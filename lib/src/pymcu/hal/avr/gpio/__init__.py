@@ -21,25 +21,25 @@ from pymcu.types import uint8, uint16, const, inline
 from pymcu.exceptions import CompileError
 
 if __CHIP__.name == "atmega328p" or __CHIP__.name == "atmega328" or __CHIP__.name == "atmega168p" or __CHIP__.name == "atmega168" or __CHIP__.name == "atmega88p" or __CHIP__.name == "atmega88" or __CHIP__.name == "atmega48p" or __CHIP__.name == "atmega48":
-    from pymcu.hal.avr.gpio.atmega328p import _PinRegs, pin_irq_setup, pin_pulse_in
+    from pymcu.hal.avr.gpio.atmega328p import _PinRegs, pin_irq_setup, pin_pulse_in, board_pin_name
 elif __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a":
-    from pymcu.hal.avr.gpio.attiny_b import select_port, select_ddr, select_pin, select_bit
+    from pymcu.hal.avr.gpio.attiny_b import select_port, select_ddr, select_pin, select_bit, board_pin_name
 elif __CHIP__.name == "attiny84" or __CHIP__.name == "attiny44" or __CHIP__.name == "attiny24":
-    from pymcu.hal.avr.gpio.attiny_ab import select_port, select_ddr, select_pin, select_bit
+    from pymcu.hal.avr.gpio.attiny_ab import select_port, select_ddr, select_pin, select_bit, board_pin_name
 elif __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
-    from pymcu.hal.avr.gpio.attiny2313 import select_port, select_ddr, select_pin, select_bit
+    from pymcu.hal.avr.gpio.attiny2313 import select_port, select_ddr, select_pin, select_bit, board_pin_name
 elif __CHIP__.name == "atmega2560":
     # pin_irq_setup is imported here because Pin.irq() dispatches to it for this
     # chip. Without it every irq() call failed as "name 'pin_irq_setup' is not
     # defined" -- an internal helper the user never wrote -- while the chip's own
     # implementation sat in atmega2560.py, complete and unreachable through the facade.
-    from pymcu.hal.avr.gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit, pin_irq_setup
+    from pymcu.hal.avr.gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit, pin_irq_setup, board_pin_name
 elif __CHIP__.name == "atmega32u4":
     # pin_irq_setup is imported here because Pin.irq() dispatches to it for this
     # chip. Without it every irq() call failed as "name 'pin_irq_setup' is not
     # defined" -- an internal helper the user never wrote -- while the chip's own
     # implementation sat in atmega32u4.py, complete and unreachable through the facade.
-    from pymcu.hal.avr.gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit, pin_irq_setup
+    from pymcu.hal.avr.gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit, pin_irq_setup, board_pin_name
 
 
 class Pin:

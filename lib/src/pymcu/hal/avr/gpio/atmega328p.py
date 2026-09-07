@@ -43,6 +43,61 @@ class _PinRegs:
                     "PD0-PD7) or an Arduino Uno/Nano board number (0-19; 13 is the "
                     "built-in LED and 14-19 are A0-A5).")
 
+
+# Board number -> port name, for callers that need the NAME rather than the
+# registers: `machine.Pin(13)` stores the resolved name so that `machine.ADC`
+# and `machine.PWM` can read it back off the Pin object. The numbering is the
+# same one _PinRegs matches above; both live in this file so a chip can only be
+# renumbered in one place.
+@inline
+def board_pin_name(n: const[uint8]) -> str:
+    match n:
+        case 0:
+            return "PD0"
+        case 1:
+            return "PD1"
+        case 2:
+            return "PD2"
+        case 3:
+            return "PD3"
+        case 4:
+            return "PD4"
+        case 5:
+            return "PD5"
+        case 6:
+            return "PD6"
+        case 7:
+            return "PD7"
+        case 8:
+            return "PB0"
+        case 9:
+            return "PB1"
+        case 10:
+            return "PB2"
+        case 11:
+            return "PB3"
+        case 12:
+            return "PB4"
+        case 13:
+            return "PB5"
+        case 14:
+            return "PC0"
+        case 15:
+            return "PC1"
+        case 16:
+            return "PC2"
+        case 17:
+            return "PC3"
+        case 18:
+            return "PC4"
+        case 19:
+            return "PC5"
+        case _:
+            raise CompileError(
+                "unknown pin on this chip. Give a PORT NAME (PB0-PB5, PC0-PC5, "
+                "PD0-PD7) or an Arduino Uno/Nano board number (0-19; 13 is the "
+                "built-in LED and 14-19 are A0-A5).")
+
 @inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
     # trigger values: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4

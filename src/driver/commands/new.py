@@ -200,6 +200,41 @@ def _pin(pkg_name: str, extra: str = "") -> str:
         return f"{pkg_name}{extra}>={_PRERELEASE_FLOOR}"
 
 
+# Built-in LED per AVR chip: the compat spelling, and the port letter plus bit
+# for the register-level template.
+#
+# This used to be `Pin(13, Pin.OUT)` and `DDRB[DDB5]` for every AVR. Thirteen is
+# an Arduino Uno number, and applying it everywhere scaffolded a project that
+# either did not compile or drove the wrong leg: on an ATtiny, PB5 is the RESET
+# pin, so the generated blink asked a newcomer to burn RSTDISBL before their
+# first program would light anything -- and after that the chip can no longer be
+# programmed over ISP. Chips whose board numbering PyMCU does not carry get a
+# port name here, because a number would have to be invented.
+#
+# The bit index is spelled with the PORTxn constant for both DDRx and PORTx.
+# They are the same number, and PORTxn is the one every chip file defines --
+# atmega32u4.py has no DDxn family at all.
+_AVR_LED = {
+    "atmega328p": ("13", "B", 5), "atmega328": ("13", "B", 5),
+    "atmega168p": ("13", "B", 5), "atmega168": ("13", "B", 5),
+    "atmega88p":  ("13", "B", 5), "atmega88":  ("13", "B", 5),
+    "atmega48p":  ("13", "B", 5), "atmega48":  ("13", "B", 5),
+    "atmega2560": ("13", "B", 7),
+    "atmega32u4": ('"PC7"', "C", 7),
+    "attiny85": ('"PB0"', "B", 0), "attiny45": ('"PB0"', "B", 0),
+    "attiny25": ('"PB0"', "B", 0), "attiny13": ('"PB0"', "B", 0),
+    "attiny13a": ('"PB0"', "B", 0),
+    "attiny84": ('"PA0"', "A", 0), "attiny44": ('"PA0"', "A", 0),
+    "attiny24": ('"PA0"', "A", 0),
+    "attiny2313": ('"PB0"', "B", 0), "attiny4313": ('"PB0"', "B", 0),
+}
+
+
+def _avr_led(chip: str) -> tuple[str, str, int]:
+    """(compat pin expression, port letter, bit) for this chip's usable LED pin."""
+    return _AVR_LED.get(chip.lower(), ('"PB0"', "B", 0))
+
+
 def _chip_imports(chip: str, flavor: str | None) -> str:
     """Generate a minimal blink program for the given chip and stdlib flavor.
 
@@ -219,7 +254,7 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
     if flavor == "micropython":
         imports = "from machine import Pin\nfrom time import sleep_ms"
         body = (
-            "led = Pin(13, Pin.OUT)\n"
+            f"led = Pin({_avr_led(chip)[0] if is_avr else 13}, Pin.OUT)\n"
             "while True:\n"
             "    led.value(1)\n"
             "    sleep_ms(500)\n"
@@ -238,16 +273,18 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
             "    time.sleep(0.5)"
         )
     elif is_avr:
+        _, _port, _bit = _avr_led(chip)
+        _ddr, _prt, _pin_bit = f"DDR{_port}", f"PORT{_port}", f"PORT{_port}{_bit}"
         imports = (
-            f"from pymcu.chips.{chip} import DDRB, PORTB, DDB5, PORTB5\n"
+            f"from pymcu.chips.{chip} import {_ddr}, {_prt}, {_pin_bit}\n"
             "from pymcu.time import delay_ms"
         )
         body = (
-            "DDRB[DDB5] = 1\n"
+            f"{_ddr}[{_pin_bit}] = 1\n"
             "while True:\n"
-            "    PORTB[PORTB5] = 1\n"
+            f"    {_prt}[{_pin_bit}] = 1\n"
             "    delay_ms(500)\n"
-            "    PORTB[PORTB5] = 0\n"
+            f"    {_prt}[{_pin_bit}] = 0\n"
             "    delay_ms(500)"
         )
     elif is_pic:

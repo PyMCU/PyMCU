@@ -239,3 +239,16 @@ def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
 
 def pin_pulse_in(pin: ptr[uint8], bit: uint8, state: uint8, timeout_us: uint16) -> uint16:
     raise NotImplementedError('pulse_in not yet implemented on ATmega32U4')
+
+
+# No board numbering on this chip, deliberately. A Leonardo/Micro numbers A0 as
+# 18 while D14-D17 also exist, so a table built like the Uno's or the Mega's
+# would mis-map pins in silence. Refusing by name is the honest answer until
+# someone writes the real Leonardo and Micro tables, which differ from each other.
+@inline
+def board_pin_name(n: const[uint8]) -> str:
+    raise CompileError(
+        "board pin numbers are not supported on the ATmega32U4: the Leonardo "
+        "and the Micro number the same chip differently, so a number here would "
+        "be a guess. Give a PORT NAME instead (PB0-PB7, PC6, PC7, PD0-PD7, PE2, "
+        "PE6, PF0, PF1, PF4-PF7). The built-in LED is PC7.")

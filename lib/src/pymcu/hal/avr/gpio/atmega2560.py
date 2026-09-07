@@ -159,6 +159,161 @@ def select_bit(name: str) -> uint8:
                 "PK0-PK7, PL0-PL7) or an Arduino Mega board number (0-69; 13 is "
                 "the built-in LED and 54-69 are A0-A15).")
 
+
+
+# Board number -> port name, for callers that need the NAME rather than the
+# registers: `machine.Pin(13)` stores the resolved name so that `machine.PWM`
+# can read it back off the Pin object. Derived from the same arms select_port
+# and select_bit match above, so a pin can only be renumbered in one place.
+# D4 (PG5) is absent here because it is absent there too.
+@inline
+def board_pin_name(n: const[uint8]) -> str:
+    match n:
+        case 0:
+            return "PE0"
+        case 1:
+            return "PE1"
+        case 2:
+            return "PE4"
+        case 3:
+            return "PE5"
+        case 5:
+            return "PE3"
+        case 6:
+            return "PH3"
+        case 7:
+            return "PH4"
+        case 8:
+            return "PH5"
+        case 9:
+            return "PH6"
+        case 10:
+            return "PB4"
+        case 11:
+            return "PB5"
+        case 12:
+            return "PB6"
+        case 13:
+            return "PB7"
+        case 14:
+            return "PJ1"
+        case 15:
+            return "PJ0"
+        case 16:
+            return "PH1"
+        case 17:
+            return "PH0"
+        case 18:
+            return "PD3"
+        case 19:
+            return "PD2"
+        case 20:
+            return "PD1"
+        case 21:
+            return "PD0"
+        case 22:
+            return "PA0"
+        case 23:
+            return "PA1"
+        case 24:
+            return "PA2"
+        case 25:
+            return "PA3"
+        case 26:
+            return "PA4"
+        case 27:
+            return "PA5"
+        case 28:
+            return "PA6"
+        case 29:
+            return "PA7"
+        case 30:
+            return "PC7"
+        case 31:
+            return "PC6"
+        case 32:
+            return "PC5"
+        case 33:
+            return "PC4"
+        case 34:
+            return "PC3"
+        case 35:
+            return "PC2"
+        case 36:
+            return "PC1"
+        case 37:
+            return "PC0"
+        case 38:
+            return "PD7"
+        case 39:
+            return "PG2"
+        case 40:
+            return "PG1"
+        case 41:
+            return "PG0"
+        case 42:
+            return "PL7"
+        case 43:
+            return "PL6"
+        case 44:
+            return "PL5"
+        case 45:
+            return "PL4"
+        case 46:
+            return "PL3"
+        case 47:
+            return "PL2"
+        case 48:
+            return "PL1"
+        case 49:
+            return "PL0"
+        case 50:
+            return "PB3"
+        case 51:
+            return "PB2"
+        case 52:
+            return "PB1"
+        case 53:
+            return "PB0"
+        case 54:
+            return "PF0"
+        case 55:
+            return "PF1"
+        case 56:
+            return "PF2"
+        case 57:
+            return "PF3"
+        case 58:
+            return "PF4"
+        case 59:
+            return "PF5"
+        case 60:
+            return "PF6"
+        case 61:
+            return "PF7"
+        case 62:
+            return "PK0"
+        case 63:
+            return "PK1"
+        case 64:
+            return "PK2"
+        case 65:
+            return "PK3"
+        case 66:
+            return "PK4"
+        case 67:
+            return "PK5"
+        case 68:
+            return "PK6"
+        case 69:
+            return "PK7"
+        case _:
+            raise CompileError(
+                "unknown pin on this chip. Give a PORT NAME (PA0-PA7, PB0-PB7, "
+                "PC0-PC7, PD0-PD7, PE0-PE7, PF0-PF7, PG0-PG4, PH0-PH7, PJ0-PJ7, "
+                "PK0-PK7, PL0-PL7) or an Arduino Mega board number (0-69; 13 is "
+                "the built-in LED and 54-69 are A0-A15).")
+
 @inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
     # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
