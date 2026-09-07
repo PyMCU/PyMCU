@@ -101,7 +101,7 @@ def main():
             led.value = True
         else:
             led.value = False
-        time.sleep_ms(10)
+        time.sleep(0.01)
 ```
 
 **Wiring:**
@@ -180,16 +180,16 @@ from pymcu.types import inline
 @inline
 def dot(led):
     led.value = True
-    time.sleep_ms(200)
+    time.sleep(0.2)
     led.value = False
-    time.sleep_ms(200)
+    time.sleep(0.2)
 
 @inline
 def dash(led):
     led.value = True
-    time.sleep_ms(600)
+    time.sleep(0.6)
     led.value = False
-    time.sleep_ms(200)
+    time.sleep(0.2)
 
 def main():
     led = DigitalInOut(board.LED)
@@ -200,19 +200,19 @@ def main():
         dot(led)
         dot(led)
         dot(led)
-        time.sleep_ms(400)    # letter gap
+        time.sleep(0.4)    # letter gap
 
         # O: ---
         dash(led)
         dash(led)
         dash(led)
-        time.sleep_ms(400)    # letter gap
+        time.sleep(0.4)    # letter gap
 
         # S: ...
         dot(led)
         dot(led)
         dot(led)
-        time.sleep_ms(1200)   # word gap
+        time.sleep(1.2)   # word gap
 ```
 
 **Why `@inline`?** `DigitalInOut` is a zero-cost abstraction — it holds no SRAM state.
@@ -245,19 +245,19 @@ def main():
     while True:
         # Red — stop (3 s)
         red.value = True; yellow.value = False; green.value = False
-        time.sleep_ms(3000)
+        time.sleep(3.0)
 
         # Red + Yellow — prepare to go (500 ms)
         red.value = True; yellow.value = True; green.value = False
-        time.sleep_ms(500)
+        time.sleep(0.5)
 
         # Green — go (3 s)
         red.value = False; yellow.value = False; green.value = True
-        time.sleep_ms(3000)
+        time.sleep(3.0)
 
         # Yellow — slow down (1 s)
         red.value = False; yellow.value = True; green.value = False
-        time.sleep_ms(1000)
+        time.sleep(1.0)
 ```
 
 **Wiring:**
@@ -289,7 +289,7 @@ def main():
     while True:
         adc_value = pot.value          # 0–65535 (16-bit scaled from 10-bit ADC)
         led.duty_cycle = adc_value     # directly drives OCR0A
-        time.sleep_ms(10)
+        time.sleep(0.01)
 ```
 
 **Wiring:**

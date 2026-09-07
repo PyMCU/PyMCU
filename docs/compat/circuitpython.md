@@ -57,7 +57,7 @@ pymcu build
 | `busio` | `UART`, `I2C`, `SPI` | ✅ Complete |
 | `pwmio` | `PWMOut` | ✅ Complete |
 | `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
-| `time` | `sleep`, `sleep_ms`, `sleep_us`, `monotonic`, `monotonic_ns` | ✅ Complete |
+| `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ Complete. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**, not CircuitPython: upstream `time` defines no such names, so code using them will not run under real CircuitPython |
 | `supervisor` | `ticks_ms`, `ticks_add`, `ticks_diff`, `reload` | ✅ Complete |
 | `alarm` | `time.TimeAlarm`, `pin.PinAlarm`, `sleep_until_alarms` | ✅ Complete |
 | `microcontroller` | `cpu.frequency`, `cpu.voltage`, `cpu.uid`, `cpu.reset_reason`, `nvm`, `watchdog`, `reset`, `delay_us` | ✅ Partial |
@@ -274,9 +274,11 @@ The `brightness` parameter is accepted but not applied (zero-cost constraint).
 ```python
 import time
 
-time.sleep_ms(500)         # 500 ms
-time.sleep_us(100)         # 100 µs
 time.sleep(0.5)            # fractional seconds — folded to delay_ms(500)
+
+# PyMCU extensions, NOT part of CircuitPython. Portable code should not use them:
+time.sleep_ms(500)         # 500 ms
+time.sleep_us(100)         # 100 us
 
 from pymcu.types import uint32
 t: float = time.monotonic()       # seconds since boot (float, as in CircuitPython)
@@ -286,7 +288,8 @@ ns: uint32 = time.monotonic_ns()  # nanoseconds since boot (wraps ~71 min)
 :::{note}
 `time.sleep(s)` takes the CircuitPython float, and the multiplication folds at compile time
 — `sleep(0.5)` becomes `delay_ms(500)` with no soft-float in the firmware. A *runtime* float
-argument does link the soft-float runtime, so prefer a literal or `sleep_ms()` in a hot path.
+argument does link the soft-float runtime, so prefer a literal in a hot path (or the
+non-portable `sleep_ms()`, accepting that the result no longer runs under CircuitPython).
 
 `time.monotonic()` returns a `float` like the real thing (`millis() / 1000.0`), which does
 pull in soft-float; the compiler warns once. Use `supervisor.ticks_ms()` for integer
@@ -457,11 +460,14 @@ count: int = 0     # PyMCU — required (int → int16 on AVR)
 
 ```python
 time.sleep(0.5)       # CircuitPython spelling; folds to delay_ms(500)
-time.sleep_ms(500)    # explicit integer milliseconds — same firmware
+time.sleep_ms(500)    # PyMCU extension: same firmware, but not CircuitPython
 ```
 
-A constant argument costs nothing. Reach for `sleep_ms()` when the delay comes from a
-runtime variable, so the seconds→milliseconds multiply does not link the soft-float runtime.
+A constant argument costs nothing, so `time.sleep(0.5)` is free and stays portable. The
+`sleep_ms()` spelling exists because it avoids the seconds-to-milliseconds multiply when the
+delay comes from a runtime variable, and that multiply would link the soft-float runtime.
+Upstream CircuitPython has no `sleep_ms`, so reaching for it trades portability for those
+bytes.
 
 ### Use integer arithmetic instead of float ADC conversion
 
