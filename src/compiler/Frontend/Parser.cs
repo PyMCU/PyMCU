@@ -777,7 +777,13 @@ public class Parser
             }
 
             parameters.Add(Located(new Param(name.Value, type, defaultVal), name));
-        } while (Match(TokenType.Comma));
+
+            // `!Check(RParen)` after the comma is the trailing comma, which `black` writes on
+            // every multi-line signature and which the CPython front end already accepts -- so
+            // without this the same source compiled or not depending on PYMCU_PY_PARSER. The
+            // call path learned it in #228 and the bare-`*` branch above already breaks on
+            // RParen; this was the one arm of the same rule left out.
+        } while (Match(TokenType.Comma) && !Check(TokenType.RParen));
 
         return parameters;
     }
