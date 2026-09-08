@@ -122,9 +122,12 @@ public static class RelativeImportResolver
     {
         for (int i = 0; i < statements.Count; i++)
         {
-            if (statements[i] is not ImportStmt imp || imp.RelativeLevel <= 0) continue;
+            if (statements[i] is not ImportStmt imp) continue;
+            if (imp.RelativeLevel <= 0 && !WantsSubmoduleFallback(imp, includePaths)) continue;
 
-            var expanded = ResolveOne(imp, filePath, includePaths);
+            var expanded = imp.RelativeLevel > 0
+                ? ResolveOne(imp, filePath, includePaths)
+                : ResolveAbsoluteSubmodules(imp, includePaths);
             statements[i] = (T)(Statement)expanded[0];
             for (int k = 1; k < expanded.Count; k++)
                 statements.Insert(++i, (T)(Statement)expanded[k]);
@@ -236,6 +239,94 @@ public static class RelativeImportResolver
         string b = root.TrimEnd(Path.DirectorySeparatorChar);
         if (string.Equals(a, b, StringComparison.Ordinal)) return true;
         return a.StartsWith(b + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// `from pkg import sub`, where `sub` is a submodule file rather than a name the package's
+    /// own module defines (PyMCU#264).
+    ///
+    /// CPython imports `pkg`, fails the attribute lookup, and falls back to importing
+    /// `pkg.sub`. That fallback is the reason an EMPTY `__init__.py` is a working layout, and
+    /// it is the default in the Adafruit wheels -- `adafruit_bus_device/__init__.py` and
+    /// `adafruit_bme280/__init__.py` are both 0 bytes. Without it the import failed with "the
+    /// module was found and does not define that name", which is true and useless: the module
+    /// really is empty, and the name really is a file sitting next to it.
+    ///
+    /// Rewritten to `import pkg.sub as sub`, which already worked before this existed, using
+    /// the same IsSubmoduleOf the relative branch has always used. No new resolution: the two
+    /// spellings now reach the loader identically, which is the property the class docstring
+    /// asks for.
+    ///
+    /// DELIBERATELY NARROWER THAN CPYTHON. The rewrite applies only when the package's own
+    /// module does not so much as MENTION the name (PackageModuleBinds). CPython prefers a
+    /// name the `__init__` binds and falls back to the submodule only if that fails; deciding
+    /// that precedence here would need the package's AST, which is not loaded yet at this
+    /// phase. Refusing to rewrite whenever the name appears in the `__init__` at all keeps
+    /// every resolution that works today working, at the cost of not fixing a package that
+    /// both binds `sub` and ships `sub.py`. No library measured needs that case, and widening
+    /// it later is a decision with its own evidence rather than a side effect of this one.
+    /// </summary>
+    private static List<ImportStmt> ResolveAbsoluteSubmodules(ImportStmt imp,
+                                                              IReadOnlyList<string> includePaths)
+    {
+        var result = new List<ImportStmt>();
+        var plainSymbols = new List<string>();
+
+        foreach (var sym in imp.Symbols)
+        {
+            if (!IsSubmoduleOf(imp.ModuleName, sym, includePaths)
+                || PackageModuleBinds(imp.ModuleName, sym, includePaths))
+            {
+                plainSymbols.Add(sym);
+                continue;
+            }
+
+            result.Add(new ImportStmt(imp.ModuleName + "." + sym, new List<string>())
+            {
+                Line = imp.Line,
+                ModuleAlias = imp.Aliases.TryGetValue(sym, out var alias) ? alias : sym,
+            });
+        }
+
+        if (plainSymbols.Count > 0 || result.Count == 0)
+        {
+            imp.Symbols.Clear();
+            imp.Symbols.AddRange(plainSymbols);
+            result.Insert(0, imp);
+        }
+
+        return result;
+    }
+
+    // Cheap pre-check so the common case -- every `from x import y` in the program that is not
+    // a package submodule -- costs one IsSubmoduleOf and no rewrite.
+    private static bool WantsSubmoduleFallback(ImportStmt imp, IReadOnlyList<string> includePaths)
+    {
+        if (imp.ModuleName.Length == 0 || imp.Symbols.Count == 0) return false;
+        foreach (var sym in imp.Symbols)
+            if (sym != StarImportExpander.Star
+                && IsSubmoduleOf(imp.ModuleName, sym, includePaths)
+                && !PackageModuleBinds(imp.ModuleName, sym, includePaths))
+                return true;
+        return false;
+    }
+
+    // Does the package's own `__init__.py` so much as mention `name`? Deliberately a substring
+    // test rather than a parse: a false "yes" only means the import keeps the behaviour it has
+    // today, and the file is not loaded at this phase. An empty or docstring-only `__init__`,
+    // which is what the wheels ship, answers no.
+    private static bool PackageModuleBinds(string package, string name,
+                                           IReadOnlyList<string> includePaths)
+    {
+        string rel = Path.Combine(package.Replace('.', Path.DirectorySeparatorChar), "__init__.py");
+        foreach (var baseDir in includePaths)
+        {
+            string init = Path.Combine(baseDir, rel);
+            if (!File.Exists(init)) continue;
+            try { return File.ReadAllText(init).Contains(name, StringComparison.Ordinal); }
+            catch (IOException) { return true; }
+        }
+        return false;
     }
 
     private static bool IsSubmoduleOf(string package, string name, IReadOnlyList<string> includePaths)
