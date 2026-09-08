@@ -176,6 +176,16 @@ public partial class IRGenerator
     // routinely live in different files -- which is also why two same-named classes in two
     // modules share an entry. That over-reach only ever costs a fold.
     private HashSet<string> writtenClassAttributes = new();
+
+    // Classes declared `class C(Enum)` / `class C(IntEnum)`. An enum's members fold to their
+    // values and the class itself is deliberately never registered as a class -- which left
+    // NOTHING keyed by the name, so `Color.RED = 9` walked past the class-variable write, was
+    // lowered as an ordinary member store, and reported "name 'Color' is not defined" about a
+    // name declared eight lines above (#273). Refusing is right; that sentence is not.
+    //
+    // Filed under the bare name and under the declaring module's prefix, because a member
+    // write reaches an enum by whichever spelling imported it.
+    private HashSet<string> enumClassNames = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
 
     // Star imports in scope, module name -> the names the star actually brought in. A star

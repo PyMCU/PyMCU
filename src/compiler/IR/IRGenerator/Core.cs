@@ -373,6 +373,7 @@ public partial class IRGenerator
         pendingFlashData.Clear();
         classAttrInits.Clear();
         writtenClassAttributes.Clear();
+        enumClassNames.Clear();
 
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);

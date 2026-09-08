@@ -129,6 +129,15 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
             throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)", constTgt);
 
+        // The same refusal one level in: an enum member. It was already refused where the enum
+        // is declared in the same file, but only by falling through to the ordinary member
+        // store, which evaluated the enum class as a value and reported "name 'Color' is not
+        // defined" about a name the file declares above. Imported, it was not refused at all:
+        // `from cfg import Color` then `Color.RED = 9` built, dropped the write and read the
+        // old value (#273). Here, before anything is lowered, and saying what is wrong.
+        if (EnumMemberAssignTarget(stmt.Target) is { } enumTgt)
+            throw UserError(EnumMemberAssignMessage(enumTgt.Cls, enumTgt.Member), enumTgt.At);
+
         // `s = f"..."` with runtime interpolations: expand into a fixed buffer + strfmt calls.
         if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
             return;
@@ -1016,6 +1025,57 @@ public partial class IRGenerator
             if (part == "__init__" || IsInit(part)) return true;
         return false;
     }
+
+    /// <summary>
+    /// The enum member an assignment target names, or null when it names anything else.
+    ///
+    /// BOTH spellings, because they were three different programs. `Color.RED = 9` with the
+    /// enum in the same file reported a name-resolution failure; imported by name it built and
+    /// dropped the write; and reached through the module -- `import cfg` then
+    /// `cfg.Color.RED = 9` -- the write LANDED and the member read 9, which is the one answer
+    /// CPython never gives. One statement, three outcomes, chosen by how the enum was
+    /// imported. The caret goes on the first token of the target, as the const-reassignment
+    /// guard above puts it.
+    /// </summary>
+    private (string Cls, string Member, ASTNode At)? EnumMemberAssignTarget(Expression target)
+    {
+        if (target is not MemberAccessExpr mem) return null;
+        return mem.Object switch
+        {
+            // `Color.RED = ...`
+            VariableExpr cv when IsEnumMemberTarget(cv.Name, mem.Member)
+                => (cv.Name, mem.Member, (ASTNode)cv),
+            // `cfg.Color.RED = ...`
+            MemberAccessExpr { Object: VariableExpr mv } dotted
+                when IsEnumMemberTarget(dotted.Member, mem.Member)
+                => (dotted.Member, mem.Member, (ASTNode)mv),
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// True when `cls.member` names an EXISTING member of an enum.
+    ///
+    /// Existing is the whole test, and it is CPython's: `Color.RED = 9` raises
+    /// `AttributeError: cannot reassign member 'RED'`, while `Color.NOPE = 9` on the same enum
+    /// is allowed, because only a member is protected. Measured against CPython 3.14 rather
+    /// than assumed, so a name that is not a member keeps whatever this compiler already does
+    /// with it instead of being refused by a rule Python does not have.
+    /// </summary>
+    private bool IsEnumMemberTarget(string cls, string member)
+    {
+        if (!enumClassNames.Contains(cls)) return false;
+        string pfx = classModuleMap.TryGetValue(cls, out var p) ? p : currentModulePrefix;
+        return globals.ContainsKey(pfx + cls + "_" + member)
+            || globals.ContainsKey(cls + "_" + member);
+    }
+
+    /// <summary>CPython's sentence, plus the thing to do instead.</summary>
+    private static string EnumMemberAssignMessage(string cls, string member) =>
+        $"cannot reassign enum member '{cls}.{member}' -- a member IS its value, and the name " +
+        "is fixed to it. Bind a variable to the member if you need something that changes " +
+        $"(`limit = {cls}.{member}`), or use a plain class attribute for a value meant to be " +
+        "written.";
 
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
@@ -4031,6 +4091,10 @@ public partial class IRGenerator
         // just like a plain assignment, so reject it with the same located error.
         if (stmt.Target is VariableExpr augConstTgt && declaredConstants.Contains(augConstTgt.Name))
             throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)", augConstTgt);
+
+        // `Color.RED += 1` mutates an enum member exactly as a plain assignment does.
+        if (EnumMemberAssignTarget(stmt.Target) is { } augEnumTgt)
+            throw UserError(EnumMemberAssignMessage(augEnumTgt.Cls, augEnumTgt.Member), augEnumTgt.At);
 
         // `obj OP= v` where obj is a ZCA instance: Python first tries the in-place dunder
         // (__iadd__ & co.), then falls back to the binary one via `obj = obj OP v`. Without

@@ -404,6 +404,11 @@ public partial class IRGenerator
                 classModuleMap[classDef.Name] = oldPrefix;
 
                 var isEnum = classDef.Bases.Contains("Enum") || classDef.Bases.Contains("IntEnum");
+                if (isEnum)
+                {
+                    enumClassNames.Add(classDef.Name);
+                    enumClassNames.Add(oldPrefix + classDef.Name);
+                }
 
                 if (classDef.Body is Block block)
                 {
