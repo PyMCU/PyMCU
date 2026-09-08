@@ -372,6 +372,7 @@ public partial class IRGenerator
         externFunctionMap.Clear();
         pendingFlashData.Clear();
         classAttrInits.Clear();
+        writtenClassAttributes.Clear();
 
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
@@ -502,6 +503,18 @@ public partial class IRGenerator
                             ? realScope : new ModuleScope();
                 }
             }
+        }
+
+        // Which `Cls.ATTR` the program writes, gathered across EVERY module before any of them
+        // is scanned. ScanGlobals decides there and then whether an ALL-CAPS class attribute
+        // folds, and it runs on the imported modules first, so a write in the entry file was
+        // not yet visible when the class that owns the attribute was scanned (#272).
+        foreach (var st in mainAst.GlobalStatements) CollectWrittenClassAttributes(st);
+        foreach (var fn in mainAst.Functions) CollectWrittenClassAttributes(fn.Body);
+        foreach (var modAstForWrites in importedModules.Values)
+        {
+            foreach (var st in modAstForWrites.GlobalStatements) CollectWrittenClassAttributes(st);
+            foreach (var fn in modAstForWrites.Functions) CollectWrittenClassAttributes(fn.Body);
         }
 
         // Track which AST objects have already been scanned so that the same

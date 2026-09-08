@@ -115,6 +115,67 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Record every `Cls.ATTR` this statement uses as an assignment target, recursing into
+    /// class bodies, methods and nested blocks. Defensive about statement shapes in the same
+    /// direction as CollectAssignedMemberNames: a missed write leaves a constant that swallows
+    /// it, so this must never UNDER-collect.
+    /// </summary>
+    private void CollectWrittenClassAttributes(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return;
+            case Block b: foreach (var st in b.Statements) CollectWrittenClassAttributes(st); return;
+            case ClassDef cd: CollectWrittenClassAttributes(cd.Body); return;
+            case FunctionDef fd: CollectWrittenClassAttributes(fd.Body); return;
+            case IfStmt iff:
+                CollectWrittenClassAttributes(iff.ThenBranch);
+                foreach (var br in iff.ElifBranches) CollectWrittenClassAttributes(br.Body);
+                CollectWrittenClassAttributes(iff.ElseBranch);
+                return;
+            case WhileStmt w: CollectWrittenClassAttributes(w.Body); return;
+            case ForStmt f:
+                // `for Dev.LIMIT in ...` writes the attribute on every iteration.
+                if (f.VarName.Contains('.')) writtenClassAttributes.Add(f.VarName);
+                CollectWrittenClassAttributes(f.Body);
+                return;
+            case WithStmt wi: CollectWrittenClassAttributes(wi.Body); return;
+            case MatchStmt m: foreach (var br in m.Branches) CollectWrittenClassAttributes(br.Body); return;
+            case TryStmt t:
+                foreach (var st in t.Body) CollectWrittenClassAttributes(st);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) CollectWrittenClassAttributes(st);
+                if (t.ElseBody != null) foreach (var st in t.ElseBody) CollectWrittenClassAttributes(st);
+                if (t.Finally != null) foreach (var st in t.Finally) CollectWrittenClassAttributes(st);
+                return;
+            case AssignStmt a: RecordClassAttrWriteTarget(a.Target); return;
+            case AugAssignStmt ag: RecordClassAttrWriteTarget(ag.Target); return;
+            case AnnAssign an:
+                // AnnAssign.Target is a (possibly dotted) name string, e.g. "Dev.LIMIT".
+                if (an.Target.Contains('.')) writtenClassAttributes.Add(an.Target);
+                return;
+        }
+    }
+
+    private void RecordClassAttrWriteTarget(Expression target)
+    {
+        switch (target)
+        {
+            // `self.x` reaches here too and records "self.x", which matches no class name and
+            // costs nothing. Narrowing this to known classes is not possible yet: this runs
+            // before the pass that collects them, which is the whole point of running early.
+            case MemberAccessExpr { Object: VariableExpr ov } ma:
+                writtenClassAttributes.Add(ov.Name + "." + ma.Member);
+                break;
+            // `Dev.TABLE[0] = x` writes THROUGH the attribute. A folded constant has no
+            // storage to index into, so the name has to keep its slot.
+            case IndexExpr { Target: MemberAccessExpr { Object: VariableExpr ov2 } ma2 }:
+                writtenClassAttributes.Add(ov2.Name + "." + ma2.Member);
+                break;
+            case TupleExpr tup: foreach (var e in tup.Elements) RecordClassAttrWriteTarget(e); break;
+        }
+    }
+
+    /// <summary>
     /// Remember the initializer of a class-body attribute that did NOT become a compile-time
     /// constant, so it can be run as part of its module's init.
     ///
@@ -374,7 +435,13 @@ public partial class IRGenerator
                         try
                         {
                             var val = EvaluateConstantExpr(innerInit);
-                            var isAllUpper = innerName.All(c => !char.IsLower(c));
+                            // A name this program WRITES is not a constant, whatever it is
+                            // called: the fold left the write nowhere to land and it was
+                            // dropped in silence (#272). Module level has had this same gate
+                            // on `reassigned` since #220. An enum member keeps folding: its
+                            // value is the member's identity, not a variable's contents.
+                            var isAllUpper = innerName.All(c => !char.IsLower(c))
+                                && !writtenClassAttributes.Contains(classDef.Name + "." + innerName);
 
                             if (isAllUpper || isEnum)
                             {

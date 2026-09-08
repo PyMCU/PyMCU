@@ -161,6 +161,21 @@ public partial class IRGenerator
     // AST: the synthesized assignment is injected into that module's own init, so `Cls_attr`
     // resolves under that module's prefix exactly as every other name in it does.
     private Dictionary<ProgramNode, List<Statement>> classAttrInits = new();
+
+    // `Cls.ATTR` used as an assignment target ANYWHERE in the program, as "Cls.ATTR".
+    // An ALL-CAPS class attribute folds at its reads and has no storage, so the write had
+    // nowhere to land and was dropped without a word: `Dev.LIMIT = 9` then reading it gave 7
+    // (#272). Module level already knows this rule -- its own isAllUpper is gated on
+    // `reassigned` -- and a name this program writes is not a constant whatever it is called.
+    //
+    // Collected program-wide BEFORE the first ScanGlobals, because the entry file is scanned
+    // last: `from cfg import Dev` in main.py writing `Dev.LIMIT` has not been read yet when
+    // cfg's own class body is scanned.
+    //
+    // Keyed by the written spelling and NOT by module, because the write and the class
+    // routinely live in different files -- which is also why two same-named classes in two
+    // modules share an entry. That over-reach only ever costs a fold.
+    private HashSet<string> writtenClassAttributes = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
 
     // Star imports in scope, module name -> the names the star actually brought in. A star
