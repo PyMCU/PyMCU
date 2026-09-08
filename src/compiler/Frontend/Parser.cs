@@ -36,6 +36,21 @@ public class Parser
         "a raise message must be one or more adjacent string literals, or the name of a " +
         "module-level string constant";
 
+    /// The refusal for a CALL in the raise-message position (#262).
+    ///
+    /// It says why rather than that it is unsupported, because the code is fine and the
+    /// message is what is not carried: PyMCU discards the raise message (a one-character and
+    /// a forty-four-character message build byte-identical firmware, and only the type name
+    /// reaches the image), so the call would never be evaluated. "Unsupported" sends someone
+    /// hunting for a workaround; this tells them to move the call out or drop it.
+    ///
+    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py, s_raise).
+    /// Change one and change the other, or the parity test in
+    /// tests/driver/test_frontend_diagnostic_parity.py fails, which is what it is for.
+    private const string RaiseMessageCallRefusal =
+        "a call in a raise message is not supported: PyMCU discards the message, so the call " +
+        "would never be evaluated. Move it out of the raise, or drop it";
+
     /// The refusal for a union type annotation.
     ///
     /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py,
@@ -973,6 +988,32 @@ public class Parser
         return new ReturnStmt(value) { Line = line };
     }
 
+    /// Does this expression contain a call anywhere?
+    ///
+    /// Used only for the raise-message position (#262), where a call is refused because the
+    /// message is discarded and the call would therefore never run. It looks THROUGH the
+    /// composite forms an f-string message actually reaches -- interpolations, member access,
+    /// operands, subscripts -- rather than only at the top node, because
+    /// `f"...{list(x.keys())}"` hides its calls one level down and is exactly the shape that
+    /// would otherwise be silently dropped.
+    ///
+    /// Unknown node types answer false: the fallback has to be "accept" so that a form nobody
+    /// listed here is discarded like the rest, not refused by omission.
+    private static bool ContainsCall(Expression? e) => e switch
+    {
+        null => false,
+        CallExpr => true,
+        FStringExpr f => f.Parts.Any(p => ContainsCall(p.Expr)),
+        MemberAccessExpr m => ContainsCall(m.Object),
+        BinaryExpr b => ContainsCall(b.Left) || ContainsCall(b.Right),
+        UnaryExpr u => ContainsCall(u.Operand),
+        TernaryExpr t => ContainsCall(t.Condition) || ContainsCall(t.TrueVal) || ContainsCall(t.FalseVal),
+        IndexExpr i => ContainsCall(i.Target) || ContainsCall(i.Index),
+        TupleExpr tu => tu.Elements.Any(ContainsCall),
+        ListExpr l => l.Elements.Any(ContainsCall),
+        _ => false,
+    };
+
     private Statement ParseRaiseStatement()
     {
         int line = Peek().Line;
@@ -992,6 +1033,7 @@ public class Parser
                 // The first token of the message argument, kept so a refusal can underline the
                 // argument rather than report at wherever parsing stopped.
                 Token messageStart = Peek();
+                int messageStartPos = pos;
                 if (Check(TokenType.String))
                 {
                     var parts = new System.Text.StringBuilder();
@@ -1007,6 +1049,35 @@ public class Parser
                 {
                     messageName = Advance().Value;
                     while (Check(TokenType.Newline)) Advance();
+                }
+
+                // Anything else in the message position is ACCEPTED AND DISCARDED (#262).
+                //
+                // The message never reaches the firmware: a one-character message and a
+                // forty-four-character one build byte-identical output, and the text is absent
+                // from the emitted assembly -- only the type name is. So there was nothing to
+                // store and nothing to lay out; the old refusal was a syntactic whitelist, not
+                // a constraint. `"a" + "b"` being refused while `"a" "b"` was accepted is what
+                // gave it away.
+                //
+                // A CALL stays refused, and not for a parsing reason: discarding the argument
+                // means the call would never run, silently, which CPython would have evaluated
+                // when the raise fired. A refusal someone can read beats a divergence nobody
+                // reports.
+                if (!Check(TokenType.RParen))
+                {
+                    pos = messageStartPos;
+                    message = "";
+                    messageName = null;
+                    // Taken BEFORE parsing: ArgumentEndToken scans forward from the cursor to
+                    // the closing `)`, so it only answers while the cursor still sits at the
+                    // start of the argument. Computing it afterwards underlined one character
+                    // too many, which the parity test caught as 9 against the bridge's 8.
+                    Token messageEnd = ArgumentEndToken();
+                    Expression discarded = ParseExpression();
+                    while (Check(TokenType.Newline)) Advance();
+                    if (ContainsCall(discarded))
+                        ErrorSpanning(messageStart, messageEnd, RaiseMessageCallRefusal);
                 }
 
                 // Blame the ARGUMENT, not the token the parser happened to stop on.

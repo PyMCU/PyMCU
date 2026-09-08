@@ -131,26 +131,16 @@ def _program(tmp_path: Path, source: str) -> Path:
     'from pymcu.types import uint8\ndef f(a: uint8 | None) -> None:\n    pass\ndef main() -> None:\n    f(1)\n',
     'from pymcu.types import uint8\ndef f() -> uint8 | None:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
     'from pymcu.types import uint8\nclass C:\n    def __init__(self) -> None:\n        self.x: uint8[2] | None = [1, 2]\ndef main() -> None:\n    c = C()\n',
-    # A raise MESSAGE that is neither literals nor a name (#236). Nine spellings diverged: the
-    # hand-written parser reported wherever its cursor stopped looking for `)` and the bridge
-    # reported the `raise` keyword. Both now mark the whole argument.
+    # A CALL in the raise message (#236 for the location, #262 for the refusal). Nine
+    # spellings diverged: the hand-written parser reported wherever its cursor stopped looking
+    # for `)` and the bridge reported the `raise` keyword. Both now mark the whole argument.
     #
-    # The three shapes are here because the OLD behaviour differed between them and a single
-    # case would not have noticed: `+` put the cursor on the operator, `.` and `(` put it on a
-    # punctuation character inside the expression, and an f-string put it at the argument start
-    # by accident, which is the answer all of them give now on purpose.
+    # Only the call shapes remain here. Since #262 the other messages -- f-strings, member
+    # access, concatenation -- are ACCEPTED and discarded, so they produce no diagnostic to
+    # locate and moved to test_a_discarded_raise_message_compiles below. A call still refuses,
+    # because discarding it would mean it never runs.
     'def main() -> None:\n    raise ValueError("a " + "b" + str(1))\n',
-    'from pymcu.chips import __CHIP__\ndef main() -> None:\n    raise ValueError(__CHIP__.name)\n',
     'def helper() -> str:\n    return "h"\ndef main() -> None:\n    raise ValueError(helper())\n',
-    'def main() -> None:\n    raise ValueError(f"{1}")\n',
-    # And across lines, where BOTH have to drop the length rather than underline the first
-    # token. The hand-written side got this wrong first: falling back to the first token's
-    # length underlined the opening literal, which is the part that may be fine.
-    'def main() -> None:\n    raise ValueError("a "\n                     + "b")\n',
-    # Raise, on one line and across two: the second is where the span-based length vanished
-    # rather than being merely too long.
-    "from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 = 1\n    raise ValueError(x)\n",
-    "from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 = 1\n    raise ValueError(\n        x)\n",
     # Unary: the operator, not the operand it applies to.
     "from pymcu.types import uint8\ndef main() -> None:\n    a: uint8 = 2\n    b: uint8 = a ** -1\n",
     # ListComp: the opening bracket, not the comprehension.
@@ -631,3 +621,34 @@ def test_both_front_ends_reach_the_same_verdict(tmp_path, annotation):
         f"one front end compiled `{annotation}` and the other refused it: "
         f"hand-written rc={hand}, CPython rc={cpython}"
     )
+
+
+# --- #261 and #262: the two front ends must AGREE about what they now ACCEPT -----------
+#
+# These classes were both refusals until now, so every case here used to be covered by the
+# diagnostic-parity list above. Once a construct is accepted there is no diagnostic left to
+# compare, and a fixture that only asserted the refusal would stop watching the moment the
+# refusal went away -- which is exactly when the two front ends can start to drift.
+#
+# So the assertion is agreement on the VERDICT, in both directions: the accepted spellings
+# must compile on both, and the two that stay refused must refuse on both.
+
+@pytest.mark.parametrize("body,accepted", [
+    # #262 -- a raise message that is not a literal. The message is discarded (a one-character
+    # and a forty-four-character message build byte-identical firmware), so there is nothing
+    # to store and these are accepted.
+    ('    raise ValueError(f"bad {1}")\n', True),
+    ('    raise ValueError("a " + "b")\n', True),
+    ('    raise ValueError("a "\n                     + "b")\n', True),
+    # A CALL stays refused: discarding the argument would mean it never runs, silently,
+    # where CPython evaluates it when the raise fires.
+    ('    raise ValueError(str(1))\n', False),
+    ('    raise ValueError(f"bad {str(1)}")\n', False),
+])
+def test_raise_message_verdict_agrees(tmp_path, body, accepted):
+    src = _program(tmp_path, "from pymcu.types import uint8\ndef main() -> None:\n" + body)
+    hand, cpython = _verdict(src, py_parser=False), _verdict(src, py_parser=True)
+    assert (hand == 0) == (cpython == 0), (
+        f"front ends disagree on `{body.strip()}`: hand-written rc={hand}, CPython rc={cpython}")
+    assert (hand == 0) == accepted, (
+        f"`{body.strip()}` expected {'accepted' if accepted else 'refused'}, rc={hand}")

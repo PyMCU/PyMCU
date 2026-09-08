@@ -822,6 +822,14 @@ def s_raise(node):
                 message = arg.value
             elif isinstance(arg, ast.Name):
                 message_name = arg.id
+            elif not any(isinstance(s, ast.Call) for s in ast.walk(arg)):
+                # ACCEPTED AND DISCARDED (#262). The message never reaches the firmware --
+                # a one-character and a forty-four-character message build byte-identical
+                # output, and the text is absent from the emitted assembly, only the type
+                # name is. There was nothing to store, so the old refusal was a syntactic
+                # whitelist rather than a constraint: `"a" + "b"` was refused while
+                # `"a" "b"` was accepted.
+                pass
             else:
                 # The ARGUMENT, not the Raise statement. Passing `node` here put every one of
                 # these at the `raise` keyword, nine spellings deep, while the hand-written
@@ -832,10 +840,17 @@ def s_raise(node):
                 # carries col_offset and end_col_offset, whereas the position of the `+` in
                 # `"a" + x` is not in the CPython AST at all.
                 #
-                # Text is word for word Parser.cs's RaiseMessageRefusal. Change one, change both.
+                # A CALL is what is left, and it stays refused for a reason that is not about
+                # parsing: discarding the argument means the call would never run, silently,
+                # where CPython evaluates it when the raise fires. A refusal someone can read
+                # beats a divergence nobody reports.
+                #
+                # Text is word for word Parser.cs's RaiseMessageCallRefusal. Change one,
+                # change both.
                 raise Unsupported(
-                    "a raise message must be one or more adjacent string literals, or the "
-                    "name of a module-level string constant", arg)
+                    "a call in a raise message is not supported: PyMCU discards the message, "
+                    "so the call would never be evaluated. Move it out of the raise, or drop "
+                    "it", arg)
         return {"k": "Raise", "errorType": exc.func.id, "message": message,
                 "messageName": message_name}
     raise Unsupported("that raise form", node)
