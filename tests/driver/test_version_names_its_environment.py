@@ -131,6 +131,17 @@ def test_the_printed_table_names_the_environment_from_two_directories(tmp_path, 
         seen.append(out)
 
     # And the two runs must each name a real path, not the literal word.
+    #
+    # `startswith("/")` was a POSIX-only spelling of "is this absolute", so this assertion
+    # could never pass on Windows, where the prefix is `C:\...`. `is_absolute()` asks the
+    # question the comment above states, using the running platform's rules, and is no
+    # weaker: Path("unknown") and Path("") are both non-absolute, so the literal word and an
+    # empty value are still rejected.
+    #
+    # First line only: the continuation `(this project's .venv, ...)` follows on the next.
     for out in seen:
         after = out.split("Environment:", 1)[1].strip()
-        assert after.startswith("/"), f"expected a path after 'Environment:', got {after[:40]!r}"
+        first = after.splitlines()[0].strip()
+        assert Path(first).is_absolute(), (
+            f"expected a path after 'Environment:', got {first[:40]!r}"
+        )
