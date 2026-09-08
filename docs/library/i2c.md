@@ -96,9 +96,10 @@ def read_reg(i2c: I2C, dev_addr: uint8, reg: uint8) -> uint8:
 Use `SoftI2C` for arbitrary GPIO pins:
 
 ```python
-from pymcu.hal.i2c import SoftI2C
+from pymcu.hal.softi2c import SoftI2C
+from pymcu.hal.avr.gpio import Pin
 from pymcu.types import uint8
 
-i2c = SoftI2C(sda="PD2", scl="PD3")
+i2c = SoftI2C(sda=Pin("PD2", Pin.OUT), scl=Pin("PD3", Pin.OUT))
 found: uint8 = i2c.ping(0x68)      # check MPU-6050
 ```

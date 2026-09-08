@@ -76,10 +76,12 @@ def main():
 Use `SoftSPI` for arbitrary GPIO pins (no hardware SPI constraint):
 
 ```python
-from pymcu.hal.spi import SoftSPI
+from pymcu.hal.softspi import SoftSPI
+from pymcu.hal.avr.gpio import Pin
 from pymcu.types import uint8
 
-spi = SoftSPI(sck="PD4", mosi="PD5", miso="PD6", cs="PD7")
+spi = SoftSPI(sck=Pin("PD4", Pin.OUT), mosi=Pin("PD5", Pin.OUT),
+              miso=Pin("PD6", Pin.IN), cs=Pin("PD7", Pin.OUT))
 
 with spi:
     b: uint8 = spi.transfer(0x55)

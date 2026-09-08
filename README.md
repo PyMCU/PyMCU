@@ -347,8 +347,10 @@ has no install extra, so a `pip`/`pipx` install never provides it.
 | `pymcu.hal.adc` | `AnalogPin` — poll + interrupt; internal temperature |
 | `pymcu.hal.timer` | `Timer(n, prescaler)` — CTC mode; `millis()` / `micros()` |
 | `pymcu.hal.pwm` | `PWM` — multi-channel; `set_duty` / `set_freq` |
-| `pymcu.hal.spi` | `SPI` + `SoftSPI` |
-| `pymcu.hal.i2c` | `I2C` + `SoftI2C` |
+| `pymcu.hal.spi` | `SPI` |
+| `pymcu.hal.softspi` | `SoftSPI` — bit-bang, any GPIO |
+| `pymcu.hal.i2c` | `I2C` |
+| `pymcu.hal.softi2c` | `SoftI2C` — bit-bang, any GPIO |
 | `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
 | `pymcu.hal.watchdog` | `Watchdog` — `enable` / `disable` / `feed` |
 | `pymcu.hal.power` | `sleep_idle` / `sleep_adc_noise` / `sleep_power_down` / `sleep_power_save` / `sleep_standby` / `sleep_extended_standby` |
