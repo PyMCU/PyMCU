@@ -779,6 +779,86 @@ public partial class IRGenerator
     /// Only an instance named at module level is affected. A Pin's `_bit` is read as
     /// `self._bit` inside its own methods, never as `led._bit`, so it stays compile-time.
     /// </summary>
+    /// <summary>
+    /// Register the ARRAY fields of every instance this module builds at its top level, so the
+    /// stack overlay never reuses their SRAM.
+    ///
+    /// Module-level arrays are registered for exactly this reason -- Core.cs says it on the
+    /// line: "so the overlay algorithm never aliases them with function-local arrays across
+    /// sibling calls" -- and an array reached as `obj.buf` never got there. It has a name and a
+    /// size only because the allocator infers both from the ArrayStore/ArrayLoad it sees, and it
+    /// infers them inside whichever function did the store, so two such arrays written from two
+    /// SIBLING calls were handed one slot. `lo.store(...)` in one helper and `hi.store(...)` in
+    /// another put `lo_buf` and `hi_buf` at the same address; every read of one answered with
+    /// the other's value, and nothing was refused and nothing was warned (#275). Reached
+    /// directly from main it was correct, which is what kept it hidden.
+    ///
+    /// Read off `__init__` rather than off classFieldLayout, because the layout does not carry
+    /// array fields at all: measured, not assumed. For `self.buf: uint8[2] = [0, 0]` the layout
+    /// comes back EMPTY, which is also why the mutation analysis in MarkModuleInstanceFields
+    /// concludes the method writes no field and marks nothing. Nothing downstream of the layout
+    /// can see this shape, so the registration has to read the declaration.
+    ///
+    /// Both spellings of "an instance the module owns": a module-level `lo = Cell()` and a
+    /// class attribute `class Reg: lo = Cell()`. The second is constructed by the module init
+    /// #270 synthesizes, under the flattened name `Reg_lo`, and its buffer aliased the same way.
+    ///
+    /// Unconditional, and deliberately NOT gated on a function touching the field: such an
+    /// array lives as long as the module does, exactly like a module-level one, so it belongs
+    /// in the global section however it is used. A FUNCTION-LOCAL instance is untouched -- only
+    /// what this module builds at its top level is collected here -- so the overlay keeps
+    /// reusing the storage it exists to reuse.
+    /// </summary>
+    private void RegisterInstanceFieldArrays(ProgramNode ast)
+    {
+        var built = new List<(string Instance, string Cls)>();
+
+        foreach (var st in ast.GlobalStatements)
+            if (st is AssignStmt { Target: VariableExpr tv, Value: CallExpr { Callee: VariableExpr cv } })
+                built.Add((tv.Name, ResolveCallee(cv.Name)));
+
+        // `class Reg: lo = Cell()`. #270 turned these into real constructions in the module's
+        // init; the name they are constructed under is the flattened one, which is also the
+        // name their fields are read and written by.
+        if (classAttrInits.TryGetValue(ast, out var attrInits))
+            foreach (var st in attrInits)
+                if (st is AssignStmt { Target: VariableExpr av, Value: CallExpr { Callee: VariableExpr acv } })
+                    built.Add((av.Name, ResolveCallee(acv.Name)));
+
+        foreach (var (instance, cls) in built)
+        {
+            FunctionDef? init = null;
+            if (!instanceMethodDefs.TryGetValue(cls + "___init__", out init)
+                && !methodAstByName.TryGetValue(cls + "___init__", out init)) continue;
+            if (init?.Body is not Block initBody) continue;
+
+            foreach (var s in initBody.Statements)
+            {
+                string? field = null;
+                string? ftype = null;
+                switch (s)
+                {
+                    case AnnAssign aa when aa.Target.StartsWith("self.", StringComparison.Ordinal):
+                        field = aa.Target.Substring("self.".Length); ftype = aa.Annotation; break;
+                    case AssignStmt { Target: MemberAccessExpr { Object: VariableExpr { Name: "self" } } sm } sa:
+                        field = sm.Member; ftype = sa.AnnotatedType; break;
+                    case VarDecl vd when vd.Name.StartsWith("self.", StringComparison.Ordinal):
+                        field = vd.Name.Substring("self.".Length); ftype = vd.VarType; break;
+                }
+                if (field == null || !IsFixedArrayParamType(ftype)) continue;
+
+                // Under this module's prefix only. Registering the bare name as well would give
+                // the array a second home and spend the SRAM twice, which is the reason Mark()
+                // registers one key too.
+                string key = currentModulePrefix + instance + "_" + field;
+                int lb = ftype!.IndexOf('[');
+                arraySizes[key] = int.Parse(ftype.Substring(lb + 1, ftype.Length - lb - 2));
+                arrayElemTypes[key] = DataTypeExtensions.StringToDataType(ftype.Substring(0, lb));
+                moduleSramArrays.Add(key);
+            }
+        }
+    }
+
     private void MarkModuleInstanceFields(ProgramNode ast)
     {
         // The instances this module builds at its top level. Collected from the AST being
