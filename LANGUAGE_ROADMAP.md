@@ -270,7 +270,8 @@ instead of `avra` whenever `[tool.pymcu.ffi]` is present in `pyproject.toml`.
 from pymcu.ffi import extern
 
 @extern("arduino_millis")
-def millis() -> uint16: ...
+def millis() -> uint16:
+    pass
 
 t: uint16 = millis()
 ```

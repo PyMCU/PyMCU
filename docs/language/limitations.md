@@ -28,7 +28,8 @@ suggests the idiomatic PyMCU alternative where one exists.
 | **Mutable** `set` (`.add()`) | Hash set requires heap | Closed set literal (below), or a `uint8` bitmask |
 
 **Supported:** `list[T]` (`x: list[uint8] = list()`) compiles to a bounded bump-allocator
-with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`.
+with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`. It is **AVR-only** -- on ARM,
+PIC and RISC-V it is refused at build time, naming AVR; use a fixed `uint8[N]` array there.
 `bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
 **Closed dict/set literals** (`d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}`) bind compile-time
 lookup tables with no storage: `d[const]` folds to its value, `d[runtime_key]` lowers to a
@@ -260,8 +261,8 @@ is a `CompileError`; a true or runtime assertion is stripped.
 | Closures capturing mutable vars | Closure cell requires heap | Pass captured values as explicit parameters |
 | `*args` / `**kwargs` | Variadic convention needs stack inspection | Fixed parameter lists |
 | `functools.partial` | Runtime partial object | Wrapper `@inline` function |
-| Higher-order functions (passing functions as values) | No function pointer type | `match / case` dispatch |
-| Unbounded recursion | Stack overflow on MCU | Iterative equivalent |
+| A function value whose target varies at run time | The address must be known at compile time | Pick with `match / case`, or index a `Callable[N]` table of known functions |
+| Recursion of any depth, direct or mutual | No per-call frame: PyMCU uses a static stack layout | Iterative equivalent |
 
 **Supported:** `@inline` functions expand at call sites — zero call overhead, zero stack.
 
@@ -269,9 +270,19 @@ A **free function that takes a class instance** (`def blink_twice(led: Pin)`) is
 expands at the call site, the way an explicit `@inline` of the same shape does: the instance
 fields live in the caller's frame, so there is no subroutine to call. The parameter must be
 annotated with the class name; an unannotated one is not an instance parameter.
-Non-`@inline` functions use a conventional call/ret ABI and can recurse to a fixed depth
-(~80 frames on ATmega328P with 2 KB SRAM). `lambda x: expr` (no closure capture) is inlined
+Non-`@inline` functions use a conventional call/ret ABI, but they may **not** recurse: the
+compiler assigns every function a fixed stack slot, so a recursive call cycle is refused at
+build time (`RecursionError: recursive call cycle: f -> g -> f`), whatever the depth would
+have been. Direct and mutual recursion are both detected.
+`lambda x: expr` (no closure capture) is inlined
 at the call site. `nonlocal` is supported inside nested `@inline` functions.
+
+**Function references are supported.** A function assigned to a `Callable`-annotated name
+captures its address and calling through it emits an indirect call (`ICALL` on AVR);
+`funcref(fn)` is the explicit spelling, and `Callable[N]` builds a dispatch table you can
+index at run time. A bare `cb = my_handler` works too. The one limit is that each target
+must be a named function known at compile time -- rebinding the name inside a run-time
+branch is refused, naming the branch.
 
 ---
 
@@ -310,6 +321,10 @@ dunders). A class-typed field dispatches correctly through a **value-returning**
 pure-assembly helper library. Expect ~200-400 cycles per operation. Subnormals are treated as
 zero; NaN and Inf propagate correctly. `uint32(x * 100.0 + 0.5)` and the other float→int
 casts truncate toward zero on the real value, not on its raw bit pattern.
+ARM and PIC18 have `float` too (RP2040 through the bootrom fast-float library, RP2350
+through the M33 FPU). **PIC16 and RISC-V have no floating point at all** -- even a bare
+`x: float = 1.5` fails there, today with an unlocated backend message rather than a proper
+diagnostic.
 
 **Note on `const[T]`:** a `const[T]` parameter accepts compile-time **float** constants as
 well as integers and strings, so `Timer(freq=2.5)` binds. What it does not accept is a value

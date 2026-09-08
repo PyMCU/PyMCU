@@ -83,7 +83,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
 | `float` (soft-float) | IEEE 754 single-precision; AVR (`__fp_*` intrinsics) and RP2040 (bootrom fast-float library via `__aeabi_f*` shims); annotation `x: float = 3.14`; float↔int conversions truncate toward zero. RP2350 pending (M33 FPU) |
 | `@naked` | No compiler prolog/epilog; registers hold raw calling-convention values at function entry; required for precise `uint16` register manipulation |
-| `@staticmethod` | NOT supported. `A.f(x)` emits a call to `A_f` that the same build never defines, failing at link time with no source line; `a.f(x)` binds the receiver to the first parameter, so the argument has nowhere to go. Class methods are *not* effectively static: the receiver is still bound. Calling through the class object is what is missing (PyMCU#201) |
+| `@staticmethod` | Accepted and ignored: what makes a method callable through the class is having no `self` parameter. `def f(x)` in a class body compiles as `Class_f` and is reached by `A.f(x)` or by `obj.f(x)`, neither of which consumes the argument. A method that DOES take `self` cannot be called as `A.f(x)` and is refused where it is written, not at the linker (PyMCU#201) |
 | `CompileError` intrinsic | `raise CompileError("msg")` aborts compilation with a `CompileError:` diagnostic; never generates `RaiseExn` IR; used in all HAL modules for unsupported arch/chip guards; cannot be caught by `try/except` |
 
 ### HAL (ATmega328P)
@@ -172,7 +172,7 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 | `fixed16` (Q8.8 fixed-point) | Fixed-point arithmetic without soft-float overhead; `Q8.8` format |
 | MicroPython/CircuitPython API alignment | Broaden compat module coverage; close remaining API gaps |
 | PIC18 codegen | Extend backend for PIC18Fxxxx family |
-| RISC-V 32-bit codegen | CH32V003, ESP32-C3 targets |
+| RISC-V 32-bit codegen (publishing) | The CH32V003/V203 backend builds in-tree but is not on PyPI and has no install extra. Also open: it does not truncate to the declared width (PyMCU#222) |
 | RP2040 PIO backend | Programmable I/O state machine output |
 | Over-the-air (OTA) support | Bootloader + `pymcu flash` over UART |
 | ARM Cortex-M3/M4 codegen | STM32, nRF52 — reuses the LLVM backend |

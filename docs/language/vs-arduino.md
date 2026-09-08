@@ -165,7 +165,7 @@ convention; no wrapper glue code needed.
 | Arduino advantage | Notes |
 |-------------------|-------|
 | Library ecosystem | 4000+ libraries; PyMCU has a growing stdlib + FFI for C libs |
-| More boards | ESP32, STM32, RP2040, SAMD, nRF52 (PyMCU: AVR + PIC + RISC-V, ARM coming) |
+| More boards | ESP32, STM32, SAMD, nRF52 (PyMCU: AVR beta; ARM (RP2040 / RP2350) and PIC alpha) |
 | Arduino IDE simplicity | PyMCU uses VS Code; more powerful but higher initial setup |
 | Community / tutorials | Vast corpus of Arduino examples |
 
