@@ -336,13 +336,51 @@ public class Parser
         return -1;
     }
 
+    /// Is this the text of a bare type name, the thing an unquoted annotation would be?
+    ///
+    /// Deliberately narrow (#261). A quoted annotation is accepted only when unquoting it
+    /// yields exactly what someone could have written without the quotes, so `"Vec"` passes
+    /// and `"busio.I2C"` or `"Optional[Vec]"` do not: those are a dotted annotation and a
+    /// typing subscript, refused on their own terms, and letting them in through the string
+    /// door would give them a second spelling that behaves differently from the first.
+    private static bool IsBareTypeName(string s)
+    {
+        if (s.Length == 0) return false;
+        if (!char.IsLetter(s[0]) && s[0] != '_') return false;
+        foreach (char c in s)
+            if (!char.IsLetterOrDigit(c) && c != '_') return false;
+        return true;
+    }
+
     private string ParseTypeAnnotation()
     {
+        // The first token of the annotation, kept so the union refusal below can underline
+        // the whole annotation. It used to be the identifier token, which the string branch
+        // does not produce.
+        Token annotationStart = Peek();
+        string typeStr;
         if (Check(TokenType.String))
-            Error("string ('forward reference') type annotations are not supported; " +
-                  "use the bare class name (e.g. `-> Vec`, not `-> " + (char)34 + "Vec" + (char)34 + "`)");
-        var t = Consume(TokenType.Identifier, "Expected type identifier");
-        string typeStr = t.Value;
+        {
+            // A string annotation is the SAME annotation with quotes round it (#261).
+            //
+            // PyMCU already resolves annotation names after the whole module is seen -- an
+            // UNQUOTED forward reference, where the class is defined below the function that
+            // names it, compiles today on both front ends. So the quotes were the only thing
+            // in the way, and the fix is to hand the text to the identical downstream path
+            // rather than to add a second resolution mechanism that could drift from the
+            // first.
+            string inner = Peek().Value;
+            if (!IsBareTypeName(inner))
+                Error("string ('forward reference') type annotations are not supported; " +
+                      "use the bare class name (e.g. `-> Vec`, not `-> " + (char)34 + "Vec" + (char)34 + "`)");
+            Advance();
+            typeStr = inner;
+        }
+        else
+        {
+            var t = Consume(TokenType.Identifier, "Expected type identifier");
+            typeStr = t.Value;
+        }
 
         if (Match(TokenType.LBracket))
         {
@@ -418,7 +456,7 @@ public class Parser
         // member) because they all come through here. Word for word the same refusal as the
         // CPython bridge's, which raises it from annotation_of for the same reason.
         if (Check(TokenType.Pipe))
-            ErrorSpanning(t, UnionEndToken(), UnionAnnotationRefusal);
+            ErrorSpanning(annotationStart, UnionEndToken(), UnionAnnotationRefusal);
 
         return typeStr;
     }

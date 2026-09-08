@@ -316,6 +316,18 @@ def annotation_of(node):
             "size", node)
     if isinstance(node, ast.Constant) and node.value is None:
         return "void"
+    # A string annotation is the SAME annotation with quotes round it (#261). PyMCU already
+    # resolves annotation names after the whole module is seen -- an UNQUOTED forward
+    # reference compiles today on both front ends -- so the quotes were the only thing in the
+    # way, and the text is returned as the type name the unquoted spelling would have produced.
+    #
+    # Only a bare name: `"busio.I2C"` and `"Optional[Vec]"` fall through to the refusals below,
+    # because a dotted annotation and a typing subscript are refused on their own terms and
+    # must not gain a second spelling through the string door.
+    #
+    # Kept in step with Parser.cs's IsBareTypeName. Change one, change both.
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
+        return node.value
     if isinstance(node, ast.Tuple):
         return "tuple[" + ",".join(annotation_of(e) for e in node.elts) + "]"
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \

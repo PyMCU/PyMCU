@@ -652,3 +652,32 @@ def test_raise_message_verdict_agrees(tmp_path, body, accepted):
         f"front ends disagree on `{body.strip()}`: hand-written rc={hand}, CPython rc={cpython}")
     assert (hand == 0) == accepted, (
         f"`{body.strip()}` expected {'accepted' if accepted else 'refused'}, rc={hand}")
+
+
+@pytest.mark.parametrize("source,accepted", [
+    # #261 -- a string annotation is the same annotation with quotes round it. An UNQUOTED
+    # forward reference already compiled, so the quotes were the only thing in the way.
+    ('from pymcu.types import uint8\nclass V:\n    def __init__(self) -> None:\n        self.a: uint8 = 1\n'
+     'def f(v: "V") -> uint8:\n    return v.a\ndef main() -> None:\n    x: uint8 = f(V())\n', True),
+    # The unquoted spelling is the regression anchor: if it ever stops compiling, the quoted
+    # one is no longer reaching the same path.
+    ('from pymcu.types import uint8\nclass V:\n    def __init__(self) -> None:\n        self.a: uint8 = 1\n'
+     'def f(v: V) -> uint8:\n    return v.a\ndef main() -> None:\n    x: uint8 = f(V())\n', True),
+    # Forward reference proper: the class is defined BELOW the function that names it.
+    ('from pymcu.types import uint8\ndef f(v: "V") -> uint8:\n    return v.a\n'
+     'class V:\n    def __init__(self) -> None:\n        self.a: uint8 = 1\n'
+     'def main() -> None:\n    x: uint8 = f(V())\n', True),
+    # A dotted name and a typing subscript are refused on their own terms and must NOT gain a
+    # second spelling through the string door.
+    ('from pymcu.types import uint8\ndef f(v: "busio.I2C") -> uint8:\n    return 1\n'
+     'def main() -> None:\n    x: uint8 = 1\n', False),
+    ('from pymcu.types import uint8\ndef f(v: "Optional[V]") -> uint8:\n    return 1\n'
+     'def main() -> None:\n    x: uint8 = 1\n', False),
+])
+def test_string_annotation_verdict_agrees(tmp_path, source, accepted):
+    src = _program(tmp_path, source)
+    hand, cpython = _verdict(src, py_parser=False), _verdict(src, py_parser=True)
+    assert (hand == 0) == (cpython == 0), (
+        f"front ends disagree: hand-written rc={hand}, CPython rc={cpython}\n{source}")
+    assert (hand == 0) == accepted, (
+        f"expected {'accepted' if accepted else 'refused'}, rc={hand}\n{source}")
