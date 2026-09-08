@@ -153,6 +153,14 @@ public partial class IRGenerator
     // an undefined instance attribute (a typo) without per-class layout completeness, which
     // is unreliable. Unioned with method/property names at the check site.
     private HashSet<string> assignedMemberNames = new();
+
+    // Class-body attributes that the ALL-CAPS convention does NOT turn into compile-time
+    // constants (Scan.cs) get run-time storage instead -- and nothing ever ran their
+    // initializer, so `class Dev: limit = 7` gave every read of `Dev.limit` a fabricated
+    // zero while `LIMIT = 7` in the same body read 7 (#270). Keyed by the declaring module's
+    // AST: the synthesized assignment is injected into that module's own init, so `Cls_attr`
+    // resolves under that module's prefix exactly as every other name in it does.
+    private Dictionary<ProgramNode, List<Statement>> classAttrInits = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
 
     // Star imports in scope, module name -> the names the star actually brought in. A star

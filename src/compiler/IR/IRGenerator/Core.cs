@@ -371,6 +371,7 @@ public partial class IRGenerator
         pendingZcaSynthFunctions.Clear();
         externFunctionMap.Clear();
         pendingFlashData.Clear();
+        classAttrInits.Clear();
 
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
@@ -652,6 +653,11 @@ public partial class IRGenerator
                 .Where(s => !IsTopLevelPureDeclaration(s))
                 .ToList();
 
+            // A class body runs where it is written, so its attribute initializers go ahead of
+            // the module's own statements, and ahead of anything that reads one (#270).
+            if (classAttrInits.TryGetValue(mainAst, out var synthClassInit))
+                executableStmts.InsertRange(0, synthClassInit);
+
             if (executableStmts.Count > 0)
             {
                 var syntheticBlock = new Block();
@@ -692,6 +698,13 @@ public partial class IRGenerator
                 // does not). Everything else -- AnnAssign SRAM arrays, plain constructions like
                 // `led = Pin(...)`, bare calls, control flow -- runs as written.
                 var moduleInit = new List<Statement>();
+
+                // A class body runs where it is written, so its attribute initializers go
+                // ahead of the module's own statements, and ahead of anything that reads
+                // one (#270).
+                if (classAttrInits.TryGetValue(mainAst, out var entryClassInit))
+                    moduleInit.AddRange(entryClassInit);
+
                 foreach (var s in mainAst.GlobalStatements)
                 {
                     if (IsTopLevelPureDeclaration(s)) continue;
@@ -2001,6 +2014,13 @@ public partial class IRGenerator
             if (!projectModules.Contains(kvp.Key)) continue;
 
             var body = new Block();
+
+            // Same as the entry module: a class body's attribute initializers run first. This
+            // goes in ahead of the emptiness check below, so a module that is nothing but a
+            // class still gets one.
+            if (classAttrInits.TryGetValue(modAst, out var modClassInit))
+                foreach (var st in modClassInit) body.Statements.Add(st);
+
             foreach (var st in modAst.GlobalStatements)
             {
                 if (IsTopLevelPureDeclaration(st)) continue;

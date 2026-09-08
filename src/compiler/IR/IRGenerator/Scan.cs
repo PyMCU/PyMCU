@@ -114,6 +114,45 @@ public partial class IRGenerator
         return result;
     }
 
+    /// <summary>
+    /// Remember the initializer of a class-body attribute that did NOT become a compile-time
+    /// constant, so it can be run as part of its module's init.
+    ///
+    /// Registering the storage was only half the job: nothing ever wrote the declared value,
+    /// so `class Dev: limit = 7` read back 0 while `LIMIT = 7` two lines above read 7, with
+    /// no error and no warning (#270). The module-level spelling of the same program has
+    /// always worked, because a module's statements run and a class body's do not.
+    ///
+    /// The synthesized target is `Cls_attr` -- the flattened name the storage is registered
+    /// under, minus the module prefix -- because the statement is compiled under the declaring
+    /// module's own prefix, which puts it back.
+    /// </summary>
+    private void RecordClassAttrInit(ProgramNode ast, string className, string attrName,
+                                     string attrType, Expression init, int? constValue)
+    {
+        // An aggregate is not a scalar global: its storage is sized by the array machinery,
+        // not by this registration, and assigning a list literal to the single byte registered
+        // here would be worse than the zero it reads today. Left exactly as it was.
+        if (attrType.Contains('[')) return;
+        if (init is ListExpr or DictExpr or SetExpr or TupleExpr) return;
+        if (!string.IsNullOrEmpty(attrType)
+            && DataTypeExtensions.StringToDataType(attrType) == DataType.UNKNOWN) return;
+
+        // An UNANNOTATED attribute is typed from its initializer alone, exactly as an
+        // unannotated module global is. StringToDataType("") answers uint8 for everything, and
+        // the store this schedules would then truncate the attribute's own declared value:
+        // `limit = 300` read back 44. NarrowLiteralOnlyGlobals does this for module level and
+        // cannot see a class body -- it collects names, and this one lives under `Cls_`.
+        if (string.IsNullOrEmpty(attrType) && constValue is { } cv)
+            mutableGlobals[currentModulePrefix + attrName] = NarrowestTypeFor(cv, cv);
+
+        var stmt = new AssignStmt(new VariableExpr(className + "_" + attrName), init)
+            { Line = init.Line };
+        if (!classAttrInits.TryGetValue(ast, out var list))
+            classAttrInits[ast] = list = new List<Statement>();
+        list.Add(stmt);
+    }
+
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
         var reassigned = CollectModuleReassignedNames(ast);
@@ -346,6 +385,8 @@ public partial class IRGenerator
                             {
                                 mutableGlobals[currentModulePrefix + innerName] =
                                     DataTypeExtensions.StringToDataType(innerType);
+                                RecordClassAttrInit(ast, classDef.Name, innerName, innerType,
+                                                    innerInit, val);
                             }
                         }
                         catch
@@ -354,6 +395,11 @@ public partial class IRGenerator
                             {
                                 mutableGlobals[currentModulePrefix + innerName] =
                                     DataTypeExtensions.StringToDataType(innerType);
+                                // No folded value: the initializer is a run-time expression, so
+                                // there is nothing to size the storage from beyond the
+                                // annotation, and the store runs the expression as written.
+                                RecordClassAttrInit(ast, classDef.Name, innerName, innerType,
+                                                    innerInit, null);
                             }
                         }
                     }
