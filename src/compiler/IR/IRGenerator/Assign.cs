@@ -865,6 +865,35 @@ public partial class IRGenerator
                 }
             }
 
+            // `mod.singleton.Nested(...)` -- a nested class reached through a module-level
+            // singleton, which is how a compat layer spells a submodule (alarm.time.TimeAlarm,
+            // alarm.pin.PinAlarm). The branch above resolves `m.Pin(...)`, ONE member access
+            // deep; this is two, and nothing covered it.
+            //
+            // The consequence was not a diagnostic about the constructor. With resolvedClass
+            // empty, the assignment never set pendingConstructorTarget, so the constructor
+            // minted an anonymous `__cN`, tagged THAT with the class, and left the named
+            // variable untagged. A later `o.field` then resolved against a name carrying no
+            // class and reported "'field' is not a member of a numeric value" -- pointing at
+            // the field read, one function away from the assignment that lost the type.
+            //
+            // Ordering made it look like something else entirely: whether the read reached the
+            // untagged name or the tagged `__cN` depended on what had been expanded first, so
+            // an @inline call before the read failed and the same call after it passed
+            // (PyMCU#271).
+            if (string.IsNullOrEmpty(resolvedClass)
+                && call.Callee is MemberAccessExpr nestMem
+                && nestMem.Object is MemberAccessExpr ownerMem
+                && ownerMem.Object is VariableExpr ownerModVar
+                && modules.ContainsKey(ownerModVar.Name))
+            {
+                string ownerMod = importedAliases.TryGetValue(ownerModVar.Name, out var orm) && orm != null
+                    ? orm : ownerModVar.Name;
+                string ownerKey = ownerMod.Replace('.', '_') + "_" + ownerMem.Member;
+                if (instanceClasses.TryGetValue(ownerKey, out var ownerCls) && ownerCls != null)
+                    resolvedClass = ownerCls + "_" + nestMem.Member;
+            }
+
             // Factory: `a = setup()` where @inline setup returns ClassName(...). Resolve
             // to the returned ZCA class so the tracking below treats `a` as that
             // instance and its methods inline (otherwise `a.read()` mangles to an
