@@ -608,6 +608,9 @@ public partial class IRGenerator
 
         if (callee == "len") return EmitLenBuiltin(expr);
         if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
+        if (callee == "struct_calcsize") return EmitStructCalcsize(expr);
+        if (callee == "struct_unpack_from") return EmitStructUnpackFrom(expr);
+        if (callee == "struct_pack_into") return EmitStructPackInto(expr);
         if (callee == "abs") return EmitAbsBuiltin(expr);
         if (callee == "min") return EmitMinBuiltin(expr);
         if (callee == "max") return EmitMaxBuiltin(expr);
@@ -3195,6 +3198,288 @@ public partial class IRGenerator
         }
 
         throw UserError("int.from_bytes() first argument must be a bytes literal b\"...\" or list [lo, hi]", ArgAt(expr, 0));
+    }
+
+
+    // ---------------------------------------------------------------------------------------
+    // struct: the subset an ahead-of-time target can do without a heap.
+    //
+    // The refusal used to be at the IMPORT, in StandardModuleNames, on the grounds that there
+    // is no heap for packed bytes to be handed back in. That reason is exact for the half of
+    // `struct` that returns a tuple, and describes nothing about the half the driver libraries
+    // actually write: measured across the twelve most-used Adafruit libraries, every format is
+    // a string literal (21 of 21), the workhorse descriptors index the result on the spot
+    // (`unpack_from(fmt, buf, off)[0]`) so no tuple ever escapes, and every `pack_into` target
+    // is a buffer the caller already owns. So the import resolves now -- lib/src/pymcu/struct.py
+    // exists and the stdlib-alias fallback finds it, the same way `math` and `time` are found --
+    // and the refusal moved HERE, to the call, where it can say which shape was out of scope.
+    //
+    // Everything is expanded from the format read at compile time. Nothing parses a format on
+    // the chip, and there is no run-time `struct` object.
+    //
+    // OUT OF SCOPE, each refused by name and never guessed at: a result that is not indexed on
+    // the spot, a non-literal format, a non-literal index, `pack_into(..., *values)`, and any
+    // code outside B/b/H/h. A width read from the wrong code is a silent wrong value on a
+    // sensor reading, which is the failure this whole surface has to not have.
+
+    /// <summary>
+    /// AST-only: does this call name `struct.&lt;member&gt;`, under whatever name the file imported
+    /// the module by? Nothing is visited and no IR is emitted, so a caller may still decline.
+    /// </summary>
+    private bool IsStructCall(CallExpr c, string member)
+    {
+        if (c.Callee is MemberAccessExpr { Object: VariableExpr mv } ma && ma.Member == member)
+        {
+            string mod = importedAliases.TryGetValue(mv.Name, out var real) && real != null
+                ? real : mv.Name;
+            return mod == "struct";
+        }
+        // `from struct import unpack_from`: the bare name resolves through the same alias to
+        // the module-qualified key.
+        return c.Callee is VariableExpr fv && fv.Name == member
+            && ResolveCallee(fv.Name) == "struct_" + member;
+    }
+
+    /// <summary>One field of a struct format: where it starts, how wide it is, how it is read.</summary>
+    private readonly record struct StructField(int Offset, int Width, bool Signed, bool LittleEndian);
+
+    private const string StructCodes = "B, b, H, h";
+
+    /// <summary>
+    /// The fields of a struct format string, or a located refusal naming what was unsupported.
+    /// `who` names the call in the message, since one format serves all three entry points.
+    /// </summary>
+    private List<StructField> ParseStructFormat(string fmt, string who, ASTNode at)
+    {
+        if (fmt.Length == 0)
+            throw UserError($"{who}: the format string is empty", at);
+
+        bool little = true;
+        bool orderGiven = false;
+        int i = 0;
+        switch (fmt[0])
+        {
+            case '<': little = true;  orderGiven = true; i = 1; break;
+            case '>': little = false; orderGiven = true; i = 1; break;
+            case '!': little = false; orderGiven = true; i = 1; break;
+            case '=':
+            case '@':
+                throw UserError(
+                    $"{who}: the '{fmt[0]}' byte-order prefix means native order AND native "
+                    + "alignment, which depends on the host that ran CPython and is not "
+                    + "something this compiler can reproduce for a chip. Write '<' or '>' to "
+                    + "say which order the device uses.", at);
+        }
+
+        var fields = new List<StructField>();
+        int offset = 0;
+        for (; i < fmt.Length; i++)
+        {
+            char c = fmt[i];
+            int width = c switch { 'B' or 'b' => 1, 'H' or 'h' => 2, _ => 0 };
+            if (width == 0)
+            {
+                string extra = char.IsDigit(c)
+                    ? " A repeat count is not supported; write the code out once per field."
+                    : "";
+                throw UserError(
+                    $"{who}: '{c}' is not a supported struct code. PyMCU expands the format at "
+                    + $"compile time into loads and stores, and implements {StructCodes}."
+                    + extra, at);
+            }
+            // Without a prefix CPython uses the host's order and alignment. For a single
+            // one-byte field neither can differ, so that one spelling is accepted -- it is what
+            // `ROUnaryStruct(0x34, "b")` writes -- and anything wider is refused rather than
+            // guessed.
+            if (!orderGiven && width > 1)
+                throw UserError(
+                    $"{who}: '{fmt}' gives no byte order, and a {width}-byte field needs one. "
+                    + "Write '<' for little-endian or '>' for big-endian.", at);
+
+            fields.Add(new StructField(offset, width, c is 'b' or 'h', little));
+            offset += width;
+        }
+
+        if (fields.Count == 0)
+            throw UserError($"{who}: '{fmt}' declares no fields", at);
+        return fields;
+    }
+
+    /// <summary>
+    /// The format argument of a struct call as compile-time text, or a located refusal.
+    ///
+    /// StaticStringOf already reaches a literal, a name bound to one, and -- through
+    /// StaticStringOfField -- a string held in a FIELD at any depth, which is what
+    /// `self.format` is after `__init__` stored the literal a descriptor was built with.
+    /// </summary>
+    private string StructFormatArg(CallExpr expr, string who)
+    {
+        if (expr.Args.Count == 0)
+            throw UserError($"{who}: expects a format string as its first argument", expr.Callee);
+        if (StaticStringOf(expr.Args[0]) is { } fmt) return fmt;
+        throw UserError(
+            $"{who}: the format must be a string known at compile time, because the loads and "
+            + "stores it describes are chosen while compiling. This one is only known at run "
+            + "time, so there is nothing to expand.", ArgAt(expr, 0));
+    }
+
+    /// <summary>A struct call's `offset` argument, which must be a constant.</summary>
+    private int StructOffsetArg(CallExpr expr, int argIndex, string who)
+    {
+        if (expr.Args.Count <= argIndex) return 0;
+        try { return EvaluateConstantExpr(expr.Args[argIndex]); }
+        catch
+        {
+            throw UserError(
+                $"{who}: the offset must be known at compile time, because it decides which "
+                + "bytes are read. Use a literal or a const.", ArgAt(expr, argIndex));
+        }
+    }
+
+    /// <summary>`struct.calcsize(fmt)`: the record's size, folded.</summary>
+    private Val EmitStructCalcsize(CallExpr expr)
+    {
+        const string who = "struct.calcsize()";
+        if (expr.Args.Count != 1)
+            throw UserError($"{who} expects exactly one argument (the format)", expr.Callee);
+        var fields = ParseStructFormat(StructFormatArg(expr, who), who, expr.Callee);
+        return new Constant(fields[^1].Offset + fields[^1].Width);
+    }
+
+    /// <summary>
+    /// A bare `struct.unpack_from(...)`. Always refused: the value it would produce is a tuple,
+    /// and the supported shape is the one that never lets one exist.
+    /// </summary>
+    private Val EmitStructUnpackFrom(CallExpr expr)
+    {
+        const string who = "struct.unpack_from()";
+        // Parse first, so a program that is wrong about BOTH hears about the format it wrote
+        // rather than about a shape it can then fix and be refused again.
+        ParseStructFormat(StructFormatArg(expr, who), who, expr.Callee);
+        throw UserError(
+            $"{who} returns a tuple, and there is no heap to hold one. Index it on the spot and "
+            + "PyMCU expands the whole thing into a load: `unpack_from(fmt, buf, off)[0]`. To "
+            + "read several fields, index it once per field.", expr.Callee);
+    }
+
+    /// <summary>
+    /// `struct.unpack_from(fmt, buf, off)[k]` -- the whole expression, expanded into a read of
+    /// field k. Called from VisitIndex, which is the only place the `[k]` is visible.
+    ///
+    /// Built as AST and handed to the ordinary expression lowering rather than emitting
+    /// ArrayLoad here: a fixed-size array indexed by a constant is UNROLLED into per-element
+    /// names and only a variable-indexed one becomes a real SRAM array, so bypassing that
+    /// would read bytes the rest of the program never wrote.
+    /// </summary>
+    private Val EmitStructUnpackFromIndexed(CallExpr call, Expression indexExpr)
+    {
+        const string who = "struct.unpack_from()";
+        var fields = ParseStructFormat(StructFormatArg(call, who), who, call.Callee);
+
+        if (call.Args.Count is < 2 or > 3)
+            throw UserError($"{who} expects (format, buffer) or (format, buffer, offset)", call.Callee);
+
+        int k;
+        try { k = EvaluateConstantExpr(indexExpr); }
+        catch
+        {
+            throw UserError(
+                $"{who}[i]: the index must be known at compile time, because it decides which "
+                + "field is read and how wide it is.", indexExpr);
+        }
+        if (k < 0 || k >= fields.Count)
+            throw UserError(
+                $"{who}[{k}]: the format describes {fields.Count} field"
+                + (fields.Count == 1 ? "" : "s") + ", so there is no field {k}.".Replace("{k}", k.ToString()),
+                indexExpr);
+
+        var f = fields[k];
+        int at = StructOffsetArg(call, 2, who) + f.Offset;
+        Expression buf = call.Args[1];
+
+        Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
+
+        Expression assembled;
+        if (f.Width == 1)
+        {
+            assembled = Byte(0);
+        }
+        else
+        {
+            Expression lo = Byte(f.LittleEndian ? 0 : 1);
+            Expression hi = Byte(f.LittleEndian ? 1 : 0);
+            assembled = new BinaryExpr(
+                new BinaryExpr(hi, PyMCU.Frontend.BinaryOp.LShift, new IntegerLiteral(8)),
+                PyMCU.Frontend.BinaryOp.BitOr, lo);
+        }
+
+        Val v = VisitExpression(assembled);
+
+        // The bytes are assembled unsigned; a signed code means the same bits read as signed.
+        // Same width, so this is a reinterpretation and not a conversion.
+        DataType want = (f.Width, f.Signed) switch
+        {
+            (1, false) => DataType.UINT8,
+            (1, true) => DataType.INT8,
+            (2, false) => DataType.UINT16,
+            _ => DataType.INT16,
+        };
+        if (GetValType(v) == want) return v;
+        Temporary typed = MakeTemp(want);
+        Emit(new Copy(v, typed));
+        return typed;
+    }
+
+    /// <summary>
+    /// `struct.pack_into(fmt, buf, off, value)` -- one scalar, written into a buffer the caller
+    /// owns. Lowered as the byte stores the format describes, through the ordinary assignment
+    /// path for the same reason the read goes through the ordinary expression path.
+    /// </summary>
+    private Val EmitStructPackInto(CallExpr expr)
+    {
+        const string who = "struct.pack_into()";
+        var fields = ParseStructFormat(StructFormatArg(expr, who), who, expr.Callee);
+
+        if (expr.Args.Count != 4)
+            throw UserError(
+                $"{who} is supported for ONE field: (format, buffer, offset, value). "
+                + $"This format describes {fields.Count} field"
+                + (fields.Count == 1 ? "" : "s")
+                + ", and packing several at once needs the values to travel as a tuple, which "
+                + "there is no heap to hold.", expr.Callee);
+        if (fields.Count != 1)
+            throw UserError(
+                $"{who}: '{StructFormatArg(expr, who)}' describes {fields.Count} fields. One "
+                + "call writes one field, because several values would have to arrive as a "
+                + "tuple and there is no heap to hold one. Write one call per field, each with "
+                + "its own one-field format and offset.", ArgAt(expr, 0));
+
+        var f = fields[0];
+        int at = StructOffsetArg(expr, 2, who);
+        Expression buf = expr.Args[1];
+        Expression value = expr.Args[3];
+
+        void Store(int n, Expression e) =>
+            VisitStatement(new AssignStmt(new IndexExpr(buf, new IntegerLiteral(at + n)), e)
+                { Line = expr.Line, Column = expr.Column });
+
+        if (f.Width == 1)
+        {
+            Store(0, new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF)));
+        }
+        else
+        {
+            Expression lo = new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
+            Expression hi = new BinaryExpr(
+                new BinaryExpr(value, PyMCU.Frontend.BinaryOp.RShift, new IntegerLiteral(8)),
+                PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
+            Store(f.LittleEndian ? 0 : 1, lo);
+            Store(f.LittleEndian ? 1 : 0, hi);
+        }
+
+        // pack_into returns None. A caller that uses the value gets the ordinary void-in-an-
+        // expression diagnostic rather than a zero.
+        return new Constant(0);
     }
 
     // abs(x): compile-time fold for constants, else a branchless-ish negate-if-negative.

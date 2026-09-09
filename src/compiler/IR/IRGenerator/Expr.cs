@@ -1553,6 +1553,14 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // `struct.unpack_from(fmt, buf, off)[k]`. This is the ONLY place the subscript and the
+        // call are visible together, and the pair is the whole supported shape: indexed on the
+        // spot, so the tuple that CPython would build never exists. A bare unpack_from() is
+        // refused in VisitCall, which cannot see whether it was indexed.
+        if (expr.Target is CallExpr unpackCall
+            && IsStructCall(unpackCall, "unpack_from"))
+            return EmitStructUnpackFromIndexed(unpackCall, expr.Index);
+
         // d[k] on a dict-literal binding: a compile-time CLOSED lookup table. A constant
         // key folds to its value; a runtime key lowers to a compare chain that raises
         // KeyError when nothing matches. Must run before the string-subscript rejection
