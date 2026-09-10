@@ -1664,6 +1664,14 @@ public partial class IRGenerator
 
                     foreach (var baseName in classDef.Bases)
                     {
+                        // #279: remember the base so it can be checked once EVERY module has
+                        // been scanned. Checking it here would refuse a base defined later in
+                        // the file, or in a module scanned after this one, so the check is
+                        // deferred rather than done in place. ResolveBase() below cannot do it
+                        // either: it falls back to `basePrefix` unconditionally, which is what
+                        // let an undefined base through in the first place.
+                        pendingBaseChecks.Add((classDef, baseName, oldPrefix));
+
                         string basePrefix = oldPrefix + baseName + "_";
 
                         string ResolveBase()
@@ -1727,6 +1735,81 @@ public partial class IRGenerator
                     currentModulePrefix = oldPrefix;
                 }
             }
+        }
+    }
+
+    /// Every `class C(Base)` seen, with the module prefix it was seen under, checked once all
+    /// modules have been scanned. See CheckBaseClassNames.
+    private readonly List<(ClassDef Def, string BaseName, string Prefix)> pendingBaseChecks = new();
+
+    /// <summary>
+    /// Reject a base class that names nothing this compiler knows (#279).
+    ///
+    /// An undefined base used to be accepted in silence, and stayed silent until something
+    /// inherited was USED -- at which point every message blamed somewhere else. A one-character
+    /// typo in a base name produced this, and no message in the sequence contained the typo:
+    ///
+    ///     class Foo(Basse): ...        accepted, nothing said
+    ///     Foo()                        "class 'Foo' cannot be constructed: it has no __init__
+    ///                                   method ... add `def __init__(self): ...`"
+    ///     (follow that advice)         "'f' is an integer: 'greet()' is not available"
+    ///
+    /// The second message is false of the program -- `Foo` DOES inherit an `__init__` -- and
+    /// following it adds a constructor that shadows the inherited one, so the reader ends up
+    /// further from the fix than they started. Naming the base here makes both unreachable for
+    /// this cause.
+    ///
+    /// Deferred until every module is scanned, because a base may be defined after its subclass
+    /// or in another module. The known-name test is CheckAnnotationNames' one: that path already
+    /// resolves a class name through aliases, module prefixes and dotted spellings, and an
+    /// annotation naming an unknown type has been refused for exactly the same reason since the
+    /// `unit8` truncation. This is the check that existed on the other path.
+    /// </summary>
+    private void CheckBaseClassNames()
+    {
+        foreach (var (def, baseName, prefix) in pendingBaseChecks)
+        {
+            if (string.IsNullOrEmpty(baseName)) continue;
+            // Bases the language gives meaning to rather than the program. Enum/IntEnum and the
+            // exception bases are handled before the scan reaches here, but a class carrying one
+            // alongside a real base still records it, so they are named again rather than relied on.
+            if (baseName is "object" or "Enum" or "IntEnum" or "Exception" or "BaseException"
+                or "Protocol" or "ABC") continue;
+            if (exceptionNames.Contains(baseName)) continue;
+
+            if (classNames.Contains(baseName) || classFieldLayout.ContainsKey(baseName)) continue;
+            if (classNames.Contains(prefix + baseName)) continue;
+            if (importedAliases.ContainsKey(baseName) || aliasToOriginal.ContainsKey(baseName)) continue;
+            if (classNames.Any(c => c.EndsWith("." + baseName, StringComparison.Ordinal)
+                                    || c.EndsWith("_" + baseName, StringComparison.Ordinal))) continue;
+            if (ResolveCallee(baseName) is { } resolved
+                && (classNames.Contains(resolved) || classFieldLayout.ContainsKey(resolved))) continue;
+            // A dotted base (`mod.Base`) whose tail names a class the compiler holds. The
+            // capability question -- whether a dotted base SHOULD resolve -- is open and separate;
+            // this only avoids inventing a refusal for a name that does exist.
+            int dot = baseName.LastIndexOf('.');
+            if (dot > 0)
+            {
+                string tail = baseName[(dot + 1)..];
+                if (classNames.Contains(tail)
+                    || classNames.Any(c => c.EndsWith("." + tail, StringComparison.Ordinal)
+                                           || c.EndsWith("_" + tail, StringComparison.Ordinal)))
+                    continue;
+            }
+
+            string? near = classNames
+                .Select(c => c.Contains('.') ? c[(c.LastIndexOf('.') + 1)..] : c)
+                .Where(n => EditDistance(n, baseName) <= 2)
+                .OrderBy(n => EditDistance(n, baseName))
+                .FirstOrDefault();
+            throw UserError(
+                $"class '{def.Name}' has a base class '{baseName}' that is not defined"
+                + (near != null ? $" (did you mean '{near}'?)" : "")
+                + ". An undefined base used to be accepted in silence, and the class then "
+                + "behaved as though it had no base at all -- so the next error named the "
+                + "constructor or the field, never the base. Define it, import it, or remove "
+                + "it from the class header.",
+                def);
         }
     }
 

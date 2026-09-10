@@ -657,6 +657,10 @@ public partial class IRGenerator
         ScanFunctions(mainAst);
         RefuseCodegenDecoratorsOnExpandedFunctions(mainAst);
 
+        // AFTER the entry file's scan, which is the last one: a base class may be defined below
+        // its subclass, or in a module scanned later, so this cannot run inside ScanFunctions (#279).
+        CheckBaseClassNames();
+
         // Synthesize a `main` function from top-level executable statements when the
         // user has not written an explicit `def main():`.  This allows MicroPython-
         // and CircuitPython-style scripts that have no entry-point wrapper.
