@@ -695,11 +695,13 @@ public class Parser
         }
 
         Consume(TokenType.Colon, "Expected ':' before function body");
-        Consume(TokenType.Newline, "Expected newline after function definition");
 
         functionDepth++;
         enclosingFunctions.Add(name);
-        var body = ParseBlock();
+        // The depth is raised BEFORE the suite is parsed, in either form, so `nonlocal` and the
+        // other depth-sensitive checks see the same nesting for `def f(): ...` as for the
+        // indented spelling.
+        var body = ParseSuite("Expected newline after function definition");
         enclosingFunctions.RemoveAt(enclosingFunctions.Count - 1);
         functionDepth--;
 
@@ -789,8 +791,7 @@ public class Parser
         }
 
         Consume(TokenType.Colon, "Expected ':'");
-        Consume(TokenType.Newline, "Expected newline after class definition");
-        var body = ParseBlock();
+        var body = ParseSuite("Expected newline after class definition");
         return Located(new ClassDef(name, bases, body) { IsStatic = true }, classKeyword);
     }
 
@@ -848,6 +849,91 @@ public class Parser
         } while (Match(TokenType.Comma) && !Check(TokenType.RParen));
 
         return parameters;
+    }
+
+    /// <summary>
+    /// The body after a `:`, in either of Python's two spellings (#250).
+    ///
+    /// The indented form is the one this parser always had. The ONE-LINE form -- `if x: p.on()`,
+    /// `while x: x = 0`, `def f(): return 1`, `class C: pass` -- was refused with "Expected
+    /// newline", which names the token the parser wanted rather than the construct it met, and
+    /// the CPython bridge accepted it and lowered it. So the same file compiled on one front end
+    /// and was refused by the other, in four shapes.
+    ///
+    /// The bridge is the oracle here rather than a second implementation to keep in step: it is
+    /// CPython's own grammar, so its answers ARE Python's. Measured against it, and matched:
+    ///
+    ///     if x: a; b                accepted, a semicolon list is one suite
+    ///     if x: if y: pass          refused, a compound statement is not a simple statement
+    ///     if x: a  /  else: b       accepted, each clause chooses its own form
+    ///     class C: pass             accepted
+    ///
+    /// Callers use this in place of the old `Consume(Newline) + ParseBlock()` pair, so a clause
+    /// that did not opt in keeps the indented-only behaviour rather than silently gaining a form.
+    /// </summary>
+    private Block ParseSuite(string newlineMessage = "Expected newline")
+    {
+        if (StartsInlineSuite()) return ParseInlineSuite();
+        Consume(TokenType.Newline, newlineMessage);
+        return ParseBlock();
+    }
+
+    /// The same, for clauses whose header ended with ConsumeStatementEnd() rather than a bare
+    /// Consume(Newline): `try`, each `except`, `else`, `finally` and `with`.
+    private Block ParseSuiteAfterStatementEnd()
+    {
+        if (StartsInlineSuite()) return ParseInlineSuite();
+        ConsumeStatementEnd();
+        return ParseBlock();
+    }
+
+    /// Whether a one-line body follows the `:`, rather than a newline ending the header.
+    ///
+    /// Dedent and EndOfFile are excluded deliberately: neither can begin a statement, and
+    /// treating them as an inline body would answer a truncated file with a message about
+    /// one-line bodies instead of the missing block it actually has.
+    private bool StartsInlineSuite()
+        => !Check(TokenType.Newline) && !Check(TokenType.Dedent) && !Check(TokenType.EndOfFile);
+
+    /// <summary>
+    /// A one-line suite: one or more SIMPLE statements on the same line, separated by `;`.
+    ///
+    /// Python does not allow a compound statement here (`if x: if y: pass` is a SyntaxError in
+    /// CPython too), and this refuses it by name rather than by the generic statement error,
+    /// because the generic one would point inside the nested construct and describe the program
+    /// as malformed where it is only nested.
+    /// </summary>
+    private Block ParseInlineSuite()
+    {
+        var block = new Block();
+        while (true)
+        {
+            if (Check(TokenType.If) || Check(TokenType.While) || Check(TokenType.For)
+                || Check(TokenType.Def) || Check(TokenType.Class) || Check(TokenType.Try)
+                || Check(TokenType.With) || Check(TokenType.At))
+            {
+                Error($"'{Peek().Value}' cannot start a one-line body: after a ':' on the same "
+                      + "line, only simple statements are allowed, and CPython refuses this too. "
+                      + "Put the body on its own indented line");
+            }
+
+            block.Statements.Add(ParseStatement());
+
+            // ParseStatement consumes the statement's own terminator, so a `;` only remains when
+            // the statement did not end the line.
+            if (Match(TokenType.Semicolon))
+            {
+                // `if x: a;` with nothing after the semicolon is legal Python.
+                if (Check(TokenType.Newline) || Check(TokenType.EndOfFile)) break;
+                continue;
+            }
+            break;
+        }
+
+        // The body's own terminator has already been consumed by the last statement. Anything
+        // left before the newline is not part of this suite.
+        while (Match(TokenType.Newline)) { }
+        return block;
     }
 
     private Block ParseBlock()
@@ -1177,8 +1263,7 @@ public class Parser
         int line = Peek().Line;
         Consume(TokenType.Try, "Expected 'try'");
         Consume(TokenType.Colon, "Expected ':' after 'try'");
-        ConsumeStatementEnd();
-        var tryBlock = ParseBlock();
+        var tryBlock = ParseSuiteAfterStatementEnd();
         var body = tryBlock.Statements;
 
         var handlers = new List<(string, List<Statement>)>();
@@ -1214,8 +1299,7 @@ public class Parser
                       + "site");
 
             Consume(TokenType.Colon, "Expected ':' after exception type");
-            ConsumeStatementEnd();
-            var handlerBlock = ParseBlock();
+            var handlerBlock = ParseSuiteAfterStatementEnd();
             handlers.Add((exnType, handlerBlock.Statements));
         }
 
@@ -1225,8 +1309,7 @@ public class Parser
         {
             Consume(TokenType.Else, "Expected 'else'");
             Consume(TokenType.Colon, "Expected ':' after 'else'");
-            ConsumeStatementEnd();
-            elseBody = ParseBlock().Statements;
+            elseBody = ParseSuiteAfterStatementEnd().Statements;
         }
 
         List<Statement>? finallyBody = null;
@@ -1234,8 +1317,7 @@ public class Parser
         {
             Consume(TokenType.Finally, "Expected 'finally'");
             Consume(TokenType.Colon, "Expected ':' after 'finally'");
-            ConsumeStatementEnd();
-            finallyBody = ParseBlock().Statements;
+            finallyBody = ParseSuiteAfterStatementEnd().Statements;
         }
 
         return new TryStmt(body, handlers, finallyBody, elseBody) { Line = line };
@@ -1261,8 +1343,7 @@ public class Parser
         } while (Match(TokenType.Comma));
 
         Consume(TokenType.Colon, "Expected ':' after 'with' header");
-        ConsumeStatementEnd();
-        Statement body = ParseBlock();
+        Statement body = ParseSuiteAfterStatementEnd();
 
         for (int i = items.Count - 1; i >= 0; --i)
         {
@@ -1448,17 +1529,15 @@ public class Parser
         Consume(TokenType.If, "Expected 'if'");
         var condition = ParseExpression();
         Consume(TokenType.Colon, "Expected ':'");
-        Consume(TokenType.Newline, "Expected newline");
 
-        var thenBranch = ParseBlock();
+        var thenBranch = ParseSuite();
 
         var elifBranches = new List<(Expression, Statement)>();
         while (Match(TokenType.Elif))
         {
             var elifCond = ParseExpression();
             Consume(TokenType.Colon, "Expected ':'");
-            Consume(TokenType.Newline, "Expected newline");
-            var elifBlock = ParseBlock();
+            var elifBlock = ParseSuite();
             elifBranches.Add((elifCond, elifBlock));
         }
 
@@ -1466,8 +1545,7 @@ public class Parser
         if (Match(TokenType.Else))
         {
             Consume(TokenType.Colon, "Expected ':'");
-            Consume(TokenType.Newline, "Expected newline");
-            elseBranch = ParseBlock();
+            elseBranch = ParseSuite();
         }
 
         return new IfStmt(condition, thenBranch, elifBranches, elseBranch) { Line = line };
@@ -1537,18 +1615,11 @@ public class Parser
 
             Consume(TokenType.Colon, "Expected ':'");
 
-            Block body;
-            if (Check(TokenType.Newline))
-            {
-                Advance();
-                body = ParseBlock();
-            }
-            else
-            {
-                body = new Block();
-                body.Statements.Add(ParseStatement());
-                if (Check(TokenType.Newline)) Advance();
-            }
+            // `case X: stmt` was the ONE place this parser already accepted a one-line body,
+            // with its own handling that took a single statement and no `;` list. Sharing
+            // ParseSuite makes every clause agree, and is why #250 is an inconsistency rather
+            // than a language decision: the form was already here, in one branch.
+            Block body = ParseSuite();
 
             branches.Add(new CaseBranch { Pattern = pattern, Guard = guard, CaptureName = captureName, Body = body });
         }
@@ -1582,8 +1653,7 @@ public class Parser
         if (!Check(TokenType.Else)) return null;
         Advance();
         Consume(TokenType.Colon, "Expected ':' after 'else'");
-        Consume(TokenType.Newline, "Expected newline");
-        return ParseBlock();
+        return ParseSuite();
     }
 
     private Statement ParseWhileStatement()
@@ -1592,8 +1662,7 @@ public class Parser
         Consume(TokenType.While, "Expected 'while'");
         var condition = ParseExpression();
         Consume(TokenType.Colon, "Expected ':'");
-        Consume(TokenType.Newline, "Expected newline");
-        var body = ParseBlock();
+        var body = ParseSuite();
         var elseBlock = ParseLoopElse();
         return LoopElseDesugar.Attach(new WhileStmt(condition, body) { Line = line }, body, elseBlock, line);
     }
@@ -1694,8 +1763,7 @@ public class Parser
             if (groupingParens > 0)
                 for (int k = 0; k < groupingParens; k++) Consume(TokenType.RParen, "Expected ')'");
             Consume(TokenType.Colon, "Expected ':'");
-            Consume(TokenType.Newline, "Expected newline");
-            var blockBody = ParseBlock();
+            var blockBody = ParseSuite();
 
             Expression? start = null, stop = null, step = null;
             if (arg2 == null)
@@ -1720,8 +1788,7 @@ public class Parser
 
         var iterable = ParseExpression();
         Consume(TokenType.Colon, "Expected ':'");
-        Consume(TokenType.Newline, "Expected newline");
-        var ibody = ParseBlock();
+        var ibody = ParseSuite();
 
         var iterStmt = new ForStmt(varTok.Value, iterable, ibody) { Var2Name = var2Name, Line = line };
         return LoopElseDesugar.Attach(iterStmt, ibody, ParseLoopElse(), line);

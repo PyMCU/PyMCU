@@ -66,7 +66,25 @@ public class ParserTests
     public void SyntaxError()
     {
         Assert.Throws<SyntaxError>(() => Parse("def main("));
-        Assert.Throws<SyntaxError>(() => Parse("def main(): return 1"));
+    }
+
+    /// <summary>
+    /// A CHECK THAT MOVED, on purpose (#250).
+    ///
+    /// `Parse("def main(): return 1")` used to be asserted here as a SyntaxError, alongside the
+    /// genuinely truncated `def main(`. The two are not alike: one is an unfinished header, and
+    /// the other is ordinary Python that the CPython bridge accepted and lowered all along, so
+    /// what this line pinned was one half of a front-end divergence.
+    ///
+    /// Kept as a positive assertion rather than deleted, so the behaviour stays covered and the
+    /// reason it changed is written where the old expectation was.
+    /// </summary>
+    [Fact]
+    public void AOneLineFunctionBodyParses()
+    {
+        var prog = Parse("def main(): return 1");
+        var body = Assert.Single(prog.Functions).Body.Statements;
+        Assert.Equal(1, ((IntegerLiteral)((ReturnStmt)Assert.Single(body)).Value!).Value);
     }
 
     [Fact]
