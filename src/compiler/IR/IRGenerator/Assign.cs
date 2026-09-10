@@ -28,6 +28,11 @@ public partial class IRGenerator
 
     private void VisitAssign(AssignStmt stmt)
     {
+        // `self.v: T = x`. A BARE name annotation on an assignment never becomes an AnnAssign
+        // -- both front ends build one only when the annotation contains a '[' -- so it
+        // arrives here as AnnotatedType and was the position the check never saw (#278).
+        CheckAnnotationNames(stmt.AnnotatedType ?? "", stmt);
+
         // Assigning to a plain name binds it, whatever the right-hand side turns out to be and
         // whichever of the shapes below claims the statement. The undefined-name check reads
         // this: an unannotated `x = f()` files no type anywhere, and without the record a later
@@ -2570,7 +2575,7 @@ public partial class IRGenerator
 
     private void VisitVarDecl(VarDecl stmt)
     {
-        CheckAnnotationNames(stmt.VarType);
+        CheckAnnotationNames(stmt.VarType, stmt);
 
         if (stmt.Init != null && !stmt.VarType.Contains("ptr")
             && !stmt.VarType.Contains("PIORegister"))
@@ -3111,8 +3116,17 @@ public partial class IRGenerator
     /// character silently changed the arithmetic. Only bare identifiers are checked: anything
     /// with brackets is a form (`uint8[4]`, `const[uint8]`, `list[uint8]`) whose own handling
     /// reports what it cannot make sense of.
+    ///
+    /// EVERY POSITION AN ANNOTATION CAN APPEAR IN, which was the bug (#278). This was written
+    /// for a local and a module-level global and applied to those two only, so the same typo
+    /// in a parameter, a return type or an instance field was accepted in silence. There is
+    /// one check and one sentence for all five, deliberately: the reader's mistake is the
+    /// same mistake wherever they made it.
+    ///
+    /// `at` is the node to point at. Without one the error lands on whatever `lastLine` held,
+    /// which reported a seven-line file at line 206.
     /// </summary>
-    private void CheckAnnotationNames(string annotation)
+    private void CheckAnnotationNames(string annotation, ASTNode? at = null)
     {
         if (string.IsNullOrEmpty(annotation) || annotation.IndexOf('[') >= 0) return;
         if (ScalarTypeNames.Contains(annotation)) return;
@@ -3131,12 +3145,38 @@ public partial class IRGenerator
         throw UserError($"unknown type '{annotation}' in the annotation"
             + (near != null ? $" (did you mean '{near}'?)" : "")
             + ". An unrecognized annotation used to be read as uint8, which changed the "
-            + "arithmetic without saying so.");
+            + "arithmetic without saying so.", at);
+    }
+
+    /// <summary>
+    /// Check the annotations in every function SIGNATURE the program defines.
+    ///
+    /// Not in VisitFunction, which is where it belongs by shape and does not work: a function
+    /// that is force-inlined at its call sites never reaches it. Measured -- for a program
+    /// with `def take(v: Bogus)` called once, VisitFunction runs for `main` alone, so a check
+    /// there sees no parameter at all. Every DEFINITION passes through here instead.
+    ///
+    /// Runs after every module is scanned, because the check asks whether a name is a class
+    /// and the class tables are not complete until then.
+    /// </summary>
+    private void CheckSignatureAnnotations(ProgramNode ast)
+    {
+        void Fn(FunctionDef f)
+        {
+            foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f);
+            CheckAnnotationNames(f.ReturnType ?? "", f);
+        }
+
+        foreach (var f in ast.Functions) Fn(f);
+        foreach (var st in ast.GlobalStatements)
+            if (st is ClassDef { Body: Block cb })
+                foreach (var m in cb.Statements)
+                    if (m is FunctionDef mf) Fn(mf);
     }
 
     private void VisitAnnAssign(AnnAssign stmt)
     {
-        CheckAnnotationNames(stmt.Annotation);
+        CheckAnnotationNames(stmt.Annotation, stmt);
 
         // A `const[...]` annotation marks the name immutable; record it so a later
         // assignment to it is rejected (see VisitAssign's reassignment guard).

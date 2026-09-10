@@ -881,6 +881,7 @@ public partial class IRGenerator
         // Runs here, not during the scan: it needs the class layouts and the instance-to-class
         // map, and both are only complete once every module has been scanned.
         currentModulePrefix = "";
+        CheckSignatureAnnotations(mainAst);
         RegisterInstanceFieldArrays(mainAst);
         MarkModuleInstanceFields(mainAst);
 
@@ -892,6 +893,7 @@ public partial class IRGenerator
             if (!astToCanonicalPrefix.TryGetValue(modKvp.Value, out var markPrefix)) continue;
             if (!projectModules.Contains(modKvp.Key)) continue;
             currentModulePrefix = markPrefix;
+            CheckSignatureAnnotations(modKvp.Value);
             RegisterInstanceFieldArrays(modKvp.Value);
             MarkModuleInstanceFields(modKvp.Value);
         }
