@@ -3199,16 +3199,46 @@ public partial class IRGenerator
         //
         // Filtered here rather than by pruning the pool, because the pool is right: `List`
         // SHOULD be told about `list`. It is only the distance-zero case that is nonsense.
+        // A name that is legal only as the HEAD of a bracketed form is not a near-miss for
+        // anything: the reader has the right word and the wrong shape. `x: list` used to be
+        // told "did you mean 'int'?", which is true, unhelpful, and teaches that `int` exists
+        // rather than the spelling that works. Same slot, same sentence, a hint that fits the
+        // mistake instead of a suggestion that does not.
+        string hint = BracketedFormHeads.Contains(annotation)
+            ? $" ('{annotation}' is the head of a bracketed type, not a type on its own: "
+              + $"write '{annotation}[...]' with the element type, e.g. {ExampleForm(annotation)})"
+            : NearMissHint(annotation);
+
+        throw UserError($"unknown type '{annotation}' in the annotation" + hint
+            + ". An unrecognized annotation used to be read as uint8, which changed the "
+            + "arithmetic without saying so.", at);
+    }
+
+    /// <summary>The closest known type name to <paramref name="annotation"/>, as a parenthesised
+    /// hint, or "" when nothing is close. NEVER the name itself: the suggestion pool and the
+    /// known set are different sets, so a name can be in the pool and out of the known set, and
+    /// a suggestion identical to the input cannot work by construction (#280).</summary>
+    private string NearMissHint(string annotation)
+    {
         string? near = ScalarTypeNames.Concat(BracketedFormHeads).Concat(classNames)
             .Where(n => n != annotation)
             .Where(n => EditDistance(n, annotation) <= 2)
             .OrderBy(n => EditDistance(n, annotation))
             .FirstOrDefault();
-        throw UserError($"unknown type '{annotation}' in the annotation"
-            + (near != null ? $" (did you mean '{near}'?)" : "")
-            + ". An unrecognized annotation used to be read as uint8, which changed the "
-            + "arithmetic without saying so.", at);
+        return near != null ? $" (did you mean '{near}'?)" : "";
     }
+
+    /// <summary>A worked example of the bracketed form, so the hint shows the shape rather than
+    /// describing it.</summary>
+    private static string ExampleForm(string head) => head switch
+    {
+        "tuple" => "tuple[uint8, uint8]",
+        // Unreachable while `Callable` is also a scalar type name, so a bare one returns as
+        // known before it gets here. Kept because the fallback below would be wrong for it,
+        // and because that membership is the kind of thing that moves.
+        "Callable" => "Callable[[], None]",
+        _ => head + "[uint8]",
+    };
 
     /// <summary>
     /// Check the annotations in every function SIGNATURE the program defines.

@@ -368,4 +368,47 @@ public class UnknownAnnotationTests
             "def main() -> uint8:\n" +
             "    return take(1)\n").Message);
     }
+
+    // A NAME THAT IS ONLY EVER THE HEAD OF A FORM GETS THE SHAPE, NOT A NEAR-MISS.
+    //
+    // `x: list` said "did you mean 'int'?" -- true, and it teaches that `int` exists rather
+    // than the spelling that works. The reader has the right word and the wrong shape, so the
+    // hint says so and shows the form, in the same sentence and the same slot the near-miss
+    // used. `PIORegister` is in here so the rule is the rule and not a special case for two
+    // names everyone recognises.
+    [Theory]
+    [InlineData("list", "list[uint8]")]
+    [InlineData("tuple", "tuple[uint8, uint8]")]
+    [InlineData("PIORegister", "PIORegister[uint8]")]
+    public void ABracketedFormHead_IsToldTheShapeAndShownAnExample(string name, string example)
+    {
+        var ex = Fails(
+            $"def take(v: {name}) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n");
+
+        Assert.Contains($"unknown type '{name}'", ex.Message);
+        Assert.Contains("head of a bracketed type", ex.Message);
+        Assert.Contains(example, ex.Message);
+        Assert.DoesNotContain("did you mean", ex.Message);
+    }
+
+    // The two controls that keep the near-miss doing its own job: a typing spelling still
+    // points at the working one, and a one-character typo still names the type meant.
+    [Theory]
+    [InlineData("List", "list")]
+    [InlineData("Tuple", "tuple")]
+    [InlineData("unit8", "uint8")]
+    public void TheNearMissStillFires_WhereItIsTheRightAnswer(string wrong, string right)
+    {
+        var ex = Fails(
+            $"def take(v: {wrong}) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n");
+
+        Assert.Contains($"did you mean '{right}'", ex.Message);
+        Assert.DoesNotContain("head of a bracketed type", ex.Message);
+    }
 }
