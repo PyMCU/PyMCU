@@ -1738,38 +1738,41 @@ public partial class IRGenerator
     // Recursively walk a statement (into class bodies, methods and nested blocks) and record
     // every member name used as an assignment target. Defensive about statement types so it
     // never UNDER-collects (a missed write would risk a false "no attribute" error).
-    private void CollectAssignedMemberNames(Statement? s)
+    private void CollectAssignedMemberNames(Statement? s, string? owner = null)
     {
         switch (s)
         {
             case null: return;
-            case Block b: foreach (var st in b.Statements) CollectAssignedMemberNames(st); return;
-            case ClassDef cd: CollectAssignedMemberNames(cd.Body); return;
-            case FunctionDef fd: CollectAssignedMemberNames(fd.Body); return;
+            case Block b: foreach (var st in b.Statements) CollectAssignedMemberNames(st, owner); return;
+            // Entering a class body names the owner for everything beneath it, including the
+            // methods -- `self.x = ...` in a method is as much a field of THIS class as one in
+            // __init__. A nested class re-owns its own body, so the inner name wins.
+            case ClassDef cd: CollectAssignedMemberNames(cd.Body, currentModulePrefix + cd.Name); return;
+            case FunctionDef fd: CollectAssignedMemberNames(fd.Body, owner); return;
             case IfStmt iff:
-                CollectAssignedMemberNames(iff.ThenBranch);
-                foreach (var br in iff.ElifBranches) CollectAssignedMemberNames(br.Body);
-                CollectAssignedMemberNames(iff.ElseBranch);
+                CollectAssignedMemberNames(iff.ThenBranch, owner);
+                foreach (var br in iff.ElifBranches) CollectAssignedMemberNames(br.Body, owner);
+                CollectAssignedMemberNames(iff.ElseBranch, owner);
                 return;
-            case WhileStmt w: CollectAssignedMemberNames(w.Body); return;
+            case WhileStmt w: CollectAssignedMemberNames(w.Body, owner); return;
             case ForStmt f:
                 // `for self.x in ...` (a member loop target) also writes the member.
-                if (f.VarName.Contains('.')) assignedMemberNames.Add(f.VarName[(f.VarName.LastIndexOf('.') + 1)..]);
-                CollectAssignedMemberNames(f.Body);
+                if (f.VarName.Contains('.')) NoteAssignedMember(f.VarName[(f.VarName.LastIndexOf('.') + 1)..], owner);
+                CollectAssignedMemberNames(f.Body, owner);
                 return;
-            case WithStmt wi: CollectAssignedMemberNames(wi.Body); return;
-            case MatchStmt m: foreach (var br in m.Branches) CollectAssignedMemberNames(br.Body); return;
+            case WithStmt wi: CollectAssignedMemberNames(wi.Body, owner); return;
+            case MatchStmt m: foreach (var br in m.Branches) CollectAssignedMemberNames(br.Body, owner); return;
             case TryStmt t:
-                foreach (var st in t.Body) CollectAssignedMemberNames(st);
-                foreach (var (_, h) in t.Handlers) foreach (var st in h) CollectAssignedMemberNames(st);
-                if (t.Finally != null) foreach (var st in t.Finally) CollectAssignedMemberNames(st);
+                foreach (var st in t.Body) CollectAssignedMemberNames(st, owner);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) CollectAssignedMemberNames(st, owner);
+                if (t.Finally != null) foreach (var st in t.Finally) CollectAssignedMemberNames(st, owner);
                 return;
-            case AssignStmt a: RecordMemberAssignTarget(a.Target); return;
-            case AugAssignStmt ag: RecordMemberAssignTarget(ag.Target); return;
+            case AssignStmt a: RecordMemberAssignTarget(a.Target, owner); return;
+            case AugAssignStmt ag: RecordMemberAssignTarget(ag.Target, owner); return;
             case AnnAssign an:
                 // AnnAssign.Target is a (possibly dotted) name string, e.g. "self._buf".
                 int dot = an.Target.LastIndexOf('.');
-                if (dot >= 0) assignedMemberNames.Add(an.Target[(dot + 1)..]);
+                if (dot >= 0) NoteAssignedMember(an.Target[(dot + 1)..], owner);
                 return;
         }
     }
@@ -1829,14 +1832,27 @@ public partial class IRGenerator
     // must print Python's words rather than the underlying byte.
     private bool IsBoolName(string name) => boolNames.Contains(name) && !nonBoolNames.Contains(name);
 
-    private void RecordMemberAssignTarget(Expression target)
+    private void RecordMemberAssignTarget(Expression target, string? owner = null)
     {
         switch (target)
         {
-            case MemberAccessExpr ma: assignedMemberNames.Add(ma.Member); break;
-            case IndexExpr { Target: MemberAccessExpr ma2 }: assignedMemberNames.Add(ma2.Member); break;
-            case TupleExpr tup: foreach (var e in tup.Elements) RecordMemberAssignTarget(e); break;
+            case MemberAccessExpr ma: NoteAssignedMember(ma.Member, owner); break;
+            case IndexExpr { Target: MemberAccessExpr ma2 }: NoteAssignedMember(ma2.Member, owner); break;
+            case TupleExpr tup: foreach (var e in tup.Elements) RecordMemberAssignTarget(e, owner); break;
         }
+    }
+
+    // Record an assigned member in BOTH the program-wide superset and, when the enclosing class
+    // is known, that class's own set. The superset is still written unconditionally: callers of
+    // it outside the attribute-read check rely on it, and a receiver whose class cannot be
+    // resolved still falls back to it.
+    private void NoteAssignedMember(string member, string? owner)
+    {
+        assignedMemberNames.Add(member);
+        if (string.IsNullOrEmpty(owner)) return;
+        if (!assignedMemberNamesByClass.TryGetValue(owner, out var set))
+            assignedMemberNamesByClass[owner] = set = new HashSet<string>();
+        set.Add(member);
     }
 
     // True when the method body calls a sibling method on self (self.<m>(...)). Such a method,

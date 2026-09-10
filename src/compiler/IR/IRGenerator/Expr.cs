@@ -1988,6 +1988,52 @@ public partial class IRGenerator
         return instanceClasses.TryGetValue(name, out var cls) ? cls : null;
     }
 
+    // True when <member> could legitimately be reached through this receiver.
+    //
+    // When the receiver's class is known, that class and its bases answer, and `receiverClass` is
+    // set so the caller can name it. When it is not known -- an unbound name, a temporary, a
+    // module-level object the scan never keyed -- the program-wide superset answers instead and
+    // `receiverClass` stays null, so this can only ever refuse a receiver it positively resolved.
+    //
+    // Assignment-based on purpose. classFieldLayout would be the obvious source and is the wrong
+    // one: it omits array fields and never learns fields assigned inside a `match`, so gating a
+    // READ on it would reject valid code. See the note on assignedMemberNamesByClass in State.cs.
+    private bool MemberReachableFromReceiver(
+        string? baseName, string member, out string? receiverClass, out string receiverMembers)
+    {
+        receiverClass = null;
+        receiverMembers = "";
+        if (baseName != null
+            && instanceClasses.TryGetValue(baseName, out var cls) && !string.IsNullOrEmpty(cls))
+        {
+            var seen = new SortedSet<string>(StringComparer.Ordinal);
+            bool known = false;
+            string? cur = cls;
+            for (int depth = 0; cur != null && depth < 20; depth++)
+            {
+                if (assignedMemberNamesByClass.TryGetValue(cur, out var own))
+                {
+                    known = true;
+                    if (own.Contains(member)) return true;
+                    foreach (var m in own) seen.Add(m);
+                }
+                cur = classBasePrefixes.TryGetValue(cur, out var bp) && !string.IsNullOrEmpty(bp)
+                    ? (bp.EndsWith("_") ? bp[..^1] : bp)
+                    : null;
+            }
+            // Only refuse on a class we actually learned something about. A class the collector
+            // never keyed says nothing about its members, and treating silence as "no fields"
+            // would turn every read on it into an error.
+            if (known)
+            {
+                receiverClass = cls;
+                receiverMembers = seen.Count > 0 ? string.Join(", ", seen) : "(none)";
+                return false;
+            }
+        }
+        return assignedMemberNames.Contains(member);
+    }
+
     // True when this reads a @property getter on a known instance: the receiver is a plain
     // name bound to a class that registers <member> as a getter.
     private bool IsPropertyGetterRead(MemberAccessExpr expr)
@@ -2366,15 +2412,39 @@ public partial class IRGenerator
             // Undefined attribute (a typo). This fallback is the last resort: every legitimate
             // resolution (module member, .value/.name, ZCA fields, pointers, numeric-scalar
             // guard) has already returned or thrown above, so reaching here fabricates an
-            // undefined `<base>_<member>` Variable read as 0. It is a genuine typo when the
-            // member is assigned NOWHERE in the program (assignedMemberNames is the superset of
-            // every class's fields — a real field is always written in some __init__/method)
-            // and is not a method or property getter. Gated to real chip targets (skip PIO and
-            // the empty-config unit compiles), like the undefined-function check.
+            // undefined `<base>_<member>` Variable read as 0 -- in practice an INDETERMINATE
+            // read, since nothing writes the slot and the allocator hands out a register with no
+            // writer. Gated to real chip targets (skip PIO and the empty-config unit compiles),
+            // like the undefined-function check.
+            //
+            // Asked of the RECEIVER'S class when that can be resolved, and only of the
+            // program-wide superset when it cannot (#276). The superset alone accepted any name
+            // that any class anywhere assigned, so whether this line was an error or silent wrong
+            // code depended on what else happened to be linked into the same firmware.
+            // Scoped OUT of __init__, exactly as the write-path check in Assign.cs is, and for a
+            // reason the corpus supplied rather than one I reasoned to: inside a constructor the
+            // receiver bindings are still being established, so `instanceClasses` for a name there
+            // can answer with the class under construction instead of the name's own class. The
+            // MicroPython layer's `machine.ADC.__init__` reads `pin._name` on a `Pin` PARAMETER and
+            // the lookup returned `machine_ADC`, which turned a valid read into a refusal -- the one
+            // failure mode worse than #276 itself. IsInsideInit() sees through @inline expansion
+            // chains, which is what that case needs, since the constructor is inlined into main.
+            //
+            // The underlying receiver-resolution weakness is NOT fixed here, only avoided, and it
+            // is worth its own issue: a wrong answer from instanceClasses is a hazard for anything
+            // that trusts it, not just for this check.
             if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
-                && !assignedMemberNames.Contains(expr.Member)
-                && !IsKnownMethodName(expr.Member))
-                throw UserError($"object has no attribute '{expr.Member}' (typo, or a field never assigned)", expr);
+                && !IsInsideInit()
+                && !IsKnownMethodName(expr.Member)
+                && !MemberReachableFromReceiver(baseName, expr.Member, out var recvCls, out var recvMembers))
+                throw UserError(
+                    recvCls == null
+                        ? $"object has no attribute '{expr.Member}' (typo, or a field never assigned)"
+                        : $"'{recvCls}' has no attribute '{expr.Member}' -- it is read here but nothing in "
+                          + $"'{recvCls}' or its bases ever assigns it, and PyMCU lays instances out at "
+                          + "compile time, so it cannot appear at run time. Assign it in __init__ to make "
+                          + $"it a field, or correct the spelling. Assigned members: {recvMembers}",
+                    expr);
 
             // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries
             // its declared width in variableTypes; read it at that width so a uint16/uint32

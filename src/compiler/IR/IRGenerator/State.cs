@@ -154,6 +154,20 @@ public partial class IRGenerator
     // is unreliable. Unioned with method/property names at the check site.
     private HashSet<string> assignedMemberNames = new();
 
+    // The same information keyed by the class that did the assigning, so a read can be checked
+    // against ITS OWN receiver instead of the program-wide union above. #276: `d.mode` compiled
+    // whenever ANY class anywhere declared a field called `mode`, and lowered to an unwritten
+    // `<base>_mode` slot -- an indeterminate read, no diagnostic. Which is why the same source
+    // line could be an error or silent wrong code depending on what else was linked in, and why
+    // cutting a program down to reproduce it made it disappear.
+    //
+    // Deliberately assignment-based, exactly like the set above, NOT layout-based: classFieldLayout
+    // omits array fields (a class with `self.buf: uint8[4]` reports "Declared fields: n, m") and
+    // never learns fields assigned inside a `match`, so gating reads on it would refuse valid
+    // code. This map inherits neither gap because it records what was written, not what was laid
+    // out. Keys match classFieldLayout's convention: currentModulePrefix + class name.
+    private Dictionary<string, HashSet<string>> assignedMemberNamesByClass = new();
+
     // Class-body attributes that the ALL-CAPS convention does NOT turn into compile-time
     // constants (Scan.cs) get run-time storage instead -- and nothing ever ran their
     // initializer, so `class Dev: limit = 7` gave every read of `Dev.limit` a fabricated
