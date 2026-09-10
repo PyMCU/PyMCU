@@ -3110,6 +3110,37 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The heads a bracketed annotation may have that are NOT already scalar type names:
+    /// `ptr[uint8]`, `list[uint8]`, `tuple[uint8, uint8]`, `Callable[...]`. `tuple` is the
+    /// multi-value return form and is the one this list was missing when it was first written:
+    /// the corpus said so, with one integration fixture and seven unit tests, rather than with
+    /// an argument.
+    ///
+    /// Asked alongside ScalarTypeNames rather than seeded from it. The two live in different
+    /// files of this partial class, and a static field that reads another file's static field
+    /// initialised to null here and turned every bracketed annotation into an
+    /// InternalCompilerError -- which compiles clean and only appears when a program is run
+    /// through it.
+    /// </summary>
+    private static readonly HashSet<string> BracketedFormHeads =
+        new() { "ptr", "list", "tuple", "Callable", "PIORegister" };
+
+    private static bool IsKnownBracketedHead(string head) =>
+        ScalarTypeNames.Contains(head) || BracketedFormHeads.Contains(head);
+
+    // Word for word Parser.cs's UnionAnnotationRefusal and the CPython bridge's copy of it in
+    // pymcu_translate.py, which already carry "change one, change both" notes to each other.
+    // Change one, change all THREE. Duplicated rather than shared because the parser's copy is
+    // private to it, and consolidating them means editing Parser.cs.
+    //
+    // The two spellings report in different PHASES -- `a | b` at parse, `Union[a, b]` here --
+    // so a reader sees SyntaxError for one and CompileError for the other. The sentence they
+    // act on is identical.
+    private const string UnionAnnotationRefusal =
+        "a union type annotation is not supported. PyMCU needs one concrete type, because the " +
+        "storage for a value is decided at compile time and two types do not share a size";
+
+    /// <summary>
     /// Reject an annotation that names no type this compiler knows. An unknown name used to
     /// fall back to uint8 without a word, so `x: unit8 = a * 300` truncated to 8 bits and
     /// printed 96 where the same line without an annotation printed 60000 -- a typo in one
@@ -3128,7 +3159,28 @@ public partial class IRGenerator
     /// </summary>
     private void CheckAnnotationNames(string annotation, ASTNode? at = null)
     {
-        if (string.IsNullOrEmpty(annotation) || annotation.IndexOf('[') >= 0) return;
+        if (string.IsNullOrEmpty(annotation)) return;
+
+        // A BRACKETED annotation is checked by its HEAD name. This used to return here, on the
+        // grounds that a bracketed form's own handling reports what it cannot make sense of.
+        // That is true for the forms that mean something and false for every other head, so
+        // `Optional[uint8]`, `Tuple[uint8, uint8]`, `List[uint8]`, `Dict[uint8, uint8]` and
+        // `Bogus[uint8, bool]` were all accepted in silence -- and those are the spellings a
+        // typing-annotated library writes, so the hole was closed for the rare spelling and
+        // left open for the common one.
+        int lb = annotation.IndexOf('[');
+        if (lb >= 0)
+        {
+            string head = annotation[..lb];
+            // `Optional[X]` IS `Union[X, None]`, and `Union[a, b]` IS `a | b`. One idea, so one
+            // answer: the sentence the `|` spelling already gets, rather than a true and
+            // useless "unknown type 'Union'".
+            if (head is "Union" or "Optional" or "typing.Union" or "typing.Optional")
+                throw UserError(UnionAnnotationRefusal, at);
+            if (head.Length == 0 || IsKnownBracketedHead(head)) return;
+            annotation = head;   // fall through and report the head as the unknown type
+        }
+
         if (ScalarTypeNames.Contains(annotation)) return;
         if (annotation is "ptr" or "object" or "self") return;
         if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
@@ -3138,7 +3190,7 @@ public partial class IRGenerator
         if (ResolveCallee(annotation) is { } resolved
             && (classNames.Contains(resolved) || classFieldLayout.ContainsKey(resolved))) return;
 
-        string? near = ScalarTypeNames.Concat(classNames)
+        string? near = ScalarTypeNames.Concat(BracketedFormHeads).Concat(classNames)
             .Where(n => EditDistance(n, annotation) <= 2)
             .OrderBy(n => EditDistance(n, annotation))
             .FirstOrDefault();

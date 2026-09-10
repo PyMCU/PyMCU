@@ -214,9 +214,11 @@ public class UnknownAnnotationTests
     //                                                on its own, whatever T says
     //
     // A discriminator has to CONSUME the high byte of a value that is not known at compile
-    // time. Even then the field position does not discriminate, because an annotated field's
-    // width is not applied when the right-hand side is a bare __init__ parameter -- separate
-    // from this bug, and the reason there is no value assertion for it here.
+    // time, AND the field has to be written again later: with only its __init__ initialiser
+    // the layout is taken from the right-hand side and the annotation is not consulted at
+    // all, so a CORRECT `uint16` is ignored too. That is PyMCU#282, a layout decision rather
+    // than a missing check, and it is why there is no value assertion for the field position
+    // here. The absence is deliberate, not an oversight.
     [Fact]
     public void AnAnnotatedLocalIsAsWideAsItSays()
     {
@@ -239,5 +241,75 @@ public class UnknownAnnotationTests
         Assert.NotEmpty(widths);
         Assert.All(widths, t => Assert.True(t.SizeOf() >= 2,
             $"'v: uint16' must reach the IR at two bytes, saw {t}"));
+    }
+
+    // ---- bracketed annotations: the head name is a type name too ----
+    //
+    // This check used to return early for anything containing a '[', on the grounds that a
+    // bracketed form's own handling reports what it cannot make sense of. True for the forms
+    // that mean something and false for every other head, so `Optional[uint8]`,
+    // `Tuple[uint8, uint8]`, `List[uint8]`, `Dict[uint8, uint8]` and `Bogus[uint8, bool]` were
+    // all accepted in silence -- and those are the spellings a typing-annotated library
+    // writes, so the hole was closed for the rare spelling and open for the common one.
+
+    [Fact]
+    public void AnUnknownBracketedHead_IsRefusedAndNamed()
+    {
+        var ex = Fails(
+            "def take(v: Bogus[uint8, bool]) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n");
+
+        Assert.Contains("unknown type 'Bogus' in the annotation", ex.Message);
+    }
+
+    // The head is reported, not the whole form, and the near-miss points at the spelling that
+    // works: PyMCU has `list[...]`, so `List[...]` is one capital letter away from compiling.
+    [Fact]
+    public void ATypingSpelling_IsRefusedAndTheWorkingSpellingSuggested()
+    {
+        var ex = Fails(
+            "def take(v: List[uint8]) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n");
+
+        Assert.Contains("unknown type 'List'", ex.Message);
+        Assert.Contains("did you mean 'list'", ex.Message);
+    }
+
+    // ONE IDEA, ONE ANSWER. `Optional[X]` IS `Union[X, None]` and `Union[a, b]` IS `a | b`, so
+    // all three get the sentence the `|` spelling already got, word for word. "unknown type
+    // 'Union'" would be true and useless.
+    [Theory]
+    [InlineData("Union[uint8, bool]")]
+    [InlineData("Optional[uint8]")]
+    public void TheTypingSpellingsOfAUnion_GetTheUnionMessage(string ann)
+    {
+        var ex = Fails(
+            $"def take(v: {ann}) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n");
+
+        Assert.Contains("a union type annotation is not supported", ex.Message);
+        Assert.DoesNotContain("unknown type", ex.Message);
+    }
+
+    // The forms that mean something must keep meaning it. `tuple` is the one this list was
+    // missing when it was first written, and the corpus said so with one fixture and seven
+    // unit tests rather than with an argument.
+    [Fact]
+    public void TheBracketedFormsThatMeanSomething_StillCompile()
+    {
+        Gen("from pymcu.types import uint8, const, ptr, inline\n" +
+            "@inline\n" +
+            "def pair() -> tuple[uint8, uint8]:\n" +
+            "    return 1, 2\n" +
+            "def main() -> uint8:\n" +
+            "    a: uint8[4] = [1, 2, 3, 4]\n" +
+            "    b, c = pair()\n" +
+            "    return a[0] + b + c\n");
     }
 }
