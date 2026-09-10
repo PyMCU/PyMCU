@@ -312,4 +312,60 @@ public class UnknownAnnotationTests
             "    b, c = pair()\n" +
             "    return a[0] + b + c\n");
     }
+
+    // A SUGGESTION IDENTICAL TO THE INPUT CANNOT WORK BY CONSTRUCTION.
+    //
+    // The suggestion pool and the known set are different sets, so a name can be in the pool
+    // and out of the known set. `list`, `tuple` and `PIORegister` are exactly that: legal only
+    // as the HEAD of a bracketed form, and so suggestible while being rejected. `x: list`
+    // answered "unknown type 'list' (did you mean 'list'?)", which tells the reader the
+    // compiler cannot see a difference it is acting on.
+    //
+    // Every name in the pool but not in the known set is covered here, so a fourth one added
+    // later fails this test instead of shipping the same sentence.
+    [Theory]
+    [InlineData("list")]
+    [InlineData("tuple")]
+    [InlineData("PIORegister")]
+    public void ARejectedName_IsNeverSuggestedAsItsOwnCorrection(string name)
+    {
+        var ex = Fails(
+            $"def take(v: {name}) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n");
+
+        Assert.Contains($"unknown type '{name}'", ex.Message);
+        Assert.DoesNotContain($"did you mean '{name}'", ex.Message);
+    }
+
+    // The control, and the reason the pool is not simply pruned: the near-miss is what makes
+    // the typing spellings a two-second fix, and `List` must still be told about `list`.
+    [Fact]
+    public void TheUsefulSuggestionSurvives_TheTypingSpellingStillPointsAtTheWorkingOne()
+    {
+        Assert.Contains("did you mean 'list'", Fails(
+            "def take(v: List) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n").Message);
+    }
+
+    // A bare `list` is not an annotation this compiler knows, in ANY position: it was already
+    // refused as a local before #278, which only made the parameter agree with it. Pinned so
+    // nobody "restores" it on the strength of the parameter position having once been silent.
+    [Fact]
+    public void ABareListIsNotAnAnnotation_InEitherPosition()
+    {
+        Assert.Contains("unknown type 'list'", Fails(
+            "def main() -> uint8:\n" +
+            "    v: list = 0\n" +
+            "    return 1\n").Message);
+
+        Assert.Contains("unknown type 'list'", Fails(
+            "def take(v: list) -> uint8:\n" +
+            "    return 1\n" +
+            "def main() -> uint8:\n" +
+            "    return take(1)\n").Message);
+    }
 }

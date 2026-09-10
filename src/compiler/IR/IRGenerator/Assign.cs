@@ -3190,7 +3190,17 @@ public partial class IRGenerator
         if (ResolveCallee(annotation) is { } resolved
             && (classNames.Contains(resolved) || classFieldLayout.ContainsKey(resolved))) return;
 
+        // NEVER the name being rejected. The suggestion pool and the known set are different
+        // sets, so a name can be in the pool and out of the known set -- `list`, `tuple` and
+        // `PIORegister` are, since they are legal only as the HEAD of a bracketed form -- and
+        // `x: list` answered "unknown type 'list' (did you mean 'list'?)". A suggestion
+        // identical to the input cannot work by construction, and it is worse than none: it
+        // tells the reader the compiler cannot see a difference it is acting on.
+        //
+        // Filtered here rather than by pruning the pool, because the pool is right: `List`
+        // SHOULD be told about `list`. It is only the distance-zero case that is nonsense.
         string? near = ScalarTypeNames.Concat(BracketedFormHeads).Concat(classNames)
+            .Where(n => n != annotation)
             .Where(n => EditDistance(n, annotation) <= 2)
             .OrderBy(n => EditDistance(n, annotation))
             .FirstOrDefault();

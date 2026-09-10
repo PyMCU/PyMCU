@@ -79,7 +79,13 @@ def test_a_literal_in_a_value_position_is_refused_by_name(tmp_path, name, body):
     assert "bytes or list" in out, out
 
 
-@pytest.mark.parametrize("default", ["list = []", 'bytes = b"ab"'], ids=["list", "bytes"])
+# `bytearray = []` and not `list = []`: a bare `list` is not an annotation this compiler
+# knows, in any position -- `x: list` as a LOCAL was already refused before #278, which only
+# made the parameter position agree with it. So the list spelling stopped reaching this
+# refusal and started failing at its annotation instead, testing nothing this test is about.
+# `bytearray` is a known annotation and `[]` is still a LIST literal in the default position,
+# which is the thing being refused here, so the pair still says what it was written to say.
+@pytest.mark.parametrize("default", ['bytearray = []', 'bytes = b"ab"'], ids=["list", "bytes"])
 def test_a_parameter_default_is_refused_by_name(tmp_path, default):
     """A list or bytes literal as a parameter default produces the same crash, which is what
     showed the defect is about the position rather than about bytes."""
