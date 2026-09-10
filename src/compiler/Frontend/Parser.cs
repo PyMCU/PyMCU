@@ -51,6 +51,15 @@ public class Parser
         "a call in a raise message is not supported: PyMCU discards the message, so the call " +
         "would never be evaluated. Move it out of the raise, or drop it";
 
+    /// The refusal for `raise X() from e`.
+    ///
+    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py, s_raise).
+    /// Change one, change both.
+    private const string RaiseCauseRefusal =
+        "'raise ... from ...' is not supported. PyMCU has no traceback for a cause to attach " +
+        "to, and the expression after 'from' would be evaluated and then discarded. Write " +
+        "'raise <Type>(...)' on its own, and report what you know at the raise site";
+
     /// The refusal for a union type annotation.
     ///
     /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py,
@@ -1135,6 +1144,28 @@ public class Parser
                     ErrorSpanning(messageStart, ArgumentEndToken(), RaiseMessageRefusal);
                 Consume(TokenType.RParen, RaiseMessageRefusal);
             }
+        }
+
+        // `raise X() from e` (#277). Refused for the SAME reason a call in the message is:
+        // CPython evaluates the cause when the raise fires, and PyMCU has no traceback to
+        // attach it to, so accepting it would discard an evaluation silently. That is the
+        // decision already made one block up for the message argument.
+        //
+        // It used to reach ConsumeStatementEnd, which reported "Expected newline or end of
+        // block" -- the punctuation the parser wanted, not the construct it met. Worse, the
+        // CPython bridge never read `node.cause` at all, so the same program was refused here
+        // and BUILT there, with the expression after `from` never name-resolved: an undefined
+        // name in that slot was swallowed whole.
+        //
+        // The whole cause expression is underlined, not the `from` keyword, because that is
+        // the span the bridge can reproduce: an AST node carries col_offset and
+        // end_col_offset, while the position of a keyword is not in the CPython AST at all.
+        if (Check(TokenType.From))
+        {
+            Advance();
+            Token causeStart = Peek();
+            ParseExpression();
+            ErrorSpanning(causeStart, tokens[pos - 1], RaiseCauseRefusal);
         }
 
         ConsumeStatementEnd();

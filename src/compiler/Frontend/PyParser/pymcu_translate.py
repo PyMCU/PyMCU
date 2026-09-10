@@ -819,6 +819,25 @@ def s_with(node):
 
 
 def s_raise(node):
+    # `raise X() from e` (#277). FIRST, before the early returns below: `raise X from e` and
+    # `raise X() from e` take different branches, and a bare `raise` returns immediately, so
+    # a check placed later would cover only one of the three shapes.
+    #
+    # This front end used to ignore `node.cause` entirely. The clause was not lowered, it was
+    # never even read, so the expression after `from` was never name-resolved and an undefined
+    # name in that slot BUILT CLEAN -- while the hand-written parser refused the same program.
+    # Refused rather than discarded for the reason the message argument already is: CPython
+    # evaluates the cause when the raise fires.
+    #
+    # Text is word for word Parser.cs's RaiseCauseRefusal. Change one, change both. Positioned
+    # on the cause NODE so both front ends underline the same span.
+    if node.cause is not None:
+        raise Unsupported(
+            "'raise ... from ...' is not supported. PyMCU has no traceback for a cause to "
+            "attach to, and the expression after 'from' would be evaluated and then "
+            "discarded. Write 'raise <Type>(...)' on its own, and report what you know at "
+            "the raise site", node.cause)
+
     # PyMCU records the exception NAME and a literal message, not an expression.
     if node.exc is None:
         return {"k": "Raise", "errorType": "", "message": "", "messageName": None}
