@@ -4088,10 +4088,23 @@ public partial class IRGenerator
         int count = elemExprs.Count;
         DataType elemDt = DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
 
+        // An all-constant literal carries its own element width, and the widest element is what
+        // the whole table has to hold. The type was read from element 0 alone, and a constant
+        // answers neither Temporary nor Variable, so it fell to the uint8 default and every wide
+        // table was stored on its low byte: `DUTIES = [256, 383, 512, ...]` printed 0, 127, 0
+        // with no diagnostic, and a PWM duty cycle is a 16-bit number on any part that has one.
+        var constElems = new List<int>(count);
+        bool allConst = count > 0 && elemExprs.All(e => TryEvalElemConst(e, out _));
+        if (allConst)
+        {
+            foreach (var e in elemExprs) { TryEvalElemConst(e, out int cv); constElems.Add(cv); }
+            elemDt = WidestElemType(constElems);
+        }
+
         for (int k = 0; k < count; ++k)
         {
             string elemName = qualified + "__" + k;
-            variableTypes[elemName] = DataType.UINT8;
+            variableTypes[elemName] = elemDt;
 
             // ZCA constructor element: build the instance directly into the slot (like a plain
             // `x = Cls(...)` assignment) so instanceClasses[slot] is registered. Constructing via
@@ -4108,7 +4121,8 @@ public partial class IRGenerator
             }
 
             Val v = VisitExpression(elemExprs[k]);
-            if (k == 0) elemDt = v switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
+            if (!allConst && k == 0)
+                elemDt = v switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
             variableTypes[elemName] = elemDt;
             Emit(new Copy(v, new Variable(elemName, elemDt)));
             if (v is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
