@@ -552,6 +552,15 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     # ── 2. Python -> IR -> LLVM IR -> relocatable object ─────────────────────
     from pymcu.toolchain.rp2040.llvm import Rp2040LlvmToolchain  # noqa: PLC0415
 
+    # The relocatable-object mode lives in the ARM backend, and an older one installed
+    # beside a newer driver would fail as a bare AttributeError deep in this function.
+    if not hasattr(Rp2040LlvmToolchain, "assemble_natmod"):
+        raise NatmodError(
+            "the installed ARM toolchain has no native-module mode. `pymcu natmod` needs "
+            "a pymcu-arm that can emit a relocatable object; upgrade it (pip install -U "
+            "pymcu-arm)."
+        )
+
     arch = Rp2040LlvmToolchain.natmod_arch(target)[0]
     if arch not in _ADAPTER_CFLAGS:
         raise NatmodError(f"no adapter flags are defined for architecture '{arch}'.")
