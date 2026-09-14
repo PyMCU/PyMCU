@@ -118,6 +118,13 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => null
         };
 
+        Option<bool> libraryOption = new("--library")
+        {
+            Description = "Library mode: no entry point. Every top-level function of the entry "
+                        + "file is a root and keeps its source name",
+            DefaultValueFactory = parseResult => false
+        };
+
         Option<string?> projectRootOption = new("--project-root")
         {
             Description = "The project's own source directory; modules loaded from inside it "
@@ -140,6 +147,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(interruptVectorOption);
         rootCommand.Options.Add(verboseOption);
         rootCommand.Options.Add(emitIrOption);
+        rootCommand.Options.Add(libraryOption);
         rootCommand.Options.Add(projectRootOption);
 
         rootCommand.SetAction(parseResult =>
@@ -166,7 +174,8 @@ public static class CompilerCliBuilder
                 Verbose: parseResult.GetValue(verboseOption),
                 EmitIrPath: parseResult.GetValue(emitIrOption),
                 ProjectRoot: parseResult.GetValue(projectRootOption),
-                Timebase: parseResult.GetValue(timebaseOption)
+                Timebase: parseResult.GetValue(timebaseOption),
+                Library: parseResult.GetValue(libraryOption)
             );
 
             // Return the exit code so Invoke() (and thus the process) actually fails

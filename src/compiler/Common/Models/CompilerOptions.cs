@@ -47,5 +47,11 @@ public sealed record CompilerOptions(
     // The program runs the millisecond time base (millis_init(), injected or explicit).
     // Bound as __TIMEBASE__ for the stdlib; the PWM HAL refuses a Timer0 frequency that
     // would reprogram the prescaler under the clock (PyMCU#295). Optional, like Board.
-    bool Timebase = false
+    bool Timebase = false,
+    // Library mode: the unit has no entry point. Every top-level function of the entry file is
+    // a root and keeps its source name, and nothing is injected around them -- no synthesized
+    // main, no HAL init. Without it a file that only defines functions compiles to nothing,
+    // because dead-code elimination roots `main` and the functions marked @used, and a library
+    // has neither. Used by the natmod emitter, whose entry point is the loader's `mpy_init`.
+    bool Library = false
 );
