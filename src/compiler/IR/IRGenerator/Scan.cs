@@ -749,8 +749,20 @@ public partial class IRGenerator
         moduleAsMain.Body.Statements.AddRange(ast.GlobalStatements);
         var fromFunctions = CollectGlobalWidthsFromFunctions(ast.Functions.Append(moduleAsMain));
 
+        // A written annotation is the user's choice of storage width and outranks anything
+        // inferred here: `presses: uint8 = 0` fed by `presses = presses + 1` in an ISR stays a
+        // byte (and in GPIOR), whatever the promoted width of the sum says.
+        var annotated = new HashSet<string>();
+        foreach (var st in ast.GlobalStatements)
+            switch (st)
+            {
+                case AnnAssign an: annotated.Add(an.Target); break;
+                case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): annotated.Add(vd.Name); break;
+            }
+
         foreach (var name in fromFunctions.Keys.Concat(initializerWidths.Keys).Distinct())
         {
+            if (annotated.Contains(name)) continue;
             string key = currentModulePrefix + name;
             if (!mutableGlobals.TryGetValue(key, out var have)) continue;
 
