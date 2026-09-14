@@ -1932,6 +1932,26 @@ public partial class IRGenerator
                 return VisitExpression(litArg.Elements[li]);
             }
 
+            // `pins = [2, 3, 4]` then `pins[0]`: a name bound to an all-constant list keeps its
+            // elements, and a CONSTANT subscript of it is one of them. It used to answer the
+            // element VARIABLE instead, so the value could not feed a parameter declared
+            // `const` -- `Pin(pins[0], Pin.OUT)` was refused while `for p in pins: Pin(p, ...)`
+            // compiled, on the same list and the same parameter. Gated like the flash table of
+            // PyMCU#317: a name the program writes keeps reading its storage.
+            if (ResolveConstSequence(ve.Name) is { } nameSeq
+                && nameWriteCounts.GetValueOrDefault(ve.Name) <= 1
+                && (expr.Index is IntegerLiteral || VisitExpression(expr.Index) is Constant))
+            {
+                int ni = expr.Index is IntegerLiteral nlit
+                    ? nlit.Value : ((Constant)VisitExpression(expr.Index)).Value;
+                if (ni < 0) ni += nameSeq.Count;
+                if (ni < 0 || ni >= nameSeq.Count)
+                    throw new IndexError(
+                        $"array index {ni} out of range for size {nameSeq.Count}",
+                        expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                return VisitExpression(nameSeq[ni]);
+            }
+
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
 
