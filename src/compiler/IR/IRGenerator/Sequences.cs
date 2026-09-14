@@ -162,6 +162,27 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The dict literal an expression denotes: a bare name, or a `self` field that was
+    /// assigned one. Emits nothing.
+    /// </summary>
+    private bool TryGetDictFor(Expression e, out Frontend.DictExpr dict)
+    {
+        if (e is VariableExpr ve && TryGetDictBinding(ve.Name, out dict!)) return true;
+        dict = null!;
+        if (e is not MemberAccessExpr) return false;
+        return SequenceKeyOf(e) is { } key && dictLiteralBindings.TryGetValue(key, out dict!);
+    }
+
+    /// <summary>The set literal an expression denotes, by name or through a field.</summary>
+    private bool TryGetSetFor(Expression e, out Frontend.SetExpr set)
+    {
+        if (e is VariableExpr ve && TryGetSetBinding(ve.Name, out set!)) return true;
+        set = null!;
+        if (e is not MemberAccessExpr) return false;
+        return SequenceKeyOf(e) is { } key && setLiteralBindings.TryGetValue(key, out set!);
+    }
+
+    /// <summary>
     /// The class a constructor call builds, or null when the call is not a constructor of a
     /// class with a field layout. Both spellings count: the bare `Pin(...)` and the dotted
     /// `digitalio.DigitalInOut(...)` a CircuitPython program writes.
