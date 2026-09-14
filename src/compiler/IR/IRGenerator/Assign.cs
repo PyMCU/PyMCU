@@ -647,10 +647,24 @@ public partial class IRGenerator
             variableTypes[paramName] = paramType;
             constantVariables.Remove(paramName);
             variableAliases.Remove(paramName);
+            // Cleared like the two above, and for the same reason: this key is the inline
+            // prefix plus the parameter name, and it is reused by every setter expansion at
+            // the same depth, so a None left by an earlier assignment would answer for this
+            // one (#306).
+            noneValuedNames.Remove(paramName);
             switch (argVal)
             {
                 case Constant c:
                     constantVariables[paramName] = c.Value;
+                    break;
+                case NoneVal:
+                    // `obj.prop = None`. None has no runtime representation, so there is
+                    // nothing to copy: record the parameter as None-valued, which is what lets
+                    // `p is None` fold inside the setter and what lets a `match p:` be decided
+                    // instead of lowering every arm. Leaving it unbound is how
+                    // `pin.pull = None` reached the Pull.DOWN arm and was refused with
+                    // "Pull-down resistor not supported on AVR" (#306).
+                    noneValuedNames.Add(paramName);
                     break;
                 case Variable vv:
                     variableAliases[paramName] = vv.Name;

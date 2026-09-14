@@ -1641,6 +1641,30 @@ public partial class IRGenerator
             }
             listLiteralParams.Remove(paramName);
 
+            // A parameter bound to None. There is no value to copy -- None has no runtime
+            // representation -- so it is recorded as None-valued, exactly as a parameter
+            // DEFAULTING to None already is, and nothing is emitted.
+            //
+            // Without this the name was left unbound: `p is None` inside the callee answered
+            // false, and `match p:` had no subject it could decide, so every arm was lowered
+            // and an arm that refuses at compile time fired for a program that never selected
+            // it. `pin.pull = None` is CircuitPython's spelling for "no pull" and was refused
+            // with "Pull-down resistor not supported on AVR" (#306).
+            //
+            // The Remove on the other path is not optional: the parameter key is the inline
+            // prefix plus the name, and that key is reused across call sites at the same
+            // depth, so a None left by an earlier site would answer for this one.
+            if (argValues[i] is NoneVal)
+            {
+                noneValuedNames.Add(paramName);
+                constantVariables.Remove(paramName);
+                strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                continue;
+            }
+            noneValuedNames.Remove(paramName);
+
             if (argValues[i] is FloatConstant fcArg)
             {
                 var fcPType = func.Params[paramIdx].Type;
