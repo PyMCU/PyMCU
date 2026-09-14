@@ -152,6 +152,7 @@ class Param:
     ctype: str
     kind: str          # "scalar" | "buffer"
     buffer_flag: str = ""
+    ann: str = ""      # the annotation as written, for the width notice
 
 
 @dataclass
@@ -162,6 +163,7 @@ class Exported:
     ret_unsigned: bool
     ret_bool: bool
     line: int
+    ret_ann: str = ""
 
 
 def _convert_param(path: Path, fn: ast.FunctionDef, arg: ast.arg) -> Param:
@@ -175,9 +177,9 @@ def _convert_param(path: Path, fn: ast.FunctionDef, arg: ast.arg) -> Param:
         )
     if ann in _BUFFERS:
         ctype, flag = _BUFFERS[ann]
-        return Param(arg.arg, ctype, "buffer", flag)
+        return Param(arg.arg, ctype, "buffer", flag, ann)
     if ann in _SCALARS:
-        return Param(arg.arg, _SCALARS[ann].ctype, "scalar")
+        return Param(arg.arg, _SCALARS[ann].ctype, "scalar", "", ann)
     why = _EXPLAINED_REFUSALS.get(ann)
     if why is not None:
         raise _located(
@@ -213,10 +215,10 @@ def _convert_function(path: Path, fn: ast.FunctionDef) -> Exported:
             f"nothing; the adapter boxes the result by its declared type.",
         )
     if ret == "None":
-        return Exported(fn.name, params, None, False, False, fn.lineno)
+        return Exported(fn.name, params, None, False, False, fn.lineno, ret)
     if ret in _SCALARS:
         s = _SCALARS[ret]
-        return Exported(fn.name, params, s.ctype, s.unsigned, ret == "bool", fn.lineno)
+        return Exported(fn.name, params, s.ctype, s.unsigned, ret == "bool", fn.lineno, ret)
     if ret in _BUFFERS:
         raise _located(
             path, fn,
@@ -668,3 +670,16 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
         f"arch {arch}, header {' '.join(f'{b:02x}' for b in head)}"
     )
     console.print(f"  [dim]copy it to CIRCUITPY and `import {name}`[/dim]")
+
+    # A bare `int` is 16 bits in PyMCU and unbounded in the interpreter calling in, so the
+    # conversion is lossy at a boundary where nothing else is. Said once, and only when the
+    # module actually has one, because on a module written in int32 it would be noise.
+    narrow = sorted({
+        e.name for e in exports
+        if e.ret_ann == "int" or any(p.ann == "int" for p in e.params)
+    })
+    if narrow:
+        console.print(
+            "  [yellow]note:[/yellow] a bare `int` crosses as 16 bits, so a value outside "
+            "-32768..32767 wraps: " + ", ".join(narrow) + ". Annotate int32 for a wider one."
+        )
