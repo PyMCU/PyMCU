@@ -1204,17 +1204,11 @@ private static Function CloneFunction(Function f)
 
                     break;
                 }
+                // AugAssign writes through its Target, which is not a Dst and so is not one of
+                // the definitions GetDst knows; every other plain definition is, and the
+                // default arm below retires it.
                 case AugAssign aug:
                     InvalidateVar(aug.Target);
-                    break;
-                case Binary bin:
-                    InvalidateVar(bin.Dst);
-                    break;
-                case Unary un:
-                    InvalidateVar(un.Dst);
-                    break;
-                case Bitcast bc:
-                    InvalidateVar(bc.Dst);
                     break;
                 // InlineAsm with operands may modify variables; invalidate them.
                 case InlineAsm { Operands: not null } ia:
@@ -1252,12 +1246,27 @@ private static Function CloneFunction(Function f)
                         foreach (var g in varConsts.Keys.Where(globalNames.Contains).ToList())
                             varConsts.Remove(g);
                     break;
+                default:
+                    // Every other instruction that DEFINES a value retires whatever was tracked
+                    // for it. Listing the kinds by hand is what made this wrong: the list held
+                    // Copy, AugAssign, Binary, Unary, Bitcast, InlineAsm and Call, and left out
+                    // every load -- so `acc = 0` followed by `acc = buf[2]` kept the 0 and every
+                    // later read of acc folded to it, with no diagnostic (PyMCU#359). The six
+                    // kinds missing were BitCheck, LoadIndirect, ArrayLoad, ArrayLoadFlash,
+                    // FlashLoadPtr and BytearrayLoad, which is the whole of the register-decode
+                    // accumulator `reg = (reg << 8) | buf[i]`.
+                    //
+                    // Asking GetDst closes the class rather than those six: an instruction kind
+                    // added later is retired here the day it becomes a definition, and cannot
+                    // reopen this by being forgotten in a second place.
+                    InvalidateVar(GetDst(instr));
+                    break;
             }
         }
 
         return;
 
-        void InvalidateVar(Val dst)
+        void InvalidateVar(Val? dst)
         {
             switch (dst)
             {
