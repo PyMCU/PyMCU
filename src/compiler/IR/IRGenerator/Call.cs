@@ -4238,6 +4238,12 @@ public partial class IRGenerator
             }
         }
 
+        // Library mode: len() of a buffer parameter reads the hidden length that travels with
+        // it. This is the only length a kernel can trust, so it is the one `len()` answers.
+        if (expr.Args[0] is VariableExpr lenBufVe && !string.IsNullOrEmpty(currentFunction)
+            && bufferLengthParams.TryGetValue(currentFunction + "." + lenBufVe.Name, out string lenParam))
+            return new Variable(lenParam, variableTypes[lenParam]);
+
         throw UserError("len() argument must be a fixed-size array or list literal", ArgAt(expr, 0));
     }
 

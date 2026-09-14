@@ -694,6 +694,32 @@ public partial class IRGenerator
                 typingOnlyValues.Remove(qualifiedParam);
         }
 
+        // Library mode: a buffer parameter carries its own length.
+        //
+        // A kernel receives a bare pointer. Everything it does with that pointer is derived
+        // from a count, and if the count arrives as a separate argument it is whatever the
+        // caller said it was. Measured on the plasma example, where the count was pixels and
+        // the buffer was three bytes per pixel: a call with a count the buffer could not
+        // support passed every check and wrote past the end, in silence.
+        //
+        // So the length travels WITH the buffer, appended after the declared parameters so
+        // their positions do not move, and `len(buf)` in the body reads it. A kernel that
+        // wants a sub-range takes a memoryview slice from its caller; the buffer protocol
+        // already carries the length of one.
+        if (LibraryMode && !funcNode.IsInline && !funcNode.IsInterrupt)
+        {
+            foreach (var param in funcNode.Params)
+            {
+                if (param.Type != "bytearray" && param.Type != "bytes") continue;
+                string bufName = currentFunction + "." + param.Name;
+                string lenName = currentFunction + ".__len_" + param.Name;
+                irFunc.Params.Add(lenName);
+                variableTypes[lenName] = DataTypeExtensions.PointerWidth >= 4
+                    ? DataType.UINT32 : DataType.UINT16;
+                bufferLengthParams[bufName] = lenName;
+            }
+        }
+
         arraysWithVariableIndex.Clear();
         ScanForVariableIndexedArrays(funcNode.Body.Statements, fullName + ".");
 

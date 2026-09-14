@@ -839,6 +839,25 @@ public partial class IRGenerator
     /// </summary>
     public string EntryFileName { get; set; } = "main.py";
 
+    /// <summary>
+    /// The unit is a library (--library): no entry point, and every top-level function is an
+    /// export called from outside PyMCU. A buffer parameter of such a function gets a hidden
+    /// trailing length parameter, and `len(buf)` inside the body reads it.
+    ///
+    /// Gated on the OPTION and not on IsExportC, because @export_c marks a function whose ABI
+    /// a C caller already wrote down; silently adding an argument to it would break that
+    /// caller. A library's callers are generated from the same signatures in the same build.
+    /// </summary>
+    public bool LibraryMode { get; set; } = false;
+
+    /// <summary>
+    /// Buffer parameter (qualified) -> its hidden length parameter (qualified). A kernel gets
+    /// the pointer and nothing else, so without this `len(buf)` has no answer and every count
+    /// has to be passed alongside and trusted -- which is exactly how a caller walks off the
+    /// end of someone's bytearray.
+    /// </summary>
+    private Dictionary<string, string> bufferLengthParams = new();
+
     // Depth counter for runtime-conditional branches currently being compiled.
     // > 0 means we are inside a branch whose predicate could not be folded at compile time.
     // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)

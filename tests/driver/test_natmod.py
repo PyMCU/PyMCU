@@ -20,7 +20,6 @@ import pytest
 
 from src.driver.commands.natmod import (
     NatmodError,
-    buffer_pairings,
     check_no_module_state,
     collect_exports,
     generate_adapter,
@@ -152,14 +151,14 @@ def test_adapter_unboxes_boxes_and_registers(tmp_path):
         "def add(a: int, b: int) -> int:\n"
         "    return a + b\n"
         "\n"
-        "def brightness(buf: bytearray, n: int, scale: uint8) -> None:\n"
+        "def brightness(buf: bytearray, scale: uint8) -> None:\n"
         "    buf[0] = scale\n"
     ))
     c = generate_adapter("kernels", collect_exports(src), src)
 
     # The kernels are declared with the widths PyMCU lowered them to.
     assert "extern int16_t add(int16_t, int16_t);" in c
-    assert "extern void brightness(uint8_t *, int16_t, uint8_t);" in c
+    assert "extern void brightness(uint8_t *, uint8_t, uint32_t);" in c
     # Unboxing, calling, boxing.
     assert "mp_int_t r0 = mp_obj_get_int(a0);" in c
     assert "int16_t p0 = (int16_t)r0;" in c
@@ -238,25 +237,32 @@ def test_int32_is_not_checked_because_the_check_could_never_fail(tmp_path):
     assert "int32_t p0 = (int32_t)r0;" in c
 
 
-def test_a_length_argument_is_checked_against_the_buffer(tmp_path):
+def test_a_buffer_is_passed_with_its_own_length(tmp_path):
+    """The positional convention this replaces was unsound, and measured so: plasma's
+    count was pixels and its buffer three bytes per pixel, so a count the buffer could
+    not support passed the check and wrote past the end. A length that travels WITH the
+    buffer cannot disagree with it."""
     src = write(tmp_path, (
-        "def brightness(buf: bytearray, n: int, scale: uint8) -> None:\n"
+        "def brightness(buf: bytearray, scale: uint8) -> None:\n"
         "    buf[0] = scale\n"
     ))
-    exports = collect_exports(src)
-    c = generate_adapter("m", exports, src)
+    c = generate_adapter("m", collect_exports(src), src)
 
-    assert 'nm_fits(b0.len, r1, "brightness(): n is larger than buf");' in c
-    # The pairing is reported so the build can print it: a convention nobody sees is a
-    # convention nobody can correct.
-    assert buffer_pairings(exports) == [("brightness", "buf", "n")]
+    assert "extern void brightness(uint8_t *, uint8_t, uint32_t);" in c
+    assert "brightness((uint8_t *)b0.buf, p1, (uint32_t)b0.len);" in c
+    # No length pairing, so no length check and no helper for one.
+    assert "nm_fits" not in c
 
 
-def test_a_buffer_with_no_length_after_it_is_reported_as_unchecked(tmp_path):
-    src = write(tmp_path, "def f(buf: bytearray) -> None:\n    buf[0] = 1\n")
-    exports = collect_exports(src)
-    assert buffer_pairings(exports) == [("f", "buf", "")]
-    assert "nm_fits" not in generate_adapter("m", exports, src)
+def test_every_buffer_gets_its_own_length_after_the_declared_arguments(tmp_path):
+    src = write(tmp_path, (
+        "def blit(dst: bytearray, src: bytes, scale: uint8) -> None:\n"
+        "    dst[0] = scale\n"
+    ))
+    c = generate_adapter("m", collect_exports(src), src)
+    assert "extern void blit(uint8_t *, const uint8_t *, uint8_t, uint32_t, uint32_t);" in c
+    assert ("blit((uint8_t *)b0.buf, (const uint8_t *)b1.buf, p2, "
+            "(uint32_t)b0.len, (uint32_t)b1.len);") in c
 
 
 def test_a_bool_is_normalised_and_not_range_checked(tmp_path):

@@ -42,6 +42,7 @@ public class IrGenerationPhase : CompilerPhaseBase
         // (#303).
         if (!string.IsNullOrEmpty(context.Options.FilePath))
             irGen.EntryFileName = System.IO.Path.GetFileName(context.Options.FilePath);
+        irGen.LibraryMode = context.Options.Library;
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
             context.ModulePaths);

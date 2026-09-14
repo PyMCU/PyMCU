@@ -337,34 +337,6 @@ _RANGES: dict[str, tuple[int, int]] = {
 }
 
 
-def _length_of(params: list[Param], i: int) -> Optional[int]:
-    """Index of the parameter taken as the length of the buffer at *i*, if any.
-
-    The convention is positional: the scalar immediately after a buffer is that
-    buffer's length. It is a convention and not a deduction, so the build PRINTS
-    every pairing it made. A kernel receives a bare pointer and the interpreter
-    receives an object that knows its size; nothing in the signature connects the
-    two, and silence here is what turns a wrong length into a write past the end
-    of someone's bytearray.
-    """
-    j = i + 1
-    if j < len(params) and params[j].kind == "scalar" and params[j].ann != "bool":
-        return j
-    return None
-
-
-def buffer_pairings(exports: list["Exported"]) -> list[tuple[str, str, str]]:
-    """(function, buffer, length) for every pairing the adapter will check."""
-    out = []
-    for e in exports:
-        for i, prm in enumerate(e.params):
-            if prm.kind != "buffer":
-                continue
-            j = _length_of(e.params, i)
-            out.append((e.name, prm.name, e.params[j].name if j is not None else ""))
-    return out
-
-
 def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
     """The C adapter: one thunk per exported function, plus mpy_init.
 
@@ -384,13 +356,14 @@ def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
     L.append("")
     L.append("/* PyMCU kernels, compiled from Python and linked in beside this file. */")
     for e in exports:
-        args = ", ".join(p.ctype for p in e.params) or "void"
-        L.append(f"extern {e.ret_ctype or 'void'} {e.name}({args});")
+        decl = [p.ctype for p in e.params]
+        decl += ["uint32_t"] * sum(1 for p in e.params if p.kind == "buffer")
+        L.append(f"extern {e.ret_ctype or 'void'} {e.name}({', '.join(decl) or 'void'});")
     L.append("")
 
     # Emit a helper only where it is used: -Werror rejects an unused static function.
     needs_range = any(p.ann in _RANGES for e in exports for p in e.params)
-    needs_len = any(lp for _, _, lp in buffer_pairings(exports))
+
     if needs_range:
         L.append("/* One raise for every integer that does not fit the width it was declared")
         L.append("   with. Shared, so the cost is one routine and one string per argument. */")
@@ -400,16 +373,6 @@ def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
         L.append("    }")
         L.append("}")
         L.append("")
-    if needs_len:
-        L.append("/* A length argument is checked against the buffer the caller actually passed,")
-        L.append("   never trusted, because the kernel receives only a pointer. */")
-        L.append("static void nm_fits(size_t have, mp_int_t want, const char *what) {")
-        L.append("    if (want < 0 || (size_t)want > have) {")
-        L.append("        mp_raise_ValueError(what);")
-        L.append("    }")
-        L.append("}")
-        L.append("")
-
     for e in exports:
         n = len(e.params)
         formal = ", ".join(f"mp_obj_t a{i}" for i in range(n))
@@ -421,11 +384,13 @@ def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
             L.append(f"static mp_obj_t nm_{e.name}({formal or 'void'}) {{")
 
         actual: list[str] = []
+        lengths: list[str] = []
         for i, prm in enumerate(e.params):
             if prm.kind == "buffer":
                 L.append(f"    mp_buffer_info_t b{i};")
                 L.append(f"    mp_get_buffer_raise(a{i}, &b{i}, {prm.buffer_flag});")
                 actual.append(f"({prm.ctype})b{i}.buf")
+                lengths.append(f"(uint32_t)b{i}.len")
             elif prm.ann == "bool":
                 L.append(f"    {prm.ctype} p{i} = ({prm.ctype})(mp_obj_is_true(a{i}) ? 1 : 0);")
                 actual.append(f"p{i}")
@@ -441,19 +406,7 @@ def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
                 L.append(f"    {prm.ctype} p{i} = ({prm.ctype})r{i};")
                 actual.append(f"p{i}")
 
-        # Length checks come after every argument exists, so the message can name both.
-        for i, prm in enumerate(e.params):
-            if prm.kind != "buffer":
-                continue
-            j = _length_of(e.params, i)
-            if j is None:
-                continue
-            L.append(
-                f"    nm_fits(b{i}.len, r{j}, "
-                f'"{e.name}(): {e.params[j].name} is larger than {prm.name}");'
-            )
-
-        call = f"{e.name}({', '.join(actual)})"
+        call = f"{e.name}({', '.join(actual + lengths)})"
         if e.ret_ctype is None:
             L.append(f"    {call};")
             L.append("    return mp_const_none;")
@@ -784,12 +737,37 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     # stores its own -o path in the .mpy as the module's source name, and that string is
     # carried into the board's RAM. An absolute build path cost 132 bytes of the 547 in the
     # first module built this way.
-    link_log = _run_capture_cwd(
-        [py, str(cp / "tools" / "mpy_ld.py"), "--arch", arch,
-         "--qstrs", str(config_h), "-o", native_mpy.name,
-         str(adapter_o), str(kernel_o)],
-        "mpy_ld link", build_dir,
-    )
+    # libgcc, the way py/dynruntime.mk does it under LINK_RUNTIME. A Cortex-M0 has no
+    # divide instruction and no UMULL, so even `x // 3` with a constant divisor lowers to
+    # __aeabi_uidiv, and the same kernel that links on armv7emsp fails on armv6m with an
+    # undefined symbol. mpy_ld.py pulls only the objects actually referenced, so a module
+    # that needs nothing from libgcc is unchanged by this.
+    libs: list[str] = []
+    libgcc = _run_capture(
+        [cc, *arch_flags, "--print-libgcc-file-name"], "libgcc lookup"
+    ).strip()
+    if libgcc and Path(libgcc).exists():
+        libs = ["-l", str(Path(libgcc).resolve())]
+
+    try:
+        link_log = _run_capture_cwd(
+            [py, str(cp / "tools" / "mpy_ld.py"), "--arch", arch,
+             "--qstrs", str(config_h), *libs, "-o", native_mpy.name,
+             str(adapter_o), str(kernel_o)],
+            "mpy_ld link", build_dir,
+        )
+    except NatmodError as e:
+        # ar_util raises this as a bare RuntimeError inside a traceback, and the advice
+        # it gives names no interpreter -- which is the whole difficulty, since the tools
+        # run under whichever python has pyelftools and not under the driver's own.
+        if "pip install ar" in str(e):
+            raise NatmodError(
+                f"linking against libgcc needs the 'ar' module, which reads .a archives.\n"
+                f"  Install it where the CircuitPython tools run: {py} -m pip install ar\n"
+                f"  libgcc is needed because this target has no divide instruction, so even a "
+                f"constant divisor becomes a call into it."
+            ) from None
+        raise
     # mpy_ld.py reports a LinkError on stdout and exits 1, which _run_capture
     # already turns into a refusal; this is the success report.
     for line in link_log.strip().splitlines():
@@ -828,15 +806,9 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
             "raises ValueError and a larger value raises OverflowError in the interpreter, "
             "so the top half of the range is not reachable yet."
         )
-    for fn, buf, length in buffer_pairings(exports):
-        if length:
-            console.print(
-                f"  [dim]{fn}(): '{length}' is taken as the length of '{buf}' and checked "
-                f"against it.[/dim]"
-            )
-        else:
-            console.print(
-                f"  [yellow]note:[/yellow] {fn}() takes the buffer '{buf}' with no length "
-                f"argument after it, so how far the kernel reads or writes cannot be checked. "
-                f"Add a length parameter directly after the buffer to have it checked."
-            )
+    if any(p.kind == "buffer" for e in exports for p in e.params):
+        console.print(
+            "  [dim]a buffer argument is passed with its own length, which `len()` returns "
+            "inside the kernel. Indexing is NOT bounds-checked: every count a kernel derives "
+            "from len() is its author's contract, as with viper's pointer types.[/dim]"
+        )
