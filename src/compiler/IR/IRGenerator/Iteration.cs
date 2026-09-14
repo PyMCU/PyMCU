@@ -93,6 +93,77 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Binds one unrolled element to the loop variable, and says whether it could. A number
+    /// binds as it always has; a STRING binds as a string constant, which is what a `const`
+    /// parameter needs and what `case "PD6"` matches on.
+    ///
+    /// Only integers were accepted, so the CircuitPython idiom for a row of pins --
+    /// `for pin in (board.D2, board.D3, board.D4)` -- was refused as "elements must be
+    /// compile-time integer constants" for elements that are compile-time constants, and every
+    /// guide with more than one pin had to be written out one call per pin (#308).
+    /// </summary>
+    private bool BindUnrolledElement(string key, Expression elem)
+    {
+        if (TryEvalConstElement(elem, out int iv))
+        {
+            constantVariables[key] = iv;
+            strConstantVariables.Remove(key);
+            return true;
+        }
+
+        if (!TryEvalConstStrElement(elem, out var text)) return false;
+
+        strConstantVariables[key] = text;
+        // A one-character string is its own character code in expression position and an
+        // interned id through a name. The unrolled name has to be indistinguishable from the
+        // literal it stands for, which is the state the read path expects.
+        if (text.Length == 1) constantVariables[key] = text[0];
+        else constantVariables.Remove(key);
+        return true;
+    }
+
+    /// <summary>
+    /// The compile-time TEXT of an element that is not a number: a string literal, a name
+    /// bound to one, or a module or class constant such as `board.D2`. Emits nothing -- an
+    /// element that turns out to need code is not a constant, and anything it wrote is undone.
+    /// </summary>
+    private bool TryEvalConstStrElement(Expression e, out string text)
+    {
+        text = "";
+        if (e is StringLiteral sl) { text = sl.Value; return true; }
+        if (e is not VariableExpr && e is not MemberAccessExpr) return false;
+
+        int before = currentInstructions.Count;
+        Val v;
+        try
+        {
+            v = VisitExpression(e);
+        }
+        catch (PyMCU.Common.CompilerError)
+        {
+            if (currentInstructions.Count > before)
+                currentInstructions.RemoveRange(before, currentInstructions.Count - before);
+            return false;
+        }
+
+        if (currentInstructions.Count > before)
+        {
+            currentInstructions.RemoveRange(before, currentInstructions.Count - before);
+            return false;
+        }
+
+        if (v is not Constant c) return false;
+        if (!string.IsNullOrEmpty(c.Text)) { text = c.Text!; return true; }
+        // Interned ids start at 256, so a value in that range is a string and nothing else.
+        if (c.Value >= 256 && stringIdToStr.TryGetValue(c.Value, out var interned))
+        {
+            text = interned;
+            return true;
+        }
+        return false;
+    }
+
     // The compile-time array a bare name denotes: its base key and length, or a negative length
     // when the name is not one. The probe order is inline expansion, enclosing function, bare
     // name, then the alias chain -- the same order every other lookup on this path uses.
@@ -639,24 +710,21 @@ public partial class IRGenerator
                         // WHICH of the two is not a constant. Short-circuiting the || would
                         // leave the second unevaluated and the caret with nothing to choose
                         // between.
-                        bool pairOk0 = TryEvalConstElement(parts[0], out int pv0);
-                        bool pairOk1 = TryEvalConstElement(parts[1], out int pv1);
+                        bool pairOk0 = BindUnrolledElement(varKey, parts[0]);
+                        bool pairOk1 = BindUnrolledElement(varKey2, parts[1]);
                         if (!pairOk0 || !pairOk1)
                             throw UserError(
                                 "for-in over a list of pairs unrolls at compile time, so both values in " +
-                                "each pair have to be integer constants. Read the run-time value inside " +
-                                "the body instead.",
+                                "each pair have to be constants -- a number, or a string such as a board " +
+                                "pin name. Read the run-time value inside the body instead.",
                                 pairOk0 ? parts[1] : parts[0]);
 
-                        constantVariables[varKey] = pv0;
-                        constantVariables[varKey2] = pv1;
                         EmitUnrolledIteration(stmt.Body, llBrk);
                         continue;
                     }
 
-                    if (TryEvalConstElement(elem, out int ev))
+                    if (BindUnrolledElement(varKey, elem))
                     {
-                        constantVariables[varKey] = ev;
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     }
                     // A tuple element with a single loop name is the shape that used to be
@@ -668,12 +736,18 @@ public partial class IRGenerator
                             $"nowhere to put the second value. Write 'for {stmt.VarName}, second in ...' to " +
                             "unpack both.", elem);
                     else throw UserError(
-                        "for-in list/tuple iterable elements must be compile-time integer constants.", elem);
+                        "for-in list/tuple iterable elements must be compile-time constants -- a number, "
+                        + "or a string such as a board pin name.", elem);
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
                 constantVariables.Remove(varKey);
-                if (varKey2 != null) constantVariables.Remove(varKey2);
+                strConstantVariables.Remove(varKey);
+                if (varKey2 != null)
+                {
+                    constantVariables.Remove(varKey2);
+                    strConstantVariables.Remove(varKey2);
+                }
                 return;
             }
 
