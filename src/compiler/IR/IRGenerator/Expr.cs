@@ -97,11 +97,31 @@ public partial class IRGenerator
                 "tuples are not supported as runtime values -- use a fixed list " +
                 "([a, b, c]) for indexable storage, or unpack directly (x, y = f())", expr);
 
-        if (expr is ListCompExpr)
+        // Three different programs reached this line and all three were told there is a
+        // filter. `[DigitalInOut(p) for p in pins]` has no `if` in it, and the reader was sent
+        // to look for one; what is unsupported is a comprehension of INSTANCES, which have no
+        // array slot to live in (#307).
+        if (expr is ListCompExpr comp)
+        {
+            if (comp.Filter != null)
+                throw UserError(
+                    "a list comprehension with a filter (if) is not supported -- the array " +
+                    "length must be a compile-time constant, and a filter decides it at run " +
+                    "time. Build the list with an explicit loop, or drop the filter (plain " +
+                    "[f(i) for i in range(N)] works)", expr);
+
+            if (ComprehensionElementIsInstance(comp))
+                throw UserError(
+                    "a list comprehension of class instances is not supported: PyMCU lays an "
+                    + "instance out at compile time and it has no array slot to live in. Write "
+                    + "the list as a literal of constructions ([A(x), A(y)]), or build each one "
+                    + "by name.", expr);
+
             throw UserError(
-                "list comprehensions with a filter (if) are not supported -- the array " +
-                "length must be a compile-time constant. Build the list with an explicit " +
-                "loop, or drop the filter (plain [f(i) for i in range(N)] works)", expr);
+                "a list comprehension is only supported where it fills a fixed array whose "
+                + "length is a compile-time constant (`xs: uint8[4] = [f(i) for i in "
+                + "range(4)]`). In this position there is no array for it to fill.", expr);
+        }
 
         // A bytes or list literal reaching a VALUE position. `b"ab"` parses to a ListExpr of
         // integers, so this answered "Unknown Expression type: ListExpr": a compiler class name
@@ -117,6 +137,22 @@ public partial class IRGenerator
                 expr);
 
         throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}", expr);
+    }
+
+    /// <summary>Whether a comprehension builds class instances rather than values.</summary>
+    private bool ComprehensionElementIsInstance(ListCompExpr comp)
+    {
+        if (comp.Element is not CallExpr call) return false;
+        string name = call.Callee switch
+        {
+            VariableExpr ve => ve.Name,
+            MemberAccessExpr ma => ma.Member,
+            _ => "",
+        };
+        if (name.Length == 0) return false;
+        if (classNames.Contains(name)) return true;
+        string resolved = ResolveCallee(name);
+        return classFieldLayout.ContainsKey(resolved) || classDirectMethods.ContainsKey(resolved);
     }
 
     // The one fact behind every refusal below, so a reader meets it once and the three sites
