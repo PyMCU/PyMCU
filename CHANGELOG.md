@@ -45,6 +45,11 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- A list literal accepts a trailing comma, as a call, a parameter list, a dict and a set
+  already did. It was the one bracketed construct without the guard, so `[1, 2,]` was
+  reported as a missing expression pointing at the closing bracket -- and every formatter in
+  the CircuitPython ecosystem writes that comma on a collection split over several lines
+  (#341).
 - `from <package> import <submodule>` works even when the package's `__init__` mentions the
   submodule's name in a comment, which is what refused `from adafruit_motor import servo`
   (#323).

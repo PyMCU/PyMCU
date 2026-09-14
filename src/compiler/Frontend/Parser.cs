@@ -3030,6 +3030,12 @@ public class Parser
             var lelems = new List<Expression> { first };
             while (Match(TokenType.Comma))
             {
+                // Trailing comma, the same guard the set literal above and the call and
+                // parameter lists already have (#341). A list was the one bracketed
+                // construct without it, so `[1, 2,]` asked for an expression and pointed at
+                // the `]` -- and every formatter in the CircuitPython ecosystem writes that
+                // comma on a collection it has split over several lines.
+                if (Check(TokenType.RBracket)) break;
                 lelems.Add(ParseExpression());
             }
 
