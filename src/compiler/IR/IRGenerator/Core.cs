@@ -949,6 +949,7 @@ public partial class IRGenerator
         // map, and both are only complete once every module has been scanned.
         currentModulePrefix = "";
         CheckSignatureAnnotations(mainAst);
+        CheckGlobalAnnotations(mainAst);
         RegisterInstanceFieldArrays(mainAst);
         MarkModuleInstanceFields(mainAst);
 
@@ -960,7 +961,22 @@ public partial class IRGenerator
             if (!astToCanonicalPrefix.TryGetValue(modKvp.Value, out var markPrefix)) continue;
             if (!projectModules.Contains(modKvp.Key)) continue;
             currentModulePrefix = markPrefix;
-            CheckSignatureAnnotations(modKvp.Value);
+            // The file the module's own declarations are written in, so a refusal below names
+            // it rather than the entry program (#347, and #348 for the globals).
+            string savedGlobPath = currentSourcePath, savedGlobFile = currentSourceFile;
+            int gDot = modKvp.Key.LastIndexOf('.');
+            currentSourceFile = (gDot != -1 ? modKvp.Key[(gDot + 1)..] : modKvp.Key) + ".py";
+            currentSourcePath = PathOfModule(modKvp.Key);
+            try
+            {
+                CheckSignatureAnnotations(modKvp.Value);
+                CheckGlobalAnnotations(modKvp.Value);
+            }
+            finally
+            {
+                currentSourcePath = savedGlobPath;
+                currentSourceFile = savedGlobFile;
+            }
             RegisterInstanceFieldArrays(modKvp.Value);
             MarkModuleInstanceFields(modKvp.Value);
         }

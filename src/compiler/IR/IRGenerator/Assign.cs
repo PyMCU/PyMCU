@@ -3592,6 +3592,55 @@ public partial class IRGenerator
                     if (m is FunctionDef mf) Fn(mf);
     }
 
+    /// <summary>
+    /// Check the annotation on every MODULE-LEVEL GLOBAL the program declares (#348).
+    ///
+    /// This was the one annotation position `CheckAnnotationNames` never swept. A local, a
+    /// parameter, a return type and an instance field all reached it; `X: Bogus = 1` written at
+    /// a module's top level did not, so it took the silent uint8 fallback that #278 exists to
+    /// stop -- and the same name one line lower, inside a function, was refused. One position
+    /// answering differently from the other four is the mistake being reported inconsistently,
+    /// not a different mistake.
+    ///
+    /// A module-level declaration never reaches `VisitAnnAssign` or `VisitVarDecl`, which is
+    /// where the other spellings are checked: ScanGlobals consumes it, and ScanGlobals runs
+    /// before the class tables are complete, so the check cannot live there either. It runs
+    /// here, beside the signature sweep, for the same reason and at the same moment.
+    /// </summary>
+    private void CheckGlobalAnnotations(ProgramNode ast)
+    {
+        int savedStmtLine = currentStmtLine;
+        try
+        {
+            foreach (var st in ast.GlobalStatements)
+            {
+                // The LINE the declaration is written on. A module-level declaration is never
+                // lowered through a statement visitor, so nothing has set `currentStmtLine`
+                // when this sweep runs and the refusal fell back to line 1 on a file whose
+                // third line held the typo. The C# front end records no column on either node,
+                // so the line is what the located overload has to work from.
+                currentStmtLine = st.Line;
+                switch (st)
+                {
+                    // `X: Bogus = 1`. The parser splits an annotated binding on one character:
+                    // an annotation containing '[' becomes an AnnAssign and anything else a
+                    // VarDecl, so both spellings have to be named here or the check depends on
+                    // the shape of the type rather than on the name in it.
+                    case VarDecl vd:
+                        CheckAnnotationNames(vd.VarType ?? "", vd);
+                        break;
+                    case AnnAssign an:
+                        CheckAnnotationNames(an.Annotation, an);
+                        break;
+                }
+            }
+        }
+        finally
+        {
+            currentStmtLine = savedStmtLine;
+        }
+    }
+
     private void VisitAnnAssign(AnnAssign stmt)
     {
         CheckAnnotationNames(stmt.Annotation, stmt);
