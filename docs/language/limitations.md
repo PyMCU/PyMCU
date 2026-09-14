@@ -338,6 +338,13 @@ dunders). A class-typed field dispatches correctly through a **value-returning**
 | `Union` types | Runtime type tag required | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
 
+**`None` is a compile-time value.** It travels: passing it as an argument, or assigning it
+through a property setter, binds the parameter as `None`, so `p is None` folds and a
+`match p:` is decided at compile time. `None` matches `case None` and the wildcard and
+nothing else, and only the arm it selects is lowered, so a refusal written in an arm the
+program never takes never fires. This is what makes the CircuitPython spelling
+`pin.pull = None` mean "no pull".
+
 **Note on `float`:** Soft-float (IEEE 754 single-precision) is supported on AVR via a
 pure-assembly helper library. Expect ~200-400 cycles per operation. Subnormals are treated as
 zero; NaN and Inf propagate correctly. `uint32(x * 100.0 + 0.5)` and the other float→int
