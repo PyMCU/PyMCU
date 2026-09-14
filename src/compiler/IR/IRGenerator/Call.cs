@@ -556,6 +556,15 @@ public partial class IRGenerator
                             + "use the operators and the builtins (abs, min, max, round) instead.",
                             memC);
 
+                    // A NAME whose value the compiler now knows (#331) arrives here as the
+                    // constant it holds, so the receiver is no longer "not a name": `x = 5`
+                    // then `x.bit_length()` used to reach the numeric message on the
+                    // undefined-function path and now reaches this one. It gets the same
+                    // sentence, because neither the reader's program nor their mistake changed.
+                    if (memC.Object is VariableExpr constRecv
+                        && NumericLocalKind(constRecv.Name) is { } constKind)
+                        throw NumericReceiverError(constRecv.Name, constKind, memC.Member, memC);
+
                     // Anything else that resolves to neither a name nor a register. No cause is
                     // claimed here on purpose: the one this branch used to name now compiles, and
                     // guessing a new one is how the last message became wrong.
@@ -956,23 +965,7 @@ public partial class IRGenerator
             if (expr.Callee is MemberAccessExpr { Object: VariableExpr numRecv } numMem
                 && NumericLocalKind(numRecv.Name) is { } numKind)
             {
-                bool isInt = numKind == "an integer";
-                // Everything offered here is checked to compile on a run-time value of that
-                // type, not read off the builtin list: hex(), bin() and pow() are on that list
-                // and all three refuse anything but a compile-time constant, and round() does
-                // not exist at all.
-                string works = isInt
-                    ? "the arithmetic, comparison and bitwise operators, the builtins abs(), "
-                      + "min(), max() and divmod(), and the width casts uint8()/int8()/"
-                      + "uint16()/int16()/uint32()/int32()"
-                    : "the arithmetic and comparison operators, abs(), and int() to truncate "
-                      + "toward zero";
-
-                throw UserError(
-                    $"'{numRecv.Name}' is {numKind}: '{numMem.Member}()' is not available. "
-                    + $"{(isInt ? "Integers" : "Floats")} on this target are fixed-width machine "
-                    + $"values, not objects carrying methods. Supported: {works}.",
-                    expr.Callee);
+                throw NumericReceiverError(numRecv.Name, numKind, numMem.Member, expr.Callee);
             }
 
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)",
@@ -2338,6 +2331,35 @@ public partial class IRGenerator
     /// is answered by its own path long before this one, and adding a negative test here would
     /// be a second place to keep that list correct.
     /// </summary>
+    /// <summary>
+    /// `x.bit_length()` on a name holding a number: the receiver named as the reader wrote it.
+    ///
+    /// ONE site for the sentence, reached from two paths. It used to live only under the
+    /// undefined-function fallback, and a name whose value the compiler knows stopped going
+    /// there once reads of locals began to fold (#331) -- the reader then got a sentence about
+    /// a receiver that is "not a name", for a program whose receiver is a name.
+    /// </summary>
+    private PyMCU.Common.CompilerError NumericReceiverError(
+        string name, string kind, string member, PyMCU.Frontend.ASTNode at)
+    {
+        bool isInt = kind == "an integer";
+        // Everything offered here is checked to compile on a run-time value of that type, not
+        // read off the builtin list: hex(), bin() and pow() are on that list and all three
+        // refuse anything but a compile-time constant, and round() does not exist at all.
+        string works = isInt
+            ? "the arithmetic, comparison and bitwise operators, the builtins abs(), "
+              + "min(), max() and divmod(), and the width casts uint8()/int8()/"
+              + "uint16()/int16()/uint32()/int32()"
+            : "the arithmetic and comparison operators, abs(), and int() to truncate "
+              + "toward zero";
+
+        return UserError(
+            $"'{name}' is {kind}: '{member}()' is not available. "
+            + $"{(isInt ? "Integers" : "Floats")} on this target are fixed-width machine "
+            + $"values, not objects carrying methods. Supported: {works}.",
+            at);
+    }
+
     private string? NumericLocalKind(string name)
     {
         foreach (var key in Qualifications(name))

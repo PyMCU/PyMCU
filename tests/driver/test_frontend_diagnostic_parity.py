@@ -86,7 +86,13 @@ def test_a_binary_argument_is_the_known_gap(tmp_path):
     # the operator; the bridge does not carry a position for it at all, so CPython's side
     # reports no column. Deliberate, documented in POSITIONED_KINDS, and pinned here so that
     # closing it is a decision someone makes rather than a surprise.
-    src = _write(tmp_path, "    a: uint8 = 5\n    s = hex(a + 1)\n")
+    #
+    # `a` reads a register rather than holding a literal, because since #331 a local holding a
+    # literal IS a compile-time constant and `hex(5 + 1)` is a legal call with no diagnostic to
+    # locate.
+    src = _write(tmp_path,
+                 "    GPIOR0: ptr[uint8] = ptr(0x3E)\n"
+                 "    a: uint8 = GPIOR0.value\n    s = hex(a + 1)\n")
 
     hand = _where(src, py_parser=False)
     cpython = _where(src, py_parser=True)
