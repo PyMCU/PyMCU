@@ -585,6 +585,27 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
         verbose=verbose,
     )
 
+    # Every export has to exist in the generated code before anything is linked. A
+    # function the compiler dropped would otherwise surface much later as "undefined
+    # symbol: <name>" out of mpy_ld.py, which reads as a linker problem and is not one.
+    # Measured: a parameter annotated `bytes` makes the compiler emit an EMPTY program
+    # and exit 0, so the only evidence of the loss is the missing definition here.
+    defined = {
+        line.split("@", 1)[1].split("(", 1)[0]
+        for line in ll.read_text().splitlines()
+        if line.startswith("define") and "@" in line
+    }
+    missing = [e.name for e in exports if e.name not in defined]
+    if missing:
+        raise NatmodError(
+            f"{entry}: the compiler produced no code for "
+            + ", ".join(f"'{m}'" for m in missing)
+            + ".\n  The function is declared in the source and absent from the generated "
+              "module, which is a compiler defect and not a mistake in your file.\n"
+              f"  Working intermediates are in {build_dir}; the .mir and .ll there show "
+              "what was kept."
+        )
+
     toolchain = Rp2040LlvmToolchain(console, target)
     kernel_o = toolchain.assemble_natmod(ll, build_dir / f"{name}.kernel.o")
 

@@ -30,7 +30,13 @@ namespace PyMCU.IR;
 /// </summary>
 public static class CanFailAnalyzer
 {
-    public static void Analyze(ProgramIR program)
+    /// <param name="libraryMode">
+    /// The unit was compiled with --library, so every top-level function is an export and none
+    /// of them was decorated. The boundary rule is the same either way, but the SENTENCE is not:
+    /// telling a reader who wrote no decorator to "remove @export_c" sends them looking for
+    /// something that is not in their file.
+    /// </param>
+    public static void Analyze(ProgramIR program, bool libraryMode = false)
     {
         // Build a fast name → Function lookup.
         var byName = program.Functions.ToDictionary(f => f.Name);
@@ -73,9 +79,17 @@ public static class CanFailAnalyzer
             // @export_c boundary: C callers have no T-flag protocol.
             if (func.IsExportC)
                 throw new ArchitectureError(
-                    $"Function '{func.Name}' is exported to C (@export_c) but can propagate " +
-                    "an error to its caller. Catch all errors inside the function or remove " +
-                    "the error-raising path before exporting.",
+                    libraryMode
+                        ? $"Function '{func.Name}' is an export of this library but can raise, " +
+                          "and its caller is outside PyMCU, with no way to receive the error. " +
+                          "The raising path has to go. In a library the usual source is '//' " +
+                          "with a computed divisor: a constant divisor (a // 2), a shift for a " +
+                          "power of two, or '%' all compile. An 'if b == 0' guard does NOT " +
+                          "close it, and neither does try/except: the check is not " +
+                          "path-sensitive, and a typed handler is treated as re-raising."
+                        : $"Function '{func.Name}' is exported to C (@export_c) but can propagate " +
+                          "an error to its caller. Catch all errors inside the function or remove " +
+                          "the error-raising path before exporting.",
                     line: 0, column: 0);
 
             // ISR boundary: no caller exists to receive the T-flag signal.

@@ -58,7 +58,7 @@ public class IrGenerationPhase : CompilerPhaseBase
 
         // CanFail analysis runs after optimization so that dead-code-eliminated
         // functions and cloned bodies are the final IR seen by the backend.
-        CanFailAnalyzer.Analyze(optimized);
+        CanFailAnalyzer.Analyze(optimized, libraryMode: context.Options.Library);
 
         // Guard every unguarded CanFail call so an uncaught error halts (top-level) or re-raises
         // to the caller, instead of being silently swallowed by the next happy-path CLT.
