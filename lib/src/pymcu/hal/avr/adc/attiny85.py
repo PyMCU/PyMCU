@@ -50,6 +50,43 @@ def adc_channel_admux(channel) -> uint8:
                 "the channel number 0 to 3. Pass one of those.")
 
 
+# The voltage the converter measures against, in millivolts, as a compile-time constant.
+# adc_init selects VCC as the reference (REFS1:0 = 00), so the reference IS the supply rail.
+# 5000 mV is the nominal for the 5 V boards; a part run at another rail should read the true
+# value with adc_measure_vcc_mv().
+@inline
+def adc_reference_millivolts() -> uint16:
+    return 5000
+
+
+# The same reference as a float in volts, so a caller that turns a reading into volts pays
+# nothing: a literal folds where 5000 / 1000.0 emitted a runtime int-to-float conversion and
+# a call to __divsf3.
+@inline
+def adc_reference_volts() -> float:
+    return 5.0
+
+
+# The supply rail in millivolts, MEASURED against the internal 1.1 V bandgap (MUX = 1100).
+# raw = 1023 * 1100 / Vcc, so Vcc = 1125300 / raw. The first conversion after the mux
+# switches is thrown away so the bandgap can settle.
+def adc_measure_vcc_mv() -> uint16:
+    ADMUX.value = 0x0C
+    ADCSRA[6] = 1
+    while ADCSRA[6]:
+        pass
+    lo0: uint8 = ADCL.value
+    hi0: uint8 = ADCH.value
+    ADCSRA[6] = 1
+    while ADCSRA[6]:
+        pass
+    lo: uint8 = ADCL.value
+    hi: uint8 = ADCH.value
+    raw: uint16 = lo + hi * 256
+    if raw == 0:
+        return 0
+    return uint16(1125300 // raw)
+
 @inline
 def adc_init(admux_val: uint8):
     ADMUX.value = admux_val

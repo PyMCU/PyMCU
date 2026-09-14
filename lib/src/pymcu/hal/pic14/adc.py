@@ -34,3 +34,15 @@ class AnalogPin:
     @inline
     def read_u16(self) -> uint16:
         return 0
+
+    # The voltage this converter measures against, in millivolts. The PIC14 parts take VDD
+    # as the positive reference, so the reference IS the supply rail; 5000 mV is the nominal
+    # for the 5 V boards this HAL targets.
+    @inline
+    def reference_millivolts(self) -> uint16:
+        return 5000
+
+    # The same reference in volts, as a float literal.
+    @inline
+    def reference_volts(self) -> float:
+        return 5.0

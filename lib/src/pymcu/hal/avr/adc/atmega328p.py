@@ -1,6 +1,6 @@
 from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
-from pymcu.exceptions import CompileError
 from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH, SREG
+from pymcu.exceptions import CompileError
 
 
 # Returns the ADMUX register value for an analog input.
@@ -51,6 +51,45 @@ def adc_channel_admux(channel) -> uint8:
                 "sources are \"TEMP\" (the die temperature sensor) and \"VBG\" (the 1.1 V "
                 "bandgap). Pass one of those, or read the signal through a pin that has "
                 "a channel.")
+
+
+# The voltage the converter measures against, in millivolts, as a compile-time constant.
+# adc_init selects AVcc (REFS1:0 = 01), so the reference IS the supply rail: 5000 mV on the
+# 5 V boards this HAL targets. A board running the part at another rail should read the true
+# value with adc_measure_vcc_mv(), which measures the rail against the 1.1 V bandgap and does
+# not depend on this constant.
+@inline
+def adc_reference_millivolts() -> uint16:
+    return 5000
+
+
+# The same reference as a float in volts, so a caller that turns a reading into volts pays
+# nothing: a literal folds where 5000 / 1000.0 emitted a runtime int-to-float conversion and
+# a call to __divsf3.
+@inline
+def adc_reference_volts() -> float:
+    return 5.0
+
+
+# The supply rail in millivolts, MEASURED: convert the internal 1.1 V bandgap against AVcc and
+# invert. raw = 1023 * 1100 / Vcc, so Vcc = 1023 * 1100 / raw. The bandgap needs time to settle
+# after the mux switches, so the first conversion is thrown away.
+def adc_measure_vcc_mv() -> uint16:
+    ADMUX.value = 0x4E
+    ADCSRA[6] = 1
+    while ADCSRA[6]:
+        pass
+    lo0: uint8 = ADCL.value
+    hi0: uint8 = ADCH.value
+    ADCSRA[6] = 1
+    while ADCSRA[6]:
+        pass
+    lo: uint8 = ADCL.value
+    hi: uint8 = ADCH.value
+    raw: uint16 = lo + hi * 256
+    if raw == 0:
+        return 0
+    return uint16(1125300 // raw)
 
 
 @inline

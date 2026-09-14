@@ -24,9 +24,9 @@ if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
         "so pymcu.hal.adc cannot read one. Use a part that has one (the ATtiny 25/45/85 and "
         "the ATmega parts do), or read the signal with an external converter over SPI or I2C.")
 elif __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
-    from pymcu.hal.avr.adc.attiny85 import adc_channel_admux, adc_init, adc_select, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16
+    from pymcu.hal.avr.adc.attiny85 import adc_channel_admux, adc_init, adc_select, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16, adc_reference_millivolts, adc_reference_volts, adc_measure_vcc_mv
 else:
-    from pymcu.hal.avr.adc.atmega328p import adc_channel_admux, adc_init, adc_select, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16
+    from pymcu.hal.avr.adc.atmega328p import adc_channel_admux, adc_init, adc_select, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16, adc_reference_millivolts, adc_reference_volts, adc_measure_vcc_mv
 
 
 class AnalogPin:
@@ -67,3 +67,21 @@ class AnalogPin:
     def read_u16(self) -> uint16:
         adc_select(self._admux)
         return adc_read_u16()
+
+    # The voltage this converter measures against, in millivolts. A compile-time constant:
+    # the caller that turns a reading into volts pays nothing for asking.
+    @inline
+    def reference_millivolts(self) -> uint16:
+        return adc_reference_millivolts()
+
+    # The same reference in volts. A float literal, so the volts = value * vref / 65535 a
+    # CircuitPython program writes folds its constants instead of calling __divsf3.
+    @inline
+    def reference_volts(self) -> float:
+        return adc_reference_volts()
+
+    # The supply rail in millivolts, measured against the internal bandgap. Costs two
+    # conversions and leaves ADMUX on the bandgap channel, so re-select before reading a pin.
+    @inline
+    def measure_supply_millivolts(self) -> uint16:
+        return adc_measure_vcc_mv()

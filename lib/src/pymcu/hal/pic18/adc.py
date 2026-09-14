@@ -47,6 +47,18 @@ class AnalogPin:
     def read_u16(self) -> uint16:
         return adc_read_u16(self.channel)
 
+    # The voltage this converter measures against, in millivolts. adc_init selects VDD as
+    # the positive reference, so the reference IS the supply rail; 5000 mV is the nominal
+    # for the 5 V boards this HAL targets.
+    @inline
+    def reference_millivolts(self) -> uint16:
+        return 5000
+
+    # The same reference in volts, as a float literal.
+    @inline
+    def reference_volts(self) -> float:
+        return 5.0
+
     @inline
     def irq(self, handler: Callable):
         raise CompileError("ADC interrupts are not implemented for PIC18F45K50")

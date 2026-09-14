@@ -54,3 +54,15 @@ class AnalogPin:
     def read_u16(self) -> uint16:
         raw: uint16 = self.read()
         return (raw << 4) | (raw >> 8)
+
+    # The voltage this converter measures against, in millivolts. The RP parts run the ADC
+    # from ADC_AVDD, which the board ties to 3V3 on every RP2040 and RP2350 design.
+    @inline
+    def reference_millivolts(self) -> uint16:
+        return 3300
+
+    # The same reference in volts, as a float literal: a caller turning a reading into volts
+    # pays nothing for it.
+    @inline
+    def reference_volts(self) -> float:
+        return 3.3
