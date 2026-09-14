@@ -49,10 +49,14 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
             // module-level `if __CHIP__.name == "..."` guards are loaded before
             // ConditionalCompilator runs and promotes the chosen imports.
             var allImports = currentAst.Imports
-                .Concat(ConditionalImportExtractor.Extract(currentAst, context.DeviceConfig));
+                .Concat(ConditionalImportExtractor.Extract(currentAst, context.DeviceConfig))
+                .ToList();
 
-            foreach (var imp in allImports)
+            // A worklist rather than a foreach: rewriting `from <package> import <submodule>`
+            // appends the submodule's own import, and it has to be loaded in this same pass.
+            for (int impIndex = 0; impIndex < allImports.Count; ++impIndex)
             {
+                var imp = allImports[impIndex];
                 if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
 
                 ProgramNode importedAst;
@@ -76,6 +80,16 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
                 // in place imported nothing at all.
                 StarImportExpander.Expand(imp, importedAst);
 
+                // `from <package> import <submodule>` -- the first line of every Adafruit
+                // guide, and the layout those packages exist for. Only the names of the
+                // package's own __init__.py could be imported from it, so `servo`, a module
+                // of adafruit_motor, was refused as a name the package does not define
+                // (#323). A name the package does not bind but DOES have a file for is that
+                // file: the import is rewritten to `import <package>.<submodule> as <name>`,
+                // which is what Python binds too.
+                foreach (var extra in RewriteSubmoduleImports(imp, importedAst, currentAst, currentPath, context))
+                    allImports.Add(extra);
+
                 graph.AddDependencyEdge(importedAst, currentAst);
 
                 if (visitedModules.Add(imp.ModuleName))
@@ -84,6 +98,54 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
         }
 
         return graph;
+    }
+
+    /// <summary>
+    /// Turns each `from P import S` whose S is a SUBMODULE of P rather than a name P binds
+    /// into `import P.S as S`, and returns the imports that adds. A name P does bind, a name
+    /// with no file behind it, and a star are all left alone -- the first is an ordinary
+    /// import and the other two are ImportedNameCheck's to report.
+    /// </summary>
+    private IEnumerable<ImportStmt> RewriteSubmoduleImports(
+        ImportStmt imp, ProgramNode importedAst, ProgramNode currentAst,
+        string currentPath, CompilationContext context)
+    {
+        if (imp.Symbols.Count == 0) yield break;
+        if (imp.WasStarImport) yield break;
+
+        // Null means the module's bindings cannot be known (a star it never expanded, or a
+        // module-level CompileError). Asking nothing is the same answer the name check gives.
+        var bound = ImportedNameCheck.BoundNames(importedAst);
+        if (bound == null) yield break;
+
+        foreach (var sym in imp.Symbols.ToList())
+        {
+            if (sym == StarImportExpander.Star || bound.Contains(sym)) continue;
+
+            string sub = imp.ModuleName + "." + sym;
+            try
+            {
+                moduleLoader.ResolveModulePath(sub, currentPath, context);
+            }
+            catch
+            {
+                continue;   // no file behind the name: not a submodule
+            }
+
+            string local = imp.Aliases.TryGetValue(sym, out var alias) ? alias : sym;
+            imp.Symbols.Remove(sym);
+            imp.Aliases.Remove(sym);
+
+            var rewritten = new ImportStmt(sub, new List<string>(), imp.RelativeLevel)
+            {
+                ModuleAlias = local,
+                Line = imp.Line,
+                Column = imp.Column,
+                InFunctionScope = imp.InFunctionScope,
+            };
+            currentAst.Imports.Add(rewritten);
+            yield return rewritten;
+        }
     }
 }
 

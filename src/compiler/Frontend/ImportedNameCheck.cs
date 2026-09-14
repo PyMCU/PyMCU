@@ -169,7 +169,7 @@ public static class ImportedNameCheck
     /// Every name <paramref name="module"/> can bind at module level, or null when the set
     /// cannot be known and no question should be asked of it.
     /// </summary>
-    private static HashSet<string>? BoundNames(ProgramNode module)
+    internal static HashSet<string>? BoundNames(ProgramNode module)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
 
