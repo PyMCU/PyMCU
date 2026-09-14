@@ -5816,16 +5816,41 @@ public partial class IRGenerator
             string synthName = SynthesizeZcaIsrWrapper(handlerFuncName, zcaRootKey);
             if (!string.IsNullOrEmpty(synthName))
             {
-                pendingIsrRegistrations[synthName] = vector;
-                pendingIsrOrigins[synthName] = (currentFunction, IsrCallLine(expr), currentModulePrefix);
+                RegisterIsr(synthName, vector, expr);
                 return new NoneVal();
             }
             // Synthesis returned empty -- fall through to original name (will fail if ZCA param)
         }
 
-        pendingIsrRegistrations[handlerFuncName] = vector;
-        pendingIsrOrigins[handlerFuncName] = (currentFunction, IsrCallLine(expr), currentModulePrefix);
+        RegisterIsr(handlerFuncName, vector, expr);
         return new NoneVal();
+    }
+
+    /// <summary>
+    /// Files one `compile_isr(handler, vector)`. A handler already registered at ANOTHER
+    /// vector is refused here instead of overwriting the first registration: the table holds
+    /// one vector per routine, so the earlier vector was silently left on
+    /// `__bad_interrupt` and every edge on that pin was lost. Two pins handled by the same
+    /// code on two vectors -- a quadrature encoder on INT0 and INT1 is the case every Arduino
+    /// guide wires -- is exactly the shape that hit it (#325).
+    /// </summary>
+    private void RegisterIsr(string handlerName, int vector, CallExpr expr)
+    {
+        if (pendingIsrRegistrations.TryGetValue(handlerName, out int already) && already != vector)
+        {
+            pendingIsrOrigins.TryGetValue(handlerName, out var first);
+            string firstAt = first.Line > 0 ? $" (registered at line {first.Line})" : "";
+            throw UserError(
+                $"'{handlerName}' is already the handler for interrupt vector 0x{already:X4}" +
+                $"{firstAt}, and this call asks for 0x{vector:X4}. A routine can only sit at " +
+                "one vector: the table has one entry per routine, and the earlier vector would " +
+                "be left on the bad-interrupt handler. Give the second vector a function of " +
+                "its own that calls the shared body -- `def on_int1(): step()` -- and register " +
+                "that.", expr.Callee);
+        }
+
+        pendingIsrRegistrations[handlerName] = vector;
+        pendingIsrOrigins[handlerName] = (currentFunction, IsrCallLine(expr), currentModulePrefix);
     }
 
     // Call into a C extern function (@extern): coerce float args to ints per the C ABI
