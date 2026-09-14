@@ -110,6 +110,14 @@ class SoftSPI:
                 else:
                     self._cs = ""
 
+    # Change the clock rate of a bus that is already running, which is what a compatibility
+    # layer's configure() is for. The half-period is a whole number of microseconds, so the
+    # rates available are 1 MHz, 500 kHz, 333 kHz and downwards; ask for one above 500 kHz
+    # and the delay disappears entirely and the loop itself sets the pace.
+    @inline
+    def set_baudrate(self, baudrate: uint16):
+        self._half_us = uint8(500 // baudrate)
+
     @inline
     def transfer(self, data: uint8) -> uint8:
         """Controller mode: send one byte MSB-first and simultaneously receive one byte.
