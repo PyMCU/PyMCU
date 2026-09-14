@@ -683,11 +683,26 @@ public partial class IRGenerator
         inlineDepth++;
         var savedPrefix = currentInlinePrefix;
         var savedModulePrefix = currentModulePrefix;
+        var savedSourcePath = currentSourcePath;
+        var savedSourceFile = currentSourceFile;
         currentInlinePrefix = newPrefix;
         currentModulePrefix = cls + "_";
 
+        // The setter's body is text in the file the setter is DEFINED in, and every other
+        // expansion says so while it lowers one. This one did not, so a call inside the body
+        // looked to the rest of the generator like a call the user had written: the guard that
+        // drops an argument's position when the call is inside a library saw an empty path and
+        // kept it, and a refusal reached through the setter was reported at the LIBRARY's line
+        // and column against the USER's file. `pin.pull = Pull.DOWN` on line 6 of a nine-line
+        // program came out as main.py:109:32, the position of the `2` in digitalio.py (#306).
+        if (setter != null && functionSourcePath.TryGetValue(setter, out var setterPath))
+        {
+            currentSourcePath = setterPath ?? "";
+            currentSourceFile = SourceFileLabel(currentSourcePath);
+        }
+
         inlineStack.Add(new InlineContext { ExitLabel = exitLabel,
-            CallerSourcePath = currentSourcePath });
+            CallerSourcePath = savedSourcePath });
         if (setter?.Body != null) VisitBlock(setter.Body);
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
@@ -695,6 +710,8 @@ public partial class IRGenerator
         inlineDepth--;
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedModulePrefix;
+        currentSourcePath = savedSourcePath;
+        currentSourceFile = savedSourceFile;
 
         return true;
     }
