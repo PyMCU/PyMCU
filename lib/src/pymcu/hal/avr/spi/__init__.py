@@ -10,9 +10,9 @@
 #
 # Single implementation covers all AVR chips with hardware SPI.
 # -----------------------------------------------------------------------------
-from pymcu.types import uint8, inline, Callable, const
+from pymcu.types import uint8, uint32, inline, Callable, const
 from pymcu.hal.avr.spi.avr import (
-    spi_init, spi_select, spi_deselect, spi_transfer,
+    spi_init, spi_configure, spi_frequency, spi_select, spi_deselect, spi_transfer,
     spi_write_bytes, spi_readinto_n, spi_write_readinto_n,
     spi_peripheral_init, spi_peripheral_ready, spi_peripheral_exchange,
     spi_peripheral_receive, spi_peripheral_send, spi_irq_setup,
@@ -30,9 +30,16 @@ class SPI:
     CONTROLLER = 0
     PERIPHERAL = 1
 
-    def __init__(self, mode: uint8 = 0, cs: const[str] = ""):
+    # baudrate, polarity, phase and lsb_first describe the clock and the frame. They used
+    # to be nowhere: the control register was the literal for mode 0 at fosc/4, so
+    # busio.SPI.configure() recorded three of them and reprogrammed none, and a display
+    # asked for mode 3 at 8 MHz ran mode 0 at 4 MHz.
+    def __init__(self, mode: uint8 = 0, cs: const[str] = "",
+                 baudrate: const[uint32] = 4000000, polarity: const[uint8] = 0,
+                 phase: const[uint8] = 0, lsb_first: const[uint8] = 0):
+        self._baudrate = baudrate
         if mode == 0:
-            spi_init()
+            spi_init(baudrate, polarity, phase, lsb_first)
             self._mode = "c"
             if cs != "":
                 from pymcu.hal.avr.gpio import Pin as _Pin
@@ -47,6 +54,20 @@ class SPI:
             spi_peripheral_init()
             self._mode = "p"
             self._cs = ""
+
+    # Reprogram a bus that is already running. The pin directions are already set, so only
+    # the two control registers are written.
+    @inline
+    def configure(self, baudrate: const[uint32] = 4000000, polarity: const[uint8] = 0,
+                  phase: const[uint8] = 0, lsb_first: const[uint8] = 0):
+        spi_configure(baudrate, polarity, phase, lsb_first)
+
+    # The bit rate the hardware actually produces for what was asked: the AVR's dividers are
+    # powers of two, so 3 MHz at a 16 MHz clock is 2 MHz, and reporting 3 MHz back would be a
+    # number the pin never carried.
+    @inline
+    def frequency(self) -> uint32:
+        return spi_frequency(self._baudrate)
 
     @inline
     def transfer(self, data: uint8) -> uint8:

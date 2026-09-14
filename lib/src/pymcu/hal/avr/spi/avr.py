@@ -25,20 +25,95 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.atmega328p import DDRB, PORTB, SPCR, SPSR, SPDR, SREG
-from pymcu.types import uint8, inline, compile_isr, Callable
+from pymcu.types import uint8, uint32, inline, const, compile_isr, Callable
+from pymcu.chips import __FREQ__
+from pymcu.exceptions import CompileError
 
 
 @inline
-def spi_init():
+# The clock divider the SPI hardware will use for a requested bit rate: the smallest divider
+# whose resulting clock does not EXCEED the request, because a peripheral rated for 1 MHz
+# must not be clocked at 2. The AVR's dividers are 2, 4, 8, 16, 32, 64 and 128.
+@inline
+def spi_divider(baudrate: const[uint32]) -> uint8:
+    if __FREQ__ // 2 <= baudrate:
+        return 2
+    if __FREQ__ // 4 <= baudrate:
+        return 4
+    if __FREQ__ // 8 <= baudrate:
+        return 8
+    if __FREQ__ // 16 <= baudrate:
+        return 16
+    if __FREQ__ // 32 <= baudrate:
+        return 32
+    if __FREQ__ // 64 <= baudrate:
+        return 64
+    return 128
+
+
+# The bit rate the hardware actually produces for a request. A layer reporting `frequency`
+# has to report this: asking for 1 MHz at 16 MHz gets 1 MHz exactly, asking for 3 MHz gets
+# 2 MHz, and reporting back the 3 MHz that was asked for is a number the pin never carried.
+@inline
+def spi_frequency(baudrate: const[uint32]) -> uint32:
+    return uint32(__FREQ__ // spi_divider(baudrate))
+
+
+# SPCR and SPSR for a bit rate, a clock polarity and a clock phase.
+#   SPCR: SPIE(7) SPE(6) DORD(5) MSTR(4) CPOL(3) CPHA(2) SPR1(1) SPR0(0)
+#   SPSR: SPI2X(0)
+# The divider is SPR1:0 with SPI2X doubling it: /2 /4 /8 /16 /32 /64 /128 comes out as
+# (SPI2X, SPR) = (1,00) (0,00) (1,01) (0,01) (1,10) (0,10) (0,11).
+@inline
+def spi_spcr(baudrate: const[uint32], polarity: const[uint8], phase: const[uint8],
+             lsb_first: const[uint8]) -> uint8:
+    if polarity > 1 or phase > 1:
+        raise CompileError(
+            "SPI polarity and phase are 0 or 1 each, which together name the four SPI modes "
+            "(mode 0 is polarity 0 phase 0, mode 3 is 1 and 1). Pass 0 or 1.")
+    spr: uint8 = 0
+    if spi_divider(baudrate) == 8 or spi_divider(baudrate) == 16:
+        spr = 1
+    if spi_divider(baudrate) == 32 or spi_divider(baudrate) == 64:
+        spr = 2
+    if spi_divider(baudrate) == 128:
+        spr = 3
+    return uint8(0x50 | (lsb_first << 5) | (polarity << 3) | (phase << 2) | spr)
+
+
+@inline
+def spi_spsr(baudrate: const[uint32]) -> uint8:
+    if spi_divider(baudrate) == 2 or spi_divider(baudrate) == 8 or spi_divider(baudrate) == 32:
+        return 1
+    return 0
+
+
+@inline
+def spi_init(baudrate: const[uint32] = 4000000, polarity: const[uint8] = 0,
+             phase: const[uint8] = 0, lsb_first: const[uint8] = 0):
     # MOSI (PB3), SCK (PB5), SS (PB2) -> output; MISO (PB4) -> input (HW-controlled)
     DDRB[3] = 1   # MOSI: output
     DDRB[5] = 1   # SCK:  output
     DDRB[2] = 1   # SS:   output (we drive it manually as chip-select)
     PORTB[2] = 1  # SS:   idle high (no device selected)
 
-    # SPCR = 0x50: SPE(6)=1 (enable SPI) | MSTR(4)=1 (master mode)
-    # DORD(5)=0 (MSB first), CPOL(3)=0, CPHA(2)=0 (mode 0), SPR[1:0]=00 (fosc/4)
-    SPCR.value = 0x50
+    # The bit rate, the mode and the bit order, all compile-time constants, so this folds to
+    # the same pair of register writes the literal 0x50 was: the default 4 MHz at a 16 MHz
+    # clock IS fosc/4 with SPI2X clear. They used to be nowhere, so busio.SPI.configure()
+    # recorded a baudrate, a polarity and a phase and reprogrammed none of them: a display
+    # asking for mode 3 at 8 MHz ran mode 0 at 4 MHz, silently.
+    SPCR.value = spi_spcr(baudrate, polarity, phase, lsb_first)
+    SPSR.value = spi_spsr(baudrate)
+
+
+# Reprogram the bit rate, mode and bit order of a bus that is already running, which is what
+# busio.SPI.configure() is for. The pin directions are already set, so only the two control
+# registers are written.
+@inline
+def spi_configure(baudrate: const[uint32] = 4000000, polarity: const[uint8] = 0,
+                  phase: const[uint8] = 0, lsb_first: const[uint8] = 0):
+    SPCR.value = spi_spcr(baudrate, polarity, phase, lsb_first)
+    SPSR.value = spi_spsr(baudrate)
 
 
 def spi_select():
