@@ -1163,6 +1163,9 @@ public partial class IRGenerator
             {
                 constantVariables.Remove(key);
                 strConstantVariables.Remove(key);
+                // A loop body is lowered once and runs many times, so what the name held on the
+                // first iteration is not what a call inside the loop may hand a callee.
+                localConstantValues.Remove(key);
             }
 
         // `obj.method()` writes only the fields that method assigns to. Dropping every field

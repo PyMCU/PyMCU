@@ -963,9 +963,14 @@ public partial class IRGenerator
                 if (!mutableGlobals.ContainsKey(tv3.Name)) constantVariables[tv3.Name] = c.Value;
             }
         }
-        else
+        else if (target is Variable tv4)
         {
-            if (target is Variable tv4) constantVariables.Remove(tv4.Name);
+            constantVariables.Remove(tv4.Name);
+            // Not folded into constantVariables -- see localConstantValues -- but remembered,
+            // so a call that passes this name can bind the callee's parameter as the constant
+            // it is (PyMCU#327).
+            if (value is Constant lc) localConstantValues[tv4.Name] = lc.Value;
+            else localConstantValues.Remove(tv4.Name);
         }
     }
 
@@ -2677,8 +2682,14 @@ public partial class IRGenerator
             string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
             name,
         })
-            if (k != null && !writeThroughAliases.Contains(k))
+        {
+            if (k == null) continue;
+            // Every write to the name, whatever spelling reaches here, clears what it was
+            // known to hold. The two assignment sites put it back when the value is constant.
+            localConstantValues.Remove(k);
+            if (!writeThroughAliases.Contains(k))
                 variableAliases.Remove(k);
+        }
 
         string written = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
                        : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
@@ -3009,6 +3020,13 @@ public partial class IRGenerator
                 {
                     constantVariables[tv.Name] = c.Value;
                 }
+            }
+            else if (target is Variable ltv)
+            {
+                // The declared local. Same reasoning as EmitScalarVarAssign: remembered for the
+                // call sites that pass it, not folded into every read of it (PyMCU#327).
+                if (val is Constant lc) localConstantValues[ltv.Name] = lc.Value;
+                else localConstantValues.Remove(ltv.Name);
             }
         }
     }

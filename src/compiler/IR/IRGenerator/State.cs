@@ -220,6 +220,18 @@ public partial class IRGenerator
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
 
+    // What a FUNCTION-LOCAL name holds, at this point of the lowering. constantVariables
+    // deliberately tracks module level only -- folding every read of a local is a different
+    // and much wider change -- so this map exists for one job: letting a CALL hand the callee
+    // the constant it dispatches on. Without it, a callee that selects on the value (the
+    // calibrated delay loops, pwm_prescaler_for_freq, claim(), any `match` on a const
+    // parameter) took its run-time path as soon as the caller put the value in a local first,
+    // and a `const` parameter refused it outright (PyMCU#327).
+    //
+    // Written where a scalar assignment stores a Constant, dropped on any other write to the
+    // name and on every name a loop body can assign.
+    private Dictionary<string, int> localConstantValues = new();
+
     // f-string-as-value targets: qualified buffer name (== the target variable, which IS the
     // bytearray) -> (unqualified length-variable name, buffer capacity incl. NUL). len(s) reads
     // the length variable; print(s)/write_str(s) stream the buffer up to it.

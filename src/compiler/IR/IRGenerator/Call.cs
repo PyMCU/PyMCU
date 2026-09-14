@@ -1776,14 +1776,7 @@ public partial class IRGenerator
 
                 if (IsConstType(func.Params[paramIdx].Type))
                 {
-                    string chase = vArg.Name;
-                    int? resolved = null;
-                    for (int hop = 0; hop < 20; hop++)
-                    {
-                        if (constantVariables.TryGetValue(chase, out int cvv)) { resolved = cvv; break; }
-                        if (!variableAliases.TryGetValue(chase, out var nextAlias)) break;
-                        chase = nextAlias;
-                    }
+                    int? resolved = TryArgumentConstant(vArg.Name, out int cvv) ? cvv : null;
                     if (resolved is int rv)
                     {
                         constantVariables[paramName] = rv;
@@ -1816,6 +1809,29 @@ public partial class IRGenerator
                             "compile time, stays a real loop. Otherwise select with explicit " +
                             "constants (if/elif or match)");
                 }
+                // An argument that HOLDS a compile-time constant binds the parameter as that
+                // constant, not as a variable that happens to contain it. Otherwise a callee
+                // which dispatches on the value -- the calibrated delay loops,
+                // pwm_prescaler_for_freq, claim(), any `match` on a const parameter -- took its
+                // run-time path as soon as the caller put the value in a local first:
+                // `delay_ms(int(s * 1000))` got the calibrated loop and
+                // `x = int(s * 1000); delay_ms(x)` got the counted one, 60 bytes more and
+                // 974 us where 1000 was asked for (PyMCU#327).
+                //
+                // Not when the callee ASSIGNS the parameter: such a write reaches the caller's
+                // own name through this alias today, and a constant has nothing to write back
+                // to.
+                if (TryArgumentConstant(vArg.Name, out int argConst)
+                    && !ParameterIsAssignedIn(func, func.Params[paramIdx].Name))
+                {
+                    constantVariables[paramName] = argConst;
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                    continue;
+                }
+
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
@@ -5773,6 +5789,38 @@ public partial class IRGenerator
             key = next;
         }
         return false;
+    }
+
+    /// <summary>
+    /// The compile-time value a call argument holds, if it holds one. Follows the alias chain
+    /// and asks BOTH maps: constantVariables, which tracks module level, and
+    /// localConstantValues, which tracks what a function-local was last assigned.
+    /// </summary>
+    private bool TryArgumentConstant(string name, out int value)
+    {
+        string chase = name;
+        for (int hop = 0; hop < 20; ++hop)
+        {
+            if (constantVariables.TryGetValue(chase, out value)) return true;
+            if (localConstantValues.TryGetValue(chase, out value)) return true;
+            if (!variableAliases.TryGetValue(chase, out var next) || next == null) break;
+            chase = next;
+        }
+        value = 0;
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="func"/> assigns to its own parameter. Such a parameter is bound
+    /// by alias so the write reaches the caller's name; binding it as a constant would drop
+    /// the write.
+    /// </summary>
+    private static bool ParameterIsAssignedIn(FunctionDef func, string paramName)
+    {
+        var names = new HashSet<string>();
+        var receivers = new HashSet<(string, string)>();
+        CollectMutatedNames(func.Body, names, receivers);
+        return names.Contains(paramName);
     }
 
     private Val EmitCompileIsrIntrinsic(CallExpr expr)
