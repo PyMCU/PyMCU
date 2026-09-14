@@ -80,8 +80,14 @@ def uart_rx_isr():
 class UART:
     """Hardware UART, zero-cost abstraction (all methods @inline)."""
 
-    def __init__(self, baud: const[uint16] = 9600):
-        uart_init(baud)
+    # bits, parity and stop describe the frame. They used to be nowhere: every layer above
+    # accepted them from the caller and threw them away, so a program that asked for 7E1 ran
+    # 8N1 and said nothing. The three are compile-time constants, so an 8N1 UART emits the
+    # same single register write it always did, and a frame this part cannot send is refused
+    # where the UART is constructed. Parity is 0 none, 1 even, 2 odd on every architecture.
+    def __init__(self, baud: const[uint16] = 9600, bits: const[uint8] = 8,
+                 parity: const[uint8] = 0, stop: const[uint8] = 1):
+        uart_init(baud, bits, parity, stop)
 
     @inline
     def write(self, data: uint8):

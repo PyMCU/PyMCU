@@ -20,6 +20,7 @@ from pymcu.chips.rp2040 import (
     UART_FR_TXFF, UART_FR_RXFE,
 )
 from pymcu.types import ptr, uint8, uint32, const, inline
+from pymcu.exceptions import CompileError
 
 # Peripheral clock assumed at the pico-sdk default of 125 MHz. (A future clocks
 # HAL will make this configurable; for now clk_peri == clk_sys == 125 MHz.)
@@ -35,7 +36,17 @@ from pymcu.hal.uart_text import (
 class UART:
     """Hardware UART0 (PL011), zero-cost abstraction."""
 
-    def __init__(self, baud: const = 115200, tx: const = 0, rx: const = 1):
+    def __init__(self, baud: const = 115200, tx: const = 0, rx: const = 1,
+                 bits: const = 8, parity: const = 0, stop: const = 1):
+        # bits, parity and stop describe the frame, and this HAL sends 8N1 and nothing else.
+        # Accepting them and ignoring them is what the layers above used to do, so a program
+        # that asked for 7E1 ran 8N1 with nothing said. Parity is 0 none, 1 even, 2 odd.
+        if bits != 8 or parity != 0 or stop != 1:
+            raise CompileError(
+                "this UART sends 8 data bits, no parity and one stop bit, and this HAL does "
+                "not program any other frame on this chip. Drop the bits, parity and stop "
+                "arguments, or drive the frame you need over a UART on a part whose HAL "
+                "programs it (the AVR one does).")
         # Bring UART0, IO_BANK0 and PADS_BANK0 out of reset; wait for all three.
         reset_mask: uint32 = (1 << RESET_UART0) | (1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)
         RESETS_RESET_CLR.value = reset_mask

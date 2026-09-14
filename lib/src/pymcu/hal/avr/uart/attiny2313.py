@@ -32,6 +32,7 @@
 from pymcu.chips import __FREQ__
 from pymcu.chips.attiny2313 import UCSRA, UCSRB, UCSRC, UBRRL, UBRRH, UDR, DDRD, SREG
 from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
+from pymcu.hal.avr.uart.frame import uart_frame_ucsrc
 
 # Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
 _rx_buf:  uint8[16] = bytearray(16)
@@ -40,7 +41,8 @@ _rx_tail: uint8 = 0
 
 
 @inline
-def uart_init(baud: const[uint16]):
+def uart_init(baud: const[uint16], bits: const[uint8] = 8, parity: const[uint8] = 0,
+              stop: const[uint8] = 1):
     # Set PD1 as output (TX), PD0 as input (RX)
     DDRD[1] = 1
     DDRD[0] = 0
@@ -73,8 +75,10 @@ def uart_init(baud: const[uint16]):
         UBRRH.value = uint8(((__FREQ__ + 8 * baud) // (16 * baud) - 1) >> 8)
         UBRRL.value = uint8((__FREQ__ + 8 * baud) // (16 * baud) - 1)
 
-    # 8N1 frame format (UCSZ1=bit2, UCSZ0=bit1, async, no parity, 1 stop)
-    UCSRC.value = 0x06
+    # Frame format: data bits, parity and stop bits, all compile-time constants, so this
+    # folds to one register write. It used to be the literal 0x06, which is 8N1 and
+    # nothing else.
+    UCSRC.value = uart_frame_ucsrc(bits, parity, stop)
     # Enable transmitter (TXEN=bit3) and receiver (RXEN=bit4)
     UCSRB.value = 0x18
 

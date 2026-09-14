@@ -32,6 +32,7 @@
 from pymcu.chips import __FREQ__
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
 from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
+from pymcu.hal.avr.uart.frame import uart_frame_ucsrc
 
 # Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
 # _rx_buf: circular storage; _rx_head: write index (ISR advances);
@@ -43,7 +44,8 @@ _rx_tail: uint8 = 0
 
 
 @inline
-def uart_init(baud: const[uint16]):
+def uart_init(baud: const[uint16], bits: const[uint8] = 8, parity: const[uint8] = 0,
+              stop: const[uint8] = 1):
     # Set PD1 as output (TX), PD0 as input (RX)
     DDRD[1] = 1
     DDRD[0] = 0
@@ -77,8 +79,10 @@ def uart_init(baud: const[uint16]):
         UBRR0H.value = uint8(((__FREQ__ + 8 * baud) // (16 * baud) - 1) >> 8)
         UBRR0L.value = uint8((__FREQ__ + 8 * baud) // (16 * baud) - 1)
 
-    # 8N1 frame format (UCSZ01=1, UCSZ00=1, async, no parity, 1 stop)
-    UCSR0C.value = 0x06
+    # Frame format: data bits, parity and stop bits, all compile-time constants, so this
+    # folds to one register write. It used to be the literal 0x06, which is 8N1 and
+    # nothing else.
+    UCSR0C.value = uart_frame_ucsrc(bits, parity, stop)
     # Enable transmitter (TXEN0=1) and receiver (RXEN0=1)
     UCSR0B.value = 0x18
 

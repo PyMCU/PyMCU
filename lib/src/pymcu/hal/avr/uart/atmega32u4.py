@@ -33,6 +33,7 @@
 from pymcu.chips import __FREQ__
 from pymcu.chips.atmega32u4 import UBRR1H, UBRR1L, UCSR1A, UCSR1B, UCSR1C, UDR1, DDRD, SREG
 from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
+from pymcu.hal.avr.uart.frame import uart_frame_ucsrc
 
 _rx_buf:  uint8[16] = bytearray(16)
 _rx_head: uint8 = 0
@@ -40,7 +41,8 @@ _rx_tail: uint8 = 0
 
 
 @inline
-def uart_init(baud: const[uint16]):
+def uart_init(baud: const[uint16], bits: const[uint8] = 8, parity: const[uint8] = 0,
+              stop: const[uint8] = 1):
     # Set PD3 as output (TX), PD2 as input (RX)
     DDRD[3] = 1
     DDRD[2] = 0
@@ -73,8 +75,10 @@ def uart_init(baud: const[uint16]):
         UBRR1H.value = uint8(((__FREQ__ + 8 * baud) // (16 * baud) - 1) >> 8)
         UBRR1L.value = uint8((__FREQ__ + 8 * baud) // (16 * baud) - 1)
 
-    # 8N1 frame format
-    UCSR1C.value = 0x06
+    # Frame format: data bits, parity and stop bits, all compile-time constants, so this
+    # folds to one register write. It used to be the literal 0x06, which is 8N1 and
+    # nothing else.
+    UCSR1C.value = uart_frame_ucsrc(bits, parity, stop)
     # Enable transmitter (TXEN1=1) and receiver (RXEN1=1)
     UCSR1B.value = 0x18
 
