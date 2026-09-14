@@ -159,6 +159,34 @@ def test_a_try_that_does_not_catch_import_error_is_left_alone(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def test_the_handler_may_import_the_other_implementation(tmp_path):
+    """`except ImportError: import <the other one>` is the second half of the idiom as often
+    as `pass` is, and the fallback has to be LOADED in the same pass that decides it is the
+    branch. Reached later it had no import statement to be reported against: adafruit_ssd1306's
+    `adafruit_framebuf` came out at line 0 of the entry file.
+    """
+    proc, _ = _compile(
+        tmp_path,
+        """
+        try:
+            import framebuf_that_is_not_here
+
+            answer = framebuf_that_is_not_here.answer
+        except ImportError:
+            import also_not_here
+
+
+        def main() -> None:
+            pass
+        """,
+    )
+    assert proc.returncode != 0
+    err = proc.stdout + proc.stderr
+    header = next(l for l in err.splitlines() if "error:" in l)
+    assert "also_not_here" in header, header
+    assert ":0:" not in header, header
+
+
 GPIOR0_ADDRESS = 0x3E
 GPIOR1_ADDRESS = 0x4A
 

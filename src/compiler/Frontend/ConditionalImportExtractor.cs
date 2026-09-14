@@ -86,10 +86,24 @@ internal static class ConditionalImportExtractor
             case TryStmt tryStmt:
             {
                 if (!CatchesImportError(tryStmt)) yield break;
+
+                // The handler's own imports, which are the branch that runs when the module in
+                // the body is absent -- `except ImportError: import adafruit_framebuf` is the
+                // second half of the idiom as often as `pass` is. They are carried ON the
+                // optional import rather than yielded, because only the loader knows whether
+                // they are needed and loading both branches would pull in two implementations.
+                var fallback = new List<ImportStmt>();
+                if (tryStmt.Handlers.Count > 0)
+                    foreach (var st in tryStmt.Handlers[0].Handler)
+                    foreach (var imp in ExtractFromStatement(st, eval))
+                        fallback.Add(imp);
+
                 foreach (var st in tryStmt.Body)
                 foreach (var imp in ExtractFromStatement(st, eval))
                 {
                     imp.IsOptional = true;
+                    imp.FallbackImports.Clear();
+                    imp.FallbackImports.AddRange(fallback);
                     yield return imp;
                 }
                 break;

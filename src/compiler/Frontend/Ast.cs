@@ -753,6 +753,12 @@ public class ImportStmt : Statement
     // has tried, so it is recorded on the node for ConditionalCompilator to fold the try on.
     public bool OptionalLoadFailed { get; set; }
 
+    // The imports written in the HANDLER beside this one, which are the branch that runs when
+    // this module is absent. Carried here because the extractor knows the try and the loader
+    // knows the outcome, and only the loader can ask for them -- loading both branches when
+    // the module IS there would pull in two implementations of the same thing.
+    public List<ImportStmt> FallbackImports { get; } = new();
+
     public ImportStmt(string modName, List<string> symbols, int level = 0)
     {
         ModuleName = modName;

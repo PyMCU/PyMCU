@@ -74,6 +74,13 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
                     // its HANDLER, so the fallback the program wrote is the branch compiled.
                     // An UNCONDITIONAL import of the same missing module still stops, below.
                     imp.OptionalLoadFailed = true;
+                    // The handler's imports are now the branch that runs, so they are loaded
+                    // in this same pass. Without this they reached the compiler only after the
+                    // graph was built, where a module that is missing too has no import
+                    // statement to be reported against: `adafruit_framebuf`, the CircuitPython
+                    // half of adafruit_ssd1306's framebuf fallback, came out at line 0 of the
+                    // entry file.
+                    allImports.AddRange(imp.FallbackImports);
                     continue;
                 }
                 catch (CompilerError e) when (e.File == null)
