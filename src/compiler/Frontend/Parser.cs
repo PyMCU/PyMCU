@@ -797,7 +797,21 @@ public class Parser
             {
                 do
                 {
-                    bases.Add(Consume(TokenType.Identifier, "Expected base class name").Value);
+                    // `class NeoPixel(adafruit_pixelbuf.PixelBuf)`, the module-qualified
+                    // spelling of a base class (#343). The parser used to stop at the dot and
+                    // ask for the closing bracket of a bracket list that is balanced, so the
+                    // reader was sent to a line that is correct -- and when the module really
+                    // is missing, the bracket hid the sentence that says which one. Recorded
+                    // as the dotted text, which is what the CPython bridge's class_of already
+                    // produces, so the two front ends hand the same base name downstream.
+                    string baseName = Consume(TokenType.Identifier, "Expected base class name").Value;
+                    while (Check(TokenType.Dot))
+                    {
+                        Advance();
+                        baseName += "." + Consume(TokenType.Identifier,
+                            "Expected a name after '.' in the base class").Value;
+                    }
+                    bases.Add(baseName);
                 } while (Match(TokenType.Comma));
             }
 

@@ -45,6 +45,10 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- A base class spelled `module.Class` is read as the class it names. The C# parser used to
+  stop at the dot and ask for a closing bracket, so `class NeoPixel(adafruit_pixelbuf.PixelBuf)`
+  was refused where the Python front end built the firmware; when the module really is absent
+  the reader is now told which one (#343).
 - An annotation spelled `module.Class` is read as the class it names, so `p: busio.I2C` says
   what `p: I2C` already said. The parser used to stop at the dot and ask for the closing
   bracket of the parameter list, which is about a bracket in a program whose brackets are
