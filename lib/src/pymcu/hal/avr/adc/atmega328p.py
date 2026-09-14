@@ -97,7 +97,12 @@ def adc_read() -> uint16:
     return result
 
 
-# Start conversion, poll, return result scaled to 16-bit (0-65535).
+# Start conversion, poll, return the result scaled to the full 16-bit range (0-65535).
+#
+# Multiplying the 10-bit result by 64 topped out at 65472: full scale on the pin read 63
+# counts short of full scale in the number, so a caller dividing by 65535 to get volts was
+# always low and `value == 65535` never happened. Replicating the top bits into the bottom
+# ones is the scaling every CircuitPython port uses, and it maps 1023 onto exactly 65535.
 @inline
 def adc_read_u16() -> uint16:
     ADCSRA[6] = 1
@@ -105,5 +110,5 @@ def adc_read_u16() -> uint16:
         pass
     lo: uint8 = ADCL.value
     hi: uint8 = ADCH.value
-    result: uint16 = (lo + hi * 256) * 64
-    return result
+    raw: uint16 = lo + hi * 256
+    return (raw << 6) | (raw >> 4)

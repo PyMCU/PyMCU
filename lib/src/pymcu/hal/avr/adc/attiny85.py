@@ -78,6 +78,9 @@ def adc_read() -> uint16:
     result: uint16 = lo + hi * 256
     return result
 
+# The 10-bit result scaled to the full 16-bit range. Multiplying by 64 topped out at 65472,
+# so full scale on the pin was 63 counts short of full scale in the number; replicating the
+# top bits into the bottom ones maps 1023 onto exactly 65535.
 @inline
 def adc_read_u16() -> uint16:
     ADCSRA[6] = 1
@@ -85,5 +88,5 @@ def adc_read_u16() -> uint16:
         pass
     lo: uint8 = ADCL.value
     hi: uint8 = ADCH.value
-    result: uint16 = lo + hi * 256
-    return result * 64
+    raw: uint16 = lo + hi * 256
+    return (raw << 6) | (raw >> 4)

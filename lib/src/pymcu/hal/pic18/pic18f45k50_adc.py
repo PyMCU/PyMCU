@@ -116,5 +116,8 @@ def adc_read_u16(channel: str) -> uint16:
         pass
     lo: uint8 = ADRESL.value
     hi: uint8 = ADRESH.value
-    result: uint16 = (lo + hi * 256) * 64
-    return result
+    # Multiplying the 10-bit result by 64 topped out at 65472, so full scale on the pin read
+    # 63 counts short of full scale in the number. Replicating the top bits into the bottom
+    # ones maps 1023 onto exactly 65535.
+    raw: uint16 = lo + hi * 256
+    return (raw << 6) | (raw >> 4)

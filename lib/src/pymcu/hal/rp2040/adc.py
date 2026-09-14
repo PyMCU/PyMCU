@@ -46,3 +46,11 @@ class AnalogPin:
         while ((ADC_CS.value >> ADC_CS_READY) & 1) == 0:
             pass
         return ADC_RESULT.value & 0xFFF
+
+    # The 12-bit result scaled to the full 16-bit range, the unit every compatibility layer
+    # speaks. Replicating the top bits into the bottom ones maps 4095 onto exactly 65535;
+    # a plain shift by 4 would stop 15 counts short.
+    @inline
+    def read_u16(self) -> uint16:
+        raw: uint16 = self.read()
+        return (raw << 4) | (raw >> 8)
