@@ -969,8 +969,7 @@ public partial class IRGenerator
             // Not folded into constantVariables -- see localConstantValues -- but remembered,
             // so a call that passes this name can bind the callee's parameter as the constant
             // it is (PyMCU#327).
-            if (value is Constant lc) localConstantValues[tv4.Name] = lc.Value;
-            else localConstantValues.Remove(tv4.Name);
+            RecordLocalConstant(tv4.Name, value, stmt.Value, stmt.AnnotatedType, tv4.Type);
         }
     }
 
@@ -2674,6 +2673,56 @@ public partial class IRGenerator
     //     Sweeping all qualifications here destroyed zero-cost @inline param bindings: a
     //     write to the expansion-local `inline1.write_hex.hi` must not kill the caller's
     //     `byte -> main.hi` param alias.
+    /// <summary>
+    /// Remembers what a function-local now holds, when that is a compile-time value.
+    ///
+    /// The VISITED value answers for `x = 2`. It does not answer for `ms = total_us // 1000`,
+    /// where total_us is itself a local: reads of a local are deliberately not folded, so the
+    /// division arrives as a run-time Temporary even though every input is known. The
+    /// initializer is therefore folded as WRITTEN, with the locals in scope, which is the same
+    /// question the range unroller asks (PyMCU#327).
+    ///
+    /// A value the declared width would truncate is NOT recorded: the storage would hold one
+    /// number and a later call would be handed another.
+    /// </summary>
+    private void RecordLocalConstant(string key, Val value, Expression? init,
+                                     string? declaredType, DataType storedType)
+    {
+        string width = !string.IsNullOrEmpty(declaredType) ? declaredType! : storedType switch
+        {
+            DataType.INT8 => "int8",
+            DataType.UINT16 => "uint16",
+            DataType.INT16 => "int16",
+            DataType.UINT32 => "uint32",
+            DataType.INT32 => "int32",
+            _ => "uint8",
+        };
+
+        if (value is Constant c)
+        {
+            if (FitsInScalar(c.Value, width)) localConstantValues[key] = c.Value;
+            else localConstantValues.Remove(key);
+            return;
+        }
+
+        if (init != null && TryFoldWithLocals(init, out int folded) && FitsInScalar(folded, width))
+        {
+            localConstantValues[key] = folded;
+            return;
+        }
+
+        localConstantValues.Remove(key);
+    }
+
+    /// <summary>The value of an expression with the caller's locals in scope, or false.</summary>
+    private bool TryFoldWithLocals(Expression e, out int value)
+    {
+        bool saved = foldLocalConstants;
+        foldLocalConstants = true;
+        try { return TryFoldThroughConversions(e, out value); }
+        finally { foldLocalConstants = saved; }
+    }
+
     /// <summary>Drops every spelling of a name from the locals map: it has just been written.</summary>
     private void ForgetLocalConstant(string bareName)
     {
@@ -3037,8 +3086,7 @@ public partial class IRGenerator
             {
                 // The declared local. Same reasoning as EmitScalarVarAssign: remembered for the
                 // call sites that pass it, not folded into every read of it (PyMCU#327).
-                if (val is Constant lc) localConstantValues[ltv.Name] = lc.Value;
-                else localConstantValues.Remove(ltv.Name);
+                RecordLocalConstant(ltv.Name, val, stmt.Init, stmt.VarType, dt);
             }
         }
     }

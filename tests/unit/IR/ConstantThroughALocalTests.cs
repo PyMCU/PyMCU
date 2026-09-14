@@ -103,6 +103,100 @@ public class ConstantThroughALocalTests
         Assert.Contains(99, writes);
     }
 
+    // The program #327 was opened for: a value computed into locals, narrowed by a cast, and
+    // handed to a callee that dispatches on it. `nap` and `nap_spelled` are the same arithmetic
+    // written two ways, and they have to lower the same -- the spelled-out one folds through
+    // the AST evaluator, the one with locals did not, and the difference was a generic counted
+    // delay against the calibrated loop.
+    private const string NapPrelude =
+        "from pymcu.types import uint16, uint32, inline\n" +
+        "from pymcu.chips.atmega328p import GPIOR0\n" +
+        "\n" +
+        "def sink(ms: uint16):\n" +
+        "    GPIOR0.value = uint16(ms)\n" +
+        "\n" +
+        "@inline\n" +
+        "def shim(ms: uint16):\n" +
+        "    sink(ms)\n" +
+        "\n" +
+        "@inline\n" +
+        "def nap(seconds: float):\n" +
+        "    total_us: uint32 = uint32(seconds * 1000000.0 + 0.5)\n" +
+        "    ms: uint32 = total_us // 1000\n" +
+        "    if ms != 0:\n" +
+        "        shim(uint16(ms))\n" +
+        "\n" +
+        "@inline\n" +
+        "def nap_spelled(seconds: float):\n" +
+        "    if uint32(seconds * 1000000.0 + 0.5) // 1000 != 0:\n" +
+        "        shim(uint16(uint32(seconds * 1000000.0 + 0.5) // 1000))\n" +
+        "\n";
+
+    /// <summary>
+    /// What the callee's parameter is given, across every call in main. A temporary is
+    /// followed back to the Copy that defined it: both spellings stage through one, and what
+    /// separates them is whether that staging copy carries a constant.
+    /// </summary>
+    private static List<string> ParameterSources(ProgramIR ir)
+    {
+        var body = ir.Functions.Last(f => f.Name == "main").Body;
+
+        string Describe(Val src)
+        {
+            for (int hop = 0; hop < 4 && src is Temporary tmp; ++hop)
+            {
+                var def = body.OfType<Copy>().LastOrDefault(
+                    c => c.Dst is Temporary d && d.Name == tmp.Name);
+                if (def == null) break;
+                src = def.Src;
+            }
+            return src switch
+            {
+                Constant k => "const " + k.Value,
+                Temporary => "tmp",
+                Variable v2 => "var " + v2.Name,
+                _ => "other",
+            };
+        }
+
+        return body.OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name == "sink.ms")
+            .Select(c => Describe(c.Src))
+            .ToList();
+    }
+
+    [Fact]
+    public void AValueComputedIntoLocals_ReachesTheCalleeAsTheConstantItIs()
+    {
+        var ir = Gen(NapPrelude + "def main():\n    nap(0.001)\n");
+        // 1 ms: the cast narrows a uint32 that holds 1, which fits, so the callee is handed 1.
+        Assert.Equal(new List<string> { "const 1" }, ParameterSources(ir));
+    }
+
+    [Fact]
+    public void TheTwoSpellingsGiveTheCalleeTheSameThing()
+    {
+        var viaLocals = ParameterSources(Gen(NapPrelude + "def main():\n    nap(0.001)\n"));
+        var spelled = ParameterSources(Gen(NapPrelude + "def main():\n    nap_spelled(0.001)\n"));
+        Assert.Equal(spelled, viaLocals);
+    }
+
+    [Fact]
+    public void ACastThatWouldTruncate_StaysRunTime()
+    {
+        // 70000 does not fit the uint16 the cast narrows to, so the number the callee would see
+        // is not the one the folder returns. Left to the run-time path.
+        var ir = Gen(NapPrelude +
+            "@inline\n" +
+            "def big(seconds: float):\n" +
+            "    total_us: uint32 = uint32(seconds * 1000000.0)\n" +
+            "    shim(uint16(total_us))\n" +
+            "\n" +
+            "def main():\n" +
+            "    big(0.07)\n");
+        Assert.DoesNotContain("const 70000", ParameterSources(ir));
+    }
+
     [Fact]
     public void ANameTheBranchesDisagreeOn_IsNotTakenAsAConstant()
     {

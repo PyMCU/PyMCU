@@ -1847,7 +1847,7 @@ public partial class IRGenerator
             if (!IsConstType(func.Params[paramIdx].Type)
                 && argValues[i] is Temporary or Variable
                 && i < rawArgExprs.Count && rawArgExprs[i] is { } rawArg
-                && TryFoldArgumentExpression(rawArg, func.Params[paramIdx].Type, out int foldedArg)
+                && TryFoldArgumentExpression(rawArg, func.Params[paramIdx].Type, savedPrefix, out int foldedArg)
                 && !ParameterIsAssignedIn(func, func.Params[paramIdx].Name))
             {
                 constantVariables[paramName] = foldedArg;
@@ -5848,10 +5848,16 @@ public partial class IRGenerator
     /// it converts to; where it would truncate, the number the callee sees is not the one the
     /// folder returns, so the argument is left to the run-time path.
     /// </summary>
-    private bool TryFoldArgumentExpression(Expression e, string paramType, out int value)
+    private bool TryFoldArgumentExpression(Expression e, string paramType, string callerPrefix,
+                                           out int value)
     {
         bool saved = foldLocalConstants;
+        // The expression was WRITTEN in the caller, and by the time the parameters are bound
+        // `currentInlinePrefix` is already the callee's -- so a name in it has to be looked up
+        // under the caller's prefix or it is not found at all.
+        string savedInline = currentInlinePrefix;
         foldLocalConstants = true;
+        currentInlinePrefix = callerPrefix;
         try
         {
             if (!TryFoldThroughConversions(e, out value)) return false;
@@ -5861,6 +5867,7 @@ public partial class IRGenerator
         finally
         {
             foldLocalConstants = saved;
+            currentInlinePrefix = savedInline;
         }
     }
 
