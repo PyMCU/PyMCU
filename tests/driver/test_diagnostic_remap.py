@@ -142,3 +142,46 @@ def test_an_error_inside_the_preamble_keeps_the_generated_files_numbering():
     out = _remap_diagnostics(text, SOURCE)
     assert "2 | from pymcu.hal.uart import UART as _pymcu_stdout\n" in out
     assert "3 | from pymcu.hal.console import print_str\n" in out
+
+
+# --- a line the message quotes is mapped too ------------------------------------------
+#
+# PyMCU#303. A diagnostic that refuses a site because of an EARLIER one quotes that earlier
+# site inside its own sentence. The compiler numbers it against the synthetic file like
+# everything else, and only the header and the snippet were mapped -- so one message stated
+# two numberings at once and the quoted line pointed past the end of the user's file
+# ("already 3 for PD6 at line 43" for a 41-line program).
+#
+# The citation carries the file name, which is what makes it recognisable here: a bare
+# number could not be told from a duty cycle or a prescaler in the same sentence.
+
+
+def test_a_line_quoted_inside_the_message_follows_the_header():
+    text = "dist/_generated/main.py:13:1: error: T0: already 3 for PD6 at main.py:11, and PD5 asks for 2\n"
+    assert _remap_diagnostics(text, SOURCE) == (
+        "src/main.py:8:1: error: T0: already 3 for PD6 at main.py:6, and PD5 asks for 2\n"
+    )
+
+
+def test_a_quoted_line_is_mapped_even_when_the_header_names_a_module():
+    # A refusal raised inside an imported HAL still quotes the caller's line, and the caller
+    # is the entry file. The header keeps the module's own numbering; the citation does not.
+    text = "lib/pymcu/hal/pwm.py:40:2: error: T0: already 3 at main.py:11, and PD5 asks for 2\n"
+    assert _remap_diagnostics(text, SOURCE) == (
+        "lib/pymcu/hal/pwm.py:40:2: error: T0: already 3 at main.py:6, and PD5 asks for 2\n"
+    )
+
+
+def test_a_quoted_line_from_another_file_is_left_alone():
+    # The offset belongs to the entry file. Another module's numbering is its own.
+    text = "dist/_generated/main.py:13:1: error: already 3 at gpio.py:11, and PD5 asks for 2\n"
+    assert _remap_diagnostics(text, SOURCE) == (
+        "src/main.py:8:1: error: already 3 at gpio.py:11, and PD5 asks for 2\n"
+    )
+
+
+def test_the_header_path_is_not_mistaken_for_a_citation():
+    # `dist/_generated/main.py:13` ends in the same characters a citation does. Mapping it
+    # twice would subtract the offset from the header as well.
+    text = "dist/_generated/main.py:13:1: error: plain message\n"
+    assert _remap_diagnostics(text, SOURCE) == "src/main.py:8:1: error: plain message\n"

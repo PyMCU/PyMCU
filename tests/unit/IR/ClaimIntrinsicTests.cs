@@ -95,6 +95,41 @@ public class ClaimIntrinsicTests
         Assert.Equal(without, with);
     }
 
+    /// <summary>
+    /// PyMCU#303. The quoted site names its FILE, not a bare line number. The message is text,
+    /// and the build driver compiles a synthetic entry whose numbering is not the reader's, so
+    /// a citation that says only "line 43" cannot be mapped back to the file they wrote -- and
+    /// it did point past the end of it. The driver recognises `file:line` and maps it.
+    /// </summary>
+    [Fact]
+    public void TheQuotedSite_NamesTheFileItIsALineOf()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Prelude +
+            "def main():\n" +
+            "    use(\"PD5\", 2)\n" +
+            "    use(\"PD6\", 5)\n"));
+        Assert.Contains("at main.py:8", ex.Message);
+        Assert.DoesNotContain("at line ", ex.Message);
+        Assert.Equal(9, ex.Line);
+    }
+
+    /// <summary>
+    /// A site inside an imported module keeps naming that module, which is what the entry
+    /// file's name must not displace.
+    /// </summary>
+    [Fact]
+    public void TheEntryFileName_IsOnlyUsedForTheEntryFile()
+    {
+        var gen = new IRGenerator { EntryFileName = "app.py" };
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => gen.Generate(
+            new Parser(new Lexer(Prelude +
+                "def main():\n" +
+                "    use(\"PD5\", 2)\n" +
+                "    use(\"PD6\", 5)\n").Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("at app.py:8", ex.Message);
+    }
+
     [Fact]
     public void DifferentKeys_NeverMeet()
     {
