@@ -104,5 +104,7 @@ class PWM:
 
     @inline
     def set_freq(self, freq: uint16):
+        # Retuning the timer retunes its other channel too; the selector claims the
+        # prescaler on the way out, so a channel with a sibling is refused here.
         self._start_val = pwm_prescaler_for_freq(self._pin, freq)
         self._tccr_b.value = self._start_val

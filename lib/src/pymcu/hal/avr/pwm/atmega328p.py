@@ -4,7 +4,7 @@ from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
 from pymcu.chips import __TIMEBASE__
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, uint16, inline, ptr, const
+from pymcu.types import uint8, uint16, inline, ptr, const, claim
 
 
 # Compile-time (pin, freq) -> TCCRxB CS value.
@@ -39,44 +39,61 @@ def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
             # midpoints between achievable frequencies: the chosen prescaler is
             # always the nearest one.
             if freq > 22097:
+                pwm_claim_prescaler(pin, 0x01)
                 return 0x01
             elif freq > 2762:
+                pwm_claim_prescaler(pin, 0x02)
                 return 0x02
             elif freq > 488:
+                pwm_claim_prescaler(pin, 0x03)
                 return 0x03
             elif freq > 122:
+                pwm_claim_prescaler(pin, 0x04)
                 return 0x04
             else:
+                pwm_claim_prescaler(pin, 0x05)
                 return 0x05
         case "PB1" | "PB2":
             # Timer1 Fast PWM 8-bit: WGM12 must stay set (bit3); CS in bits 2:0
             if freq > 22097:
+                pwm_claim_prescaler(pin, 0x09)
                 return 0x09
             elif freq > 2762:
+                pwm_claim_prescaler(pin, 0x0A)
                 return 0x0A
             elif freq > 488:
+                pwm_claim_prescaler(pin, 0x0B)
                 return 0x0B
             elif freq > 122:
+                pwm_claim_prescaler(pin, 0x0C)
                 return 0x0C
             else:
+                pwm_claim_prescaler(pin, 0x0D)
                 return 0x0D
         case "PB3" | "PD3":
             # Timer2: CS encoding 001(1) 010(8) 011(32) 100(64) 101(128) 110(256)
             # 111(1024) -- unlike Timer0/1 it also has /32 and /128, so it gets
             # 1953 Hz and 488 Hz buckets the other timers cannot reach.
             if freq > 22097:
+                pwm_claim_prescaler(pin, 0x01)
                 return 0x01
             elif freq > 3906:
+                pwm_claim_prescaler(pin, 0x02)
                 return 0x02
             elif freq > 1381:
+                pwm_claim_prescaler(pin, 0x03)
                 return 0x03
             elif freq > 690:
+                pwm_claim_prescaler(pin, 0x04)
                 return 0x04
             elif freq > 345:
+                pwm_claim_prescaler(pin, 0x05)
                 return 0x05
             elif freq > 122:
+                pwm_claim_prescaler(pin, 0x06)
                 return 0x06
             else:
+                pwm_claim_prescaler(pin, 0x07)
                 return 0x07
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
@@ -146,10 +163,13 @@ def pwm_select_tccr_b(pin: const) -> ptr[uint8]:
 def pwm_select_start_val(pin: const) -> uint8:
     match pin:
         case "PD6" | "PD5":
+            pwm_claim_prescaler(pin, 0x03)
             return 0x03
         case "PB1" | "PB2":
+            pwm_claim_prescaler(pin, 0x0A)
             return 0x0A
         case "PB3" | "PD3":
+            pwm_claim_prescaler(pin, 0x04)
             return 0x04
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
@@ -282,3 +302,32 @@ def pwm_release(pin: const):
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
 
+
+
+
+# The two channels of one timer share its prescaler: whoever writes TCCRxB last sets the
+# frequency of both. Measured on an Arduino Uno: PWM("PD5", 128, 5000) then
+# PWM("PD6", 128, 100) left both pins at 61 Hz with nothing said (PyMCU#300). The PWM class
+# claims the prescaler it is about to program under the timer's key, and the compiler
+# refuses a second channel asking for another one, where it is written. A run-time
+# prescaler has nothing to claim and goes through. Emits nothing.
+@inline
+def pwm_claim_prescaler(pin: const, code: uint8):
+    match pin:
+        case "PD6" | "PD5":
+            claim("Timer0 prescaler (PD5 and PD6 share it)", code, pin,
+                  "The two channels of one timer run at one frequency. Timer0 codes: 1 = 62500 Hz, "
+                  "2 = 7812 Hz, 3 = 976 Hz, 4 = 244 Hz, 5 = 61 Hz. Ask both for the same "
+                  "frequency, or move one to PB1/PB2 (Timer1) or PB3/PD3 (Timer2)")
+        case "PB1" | "PB2":
+            claim("Timer1 prescaler (PB1 and PB2 share it)", code, pin,
+                  "The two channels of one timer run at one frequency. Timer1 codes: 9 = 62500 Hz, "
+                  "10 = 7812 Hz, 11 = 976 Hz, 12 = 244 Hz, 13 = 61 Hz. Ask both for the same "
+                  "frequency, or move one to PD5/PD6 (Timer0) or PB3/PD3 (Timer2)")
+        case "PB3" | "PD3":
+            claim("Timer2 prescaler (PB3 and PD3 share it)", code, pin,
+                  "The two channels of one timer run at one frequency. Timer2 codes: 1 = 62500 Hz, "
+                  "2 = 7812 Hz, 3 = 1953 Hz, 4 = 976 Hz, 5 = 488 Hz, 6 = 244 Hz, 7 = 61 Hz. Ask "
+                  "both for the same frequency, or move one to PD5/PD6 (Timer0) or PB1/PB2 (Timer1)")
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")

@@ -1,6 +1,6 @@
 from pymcu.chips.attiny85 import DDRB, PORTB, OCR0A, OCR0B, TCCR0A, TCCR0B, TCCR1
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, uint16, inline, ptr, const
+from pymcu.types import uint8, uint16, inline, ptr, const, claim
 
 # ATtiny85/45/25 PWM HAL
 #
@@ -61,8 +61,10 @@ def pwm_select_tccr_b(pin: const) -> ptr[uint8]:
 def pwm_select_start_val(pin: const) -> uint8:
     match pin:
         case "PB0" | "PB1":
+            pwm_claim_prescaler(pin, 0x03)
             return 0x03   # Timer0 prescaler 64
         case "PB4":
+            pwm_claim_prescaler(pin, 0x67)
             return 0x67   # Timer1 PWM1B|COM1B1|prescaler 64
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
@@ -94,38 +96,54 @@ def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
         case "PB0" | "PB1":
             # Timer0: CS[2:0] in TCCR0B
             if freq > 3906:
+                pwm_claim_prescaler(pin, 0x01)
                 return 0x01
             elif freq > 488:
+                pwm_claim_prescaler(pin, 0x02)
                 return 0x02
             elif freq > 122:
+                pwm_claim_prescaler(pin, 0x03)
                 return 0x03
             elif freq > 30:
+                pwm_claim_prescaler(pin, 0x04)
                 return 0x04
             else:
+                pwm_claim_prescaler(pin, 0x05)
                 return 0x05
         case "PB4":
             # Timer1: TCCR1 = PWM1B(0x40)|COM1B1(0x20)|CS1[3:0]
             if freq > 15625:
+                pwm_claim_prescaler(pin, 0x61)
                 return 0x61
             elif freq > 7812:
+                pwm_claim_prescaler(pin, 0x62)
                 return 0x62
             elif freq > 3906:
+                pwm_claim_prescaler(pin, 0x63)
                 return 0x63
             elif freq > 1953:
+                pwm_claim_prescaler(pin, 0x64)
                 return 0x64
             elif freq > 976:
+                pwm_claim_prescaler(pin, 0x65)
                 return 0x65
             elif freq > 488:
+                pwm_claim_prescaler(pin, 0x66)
                 return 0x66
             elif freq > 244:
+                pwm_claim_prescaler(pin, 0x67)
                 return 0x67
             elif freq > 122:
+                pwm_claim_prescaler(pin, 0x68)
                 return 0x68
             elif freq > 61:
+                pwm_claim_prescaler(pin, 0x69)
                 return 0x69
             elif freq > 30:
+                pwm_claim_prescaler(pin, 0x6A)
                 return 0x6A
             else:
+                pwm_claim_prescaler(pin, 0x6B)
                 return 0x6B
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
@@ -208,5 +226,22 @@ def pwm_release(pin: const):
             DDRB[1] = 0
         case "PB4":
             DDRB[4] = 0
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
+
+
+
+# See atmega328p.pwm_claim_prescaler: PB0 and PB1 share Timer0's prescaler; PB4 has
+# Timer1 to itself on this part, so there is nothing to claim there.
+@inline
+def pwm_claim_prescaler(pin: const, code: uint8):
+    match pin:
+        case "PB0" | "PB1":
+            claim("Timer0 prescaler (PB0 and PB1 share it)", code, pin,
+                  "The two channels of one timer run at one frequency. Timer0 codes: 1 = 31250 Hz, "
+                  "2 = 3906 Hz, 3 = 488 Hz, 4 = 122 Hz, 5 = 30 Hz. Ask both for the same "
+                  "frequency, or move one to PB4 (Timer1)")
+        case "PB4":
+            pass
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
