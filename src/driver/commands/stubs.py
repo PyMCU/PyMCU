@@ -28,10 +28,39 @@ _TYPE_REMAP = [
 ]
 
 
+_ACCESSOR_SUFFIXES = (".setter", ".getter", ".deleter")
+
+
+def _is_accessor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A `@property` / `@x.setter` pair redefines a name without overloading it."""
+    for dec in node.decorator_list:
+        text = ast.unparse(dec)
+        if text == "property" or text.endswith(_ACCESSOR_SUFFIXES):
+            return True
+    return False
+
+
+def _overloaded_names(body: list[ast.stmt]) -> set[str]:
+    """Names this body defines more than once as a plain `def`.
+
+    PyMCU has no `@typing.overload`: a second `def freq(self, value)` after
+    `def freq(self)` *is* the overload, and the compiler dispatches on the
+    arguments that bind. Emitting both verbatim into a `.pyi` makes the second
+    shadow the first, so a type checker sees one signature and flags every call
+    that matches the other -- plus an "already defined" error on the stub itself.
+    """
+    counts: dict[str, int] = {}
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not _is_accessor(node):
+            counts[node.name] = counts.get(node.name, 0) + 1
+    return {name for name, count in counts.items() if count > 1}
+
+
 class _StubBuilder(ast.NodeVisitor):
     def __init__(self, remap_types: bool) -> None:
         self.lines: list[str] = []
         self.remap = remap_types
+        self.used_overload = False
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _emit(self, text: str, indent: int = 0) -> None:
@@ -64,9 +93,13 @@ class _StubBuilder(ast.NodeVisitor):
         prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
         return f"{prefix} {node.name}({args}) -> {ret}:"
 
-    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, indent: int) -> None:
+    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, indent: int,
+                  overloaded: bool = False) -> None:
         if node.name.startswith("_") and node.name != "__init__":
             return
+        if overloaded:
+            self.used_overload = True
+            self._emit("@overload", indent)
         for dec in node.decorator_list:
             name = ast.unparse(dec)
             if name == "inline":  # implementation detail, not public API
@@ -103,10 +136,12 @@ class _StubBuilder(ast.NodeVisitor):
         bases = ", ".join(ast.unparse(b) for b in node.bases)
         self._emit(f"class {node.name}({bases}):" if bases else f"class {node.name}:", indent)
         had_doc = self._docstring(node, indent + 1)
+        overloaded = _overloaded_names(node.body)
         members = 0
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._function(child, indent + 1)
+                self._function(child, indent + 1,
+                               overloaded=child.name in overloaded and not _is_accessor(child))
                 members += 1
             elif isinstance(child, (ast.Assign, ast.AnnAssign)):
                 before = len(self.lines)
@@ -120,13 +155,15 @@ class _StubBuilder(ast.NodeVisitor):
         self._emit("")
 
     def _module_body(self, nodes: list[ast.stmt]) -> None:
+        overloaded = _overloaded_names(nodes)
         for node in nodes:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 # Keep imports: annotations reference them, and IDEs resolve
                 # `pymcu.*` against the installed stdlib.
                 self._emit(ast.unparse(node))
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._function(node, 0)
+                self._function(node, 0,
+                               overloaded=node.name in overloaded and not _is_accessor(node))
                 self._emit("")
             elif isinstance(node, ast.ClassDef):
                 self._class(node, 0)
@@ -140,7 +177,13 @@ class _StubBuilder(ast.NodeVisitor):
     def build(self, tree: ast.Module, header: str) -> str:
         self._emit(f"# {header}")
         self._docstring(tree, 0)
+        prologue = len(self.lines)
         self._module_body(tree.body)
+        if self.used_overload:
+            # Inserted after the fact: whether the module needs it is only known
+            # once its bodies have been walked, and an unused `typing` import in
+            # every one of the ~240 stubs is its own kind of noise.
+            self.lines.insert(prologue, "from typing import overload")
         return "\n".join(self.lines).rstrip() + "\n"
 
 
