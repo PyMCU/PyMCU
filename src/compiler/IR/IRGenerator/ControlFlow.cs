@@ -652,33 +652,34 @@ public partial class IRGenerator
             }
         }
 
-        // The locals, on the same rule: a value survives the chain only when every arm agrees
-        // on it and one arm always runs.
+        // The locals, on the same rule, stated the other way round: what the chain leaves is
+        // what EVERY path agrees on. Asking instead which keys changed misses the ones an arm
+        // DROPPED -- `prescaler: uint8 = 0` then a call in each arm -- because a key nothing
+        // records is absent from the arm's snapshot rather than different in it, and the
+        // pre-chain 0 was resurrected past a chain that had overwritten it.
+        //
+        // Without an `else` the fall-through is a path of its own, carrying the state from
+        // before the chain, so it counts as one more arm.
         if (branchSnapsLocals.Count > 0)
         {
-            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
-            foreach (var dead in killedConstants) localConstantValues.Remove(dead);
+            var paths = new List<Dictionary<string, int>>(branchSnapsLocals);
+            if (!hasElse) paths.Add(snapBeforeLocals);
 
-            var changedLocals = new HashSet<string>();
-            foreach (var kvp in branchSnapsLocals.SelectMany(snap => snap))
-                if (!snapBeforeLocals.TryGetValue(kvp.Key, out var oldV) || oldV != kvp.Value)
-                    changedLocals.Add(kvp.Key);
-
-            foreach (var key in changedLocals)
+            var agreedLocals = new Dictionary<string, int>();
+            foreach (var kvp in paths[0])
             {
+                if (killedConstants.Contains(kvp.Key)) continue;
                 bool allAgree = true;
-                int agreed = 0;
-                bool first = true;
-                foreach (var snap in branchSnapsLocals)
-                {
-                    if (!snap.TryGetValue(key, out var v)) { allAgree = false; break; }
-                    if (first) { agreed = v; first = false; }
-                    else if (v != agreed) { allAgree = false; break; }
-                }
-
-                if (allAgree && !first && hasElse) localConstantValues[key] = agreed;
-                else localConstantValues.Remove(key);
+                for (int pi = 1; pi < paths.Count; ++pi)
+                    if (!paths[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
+                    {
+                        allAgree = false;
+                        break;
+                    }
+                if (allAgree) agreedLocals[kvp.Key] = kvp.Value;
             }
+
+            localConstantValues = agreedLocals;
         }
 
         if (branchSnaps.Count <= 0) return;
