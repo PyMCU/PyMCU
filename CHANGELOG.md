@@ -45,6 +45,10 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- `self.column, self.row = 0, 0` unpacks into attributes, as it already did into names. The
+  right-hand side is snapshotted before any store, so an attribute swap is still a swap, and
+  each target is then written through the assignment it would have been on its own line. It
+  used to die two tokens past the comma as "Expected newline or end of block" (#344).
 - A base class spelled `module.Class` is read as the class it names. The C# parser used to
   stop at the dot and ask for a closing bracket, so `class NeoPixel(adafruit_pixelbuf.PixelBuf)`
   was refused where the Python front end built the firmware; when the module really is absent

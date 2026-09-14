@@ -4866,8 +4866,71 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// `self.column, self.row = 0, 0` (#344). An ATTRIBUTE target cannot take the Copy-into-a
+    /// -Variable path below -- an instance field is stored through the assignment path, which
+    /// knows the layout -- so a tuple unpack with one is rewritten into the statements the
+    /// author would otherwise have written: the whole right-hand side into snapshot names
+    /// first, because Python evaluates it before any store, then one plain assignment per
+    /// target. Both halves go through VisitAssign, so a field keeps exactly the lowering it
+    /// has when it is written on its own line.
+    ///
+    /// Returns false when no target is an attribute, leaving the all-names case untouched.
+    /// </summary>
+    private bool TryUnpackIntoAttributes(TupleUnpackStmt stmt)
+    {
+        if (!stmt.Targets.Any(t => t.Contains('.'))) return false;
+
+        if (stmt.StarredIndex >= 0)
+            throw UserError("a starred target collects into an array, which an attribute "
+                            + "cannot be. Unpack into names and assign the attributes from "
+                            + "them", stmt);
+
+        var values = stmt.Value is TupleExpr tup
+            ? tup.Elements
+            : throw UserError("unpacking into an attribute needs the values written out, "
+                              + $"as in `{stmt.Targets[0]}, ... = a, b`", stmt);
+
+        if (values.Count != stmt.Targets.Count)
+            throw UserError(
+                $"tuple unpacking size mismatch: {stmt.Targets.Count} target"
+                + $"{(stmt.Targets.Count == 1 ? "" : "s")} on the left "
+                + $"({string.Join(", ", stmt.Targets)}), {values.Count} "
+                + $"value{(values.Count == 1 ? "" : "s")} on the right",
+                values.Count > stmt.Targets.Count ? values[stmt.Targets.Count] : null);
+
+        // The snapshots, so `self.a, self.b = self.b, self.a` still swaps.
+        var snapNames = new List<string>(values.Count);
+        for (int k = 0; k < values.Count; ++k)
+        {
+            string snap = $"__unpack{tempCounter++}";
+            snapNames.Add(snap);
+            VisitAssign(new AssignStmt(new VariableExpr(snap), values[k]) { Line = stmt.Line });
+        }
+
+        for (int k = 0; k < stmt.Targets.Count; ++k)
+        {
+            Expression target;
+            string t = stmt.Targets[k];
+            int dot = t.IndexOf('.');
+            if (dot < 0) target = new VariableExpr(t);
+            else
+            {
+                Expression obj = new VariableExpr(t[..dot]);
+                foreach (var member in t[(dot + 1)..].Split('.'))
+                    obj = new MemberAccessExpr(obj, member);
+                target = obj;
+            }
+            VisitAssign(new AssignStmt(target, new VariableExpr(snapNames[k])) { Line = stmt.Line });
+        }
+
+        return true;
+    }
+
     private void VisitTupleUnpack(TupleUnpackStmt stmt)
     {
+        if (TryUnpackIntoAttributes(stmt)) return;
+
         // Every target is written here, so none of them still holds what it held.
         foreach (var unpacked in stmt.Targets) ForgetLocalConstant(unpacked);
 

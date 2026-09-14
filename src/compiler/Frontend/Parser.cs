@@ -1858,9 +1858,45 @@ public class Parser
 
         if (Check(TokenType.Comma))
         {
-            if (expr is VariableExpr firstVar)
+            // An unpack target may be a plain name or an attribute (#344). `self.column,
+            // self.row = 0, 0` is two stores of two constants, which is what the author would
+            // otherwise write on two lines, and it used to die two tokens later as "Expected
+            // newline or end of block" -- a sentence about where the parser stopped. An
+            // attribute target is carried as its dotted text, the same encoding the annotated
+            // member declaration below already uses for `self._buf: uint8[N]`.
+            if (expr is VariableExpr or MemberAccessExpr)
             {
-                var targets = new List<string> { firstVar.Name };
+                string FlattenTarget(Expression e)
+                {
+                    if (e is VariableExpr v) return v.Name;
+                    var parts = new List<string>();
+                    Expression cur = e;
+                    while (cur is MemberAccessExpr m)
+                    {
+                        parts.Add(m.Member);
+                        cur = m.Object;
+                    }
+                    if (cur is not VariableExpr root)
+                        Error("an unpacking target must be a name or an attribute of one, "
+                              + "such as `a, b = ...` or `self.a, self.b = ...`");
+                    parts.Add(((VariableExpr)cur).Name);
+                    parts.Reverse();
+                    return string.Join(".", parts);
+                }
+
+                string ParseOneTarget()
+                {
+                    string n = Consume(TokenType.Identifier, "Expected variable name in tuple unpack").Value;
+                    while (Check(TokenType.Dot))
+                    {
+                        Advance();
+                        n += "." + Consume(TokenType.Identifier,
+                            "Expected an attribute name after '.' in tuple unpack").Value;
+                    }
+                    return n;
+                }
+
+                var targets = new List<string> { FlattenTarget(expr) };
                 int starredIndex = -1;
                 while (Match(TokenType.Comma))
                 {
@@ -1875,8 +1911,7 @@ public class Parser
                     }
                     else
                     {
-                        var t = Consume(TokenType.Identifier, "Expected variable name in tuple unpack");
-                        targets.Add(t.Value);
+                        targets.Add(ParseOneTarget());
                     }
                 }
 

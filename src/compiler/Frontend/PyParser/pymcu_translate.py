@@ -702,9 +702,22 @@ def assign_one(target, value):
             if isinstance(el, ast.Starred):
                 starred = i
                 el = el.value
-            if not isinstance(el, ast.Name):
-                raise Unsupported("an unpacking target that is not a plain name", target)
-            names.append(el.id)
+            # A name, or an attribute of one carried as its dotted text (#344). The C# parser
+            # builds the same string from its tokens, and VisitTupleUnpack rewrites a dotted
+            # target into the assignment an author would write on its own line.
+            if isinstance(el, ast.Name):
+                names.append(el.id)
+                continue
+            parts = []
+            cur = el
+            while isinstance(cur, ast.Attribute):
+                parts.append(cur.attr)
+                cur = cur.value
+            if not parts or not isinstance(cur, ast.Name):
+                raise Unsupported("an unpacking target must be a name or an attribute of one, "
+                                  "such as `a, b = ...` or `self.a, self.b = ...`", target)
+            parts.append(cur.id)
+            names.append(".".join(reversed(parts)))
         return {"k": "TupleUnpack", "targets": names, "value": expr(value), "starredIndex": starred}
     return {"k": "Assign", "target": expr(target), "value": expr(value), "annotatedType": None}
 
