@@ -277,8 +277,9 @@ def timer2_irq_compa_setup(handler: Callable):
 
 @inline
 def millis_init():
-    # Normal mode: WGM0[2:0] = 000. CS0[2:0] = 011 -> prescaler 64.
-    TCCR0A.value = 0x00
+    # CS0[2:0] = 011 -> prescaler 64. TCCR0A is left alone: the counter overflows
+    # every 256 clocks in normal mode and in the fast PWM mode a PWM on PD5/PD6 puts
+    # it in, and clearing it here killed a PWM built before the time base (PyMCU#295).
     TCCR0B.value = 0x03   # prescaler 64
     TCNT0.value  = 0
     TIMSK0[0]    = 1      # TOIE0: enable Timer0 overflow interrupt
