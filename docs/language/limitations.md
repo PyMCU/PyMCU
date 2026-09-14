@@ -764,3 +764,55 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
   `pymcu-avr-toolchain`). If the wheel is not available for your platform the toolchain
   falls back to a system LLVM (e.g. `brew install llvm lld`).
 - **No C/C++ interop (`@extern`) yet** on this backend.
+---
+
+## What stops each Adafruit CircuitPython library
+
+Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's file
+**byte-identical to its repository** and a `main()` written after the library's own example
+that constructs the object and calls its methods.
+
+None of the twenty builds unmodified. Every one now stops at a construct the compiler names at
+the line it is written on, which is the thing to check when one of these messages changes: a
+refusal that names a bracket instead of a construct is a defect, not a limitation.
+
+| Library | Stops at | What the compiler says |
+|---|---|---|
+| `adafruit_bmp280` | `Optional[...]` on a parameter | a union type annotation is not supported |
+| `adafruit_bus_device` | `WriteableBuffer` annotation | unknown type in the annotation |
+| `adafruit_character_lcd` | `Optional[digitalio.DigitalInOut]` | a union type annotation is not supported |
+| `adafruit_debouncer` | `**kwargs` | it collects arguments into a run-time dictionary |
+| `adafruit_dht` | `import array` | `array` is a Python standard module; use a bytearray |
+| `adafruit_ds18x20` | `tuple[Literal[...], ...]` | `...` is not a type annotation PyMCU can read |
+| `adafruit_74hc595` | `**kwargs` | it collects arguments into a run-time dictionary |
+| `adafruit_hcsr04` | `Optional[...]` on a parameter | a union type annotation is not supported |
+| `adafruit_ht16k33` (matrix) | `m[x, y] = 1`, a tuple subscript | tuples are not supported as runtime values |
+| `adafruit_ht16k33` (segments) | `Tuple[int, ...]` | `...` is not a type annotation PyMCU can read |
+| `adafruit_ina219` | `WriteableBuffer`, through `bus_device` | unknown type in the annotation |
+| `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |
+| `adafruit_mcp3xxx` | `Optional[...]` on a parameter | a union type annotation is not supported |
+| `neopixel` | `import adafruit_pixelbuf` | module not found |
+| `adafruit_pcf8574` | `**kwargs` | it collects arguments into a run-time dictionary |
+| `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
+| `adafruit_motor` (servo) | `Optional[float]` on a property | a union type annotation is not supported |
+| `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
+| `adafruit_tcs34725` | `Tuple[...]` | unknown type in the annotation (did you mean `tuple`?) |
+| `adafruit_veml7700` | `WriteableBuffer`, through `bus_device` | unknown type in the annotation |
+
+### Which of these are limits and which are gaps
+
+**Limits of the no-heap, fixed-width model.** `**kwargs` needs a run-time dictionary.
+`except X as e` needs an exception object, and a raise here carries only which exception was
+raised. An f-string in a raise message would be built and then discarded, because the message
+never reaches the image. `array` is dynamic storage. Each says so in one sentence at the line
+it is written on.
+
+**A union annotation is the largest single blocker**, stopping five of the twenty. `Optional[X]`
+is `X` or `None`, and storage here is decided at compile time, so there is no width the two
+share. Whether PyMCU should read `Optional[X]` as `X` is a language decision, not an oversight.
+
+**Two need a module that does not exist yet**: `adafruit_pixelbuf` for `neopixel` and
+`adafruit_framebuf` for `adafruit_ssd1306`. Both report the missing module by name.
+
+**A tuple subscript** (`matrix[x, y]`) is a genuine gap in the parser, and it is the one
+entry above whose message still points at a bracket.
