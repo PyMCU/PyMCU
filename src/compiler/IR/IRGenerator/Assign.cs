@@ -2080,11 +2080,93 @@ public partial class IRGenerator
 
     // Compile-time __len__ of a class, when its body is a single constant return
     // (e.g. _NVM.__len__ -> 1024). Null when absent or not statically known.
-    private int? DunderConstLen(string cls)
+    private int? DunderConstLen(string cls) => ConstReturnOfMethod(cls, "__len__", 0);
+
+    /// <summary>
+    /// The compile-time value a single-return method hands back, or null (#329).
+    ///
+    /// This used to be one AST pattern -- `[ReturnStmt { Value: IntegerLiteral }]` -- so the
+    /// number had to be a literal REACHED WITHOUT LEAVING THE METHOD. A compile-time `if` chain
+    /// worked only because the frontend prunes it before this runs, leaving one literal behind;
+    /// a name, a class attribute or one method hop did not, and a part's EEPROM size is a chip
+    /// fact that lives in the HAL, one hop away from the layer that has to ask for it.
+    ///
+    /// Three readings now, in the order they cost:
+    ///   * a literal, unchanged;
+    ///   * a NAME -- a module constant, a class attribute, an imported constant -- through the
+    ///     constant evaluator the rest of the compiler uses, which already resolves all three;
+    ///   * ONE HOP, `self._size()` or `Eeprom().size()`, by asking the callee the same question.
+    ///
+    /// The hop limit is one, and it is deliberate. This runs SPECULATIVELY from three call
+    /// sites, one of them a probe that falls back on false, so it must stay pure: it reads the
+    /// AST and the constant tables and emits nothing. Following an arbitrary chain would turn a
+    /// cheap probe into a search, and a second hop has never been what any of these programs
+    /// needed. Anything deeper keeps the sentence it has, which says the length is not a
+    /// compile-time constant -- true of that program, and the honest answer.
+    /// </summary>
+    private int? ConstReturnOfMethod(string cls, string method, int depth)
     {
-        if (!inlineFunctions.TryGetValue(cls + "_" + "__len__", out var lenFn)) return null;
-        if (lenFn.Body.Statements is [ReturnStmt { Value: IntegerLiteral il }]) return il.Value;
+        if (depth > 1) return null;
+        if (string.IsNullOrEmpty(cls)) return null;
+        if (!inlineFunctions.TryGetValue(cls + "_" + method, out var fn)) return null;
+        if (fn.Body.Statements is not [ReturnStmt { Value: { } ret }]) return null;
+        return ConstValueOfReturn(ret, cls, depth);
+    }
+
+    /// <summary>
+    /// The compile-time value of `Owner.ATTR`, or null. A class attribute is stored under the
+    /// UNDERSCORE-JOINED name, optionally under the defining module's prefix, which is the same
+    /// pair of keys the dotted-constant reader in the expression path tries.
+    /// </summary>
+    private int? ConstClassAttribute(string owner, string member)
+    {
+        foreach (string key in new[] { owner + "_" + member, currentModulePrefix + owner + "_" + member })
+        {
+            if (key.Length == 0) continue;
+            if (globals.TryGetValue(key, out var sym) && !sym.IsMemoryAddress) return sym.Value;
+            if (constantVariables.TryGetValue(key, out int cv)) return cv;
+        }
         return null;
+    }
+
+    /// The compile-time value of a `return` expression inside <paramref name="cls"/>, or null.
+    private int? ConstValueOfReturn(Expression ret, string cls, int depth)
+    {
+        switch (ret)
+        {
+            case IntegerLiteral il:
+                return il.Value;
+
+            // A NAME: a module-level constant, or a constant imported from another module.
+            // EvaluateConstantExpr resolves both, and it THROWS on anything it cannot read,
+            // which here means "not a compile-time constant" rather than "this program is
+            // wrong" -- the caller decides what to say about that.
+            case VariableExpr:
+                try { return EvaluateConstantExpr(ret); }
+                catch (Exception) { return null; }
+
+            // A CLASS ATTRIBUTE, `Table.SIZE` or `self.SIZE`. Through ProbeBinding, which is
+            // the null-returning half of the name resolver: the constant evaluator has no
+            // reading for a dotted name at all, so it would throw on every one of these.
+            case MemberAccessExpr { Object: VariableExpr attrObj } attr:
+                string owner = attrObj.Name == "self" ? cls : attrObj.Name;
+                return ConstClassAttribute(owner, attr.Member);
+
+            // One hop. `self._size()` asks this class; `Eeprom().size()` asks the class the
+            // call constructs, which is the shape a layer uses to reach a HAL fact.
+            case CallExpr { Callee: MemberAccessExpr hop, Args.Count: 0 }:
+                string? hopClass = hop.Object switch
+                {
+                    VariableExpr { Name: "self" } => cls,
+                    VariableExpr hv => ResolveCtorClass(new CallExpr(hv, new List<Expression>())),
+                    CallExpr ctor => ResolveCtorClass(ctor),
+                    _ => null,
+                };
+                return hopClass == null ? null : ConstReturnOfMethod(hopClass, hop.Member, depth + 1);
+
+            default:
+                return null;
+        }
     }
 
     // `obj[a:b] = <list/bytes literal>` where obj's class defines __setitem__: unroll

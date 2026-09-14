@@ -543,6 +543,37 @@ public partial class IRGenerator
     /// an instance. Returns null whenever the joined name is not a global the scan filed, so
     /// every access that resolves some other way keeps the path it has.
     /// </summary>
+    /// <summary>
+    /// The class of the object a slice is taken of, without lowering anything (#329).
+    ///
+    /// The subscript path is about to throw, so the target must not be visited: doing that
+    /// emits instructions for a program that is being refused. The instance tables answer the
+    /// question directly, under the same key spellings the rest of the compiler uses, including
+    /// the underscore-joined one a module-level instance gets (`microcontroller.nvm`).
+    /// </summary>
+    private string? SliceTargetClass(Expression target)
+    {
+        string? name = target switch
+        {
+            VariableExpr v => v.Name,
+            MemberAccessExpr { Object: VariableExpr mo } m => mo.Name + "_" + m.Member,
+            _ => null,
+        };
+        if (name == null) return null;
+
+        foreach (string? key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+                     string.IsNullOrEmpty(currentModulePrefix) ? null : currentModulePrefix + name,
+                     name,
+                 })
+        {
+            if (key != null && instanceClasses.TryGetValue(key, out string? cls)) return cls;
+        }
+        return null;
+    }
+
     private Val? TryDottedClassConstant(MemberAccessExpr expr)
     {
         var tail = new List<string> { expr.Member };
@@ -1925,6 +1956,21 @@ public partial class IRGenerator
                     return new Variable(tmpName, elemDt);
                 }
             }
+
+            // An OBJECT with __getitem__ is not a fixed-size array, and telling its author about
+            // fixed-size arrays describes neither the program they wrote nor the one they
+            // should write (#329). `nvm[0:4]` is a sequence protocol, and what this target
+            // cannot do is produce the new sequence a slice READ stands for -- there is nowhere
+            // to put it. Writing through the slice works and is named, because the elements go
+            // one at a time into storage that already exists.
+            if (SliceTargetClass(expr.Target) is { } sliceCls
+                && inlineFunctions.ContainsKey(sliceCls + "_" + "__getitem__"))
+                throw UserError(
+                    $"a slice READ of '{sliceCls}' is not supported: a slice makes a new sequence, "
+                    + "and there is no storage to make it in. Read the elements one at a time "
+                    + "(`obj[i]`), loop over them (`for v in obj:`), or copy them into a buffer "
+                    + "you own. Writing through a slice (`obj[a:b] = ...`) is supported and "
+                    + "unrolls to one __setitem__ per element.", expr.Target);
 
             throw UserError("Slice indexing is only supported on named fixed-size arrays", expr.Target);
         }
