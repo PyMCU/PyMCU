@@ -152,17 +152,45 @@ to nothing.
 ```python
 import board
 import busio
-from pymcu.types import uint8
+from pymcu.types import uint16
 
-uart = busio.UART(board.TX, board.RX, baudrate=9600)
-uart.write_str("READY\n")
+uart = busio.UART(board.TX, board.RX, baudrate=9600, timeout=500)
+uart.write(b"READY\r\n")
 
-b: uint8 = uart.read()          # blocking receive of 1 byte
-uart.println("received")
+buf = bytearray(8)
+n: uint16 = uart.readinto(buf)      # how many bytes actually arrived
 ```
 
-The `tx`/`rx` pin arguments are accepted for API compatibility; hardware pins on
+Every parameter reaches the hardware. `bits`, `parity` and `stop` are the frame format:
+parity is `None`, `busio.Parity.EVEN` or `busio.Parity.ODD`, and a frame the part cannot send
+is refused where the UART is constructed. They used to be accepted and dropped, so a program
+that asked for 7E1 ran 8N1 and said nothing.
+
+`timeout` is in milliseconds here, not the float seconds CircuitPython uses, because a
+parameter default cannot be a float in this compiler. `readinto` honours it and returns how
+many bytes it got; it used to block on every byte for ever whatever the timeout said, so a
+sensor that stopped answering hung the program.
+
+`receiver_buffer_size` turns on the interrupt-driven receive ring in the HAL, which is what
+makes `in_waiting` a count instead of a flag. It defaults to 64, the size of the ring; asking
+for more is refused with the ring's size named. Pass `1` for the polled UART, which holds one
+byte in the hardware register and costs no interrupt.
+
+`read()` and `readline()` return a `bytes` object and there is no heap to build one on, so
+both are refused at build time with a message naming `readinto(buf)`. They used to compile to
+nothing and hand back a value that was never read.
+
+The `tx`/`rx` pin arguments are accepted for API compatibility; the hardware pins on the
 ATmega328P are fixed (PD1/PD0).
+
+| Member | Behaviour |
+|---|---|
+| `write(buf) -> int` | Write every byte of a literal or an array; returns the count |
+| `readinto(buf) -> int` | Fill `buf` or stop at the timeout; returns what it got |
+| `in_waiting` | A count when buffered; 0 or 1 when polled, because the hardware has no count |
+| `baudrate`, `timeout` | The values in force; `timeout` is settable |
+| `reset_input_buffer()` | Drop everything waiting |
+| `read()`, `readline()` | Refused at build time, naming `readinto` |
 
 ---
 
@@ -170,36 +198,51 @@ ATmega328P are fixed (PD1/PD0).
 
 ```python
 import board, busio
-from pymcu.types import uint8
 
-i2c = busio.I2C(board.SCL, board.SDA)
+i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
 
-# Context-manager style (CircuitPython idiomatic):
-with i2c:
-    i2c.write(0x68, 0x00)         # write one byte to device 0x68
-    val: uint8 = i2c.read(0x68)   # read one byte from device 0x68
-
-# Lock style:
-if i2c.try_lock():
-    addr: uint8 = i2c.scan()      # address of first responding device
-    i2c.writeto(0x68, 0x6B)
-    data: uint8 = i2c.readfrom_into(0x68)
-    i2c.unlock()
+while not i2c.try_lock():
+    pass
+i2c.writeto(0x68, bytes([0x6B, 0x00]))
+data = bytearray(6)
+i2c.writeto_then_readfrom(0x68, bytes([0x3B]), data)
+i2c.unlock()
 ```
 
-| Method | Description |
+`frequency` reaches the bit-rate register. It used to be dropped and the bus ran at 100 kHz
+whatever the program asked for. A rate the TWI cannot clock (above about 444 kHz or below
+about 30.5 kHz at 16 MHz) is refused where the bus is constructed, with the reachable range
+named. `i2c.frequency` reports what the bus actually clocks, which is not always the request:
+the bit-rate register is an integer.
+
+`start` and `end` slice the buffer on every transfer method, as they do in CircuitPython.
+They used to be accepted and the whole buffer sent, so a program writing one register out of a
+packet wrote the packet.
+
+`scan()` returns a list of the addresses that answered and there is no heap to build one on,
+so it is refused at build time with a message naming `probe(address)`:
+
+```python
+for a in range(8, 120):
+    if i2c.probe(a):
+        print(hex(a))
+```
+
+It used to compile to nothing, so the scan found nothing and said nothing.
+
+| Method | Behaviour |
 |---|---|
-| `write(addr, data)` | Write one byte; returns 1 on ACK |
-| `read(addr)` | Read one byte |
-| `writeto(addr, data)` | Alias for `write()` |
-| `readfrom_into(addr)` | Read one byte (CircuitPython-style name) |
-| `writeto_then_readfrom(addr, out)` | Repeated-start write + read |
-| `scan()` | Returns first responding address (0 = none found) |
-| `try_lock()` / `unlock()` | Bus locking (single-master on AVR; always succeeds) |
+| `probe(addr) -> int` | 1 if a device acknowledges at `addr` |
+| `writeto(addr, buf, start, end)` | Write the slice |
+| `readfrom_into(addr, buf, start, end)` | Read into the slice, NACK on the last byte |
+| `writeto_then_readfrom(addr, out, in, ...)` | Repeated-start write then read |
+| `frequency` | The SCL rate actually clocked |
+| `try_lock()` / `unlock()` | Bus locking (single controller on AVR) |
+| `scan()` | Refused at build time, naming `probe` |
 
 :::{note}
-Hardware I2C on ATmega328P uses fixed pins: SCL = PC5 (A5), SDA = PC4 (A4).
-The `scl`/`sda` arguments to `busio.I2C()` are accepted for API compatibility.
+Hardware I2C on the ATmega328P uses fixed pins: SCL = PC5 (A5), SDA = PC4 (A4).
+The `scl`/`sda` arguments are accepted for API compatibility.
 :::
 
 ---
@@ -207,43 +250,71 @@ The `scl`/`sda` arguments to `busio.I2C()` are accepted for API compatibility.
 ### `busio.SPI`
 
 ```python
-import board, busio
-from pymcu.types import uint8
+import board, busio, digitalio
 
-def main():
-    spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+cs = digitalio.DigitalInOut(board.D10)
+cs.switch_to_output(value=True)
 
-    # write() / readinto() / write_readinto() take BUFFERS, exactly as they do
-    # in CircuitPython -- not a single byte.
-    out_buf: uint8[2] = [0xAB, 0x00]
-    in_buf:  uint8[2] = [0, 0]
+out_buf = bytearray(b"\xAB\x00")
+in_buf  = bytearray(2)
 
-    # Lock style, as CircuitPython specifies it:
-    if spi.try_lock():
-        spi.configure(baudrate=1000000)
-        spi.write(out_buf)
-        spi.readinto(in_buf)
-        spi.write_readinto(out_buf, in_buf)
-        spi.unlock()
-
-    # `with spi:` takes and releases the lock around the block:
-    with spi:
-        spi.write(out_buf)
+while not spi.try_lock():
+    pass
+spi.configure(baudrate=1000000, polarity=1, phase=1)   # mode 3 at 1 MHz
+cs.value = False
+spi.write_readinto(out_buf, in_buf)
+cs.value = True
+spi.unlock()
 ```
 
-| Method | Description |
+`configure()` programs the clock and the mode. It used to record `baudrate` and reprogram
+nothing, so a display asked for mode 3 at 8 MHz ran mode 0 at 4 MHz. `spi.frequency` reports
+the rate the bus actually runs at: the dividers are powers of two and the chosen one never
+exceeds the request, so asking for 3 MHz on a 16 MHz part gets 2 MHz.
+
+`bits` other than 8 is refused; the hardware shifts 8 bits per frame and has no other size.
+
+`write_readinto` requires the two slices to be the same length, which SPI does: one byte is
+clocked in for every byte clocked out. It used to index the read buffer with the write
+buffer's index and check nothing, so a shorter read buffer was written past its end.
+
+| Method | Behaviour |
 |---|---|
-| `write(data)` | Transmit one byte |
-| `readinto()` | Receive one byte (sends 0xFF) |
-| `write_readinto(out)` | Full-duplex transfer — send and receive simultaneously |
-| `select()` / `deselect()` | Assert / deassert chip-select |
-| `configure(baudrate, polarity, phase, bits)` | Accepted for API compatibility |
+| `write(buf, start, end)` | Clock the slice out, discarding what comes back |
+| `readinto(buf, start, end, write_value)` | Clock `write_value` out, keep what comes back |
+| `write_readinto(out, in, ...)` | Full duplex; the two slices must be the same length |
+| `configure(baudrate, polarity, phase, bits)` | Programs the clock and the mode |
+| `frequency` | The bit rate actually clocked |
 | `try_lock()` / `unlock()` | Bus locking (always succeeds on bare metal) |
 
 :::{note}
-Hardware SPI on ATmega328P uses fixed pins: SCK = PB5, MOSI = PB3, MISO = PB4.
-Pass a `cs` string to the constructor to control a specific CS pin.
+Hardware SPI on the ATmega328P uses fixed pins: SCK = PB5, MOSI = PB3, MISO = PB4.
+Chip-select is the caller's, through a `digitalio.DigitalInOut`, exactly as in CircuitPython.
 :::
+
+---
+
+### `board.I2C()`, `board.SPI()`, `board.UART()`
+
+```python
+import board
+
+i2c = board.I2C()      # the board's SCL and SDA, 100 kHz
+spi = board.SPI()       # the board's SCK, MOSI and MISO, mode 0 at fosc/4
+uart = board.UART()     # the board's TX and RX, 9600 8N1
+```
+
+The first line of nearly every Adafruit sensor guide, and none of the three existed. They are
+functions and not module-level objects, so a program that imports `board` and never asks for a
+bus programs no peripheral and compiles to the same bytes it did before.
+
+They take no arguments, as CircuitPython's do. `board.UART()` leaves the receive ring off; for
+another rate, or for the buffer that makes `in_waiting` a count, construct
+`busio.UART(board.TX, board.RX, ...)` directly.
+
+Available on the AVR Arduino boards: `arduino_uno`, `arduino_nano`, `arduino_micro` and
+`arduino_mega`.
 
 ---
 
@@ -560,7 +631,7 @@ These are the **actual gaps** — anything not listed here behaves identically.
 | `microcontroller.nvm[a:b] = ...` | Supported | ✅ Slice assignment compiles to byte writes; a slice *read* bound to a name still needs a heap |
 | Lambda expressions | Supported | ✅ `lambda x: expr` (no capture) — inlined at the call site |
 | `AnalogOut` | Supported (SAMD DAC) | ❌ No DAC on any AVR part — constructing one is refused at build time and names `pwmio.PWMOut` instead |
-| `busio.I2C.scan()` | Returns list of addresses | Returns first address (no heap) |
+| `busio.I2C.scan()` | Returns list of addresses | Refused at build time; `probe(addr)` in a loop covers the same range |
 | `neopixel.brightness` | Applies scaling | Accepted but not applied (ZCA constraint) |
 | `supervisor.ticks_ms()` | 29-bit counter | 32-bit uint32 (~49-day wrap) |
 | Target hardware | SAMD21, RP2040, ESP32, … | ATmega328P (Arduino Uno / Nano) |
