@@ -400,6 +400,8 @@ public partial class IRGenerator
             constantVariables["__FREQ__"] = (int)config.Frequency;
             constantVariables["__FREQUENCY__"] = (int)config.Frequency;
         }
+        // Always bound, so a HAL can read it without the time base in the program.
+        constantVariables["__TIMEBASE__"] = config.Timebase ? 1 : 0;
 
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes.

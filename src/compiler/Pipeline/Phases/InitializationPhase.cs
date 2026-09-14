@@ -30,6 +30,7 @@ public class InitializationPhase : CompilerPhaseBase
         Logger.Initialize(options.Verbose);
 
         context.DeviceConfig.Frequency = options.Frequency;
+        context.DeviceConfig.Timebase = options.Timebase;
         context.DeviceConfig.ResetVector = options.ResetVector;
         context.DeviceConfig.InterruptVector = options.InterruptVector;
 

@@ -37,6 +37,13 @@ public class DeviceConfig
     public string DetectedChip { get; set; } = ""; // From source code (device_info)
     public string Arch { get; set; } = "";
     public ulong Frequency { get; set; }
+
+    /// True when the program runs the millisecond time base (millis_init(): the driver
+    /// injects it for ticks_ms()/monotonic()/asyncio, or the sources call it). On the
+    /// ATmega that is Timer0's overflow at prescaler 64, and the PWM HAL reads it as
+    /// `__TIMEBASE__` to refuse, at compile time, a frequency on the Timer0 pins that
+    /// would reprogram the prescaler under the clock (PyMCU#295).
+    public bool Timebase { get; set; } = false;
     public int RamSize { get; set; } = 0;
     public int FlashSize { get; set; } = 0;
     public int EepromSize { get; set; } = 0;

@@ -43,5 +43,9 @@ public sealed record CompilerOptions(
     // is written knowing that only the entry file's top level runs. The driver stages the entry
     // file into dist/_generated while the imports still resolve out of src/, so the entry
     // file's own directory is not enough on its own. Absent, the entry file's directory is used.
-    string? ProjectRoot = null
+    string? ProjectRoot = null,
+    // The program runs the millisecond time base (millis_init(), injected or explicit).
+    // Bound as __TIMEBASE__ for the stdlib; the PWM HAL refuses a Timer0 frequency that
+    // would reprogram the prescaler under the clock (PyMCU#295). Optional, like Board.
+    bool Timebase = false
 );

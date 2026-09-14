@@ -85,5 +85,11 @@ __CHIP__: _ChipInfo = _ChipInfo()
 #           ...
 __FREQ__: int = 16_000_000
 
+# 1 when the program runs the millisecond time base (millis_init(), injected by the build
+# for ticks_ms()/monotonic()/asyncio or called by the sources), else 0. Bound by the
+# compiler like __FREQ__. On the ATmega the time base is Timer0's overflow at prescaler
+# 64, and the PWM HAL reads this to refuse a Timer0 frequency that would change it.
+__TIMEBASE__: int = 0
+
 # GCC / avr-libc convention alias -- same compile-time value as __FREQ__.
 F_CPU: int = __FREQ__

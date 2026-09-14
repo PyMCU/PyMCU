@@ -1022,6 +1022,9 @@ def build(
             _millis_reason = "ticks_ms()"
         elif target.lower().startswith("atmega") and _detect_async_def_usage(sources_dir):
             _millis_reason = "async def (asyncio.ticks)"
+        # Either way the time base runs, and the compiler is told so (see
+        # PymcuCompiler.compile(timebase=...)).
+        _timebase = bool(_millis_reason) or _sources_contain(sources_dir, "millis_init")
         if _millis_reason and not _sources_contain(sources_dir, "millis_init"):
             entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir, _millis_reason)
             _linemap_preamble_offset += _n
@@ -1125,6 +1128,7 @@ def build(
                         on_output=compiler_handler,
                         emit_ir_path=str(ir_file),
                         diagnostic_source=_diagnostic_source,
+                        timebase=_timebase,
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
                     linemap_path: Path | None = None
@@ -1166,6 +1170,7 @@ def build(
                         interrupt_vector=interrupt_vector,
                         extra_includes=extra_includes or None,
                         on_output=compiler_handler,
+                        timebase=_timebase,
                     )
             except RuntimeError as e:
                 progress.stop()

@@ -58,6 +58,12 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => 4000000UL
         };
 
+        Option<bool> timebaseOption = new("--timebase")
+        {
+            Description = "The program runs the millisecond time base (millis_init); binds __TIMEBASE__ = 1",
+            DefaultValueFactory = parseResult => false
+        };
+
         // NOT AllowMultipleArgumentsPerToken. It makes a list option keep consuming tokens
         // until the next one it recognises, and a token starting with `--` is NOT a stopping
         // condition, so everything after this flag is swallowed as another value:
@@ -127,6 +133,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(targetOption);
         rootCommand.Options.Add(boardOption);
         rootCommand.Options.Add(freqOption);
+        rootCommand.Options.Add(timebaseOption);
         rootCommand.Options.Add(configOption);
         rootCommand.Options.Add(includeOption);
         rootCommand.Options.Add(resetVectorOption);
@@ -158,7 +165,8 @@ public static class CompilerCliBuilder
                 InterruptVector: parseResult.GetValue(interruptVectorOption),
                 Verbose: parseResult.GetValue(verboseOption),
                 EmitIrPath: parseResult.GetValue(emitIrOption),
-                ProjectRoot: parseResult.GetValue(projectRootOption)
+                ProjectRoot: parseResult.GetValue(projectRootOption),
+                Timebase: parseResult.GetValue(timebaseOption)
             );
 
             // Return the exit code so Invoke() (and thus the process) actually fails
