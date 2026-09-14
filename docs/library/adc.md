@@ -10,13 +10,19 @@ Analog-to-digital conversion. Wraps the AVR ADC peripheral.
 
 ## class `AnalogPin`
 
-### `AnalogPin(channel: str)`
+### `AnalogPin(channel)`
 
-Initializes the ADC for the given channel. On ATmega328P, `channel` is a port-pin name:
-`"PC0"` through `"PC5"` (ADC channels 0–5 on PORTC), plus `"TEMP"` / `"ADC8"` for the
-internal temperature sensor and `"VBG"` for the 1.1 V bandgap reference. The Arduino
-`A0`–`A5` names are the pin constants exported by `pymcu.boards.arduino_uno`, which
-resolve to these same strings (`A0 == "PC0"`).
+Initializes the ADC for the given input. On the ATmega328P the input can be named four
+ways, all equivalent: the register name `"PC0"`–`"PC5"`, the Arduino analog name
+`"A0"`–`"A5"`, the Arduino board number `14`–`19`, or the converter's own channel number
+`0`–`5`. The internal sources are `"TEMP"` / `"ADC8"` (die temperature sensor) and `"VBG"`
+(the 1.1 V bandgap). On the ATtiny 25/45/85 the inputs are `"PB2"`/`"A1"`/`1`,
+`"PB4"`/`"A2"`/`2`, `"PB3"`/`"A3"`/`3` and `"PB5"`/`"A0"`/`0`; the digital pin numbers are
+not accepted there because they run in a different order from the channels.
+
+A name with no converter behind it is refused where the `AnalogPin` is written. It used to
+select channel 0 and say nothing, so a program that asked for a pin with no channel read
+A0 forever, and `"A1"` through `"A5"` did the same.
 
 ### Methods
 
@@ -24,10 +30,13 @@ resolve to these same strings (`A0 == "PC0"`).
 |---|---|---|
 | `start()` | — | Begin a conversion (sets ADSC in ADCSRA) |
 | `read() -> uint16` | `uint16` | 10-bit result (0–1023) |
-| `read_u16() -> uint16` | `uint16` | 16-bit scaled result (0–65535) |
+| `read_u16() -> uint16` | `uint16` | Result scaled to the full 16-bit range (0–65535) |
 | `start_conversion()` | — | Start ADC with interrupt enabled |
 | `read_result() -> uint16` | `uint16` | Read ADCL/ADCH result registers directly |
 | `irq(handler)` | — | Register an ISR at the ADC Complete vector and enable ADIE + global interrupts |
+| `reference_millivolts() -> uint16` | `uint16` | The voltage the converter measures against, in millivolts (compile-time constant) |
+| `reference_volts() -> float` | `float` | The same reference in volts, as a float literal |
+| `measure_supply_millivolts() -> uint16` | `uint16` | The supply rail, **measured** against the 1.1 V bandgap; costs two conversions and leaves ADMUX on the bandgap |
 
 ---
 
@@ -60,8 +69,27 @@ from pymcu.types import uint16
 adc = AnalogPin("PC0")
 adc.start()
 # ... wait for conversion ...
-val: uint16 = adc.read_u16()    # 0-65535 (10-bit × 64)
+val: uint16 = adc.read_u16()    # 0-65535; 1023 counts map to exactly 65535
 ```
+
+The scaling replicates the top bits into the bottom ones rather than multiplying by 64,
+which topped out at 65472 and left full scale on the pin 63 counts short of full scale in
+the number.
+
+### Turning a reading into volts
+
+```python
+from pymcu.hal.adc import AnalogPin
+
+adc = AnalogPin("A0")
+volts: float = adc.read_u16() * adc.reference_volts() / 65535.0
+```
+
+`reference_volts()` is what the converter measures against: the supply rail on the AVR and
+PIC parts (`adc_init` selects AVcc), 3.3 V on the RP parts. It is a compile-time constant,
+so the constants in that expression fold. On a board running an AVR at a rail other than
+5 V, read the true value with `measure_supply_millivolts()`, which measures it against the
+internal bandgap instead of trusting the constant.
 
 ### Interrupt-driven
 

@@ -18,6 +18,7 @@ All modules compile to tight native machine code — there is no Python runtime 
 | {doc}`GPIO / Pin <gpio>` | `pymcu.hal.gpio` | Digital I/O, pin interrupts |
 | {doc}`UART <uart>` | `pymcu.hal.uart` | Serial communication |
 | {doc}`ADC <adc>` | `pymcu.hal.adc` | Analog-to-digital conversion |
+| {doc}`DAC <dac>` | `pymcu.hal.dac` | Analog output — refused on every part PyMCU targets today, and says what to use instead |
 | {doc}`Timer <timer>` | `pymcu.hal.timer` | Hardware timers |
 | {doc}`PWM <pwm>` | `pymcu.hal.pwm` | Pulse-width modulation |
 | {doc}`SPI <spi>` | `pymcu.hal.spi` | SPI bus (hardware + soft) |
@@ -51,6 +52,7 @@ for details on the Zero-Cost Abstraction model.
 gpio
 uart
 adc
+dac
 timer
 pwm
 spi

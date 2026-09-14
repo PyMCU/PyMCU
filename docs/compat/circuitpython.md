@@ -124,12 +124,26 @@ from analogio import AnalogIn
 from pymcu.types import uint16
 
 adc = AnalogIn(board.A0)
-val: uint16 = adc.value          # 0–65535 (10-bit ADC scaled ×64)
-vref: uint8 = adc.reference_voltage   # always 5 on 5 V boards
+val: uint16 = adc.value               # 0–65535; full scale on the pin reads 65535
+vref: float = adc.reference_voltage   # the reference the converter measures against
+volts: float = val * vref / 65535.0
 ```
 
-`AnalogOut` is not available — the ATmega328P has no DAC. Instantiating it raises
-`NotImplementedError` at build time.
+`value` covers the whole 16-bit range: the 10-bit reading is scaled by replicating its top
+bits into the bottom ones, so 1023 counts map to exactly 65535. It used to be multiplied by
+64, which stopped at 65472 and left every volts calculation low.
+
+`reference_voltage` comes from the HAL, which knows what each part's converter is wired to
+— the supply rail on the AVR and PIC parts, 3.3 V on the RP parts. It is a compile-time
+constant on every target, so the arithmetic above folds.
+
+A pin with no ADC channel behind it (`AnalogIn(board.D2)`) is refused where it is written.
+It used to build clean and read A0 forever.
+
+`AnalogOut` needs a digital-to-analog converter and the ATmega328P has none, so
+constructing one is refused at build time with a message that names `pwmio.PWMOut` as the
+way to get an analog-like output. It used to build with a warning and compile `.value = ...`
+to nothing.
 
 ---
 
@@ -545,7 +559,7 @@ These are the **actual gaps** — anything not listed here behaves identically.
 | `bytearray` | Dynamic heap | ✅ Same spelling — `bytearray(8)` / `bytearray(b"...")` lower to a fixed `uint8[N]`; the size must be compile-time and cannot grow. `print(buf)` gives the CPython repr |
 | `microcontroller.nvm[a:b] = ...` | Supported | ✅ Slice assignment compiles to byte writes; a slice *read* bound to a name still needs a heap |
 | Lambda expressions | Supported | ✅ `lambda x: expr` (no capture) — inlined at the call site |
-| `AnalogOut` | Supported (SAMD DAC) | ❌ No DAC on ATmega328P |
+| `AnalogOut` | Supported (SAMD DAC) | ❌ No DAC on any AVR part — constructing one is refused at build time and names `pwmio.PWMOut` instead |
 | `busio.I2C.scan()` | Returns list of addresses | Returns first address (no heap) |
 | `neopixel.brightness` | Applies scaling | Accepted but not applied (ZCA constraint) |
 | `supervisor.ticks_ms()` | 29-bit counter | 32-bit uint32 (~49-day wrap) |
