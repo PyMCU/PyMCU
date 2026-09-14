@@ -1980,8 +1980,7 @@ public partial class IRGenerator
                 else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
                 else if (ConstValuesOf(litArg.Elements) is { } litValues
                          && TryMaterialiseConstTableFromValues(
-                                "param:" + ResolveNameKey(ve.Name), ve.Name, litValues,
-                                bindings: 0)
+                                "param:" + ResolveNameKey(ve.Name), ve.Name, litValues)
                             is { } litTable)
                     return EmitFlashArrayRead(litTable, VisitExpression(expr.Index), litValues.Count);
                 else throw UserError(
@@ -2002,7 +2001,7 @@ public partial class IRGenerator
             // compiled, on the same list and the same parameter. Gated like the flash table of
             // PyMCU#317: a name the program writes keeps reading its storage.
             if (ResolveConstSequence(ve.Name) is { } nameSeq
-                && nameWriteCounts.GetValueOrDefault(ve.Name) <= 1
+                && nameWriteCounts.GetValueOrDefault(ve.Name) == 0
                 && (expr.Index is IntegerLiteral || VisitExpression(expr.Index) is Constant))
             {
                 int ni = expr.Index is IntegerLiteral nlit

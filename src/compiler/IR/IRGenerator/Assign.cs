@@ -4405,6 +4405,11 @@ public partial class IRGenerator
         variableTypes[qualified] = elemDt;
         // Keep the values: a run-time subscript reaching this array later can turn them into a
         // flash table, which is the storage a lookup table written as a plain list wants.
+        // A name rebound to another list denotes the new values from here on, so any layout
+        // built from the old ones must not be reused for it.
+        materialisedConstTables.Remove(qualified);
+        materialisedConstTables.Remove("dictrows:" + qualified);
+        materialisedConstTables.Remove("dictkeys:dictrows:" + qualified);
         if (allConst) ctArrayConstElements[qualified] = constElems;
         else ctArrayConstElements.Remove(qualified);
         return true;

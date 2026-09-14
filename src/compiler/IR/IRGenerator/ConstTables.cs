@@ -40,10 +40,12 @@ public partial class IRGenerator
     // a run-time subscript can build a flash table without going back to the AST.
     private readonly Dictionary<string, List<int>> ctArrayConstElements = new();
 
-    // How many times each bare name is bound or written anywhere in the program: a subscript
-    // store, a slice store, a rebinding, a loop variable, or being handed to a call that could
-    // store through it. Counted once over the whole program and deliberately unscoped, because
-    // a table that is written anywhere must not become flash anywhere.
+    // How many times each bare name is WRITTEN anywhere in the program: a subscript store, a
+    // slice store, a rebinding to something that is not a table literal, a loop variable, or
+    // being handed to a call that could store through it. Counted once over the whole program
+    // and deliberately unscoped, because a table that is written anywhere must not become flash
+    // anywhere. The assignment that creates the table is not one of these: it is a definition,
+    // and two classes may each define a field of the same name.
     private readonly Dictionary<string, int> nameWriteCounts = new();
 
     // Flash tables already materialised, keyed by the array they came from.
@@ -115,7 +117,16 @@ public partial class IRGenerator
         {
             switch (node)
             {
-                case AssignStmt asg: NoteTarget(asg.Target); break;
+                // A plain assignment is a DEFINITION: it says what the name holds from here
+                // on, and the bindings follow it (the cached layout is dropped when the values
+                // are re-recorded). What corrupts a table laid in flash is a store INTO it,
+                // which is the IndexExpr case below.
+                //
+                // Counting definitions cost two real programs: two classes that each define a
+                // field called `chars` lost the layout for both, and a field taking what its
+                // constructor was handed (`self._levels = levels`) lost it for itself.
+                case AssignStmt { Target: IndexExpr } asgIdx: NoteTarget(asgIdx.Target); break;
+                case AssignStmt: break;
                 case AugAssignStmt aug: NoteTarget(aug.Target); break;
                 case AnnAssign ann: Note(ann.Target); break;
                 case ForStmt fs: Note(fs.VarName); break;
@@ -154,12 +165,11 @@ public partial class IRGenerator
     /// or one held in a `self` field. <paramref name="cacheKey"/> names the binding so repeated
     /// subscripts share one table; <paramref name="writtenName"/> is the source name whose
     /// writes decide whether the values can live in flash at all, and
-    /// <paramref name="bindings"/> how many of its counted writes are the binding that created
-    /// it: one for a name or a field, none for a parameter, whose binding is the call site and
-    /// is not a write that appears in the source at all.
+    /// <paramref name="bindings"/> is kept for call sites that pass a name which is legitimately
+    /// written, such as the key row of a table whose own name is.
     /// </summary>
     private string? TryMaterialiseConstTableFromValues(string cacheKey, string writtenName,
-                                                       List<int> values, int bindings = 1)
+                                                       List<int> values, int bindings = 0)
     {
         if (materialisedConstTables.TryGetValue(cacheKey, out var already)) return already;
         if (values.Count == 0) return null;
@@ -196,9 +206,7 @@ public partial class IRGenerator
 
         int dot = key.LastIndexOf('.');
         string bare = dot >= 0 ? key[(dot + 1)..] : key;
-        // The definition itself is one of the writes counted, so exactly one is the table being
-        // created and anything beyond that is a write this table could not follow.
-        if (nameWriteCounts.GetValueOrDefault(bare) != 1) return null;
+        if (nameWriteCounts.GetValueOrDefault(bare) != 0) return null;
 
         DataType elemDt = arrayElemTypes.TryGetValue(key, out var dt) && dt != DataType.UNKNOWN
             ? dt : WidestElemType(values);
