@@ -36,6 +36,12 @@ public class IrGenerationPhase : CompilerPhaseBase
         DataTypeExtensions.SetPointerWidth(context.DeviceConfig.PointerWidth);
 
         var irGen = new IRGenerator();
+        // The entry file has no path inside IR generation -- that is how it is told apart from
+        // an imported module -- so a diagnostic that cites one of its lines in its own sentence
+        // has nothing to name the file with. Hand it the name this compilation was invoked on
+        // (#303).
+        if (!string.IsNullOrEmpty(context.Options.FilePath))
+            irGen.EntryFileName = System.IO.Path.GetFileName(context.Options.FilePath);
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
             context.ModulePaths);

@@ -5552,8 +5552,18 @@ public partial class IRGenerator
         if (v is not Constant c) return new NoneVal();   // a run-time value: nothing to hold
 
         int line = inlineDepth > 0 && currentStmtLine > 0 ? currentStmtLine : expr.Line;
+        // `file:line`, never a bare "line N", even for the entry file. Two reasons, and the
+        // second is the measured one (#303). A message that says only "line 55" does not say
+        // which file, and the reader of a program with an imported HAL has several. And the
+        // build driver compiles a SYNTHETIC entry under dist/_generated -- print() alone adds
+        // four lines to it -- so every line the compiler states for the entry file is in that
+        // file's numbering and has to be mapped back. The driver maps a header by recognising
+        // `path:line`; giving the citation the same shape is what lets it map this one too. A
+        // bare number could not be told from any other number in the sentence: "already 3 for
+        // PD6 at line 43" named a line past the end of a 41-line file, and was correct only in
+        // a file the reader never wrote.
         string? sitePath = CallSiteSourcePath();
-        string site = sitePath != null ? $"{Path.GetFileName(sitePath)}:{line}" : $"line {line}";
+        string site = $"{(sitePath != null ? Path.GetFileName(sitePath) : EntryFileName)}:{line}";
         string who = owner.Length > 0 ? owner : "an earlier site";
 
         if (!claims.TryGetValue(key, out var rec))

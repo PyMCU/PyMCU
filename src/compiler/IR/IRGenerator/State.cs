@@ -692,6 +692,18 @@ public partial class IRGenerator
     }
     private readonly Dictionary<string, ClaimRecord> claims = new();
 
+    /// <summary>
+    /// The name of the file this compilation was invoked on, for a diagnostic that has to cite
+    /// a line of the ENTRY file inside its own sentence.
+    ///
+    /// Everywhere else the entry file is named by leaving `File` unset and letting the pipeline
+    /// fill in the path it was handed, which is why nothing in IR generation carried it. A
+    /// citation inside a message has no such slot: it is text, and text has to say which file
+    /// or the number in it means nothing. Defaults to the name IR generation already assumes
+    /// for the entry module, so a caller that does not set it reads as before. Issue #303.
+    /// </summary>
+    public string EntryFileName { get; set; } = "main.py";
+
     // Depth counter for runtime-conditional branches currently being compiled.
     // > 0 means we are inside a branch whose predicate could not be folded at compile time.
     // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)
