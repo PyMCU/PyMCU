@@ -50,6 +50,15 @@
   A second `main()` and a `main()` that returns early with module-level code after the
   call are refused where the call is written (#301).
 
+### Guardrails (was silent, now a located error)
+- A call whose callee reaches the end of its body without returning is refused where the
+  result is read, naming the callee. There is no `None` here, so the caller was reading the
+  result temporary the expansion never wrote: an AVR PWM HAL whose prescaler selector had
+  lost its `return` compiled to `MOV R4, R16` -- the low byte of RAMEND, left by the reset
+  prologue -- and programmed TCCR0B = 0x3F instead of 3, which clocks Timer0 from the T0 pin
+  so the output never toggles. The firmware built clean. A call written as a statement reads
+  nothing and is untouched (#302).
+
 ### Diagnostics
 - A line a message quotes for an EARLIER site is a line of the file the reader wrote. The
   citation now names its file (`already 3 for PD6 at main.py:38`) and `pymcu build` maps it

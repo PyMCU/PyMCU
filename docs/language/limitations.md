@@ -277,6 +277,27 @@ have been. Direct and mutual recursion are both detected.
 `lambda x: expr` (no closure capture) is inlined
 at the call site. `nonlocal` is supported inside nested `@inline` functions.
 
+**A function that promises a value must produce one wherever its result is read.** There is
+no `None` here: the result of an `@inline` is a temporary the expansion writes its `return`
+into, and the result of a subroutine is a register. A body that reaches its end without
+returning leaves both untouched, so a caller that reads the result reads whatever the register
+or stack slot happened to hold. That is refused at the call, naming the callee:
+
+```python
+@inline
+def bucket(freq: uint16) -> uint8:
+    if freq > 488:
+        return 3          # and nothing for the other path
+
+p: uint8 = bucket(f)      # refused: a path through bucket returns nothing
+bucket(f)                 # fine: nothing reads the result
+```
+
+A `match` needs a `case _:` arm and an `if` needs an `else:` for the compiler to see that
+every path leaves; `raise` counts as leaving, and so does a `while True:` with no `break`.
+Calling the function as a statement is always allowed, which is how an accessor whose
+one-argument path returns nothing is used.
+
 **Function references are supported.** A function assigned to a `Callable`-annotated name
 captures its address and calling through it emits an indirect call (`ICALL` on AVR);
 `funcref(fn)` is the explicit spelling, and `Callable[N]` builds a dispatch table you can
