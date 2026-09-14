@@ -14,12 +14,14 @@ Everything in this section is shipped and tested in the current alpha build.
 | `while` + `break` / `continue` | Full support |
 | `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1,2,3]` | Fixed-size array or constant list literal |
+| `for x in ["PD2", "PD3"]` / `for x in (board.D2, board.D3)` | A constant list of strings unrolls too, binding the loop variable as a string constant, so a `const` parameter resolves as it would from a literal. Also the pair form |
 | `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`) patterns; DCE on `__CHIP__` |
 | `def` (functions) | Typed params, defaults, keyword args, overloading by type |
 | `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level executable statements |
 | `class` | Zero-cost flattening, `@inline` methods, constructors |
+| Nested `class` | Constructible, and its constants readable through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the declaring module |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
