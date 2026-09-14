@@ -814,6 +814,15 @@ public partial class IRGenerator
     // `for` over the NAME unrolls the way the same literal written inline already does.
     private Dictionary<string, List<Frontend.Expression>> constSequenceBindings = new();
 
+    // The names currently bound to a TUPLE rather than to a list (#299). A tuple and a list of
+    // the same elements share their storage here, so nothing downstream can tell them apart and
+    // `T[0] = 5` was accepted where CPython raises TypeError. Immutability is a property of the
+    // name, and the binding is the only place that property exists.
+    //
+    // A name is REMOVED when it is rebound to something writable: a set that only grows would
+    // refuse `t = (1, 2, 3)` followed by `t = [1, 2, 3]`, which is a legal program.
+    private readonly HashSet<string> tupleBoundNames = new();
+
     // The literal elements an ANNOTATED array was initialized with (`base: uint8[4] = [1,2,3,4]`).
     // Read only when a list comprehension iterates that array by name: the array itself keeps
     // living as stores, so nothing else changes shape because the elements are remembered here.

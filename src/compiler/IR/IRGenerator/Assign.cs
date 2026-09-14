@@ -220,6 +220,12 @@ public partial class IRGenerator
             string seqKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + seqTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + seqTgt.Name : seqTgt.Name);
+
+            // The one place the tuple-ness of the name exists (#299). Recorded for BOTH lengths,
+            // before the unroll-limit test below splits them, because the two paths differ only
+            // in how the elements are stored and not in what the name is.
+            NoteSequenceMutability(seqKey, seqTgt.Name, isTuple: stmt.Value is TupleExpr);
+
             if (seqElements.Count is > 0 and <= ConstSequenceUnrollLimit
                 && seqElements.All(e => TryEvalConstElement(e, out _)))
             {
@@ -2231,8 +2237,53 @@ public partial class IRGenerator
 
     // `arr[i] = v` / `port[bit] = v`: array/bytearray store, runtime/constant bit
     // subscript on a register, with target-address resolution. Always terminal.
+    /// <summary>
+    /// Record, or clear, that a name is bound to a tuple (#299).
+    ///
+    /// Both the scope-qualified key and the bare name, because the binding and the write do not
+    /// always compute the same key: a module-level tuple is bound while the module's top level
+    /// is being lowered and written from inside a function, and the array tables the write path
+    /// normalizes against hold nothing for the short form. Clearing does both for the same
+    /// reason, and clearing is what makes the wrong answer here an ACCEPTED write rather than a
+    /// refused one: a name this misses is exactly where the compiler stands today.
+    /// </summary>
+    /// Whether a write through this name is a write through a tuple, under any of the keys a
+    /// binding may have recorded it as.
+    private bool IsTupleBound(string name)
+        => tupleBoundNames.Contains(name)
+           || (!string.IsNullOrEmpty(currentFunction) && tupleBoundNames.Contains(currentFunction + "." + name))
+           || (!string.IsNullOrEmpty(currentInlinePrefix) && tupleBoundNames.Contains(currentInlinePrefix + name));
+
+    private void NoteSequenceMutability(string qualifiedKey, string bareName, bool isTuple)
+    {
+        if (isTuple)
+        {
+            tupleBoundNames.Add(qualifiedKey);
+            tupleBoundNames.Add(bareName);
+        }
+        else
+        {
+            tupleBoundNames.Remove(qualifiedKey);
+            tupleBoundNames.Remove(bareName);
+        }
+    }
+
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
+        // A tuple does not support item assignment, here or in CPython (#299). Refused before
+        // the slice and array paths below, which cannot tell a tuple from a list: the two share
+        // their storage, and the name is the only place the difference is recorded.
+        //
+        // The refusal names the tuple and says what to write instead. The elements go into the
+        // same array either way, so a list is not a workaround for a missing capability -- it is
+        // the spelling that means "this is written to".
+        if (indexExpr.Target is VariableExpr tupTgt && IsTupleBound(tupTgt.Name))
+            throw UserError(
+                $"'{tupTgt.Name}' is a tuple, and a tuple does not support item assignment. "
+                + $"Write the same elements as a list (`{tupTgt.Name} = [...]`): the storage is "
+                + "identical, and a list is the spelling that says the name is written to.",
+                indexExpr);
+
         // Slice assignment: supported for compile-time indices and a MATCHING-length
         // source (list literal, whole array, or array slice) — an element-wise copy loop.
         // Differing lengths would need a memmove/realloc (insert/delete), which has no
