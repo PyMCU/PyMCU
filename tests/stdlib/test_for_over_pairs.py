@@ -141,8 +141,11 @@ def test_the_single_name_form_over_a_flat_list_still_works(tmp_path):
 
 def test_a_run_time_value_in_a_pair_is_still_refused_as_non_constant(tmp_path):
     """The one refusal that legitimately talks about constants, because here the element
-    really does hold something that is not one."""
+    really does hold something that is not one.
+
+    It no longer says "integer": a string element unrolls too since #308, so naming the kind
+    would send a reader looking for a number where a board pin name is what they wrote."""
     out, ir = build(tmp_path, "    for a, b in [(1, seed)]:\n"
                               "        total = total + a\n")
     assert ir is None
-    assert "integer constants" in out, out
+    assert "have to be constants" in out, out
