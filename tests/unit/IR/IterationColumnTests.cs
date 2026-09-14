@@ -161,18 +161,17 @@ public class IterationColumnTests
         Assert.Null(loop.Iterable);
     }
 
-    // This is now the only test pinning WHICH of two arguments the plural message marks.
-    // Its `for i in (range(0, n))` sibling covered the same decision at the range-as-iterable
-    // site and was rewritten when #224 stopped refusing that spelling. If this one moves or
-    // changes shape, that decision loses its last guard without anything going red.
+    // Until PyMCU#288 this pinned WHICH of two arguments the plural "must be compile-time
+    // constants" message marked. enumerate(range(0, n)) is now a runtime loop with an index
+    // alongside, so the message is gone and the spelling has to compile instead.
     [Fact]
-    public void EnumerateRange_PointsAtTheArgumentThatIsNotConstant()
+    public void EnumerateRange_WithARuntimeBound_Compiles()
     {
         const string src =
             "def main(n: uint8):\n" +
             "    for i, v in enumerate(range(0, n)):\n" +
             "        pass\n";
-        PointsAt(src, 2, "n))");
+        Gen(src);
     }
 
     [Fact]

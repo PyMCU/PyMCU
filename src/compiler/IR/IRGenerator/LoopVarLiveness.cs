@@ -30,6 +30,10 @@ public partial class IRGenerator
     /// (PyMCU#285)
     private readonly HashSet<ForStmt> loopVarReadAfter = new(ReferenceEqualityComparer.Instance);
 
+    /// A plain range loop that stands for `for i, v in enumerate(range(...))`, mapped to the
+    /// name of its index `i`: the range lowering keeps the index alongside its counter.
+    private readonly Dictionary<ForStmt, string> enumerateIndexFor = new(ReferenceEqualityComparer.Instance);
+
     private void ScanLoopVarReadsAfter(ProgramNode mainAst, IEnumerable<ProgramNode> importedModules)
     {
         foreach (var prog in importedModules.Prepend(mainAst))

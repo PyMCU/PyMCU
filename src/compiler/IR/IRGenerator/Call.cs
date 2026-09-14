@@ -606,6 +606,15 @@ public partial class IRGenerator
         // One check for every builtin, before the dispatch below. Issue #226.
         expr = CheckBuiltinKeywords(expr, callee);
 
+        // range() has no run-time value: there is no object to hand back, only loops that
+        // walk it. Every supported spelling reaches the compiler without passing through
+        // here, so a call that does arrive is `r = range(4)`, `len(range(4))` or an argument.
+        // It used to be reported as a builtin PyMCU does not provide (PyMCU#288).
+        if (callee == "range")
+            throw UserError(
+                "range() is not a value in PyMCU: use it as the iterable of a for loop, in " +
+                "'x in range(...)', in reversed(range(...)) or in enumerate(range(...))", expr.Callee);
+
         if (callee == "len") return EmitLenBuiltin(expr);
         if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
         if (callee == "struct_calcsize") return EmitStructCalcsize(expr);

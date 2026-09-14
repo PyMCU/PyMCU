@@ -190,6 +190,12 @@ public partial class IRGenerator
         return null;
     }
 
+    // The key a loop variable is stored under: the same qualification the body uses to read it.
+    private string QualifyLoopVar(string bareName) =>
+        !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + bareName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bareName : bareName);
+
     private (long Lo, long Hi) OperandRange(Val v)
         => v is Constant or Temporary or Variable ? ValRange(v) : RangeOfType(GetValType(v));
 
@@ -214,6 +220,89 @@ public partial class IRGenerator
         if (kLo < -1) lo = Math.Min(lo, eLo + kLo + 1);
         return (lo, hi);
     }
+
+    // `for v in reversed(range(a, b, s))` as the range it is: from the last value visited down
+    // to a, by -s. Constant bounds give constants; runtime bounds are supported for a unit step
+    // (`range(b - 1, a - 1, -1)`), and any other step is refused naming the spelling to use.
+    private ForStmt ReversedRangeFor(ForStmt stmt, CallExpr range)
+    {
+        var args = range.Args;
+        if (args.Count is < 1 or > 3) throw UserError("range() takes 1 to 3 arguments", range.Callee);
+        Expression a = args.Count >= 2 ? args[0] : new IntegerLiteral(0) { Line = stmt.Line };
+        Expression b = args.Count >= 2 ? args[1] : args[0];
+        Expression s = args.Count == 3 ? args[2] : new IntegerLiteral(1) { Line = stmt.Line };
+        int? Const(Expression e) { try { return EvaluateConstantExpr(e); } catch (Exception) { return null; } }
+
+        ForStmt rewritten;
+        if (Const(s) is not { } cs)
+            throw UserError("reversed(range()) needs a compile-time constant step", args[2]);
+        if (cs == 0) throw UserError("for-in range() step cannot be zero.", args[2]);
+        if (Const(a) is { } ca && Const(b) is { } cb)
+        {
+            long trips = RangeTripCount(ca, cb, cs);
+            int last = (int)(ca + (trips - 1) * cs);
+            rewritten = trips > 0
+                ? new ForStmt(stmt.VarName, new IntegerLiteral(last), new IntegerLiteral(ca - cs),
+                              new IntegerLiteral(-cs), stmt.Body)
+                : new ForStmt(stmt.VarName, new IntegerLiteral(ca), new IntegerLiteral(ca),
+                              new IntegerLiteral(1), stmt.Body);
+        }
+        else if (cs is 1 or -1)
+        {
+            Expression Shift(Expression e, int by) =>
+                new BinaryExpr(e, by < 0 ? Frontend.BinaryOp.Sub : Frontend.BinaryOp.Add,
+                               new IntegerLiteral(Math.Abs(by))) { Line = stmt.Line };
+            rewritten = new ForStmt(stmt.VarName, Shift(b, -cs), Shift(a, -cs), new IntegerLiteral(-cs), stmt.Body);
+        }
+        else
+            throw UserError(
+                "reversed(range()) with a step other than 1 or -1 needs compile-time constant " +
+                "bounds; write the descending range directly, e.g. range(last, start - step, -step)",
+                args[2]);
+        rewritten.Line = stmt.Line;
+        if (loopVarReadAfter.Contains(stmt)) loopVarReadAfter.Add(rewritten);
+        return rewritten;
+    }
+
+    // `x in range(a, b, s)` as the comparisons it stands for: `a <= x and x < b` (descending:
+    // `b < x and x <= a`), and for a step past 1 `(x - a) % s == 0` as well. Operands that
+    // are not a name or a literal are bound to a local first, so each is evaluated once.
+    private Expression RangeMembershipAst(Expression x, CallExpr range, bool negate, Expression at)
+    {
+        var args = range.Args;
+        if (args.Count is < 1 or > 3) throw UserError("range() takes 1 to 3 arguments", range.Callee);
+        Expression a = args.Count >= 2 ? args[0] : new IntegerLiteral(0) { Line = at.Line };
+        Expression b = args.Count >= 2 ? args[1] : args[0];
+        int step = 1;
+        if (args.Count == 3)
+        {
+            try { step = EvaluateConstantExpr(args[2]); }
+            catch (Exception) { throw UserError("'in range(...)' needs a compile-time constant step", args[2]); }
+            if (step == 0) throw UserError("range() step cannot be zero.", args[2]);
+        }
+
+        Expression Pinned(Expression e)
+        {
+            if (e is IntegerLiteral or VariableExpr or UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral })
+                return e;
+            string name = "__in_range_" + (_inRangeCounter++);
+            VisitStatement(new AssignStmt(new VariableExpr(name) { Line = at.Line }, e) { Line = at.Line });
+            return new VariableExpr(name) { Line = at.Line };
+        }
+        x = Pinned(x); a = Pinned(a); b = Pinned(b);
+
+        Expression Bin(Expression l, Frontend.BinaryOp op, Expression r) => new BinaryExpr(l, op, r) { Line = at.Line };
+        Expression cond = step > 0
+            ? Bin(Bin(a, Frontend.BinaryOp.LessEq, x), Frontend.BinaryOp.And, Bin(x, Frontend.BinaryOp.Less, b))
+            : Bin(Bin(b, Frontend.BinaryOp.Less, x), Frontend.BinaryOp.And, Bin(x, Frontend.BinaryOp.LessEq, a));
+        if (step is not (1 or -1))
+            cond = Bin(cond, Frontend.BinaryOp.And,
+                Bin(Bin(Bin(x, Frontend.BinaryOp.Sub, a), Frontend.BinaryOp.Mod, new IntegerLiteral(step)),
+                    Frontend.BinaryOp.Equal, new IntegerLiteral(0)));
+        return negate ? new UnaryExpr(Frontend.UnaryOp.Not, cond) { Line = at.Line } : cond;
+    }
+
+    private int _inRangeCounter;
 
     // The type of a range() counter: the program's annotation when there is one, otherwise the
     // narrowest integer type that holds every value the counter takes. `for i in range(N)` with
@@ -751,57 +840,23 @@ public partial class IRGenerator
                         return;
                     }
 
-                    if (inner is CallExpr rcall && rcall.Callee is VariableExpr rv && rv.Name == "range")
+                    // enumerate(range(...)) is the range loop itself with an index alongside:
+                    // the plain range lowering runs the loop (unrolled when short and constant,
+                    // a counter otherwise) and keeps the index for it. Before this only
+                    // constant bounds were accepted, and they unrolled with no cap (PyMCU#288).
+                    if (inner is CallExpr { Callee: VariableExpr { Name: "range" } } rcall)
                     {
-                        int? EvalC(Expression e)
-                        {
-                            if (e is IntegerLiteral il) return il.Value;
-                            if (e is VariableExpr v)
-                            {
-                                string k = currentInlinePrefix + v.Name;
-                                if (constantVariables.TryGetValue(k, out int cv)) return cv;
-                            }
-
-                            return null;
-                        }
-
-                        int rstart = 0, rstop = 0, rstep = 1;
-                        if (rcall.Args.Count == 1)
-                        {
-                            var sv = EvalC(rcall.Args[0]);
-                            if (!sv.HasValue)
-                                throw UserError("enumerate(range()) argument must be compile-time constant.",
-                                    ArgAt(rcall, 0));
-                            rstop = sv.Value;
-                        }
-                        else if (rcall.Args.Count >= 2)
-                        {
-                            var sv = EvalC(rcall.Args[0]);
-                            var ev = EvalC(rcall.Args[1]);
-                            if (!sv.HasValue || !ev.HasValue)
-                                throw UserError("enumerate(range()) arguments must be compile-time constants.",
-                                    ArgAt(rcall, sv.HasValue ? 1 : 0));
-                            rstart = sv.Value;
-                            rstop = ev.Value;
-                            if (rcall.Args.Count >= 3)
-                            {
-                                var stv = EvalC(rcall.Args[2]);
-                                if (!stv.HasValue)
-                                    throw UserError("enumerate(range()) step must be compile-time constant.",
-                                        ArgAt(rcall, 2));
-                                rstep = stv.Value;
-                            }
-                        }
-
-                        for (int rval = rstart; rstep > 0 ? rval < rstop : rval > rstop; rval += rstep)
-                        {
-                            constantVariables[idxKey] = idx++;
-                            constantVariables[valKey] = rval;
-                            VisitStatement(stmt.Body);
-                        }
-
-                        constantVariables.Remove(idxKey);
-                        constantVariables.Remove(valKey);
+                        var rargs = rcall.Args;
+                        if (rargs.Count is < 1 or > 3)
+                            throw UserError("range() takes 1 to 3 arguments", rcall.Callee);
+                        var plain = new ForStmt(stmt.Var2Name,
+                            rargs.Count >= 2 ? rargs[0] : null,
+                            rargs.Count >= 2 ? rargs[1] : rargs[0],
+                            rargs.Count == 3 ? rargs[2] : null,
+                            stmt.Body) { Var2Name = stmt.VarName, Line = stmt.Line };
+                        if (loopVarReadAfter.Contains(stmt)) loopVarReadAfter.Add(plain);
+                        enumerateIndexFor[plain] = stmt.VarName;
+                        VisitFor(plain);
                         return;
                     }
 
@@ -1138,6 +1193,15 @@ public partial class IRGenerator
                 {
                     string valKey = currentInlinePrefix + stmt.VarName;
                     Expression inner = call.Args[0];
+
+                    // reversed(range(...)) is the same range walked from its last value down,
+                    // so it goes through the one range lowering and unrolls, sizes its counter
+                    // and keeps its variable exactly like a range written that way (PyMCU#288).
+                    if (inner is CallExpr { Callee: VariableExpr { Name: "range" } } rrange)
+                    {
+                        VisitFor(ReversedRangeFor(stmt, rrange));
+                        return;
+                    }
 
                     if (inner is ListExpr le3)
                     {
@@ -1582,16 +1646,39 @@ public partial class IRGenerator
             var unrollVar = new Variable(unrollKey, unrollType);
             bool unrollReadAfter = loopVarReadAfter.Contains(stmt);
 
-            for (int i = unrollStart; unrollStep > 0 ? i < unrollStop : i > unrollStop; i += unrollStep)
+            // enumerate(range(...)): the index walks 0, 1, 2 ... next to the value.
+            string? unrollIdxKey = null;
+            Variable? unrollIdxVar = null;
+            long unrollTrips = RangeTripCount(unrollStart, unrollStop, unrollStep);
+            if (enumerateIndexFor.TryGetValue(stmt, out var unrollIdxName))
+            {
+                unrollIdxKey = QualifyLoopVar(unrollIdxName);
+                var idxType = NarrowestTypeFor(0, unrollTrips);
+                variableTypes[unrollIdxKey] = idxType;
+                unrollIdxVar = new Variable(unrollIdxKey, idxType);
+            }
+
+            int unrollIdx = 0;
+            for (int i = unrollStart; unrollStep > 0 ? i < unrollStop : i > unrollStop; i += unrollStep, unrollIdx++)
             {
                 constantVariables[unrollKey] = i;
                 if (unrollBreaks && unrollReadAfter) Emit(new Copy(new Constant(i), unrollVar));
+                if (unrollIdxKey != null)
+                {
+                    constantVariables[unrollIdxKey] = unrollIdx;
+                    if (unrollBreaks && unrollReadAfter) Emit(new Copy(new Constant(unrollIdx), unrollIdxVar!));
+                }
                 EmitUnrolledIteration(stmt.Body, unrollBrk);
             }
             if (unrollBrk.Length > 0) Emit(new Label(unrollBrk));
 
             constantVariables.Remove(unrollKey);
-            if (!unrollBreaks && unrollReadAfter) Emit(new Copy(new Constant(unrollLast), unrollVar));
+            if (unrollIdxKey != null) constantVariables.Remove(unrollIdxKey);
+            if (!unrollBreaks && unrollReadAfter)
+            {
+                Emit(new Copy(new Constant(unrollLast), unrollVar));
+                if (unrollIdxKey != null) Emit(new Copy(new Constant((int)unrollTrips - 1), unrollIdxVar!));
+            }
             return;
         }
 
@@ -1627,6 +1714,19 @@ public partial class IRGenerator
         // not a constant is kept in a temporary of its own, since the body may rewrite the
         // variable it was read from.
         bool readAfter = loopVarReadAfter.Contains(stmt);
+
+        // enumerate(range(...)): an index that starts at 0 and steps by 1 with the counter.
+        Variable? enumIdxVar = null;
+        if (enumerateIndexFor.TryGetValue(stmt, out var idxName))
+        {
+            string idxKey = QualifyLoopVar(idxName);
+            var (cLo, cHi) = CounterValueRange(startVal, stopVal, stepVal);
+            var idxType = NarrowestTypeFor(0, cHi - cLo + 1);
+            variableTypes[idxKey] = idxType;
+            enumIdxVar = new Variable(idxKey, idxType);
+            Emit(new Copy(new Constant(0), enumIdxVar));
+        }
+
         Val startKeep = startVal;
         if (readAfter && startVal is not Constant)
         {
@@ -1683,6 +1783,7 @@ public partial class IRGenerator
 
         Emit(new Label(contLabel));
         Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, loopVar, stepVal));
+        if (enumIdxVar != null) Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, enumIdxVar, new Constant(1)));
         Emit(new Jump(startLabel));
 
         // Python leaves the loop variable at the last value visited; the exit test fires one
@@ -1696,6 +1797,7 @@ public partial class IRGenerator
             Emit(new Label(exitLabel));
             Emit(new JumpIfEqual(loopVar, startKeep, endLabel));
             Emit(new AugAssign(PyMCU.IR.BinaryOp.Sub, loopVar, stepVal));
+            if (enumIdxVar != null) Emit(new AugAssign(PyMCU.IR.BinaryOp.Sub, enumIdxVar, new Constant(1)));
         }
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);

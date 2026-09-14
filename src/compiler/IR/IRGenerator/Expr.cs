@@ -620,6 +620,13 @@ public partial class IRGenerator
         if (expr.Op == AstBinOp.In || expr.Op == AstBinOp.NotIn)
         {
             bool negate = expr.Op == AstBinOp.NotIn;
+
+            // `x in range(a, b, s)` is two comparisons and, for a step past 1, a remainder
+            // test -- not a container lookup. Rewritten before the left side is visited, so
+            // it is evaluated exactly once by the rewrite (PyMCU#288).
+            if (expr.Right is CallExpr { Callee: VariableExpr { Name: "range" } } rangeIn)
+                return VisitExpression(RangeMembershipAst(expr.Left, rangeIn, negate, expr));
+
             Val lhs = VisitExpression(expr.Left);
 
             if (expr.Right is VariableExpr rv)
