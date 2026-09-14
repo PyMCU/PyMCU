@@ -729,8 +729,8 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     # Every export has to exist in the generated code before anything is linked. A
     # function the compiler dropped would otherwise surface much later as "undefined
     # symbol: <name>" out of mpy_ld.py, which reads as a linker problem and is not one.
-    # Measured: a parameter annotated `bytes` makes the compiler emit an EMPTY program
-    # and exit 0, so the only evidence of the loss is the missing definition here.
+    # Measured: a parameter annotated `bytes` makes the compiler drop the function and
+    # exit 0 (PyMCU#365), so the only evidence of the loss is the missing definition here.
     defined = {
         line.split("@", 1)[1].split("(", 1)[0]
         for line in ll.read_text().splitlines()
@@ -743,6 +743,8 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
             + ", ".join(f"'{m}'" for m in missing)
             + ".\n  The function is declared in the source and absent from the generated "
               "module, which is a compiler defect and not a mistake in your file.\n"
+              "  A parameter annotated `bytes` is one known cause (PyMCU#365); `bytearray` "
+              "is unaffected.\n"
               f"  Working intermediates are in {build_dir}; the .mir and .ll there show "
               "what was kept."
         )
