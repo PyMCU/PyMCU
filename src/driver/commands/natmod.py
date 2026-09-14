@@ -552,7 +552,7 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     # ── 2. Python -> IR -> LLVM IR -> relocatable object ─────────────────────
     from pymcu.toolchain.rp2040.llvm import Rp2040LlvmToolchain  # noqa: PLC0415
 
-    arch, _, _ = Rp2040LlvmToolchain.natmod_arch(target)
+    arch = Rp2040LlvmToolchain.natmod_arch(target)[0]
     if arch not in _ADAPTER_CFLAGS:
         raise NatmodError(f"no adapter flags are defined for architecture '{arch}'.")
 
