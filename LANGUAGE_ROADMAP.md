@@ -142,6 +142,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | `zip(a, b)` compile-time | `for x, y in zip(list1, list2):` — unrolled over paired constant lists |
+| Named sequence | `pins = [11, 12, 13]` and `pins = (11, 12, 13)` iterate the same way at any length: at most 8 constant elements unroll against the literal, past that the name gets a fixed array the loop walks. Unannotated, the element width is the widest element's, so a 16-bit table stays 16-bit |
 | `reversed(iterable)` | `for x in reversed([1,2,3]):` — compile-time reverse unroll; `reversed(range(a, b, s))` is the same range walked down (runtime bounds with a unit step) |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant; compile-time `n` only |
 | `pow(x, n)` / `x ** n` | Compile-time constant fold; `BinaryOp::Pow` |

@@ -400,19 +400,26 @@ _loop:
 |---|---|---|
 | List comprehension over a **runtime** iterable | Length not known at compile time | `for` loop with fixed-size array |
 | `if`-filtered comprehension with a **runtime** condition | The result length would vary at runtime | Keep the filter compile-time constant, or `for` loop + explicit index |
-| Runtime tuples | A tuple is a compile-time construct here | Separate variables, or a fixed-size array |
+| Runtime tuples as a **value** (returned, passed, stored in a field) | A tuple is a compile-time construct here | Separate variables, or a fixed-size array |
 | Dict comprehension | Heap allocation | Not available |
 | Set comprehension | Heap allocation | Not available |
 | Generator expressions | Coroutine frame requires heap | A `yield` generator function (supported — see Async and concurrency) |
 | `map()` / `filter()` with runtime iterables | Lazy iterator requires heap | Explicit `for` loop |
 
 **Supported:** `for i in range(N)` (runtime or constant N), `for x in array`,
-`for x in [...]`, `for i, x in enumerate(iterable)`, `for x, y in zip(list1, list2)`,
+`for x in [...]`, `for x in (...)`, `for i, x in enumerate(iterable)`, `for x, y in zip(list1, list2)`,
 `for x in reversed([...])`, `for x in reversed(range(...))`, `x in range(...)`,
 list comprehensions with compile-time constant bounds (`range(start, stop, step)` honours
 the step), nested list comprehensions, `if`-filtered list comprehensions (constant condition),
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
+
+**A sequence bound to a name.** `DUTIES = [256, 383, ...]` and `DUTIES = (256, 383, ...)`
+are the same thing to iterate over, at any length: up to eight constant elements the `for`
+unrolls against the literal, and past that the name gets a fixed array the loop walks.
+Without an annotation the element width comes from the widest element, so a 16-bit table
+stays 16-bit. Being the same storage, a write through the name (`DUTIES[0] = 1`) is not
+refused on the tuple the way CPython refuses it.
 
 **The range counter.** The loop variable of a `range()` loop is as wide as its bounds need,
 with no annotation: constants exactly (`range(300)` is a 16-bit loop, `range(200, -1, -1)` a
