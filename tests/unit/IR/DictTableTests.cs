@@ -126,6 +126,29 @@ public class DictTableTests
             "        row = D[i]\n" +
             "        i = i + 1\n"));
 
+    // Both subscripts written together, which is the only place the pair is visible: a row is
+    // never a value, so `D[k][j]` had nowhere to put the row and tried to evaluate the list.
+    [Fact]
+    public void BothSubscriptsTogether_WithConstantKeys_FoldToTheElement()
+        => Assert.Empty(Tables(Gen(
+            "D = {0: [1, 2], 1: [3, 4]}\n" +
+            "def main():\n" +
+            "    a = D[0][1]\n")));
+
+    [Fact]
+    public void BothSubscriptsTogether_WithARunTimeKey_ReadsTheTable()
+    {
+        var tables = Tables(Gen(
+            "D = {0: [1, 2], 1: [3, 4]}\n" +
+            "def main():\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 2:\n" +
+            "        a = D[i][1]\n" +
+            "        i = i + 1\n"));
+        Assert.Single(tables);
+        Assert.Equal(new List<int> { 1, 2, 3, 4 }, tables[0].Bytes);
+    }
+
     // ---------------------------------------------------------------- #337 zip
 
     [Fact]

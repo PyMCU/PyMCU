@@ -1812,6 +1812,48 @@ public partial class IRGenerator
         if (expr.Target is MemberAccessExpr && TryGetDictFor(expr.Target, out var fieldDictLit))
             return EmitDictLookup(fieldDictLit, expr.Index);
 
+        // `D[k][j]`: one element of a rectangular dict, both subscripts written together. The
+        // row is never a value here, so this is the only place the pair is visible; taken apart
+        // (`row = D[k]` then `row[j]`) it is the row-view path in the assignment. Without it the
+        // inner lookup tried to evaluate a list in a value position and said so.
+        if (expr.Target is IndexExpr rowChain && TryGetDictFor(rowChain.Target, out var chainDict)
+            && DictRows(chainDict) is { } chainRows)
+        {
+            Val rowIdxVal = VisitExpression(rowChain.Index);
+            Val colIdxVal = VisitExpression(expr.Index);
+            int width = chainRows[0].Count;
+
+            if (rowIdxVal is Constant rc && colIdxVal is Constant cc)
+            {
+                if (rc.Value < 0 || rc.Value >= chainRows.Count)
+                    throw UserError($"KeyError: {rc.Value} is not a key of this dict literal "
+                                    + "(checked at compile time)", rowChain.Index);
+                if (cc.Value < 0 || cc.Value >= width)
+                    throw new IndexError($"array index {cc.Value} out of range for size {width}",
+                                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                return new Constant(chainRows[rc.Value][cc.Value]);
+            }
+
+            string chainSource = rowChain.Target is MemberAccessExpr cm ? cm.Member
+                               : (rowChain.Target is VariableExpr cv ? cv.Name : "table");
+            if (MaterialiseDictRows("dictrows:" + SequenceKeyOf(rowChain.Target), chainSource,
+                                    chainRows) is { } chainTable)
+            {
+                Val flat;
+                if (rowIdxVal is Constant rc2 && colIdxVal is Constant cc2)
+                    flat = new Constant(rc2.Value * width + cc2.Value);
+                else
+                {
+                    Temporary scaled = MakeTemp(DataType.UINT16);
+                    Emit(new Binary(BinaryOp.Mul, rowIdxVal, new Constant(width), scaled));
+                    Temporary sum = MakeTemp(DataType.UINT16);
+                    Emit(new Binary(BinaryOp.Add, scaled, colIdxVal, sum));
+                    flat = sum;
+                }
+                return EmitFlashArrayRead(chainTable, flat, chainRows.Count * width);
+            }
+        }
+
         // A string subscript is a mistake — a single-char string would otherwise fold to
         // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
         if (expr.Index is StringLiteral)
