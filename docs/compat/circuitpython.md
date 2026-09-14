@@ -56,6 +56,7 @@ pymcu build
 | `analogio` | `AnalogIn`, `AnalogOut` | ✅ Complete |
 | `busio` | `UART`, `I2C`, `SPI` | ✅ Complete |
 | `pwmio` | `PWMOut` | ✅ Complete |
+| `pulseio` | `PulseIn`, `PulseOut` | ✅ On the ATmega 48/88/168/328 family. `PulseOut.send()` takes the length as a second argument, and the carrier pin is fixed by the timer channel |
 | `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
 | `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ Complete. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**, not CircuitPython: upstream `time` defines no such names, so code using them will not run under real CircuitPython |
 | `supervisor` | `ticks_ms`, `ticks_add`, `ticks_diff`, `reload`, `runtime` | ✅ Complete |
@@ -315,6 +316,58 @@ another rate, or for the buffer that makes `in_waiting` a count, construct
 
 Available on the AVR Arduino boards: `arduino_uno`, `arduino_nano`, `arduino_micro` and
 `arduino_mega`.
+
+---
+
+### `pulseio.PulseIn`, `pulseio.PulseOut`
+
+```python
+import board, pulseio
+from pymcu.types import uint8, uint16
+
+pulses = pulseio.PulseIn(board.D2, maxlen=70)
+while len(pulses) < 67:
+    pass
+leader: uint16 = pulses[0]          # microseconds
+pulses.clear()
+
+frame: uint16[4] = [560, 560, 1690, 560]
+out = pulseio.PulseOut(board.D3, frequency=38000, duty_cycle=32768)
+out.send(frame, 4)
+```
+
+`PulseIn` measures the pulses arriving on a pin, `PulseOut` sends a gated carrier: between
+them they are how an infrared remote, an HC-SR04 rangefinder and a DHT sensor are read and
+driven. Neither existed.
+
+**`PulseIn`.** `maxlen` is how many pulses to hold. The buffer is a fixed array of 128 in the
+HAL, allocated at compile time, so a larger `maxlen` is refused where it is written rather
+than quietly given less; a pulse that arrives with the buffer full is dropped. `idle_state`
+decides which edge starts the first pulse, and the capture takes that from the line itself:
+the first edge after a clear only sets the reference, so the first stored interval follows
+the line leaving rest.
+
+One `PulseIn` per program on the AVR: the buffer and the edge timestamp are module state in
+the HAL, so a second one would share them.
+
+`resume(trigger_duration=...)` sends a pulse on the pin before recording again, to trigger a
+sensor that answers on the same line. The pin is an input while it is being measured and this
+HAL does not turn it round, so a non-zero duration is refused rather than dropped: drive the
+trigger with a `digitalio.DigitalInOut` on the pin first.
+
+**`PulseOut`.** The carrier comes out of one timer channel, which is `board.D3` on the AVR;
+any other pin is refused where the `PulseOut` is written. 38 kHz comes out as 38 462 Hz, 1.2 %
+high and inside any receiver's band-pass. The gaps are timed against a running counter rather
+than counted out in delay calls: measured, 560 µs holds the carrier for 561.5 µs and 1690 µs
+for 1692 µs.
+
+`send()` takes the number of durations as a second argument, where CircuitPython takes it
+from the array. A module-level array loses its length and its iterability when it crosses a
+parameter (PyMCU#258), so neither `len(pulses)` nor `for p in pulses` can work inside the
+method. When that lands the count becomes optional.
+
+Both halves claim their timer, so a PWM or a servo that would reprogram it out from under
+them is refused where it is written rather than silently changing every measurement.
 
 ---
 

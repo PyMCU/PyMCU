@@ -21,6 +21,7 @@ All modules compile to tight native machine code — there is no Python runtime 
 | {doc}`DAC <dac>` | `pymcu.hal.dac` | Analog output — refused on every part PyMCU targets today, and says what to use instead |
 | {doc}`Timer <timer>` | `pymcu.hal.timer` | Hardware timers |
 | {doc}`PWM <pwm>` | `pymcu.hal.pwm` | Pulse-width modulation |
+| {doc}`Pulses <pulse>` | `pymcu.hal.pulse` | Measuring the pulses on a pin, and sending a gated carrier |
 | {doc}`SPI <spi>` | `pymcu.hal.spi` | SPI bus (hardware + soft) |
 | {doc}`I2C <i2c>` | `pymcu.hal.i2c` | I2C bus (hardware + soft) |
 | {doc}`EEPROM <eeprom>` | `pymcu.hal.eeprom` | Non-volatile byte storage |
@@ -55,6 +56,7 @@ adc
 dac
 timer
 pwm
+pulse
 spi
 i2c
 eeprom
