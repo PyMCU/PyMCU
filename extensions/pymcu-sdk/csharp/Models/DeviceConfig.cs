@@ -44,6 +44,18 @@ public class DeviceConfig
     /// `__TIMEBASE__` to refuse, at compile time, a frequency on the Timer0 pins that
     /// would reprogram the prescaler under the clock (PyMCU#295).
     public bool Timebase { get; set; } = false;
+
+    /// The rate the program's diagnostic output goes out at, from `[tool.pymcu] stdout_baud`.
+    /// Reaches the backend so the unhandled-exception path can enable the transmitter itself
+    /// when nothing else in the program has (PyMCU#340).
+    public int StdoutBaud { get; set; } = 115200;
+
+    /// True when something in the program already sets the UART up: an explicit `UART(...)`, or
+    /// the stdout preamble the driver injects for `print()` / `input()`. The unhandled-exception
+    /// path then needs no initialisation of its own and emits none, so a program that prints
+    /// keeps the image it had (PyMCU#340).
+    public bool UartOwnedByProgram { get; set; } = false;
+
     public int RamSize { get; set; } = 0;
     public int FlashSize { get; set; } = 0;
     public int EepromSize { get; set; } = 0;
