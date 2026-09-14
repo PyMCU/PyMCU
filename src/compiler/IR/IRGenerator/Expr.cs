@@ -288,7 +288,7 @@ public partial class IRGenerator
 
     // Full value range of an integer storage type. FLOAT has no integer range and never
     // reaches the range-aware promotion below.
-    private static (long Min, long Max) RangeOfType(DataType t) => t switch
+    internal static (long Min, long Max) RangeOfType(DataType t) => t switch
     {
         DataType.UINT8 => (0L, 255L),
         DataType.INT8 => (-128L, 127L),

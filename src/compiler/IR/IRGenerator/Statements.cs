@@ -459,7 +459,7 @@ public partial class IRGenerator
     }
 
     /// <summary>The narrowest integer type that holds the whole closed range [min, max].</summary>
-    private static DataType NarrowestTypeFor(long min, long max)
+    internal static DataType NarrowestTypeFor(long min, long max)
     {
         if (min >= 0)
         {

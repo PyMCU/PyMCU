@@ -40,6 +40,10 @@ public class IrGenerationPhase : CompilerPhaseBase
             context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
             context.ModulePaths);
 
+        // One width per variable name, whether or not the optimizer runs: the backend sizes a
+        // name once, so two widths for one name is a miscompile, not a missed optimisation.
+        Optimizer.UnifyVariableWidths(ir);
+
         // PYMCU_NO_OPT=1 skips the optimizer: lets a miscompile be bisected to the
         // IR generator (raw IR wrong) vs an optimizer pass (raw IR right).
         var optimized = Environment.GetEnvironmentVariable("PYMCU_NO_OPT") == "1"

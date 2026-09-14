@@ -1922,6 +1922,68 @@ private static Function CloneFunction(Function f)
         _ => null,
     };
 
+    /// One type per variable name, program-wide. The IR generator types a name at each site
+    /// from what it knows there: a range loop sizes its counter from its bounds, an array
+    /// walk types the element variable from the array, an assignment from its value. When one
+    /// name goes through two of those the backend receives a variable that is two bytes at one
+    /// site and one byte at another, and the register allocator sizes it once: `for k, v in
+    /// enumerate(range(lo, lo + 3))` followed by `for v in xs` put `main.v` in R8:R9 for the
+    /// first loop and handed R9 to a callee, so the counter printed 12288 (PyMCU#284).
+    ///
+    /// Widening every occurrence of such a name to the narrowest type that covers all of them
+    /// keeps every value the program computes (a narrower copy into it is extended, a wider
+    /// read of it sees the same number) and costs a byte only where two widths already met.
+    /// Non-integer types (float, references) are left alone.
+    public static void UnifyVariableWidths(ProgramIR program)
+    {
+        var lo = new Dictionary<string, long>();
+        var hi = new Dictionary<string, long>();
+        var seen = new Dictionary<string, HashSet<DataType>>();
+        var skip = new HashSet<string>();
+
+        void Note(Val? v)
+        {
+            if (v is not Variable var) return;
+            if (!IsIntegerWidthType(var.Type)) { skip.Add(var.Name); return; }
+            var (tLo, tHi) = IRGenerator.IRGenerator.RangeOfType(var.Type);
+            lo[var.Name] = lo.TryGetValue(var.Name, out var l) ? Math.Min(l, tLo) : tLo;
+            hi[var.Name] = hi.TryGetValue(var.Name, out var h) ? Math.Max(h, tHi) : tHi;
+            if (!seen.TryGetValue(var.Name, out var set)) seen[var.Name] = set = new HashSet<DataType>();
+            set.Add(var.Type);
+        }
+
+        foreach (var g in program.Globals) Note(g);
+        foreach (var f in program.Functions)
+            foreach (var ins in f.Body)
+            {
+                RegisterUses(ins, Note);
+                Note(GetDst(ins));
+                if (ins is AugAssign aa) Note(aa.Target);
+            }
+
+        var unified = new Dictionary<string, DataType>();
+        foreach (var (name, set) in seen)
+            if (set.Count > 1 && !skip.Contains(name))
+                unified[name] = IRGenerator.IRGenerator.NarrowestTypeFor(lo[name], hi[name]);
+        if (unified.Count == 0) return;
+
+        Val Fix(Val v) => v is Variable var && unified.TryGetValue(var.Name, out var t) && var.Type != t
+            ? var with { Type = t } : v;
+
+        program.Globals = program.Globals.Select(g => (Variable)Fix(g)).ToList();
+        foreach (var f in program.Functions)
+            for (int i = 0; i < f.Body.Count; i++)
+            {
+                var ins = ReplaceUses(f.Body[i], Fix);
+                if (GetDst(ins) is Variable dv) ins = ReplaceDst(ins, Fix(dv));
+                if (ins is AugAssign aa && aa.Target is Variable at) ins = aa with { Target = Fix(at) };
+                f.Body[i] = ins;
+            }
+    }
+
+    private static bool IsIntegerWidthType(DataType t) => t is DataType.UINT8 or DataType.INT8
+        or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
+
     private static Instruction ReplaceDst(Instruction instr, Val newDst) => instr switch
     {
         Binary b => b with { Dst = newDst },
