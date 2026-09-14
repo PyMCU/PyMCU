@@ -232,6 +232,11 @@ public partial class IRGenerator
     // name and on every name a loop body can assign.
     private Dictionary<string, int> localConstantValues = new();
 
+    // Whether EvaluateConstantExpr may answer from localConstantValues. Off by default: that
+    // evaluator serves array sizes, addresses and `assert`, and a local folded into those is a
+    // separate decision. The range unroller turns it on around its own question.
+    private bool foldLocalConstants;
+
     // f-string-as-value targets: qualified buffer name (== the target variable, which IS the
     // bytearray) -> (unqualified length-variable name, buffer capacity incl. NUL). len(s) reads
     // the length variable; print(s)/write_str(s) stream the buffer up to it.

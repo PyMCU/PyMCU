@@ -65,6 +65,20 @@ public partial class IRGenerator
                 constantVariables.TryGetValue(currentFunction + "." + varE.Name, out int cvf)) return cvf;
             if (constantVariables.TryGetValue(varE.Name, out int cvb)) return cvb;
 
+            // A function-local that was last assigned a constant. Consulted ONLY where the
+            // caller asked for it: this evaluator answers array sizes, addresses and `assert`
+            // too, and folding a local into those would turn `x: uint8 = 1` followed by
+            // `assert x == 2` into a compile error -- a decision of its own, not this one.
+            // The range unroller asks, because deciding a trip count at compile time is exactly
+            // what it is for (#326).
+            if (foldLocalConstants)
+            {
+                if (localConstantValues.TryGetValue(currentInlinePrefix + varE.Name, out int lcip)) return lcip;
+                if (!string.IsNullOrEmpty(currentFunction) &&
+                    localConstantValues.TryGetValue(currentFunction + "." + varE.Name, out int lcf)) return lcf;
+                if (localConstantValues.TryGetValue(varE.Name, out int lcb)) return lcb;
+            }
+
             string lookup = currentModulePrefix + varE.Name;
             if (globals.TryGetValue(lookup, out var globalSym))
             {

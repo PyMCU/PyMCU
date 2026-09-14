@@ -45,7 +45,8 @@ public class RangeCounterTypeTests
     }
 
     private static string Loop(string header, string prelude = "") =>
-        "from pymcu.types import uint8, uint16, int8\n\n" +
+        "from pymcu.types import uint8, uint16, int8\n" +
+        "from pymcu.chips.atmega328p import GPIOR0\n\n" +
         "def main():\n" +
         "    c: uint16 = 0\n" +
         prelude +
@@ -81,12 +82,26 @@ public class RangeCounterTypeTests
         Assert.Contains(Main(ir).Body, i => i is JumpIfLessOrEqual);
     }
 
+    // Bounds reached through a NAME. Since #326 a name the compiler can fold is folded, so
+    // these are sized exactly, like a literal; the rows are here because the spelling is what
+    // a program writes and because a trip count past the unroll limit has to stay a loop.
+    // The step row is 9 rather than 30 for that reason: at 30 the loop runs 7 times and unrolls,
+    // and there is no counter left to size.
     [Theory]
     [InlineData("n: uint16 = 300", "range(n)", DataType.UINT16)]
     [InlineData("n: uint8 = 200", "range(n)", DataType.UINT8)]
     [InlineData("a: int8 = -5", "range(a, 5)", DataType.INT8)]
     [InlineData("a: int8 = -5\n    n: uint8 = 200", "range(a, n)", DataType.INT16)]
-    [InlineData("n: uint8 = 200\n    s: uint8 = 30", "range(0, n, s)", DataType.UINT16)]   // may stop on n + s - 1
+    [InlineData("n: uint8 = 200\n    s: uint8 = 9", "range(0, n, s)", DataType.UINT16)]   // stops on 207
+    public void BoundsThroughAName_SizeTheCounter(string decls, string header, DataType expected)
+        => Assert.Equal(expected, Counter(Gen(Loop(header, "    " + decls + "\n")), "main.i").Type);
+
+    // A bound that is genuinely decided at run time: the counter is sized from the DECLARED
+    // types, which is the path the rows above no longer take.
+    [Theory]
+    [InlineData("n: uint16 = GPIOR0.value", "range(n)", DataType.UINT16)]
+    [InlineData("n: uint8 = GPIOR0.value", "range(n)", DataType.UINT8)]
+    [InlineData("n: uint8 = GPIOR0.value\n    s: uint8 = 30", "range(0, n, s)", DataType.UINT16)]  // may stop on n + s - 1
     public void RuntimeBounds_SizeTheCounterFromTheirTypes(string decls, string header, DataType expected)
         => Assert.Equal(expected, Counter(Gen(Loop(header, "    " + decls + "\n")), "main.i").Type);
 

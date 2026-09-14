@@ -277,39 +277,48 @@ public partial class IRGenerator
         return null;
     }
 
-    // The (start, stop, step) of a plain `for x in range(...)` whose bounds are compile-time
-    // constants and whose trip count is at most <see cref="ConstSequenceUnrollLimit"/>, or null
-    // when the loop has to stay a loop. Only literals and names already folded to a constant
-    // count -- the same rule the range-as-iterable path uses -- so nothing is evaluated here
-    // that a run-time bound could make wrong.
-    private (int Start, int Stop, int Step)? RangeUnrollBounds(ForStmt stmt)
+    // The (start, stop, step) of a plain `for x in range(...)` when all three are known at
+    // compile time, whatever shape they were written in, or null when one of them is decided
+    // at run time. The trip count is the caller's business.
+    //
+    // Only a literal or a NAME folded before, so an EXPRESSION that is a constant -- which is
+    // what `range(total_us // 60000000)` is after the fold -- was lowered as a run-time counter
+    // loop over a 32-bit bound: 1814 bytes on a 380-byte program (PyMCU#326). The evaluator
+    // throws on anything whose value is not fixed, which is the answer wanted, and emits
+    // nothing, so asking it speculatively costs nothing either.
+    private (int Start, int Stop, int Step)? RangeFoldedBounds(ForStmt stmt)
     {
         int? Bound(Expression? e, int whenAbsent)
         {
             if (e == null) return whenAbsent;
             if (e is IntegerLiteral il) return il.Value;
             if (e is UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }) return -n.Value;
-            // A NAME goes through the general constant evaluator, which knows the unrolled
-            // loop variables, the inline-expansion bindings and the module's own constants --
-            // so `WIDTH = 4` then `range(WIDTH)` unrolls exactly like `range(4)`. It throws on
-            // anything whose value is not fixed at compile time, which is the answer wanted:
-            // a run-time bound leaves the loop a loop.
-            if (e is VariableExpr)
-            {
-                try { return EvaluateConstantExpr(e); }
-                catch { return null; }
-            }
-            return null;
+            // The general constant evaluator knows the unrolled loop variables, the
+            // inline-expansion bindings and the module's own constants -- so `WIDTH = 4` then
+            // `range(WIDTH)` folds exactly like `range(4)`, and so does `range(WIDTH // 2)`.
+            // Asked here with locals in scope, which is what a bound computed into one needs.
+            bool savedFold = foldLocalConstants;
+            foldLocalConstants = true;
+            try { return EvaluateConstantExpr(e); }
+            catch { return null; }
+            finally { foldLocalConstants = savedFold; }
         }
 
         if (Bound(stmt.RangeStart, 0) is not { } start) return null;
         if (Bound(stmt.RangeStop, 0) is not { } stop) return null;
         if (Bound(stmt.RangeStep, 1) is not { } step || step == 0) return null;
 
-        long trips = RangeTripCount(start, stop, step);
-        if (trips <= 0 || trips > ConstSequenceUnrollLimit) return null;
-
         return (start, stop, step);
+    }
+
+    // The same bounds, but only when the trip count is at most
+    // <see cref="ConstSequenceUnrollLimit"/> -- the loops the unroller takes.
+    private (int Start, int Stop, int Step)? RangeUnrollBounds(ForStmt stmt)
+    {
+        if (RangeFoldedBounds(stmt) is not { } b) return null;
+        long trips = RangeTripCount(b.Start, b.Stop, b.Step);
+        if (trips <= 0 || trips > ConstSequenceUnrollLimit) return null;
+        return b;
     }
 
     // How many values range(start, stop, step) visits, for a non-zero step. Every reading of a
@@ -1743,6 +1752,25 @@ public partial class IRGenerator
         //
         // Emitted before the run-time lowering starts, because the checks below evaluate the
         // bound expressions and that is not free of side effects.
+        // A range that is empty at compile time runs nothing. It used to be lowered as a
+        // counter loop that immediately exits, which is a comparison, a jump and a counter of
+        // whatever width the bound needed -- and the bound itself, recomputed at run time
+        // (#326). Python never binds the loop variable for an empty range; the run-time
+        // lowering left it at start, so a read after the loop keeps that.
+        if (RangeFoldedBounds(stmt) is { } emptyBounds
+            && RangeTripCount(emptyBounds.Start, emptyBounds.Stop, emptyBounds.Step) <= 0)
+        {
+            if (loopVarReadAfter.Contains(stmt))
+            {
+                string emptyKey = QualifyLoopVar(stmt.VarName);
+                DataType emptyType = ChooseCounterType(stmt, emptyKey,
+                    emptyBounds.Start, emptyBounds.Start, exact: true);
+                variableTypes[emptyKey] = emptyType;
+                Emit(new Copy(new Constant(emptyBounds.Start), new Variable(emptyKey, emptyType)));
+            }
+            return;
+        }
+
         if (RangeUnrollBounds(stmt) is { } unroll)
         {
             (int unrollStart, int unrollStop, int unrollStep) = unroll;
