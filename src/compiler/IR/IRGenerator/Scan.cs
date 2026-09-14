@@ -1313,6 +1313,14 @@ public partial class IRGenerator
                         // single primitive field is eligible to be returned by value from a
                         // non-@inline factory (Model B register-packed handle).
                         var clsLayout = DeriveFieldLayout(block);
+                        // Fields holding a COMPILE-TIME table: a list of constructions, a
+                        // comprehension of them, a dict or a set. The layout types such a
+                        // field as a scalar, so the outline check saw nothing wrong and
+                        // shared the body -- where `self` is a run-time parameter and the
+                        // table is unreachable, reported as a method that cannot be
+                        // dispatched. They are compile-time per instance, like a ZCA field,
+                        // so a method that touches one is force-inlined for the same reason.
+                        var ctFields = CompileTimeTableFields(block);
                         // A subclass with no __init__ of its own inherits the base's fields, so an
                         // OVERRIDDEN method can resolve them (`self.a` otherwise errors "not a
                         // member"). Inherit the layout ONLY when the base is a slot class: that is
@@ -1554,7 +1562,7 @@ public partial class IRGenerator
                                     // (`self.inner.get()`) has no standalone form: outlining it
                                     // anyway mangled the call into `self_inner_get` and failed the
                                     // build over a method the program may never call.
-                                    if (IsOutlineSafe(func, clsLayout))
+                                    if (IsOutlineSafe(func, clsLayout, ctFields))
                                         RegisterOutlinedMethod(func, classKey, clsLayout, fullName, classMethods);
                                     else
                                         instanceMethodDefs[fullName] = func;
@@ -1645,7 +1653,7 @@ public partial class IRGenerator
                                         // about this one.
                                         classPlainFunctions.Add(fullName);
                                     }
-                                    else if (IsOutlineSafe(func, defLayout))
+                                    else if (IsOutlineSafe(func, defLayout, ctFields))
                                     {
                                         // A single-field mutator that ALSO has explicit returns
                                         // cannot use write-back-via-return (one return slot can't
@@ -2532,8 +2540,42 @@ public partial class IRGenerator
     // node makes it UNSAFE: outlining must be provably correct, otherwise we keep the existing
     // force-inline behavior (zero regression). Methods with user params besides self stay safe
     // (those params become trailing params of the shared body).
+    /// <summary>
+    /// The fields a class assigns a compile-time table to: a list of constructions, a
+    /// comprehension of them, a dict or a set literal. Read off the class body, because the
+    /// bindings that record them do not exist yet when the outline decision is made.
+    /// </summary>
+    private static HashSet<string> CompileTimeTableFields(Block classBody)
+    {
+        var fields = new HashSet<string>();
+
+        void Walk(Statement? st)
+        {
+            switch (st)
+            {
+                case Block b: foreach (var x in b.Statements) Walk(x); break;
+                case FunctionDef fd: Walk(fd.Body); break;
+                case IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var br in i.ElifBranches) Walk(br.Body);
+                    Walk(i.ElseBranch);
+                    break;
+                case WhileStmt w: Walk(w.Body); break;
+                case ForStmt f: Walk(f.Body); break;
+                case AssignStmt { Target: MemberAccessExpr { Object: VariableExpr { Name: "self" } } m } a
+                    when a.Value is DictExpr or SetExpr or ListExpr or ListCompExpr:
+                    fields.Add(m.Member);
+                    break;
+            }
+        }
+
+        Walk(classBody);
+        return fields;
+    }
+
     private bool IsOutlineSafe(FunctionDef method,
-        List<(string Field, string Type, string SourceParam)> layout)
+        List<(string Field, string Type, string SourceParam)> layout,
+        HashSet<string>? compileTimeFields = null)
     {
         if (layout.Count == 0) return false;
 
@@ -2571,6 +2613,9 @@ public partial class IRGenerator
             {
                 case MemberAccessExpr ma when ma.Object is VariableExpr sv && sv.Name == "self":
                     if (!fields.Contains(ma.Member)) safe = false; // self.method() or non-field
+                    // A field holding a compile-time table has no run-time value to pass, so a
+                    // shared body cannot reach it.
+                    if (compileTimeFields != null && compileTimeFields.Contains(ma.Member)) safe = false;
                     return; // do NOT descend into the `self` leaf -- it is a field access
                 // `self.<field>.<anything>` -- a member reached THROUGH a field, so the field is
                 // another instance, not the scalar an outlined body would take as a parameter.
