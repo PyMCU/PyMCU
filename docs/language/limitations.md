@@ -474,9 +474,17 @@ that CALLS a method is lowered as one comparison and one expansion per element, 
 eight it is refused as more code than it is worth.
 
 A list of NUMBERS in a field works the same way for a constant subscript, `for` and
-`len()`, but has no storage behind it: index it at run time and the compiler names the
-declaration that does (`self._levels: uint8[3] = [...]`). A `bytearray` or a fixed array
-handed to a driver keeps its storage, so `self._data[i] = v` writes the caller's buffer.
+`len()`. A `bytearray` or a fixed array handed to a driver keeps its storage, so
+`self._data[i] = v` writes the caller's buffer.
+
+**A lookup table written as a plain list.** `DIGITS = [0x3F, 0x06, ...]` read as
+`DIGITS[digit]` with a run-time digit is the shape of every 7-segment table, font and gamma
+curve. The values are constants and nothing writes them, so the table is placed in flash,
+and only when a run-time subscript actually needs it: a table that is only ever indexed
+with a constant emits nothing at all, as before. The same holds for such a list reached
+through a parameter or held in a `self` field. What is refused is a table the program
+STORES into: flash cannot be written, so that one is told to declare its storage
+(`T: uint8[10] = [...]`).
 
 **A sequence bound to a name.** `DUTIES = [256, 383, ...]` and `DUTIES = (256, 383, ...)`
 are the same thing to iterate over, at any length: up to eight constant elements the `for`

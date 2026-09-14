@@ -38,9 +38,14 @@
 - A bytearray handed to a driver and stored in a field keeps its storage, so
   `self._data[i] = v` writes the caller's buffer instead of being refused as a bit index
   into a scalar (#315).
-- A run-time subscript of a compile-time list of numbers is refused with the declaration
-  that would give it storage, in place of `Bit index must be constant for reading` on a
-  program containing no register (#317).
+- A lookup table written as a plain list reads at run time. `DIGITS = [0x3F, 0x06, ...]`
+  then `DIGITS[digit]` is how every 7-segment table, font and gamma curve is written, and
+  it was refused: the list lives as separate variables, which have nothing to index. The
+  values are constants and nothing writes them, so the table is materialised in flash at
+  the first run-time subscript that needs it, and a table only ever indexed with a
+  constant still emits nothing. The same answer through a parameter and through a `self`
+  field. A table the program stores into keeps its refusal, because flash cannot be
+  written (#317).
 
 ### Correctness (silent-miscompile class)
 - The counter of `for i in range(...)` is sized from its bounds instead of being an
