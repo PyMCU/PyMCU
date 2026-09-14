@@ -325,6 +325,14 @@ dunders). A class-typed field dispatches correctly through a **value-returning**
 (`self.pin.read()` on a nested ZCA field), which is what the compat layers are built on —
 `machine.Pin` wrapping the HAL `Pin` is exactly this shape.
 
+A class declared inside another class is constructible, and its constants are readable
+through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the module that
+declares it. That is how CircuitPython spells the UART parity, `busio.UART.Parity.ODD`.
+
+An unannotated field takes its width from the widest value the constructor assigns — a
+conversion call says its own type, a literal the narrowest type that holds it, an arithmetic
+expression its widest operand. An explicit `self.x: T = ...` still wins.
+
 ---
 
 ## Type system limitations
@@ -442,6 +450,16 @@ the step), nested list comprehensions, `if`-filtered list comprehensions (consta
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
 
+A `for` over a short constant list unrolls, and the loop variable is a compile-time constant
+in each iteration, so a `const` parameter receiving it resolves as it would from a literal.
+The elements may be numbers or STRINGS, which is what a row of board pins is:
+`for pin in (board.D2, board.D3, board.D4)` works, and so does the pair form
+`for pin, name in [(board.D2, "D2"), (board.D3, "D3")]`.
+
+A comprehension of class INSTANCES is not supported outside the forms above: PyMCU lays an
+instance out at compile time and it has no array slot to live in. Write the list as a
+literal of constructions (`[A(x), A(y)]`), or build each one by name.
+
 **A driver that takes a list.** A class is handed several pins, several devices or a table
 of numbers the way every embedded library does it, and keeps the list in a field:
 
@@ -556,6 +574,12 @@ microcontroller.nvm[0:4] = b"\xcc\x10\xca\xfe"   # one byte-write per element
 `@interrupt` decorator for hardware ISRs, `Pin.irq(trigger, handler)` for external pin
 interrupts, atomic flag patterns via `GPIOR0`.
 
+A routine sits at ONE interrupt vector. Registering the same handler at a second vector is
+refused where it is written: the table has one entry per routine, and the earlier vector
+would be left on the bad-interrupt handler. Two pins handled by the same code need a second
+function that calls the shared body — `def on_int1(): step()` — registered at the second
+vector.
+
 :::{admonition} Timer0 and millis / ticks_ms
 :class: warning
 
@@ -594,9 +618,16 @@ hardware timer dependency.
 | A function defined twice in one module | PyMCU compiles the first, Python binds the last | Rename one, or make every definition `@inline` with different parameter types |
 
 **Supported:** `import foo`, `from foo import Bar`, `from foo import Bar as B`,
-`from foo import *`, relative imports (`from .util import half`, `from . import util`),
-multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` and `pymcu-micropython`
-compat packages.
+`from foo import *`, `from package import submodule`, relative imports
+(`from .util import half`, `from . import util`), multi-module projects, `pymcu` stdlib,
+`pymcu-circuitpython` and `pymcu-micropython` compat packages.
+
+`from <package> import <submodule>` binds the submodule under its own name, as CPython does
+when the package's `__init__` has no such attribute: `from adafruit_motor import servo`, then
+`servo.Servo(pwm)`. An alias is kept (`from adafruit_motor import servo as s`).
+
+An import alias belongs to the file that writes it. Two modules that alias different things
+to the same name each keep their own, the way Python scopes them.
 
 `from foo import *` binds the public top-level names of `foo`: its functions, classes and
 module-level variables, minus the ones whose name starts with `_`, which are private and

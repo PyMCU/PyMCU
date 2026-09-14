@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Silent wrong code
+- A keyword argument clears the None an earlier expansion of the same `@inline` function left
+  on that parameter. Any call that let `parity` default to None made the NEXT call's
+  `parity=Parity.EVEN` read as None, so the `match` inside took the `case None` arm and a
+  UART asked for 7E2 was programmed 7N2 (#324). A `match` subject that folded to a constant
+  no longer matches `case None` at all: the arm was lowered as a comparison against a value
+  with no representation, and which arm ran was decided by whatever register it read.
+- An unannotated field is as wide as the widest value the constructor assigns. It was laid
+  out as a byte whatever was stored in it, so `self._period = uint16(1000000 // uint32(hz))`
+  read back as `20000 & 0xFF`; `adafruit_motor.servo` put 689 us on the pin where 1000 was
+  asked for (#322).
+- An import alias belongs to the module that wrote it. One flat table was shared by every
+  module, so two files aliasing different things to the same name got whichever was
+  registered first, and a wrapper class ended up constructing itself (#320).
+- Registering one routine at two interrupt vectors is refused where it is written. The
+  second registration overwrote the first, leaving that vector on the bad-interrupt handler
+  with its enable bit set: a quadrature encoder on INT0 and INT1 was deaf to one of its two
+  pins (#325).
+- A global an ISR writes stays in SRAM. The AVR backend homed it in R2-R15, which every ISR
+  prologue saves and every epilogue restores, so the handler's write was undone on RETI and
+  an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
+
+### Language surface
+- `from <package> import <submodule>` works even when the package's `__init__` mentions the
+  submodule's name in a comment, which is what refused `from adafruit_motor import servo`
+  (#323).
+- A constant inside a nested class is readable: `Outer.Inner.A`, and `busio.UART.Parity.ODD`
+  through the declaring module. The scan never registered a nested class body's attributes
+  and the read resolved one hop at a time (#319).
+- A `for` over a constant list of STRINGS unrolls, so
+  `for pin in (board.D2, board.D3, board.D4)` -- the CircuitPython idiom for a row of pins --
+  binds each pin as a compile-time constant instead of being refused as a non-integer (#308).
+- A HAL module can put its own interrupt on a pin: a handler named as a value resolves in the
+  module that defines it, and `compile_isr()` accepts a vector composed from an `@inline`
+  table instead of only a literal (#321).
+- `Pin.mode()` has the reading half its signature advertises, on AVR and on PIC; every
+  `match __CHIP__.name:` in the PIC14 GPIO layer refuses an unsupported part instead of
+  falling off the end (#312).
+
+### Diagnostics
+- A refused comprehension says which thing is unsupported. A comprehension of class instances
+  was told it has a filter, and sent the reader looking for an `if` that is not there (#307).
+- A diagnostic about a module-level line above `def main():` is reported at the line it is on.
+  The driver mapped the injected preamble by one offset for two insertion points and picked
+  the larger, so the number came out one early while the snippet text was right; the
+  debugger's line map was off by one over the same region (#311).
+
 ### Peripherals (measured on an Arduino Uno with a scope)
 - `PWM.stop()` takes the channel off the pin and drives it low instead of stopping the
   timer, which froze the sibling channel and the time base and left the pin at whatever

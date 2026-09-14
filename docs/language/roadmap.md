@@ -15,6 +15,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1, 2, 3]` | Fixed-size array or constant list literal |
 | `for x in named` where `named = [...]` / `(...)` | List and tuple alike, at any length: up to 8 constant elements the loop unrolls against the literal, past that the name gets a fixed array. The element width comes from the widest element |
+| `for x in ["PD2", "PD3"]` / `for x in (board.D2, board.D3)` | A constant list of STRINGS unrolls too, and the loop variable binds as a string constant, so a `const` parameter receiving it resolves as it would from a literal. Also the pair form, `for pin, name in [(board.D2, "D2"), ...]` |
 | `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index |
 | `for x, y in zip(a, b)` | Compile-time unroll over paired lists |
 | `reversed(iterable)` | Compile-time reverse unroll; `reversed(range(...))` is the descending range |
@@ -23,6 +24,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level statements |
 | Module-level `main()` (bare, or under `if __name__ == "__main__":`) | Says where the entry point's body runs: what is written after the call runs after the body. A second call, and an early `return` with module-level code after the call, are refused |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
+| Nested `class` | Constructible, and its constants readable through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the declaring module (`busio.UART.Parity.ODD`) |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
