@@ -67,8 +67,22 @@ public class ListFieldDiagnosticTests
         Assert.DoesNotContain("Array size 'uint8'", ex.Message);
     }
 
-    // A list of instances is a different construct and keeps its own lowering; it must not
-    // be swallowed by the constant-literal path, and it must not leak an AST class name.
+    // A list of instances is a different construct with its own lowering: a compile-time
+    // sequence whose elements are built once, not a fixed array of bytes.
+    [Fact]
+    public void AFieldHoldingInstances_Compiles()
+        => Assert.NotNull(Gen(
+            "class Part:\n" +
+            "    def __init__(self, n: uint8):\n" +
+            "        self.n = n\n" +
+            "class Box:\n" +
+            "    def __init__(self, k: uint8):\n" +
+            "        self.parts = [Part(1), Part(2)]\n" +
+            "def main():\n" +
+            "    b = Box(1)\n"));
+
+    // Neither all constants nor all instances: there is no shape to infer, so the field is
+    // still asked for its size, and the message must not leak an AST class name.
     [Fact]
     public void AFieldHoldingSomethingOtherThanConstants_StillAsksForASize()
     {
@@ -78,7 +92,7 @@ public class ListFieldDiagnosticTests
             "        self.n = n\n" +
             "class Box:\n" +
             "    def __init__(self, k: uint8):\n" +
-            "        self.parts = [Part(1), Part(2)]\n" +
+            "        self.parts = [Part(1), k]\n" +
             "def main():\n" +
             "    b = Box(1)\n"));
 
