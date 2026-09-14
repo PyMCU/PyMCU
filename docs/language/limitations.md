@@ -414,6 +414,21 @@ than a silent fold of whatever the variable happened to hold. `Pin(n)` where `n`
 variable is the case you are most likely to hit — a pin identity has to be known at compile
 time for the GPIO access to stay zero-cost.
 
+**A local holding a value the compiler can see IS a compile-time value.** `x: uint8 = 5` then
+`x + 1` is the constant 6, not an addition, and the same goes for a chain of them: a HAL helper
+written through wide locals, which is how it has to be written for the arithmetic not to
+truncate, folds exactly as the expression form does. What follows from that is worth knowing
+before it surprises you:
+
+* `assert x == 3` on such a local is decided at compile time, and a false one is a
+  `CompileError` rather than a stripped statement.
+* a `const` parameter accepts it, and a `match` on it picks its arm at compile time.
+* a diagnostic about "a run-time value" will not be about it.
+
+The value is forgotten at every write to the name, at every name a loop body can assign, and
+where the arms of an `if` chain disagree, so a name a loop mutates is a run-time value again.
+Reading a register (`GPIOR0.value`) is the way to say "the compiler cannot know this".
+
 ---
 
 ## Pointer arithmetic
