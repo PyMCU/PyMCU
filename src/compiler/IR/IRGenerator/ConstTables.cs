@@ -237,18 +237,33 @@ public partial class IRGenerator
     private readonly Dictionary<string, (string Table, int Width, Val Index)> rowViews = new();
 
     /// <summary>
-    /// The rows of a dict whose values are all lists of the same length and all constants, keyed
-    /// 0..N-1 so the key IS the row index. Null when the dict is not that rectangle.
+    /// The rows of a dict whose values are all lists of the same length and all constants,
+    /// with the constant integer key of each. Character codes count: a one-character string
+    /// literal folds to its code, which is what makes `ch in table` work against a run-time
+    /// byte. Null when the dict is not that rectangle.
     /// </summary>
-    private List<List<int>>? DictRows(Frontend.DictExpr d)
+    private List<(int Key, List<int> Row)>? DictKeyedRows(Frontend.DictExpr d)
     {
         if (d.Entries.Count == 0) return null;
-        var rows = new List<List<int>>();
+        var rows = new List<(int Key, List<int> Row)>();
+        var seen = new HashSet<int>();
         int width = -1;
-        for (int i = 0; i < d.Entries.Count; i++)
+        foreach (var (kE, vE) in d.Entries)
         {
-            var (kE, vE) = d.Entries[i];
-            if (kE is not IntegerLiteral kl || kl.Value != i) return null;   // keys must be 0..N-1
+            int key;
+            switch (kE)
+            {
+                case IntegerLiteral kl: key = kl.Value; break;
+                case BooleanLiteral kb: key = kb.Value ? 1 : 0; break;
+                case UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral kn }:
+                    key = -kn.Value; break;
+                // A multi-character key is an interned id, which no run-time value can equal,
+                // so a table keyed by one cannot be indexed at run time and is not this shape.
+                case StringLiteral ks when ks.Value.Length == 1: key = ks.Value[0]; break;
+                default: return null;
+            }
+            if (!seen.Add(key)) return null;
+
             var elements = vE switch
             {
                 ListExpr le => le.Elements,
@@ -259,10 +274,14 @@ public partial class IRGenerator
             if (ConstValuesOf(elements) is not { } values) return null;
             if (width < 0) width = values.Count;
             else if (values.Count != width) return null;                     // not a rectangle
-            rows.Add(values);
+            rows.Add((key, values));
         }
         return width > 0 ? rows : null;
     }
+
+    /// <summary>Just the rows, in the order written.</summary>
+    private List<List<int>>? DictRows(Frontend.DictExpr d)
+        => DictKeyedRows(d)?.Select(r => r.Row).ToList();
 
     /// <summary>
     /// Lays the rows out end to end in flash and returns the table name, or null when the values
@@ -274,6 +293,85 @@ public partial class IRGenerator
         var flat = new List<int>();
         foreach (var row in rows) flat.AddRange(row);
         return TryMaterialiseConstTableFromValues(cacheKey, writtenName, flat, bindings);
+    }
+
+    /// <summary>
+    /// The ROW INDEX a key selects, for a rectangle whose keys are arbitrary constants.
+    /// Contiguous ascending keys are a subtraction; anything else is a search over a key row
+    /// laid in flash next to the rectangle, so a 96-glyph font costs the same code as a
+    /// 7-glyph one. A key that matches nothing raises KeyError, which is what the author's own
+    /// `if k not in table: raise` has usually excluded already.
+    /// </summary>
+    private Val EmitDictRowIndex(List<(int Key, List<int> Row)> rows, string cacheKey,
+                                 string writtenName, Val keyVal)
+    {
+        int n = rows.Count;
+        bool contiguous = true;
+        for (int i = 1; i < n && contiguous; i++)
+            if (rows[i].Key != rows[0].Key + i) contiguous = false;
+
+        if (contiguous)
+        {
+            int baseKey = rows[0].Key;
+            Temporary idx = MakeTemp(DataType.UINT16);
+            if (baseKey == 0) Emit(new Copy(keyVal, idx));
+            else Emit(new Binary(BinaryOp.Sub, keyVal, new Constant(baseKey), idx));
+            EmitKeyErrorIfOutOfRange(idx, n);
+            return idx;
+        }
+
+        // The keys, in the order written, as their own flash table. It is a separate table so
+        // the rectangle stays exactly the bytes the rows have.
+        string? keysTable = TryMaterialiseConstTableFromValues(
+            "dictkeys:" + cacheKey, writtenName + "_keys",
+            rows.Select(r => r.Key).ToList(), bindings: int.MaxValue);
+        if (keysTable == null)
+        {
+            // No table to search: fall back to a compare chain, which is what the scalar dict
+            // lookup does and costs one compare per key.
+            Temporary chainIdx = MakeTemp(DataType.UINT16);
+            string chainEnd = MakeLabel();
+            Emit(new Copy(new Constant(n), chainIdx));
+            for (int i = 0; i < n; i++)
+            {
+                string next = MakeLabel();
+                Emit(new JumpIfNotEqual(keyVal, new Constant(rows[i].Key), next));
+                Emit(new Copy(new Constant(i), chainIdx));
+                Emit(new Jump(chainEnd));
+                Emit(new Label(next));
+            }
+            Emit(new Label(chainEnd));
+            EmitKeyErrorIfOutOfRange(chainIdx, n);
+            return chainIdx;
+        }
+
+        Temporary found = MakeTemp(DataType.UINT16);
+        Temporary i2 = MakeTemp(DataType.UINT16);
+        string loop = MakeLabel(), done = MakeLabel(), next2 = MakeLabel();
+        Emit(new Copy(new Constant(n), found));       // n means "not found"
+        Emit(new Copy(new Constant(0), i2));
+        Emit(new Label(loop));
+        Emit(new JumpIfGreaterOrEqual(i2, new Constant(n), done));
+        Temporary k = MakeTemp(DataType.UINT8);
+        Emit(new ArrayLoadFlash(keysTable, i2, k));
+        Emit(new JumpIfNotEqual(k, keyVal, next2));
+        Emit(new Copy(i2, found));
+        Emit(new Jump(done));
+        Emit(new Label(next2));
+        Emit(new AugAssign(BinaryOp.Add, i2, new Constant(1)));
+        Emit(new Jump(loop));
+        Emit(new Label(done));
+        EmitKeyErrorIfOutOfRange(found, n);
+        return found;
+    }
+
+    private void EmitKeyErrorIfOutOfRange(Val idx, int n)
+    {
+        string ok = MakeLabel();
+        Emit(new JumpIfLessThan(idx, new Constant(n), ok));
+        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        Emit(new SignalError(new Constant(4 /* KeyError */), localCatch));
+        Emit(new Label(ok));
     }
 
     /// <summary>

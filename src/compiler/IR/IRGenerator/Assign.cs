@@ -505,32 +505,35 @@ public partial class IRGenerator
         // width and the run-time row index, because seven bytes have nothing to be held in.
         if (stmt.Target is VariableExpr rowTgt && stmt.Value is IndexExpr rowIdx
             && TryGetDictFor(rowIdx.Target, out var rowDict)
-            && DictRows(rowDict) is { } dictRows)
+            && DictKeyedRows(rowDict) is { } keyedRows)
         {
             string rowKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + rowTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + rowTgt.Name : rowTgt.Name);
             string rowSource = rowIdx.Target is MemberAccessExpr rm ? rm.Member
                              : (rowIdx.Target is VariableExpr rv ? rv.Name : rowTgt.Name);
+            string rowCache = SequenceKeyOf(rowIdx.Target) ?? rowSource;
             Val rowKeyVal = VisitExpression(rowIdx.Index);
             rowViews.Remove(rowKey);
             constSequenceBindings.Remove(rowKey);
 
             if (rowKeyVal is Constant rowConst)
             {
-                if (rowConst.Value < 0 || rowConst.Value >= dictRows.Count)
+                int at = keyedRows.FindIndex(r => r.Key == rowConst.Value);
+                if (at < 0)
                     throw UserError(
-                        $"KeyError: {rowConst.Value} is not a key of this dict literal "
-                        + "(checked at compile time)", rowIdx.Index);
+                        $"KeyError: {DescribeDictKey(rowIdx.Index, rowConst)} is not a key of "
+                        + "this dict literal (checked at compile time)", rowIdx.Index);
                 constSequenceBindings[rowKey] =
-                    dictRows[rowConst.Value].Select(v => (Expression)new IntegerLiteral(v)).ToList();
+                    keyedRows[at].Row.Select(v => (Expression)new IntegerLiteral(v)).ToList();
                 return;
             }
 
-            if (MaterialiseDictRows("dictrows:" + SequenceKeyOf(rowIdx.Target), rowSource, dictRows)
-                    is { } rowTable)
+            if (MaterialiseDictRows("dictrows:" + rowCache, rowSource,
+                                    keyedRows.Select(r => r.Row).ToList()) is { } rowTable)
             {
-                rowViews[rowKey] = (rowTable, dictRows[0].Count, rowKeyVal);
+                Val rowIndex = EmitDictRowIndex(keyedRows, rowCache, rowSource, rowKeyVal);
+                rowViews[rowKey] = (rowTable, keyedRows[0].Row.Count, rowIndex);
                 return;
             }
         }
