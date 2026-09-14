@@ -214,6 +214,90 @@ public partial class IRGenerator
         list.Add(stmt);
     }
 
+    /// <summary>
+    /// Registers a class body's ATTRIBUTES under the class prefix, and recurses into a class
+    /// declared inside it. The recursion is what #319 was missing: `Outer.Inner.A` had no name
+    /// anywhere, so the read was refused with "object has no attribute 'Inner'" -- a sentence
+    /// about the hop rather than about the constant. It is how CircuitPython spells the UART
+    /// parity (`busio.UART.Parity.ODD`), so the canonical spelling did not compile.
+    /// </summary>
+    private void ScanClassBodyAttributes(ProgramNode ast, string className, Block block, bool isEnum)
+    {
+        foreach (var innerStmt in block.Statements)
+        {
+            var innerName = "";
+            var innerType = "";
+            Expression? innerInit = null;
+
+            switch (innerStmt)
+            {
+                case VarDecl vDecl:
+                    innerName = vDecl.Name;
+                    innerType = vDecl.VarType;
+                    innerInit = vDecl.Init;
+                    break;
+                case AssignStmt { Target: VariableExpr iVar } iAssign:
+                    innerName = iVar.Name;
+                    innerInit = iAssign.Value;
+                    break;
+                case AnnAssign iAnnAssign:
+                    innerName = iAnnAssign.Target;
+                    innerType = iAnnAssign.Annotation;
+                    innerInit = iAnnAssign.Value;
+                    break;
+            }
+
+            if (string.IsNullOrEmpty(innerName) || innerInit == null) continue;
+            try
+            {
+                var val = EvaluateConstantExpr(innerInit);
+                // A name this program WRITES is not a constant, whatever it is
+                // called: the fold left the write nowhere to land and it was
+                // dropped in silence (#272). Module level has had this same gate
+                // on `reassigned` since #220. An enum member keeps folding: its
+                // value is the member's identity, not a variable's contents.
+                var isAllUpper = innerName.All(c => !char.IsLower(c))
+                    && !writtenClassAttributes.Contains(className + "." + innerName);
+
+                if (isAllUpper || isEnum)
+                {
+                    globals[currentModulePrefix + innerName] = new SymbolInfo
+                        { IsMemoryAddress = false, Value = val };
+                }
+                else
+                {
+                    mutableGlobals[currentModulePrefix + innerName] =
+                        DataTypeExtensions.StringToDataType(innerType);
+                    RecordClassAttrInit(ast, className, innerName, innerType,
+                                        innerInit, val);
+                }
+            }
+            catch
+            {
+                if (!isEnum)
+                {
+                    mutableGlobals[currentModulePrefix + innerName] =
+                        DataTypeExtensions.StringToDataType(innerType);
+                    // No folded value: the initializer is a run-time expression, so
+                    // there is nothing to size the storage from beyond the
+                    // annotation, and the store runs the expression as written.
+                    RecordClassAttrInit(ast, className, innerName, innerType,
+                                        innerInit, null);
+                }
+            }
+        }
+
+        foreach (var innerStmt in block.Statements)
+        {
+            if (innerStmt is not ClassDef deeper || deeper.Body is not Block deeperBlock) continue;
+            var savedPrefix = currentModulePrefix;
+            currentModulePrefix += deeper.Name + "_";
+            ScanClassBodyAttributes(ast, className + "_" + deeper.Name, deeperBlock,
+                                    deeper.Bases.Contains("Enum") || deeper.Bases.Contains("IntEnum"));
+            currentModulePrefix = savedPrefix;
+        }
+    }
+
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
         var reassigned = CollectModuleReassignedNames(ast);
@@ -411,71 +495,7 @@ public partial class IRGenerator
                 }
 
                 if (classDef.Body is Block block)
-                {
-                    foreach (var innerStmt in block.Statements)
-                    {
-                        var innerName = "";
-                        var innerType = "";
-                        Expression? innerInit = null;
-
-                        switch (innerStmt)
-                        {
-                            case VarDecl vDecl:
-                                innerName = vDecl.Name;
-                                innerType = vDecl.VarType;
-                                innerInit = vDecl.Init;
-                                break;
-                            case AssignStmt { Target: VariableExpr iVar } iAssign:
-                                innerName = iVar.Name;
-                                innerInit = iAssign.Value;
-                                break;
-                            case AnnAssign iAnnAssign:
-                                innerName = iAnnAssign.Target;
-                                innerType = iAnnAssign.Annotation;
-                                innerInit = iAnnAssign.Value;
-                                break;
-                        }
-
-                        if (string.IsNullOrEmpty(innerName) || innerInit == null) continue;
-                        try
-                        {
-                            var val = EvaluateConstantExpr(innerInit);
-                            // A name this program WRITES is not a constant, whatever it is
-                            // called: the fold left the write nowhere to land and it was
-                            // dropped in silence (#272). Module level has had this same gate
-                            // on `reassigned` since #220. An enum member keeps folding: its
-                            // value is the member's identity, not a variable's contents.
-                            var isAllUpper = innerName.All(c => !char.IsLower(c))
-                                && !writtenClassAttributes.Contains(classDef.Name + "." + innerName);
-
-                            if (isAllUpper || isEnum)
-                            {
-                                globals[currentModulePrefix + innerName] = new SymbolInfo
-                                    { IsMemoryAddress = false, Value = val };
-                            }
-                            else
-                            {
-                                mutableGlobals[currentModulePrefix + innerName] =
-                                    DataTypeExtensions.StringToDataType(innerType);
-                                RecordClassAttrInit(ast, classDef.Name, innerName, innerType,
-                                                    innerInit, val);
-                            }
-                        }
-                        catch
-                        {
-                            if (!isEnum)
-                            {
-                                mutableGlobals[currentModulePrefix + innerName] =
-                                    DataTypeExtensions.StringToDataType(innerType);
-                                // No folded value: the initializer is a run-time expression, so
-                                // there is nothing to size the storage from beyond the
-                                // annotation, and the store runs the expression as written.
-                                RecordClassAttrInit(ast, classDef.Name, innerName, innerType,
-                                                    innerInit, null);
-                            }
-                        }
-                    }
-                }
+                    ScanClassBodyAttributes(ast, classDef.Name, block, isEnum);
 
                 currentModulePrefix = oldPrefix;
             }

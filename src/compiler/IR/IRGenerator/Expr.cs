@@ -484,6 +484,68 @@ public partial class IRGenerator
     // True when an expression is None: the None literal, or a name currently bound
     // to None (a param defaulted to None, a variable assigned None). An integer or
     // a concrete instance is never None.
+    /// <summary>
+    /// `A.B.C` (and deeper) read as ONE name, when the head is a class or a module rather than
+    /// an instance. Returns null whenever the joined name is not a global the scan filed, so
+    /// every access that resolves some other way keeps the path it has.
+    /// </summary>
+    private Val? TryDottedClassConstant(MemberAccessExpr expr)
+    {
+        var tail = new List<string> { expr.Member };
+        Expression cur = expr.Object;
+        while (cur is MemberAccessExpr inner)
+        {
+            tail.Add(inner.Member);
+            cur = inner.Object;
+        }
+
+        // One hop is the ordinary case and is resolved below, unchanged.
+        if (tail.Count < 2 || cur is not VariableExpr root) return null;
+
+        // Only a class or a module, never an instance: a local whose flattened field names
+        // happen to join to the same string must keep its own resolution.
+        string head = root.Name;
+        bool headIsModule = modules.ContainsKey(head);
+        if (!headIsModule && !classNames.Contains(head) && !IsImportedAlias(head)) return null;
+        if (!headIsModule && LooksLikeLocalInstance(head)) return null;
+
+        if (TryImportedAlias(head, out var realMod) && realMod != null)
+            head = headIsModule ? realMod : realMod + "." + AliasOriginal(root.Name);
+
+        tail.Reverse();
+        string mangled = (head + "." + string.Join(".", tail)).Replace('.', '_');
+
+        foreach (var key in new[] { mangled, currentModulePrefix + mangled })
+        {
+            if (key.Length == 0) continue;
+            if (globals.TryGetValue(key, out var sym))
+                return sym.IsMemoryAddress ? new MemoryAddress(sym.Value, sym.Type) : new Constant(sym.Value);
+            if (constantVariables.TryGetValue(key, out int cv))
+                return new Constant(cv, ResolveStrConstant(key));
+            if (mutableGlobals.TryGetValue(key, out var mt))
+                return new Variable(key, mt);
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether a bare name stands for a value in the code being lowered, not a type.</summary>
+    private bool LooksLikeLocalInstance(string name)
+    {
+        foreach (var key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+                     name,
+                 })
+        {
+            if (key == null) continue;
+            if (instanceClasses.ContainsKey(key) || variableTypes.ContainsKey(key)
+                || variableAliases.ContainsKey(key)) return true;
+        }
+        return false;
+    }
+
     private bool IsNoneValued(Expression e)
     {
         if (e is NoneLiteral) return true;
@@ -2250,6 +2312,14 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // A constant two class names deep: `Outer.Inner.A`, where one level works. The access
+        // was resolved one hop at a time, so `Outer.Inner` was asked for as an attribute of
+        // `Outer` and refused with "object has no attribute 'Inner'" -- a sentence about the
+        // hop, not about the name. The scan files a nested class's constants under the joined
+        // prefix, so the whole dotted path IS the name (#319). It is how CircuitPython spells
+        // the UART parity: `busio.UART.Parity.ODD`, which adds a module hop in front.
+        if (TryDottedClassConstant(expr) is { } dottedConst) return dottedConst;
+
         // A single-field instance handed back by a factory IS its one field: the call returns
         // the field's value in a register and the name is bound to that (RFC 0001 Model B
         // handle). A method call on it already knew that; a direct field READ did not, and
