@@ -2,6 +2,7 @@ from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A, OCR0B
 from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL, OCR1AH, OCR1BH
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
+from pymcu.chips import __TIMEBASE__
 from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, inline, ptr, const
 
@@ -19,6 +20,21 @@ from pymcu.types import uint8, uint16, inline, ptr, const
 def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
     match pin:
         case "PD6" | "PD5":
+            # Timer0 is also the millisecond time base (millis(), ticks_ms(),
+            # monotonic(), asyncio), which runs it at prescaler 64 and counts its
+            # overflows. Any other prescaler here runs that clock at the wrong rate:
+            # measured on an Arduino Uno, 5000 Hz on PD6 made monotonic() run 8.44
+            # times too fast (PyMCU#295). So with the time base in the program the
+            # only frequency on these two pins is the 976 Hz bucket, and the request
+            # is refused where it is written. A run-time frequency cannot be checked
+            # here and is refused too.
+            if __TIMEBASE__ and (freq <= 488 or freq > 2762):
+                raise CompileError(
+                    "PWM: PD5/PD6 (Arduino D5/D6) share Timer0 with the millisecond time "
+                    "base (millis, ticks_ms, monotonic, asyncio), which fixes its prescaler "
+                    "at 64: the only PWM frequency on these pins is then 976 Hz (any "
+                    "request between 489 and 2762 Hz, or the default). For this frequency "
+                    "use PD3/PB3 (D3/D11, Timer2) or PB1/PB2 (D9/D10, Timer1).")
             # Timer0: CS[2:0] = 001/010/011/100/101. Thresholds are the geometric
             # midpoints between achievable frequencies: the chosen prescaler is
             # always the nearest one.
@@ -265,3 +281,4 @@ def pwm_release(pin: const):
             DDRD[3] = 0
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
+
