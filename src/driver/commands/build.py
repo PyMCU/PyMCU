@@ -28,7 +28,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import binary_for_plugin, get_backend_for_chip, run_backend
-from ..core.compiler import PyMCUCompiler
+from ..core.compiler import PyMCUCompiler, map_line
 from ..core.boards import (
     board_frequency,
     default_frequency,
@@ -308,6 +308,12 @@ def _sources_contain(sources_dir: Path, token: str) -> bool:
 
 _MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
 
+# Every line `pymcu build` inserts into the entry file carries this. It is what lets a
+# diagnostic be mapped back per LINE instead of by one accumulated offset, which is what
+# reported a module-level line one early whenever the program had an explicit
+# `def main():` (#311).
+INJECTED_MARK = "  # pymcu:injected"
+
 
 def _inject_preamble(
     entry_point: Path,
@@ -332,19 +338,54 @@ def _inject_preamble(
     existing = entry_point.read_text(encoding="utf-8")
     m = _MAIN_DEF_RE.search(existing)
     if m:
-        header = comment + import_line + "\n"
-        modified = existing[:m.end()] + "\n    " + call_line + existing[m.end():]
+        header = _mark_injected(comment + import_line + "\n")
+        modified = (existing[:m.end()] + "\n    " + call_line + INJECTED_MARK
+                    + existing[m.end():])
         synthetic.write_text(header + modified, encoding="utf-8")
-        # Lines before def main() shifted by header_lines; lines inside def main()
-        # shifted by header_lines + 1 (the inserted call_line).  Use the larger
-        # value so breakpoints inside the function body (the common case) resolve
-        # correctly.
+        # Two insertion points, and therefore two different shifts: a line above
+        # `def main():` moves by the header alone, a line at or below the inserted call by
+        # the header plus one. A single number cannot say both, and the larger of the two
+        # sent every diagnostic about a module-level line one line early (#311). Kept only
+        # for callers that still want a rough count; the honest answer is the per-line map
+        # _preamble_line_map() reads back off the marks above.
         preamble_lines = header.count("\n") + 1
     else:
-        preamble = comment + import_line + call_line + "\n\n"
+        preamble = _mark_injected(comment + import_line + call_line + "\n\n")
         synthetic.write_text(preamble + existing, encoding="utf-8")
         preamble_lines = preamble.count("\n")
     return synthetic, preamble_lines
+
+
+def _mark_injected(block: str) -> str:
+    """Put the sentinel on every line of an injected block, blank lines included."""
+    out = []
+    for line in block.split("\n")[:-1]:        # the block always ends in a newline
+        out.append(line + INJECTED_MARK + "\n")
+    return "".join(out)
+
+
+def _preamble_line_map(synthetic: Path) -> list[int | None]:
+    """Generated line (1-based) -> the user's line, or None for a line pymcu injected.
+
+    Read back off the file itself rather than accumulated as the injections run, so the
+    four preambles that can stack compose without any of them knowing about the others.
+    Index 0 is unused, so a 1-based line number indexes it directly.
+    """
+    mapping: list[int | None] = [None]
+    injected = 0
+    try:
+        lines = synthetic.read_text(encoding="utf-8").split("\n")
+    except OSError:
+        return mapping
+    if lines and lines[-1] == "":
+        lines.pop()
+    for generated, line in enumerate(lines, start=1):
+        if line.rstrip().endswith(INJECTED_MARK.strip()):
+            injected += 1
+            mapping.append(None)
+        else:
+            mapping.append(generated - injected)
+    return mapping
 
 
 def _get_stdout_config(pymcu_config: dict) -> tuple[str, int]:
@@ -448,19 +489,20 @@ def _inject_clock_init_preamble(entry_point: Path, generated_dir: Path) -> tuple
     )
 
 
-def _correct_linemap(linemap_path: Path, filename: str, offset: int) -> None:
-    """Subtract *offset* from every linemap entry whose File == *filename*.
+def _correct_linemap(linemap_path: Path, filename: str, offset) -> None:
+    """Map every linemap entry whose File == *filename* back to the user's line.
 
-    Entries that would have a corrected line number <= 0 (i.e. they point into
-    the injected preamble itself) are dropped — they have no counterpart in the
-    original source file.
+    *offset* is the per-line map _preamble_line_map() builds, or a plain count for callers
+    that still hand one over. Entries that land on a line pymcu injected are dropped: they
+    have no counterpart in the original source file. The single count is what put the
+    debugger's line map one off over the region above `def main():` (#311).
     """
     entries = json.loads(linemap_path.read_text(encoding="utf-8"))
     corrected = []
     for e in entries:
         if e.get("File") == filename:
-            new_line = e["Line"] - offset
-            if new_line > 0:
+            new_line = map_line(offset, e["Line"])
+            if new_line:
                 corrected.append({**e, "Line": new_line})
         else:
             corrected.append(e)
@@ -1058,9 +1100,16 @@ def build(
         # above replaced entry_point with a synthetic file under dist/_generated and shifted
         # the line numbers; without this map a diagnostic sends the reader into their own
         # build output, at a line that says something else.
-        _diagnostic_source = (
-            (str(entry_point), str(_original_entry_point), _linemap_preamble_offset)
+        # Read back off the generated file, which is the only place that knows where every
+        # one of the four possible preambles actually landed.
+        _preamble_map = (
+            _preamble_line_map(entry_point)
             if _linemap_preamble_offset > 0 and str(entry_point) != str(_original_entry_point)
+            else None
+        )
+        _diagnostic_source = (
+            (str(entry_point), str(_original_entry_point), _preamble_map)
+            if _preamble_map is not None
             else None
         )
 
@@ -1155,8 +1204,8 @@ def build(
                     # Correct linemap line numbers when preamble was injected.
                     # The compiler saw the synthetic file (with prepended lines),
                     # so all recorded line numbers are shifted by the preamble size.
-                    if linemap_path and linemap_path.exists() and _linemap_preamble_offset > 0:
-                        _correct_linemap(linemap_path, "main.py", _linemap_preamble_offset)
+                    if linemap_path and linemap_path.exists() and _preamble_map is not None:
+                        _correct_linemap(linemap_path, "main.py", _preamble_map)
                 else:
                     compiler.compile(
                         input_file=entry_point,

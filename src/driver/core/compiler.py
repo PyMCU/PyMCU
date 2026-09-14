@@ -28,6 +28,25 @@ _DIAG_HEADER_RE = re.compile(r"^(\S+?):(\d+)(:.*)$")
 _DIAG_GUTTER_RE = re.compile(r"^(\s*)(\d+)( \| .*)$")
 
 
+def map_line(offset, generated: int):
+    """The user's line for a generated one, or None when pymcu wrote that line itself.
+
+    `offset` is either a per-line map (index = generated line, value = the user's line or
+    None) or, for callers that still hand one over, a single count of injected lines.
+    One number cannot describe a preamble inserted in TWO places -- a header at the top and
+    a call inside `def main():` -- which is why a diagnostic about a module-level line came
+    out one line early (#311).
+    """
+    if isinstance(offset, int):
+        mapped = generated - offset
+        return mapped if mapped >= 1 else None
+    if 1 <= generated < len(offset):
+        return offset[generated]
+    # Past the end of the map: the file grew after it was built, so shift by whatever the
+    # map's own tail says rather than inventing a number.
+    return None
+
+
 def _remap_diagnostics(text: str, diagnostic_source) -> str:
     """Point every diagnostic at the file the user wrote, header AND snippet.
 
@@ -58,7 +77,7 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
     cited = re.compile(r"(?<![\w./\\])" + re.escape(syn_name) + r":(\d+)")
 
     def map_citations(text: str) -> str:
-        return cited.sub(lambda m: f"{syn_name}:{max(1, int(m.group(1)) - offset)}", text)
+        return cited.sub(lambda m: f"{syn_name}:{map_line(offset, int(m.group(1))) or 1}", text)
 
     out: list[str] = []
     # Whether the snippet currently being read belongs to the entry file. Decided per block
@@ -74,12 +93,13 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
             # refusal raised inside an imported HAL can still quote the caller's line.
             rest = map_citations(rest)
             if is_synthetic(path):
-                # A line at or below the offset is inside the preamble, so the generated file
-                # really is where it went wrong. Its frame stays as the compiler drew it;
-                # renumbering would send the reader to a line of their own source that is not
-                # the one that failed.
-                renumber = num > offset
-                out.append(f"{real}:{max(1, num - offset)}{rest}")
+                # A line pymcu injected has no counterpart in the user's file, so the
+                # generated file really is where it went wrong. Its frame stays as the
+                # compiler drew it; renumbering would send the reader to a line of their own
+                # source that is not the one that failed.
+                mapped_header = map_line(offset, num)
+                renumber = mapped_header is not None
+                out.append(f"{real}:{mapped_header or 1}{rest}")
             else:
                 renumber = False
                 out.append(f"{path}:{num}{rest}")
@@ -88,8 +108,8 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
         gutter = _DIAG_GUTTER_RE.match(line) if renumber else None
         if gutter:
             pad, digits, rest = gutter.group(1), gutter.group(2), gutter.group(3)
-            mapped = int(digits) - offset
-            if mapped < 1:
+            mapped = map_line(offset, int(digits))
+            if mapped is None:
                 # A context line from inside the preamble. There is no number of the user's
                 # that fits it, and clamping it to 1 would label injected code as the first
                 # line they wrote, so it is dropped instead.
