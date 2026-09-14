@@ -132,21 +132,21 @@ def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
 
 
 @inline
-def pwm_init(pin: const, duty: uint8, prescaler: uint8):
+def pwm_init(pin: const, duty: uint8, prescaler: uint8, invert: const[uint8] = 0):
     match pin:
         case "PB0":
             # Timer0 OC0A: Fast PWM non-inverting
             # TCCR0A = COM0A1 | WGM01 | WGM00 = 0x83
             DDRB[0] = 1
             OCR0A.value = duty
-            TCCR0A.value = 0x83
+            TCCR0A.value = 0xC3 if invert else 0x83
             TCCR0B.value = prescaler
         case "PB1":
             # Timer0 OC0B: Fast PWM non-inverting
             # TCCR0A = COM0B1 | WGM01 | WGM00 = 0x23
             DDRB[1] = 1
             OCR0B.value = duty
-            TCCR0A.value = 0x23
+            TCCR0A.value = 0x33 if invert else 0x23
             TCCR0B.value = prescaler
         case "PB4":
             # Timer1 OC1B: Fast PWM mode via PWM1B bit and COM1B1
@@ -185,13 +185,13 @@ def pwm_disconnect(pin: const):
 
 
 @inline
-def pwm_connect(pin: const):
+def pwm_connect(pin: const, invert: const[uint8] = 0):
     match pin:
         case "PB0":
-            TCCR0A.value = TCCR0A.value | 0x80
+            TCCR0A.value = TCCR0A.value | (0xC0 if invert else 0x80)
         case "PB1":
-            TCCR0A.value = TCCR0A.value | 0x20
+            TCCR0A.value = TCCR0A.value | (0x30 if invert else 0x20)
         case "PB4":
-            TCCR1.value = TCCR1.value | 0x20
+            TCCR1.value = TCCR1.value | (0x30 if invert else 0x20)
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")

@@ -10,7 +10,7 @@ Hardware pulse-width modulation. Wraps the Timer/Counter OC channels on AVR.
 
 ## class `PWM`
 
-### `PWM(pin: str, duty: uint8, freq: uint16 = 0)`
+### `PWM(pin: str, duty: uint8, freq: uint16 = 0, invert: const[uint8] = 0)`
 
 Configures hardware PWM on the given pin. `duty` is 8-bit (0 = 0%, 255 = 100%). `freq` is
 optional; `0` leaves the timer at its default prescaler.
@@ -34,6 +34,14 @@ optional; `0` leaves the timer at its default prescaler.
 | `stop()` | Disable PWM output |
 | `set_duty(duty: uint8)` | Update duty cycle while running |
 | `set_freq(freq: uint16)` | Select the prescaler closest to `freq` |
+
+### Inverting output
+
+`invert=1` selects the inverting compare output mode (AVR: COMxn1:COMxn0 = 11). The pin is
+set on compare match and cleared at BOTTOM, so `duty` counts the LOW time: `duty=64` is 75 %
+high. `set_duty(0)` still disconnects the compare output and drives the pin low; a non-zero
+duty reconnects it inverting. The argument is a compile-time constant and costs nothing when
+it is 0; `machine.PWM(pin, invert=1)` lowers to it.
 
 ### Reachable frequencies
 

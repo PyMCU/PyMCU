@@ -42,14 +42,17 @@ else:
 class PWM:
     """Hardware PWM channel for AVR, zero-cost abstraction (all methods @inline)."""
 
-    def __init__(self, pin: const, duty: uint8, freq: uint16 = 0):
+    def __init__(self, pin: const, duty: uint8, freq: uint16 = 0, invert: const[uint8] = 0):
+        # invert selects the inverting compare output mode (COMxn0 set): the pin is
+        # set on compare match and cleared at BOTTOM, so duty counts the LOW time.
         self._pin = pin
+        self._invert = invert
         prescaler: uint8 = 0
         if freq == 0:
             prescaler = pwm_select_start_val(pin)
         else:
             prescaler = pwm_prescaler_for_freq(pin, freq)
-        pwm_init(pin, duty, prescaler)
+        pwm_init(pin, duty, prescaler, invert)
         self._ocr       = pwm_select_ocr(pin)
         self._tccr_b    = pwm_select_tccr_b(pin)
         self._start_val = prescaler
@@ -68,7 +71,7 @@ class PWM:
             # Folds to nothing on the 8-bit channels.
             pwm_clear_ocr_high(self._pin)
             self._ocr.value = duty
-            pwm_connect(self._pin)
+            pwm_connect(self._pin, self._invert)
 
     @inline
     def start(self):
