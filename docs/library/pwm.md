@@ -36,6 +36,27 @@ optional; `0` leaves the timer at its default prescaler.
 | `set_duty(duty: uint8)` | Update duty cycle while running |
 | `set_freq(freq: uint16)` | Select the prescaler closest to `freq` |
 
+### Timer0 is also the time base
+
+On the ATmega parts PD5 and PD6 (Arduino D5 and D6) are the two channels of Timer0, and
+Timer0's overflow is what `millis()`, `ticks_ms()`, `time.monotonic()` and asyncio count.
+The time base runs it at prescaler 64, so while it is in the program (the build injects
+`millis_init()` for those calls, or the sources call it) the only frequency available on
+those two pins is the 976 Hz bucket, which is also the default. Any other request there
+is refused where it is written:
+
+```
+error: CompileError: PWM: PD5/PD6 (Arduino D5/D6) share Timer0 with the millisecond time
+base (millis, ticks_ms, monotonic, asyncio), which fixes its prescaler at 64 ...
+```
+
+Use PD3/PB3 (D3/D11, Timer2) or PB1/PB2 (D9/D10, Timer1) for that frequency. Without the
+time base every bucket stays available on Timer0. Measured before this rule existed: a
+5000 Hz PWM on D6 made `monotonic()` run 8.44 times too fast on an Arduino Uno.
+
+The two channels of one timer always share its prescaler: the last `PWM()` built decides
+the frequency of both, and nothing warns yet (see PyMCU#300).
+
 ### Inverting output
 
 `invert=1` selects the inverting compare output mode (AVR: COMxn1:COMxn0 = 11). The pin is

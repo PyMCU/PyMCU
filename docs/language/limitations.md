@@ -482,10 +482,13 @@ interrupts, atomic flag patterns via `GPIOR0`.
 :::{admonition} Timer0 and millis / ticks_ms
 :class: warning
 
-`millis_init()` (auto-injected when `ticks_ms()` — or, on ATmega, an `async def` — is
-detected) configures **Timer0** in normal overflow mode.  Do **not** use Timer0 for
-PWM, CTC, or other purposes when `ticks_ms()` / `millis()` / `async`-`await` is active
-in the same program.
+`millis_init()` (auto-injected when `ticks_ms()` / `monotonic()` or, on ATmega, an
+`async def` is detected) runs **Timer0** at prescaler 64 and counts its overflows. A PWM
+on PD5/PD6 (Arduino D5/D6) at the default frequency shares the timer without harm; any
+other frequency there would reprogram the prescaler under the clock (measured: 5000 Hz on
+D6 made `monotonic()` run 8.44 times too fast) and is refused at compile time, naming
+D3/D11 and D9/D10 as the pins to use. CTC or other direct uses of Timer0 in such a
+program are still yours to avoid.
 
 On AVR the clock `await asyncio.sleep_ms(...)` waits against is that same Timer0
 counter, so its resolution is **4 µs at 16 MHz** (1 µs on RP2040/RP2350, which have a
