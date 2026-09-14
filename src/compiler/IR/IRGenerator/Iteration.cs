@@ -150,12 +150,100 @@ public partial class IRGenerator
         if (Bound(stmt.RangeStop, 0) is not { } stop) return null;
         if (Bound(stmt.RangeStep, 1) is not { } step || step == 0) return null;
 
-        long trips = step > 0
-            ? (stop > start ? ((long)stop - start + step - 1) / step : 0)
-            : (stop < start ? ((long)start - stop - step - 1) / -step : 0);
+        long trips = RangeTripCount(start, stop, step);
         if (trips <= 0 || trips > ConstSequenceUnrollLimit) return null;
 
         return (start, stop, step);
+    }
+
+    // How many values range(start, stop, step) visits, for a non-zero step. Every reading of a
+    // range -- the unroller, the comprehension expanders, reversed(range()) -- goes through
+    // this one formula so they agree on the length.
+    internal static long RangeTripCount(long start, long stop, long step)
+        => step > 0
+            ? (stop > start ? (stop - start + step - 1) / step : 0)
+            : (stop < start ? (start - stop - step - 1) / -step : 0);
+
+    // The program's own annotation for a loop variable, or null when it has none. Same
+    // three-key lookup as InferExprType (Core.cs), but "absent" is not "uint8", and a type an
+    // earlier range loop over the same name inferred is not a declaration (see
+    // rangeInferredCounterKeys).
+    private DataType? DeclaredLoopVarType(string bareName)
+    {
+        foreach (var start in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + bareName,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + bareName,
+            bareName,
+        })
+        {
+            if (start == null) continue;
+            var key = start;
+            for (var i = 0; i < 20; ++i)
+            {
+                if (rangeInferredCounterKeys.Contains(key)) return null;
+                if (variableTypes.TryGetValue(key, out var t)) return IsIntegerType(t) ? t : null;
+                if (variableAliases.TryGetValue(key, out var alias)) key = alias;
+                else break;
+            }
+        }
+        return null;
+    }
+
+    private (long Lo, long Hi) OperandRange(Val v)
+        => v is Constant or Temporary or Variable ? ValRange(v) : RangeOfType(GetValType(v));
+
+    // Every value the counter of range(start, stop, step) holds, including the one it stops
+    // on. That last value is start + trips*step, which passes stop by up to |step| - 1: with a
+    // unit step the counter never passes stop and the bounds alone decide; otherwise the
+    // overshoot is exact when everything is constant, and one extra step wide when a bound is
+    // only known at run time. stop is included even when the loop is empty, so both sides of
+    // the exit test share one signedness (range(0, -5) compares signed, not by luck).
+    private (long Lo, long Hi) CounterValueRange(Val startVal, Val stopVal, Val stepVal)
+    {
+        var (sLo, sHi) = OperandRange(startVal);
+        var (eLo, eHi) = OperandRange(stopVal);
+        long lo = Math.Min(sLo, eLo), hi = Math.Max(sHi, eHi);
+        if (startVal is Constant sc && stopVal is Constant ec && stepVal is Constant kc && kc.Value != 0)
+        {
+            long last = sc.Value + RangeTripCount(sc.Value, ec.Value, kc.Value) * kc.Value;
+            return (Math.Min(lo, last), Math.Max(hi, last));
+        }
+        var (kLo, kHi) = OperandRange(stepVal);
+        if (kHi > 1) hi = Math.Max(hi, eHi + kHi - 1);
+        if (kLo < -1) lo = Math.Min(lo, eLo + kLo + 1);
+        return (lo, hi);
+    }
+
+    // The type of a range() counter: the program's annotation when there is one, otherwise the
+    // narrowest integer type that holds every value the counter takes. `for i in range(N)` with
+    // N up to 255 stays the 8-bit loop it always was; range(300), a uint16 stop variable, a
+    // descending range past 127 or a step that overshoots widen exactly as far as they need.
+    private DataType RangeCounterType(ForStmt stmt, string varName, Val startVal, Val stopVal, Val stepVal)
+    {
+        foreach (var (v, node) in new[]
+                 {
+                     (startVal, stmt.RangeStart ?? stmt.RangeStop!),
+                     (stopVal, stmt.RangeStop!),
+                     (stepVal, stmt.RangeStep ?? stmt.RangeStop!),
+                 })
+            if (!IsIntegerType(GetValType(v)))
+                throw UserError("range() bounds must be integers", node);
+
+        var (lo, hi) = CounterValueRange(startVal, stopVal, stepVal);
+        DataType inferred = NarrowestTypeFor(lo, hi);
+        if (DeclaredLoopVarType(stmt.VarName) is { } declared)
+        {
+            var (dLo, dHi) = RangeOfType(declared);
+            if (startVal is Constant && stopVal is Constant && stepVal is Constant && (lo < dLo || hi > dHi))
+                throw UserError(
+                    $"loop variable '{stmt.VarName}' is declared {declared.ToString().ToLowerInvariant()} " +
+                    $"but range(...) reaches {(hi > dHi ? hi : lo)}; declare it " +
+                    $"{inferred.ToString().ToLowerInvariant()} or drop the annotation", stmt.RangeStop!);
+            return declared;
+        }
+        rangeInferredCounterKeys.Add(varName);
+        return inferred;
     }
 
     private void EmitUnrolledIteration(Statement body, string breakLabel)
@@ -1501,7 +1589,15 @@ public partial class IRGenerator
         string varName = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.VarName
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
-        var loopVar = new Variable(varName, DataType.UINT8);
+        // The counter was an unconditional UINT8 here, whatever the bounds said: range(300) ran
+        // 44 times, range(0, 256) never ran, a descending range from 200 never ran, and a
+        // uint16 stop variable or a uint16 annotation on the loop variable were both ignored.
+        // Filed in variableTypes before the body is visited, so the body's reads and the
+        // storage allocator see the same width the loop compares and steps.
+        DataType counterType = RangeCounterType(stmt, varName, startVal, stopVal, stepVal);
+        constantVariables.Remove(varName);
+        variableTypes[varName] = counterType;
+        var loopVar = new Variable(varName, counterType);
         Emit(new Copy(startVal, loopVar));
 
         string startLabel = MakeLabel();

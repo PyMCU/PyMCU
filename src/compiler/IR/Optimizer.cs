@@ -2105,7 +2105,7 @@ private static Function CloneFunction(Function f)
             {
                 if (body[i] is not Label { Name: var lStart }) continue;
                 if (body[i + 1] is not JumpIfGreaterOrEqual {
-                    Src1: Variable { Name: var loopVar },
+                    Src1: Variable { Name: var loopVar, Type: var loopType },
                     Src2: Constant { Value: var tripN },
                     Target: var lEnd }) continue;
                 if (tripN <= 0 || tripN > MaxUnrollTripCount) continue;
@@ -2160,14 +2160,14 @@ private static Function CloneFunction(Function f)
                 var unrolled = new List<Instruction>();
                 for (int k = initValue; k < tripN; k++)
                 {
-                    unrolled.Add(new Copy(new Constant(k), new Variable(loopVar)));
+                    unrolled.Add(new Copy(new Constant(k), new Variable(loopVar, loopType)));
                     for (int bi = 0; bi < loopBody.Count; bi++)
                     {
                         if (bi == incrIdx) continue;
                         unrolled.Add(RenameBodyLabels(loopBody[bi], bodyLabels, k));
                     }
                 }
-                unrolled.Add(new Copy(new Constant(tripN), new Variable(loopVar)));
+                unrolled.Add(new Copy(new Constant(tripN), new Variable(loopVar, loopType)));
 
                 body.RemoveRange(i, endLabelIdx - i + 1);
                 body.InsertRange(i, unrolled);

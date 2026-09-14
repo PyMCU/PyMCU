@@ -277,6 +277,10 @@ public partial class IRGenerator
     private Dictionary<string, DataType> literalOnlyLocalWidths = new();
 
     private HashSet<string> boundNames = new();
+    // Loop variables whose type was INFERRED by a range loop rather than declared by the
+    // program. A later `for i in range(...)` over the same name sizes its counter from its own
+    // bounds instead of treating the earlier inference as an annotation it has to fit.
+    private HashSet<string> rangeInferredCounterKeys = new();
 
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties
 
