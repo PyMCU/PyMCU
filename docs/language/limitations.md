@@ -408,10 +408,26 @@ _loop:
 
 **Supported:** `for i in range(N)` (runtime or constant N), `for x in array`,
 `for x in [...]`, `for i, x in enumerate(iterable)`, `for x, y in zip(list1, list2)`,
-`for x in reversed([...])`, list comprehensions with compile-time constant bounds,
-nested list comprehensions, `if`-filtered list comprehensions (constant condition),
+`for x in reversed([...])`, `for x in reversed(range(...))`, `x in range(...)`,
+list comprehensions with compile-time constant bounds (`range(start, stop, step)` honours
+the step), nested list comprehensions, `if`-filtered list comprehensions (constant condition),
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
+
+**The range counter.** The loop variable of a `range()` loop is as wide as its bounds need,
+with no annotation: constants exactly (`range(300)` is a 16-bit loop, `range(200, -1, -1)` a
+signed one), variables by their declared type (`n: uint16` gives a 16-bit counter), and an
+`int8` start with a `uint8` stop gives `int16`. A step other than 1 can stop one step past
+`stop`, and the counter is sized for that too. A range that fits a byte stays the 8-bit loop it
+always was. A type declared on the loop variable before the loop is used as written, and is a
+`CompileError` when constant bounds do not fit it. A signed runtime step picks its direction at
+run time; an unsigned one counts up.
+
+After the loop the variable holds the last value visited, as in Python, whether the loop
+unrolled or ran as a counter. The one difference: a range that runs zero times leaves the
+variable at `start` (Python leaves it unbound). `enumerate(range(...))` with runtime bounds
+keeps a runtime index alongside the counter. `reversed(range(...))` with runtime bounds needs
+a step of 1 or -1; with constant bounds any step works.
 
 ### Slices
 
@@ -511,7 +527,7 @@ alone.
 | `print(str)` / `print(int)` | ✅ Supported | Routes to UART |
 | `print(float)` | ✅ Supported | Two rounded decimals, trailing zero trimmed (`3.25`, `1234.5`) |
 | `print(bytearray)` / `print(arr[a:b])` | ✅ Supported | CPython repr — `bytearray(b'\xcc\x10')`; length must be compile-time |
-| `range(n)` | ✅ Supported | For-loop bounds; runtime or constant |
+| `range(n)` | ✅ Supported | For-loop bounds, runtime or constant; the counter is sized from the bounds. Also `x in range(...)`, `reversed(range(...))`, `enumerate(range(...))`. Not a value: `r = range(4)` is a `CompileError` |
 | `len(arr)` / `len(b"...")` | ✅ Supported | Compile-time constant fold |
 | `abs(x)` | ✅ Supported | Intrinsic |
 | `min(a, b)` / `max(a, b)` | ✅ Supported | Intrinsic. Also over a fixed-size array, and with `key=f`: the key is called once per operand and the winner is the original value, not its key |

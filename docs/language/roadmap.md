@@ -12,11 +12,11 @@ This page tracks which language and HAL features have been implemented, and what
 |---|---|
 | `if / elif / else` | Compile-time DCE on `__CHIP__` branches |
 | `while` + `break` / `continue` | |
-| `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)` |
+| `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1, 2, 3]` | Fixed-size array or constant list literal |
-| `for i, x in enumerate(iterable)` | Compile-time index counter |
+| `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index |
 | `for x, y in zip(a, b)` | Compile-time unroll over paired lists |
-| `reversed(iterable)` | Compile-time reverse unroll |
+| `reversed(iterable)` | Compile-time reverse unroll; `reversed(range(...))` is the descending range |
 | `match / case` | Literal, wildcard, OR (`\|`), guard `if cond`, sequence, capture, dotted-name patterns; DCE on `__CHIP__` |
 | `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (`@inline` only, annotated `-> (T1, T2)` or `-> tuple[T1, T2]`) |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level statements |

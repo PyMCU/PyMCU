@@ -12,9 +12,9 @@ Everything in this section is shipped and tested in the current alpha build.
 |---------|-------|
 | `if` / `elif` / `else` | Compile-time DCE for `__CHIP__` branches |
 | `while` + `break` / `continue` | Full support |
-| `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)` |
+| `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1,2,3]` | Fixed-size array or constant list literal |
-| `for i, x in enumerate(iterable)` | Compile-time index counter |
+| `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`) patterns; DCE on `__CHIP__` |
 | `def` (functions) | Typed params, defaults, keyword args, overloading by type |
 | `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
@@ -142,7 +142,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | `zip(a, b)` compile-time | `for x, y in zip(list1, list2):` — unrolled over paired constant lists |
-| `reversed(iterable)` | `for x in reversed([1,2,3]):` — compile-time reverse unroll |
+| `reversed(iterable)` | `for x in reversed([1,2,3]):` — compile-time reverse unroll; `reversed(range(a, b, s))` is the same range walked down (runtime bounds with a unit step) |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant; compile-time `n` only |
 | `pow(x, n)` / `x ** n` | Compile-time constant fold; `BinaryOp::Pow` |
 

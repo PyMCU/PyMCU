@@ -1,5 +1,23 @@
 # Changelog — pymcu-compiler / pymcu-stdlib
 
+## Unreleased
+
+### Correctness (silent-miscompile class)
+- The counter of `for i in range(...)` is sized from its bounds instead of being an
+  unconditional uint8: `range(300)` ran 44 times, `range(0, 256)` never ran,
+  `range(200, -1, -1)` never ran, a `uint16` stop variable and a `uint16` annotation on
+  the loop variable were ignored, and `range(0, 250, 30)` wrapped its counter (#284).
+- The range loop variable holds the last value visited after the loop, as in Python:
+  it read 0 after an unrolled constant range and `stop` after a runtime one (#285).
+- A signed runtime step (`range(10, 0, step)` with `step: int8 = -2`) counts down instead
+  of exiting before the first iteration (#286).
+- List comprehensions over `range(start, stop, step)` honour the step (#287).
+
+### Language
+- `x in range(a, b[, s])`, `reversed(range(...))` and `enumerate(range(...))` over runtime
+  bounds are supported; `range()` as a value is refused with a message that names the
+  spellings that work (#288).
+
 ## 0.1.0a10 — 2026-08-18
 
 The hardware-validation release. Everything below came out of a sustained
