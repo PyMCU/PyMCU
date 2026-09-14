@@ -581,6 +581,25 @@ public partial class IRGenerator
                 return;
             }
 
+            // `for v in self._levels:` — the same unroll when the sequence of NUMBERS was stored
+            // in a field. Runs after the instance-sequence path above, so a field holding pins
+            // binds instances and a field holding numbers binds constants.
+            if (iter is MemberAccessExpr && ResolveConstSequenceExpr(iter) is { } memConstSeq)
+            {
+                string memBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                foreach (var elem in memConstSeq)
+                {
+                    if (!TryEvalConstElement(elem, out int mv))
+                        throw UserError("for-in over a sequence held in a field needs compile-time integer elements.");
+                    constantVariables[varKey] = mv;
+                    EmitUnrolledIteration(stmt.Body, memBrk);
+                }
+                if (memBrk.Length > 0) Emit(new Label(memBrk));
+
+                constantVariables.Remove(varKey);
+                return;
+            }
+
             if (iter is ListExpr or TupleExpr)
             {
                 var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
@@ -1439,10 +1458,19 @@ public partial class IRGenerator
                 }
             }
 
-            // for v in ct_array: — unroll over compile-time array (scalars or ZCA instances)
-            if (iter is VariableExpr forVarExpr2)
+            // for v in ct_array: — unroll over compile-time array (scalars or ZCA instances).
+            // A MemberAccessExpr reaches the same shape through a field: `for p in self._pins:`
+            // is how a driver that was handed a list of pins walks them.
+            if (iter is VariableExpr or MemberAccessExpr)
             {
-                ResolveForBase(forVarExpr2.Name, out string forBase, out int forSize);
+                string forBase = "";
+                int forSize = -1;
+                if (iter is MemberAccessExpr
+                    && TryResolveInstanceSequence(iter, out var memSeqBase, out int memSeqCount))
+                { forSize = memSeqCount; forBase = memSeqBase; }
+                if (forSize < 0 && iter is VariableExpr forVarExpr2)
+                    ResolveForBase(forVarExpr2.Name, out forBase, out forSize);
+
                 if (forSize > 0)
                 {
                     EmitSequenceUnroll(stmt, forBase, forSize);

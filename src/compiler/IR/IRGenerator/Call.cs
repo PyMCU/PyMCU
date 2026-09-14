@@ -1299,6 +1299,14 @@ public partial class IRGenerator
         // The argument EXPRESSIONS, parallel to argValues, kept for their source position.
         var rawArgExprs = new List<Expression?>();
         var rawListArgs = new List<ListExpr?>();
+        // The base key of an argument that is a compile-time sequence of ZCA instances --
+        // hoisted here, in the CALLER's scope, because the elements must be built exactly once
+        // and the parameter is only another name for them. Parallel to argValues.
+        var rawSeqBases = new List<string?>();
+        // The elements of an argument that is a list of NUMBERS reached by name. Resolved here,
+        // in the caller's scope, because the callee's prefix is already in place by the time the
+        // parameters are bound.
+        var rawConstSeqArgs = new List<List<Expression>?>();
 
         foreach (var rawArg in expr.Args)
         {
@@ -1325,6 +1333,35 @@ public partial class IRGenerator
                 // it via `for x in param` (unrolled) or `param[const]` indexing.
                 ListExpr? seqLit = arg as ListExpr
                     ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null);
+
+                // `Bar([Pin("PD5", Pin.OUT), Pin("PD6", Pin.OUT)])`: a list of INSTANCES is not
+                // raw AST to re-evaluate at each subscript -- the elements are built once here
+                // and the parameter is bound to the base key they live under, which is the same
+                // shape `objs = [A(1), A(2)]` already produces at module level.
+                if (seqLit != null && IsInstanceSequenceLiteral(seqLit))
+                {
+                    rawSeqBases.Add(HoistInstanceSequence(seqLit));
+                    rawConstSeqArgs.Add(null);
+                    rawListArgs.Add(null);
+                    argValues.Add(new NoneVal());
+                    continue;
+                }
+
+                // A NAME already bound to such a sequence (`pins = [...]` then `Bar(pins)`) is
+                // carried the same way: the parameter becomes another name for the same base.
+                if (seqLit == null && TryResolveInstanceSequence(arg, out var namedSeqBase, out _))
+                {
+                    rawSeqBases.Add(namedSeqBase);
+                    rawConstSeqArgs.Add(null);
+                    rawListArgs.Add(null);
+                    argValues.Add(new NoneVal());
+                    continue;
+                }
+
+                rawSeqBases.Add(null);
+                rawConstSeqArgs.Add(seqLit == null && arg is VariableExpr constSeqVe
+                    ? ResolveConstSequence(constSeqVe.Name)
+                    : null);
                 rawListArgs.Add(seqLit);
                 if (seqLit != null)
                 {
@@ -1628,6 +1665,16 @@ public partial class IRGenerator
             constantAddressVariables.Remove(paramName);
             constantAddressVariables.Remove(paramName + "_type");
 
+            if (i < rawSeqBases.Count && rawSeqBases[i] != null)
+            {
+                // A compile-time sequence of instances: the parameter is another name for the
+                // base the elements were built under, so `ps[0]`, `for p in ps` and a field that
+                // stores it all reach the same `base__k` the module-level form produces.
+                BindSequenceAlias(paramName, rawSeqBases[i]!);
+                continue;
+            }
+
+
             if (i < rawListArgs.Count && rawListArgs[i] != null)
             {
                 // Bytes/list/tuple literal bound to this parameter: record the raw AST
@@ -1640,6 +1687,14 @@ public partial class IRGenerator
                 continue;
             }
             listLiteralParams.Remove(paramName);
+
+            // `levels = [7, 8, 9]` then `D(levels)`: a list of NUMBERS reached by name keeps its
+            // elements against the parameter, so `xs[0]`, `for v in xs` and `len(xs)` answer the
+            // same inside the callee as they do outside it. The scalar/array binding below still
+            // runs, which is what leaves a run-time subscript reading the array itself.
+            constSequenceBindings.Remove(paramName);
+            if (i < rawConstSeqArgs.Count && rawConstSeqArgs[i] != null)
+                constSequenceBindings[paramName] = rawConstSeqArgs[i]!;
 
             // A parameter bound to None. There is no value to copy -- None has no runtime
             // representation -- so it is recorded as None-valued, exactly as a parameter
@@ -2884,6 +2939,7 @@ public partial class IRGenerator
     {
         if (memC.Object is not IndexExpr { Target: VariableExpr arrVe } idxExpr) return null;
 
+        string sourceName = arrVe.Name;
         string q = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + arrVe.Name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name);
@@ -2904,9 +2960,9 @@ public partial class IRGenerator
         const int maxUnrolled = 8;
         if (count > maxUnrolled)
             throw UserError(
-                $"'{arrVe.Name}[i].{memC.Member}()' selects among {count} instances at run time, "
+                $"'{sourceName}[i].{memC.Member}()' selects among {count} instances at run time, "
                 + $"which is lowered as {count} branches -- past {maxUnrolled} that is more code "
-                + "than it is worth. Iterate with `for p in " + arrVe.Name + ":`, or split the "
+                + "than it is worth. Iterate with `for p in " + sourceName + ":`, or split the "
                 + "array.", expr.Callee);
 
         string methodName = memC.Member;
@@ -2949,7 +3005,7 @@ public partial class IRGenerator
             Emit(new JumpIfNotEqual(probe, new Constant(k), nextLabel));
 
             var armCall = new CallExpr(
-                new MemberAccessExpr(new IndexExpr(arrVe, new IntegerLiteral(k)), methodName),
+                new MemberAccessExpr(new IndexExpr(idxExpr.Target, new IntegerLiteral(k)), methodName),
                 expr.Args) { Line = expr.Line };
             Val armVal = VisitCall(armCall);
             if (result != null && armVal is not NoneVal) Emit(new Copy(armVal, result));
