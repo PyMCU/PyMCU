@@ -33,8 +33,20 @@ optional; `0` leaves the timer at its default prescaler.
 | `start()` | Put the compare output back on the pin (a duty of 0 stays off) |
 | `stop()` | Take the compare output off the pin and drive it low; the timer keeps running for its other channel and for the time base |
 | `deinit()` | `stop()`, then the pin back to an input without pull-up |
-| `set_duty(duty: uint8)` | Update duty cycle while running |
+| `set_duty(duty: uint8)` | Update the 8-bit duty while running (0 off, 255 fully on, else high for duty + 1 of 256 counts) |
+| `set_duty_u16(duty: uint16)` | Update the 16-bit duty, 0..65535 = 0..100 %, exact to the channel's resolution: 32768 is 50.0 %, 65535 fully on, below half a count is off |
 | `set_freq(freq: uint16)` | Select the prescaler closest to `freq` |
+
+### Two duty entries, one exact
+
+`PWM(pin, duty)` and `set_duty()` take the 8-bit duty the HAL always had. `PWM(pin,
+duty_u16=...)` and `set_duty_u16()` take the 16-bit one every architecture's HAL shares
+(0..65535 = 0..100 %, what CircuitPython's `duty_cycle` and MicroPython's `duty_u16` mean),
+and each chip module resolves it to its own compare register. On the AVR 8-bit channels the
+value becomes round(duty * 256 / 65535) counts high and the compare register holds one less,
+because fast PWM is high for OCR + 1 counts. Measured before this existed: every 16-bit duty
+came out 1/256 above what was asked, 50.4 % for 32768 on an Arduino Uno. The compat layers
+use only the 16-bit entry and know nothing about the resolution behind it.
 
 ### Timer0 is also the time base
 

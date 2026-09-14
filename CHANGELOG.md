@@ -11,6 +11,9 @@
   compile time, naming D3/D11 and D9/D10; `millis_init()` no longer clears TCCR0A. The
   driver passes `--timebase` and the compiler binds `__TIMEBASE__` next to `__FREQ__`
   (#295).
+- Every PWM HAL takes a 16-bit duty (`PWM(pin, duty_u16=...)`, `set_duty_u16()`), the entry
+  the CircuitPython and MicroPython layers now use exclusively; on the AVR 8-bit channels
+  it lands exactly (32768 is 50.0 %, it read 50.4 % on the Uno; pymcu-circuitpython#30).
 - The two channels of one timer share its prescaler: the second `PWM()` (or a
   `set_freq()` next to a running sibling) asking for another bucket is refused at compile
   time, where it is written, through the new `claim()` intrinsic in `pymcu.types` (#300).
