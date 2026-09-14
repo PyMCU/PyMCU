@@ -45,3 +45,25 @@ class EEPROM:
     @inline
     def read(self, addr: uint16) -> uint8:
         return eeprom_read(addr)
+
+    # How many bytes this part's EEPROM holds, as a compile-time constant. A layer that
+    # reports a size had nowhere to ask, so microcontroller.nvm reported the ATmega328P's
+    # 1024 on every chip: an ATtiny85 has 512 and an ATmega2560 has 4096, and a program that
+    # trusted len(nvm) wrote past the end of the first and used a quarter of the second.
+    @inline
+    def size(self) -> uint16:
+        match __CHIP__.name:
+            case "attiny13" | "attiny13a" | "attiny25":
+                return 64
+            case "attiny24" | "attiny2313" | "attiny45" | "attiny4313" | "attiny44":
+                return 128
+            case "attiny85" | "attiny84":
+                return 512
+            case "atmega48" | "atmega48p":
+                return 256
+            case "atmega88" | "atmega88p" | "atmega168" | "atmega168p":
+                return 512
+            case "atmega2560" | "atmega32u4":
+                return 4096
+            case _:
+                return 1024
