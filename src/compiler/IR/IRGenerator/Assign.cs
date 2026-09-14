@@ -508,6 +508,53 @@ public partial class IRGenerator
         // `self.buf: list[uint8] = [...]` declares. Only all-constant literals qualify: a list
         // of instances (`self.pins = [Pin(1), Pin(2)]`) is a different shape with its own path,
         // and a literal whose size cannot be read still asks for the annotation by name.
+        // `self._pins = pins` / `self._levels = levels`: a FIELD that holds a compile-time
+        // sequence. The field is another name for the sequence, not a scalar: before this it
+        // became one, and every `self._pins[0]` read the zero that nothing had written -- built
+        // clean, ran wrong, which is the shape a driver taking a list of pins always has.
+        if (stmt.Target is MemberAccessExpr { Object: VariableExpr } seqMem
+            && MemberFlatKey(seqMem) is { } seqFieldKey)
+        {
+            string? seqSourceBase = null;
+            if (stmt.Value is ListExpr seqFieldLit && IsInstanceSequenceLiteral(seqFieldLit))
+                seqSourceBase = HoistInstanceSequence(seqFieldLit);
+            else if (stmt.Value is not ListExpr
+                     && TryResolveInstanceSequence(stmt.Value, out var seqBoundBase, out _))
+                seqSourceBase = seqBoundBase;
+
+            if (seqSourceBase != null)
+            {
+                BindSequenceAlias(seqFieldKey, seqSourceBase);
+                return;
+            }
+
+            // `self._data = data`: a field handed a bytearray or a fixed array. It keeps the
+            // storage it was given -- before this the address went into a scalar field and
+            // `self._data[i]` was read as a bit index into that scalar.
+            if (stmt.Value is VariableExpr seqArrVe)
+            {
+                string seqArrSrc = ResolveNameKey(seqArrVe.Name);
+                if (seqArrSrc != seqFieldKey
+                    && (arraySizes.ContainsKey(seqArrSrc) || bytearrayParams.Contains(seqArrSrc))
+                    && !instanceClasses.ContainsKey(seqArrSrc + "__0"))
+                {
+                    BindSequenceAlias(seqFieldKey, seqArrSrc);
+                    if (bytearrayParams.Contains(seqArrSrc)) bytearrayParams.Add(seqFieldKey);
+                    return;
+                }
+            }
+
+            // A list of NUMBERS keeps its elements against the field, so a constant subscript
+            // folds, `for v in self._levels` unrolls and `len()` answers -- the same three
+            // things the name outside the class already answers.
+            if (stmt.Value is not ListExpr && ResolveConstSequenceExpr(stmt.Value) is { } seqConstElems)
+            {
+                constSequenceBindings[seqFieldKey] = seqConstElems;
+                variableAliases.Remove(seqFieldKey);
+                return;
+            }
+        }
+
         if (stmt.Target is MemberAccessExpr listMem && stmt.Value is ListExpr fieldList)
         {
             if (fieldList.Elements.Count > 0
@@ -2971,7 +3018,16 @@ public partial class IRGenerator
         while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
         if (string.IsNullOrEmpty(baseName)) return null;
         string flat = baseName + "_" + mem.Member;
-        return arraySizes.ContainsKey(flat) ? flat : null;
+        if (arraySizes.ContainsKey(flat)) return flat;
+
+        // A field that was HANDED an array (`self._data = data`, the shape every buffer-taking
+        // driver has) is another NAME for that storage, not a copy of its address into a scalar
+        // field. Follow the alias to the array itself so the indexed load and store find it.
+        string resolved = FollowAliases(flat);
+        if (resolved == flat || !arraySizes.ContainsKey(resolved)) return null;
+        // A compile-time sequence of instances also lives behind such an alias, and it has no
+        // SRAM to index: that shape is answered by the element paths, not by an array load.
+        return instanceClasses.ContainsKey(resolved + "__0") ? null : resolved;
     }
 
     // Resolves an array-size annotation token to a constant: a literal ("24"),
