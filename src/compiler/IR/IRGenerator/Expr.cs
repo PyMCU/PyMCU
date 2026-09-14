@@ -1617,6 +1617,66 @@ public partial class IRGenerator
         _ => folded.Value.ToString(),
     };
 
+
+    // Reads one element of a table that lives in flash. A byte-wide element is a single
+    // ArrayLoadFlash; a wider one is stored little-endian as bytes and reassembled here, so no
+    // backend has to learn a new width.
+    private Val EmitFlashArrayRead(string qualified, Val idxVal, int sz)
+    {
+                DataType felem = arrayElemTypes.TryGetValue(qualified, out var fe)
+                    ? fe : DataType.UINT8;
+                int fsize = felem.SizeOf();
+                if (fsize <= 1)
+                {
+                    Temporary tmp = MakeTemp(felem);
+                    Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
+                    return tmp;
+                }
+
+                // A table wider than a byte is stored little-endian as bytes, so the
+                // element is read one byte at a time and reassembled here. ArrayLoadFlash
+                // stays a byte load and no backend has to learn a new width, which is what
+                // lets every target that reads a const[uint8[N]] table read a wide one.
+                // A constant index folds to constant byte offsets, so the common case is
+                // the same LPM sequence repeated, not index arithmetic.
+                // The offset is a BYTE offset, so it outgrows eight bits before the element
+                // count does: a uint16 table of 200 entries is 400 bytes, and index 128
+                // scales to 256. Widen the offset temp once the table crosses that line, and
+                // keep the narrow one for the tables that do not.
+                DataType offType = sz * fsize > 256 ? DataType.UINT16 : DataType.UINT8;
+                Val ByteOffset(int b)
+                {
+                    if (idxVal is Constant kc) return new Constant(kc.Value * fsize + b);
+                    Temporary scaled = MakeTemp(offType);
+                    Emit(new Binary(BinaryOp.Mul, idxVal, new Constant(fsize), scaled));
+                    if (b == 0) return scaled;
+                    Temporary off = MakeTemp(offType);
+                    Emit(new Binary(BinaryOp.Add, scaled, new Constant(b), off));
+                    return off;
+                }
+
+                // Built from the TOP byte down: each step shifts what is already there up
+                // by eight and ORs the next byte in, so the two's-complement bit pattern of
+                // a signed element comes out right without a sign-extension step.
+                Temporary acc = MakeTemp(felem);
+                Temporary hi = MakeTemp(DataType.UINT8);
+                Emit(new ArrayLoadFlash(qualified, ByteOffset(fsize - 1), hi));
+                Emit(new Copy(hi, acc));
+                for (int b = fsize - 2; b >= 0; b--)
+                {
+                    Temporary shifted = MakeTemp(felem);
+                    Emit(new Binary(BinaryOp.LShift, acc, new Constant(8), shifted));
+                    Temporary lo = MakeTemp(DataType.UINT8);
+                    Emit(new ArrayLoadFlash(qualified, ByteOffset(b), lo));
+                    Temporary widened = MakeTemp(felem);
+                    Emit(new Copy(lo, widened));
+                    Temporary merged = MakeTemp(felem);
+                    Emit(new Binary(BinaryOp.BitOr, shifted, widened, merged));
+                    acc = merged;
+                }
+                return acc;
+    }
+
     private Val VisitIndex(IndexExpr expr)
     {
         // `struct.unpack_from(fmt, buf, off)[k]`. This is the ONLY place the subscript and the
@@ -1719,6 +1779,14 @@ public partial class IRGenerator
             && ResolveConstSequenceExpr(expr.Target) is { } constSeqElems)
         {
             Val cseqIdxVal = VisitExpression(expr.Index);
+            // A table held in a field and read with a run-time index: the values are constants
+            // and nothing writes them, so they go to flash here, at the subscript that needs it.
+            if (cseqIdxVal is not Constant
+                && ConstValuesOf(constSeqElems) is { } cseqValues
+                && SequenceKeyOf(expr.Target) is { } cseqKey
+                && TryMaterialiseConstTableFromValues(cseqKey, constSeqMem.Member, cseqValues)
+                    is { } cseqTable)
+                return EmitFlashArrayRead(cseqTable, cseqIdxVal, cseqValues.Count);
             if (cseqIdxVal is not Constant cseqIdxConst)
                 throw UserError(
                     $"'{FormatMemberTarget(constSeqMem)}' holds {constSeqElems.Count} compile-time "
@@ -1745,6 +1813,12 @@ public partial class IRGenerator
                 int li;
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
+                else if (ConstValuesOf(litArg.Elements) is { } litValues
+                         && TryMaterialiseConstTableFromValues(
+                                "param:" + ResolveNameKey(ve.Name), ve.Name, litValues,
+                                bindings: 0)
+                            is { } litTable)
+                    return EmitFlashArrayRead(litTable, VisitExpression(expr.Index), litValues.Count);
                 else throw UserError(
                     $"'{ve.Name}' holds {litArg.Elements.Count} compile-time values with no "
                     + "storage behind them, so it cannot be indexed at run time. Declare an "
@@ -1785,6 +1859,31 @@ public partial class IRGenerator
                     if (arraySizes.ContainsKey(bare) || bytearrayParams.Contains(bare))
                         qualified = bare;
                 }
+            }
+
+            // A module-level list written without an annotation is filed under the synthesized
+            // main that runs the module's statements, so neither `<fn>.<name>` nor the bare name
+            // finds it from an ordinary function, and the subscript fell through to the register
+            // bit path: a lookup table read from an ordinary function was told its bit index was
+            // not constant, about a program with no register in it. The prescan has the values.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && !listVarElemTypes.ContainsKey(qualified) && !listVarElemTypes.ContainsKey(ve.Name)
+                && ModuleConstListValues(ve.Name) is { } modValues)
+            {
+                Val modIdx = VisitExpression(expr.Index);
+                int modIdxConst = modIdx is Constant mc ? mc.Value : -1;
+                if (modIdx is Constant)
+                {
+                    if (modIdxConst < 0) modIdxConst += modValues.Count;
+                    if (modIdxConst < 0 || modIdxConst >= modValues.Count)
+                        throw new IndexError(
+                            $"array index {(modIdx as Constant)!.Value} out of range for size {modValues.Count}",
+                            expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                    return new Constant(modValues[modIdxConst]);
+                }
+                if (TryMaterialiseConstTableFromValues("module:" + ve.Name, ve.Name, modValues)
+                        is { } modTable)
+                    return EmitFlashArrayRead(modTable, modIdx, modValues.Count);
             }
 
                         // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
@@ -1837,61 +1936,19 @@ public partial class IRGenerator
                         $"array index {cidx.Value} out of range for size {sz}",
                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
+                // `DIGITS[digit]` with `digit` known only at run time, on a lookup table
+                // written as a plain list. The elements are constants and nothing writes them,
+                // so the table goes to flash here, at the first subscript that needs it -- a
+                // table only ever indexed with a constant still costs nothing.
+                if (idxVal is not Constant
+                    && !flashArrays.Contains(qualified)
+                    && !arraysWithVariableIndex.Contains(qualified)
+                    && !moduleSramArrays.Contains(qualified)
+                    && TryMaterialiseConstTable(qualified) is { } ctTable)
+                    qualified = ctTable;
+
                 if (flashArrays.Contains(qualified))
-                {
-                    DataType felem = arrayElemTypes.TryGetValue(qualified, out var fe)
-                        ? fe : DataType.UINT8;
-                    int fsize = felem.SizeOf();
-                    if (fsize <= 1)
-                    {
-                        Temporary tmp = MakeTemp(felem);
-                        Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
-                        return tmp;
-                    }
-
-                    // A table wider than a byte is stored little-endian as bytes, so the
-                    // element is read one byte at a time and reassembled here. ArrayLoadFlash
-                    // stays a byte load and no backend has to learn a new width, which is what
-                    // lets every target that reads a const[uint8[N]] table read a wide one.
-                    // A constant index folds to constant byte offsets, so the common case is
-                    // the same LPM sequence repeated, not index arithmetic.
-                    // The offset is a BYTE offset, so it outgrows eight bits before the element
-                    // count does: a uint16 table of 200 entries is 400 bytes, and index 128
-                    // scales to 256. Widen the offset temp once the table crosses that line, and
-                    // keep the narrow one for the tables that do not.
-                    DataType offType = sz * fsize > 256 ? DataType.UINT16 : DataType.UINT8;
-                    Val ByteOffset(int b)
-                    {
-                        if (idxVal is Constant kc) return new Constant(kc.Value * fsize + b);
-                        Temporary scaled = MakeTemp(offType);
-                        Emit(new Binary(BinaryOp.Mul, idxVal, new Constant(fsize), scaled));
-                        if (b == 0) return scaled;
-                        Temporary off = MakeTemp(offType);
-                        Emit(new Binary(BinaryOp.Add, scaled, new Constant(b), off));
-                        return off;
-                    }
-
-                    // Built from the TOP byte down: each step shifts what is already there up
-                    // by eight and ORs the next byte in, so the two's-complement bit pattern of
-                    // a signed element comes out right without a sign-extension step.
-                    Temporary acc = MakeTemp(felem);
-                    Temporary hi = MakeTemp(DataType.UINT8);
-                    Emit(new ArrayLoadFlash(qualified, ByteOffset(fsize - 1), hi));
-                    Emit(new Copy(hi, acc));
-                    for (int b = fsize - 2; b >= 0; b--)
-                    {
-                        Temporary shifted = MakeTemp(felem);
-                        Emit(new Binary(BinaryOp.LShift, acc, new Constant(8), shifted));
-                        Temporary lo = MakeTemp(DataType.UINT8);
-                        Emit(new ArrayLoadFlash(qualified, ByteOffset(b), lo));
-                        Temporary widened = MakeTemp(felem);
-                        Emit(new Copy(lo, widened));
-                        Temporary merged = MakeTemp(felem);
-                        Emit(new Binary(BinaryOp.BitOr, shifted, widened, merged));
-                        acc = merged;
-                    }
-                    return acc;
-                }
+                    return EmitFlashArrayRead(qualified, idxVal, sz);
 
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
                 {
