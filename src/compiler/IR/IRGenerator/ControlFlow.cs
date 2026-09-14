@@ -1135,6 +1135,13 @@ public partial class IRGenerator
                     constantVariables.Remove(prefix + "." + field);
                     strConstantVariables.Remove(prefix + "_" + field);
                     strConstantVariables.Remove(prefix + "." + field);
+                    // A single-field instance IS its field: the value lives under the
+                    // instance's own name, with no `_field` suffix to drop. Left in place,
+                    // `self.value = self.value + 1` inside a method's loop folded every later
+                    // read -- and the method's `return self.value` -- to the constructor's
+                    // value, so a Fader that summed 0..9 returned 3.
+                    constantVariables.Remove(prefix);
+                    strConstantVariables.Remove(prefix);
                 }
         }
     }

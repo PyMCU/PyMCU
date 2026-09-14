@@ -2095,6 +2095,9 @@ public partial class IRGenerator
 
         if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
             lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
+        // A result temporary the expansion allocated itself (a value return in a callee the
+        // parser filed as void) is the call's value too.
+        result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;
         inlineStack.RemoveAt(inlineStack.Count - 1);
         activeInlineExpansions.Remove(callee);
         // Nested expansions pop innermost-first, so after the RHS finishes this holds

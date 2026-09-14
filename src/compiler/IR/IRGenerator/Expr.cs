@@ -268,6 +268,38 @@ public partial class IRGenerator
         return new Constant(0);
     }
 
+    // True when `<obj>.<field>` names a declared field of an instance that lives in an SRAM
+    // slot. `.value` is also the register / pointer read, and that path ran first: `self.value`
+    // on a single-field instance handed back the instance's own scalar, which IS the field
+    // while the instance is flattened (and the snapshot MaterializeSlotFromFlattened takes
+    // relies on that) -- but once the instance has a slot the writes go there, and every read
+    // through the scalar saw the constructor's value: `self.value = self.value + 1` in a
+    // method never added up, and a Fader that summed 0..9 answered 3.
+    private bool IsSlotInstanceField(Expression obj, string field)
+    {
+        if (obj is not VariableExpr ve) return false;
+        foreach (var start in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                     ve.Name,
+                 })
+        {
+            if (start == null) continue;
+            string? key = start;
+            for (int depth = 0; depth < 20 && key != null; depth++)
+            {
+                if (slotInstances.ContainsKey(key)
+                    && instanceClasses.TryGetValue(key, out var cls) && cls != null
+                    && classFieldLayout.TryGetValue(cls, out var layout)
+                    && layout.Any(f => f.Field == field))
+                    return true;
+                if (!variableAliases.TryGetValue(key, out key)) break;
+            }
+        }
+        return false;
+    }
+
     private DataType GetValType(Val v)
     {
         if (v is FloatConstant) return DataType.FLOAT;
@@ -2232,7 +2264,7 @@ public partial class IRGenerator
         if (expr.Member == "value" && propertyGetters.Count > 0 && IsPropertyGetterRead(expr))
             return VisitCall(new CallExpr(expr, new List<Expression>()));
 
-        if (expr.Member == "value")
+        if (expr.Member == "value" && !IsSlotInstanceField(expr.Object, "value"))
         {
             Val obj = VisitExpression(expr.Object);
 

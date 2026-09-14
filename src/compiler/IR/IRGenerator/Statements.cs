@@ -1097,6 +1097,11 @@ public partial class IRGenerator
         if (inlineStack.Count > 0)
         {
             var ctx = inlineStack.Last();
+            // An unannotated def is "void" to the parser and return-type inference skips class
+            // methods, so a method's `return self.value` had no result temporary to land in and
+            // the caller read None. The first value return decides the width.
+            if (ctx.ResultTemp == null && ctx.ResultVars.Count == 0 && val is not NoneVal)
+                ctx.ResultTemp = MakeTemp(GetValType(val));
             if (ctx.ResultTemp != null)
             {
                 if (val is MemoryAddress m)
