@@ -8,7 +8,10 @@
   local: `f(int(s * 1000))` bound a constant and `x = int(s * 1000); f(x)` bound a variable,
   so every callee that dispatches on the value -- the calibrated delays,
   `pwm_prescaler_for_freq`, `claim()`, any `match` on a `const` parameter -- lost its constant
-  path, and a `const` parameter refused the call outright (#327).
+  path, and a `const` parameter refused the call outright. A local computed from another local
+  counts, and so does a narrowing cast of one while the value fits. Measured on a millisecond
+  delay written with locals: 681 bytes and the generic counted subroutine, against 484 and the
+  calibrated loop (#327).
 - A `range()` bound written as an EXPRESSION decides the loop. Only a literal or a name folded
   before, so `range(total_us // 60000000)` was a run-time counter loop over a 32-bit bound;
   1814 bytes on a 380-byte program. A folded count of at most eight unrolls, and an empty
