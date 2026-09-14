@@ -964,6 +964,26 @@ public partial class IRGenerator
 
                 var altVals = alts.Select(VisitExpression).ToList<Val>();
 
+                // A subject that folded to a compile-time CONSTANT is never None, so a
+                // `case None` alternative cannot match it. Left in, the arm was lowered as a
+                // run-time comparison against a value with no representation -- an arbitrary
+                // register -- and which arm ran was decided by whatever that register held.
+                // `busio.UART(parity=Parity.EVEN)` compared 1 against it to choose between
+                // "no parity" and the parity it was given (#324).
+                if (targetVal is Constant && altVals.Any(v => v is NoneVal))
+                {
+                    var keptAlts = new List<Expression>();
+                    var keptVals = new List<Val>();
+                    for (int ai = 0; ai < altVals.Count; ++ai)
+                    {
+                        if (altVals[ai] is NoneVal) continue;
+                        keptAlts.Add(alts[ai]);
+                        keptVals.Add(altVals[ai]);
+                    }
+                    alts = keptAlts;
+                    altVals = keptVals;
+                }
+
                 // `match x:` where x is None. None is not a Constant -- it has no value to
                 // compare against -- so every arm stayed a run-time comparison and every arm
                 // was LOWERED, including arms whose bodies refuse at compile time. `pull = None`
