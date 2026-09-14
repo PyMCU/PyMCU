@@ -13,10 +13,15 @@
 # Global interrupts must be disabled during transmission for correct timing;
 # the user is responsible for calling asm("CLI") / asm("SEI") around show().
 #
-# Architecture dispatch:
-#   match __CHIP__.arch  -- eliminates non-AVR targets at compile time
-#   ws2812_write_byte(pin, byte) -- const[str] pin folds away non-matching pins
-from pymcu.chips import __CHIP__
+# The emitter is pymcu.hal.ws2812, which picks the architecture and refuses the ones
+# it has no bit times for. This driver used to hold that choice itself, as an
+# `if __CHIP__.arch == "avr"` around each call, and on any other part the three
+# bodies were simply empty: the program built, ran, and drove nothing. A pin that
+# stays dark and a build that says why are not the same answer.
+#
+# `ws2812_write_byte(pin, byte)` takes a const[str] pin so the non-matching ports
+# fold away and one SBI/CBI pair survives.
+from pymcu.hal.ws2812 import ws2812_init, ws2812_write_byte, ws2812_reset
 from pymcu.types import uint8, inline
 
 
@@ -24,21 +29,15 @@ class NeoPixel:
 
     @inline
     def _ws2812_init(self, pin: str):
-        if __CHIP__.arch == "avr":
-            from pymcu.drivers._neopixel.avr import ws2812_init
-            ws2812_init(pin)
+        ws2812_init(pin)
 
     @inline
     def _ws2812_write(self, pin: str, val: uint8):
-        if __CHIP__.arch == "avr":
-            from pymcu.drivers._neopixel.avr import ws2812_write_byte
-            ws2812_write_byte(pin, val)
+        ws2812_write_byte(pin, val)
 
     @inline
     def _ws2812_show(self, pin: str):
-        if __CHIP__.arch == "avr":
-            from pymcu.drivers._neopixel.avr import ws2812_reset
-            ws2812_reset(pin)
+        ws2812_reset(pin)
 
     @inline
     def __init__(self, pin: str, n: uint8):
