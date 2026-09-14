@@ -1572,6 +1572,18 @@ public partial class IRGenerator
         // The other is a name the program never defines -- a typo, which used to become a read
         // of a slot nobody ever wrote, so the firmware shipped with whatever the RAM held and
         // no diagnostic said a word. Invent the local only for the first.
+        // A plain FUNCTION named as a VALUE -- an interrupt handler handed to an @inline
+        // helper that lives in another module. Functions are registered under the prefix of
+        // the module that DEFINES them, and only the bare name was looked for, so the handler
+        // was reported undefined in the very file that defines it, forty lines below the
+        // definition (#321). Any HAL module that owns an interrupt has to put it on a pin, and
+        // the pin table lives in the GPIO module, so this is the shape that reaches it.
+        if (!string.IsNullOrEmpty(currentModulePrefix)
+            && !IsNameKnownSomewhere(finalLocalName, name)
+            && (functionParams.ContainsKey(currentModulePrefix + name)
+                || inlineFunctions.ContainsKey(currentModulePrefix + name)))
+            return new Variable(currentModulePrefix + name, DataType.UINT16);
+
         if (!IsNameKnownSomewhere(finalLocalName, name))
         {
             // The name may be missing because its defining module REFUSED this target: a

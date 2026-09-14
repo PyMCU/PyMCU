@@ -5760,6 +5760,21 @@ public partial class IRGenerator
         throw new ArchitectureError(msg, line, 0) { File = sitePath, LocationIsFinal = true };
     }
 
+    /// <summary>The compile-time value a result slot holds, when it holds one.</summary>
+    private bool TryFoldedConstant(Val v, out int value)
+    {
+        value = 0;
+        string? key = v switch { Variable var => var.Name, Temporary tmp => tmp.Name, _ => null };
+        if (key == null) return false;
+        for (int depth = 0; depth < 20; ++depth)
+        {
+            if (constantVariables.TryGetValue(key, out value)) return true;
+            if (!variableAliases.TryGetValue(key, out var next) || next == null) return false;
+            key = next;
+        }
+        return false;
+    }
+
     private Val EmitCompileIsrIntrinsic(CallExpr expr)
     {
         if (expr.Args.Count != 2)
@@ -5767,6 +5782,12 @@ public partial class IRGenerator
         Val vecVal = VisitExpression(expr.Args[1]);
         int vector = 0;
         if (vecVal is Constant c) vector = c.Value;
+        // An @inline function whose body is a `match` over const arms returning literals HAS a
+        // compile-time value; what it hands back is the slot that value was folded into, and
+        // only a bare Constant was accepted. Composing the vector out of the GPIO module's pin
+        // table was refused for it, so a HAL module that owns an interrupt had to write the
+        // pin-to-vector table out a second time (#321).
+        else if (TryFoldedConstant(vecVal, out int foldedVec)) vector = foldedVec;
         else throw UserError("compile_isr() second argument (vector) must be a compile-time constant", ArgAt(expr, 1));
 
         string handlerFuncName = "";
