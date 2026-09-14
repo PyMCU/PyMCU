@@ -56,8 +56,13 @@ public class CoreDiagnosticColumnTests
             "    xs = [1, 2, 3]\n" +
             "    i: uint8 = GPIOR0.value\n" +
             "    GPIOR1.value = uint8(xs[i])\n" +
+            "    xs[0] = 4\n" +
             "    while True:\n        pass\n");
 
+        // `xs[0] = 4` is what keeps this at the refusal: an all-constant list nobody writes
+        // now becomes a flash table at a run-time subscript (#317), and flash cannot be written,
+        // so a list the program stores into still has nowhere to be indexed.
+        //
         // Asserts that the message NAMES THE ARRAY, not the clause it uses to do so. The old
         // wording ("has no declared array type") was replaced in #246 because it is false for
         // the other way into this site -- an array that IS declared and loses its addressability

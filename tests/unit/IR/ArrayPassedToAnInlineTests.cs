@@ -126,12 +126,15 @@ public class ArrayPassedToAnInlineTests
     public void AnArrayWithNoDeclaredTypeIsStillRefused()
     {
         // The control that keeps the fix honest. `b = [1, 2, 3]` genuinely has no array type,
-        // and marking every argument addressable would have made this compile too.
+        // and marking every argument addressable would have made this compile too. The store
+        // keeps it refused now that an all-constant list nobody writes becomes a flash table at
+        // a run-time subscript (#317): flash cannot be written.
         var ex = Assert.ThrowsAny<CompilerError>(() => Compile(
             "def main() -> None:\n" +
             "    b = [1, 2, 3]\n" +
             "    i: uint8 = GPIOR0.value\n" +
-            "    GPIOR1.value = b[i]\n"));
+            "    GPIOR1.value = b[i]\n" +
+            "    b[0] = 4\n"));
 
         Assert.Contains("not addressable at run time", ex.Message);
     }

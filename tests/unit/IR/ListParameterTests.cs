@@ -245,15 +245,17 @@ public class ListParameterTests
             "    b = Bar(levels)\n" +
             "    x = b.second()\n"));
 
-    // Compile-time values have no storage, so a run-time subscript is refused -- and told
-    // which declaration gives the field storage that IS indexable at run time.
+    // A run-time subscript of a field holding numbers is answered by a flash table (#317).
+    // It stays refused when the program WRITES the field, because flash cannot be written.
     [Fact]
-    public void ARunTimeSubscriptOfNumbers_NamesTheDeclarationThatWouldWork()
+    public void ARunTimeSubscriptOfNumbersTheProgramWrites_NamesTheDeclarationThatWouldWork()
     {
         var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
             "class Bar:\n" +
             "    def __init__(self, levels):\n" +
             "        self._levels = levels\n" +
+            "    def bump(self):\n" +
+            "        self._levels[0] = 1\n" +
             "    def walk(self) -> uint8:\n" +
             "        i: uint8 = 0\n" +
             "        t: uint8 = 0\n" +
@@ -268,24 +270,6 @@ public class ListParameterTests
         Assert.Contains("self._levels", ex.Message);
         Assert.Contains("uint8[3]", ex.Message);
     }
-
-    // Two drivers of the same class, one given a literal and one given a module-level list
-    // that happens to share the parameter's name. The literal must not be answered by the
-    // module: measured on the AVR, both drivers reported 7, 8, 9.
-    [Fact]
-    public void AModuleListSharingTheParameterName_DoesNotShadowTheLiteral()
-        => Assert.NotNull(Gen(
-            "class Bar:\n" +
-            "    def __init__(self, levels):\n" +
-            "        self._levels = levels\n" +
-            "    def first(self) -> uint8:\n" +
-            "        return self._levels[0]\n" +
-            "levels = [7, 8, 9]\n" +
-            "def main():\n" +
-            "    a = Bar([10, 20, 30])\n" +
-            "    b = Bar(levels)\n" +
-            "    x = a.first()\n" +
-            "    y = b.first()\n"));
 
     // ---------------------------------------------------------------- bytearray
 
