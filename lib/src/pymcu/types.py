@@ -115,7 +115,89 @@ def device_info(arch: str, chip: str = "", ram_size: int = 0, flash_size: int = 
     pass
 
 
+# PyMCU overloads an @inline function or method by redefining it: `freq(self)` and
+# `freq(self, value)` in one class body, and the compiler picks by arity and types. CPython
+# keeps only the last definition, so every test of a layer under CPython that called the
+# shorter spelling failed with "missing 1 required positional argument". The compiler never
+# reads this module (its names are intrinsics), so here @inline keeps every definition of a
+# name and dispatches by the arguments that bind, last definition first.
+class _Overloads:
+    def __init__(self, first, second):
+        self._fns = [first, second]
+        self.__name__ = getattr(second, "__name__", "overload")
+        self.__doc__ = second.__doc__
+
+    def add(self, fn):
+        self._fns.append(fn)
+        return self
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return _BoundOverloads(self, obj)
+
+    def __call__(self, *args, **kwargs):
+        import inspect
+        first_binding = None
+        for fn in reversed(self._fns):
+            sig = inspect.signature(fn)
+            try:
+                bound = sig.bind(*args, **kwargs)
+            except TypeError:
+                continue
+            if first_binding is None:
+                first_binding = fn
+            # The compiler picks by the annotated types too: Pin(8) is the const[uint8]
+            # overload and Pin("PB5") the const[str] one, write(0x44) the uint8 one and
+            # write(buf) the bytearray one. Take the first definition whose annotations
+            # accept every argument, else the first that merely binds.
+            if all(_annotation_accepts(sig.parameters[name].annotation, value)
+                   for name, value in bound.arguments.items()):
+                return fn(*args, **kwargs)
+        if first_binding is not None:
+            return first_binding(*args, **kwargs)
+        raise TypeError(f"no overload of {self.__name__} takes these arguments")
+
+
+def _annotation_accepts(annotation, value) -> bool:
+    import inspect
+    if annotation is inspect.Parameter.empty or isinstance(annotation, str):
+        return True
+    origin = getattr(annotation, "__origin__", None)
+    if origin is not None:
+        args = getattr(annotation, "__args__", ())
+        if origin in (const, ptr) and args:
+            annotation = args[0]
+        else:
+            return True
+    if isinstance(annotation, type):
+        if annotation is int and isinstance(value, bool):
+            return True
+        try:
+            return isinstance(value, annotation)
+        except TypeError:
+            return True
+    return True
+
+
+class _BoundOverloads:
+    def __init__(self, overloads, obj):
+        self._overloads = overloads
+        self._obj = obj
+
+    def __call__(self, *args, **kwargs):
+        return self._overloads(self._obj, *args, **kwargs)
+
+
 def inline(f):
+    import inspect
+    import sys as _sys
+    ns = _sys._getframe(1).f_locals
+    prev = ns.get(getattr(f, "__name__", ""))
+    if isinstance(prev, _Overloads):
+        return prev.add(f)
+    if inspect.isfunction(prev):
+        return _Overloads(prev, f)
     return f
 
 
