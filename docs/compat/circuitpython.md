@@ -56,6 +56,7 @@ pymcu build
 | `analogio` | `AnalogIn`, `AnalogOut` | ✅ Complete |
 | `busio` | `UART`, `I2C`, `SPI` | ✅ Complete |
 | `pwmio` | `PWMOut` | ✅ Complete |
+| `adafruit_motor.servo` | `Servo`, `ContinuousServo` | ✅ On D9/D10, where the frequency is exact. Import the submodule's members by name |
 | `pulseio` | `PulseIn`, `PulseOut` | ✅ On the ATmega 48/88/168/328 family. `PulseOut.send()` takes the length as a second argument, and the carrier pin is fixed by the timer channel |
 | `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
 | `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ Complete. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**, not CircuitPython: upstream `time` defines no such names, so code using them will not run under real CircuitPython |
@@ -296,29 +297,6 @@ Chip-select is the caller's, through a `digitalio.DigitalInOut`, exactly as in C
 
 ---
 
-### `board.I2C()`, `board.SPI()`, `board.UART()`
-
-```python
-import board
-
-i2c = board.I2C()      # the board's SCL and SDA, 100 kHz
-spi = board.SPI()       # the board's SCK, MOSI and MISO, mode 0 at fosc/4
-uart = board.UART()     # the board's TX and RX, 9600 8N1
-```
-
-The first line of nearly every Adafruit sensor guide, and none of the three existed. They are
-functions and not module-level objects, so a program that imports `board` and never asks for a
-bus programs no peripheral and compiles to the same bytes it did before.
-
-They take no arguments, as CircuitPython's do. `board.UART()` leaves the receive ring off; for
-another rate, or for the buffer that makes `in_waiting` a count, construct
-`busio.UART(board.TX, board.RX, ...)` directly.
-
-Available on the AVR Arduino boards: `arduino_uno`, `arduino_nano`, `arduino_micro` and
-`arduino_mega`.
-
----
-
 ### `pulseio.PulseIn`, `pulseio.PulseOut`
 
 ```python
@@ -385,6 +363,47 @@ pwm.deinit()                # stop PWM
 
 Duty cycle is 16-bit (0–65535) mapped to an 8-bit OCR register internally.
 Context manager is supported (`with PWMOut(...) as pwm:`).
+
+---
+
+`frequency` reports what the pin emits, not what was asked for. On a timer whose period is
+fixed at 256 counts the frequencies on offer are a handful of buckets, so
+`PWMOut(board.D6, frequency=5000)` emits 7812 Hz and used to say 5000.
+
+`board.D9` and `board.D10` are the exception: asking either for a frequency that is not one
+of those buckets reaches the timer mode whose period is a register, and it comes out exactly.
+`PWMOut(board.D9, frequency=50)` really is 50 Hz, with 40 000 steps of duty across the
+period instead of 256. It used to run at 61 Hz. A PWM on that path cannot be retuned at run
+time and says so.
+
+The first parameter is `pin`, as CircuitPython names it. It was `pin_name`, so
+`PWMOut(pin=board.D9, ...)` did not compile.
+
+---
+
+### The servo idiom
+
+```python
+import board, pwmio
+from adafruit_motor.servo import Servo
+
+pwm = pwmio.PWMOut(board.D9, frequency=50)
+s = Servo(pwm, min_pulse=1000, max_pulse=2000)
+s.angle = 90                      # a 1500 us pulse, measured
+```
+
+Put the servo on `board.D9` or `board.D10`. Those two reach the exact-frequency path, so the
+period is 20 ms and one count is 0.5 us: a servo's travel has about 2000 steps. On any other
+pin 50 Hz becomes 61 Hz, the period has 256 counts of 64 us, and the servo still moves in
+about 16 steps with its timing 22 % fast.
+
+`from adafruit_motor import servo`, which is what every guide writes, does not compile: a
+submodule cannot be imported by name (PyMCU#323). Write
+`from adafruit_motor.servo import Servo`.
+
+`fraction` and `ContinuousServo.throttle` take whole numbers rather than floats -- 0 to 65535
+and -32768 to 32767 -- because a parameter default cannot be a float here and soft-float on
+this part costs hundreds of cycles an operation. `angle` is a whole number of degrees.
 
 ---
 

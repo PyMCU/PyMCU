@@ -12,8 +12,26 @@ Hardware pulse-width modulation. Wraps the Timer/Counter OC channels on AVR.
 
 ### `PWM(pin: str, duty: uint8, freq: uint16 = 0, invert: const[uint8] = 0)`
 
-Configures hardware PWM on the given pin. `duty` is 8-bit (0 = 0%, 255 = 100%). `freq` is
+Configures hardware PWM on the given pin. `duty` is 8-bit (0 = 0%, 255 = 100%); `duty_u16`
+is the 16-bit entry every compatibility layer speaks, and it wins over `duty`. `freq` is
 optional; `0` leaves the timer at its default prescaler.
+
+**A Timer1 channel honours the frequency exactly.** `PB1` and `PB2` asking for a frequency
+that is not one of the eight-bit buckets reach mode 14, where the period lives in a register
+rather than being fixed at 256 counts. 50 Hz then really is 50 Hz, and the duty has 40 000
+steps of 0.5 µs instead of 256 of 64 µs. That is what makes the servo idiom work: a servo
+asked for 50 Hz used to run at 61 and had about 16 steps of angle.
+
+`Timer0` and `Timer2` still pick the **nearest** bucket, because their period is fixed at
+256 counts and there is nothing else to give: asking `PD6` for 1000 Hz gets 976.6 Hz.
+
+`frequency()` reports the rate the pin actually emits, on either path. It is not the request:
+every layer above used to report the request, so `PWMOut(board.D6, frequency=5000)` emitted
+7812 Hz and said 5000.
+
+A PWM at an exact frequency cannot be retuned at run time: its period is a register computed
+from the frequency, and so is every duty measured against it, so `set_freq()` is refused
+there with a message naming the five frequencies that can be retuned.
 
 ### Supported pins (ATmega328P)
 
@@ -21,8 +39,8 @@ optional; `0` leaves the timer at its default prescaler.
 |---|---|---|---|
 | `"PD6"` | D6 | Timer0 OC0A | Fast PWM, 8-bit |
 | `"PD5"` | D5 | Timer0 OC0B | Fast PWM, 8-bit |
-| `"PB1"` | D9 | Timer1 OC1A | Fast PWM, 8-bit |
-| `"PB2"` | D10 | Timer1 OC1B | Fast PWM, 8-bit |
+| `"PB1"` | D9 | Timer1 OC1A | 8-bit at a bucket frequency; **16-bit at any other**, period in ICR1 |
+| `"PB2"` | D10 | Timer1 OC1B | 8-bit at a bucket frequency; **16-bit at any other**, period in ICR1 |
 | `"PB3"` | D11 | Timer2 OC2A | Fast PWM, 8-bit |
 | `"PD3"` | D3 | Timer2 OC2B | Fast PWM, 8-bit |
 
@@ -30,6 +48,7 @@ optional; `0` leaves the timer at its default prescaler.
 
 | Method | Description |
 |---|---|
+| `frequency()` | The rate the pin actually emits, which is not always the one asked for |
 | `start()` | Put the compare output back on the pin (a duty of 0 stays off) |
 | `stop()` | Take the compare output off the pin and drive it low; the timer keeps running for its other channel and for the time base |
 | `deinit()` | `stop()`, then the pin back to an input without pull-up |
