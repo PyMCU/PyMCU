@@ -1621,6 +1621,22 @@ public partial class IRGenerator
         // unconditional `>= stop` test made any negative-step runtime range exit immediately.
         if (stepVal is Constant stepC && stepC.Value < 0)
             Emit(new JumpIfLessOrEqual(loopVar, stopVal, endLabel));
+        else if (stepVal is not Constant && GetValType(stepVal).IsSigned())
+        {
+            // A step held in a signed variable is decided at run time, so the direction of
+            // the exit test is too: step < 0 counts down to stop, anything else counts up. An
+            // unsigned step cannot be negative and keeps the single compare below. Before
+            // this the ascending test was used for every non-constant step, so range(10, 0,
+            // step) with step = -2 exited before its first iteration.
+            string negLabel = MakeLabel();
+            string bodyLabel = MakeLabel();
+            Emit(new JumpIfLessThan(stepVal, new Constant(0), negLabel));
+            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
+            Emit(new Jump(bodyLabel));
+            Emit(new Label(negLabel));
+            Emit(new JumpIfLessOrEqual(loopVar, stopVal, endLabel));
+            Emit(new Label(bodyLabel));
+        }
         else
             Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
 
