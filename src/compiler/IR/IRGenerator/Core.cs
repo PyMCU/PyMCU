@@ -729,27 +729,74 @@ public partial class IRGenerator
                 if (classAttrInits.TryGetValue(mainAst, out var entryClassInit))
                     moduleInit.AddRange(entryClassInit);
 
+                // Module-level statements written AFTER the explicit `main()` call. The call
+                // marks where main's body runs, so everything below it runs after that body,
+                // exactly as Python orders it -- see the self-call comment below (#301).
+                var moduleTail = new List<Statement>();
+                CallExpr? selfCall = null;
+                int selfCallLine = 0;
+
                 foreach (var s in mainAst.GlobalStatements)
                 {
                     if (IsTopLevelPureDeclaration(s)) continue;
 
-                    // `if __name__ == "__main__": main()` -- the guard is true here (the entry
-                    // file IS __main__, so the condition already folded away), and its body
-                    // calls the entry point PyMCU calls itself. Inserting that call into main's
-                    // own body made the cycle detector report `main -> main`, a recursion the
-                    // user never wrote, for the most universal idiom in Python. The call is
-                    // redundant, not wrong: drop it and let the entry point run once.
-                    if (IsEntryPointSelfCall(s)) continue;
+                    // `main()` at module level -- written by hand, or left by
+                    // `if __name__ == "__main__": main()` once the guard folded away (the entry
+                    // file IS __main__). It names the entry point PyMCU calls itself, so it is
+                    // not lowered as a call: inserting one into main's own body made the cycle
+                    // detector report `main -> main`, a recursion the user never wrote, for the
+                    // most universal idiom in Python.
+                    //
+                    // It is not dropped either. It says WHERE main's body runs, and the
+                    // statements below it run after that body. Dropping it ran them first
+                    // instead, so `main(); print("END")` printed END before main's own output
+                    // and nothing said so (#301).
+                    if (IsEntryPointSelfCall(s, out var thisCall))
+                    {
+                        // Nothing has been lowered yet, so `currentStmtLine` is still 0 and a
+                        // node with no column of its own would send the caret to line 1. The
+                        // two refusals here are about a statement that is in hand: put its
+                        // line where UserError looks for one.
+                        int line = thisCall!.Line > 0 ? thisCall.Line : s.Line;
+                        if (selfCall != null)
+                        {
+                            currentStmtLine = line;
+                            throw UserError(
+                                "main() is the entry point and runs once, so it cannot be "
+                                + "called twice at module level. Move the second call's work "
+                                + "into main, or rename the function and call it as often as "
+                                + "you like.",
+                                thisCall);
+                        }
+                        selfCall = thisCall;
+                        selfCallLine = line;
+                        continue;
+                    }
 
                     if (s is VarDecl d)
                     {
                         if (d.Init != null
                             && mutableGlobals.ContainsKey(d.Name)
                             && !globals.ContainsKey(d.Name))
-                            moduleInit.Add(new AnnAssign(d.Name, d.VarType, d.Init));
+                            (selfCall == null ? moduleInit : moduleTail)
+                                .Add(new AnnAssign(d.Name, d.VarType, d.Init));
                         continue;
                     }
-                    moduleInit.Add(s);
+                    (selfCall == null ? moduleInit : moduleTail).Add(s);
+                }
+
+                // main's body is spliced in where the call is, not called, so a `return` in it
+                // ends the program and the statements below the call never run. Python runs
+                // them. There is no lowering of this shape that is both a splice and correct,
+                // so it is refused where the reader can see both halves (#301).
+                if (moduleTail.Count > 0 && BodyCanReturnEarly(mainFuncDef.Body))
+                {
+                    currentStmtLine = selfCallLine;
+                    throw UserError(
+                        "main() returns, and there is module-level code after the call to it. "
+                        + "PyMCU runs main's body where the call is written, so a `return` "
+                        + "would skip that code. Move it into main, or drop the `return`.",
+                        selfCall);
                 }
 
                 // Insert AFTER the build's auto-injected `_pymcu_*` preamble (clock_init,
@@ -760,6 +807,7 @@ public partial class IRGenerator
                 while (at < body.Count && IsInjectedPreamble(body[at])) at++;
                 for (int i = moduleInit.Count - 1; i >= 0; i--)
                     body.Insert(at, moduleInit[i]);
+                body.AddRange(moduleTail);
 
                 // An import runs before the file that imports it, so this goes in AFTER the
                 // entry module's own init and therefore ends up ahead of it.
@@ -1152,9 +1200,57 @@ public partial class IRGenerator
     /// A module-level `main()` with no arguments: the call the runtime already makes. Written
     /// by hand or left by the `if __name__ == "__main__":` guard, it means the same thing.
     /// </summary>
-    private static bool IsEntryPointSelfCall(Statement s)
-        => s is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "main" } } call }
-           && call.Args.Count == 0;
+    private static bool IsEntryPointSelfCall(Statement s, out CallExpr? call)
+    {
+        if (s is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "main" } } c }
+            && c.Args.Count == 0)
+        {
+            call = c;
+            return true;
+        }
+        call = null;
+        return false;
+    }
+
+    /// <summary>
+    /// True when lowering this body can reach a `return` before its last statement runs.
+    ///
+    /// Only asked of the entry point's body, and only to decide whether splicing it in place of
+    /// an explicit `main()` call would swallow the module-level statements written below that
+    /// call. A `return` as the very last statement of the body is not one of those: nothing in
+    /// the body follows it, so the splice puts the module tail exactly where Python does.
+    /// </summary>
+    private static bool BodyCanReturnEarly(Block body)
+    {
+        for (int i = 0; i < body.Statements.Count; i++)
+        {
+            var s = body.Statements[i];
+            if (s is ReturnStmt) return i != body.Statements.Count - 1;
+            if (ContainsReturn(s)) return true;
+        }
+        return false;
+    }
+
+    /// A `return` anywhere inside a statement's nested blocks, which is always an early one:
+    /// control reaches it only under a condition, so the statements after it can still run.
+    private static bool ContainsReturn(Statement? s) => s switch
+    {
+        null => false,
+        ReturnStmt => true,
+        Block b => b.Statements.Any(ContainsReturn),
+        IfStmt ifs => ContainsReturn(ifs.ThenBranch)
+                      || ContainsReturn(ifs.ElseBranch)
+                      || ifs.ElifBranches.Any(e => ContainsReturn(e.Body)),
+        WhileStmt w => ContainsReturn(w.Body),
+        ForStmt f => ContainsReturn(f.Body),
+        TryStmt t => t.Body.Any(ContainsReturn)
+                     || t.Handlers.Any(h => h.Handler.Any(ContainsReturn))
+                     || (t.ElseBody?.Any(ContainsReturn) ?? false)
+                     || (t.Finally?.Any(ContainsReturn) ?? false),
+        MatchStmt m => m.Branches.Any(c => ContainsReturn(c.Body)),
+        WithStmt wi => ContainsReturn(wi.Body),
+        _ => false
+    };
 
     /// <summary>
     /// The diagnostic for indexing an unrolled array with a run-time value. The subscript is
