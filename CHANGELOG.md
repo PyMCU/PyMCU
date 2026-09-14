@@ -45,6 +45,11 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- `super().__init__(a)` applies the base constructor's defaults. The binding loop stopped at
+  the end of the argument list it was given and left the rest unbound, so the base body read
+  its own defaulted parameter and was told the name "is read here but never assigned,
+  imported, or received as a parameter" -- about a parameter, one line under its declaration.
+  A required parameter no argument reaches is now named instead (#350).
 - A keyword argument binds to a base-class method: `super().__init__(pwm, min_pulse=500)` is
   line 110 of `adafruit_motor/servo.py` and the normal way a driver subclass forwards. It used
   to reach the value path and print "Unknown Expression type: KeywordArgExpr", the name of a

@@ -2787,9 +2787,11 @@ public partial class IRGenerator
     /// </summary>
     private List<Expression> BindMethodArgs(FunctionDef fn, List<Expression> args, string spelling)
     {
-        if (!args.Any(a => a is KeywordArgExpr)) return args;
-
         var parameters = fn.Params.Where(p => !IsReceiverParamName(p.Name)).ToList();
+
+        // Nothing to bind and nothing to fill in: the argument list already covers every
+        // parameter, so it is handed back exactly as it arrived and the firmware is unchanged.
+        if (!args.Any(a => a is KeywordArgExpr) && args.Count >= parameters.Count) return args;
         var positional = new List<Expression>();
         var byName = new Dictionary<string, Expression>();
         foreach (var a in args)
@@ -2806,15 +2808,11 @@ public partial class IRGenerator
         // list it is given and leaves the rest unbound, so stopping at the last EXPLICIT value
         // left a trailing defaulted parameter with no value at all: `super().__init__(a, b=7)`
         // against `(a, b=1, c=2)` reached the base body and read `c` as a name nobody defined.
-        // Up to the last parameter that HAS a value, from any source -- a position, a keyword,
-        // or its own default. The positional loop this feeds binds nothing past the end of the
-        // list it is given and leaves the rest unbound, so stopping at the last EXPLICIT value
-        // left a trailing defaulted parameter with no value at all: `super().__init__(a, b=7)`
-        // against `(a, b=1, c=2)` reached the base body and read `c` as a name nobody defined.
-        int lastIdx = positional.Count - 1;
-        for (int i = 0; i < parameters.Count; i++)
-            if (byName.ContainsKey(parameters[i].Name) || parameters[i].DefaultValue is not null)
-                lastIdx = Math.Max(lastIdx, i);
+        // EVERY parameter, so a required one that no argument reaches is named here. It used to
+        // be left unbound and the base body then read it, which answered "name 'b' is not
+        // defined -- never assigned, imported, or received as a parameter" about a parameter,
+        // one line under its own declaration.
+        int lastIdx = parameters.Count - 1;
 
         var ordered = new List<Expression>();
         for (int i = 0; i <= lastIdx; i++)
