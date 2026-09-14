@@ -18,6 +18,11 @@
   range emits nothing (#326).
 
 ### Silent wrong code
+- An unhandled `raise` written in the entry function halts with its name instead of returning
+  from a function that has no caller. It lowered to `SET; RET`, so the RET popped a return
+  address that was never pushed and the chip ran off into whatever the top of SRAM held; the
+  documented `E:<TypeName>` and halt was reached only by an exception returning into main from
+  a callee (#339).
 - A keyword argument clears the None an earlier expansion of the same `@inline` function left
   on that parameter. Any call that let `parity` default to None made the NEXT call's
   `parity=Parity.EVEN` read as None, so the `match` inside took the `case None` arm and a

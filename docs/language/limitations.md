@@ -190,7 +190,7 @@ finally:
 | Caught at call sites | An exception is detected after a **function call** inside the `try`. Raise from a helper and catch it where you call it (rather than `raise`-ing directly in the `try` body) |
 | AVR + ARM (RP2040/RP2350) | PIC and other backends: use return codes or sentinel values instead |
 | Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime; handlers match by integer code |
-| Unmatched at top level | An exception that reaches `main` with no handler hits `__pymcu_unhandled_exn` — `E:<TypeName>` to UART0 then a halt, never a silent continue |
+| Unmatched at top level | An exception with no handler hits `__pymcu_unhandled_exn` — `E:<TypeName>` to UART0 then a halt, never a silent continue. Whether it reached `main` from a callee or was raised in `main`'s own body (or in an `@inline` expansion there) makes no difference |
 
 :::{admonition} Return codes are still often clearer for firmware
 :class: note
