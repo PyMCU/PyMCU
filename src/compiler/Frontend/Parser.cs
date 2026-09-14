@@ -66,6 +66,24 @@ public class Parser
     /// annotation_of). Before #240 the two front ends refused `self.x: uint8[2] | None` in
     /// different PHASES with different text: this one at Lexical & Syntax with a caret, the
     /// bridge not at all until IR generation, where a guard about something else answered.
+    /// The refusal for a subscript with more than one index (#352).
+    ///
+    /// It says what the construct DOES rather than that it is unsupported, because the reader
+    /// who wrote `m[x, y]` is usually not thinking about tuples at all: the pair becomes one,
+    /// and a tuple is not a runtime value on this target. The advice points at the method the
+    /// dunder delegates to, which in every library seen so far is where the two indices were
+    /// going anyway.
+    ///
+    /// The message it replaces on the CPython bridge named the right limit and then advised
+    /// building a fixed list for indexable storage, which is not what this program is doing.
+    ///
+    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py, subscript).
+    /// Change one, change both.
+    private const string TwoIndexSubscriptRefusal =
+        "a subscript with more than one index is not supported: 'm[x, y]' hands the pair to " +
+        "__getitem__ as a tuple, and a tuple is not a runtime value on this target. Call the " +
+        "method the subscript stands for, passing the indices separately (e.g. 'm.pixel(x, y)')";
+
     private const string UnionAnnotationRefusal =
         "a union type annotation is not supported. PyMCU needs one concrete type, because the " +
         "storage for a value is decided at compile time and two types do not share a size";
@@ -2614,6 +2632,10 @@ public class Parser
             }
             else if (Match(TokenType.LBracket))
             {
+                // Where the index starts, for the two-index refusal below: CPython puts the
+                // Tuple node at its first element, so pointing at the comma would have the two
+                // front ends naming different characters for the same program.
+                int indexStart = pos;
                 Expression? index;
                 if (Check(TokenType.Colon))
                 {
@@ -2648,6 +2670,20 @@ public class Parser
                     {
                         index = first;
                     }
+                }
+
+                // `m[x, y]` (#352). It passes the pair to __getitem__ as one TUPLE, which is
+                // not a runtime value here -- the same model limit the bare tuple hits, reached
+                // through a subscript. The parse used to end at the comma asking for a
+                // bracket, in a program whose brackets are balanced.
+                //
+                // Word for word the CPython bridge's sentence for the same shape, and at the
+                // same character: the caret goes on the first index, where CPython stamps the
+                // Tuple, not on the comma where this parser happens to notice.
+                if (Check(TokenType.Comma))
+                {
+                    pos = indexStart;
+                    Error(TwoIndexSubscriptRefusal);
                 }
 
                 Consume(TokenType.RBracket, "Expected ']'");

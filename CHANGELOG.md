@@ -45,6 +45,11 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- `m[x, y]` is refused by one sentence naming the construct, at the first index, on both front
+  ends. It was `Expected "]"` from one and, from the other, the generic tuple refusal, whose
+  advice to build a fixed list for indexable storage is not what a reader indexing a matrix is
+  doing. It is the no-runtime-tuple limit reached through a subscript, and the message now says
+  so and points at the method the dunder stands for (#352).
 - The optional-import idiom every CircuitPython driver opens with works, and picks the branch
   that is true. An import inside a `try` that catches ImportError was never discovered, so the
   module was not loaded and the name it binds was undefined at the call site -- while the flag
