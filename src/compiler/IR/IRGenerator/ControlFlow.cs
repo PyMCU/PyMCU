@@ -67,8 +67,68 @@ public partial class IRGenerator
         return false;
     }
 
+    /// <summary>
+    /// The literal a comparison operand stands for, when it stands for one (#330).
+    ///
+    /// An @inline expansion records its folded return value under the result temporary's name
+    /// rather than handing back a Constant, so the operands of a comparison have to be asked
+    /// the same question every other consumer of an @inline result asks. Anything that is not
+    /// a temporary carrying a known value comes back untouched.
+    ///
+    /// The TEXT travels with the number. A one-character string reaches this compiler as its
+    /// character code in one position and as an interned id in another, and comparing the two
+    /// numbers compares two encodings of the same string (#211); the comparison above decides
+    /// a pair by text exactly when both sides carry text, so dropping it here would answer a
+    /// string comparison with an id comparison.
+    /// </summary>
+    private Val FoldedOperand(Val v)
+    {
+        if (v is not Temporary t) return v;
+        if (!TryFoldedConstant(t, out int value)) return v;
+        strConstantVariables.TryGetValue(t.Name, out string? text);
+        return new Constant(value, text);
+    }
+
+    /// <summary>
+    /// How the reader wrote the operand a comparison could not decide, for the guard warning
+    /// to name (#330). Null when there is nothing worth naming -- a literal is decided by
+    /// definition, and a shape with no short spelling is better left out of the sentence than
+    /// described inaccurately.
+    /// </summary>
+    private static string? DescribeOperand(Expression e) => e switch
+    {
+        VariableExpr v => v.Name,
+        MemberAccessExpr m when DescribeOperand(m.Object) is { } o => o + "." + m.Member,
+        CallExpr c when DescribeOperand(c.Callee) is { } f => f + "(...)",
+        _ => null,
+    };
+
+    /// The operand of the most recently emitted run-time comparison, as the reader spelled it.
+    /// Read when a branch is entered, so a `raise CompileError` inside it can say which value
+    /// the compiler could not decide instead of repeating advice the program already followed.
+    private string? _pendingUndecidedOperand;
+
+    /// What each open run-time branch could not decide, by depth. A branch entered for a reason
+    /// that names nothing -- a match arm, a loop whose exit is unknown -- records null, so the
+    /// warning falls back to the general sentence rather than naming a value from a branch that
+    /// closed two statements ago.
+    private readonly Dictionary<int, string?> _undecidedByBranchDepth = new();
+
+    private void EnterRuntimeBranch(string? undecided)
+    {
+        _runtimeBranchDepth++;
+        _undecidedByBranchDepth[_runtimeBranchDepth] = undecided;
+    }
+
+    private void LeaveRuntimeBranch()
+    {
+        _undecidedByBranchDepth.Remove(_runtimeBranchDepth);
+        _runtimeBranchDepth--;
+    }
+
     private int EmitOptimizedConditionalJump(Expression cond, string targetLabel, bool jumpIfTrue = false)
     {
+        _pendingUndecidedOperand = null;
 
         // Every condition that reaches here is a truth test, including each operand of an
         // `and` / `or`, which recurses into this method. `if x and True:` tested the raw
@@ -163,6 +223,23 @@ public partial class IRGenerator
             Val v1 = VisitExpression(binExpr.Left);
             Val v2 = VisitExpression(binExpr.Right);
             if (cmpAgainstStrLiteral) multiStrHandleReads--;
+
+            // An @inline call in a CONDITION folds like one anywhere else (#330).
+            //
+            // An @inline expansion never hands back a Constant: it returns the temporary its
+            // `return` was assigned into, and the literal is recorded under that temporary's
+            // NAME. Every other consumer asks -- a call argument, an assignment, a later read
+            // of a name -- so `x = port_of(p)` then `if x != 0` folded, and the same test
+            // written in one line did not. A `Temporary` standing for a known literal was
+            // indistinguishable here from a genuine run-time temporary, so the branch was
+            // classified run-time, and a `raise CompileError` inside it was downgraded to a
+            // warning telling the reader to declare `const` a parameter already declared
+            // `const`.
+            //
+            // Temporaries only: a Variable already resolves through ResolveBinding on the way
+            // in, so chasing one here would be a second answer to a question already answered.
+            v1 = FoldedOperand(v1);
+            v2 = FoldedOperand(v2);
 
             // ONLY a comparison can be decided here. The switch below covers the six
             // comparison operators and nothing else, so a folded `3 & 1` or `3 + 1` used bare
@@ -261,6 +338,13 @@ public partial class IRGenerator
                 DataType cmpType = ComparisonType(v1, v2);
                 v1 = WidenForComparison(v1, cmpType, left: true);
                 v2 = WidenForComparison(v2, cmpType);
+
+                // The operand that kept this comparison from being decided, for a guard
+                // warning inside the branch to name (#330). The side that is NOT a literal is
+                // the one the reader has to change; when both are, the left one is named.
+                _pendingUndecidedOperand =
+                    (v1 is Constant ? null : DescribeOperand(binExpr.Left))
+                    ?? (v2 is Constant ? null : DescribeOperand(binExpr.Right));
             }
 
             switch (binExpr.Op)
@@ -471,6 +555,9 @@ public partial class IRGenerator
 
         int condStart = currentInstructions.Count;
         int optResult = EmitOptimizedConditionalJump(stmt.Condition, nextLabel, false);
+        // Captured now, before the body is lowered: anything inside it that emits its own
+        // run-time comparison overwrites the field (#330).
+        string? condUndecided = _pendingUndecidedOperand;
         bool skipThen = false;
         bool isRuntimeBranch = false;
 
@@ -540,9 +627,9 @@ public partial class IRGenerator
 
         if (!skipThen)
         {
-            if (isRuntimeBranch) _runtimeBranchDepth++;
+            if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ThenBranch);
-            if (isRuntimeBranch) _runtimeBranchDepth--;
+            if (isRuntimeBranch) LeaveRuntimeBranch();
             if (stmt.ElifBranches.Count > 0 || stmt.ElseBranch != null)
                 Emit(new Jump(endLabel));
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
@@ -564,6 +651,7 @@ public partial class IRGenerator
 
             int elifCondStart = currentInstructions.Count;
             int elifOpt = EmitOptimizedConditionalJump(elifCond, nextLabel, false);
+            string? elifUndecided = _pendingUndecidedOperand;
             bool skipElif = false;
             bool elifIsRuntime = false;
 
@@ -600,9 +688,9 @@ public partial class IRGenerator
 
             if (!skipElif)
             {
-                if (elifIsRuntime) _runtimeBranchDepth++;
+                if (elifIsRuntime) EnterRuntimeBranch(elifUndecided);
                 VisitStatement(elifBlock);
-                if (elifIsRuntime) _runtimeBranchDepth--;
+                if (elifIsRuntime) LeaveRuntimeBranch();
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
                 branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
                 strConstantVariables = new Dictionary<string, string>(snapBefore);
@@ -617,9 +705,9 @@ public partial class IRGenerator
         {
             Emit(new Label(nextLabel));
             // The else branch runs when the condition was false — still runtime-guarded.
-            if (isRuntimeBranch) _runtimeBranchDepth++;
+            if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ElseBranch);
-            if (isRuntimeBranch) _runtimeBranchDepth--;
+            if (isRuntimeBranch) LeaveRuntimeBranch();
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
             strConstantVariables = new Dictionary<string, string>(snapBefore);
             branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
@@ -858,9 +946,9 @@ public partial class IRGenerator
         }
 
         // The body runs under a run-time condition whenever the pattern tested anything.
-        _runtimeBranchDepth++;
+        EnterRuntimeBranch(null);
         if (branch.Body != null) VisitBlock((Block)branch.Body);
-        _runtimeBranchDepth--;
+        LeaveRuntimeBranch();
 
         Emit(new Jump(endLabel));
         Emit(new Label(nextCaseLabel));
@@ -1148,9 +1236,9 @@ public partial class IRGenerator
                     // is guarded by a runtime condition. Increment depth so that any
                     // CompileError raise inside the body is not a false-positive abort.
                     bool matchBodyIsRuntime = !subjectIsDecided;
-                    if (matchBodyIsRuntime) _runtimeBranchDepth++;
+                    if (matchBodyIsRuntime) EnterRuntimeBranch(null);
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
-                    if (matchBodyIsRuntime) _runtimeBranchDepth--;
+                    if (matchBodyIsRuntime) LeaveRuntimeBranch();
                     Emit(new Jump(endLabel));
                 }
             }
@@ -1182,9 +1270,9 @@ public partial class IRGenerator
                     // A None subject is as decided as a constant one: reaching the wildcard
                     // means no `case None` matched it, which is a compile-time fact (#306).
                     bool wildcardIsRuntime = !(targetVal is Constant) && targetVal is not NoneVal;
-                    if (wildcardIsRuntime) _runtimeBranchDepth++;
+                    if (wildcardIsRuntime) EnterRuntimeBranch(null);
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
-                    if (wildcardIsRuntime) _runtimeBranchDepth--;
+                    if (wildcardIsRuntime) LeaveRuntimeBranch();
                     Emit(new Jump(endLabel));
                 }
             }
@@ -1653,9 +1741,9 @@ public partial class IRGenerator
         // unconditional raise (FixedDict's `while ...: probe` followed by `raise KeyError`).
         if (inlineStack.Count > 0) inlineStack[^1].SawDynamicLoop = true;
 
-        if (isRuntimeLoop) _runtimeBranchDepth++;
+        if (isRuntimeLoop) EnterRuntimeBranch(null);
         VisitStatement(stmt.Body);
-        if (isRuntimeLoop) _runtimeBranchDepth--;
+        if (isRuntimeLoop) LeaveRuntimeBranch();
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
@@ -1803,10 +1891,27 @@ public partial class IRGenerator
             // execute at runtime.
             // CompileError must NEVER mutate into a runtime instruction; it is a
             // compile-time-only concept. Emit nothing and warn the developer.
+            //
+            // The advice NAMES THE VALUE the compiler could not decide (#330). It used to say
+            // "declare the guarding parameter as const[...]" unconditionally, which for the
+            // shape that produced this issue told the reader to do what the program had
+            // already done: both parameters were `const`, and what was undecided was the
+            // comparison, not the declaration. A reader cannot tell a false warning from a
+            // real one when the advice is the same sentence either way.
+            _undecidedByBranchDepth.TryGetValue(_runtimeBranchDepth, out string? undecided);
+            string advice = undecided != null
+                ? $"`{undecided}` is not known at compile time here, so the branch could not be "
+                  + "pruned. A guard is decided only when every value in its condition is fixed "
+                  + "at compile time: a literal, a parameter declared `const` and passed a "
+                  + "literal at every call site, a chip fact such as `__CHIP__`, or an `@inline` "
+                  + "call over those."
+                : "The branch could not be pruned, so the guard was not checked. A guard is "
+                  + "decided only when every value in its condition is fixed at compile time: a "
+                  + "literal, a parameter declared `const` and passed a literal at every call "
+                  + "site, a chip fact such as `__CHIP__`, or an `@inline` call over those.";
             Console.Error.WriteLine(
                 $"warning: CompileError guard could not be verified at compile time " +
-                $"(line {stmt.Line}): {msg}. " +
-                "Ensure the guarding parameter is declared as const[...] so the branch can be pruned.");
+                $"(line {stmt.Line}): {msg}. " + advice);
             return;
         }
 
