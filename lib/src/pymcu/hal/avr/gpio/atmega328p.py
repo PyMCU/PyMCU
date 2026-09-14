@@ -99,11 +99,13 @@ def board_pin_name(n: const[uint8]) -> str:
                 "built-in LED and 14-19 are A0-A5).")
 
 @inline
-def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
+def pin_irq_enable(name: const, trigger: uint8):
+    # Program the registers that make `name` interrupt on `trigger`, and nothing else.
+    # Registering the handler is pin_irq_setup's half, because a handler reference has to be
+    # resolved in the module that names it (PyMCU#321).
+    #
     # trigger values: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
     # EICRA ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
-    # handler: compile-time function reference; compile_isr() registers it at the
-    # correct vector so the @interrupt decorator is not needed on the handler.
     #
     # Checked BEFORE any register is touched, and once for every pin: a trigger that
     # matched no arm below used to fall off the end of the if/elif chain with EICRA left
@@ -145,7 +147,6 @@ def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
                 EICRA[1] = 0
             EIMSK[0] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0002)
         case 'PD3' | 3:
             if trigger == 1:
                 # falling edge: ISC11=1, ISC10=0
@@ -165,98 +166,125 @@ def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
                 EICRA[3] = 0
             EIMSK[1] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0004)
         case 'PB0' | 8:
             PCICR[0] = 1
             PCMSK0[0] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0006)
         case 'PB1' | 9:
             PCICR[0] = 1
             PCMSK0[1] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0006)
         case 'PB2' | 10:
             PCICR[0] = 1
             PCMSK0[2] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0006)
         case 'PB3' | 11:
             PCICR[0] = 1
             PCMSK0[3] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0006)
         case 'PB4' | 12:
             PCICR[0] = 1
             PCMSK0[4] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0006)
         case 'PB5' | 13:
             PCICR[0] = 1
             PCMSK0[5] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0006)
         case 'PC0' | 14:
             PCICR[1] = 1
             PCMSK1[0] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0008)
         case 'PC1' | 15:
             PCICR[1] = 1
             PCMSK1[1] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0008)
         case 'PC2' | 16:
             PCICR[1] = 1
             PCMSK1[2] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0008)
         case 'PC3' | 17:
             PCICR[1] = 1
             PCMSK1[3] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0008)
         case 'PC4' | 18:
             PCICR[1] = 1
             PCMSK1[4] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0008)
         case 'PC5' | 19:
             PCICR[1] = 1
             PCMSK1[5] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x0008)
         case 'PD0' | 0:
             PCICR[2] = 1
             PCMSK2[0] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x000A)
         case 'PD1' | 1:
             PCICR[2] = 1
             PCMSK2[1] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x000A)
         case 'PD4' | 4:
             PCICR[2] = 1
             PCMSK2[4] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x000A)
         case 'PD5' | 5:
             PCICR[2] = 1
             PCMSK2[5] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x000A)
         case 'PD6' | 6:
             PCICR[2] = 1
             PCMSK2[6] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x000A)
         case 'PD7' | 7:
             PCICR[2] = 1
             PCMSK2[7] = 1
             SREG[7] = 1
-            compile_isr(handler, 0x000A)
 
+
+# The interrupt vector `name` fires on. INT0 and INT1 have one each; every other pin shares
+# its port's pin-change vector.
+@inline
+def pin_irq_vector(name: const) -> uint16:
+    match name:
+        case 'PD2' | 2:
+            return 0x0002
+        case 'PD3' | 3:
+            return 0x0004
+        case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 8 | 9 | 10 | 11 | 12 | 13:
+            return 0x0006
+        case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5' | 14 | 15 | 16 | 17 | 18 | 19:
+            return 0x0008
+        case 'PD0' | 'PD1' | 'PD4' | 'PD5' | 'PD6' | 'PD7' | 0 | 1 | 4 | 5 | 6 | 7:
+            return 0x000A
+        case _:
+            raise CompileError(
+                "this pin has no interrupt on this chip. Every pin of ports B, C and D has "
+                "one: name it as 'PB0' to 'PB5', 'PC0' to 'PC5', 'PD0' to 'PD7', or as the "
+                "Arduino board number 0 to 19.")
+
+
+# The registers plus the handler: what Pin.irq() calls.
+#
+# The two halves are separate so that a HAL module with an ISR of its own can put it on a pin
+# without the handler crossing a module boundary. An inlined function reference is resolved in
+# the module that DEFINES the function it was passed to, not the one that named it, so
+# pin_irq_setup(pin, 3, my_isr) from another module reports my_isr as undefined here
+# (PyMCU#321). Calling pin_irq_enable() and compile_isr() separately keeps the name at home.
+@inline
+def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
+    pin_irq_enable(name, trigger)
+    # The vector is written out rather than taken from pin_irq_vector(): compile_isr needs a
+    # compile-time constant and an @inline function's return value is not accepted as one.
+    match name:
+        case 'PD2' | 2:
+            compile_isr(handler, 0x0002)
+        case 'PD3' | 3:
+            compile_isr(handler, 0x0004)
+        case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 8 | 9 | 10 | 11 | 12 | 13:
+            compile_isr(handler, 0x0006)
+        case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5' | 14 | 15 | 16 | 17 | 18 | 19:
+            compile_isr(handler, 0x0008)
+        case 'PD0' | 'PD1' | 'PD4' | 'PD5' | 'PD6' | 'PD7' | 0 | 1 | 4 | 5 | 6 | 7:
+            compile_isr(handler, 0x000A)
 
 # ---- pulse_in timing helpers -----------------------------------------------
 # Non-inline asm() helpers with guaranteed 8-cycle inner loops.

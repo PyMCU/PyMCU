@@ -255,10 +255,16 @@ def test_every_exported_trigger_either_configures_the_chip_or_names_itself(tmp_p
 
 
 def test_the_setup_helpers_guard_before_touching_a_register():
-    """A guard placed after the first register write would leave the chip half-configured."""
+    """A guard placed after the first register write would leave the chip half-configured.
+
+    The helper to read is whichever one writes the registers. On the ATmega328P that is
+    pin_irq_enable: pin_irq_setup was split in two so that a HAL module with an ISR of its
+    own can put it on a pin without the handler crossing a module boundary (PyMCU#321).
+    """
     for chip in ("atmega328p", "atmega2560", "atmega32u4"):
         text = (STDLIB / "pymcu" / "hal" / "avr" / "gpio" / f"{chip}.py").read_text()
-        body = text[text.index("def pin_irq_setup("):]
+        opener = "def pin_irq_enable(" if "def pin_irq_enable(" in text else "def pin_irq_setup("
+        body = text[text.index(opener):]
         guard = body.index("raise CompileError")
         first_write = min(m.start() for m in re.finditer(r"^\s+EICRA\[|^\s+PCICR\[",
                                                          body, re.MULTILINE))
