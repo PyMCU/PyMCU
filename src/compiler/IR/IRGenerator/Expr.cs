@@ -1497,6 +1497,11 @@ public partial class IRGenerator
         // `1 if obj else 0` asks for the object's truth value exactly as `if obj:` does, and
         // only the statement forms were routed through the protocol. Here the raw handle was
         // tested instead, so an instance whose __bool__ says true came out false.
+        // `Pin(dp_pin, Pin.OUT) if dp_pin else None` with dp_pin None: the true branch cannot
+        // run, and lowering it refused the program for a constructor argument that only the
+        // dead side ever supplies (PyMCU#334).
+        if (IsNoneValued(expr.Condition)) return VisitExpression(expr.FalseVal);
+
         Val cond = VisitExpression(LowerInstanceTruthiness(expr.Condition));
         if (cond is Constant c)
         {

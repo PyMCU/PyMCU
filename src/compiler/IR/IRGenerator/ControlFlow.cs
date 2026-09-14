@@ -75,6 +75,19 @@ public partial class IRGenerator
         // instance handle for x and answered false for an object whose __bool__ says true.
         cond = LowerInstanceTruthiness(cond);
 
+        // `if self.dp:` on a field that holds None. None is falsy in Python and its falseness
+        // is known here, so the branch is decided at compile time and the side that cannot run
+        // is not lowered. Without this the dead side WAS lowered, and an optional peripheral --
+        // `self.dp = None` guarded by `if self.dp:` before every use, which is how every driver
+        // writes one -- failed inside it, calling a method on a receiver with no class and
+        // reporting a mangled symbol the user never wrote (PyMCU#334).
+        if (IsNoneValued(cond))
+        {
+            if (jumpIfTrue) return -1;      // never true: fall through, skip nothing
+            Emit(new Jump(targetLabel));    // always false: take the not-taken path
+            return -1;
+        }
+
         // An `if` does not lower its comparison through VisitBinary; it comes straight here and
         // becomes a conditional jump. That is how `a == b` over two bytes names emitted a
         // one-byte `jne` between the two array names and answered without reading either.
