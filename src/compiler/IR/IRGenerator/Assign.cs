@@ -3566,6 +3566,14 @@ public partial class IRGenerator
     {
         if (string.IsNullOrEmpty(annotation)) return;
 
+        // `...` on its own. Both readers now carry it here as text rather than refusing it
+        // themselves (#357), so this is the one site that answers for it and the two front ends
+        // produce the same sentence by construction rather than by a comment asking for it.
+        if (annotation == "...")
+            throw UserError("'...' is not a type annotation PyMCU can read. Write one type "
+                            + "name, optionally with a size or element type in brackets, "
+                            + "e.g. uint8 or uint8[4]", at);
+
         // A BRACKETED annotation is checked by its HEAD name. This used to return here, on the
         // grounds that a bracketed form's own handling reports what it cannot make sense of.
         // That is true for the forms that mean something and false for every other head, so
@@ -3711,6 +3719,19 @@ public partial class IRGenerator
             {
                 foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f);
                 CheckAnnotationNames(f.ReturnType ?? "", f);
+
+                // A RETURN annotation is the one position where a tuple's LENGTH is what the
+                // compiler needs: the count is what the caller unpacks, and there is no
+                // run-time tuple to ask. `-> Tuple[int, ...]` says the length is open, which
+                // is the one thing this position cannot read (#357). Everywhere else -- a
+                // parameter, a global -- only the element type matters and the `...` costs
+                // nothing.
+                if (PyMCU.Common.AnnotationText.IsVariadicTuple(f.ReturnType))
+                    throw UserError(
+                        $"'{f.ReturnType}' does not say how many values '{f.Name}' returns, and "
+                        + "a return position needs that number: the caller unpacks it at "
+                        + "compile time and there is no run-time tuple to count. Write the "
+                        + "elements out (e.g. `-> tuple[uint8, uint8]`).", f);
             }
             finally
             {
@@ -3782,6 +3803,21 @@ public partial class IRGenerator
         // assignment to it is rejected (see VisitAssign's reassignment guard).
         if (!stmt.Target.Contains('.') && IsConstType(stmt.Annotation))
             declaredConstants.Add(stmt.Target);
+
+        // `T: tuple[...] = (a, b, c)` IS `T = (a, b, c)` with the type written down (#357).
+        //
+        // The two spellings took different paths: the bare one binds the elements against the
+        // name, and the annotated one fell through to the expression visitor, which answered
+        // "tuples are not supported as runtime values" -- true of a tuple used as a value, and
+        // not what this statement does. The annotation adds nothing the binding does not
+        // already know, so it is the same statement and takes the same path.
+        if (!stmt.Target.Contains('.') && PyMCU.Common.TupleType.IsTupleType(stmt.Annotation)
+            && stmt.Value is TupleExpr or ListExpr)
+        {
+            VisitStatement(new AssignStmt(new VariableExpr(stmt.Target), stmt.Value)
+                { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
+            return;
+        }
 
         // Instance-member array declaration (self._buf: uint8[N]): reserve a
         // per-instance SRAM framebuffer. The parser encodes the target as a

@@ -51,6 +51,10 @@ public static class TupleType
         }
 
         if (start < inner.Length) elements.Add(inner[start..].Trim());
+        // `...` is a statement about the LENGTH, not an element (#357). A caller counting the
+        // values to unpack must not count it as one; the position that needs the length refuses
+        // the annotation outright rather than reading a number out of it.
+        elements.RemoveAll(e => e == "...");
         return elements;
     }
 

@@ -49,14 +49,28 @@ public class AnnotationSubscriptTests
     }
 
     [Fact]
-    public void AnEllipsisInsideBrackets_IsNamed()
+    public void AnEllipsisOnItsOwn_IsNamed()
     {
-        // Refused in the reader rather than carried into the text: `tuple` is a known head and
-        // a known head is not looked inside, so carrying it would let this front end compile
-        // what the CPython bridge refuses.
+        // The sentence moved but did not change (#357). It used to be raised by the reader the
+        // moment it saw `...` anywhere inside an annotation, on the grounds that a known head
+        // is not looked inside so carrying it would let this front end compile what the CPython
+        // bridge refuses. The bridge accepted `Callable[..., None]` all along, so refusing it
+        // here WAS the divergence; both readers now carry the text and one site answers for it.
         Assert.Contains("'...' is not a type annotation", Refusal(
             "def main():\n" +
-            "    x: tuple[Literal[1], ...] = 5\n"));
+            "    x: ... = 5\n" +
+            "    y = x\n"));
+    }
+
+    [Fact]
+    public void AnEllipsisInsideATupleAnnotation_IsRead()
+    {
+        // `tuple[Literal[9, 10, 11, 12], ...]` is adafruit_ds18x20's module-level table: the
+        // elements are in the initialiser, and the annotation says nothing the compiler needs.
+        Assert.NotNull(Gen(
+            "RESOLUTION: tuple[Literal[9, 10, 11, 12], ...] = (9, 10, 11, 12)\n\n" +
+            "def main():\n" +
+            "    x = RESOLUTION[0]\n"));
     }
 
     [Fact]
