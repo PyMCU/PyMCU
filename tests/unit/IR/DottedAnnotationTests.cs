@@ -87,12 +87,25 @@ public class DottedAnnotationTests
     }
 
     [Fact]
-    public void AUnionIsStillAUnion_AfterADottedName()
+    public void ADottedNameOrNone_IsTheDottedName()
     {
-        // The union refusal sits after the dotted loop, so it must still fire on a dotted
-        // left-hand side rather than being stranded behind the new code.
-        Assert.Contains("union type annotation", Refusal(
+        // `X | None` means X, and a dotted X is no different: None-ness is a compile-time
+        // property, so there is no second width to reconcile. This used to be refused as a
+        // union, which is the shape five Adafruit libraries stop on.
+        Assert.Contains("unknown type", Refusal(
             "def take(v: mod.Vec | None) -> uint8:\n" +
+            "    return 1\n\n" +
+            "def main():\n" +
+            "    y = take(1)\n"));
+    }
+
+    [Fact]
+    public void ADottedUnionOfTwoRealTypes_IsStillAUnion()
+    {
+        // The refusal that remains, and the reason the dotted loop still has to be walked
+        // before the judgement: two real types have no width they share.
+        Assert.Contains("union type annotation", Refusal(
+            "def take(v: mod.Vec | uint8) -> uint8:\n" +
             "    return 1\n\n" +
             "def main():\n" +
             "    y = take(1)\n"));

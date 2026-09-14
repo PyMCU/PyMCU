@@ -356,16 +356,47 @@ expression its widest operand. An explicit `self.x: T = ...` still wins.
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
 | `None` assigned to a scalar (`int` / `uintN`) | `None` is a real null literal, not the integer `-1` | Use a sentinel value (e.g. `0xFF`), or keep `None` for reference / optional-typed values where `is None` / `== None` checks work |
-| `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern |
-| `Union` types | Runtime type tag required | Separate functions per type |
+| `Union` of two real types | Runtime type tag required | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
 
-**`None` is a compile-time value.** It travels: passing it as an argument, or assigning it
-through a property setter, binds the parameter as `None`, so `p is None` folds and a
-`match p:` is decided at compile time. `None` matches `case None` and the wildcard and
-nothing else, and only the arm it selects is lowered, so a refusal written in an arm the
-program never takes never fires. This is what makes the CircuitPython spelling
-`pin.pull = None` mean "no pull".
+**`None` is a compile-time value.** It travels: passing it as an argument, assigning it
+through a property setter, binding it to a name, or storing it in a field binds that name as
+`None`, so `p is None` folds and a `match p:` is decided at compile time. `None` matches
+`case None` and the wildcard and nothing else, and only the arm it selects is lowered, so a
+refusal written in an arm the program never takes never fires. This is what makes the
+CircuitPython spelling `pin.pull = None` mean "no pull".
+
+**`Optional[X]` is read as `X`,** and so are `X | None` and `Union[X, None]`, in every
+annotation position. The refusal they used to get was about storage, and storage is not the
+question: None-ness is the compile-time property above, so the annotation needs `X`'s width
+and nothing else. A field keeps the knowledge PER INSTANCE, so two objects of one class, one
+constructed with the optional argument and one without, get different code from the same
+method:
+
+```python
+class Dev:
+    @inline
+    def __init__(self, pin: Optional[uint8] = None):
+        self._pin = pin
+
+    @inline
+    def go(self) -> uint8:
+        if self._pin is not None:
+            return self._pin
+        return 99
+
+d = Dev()       # d.go() is the constant 99, and d._pin has no storage
+e = Dev(7)      # e.go() is the constant 7, with no test at run time
+```
+
+Neither branch that cannot run is lowered, so this costs nothing: the 321-fixture corpus is
+byte-identical across the change.
+
+**Where the knowledge runs out is a `return`.** The caller asked for a number and the path
+answers `None`, which has no width, so that return is refused in one sentence at the line it
+is written on. A `return None` on a path the caller cannot reach is not refused, because the
+guard that excludes it folds first. A `Union` of two REAL types keeps its refusal: there both
+members need storage and disagree about how much.
 
 **Note on `float`:** Soft-float (IEEE 754 single-precision) is supported on AVR via a
 pure-assembly helper library. Expect ~200-400 cycles per operation. Subnormals are treated as

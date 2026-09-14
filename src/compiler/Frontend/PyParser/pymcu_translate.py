@@ -309,11 +309,15 @@ def annotation_of(node):
     # nested in a tuple annotation is caught as well.
     #
     # Text is word for word Parser.cs's UnionAnnotationRefusal. Change one, change both.
+    # `uint8 | None` is READ here and JUDGED downstream, like every other annotation shape.
+    # None-ness is a compile-time property in this compiler, so `X | None` means X; a union
+    # that is still a union after the normaliser has dropped the None members keeps its
+    # refusal, from the one site that judges every annotation name.
+    #
+    # BitOr and not every BinOp: an array size is allowed to be an expression (`uint8[n*2]`),
+    # and those come through here as BinOps too.
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        raise Unsupported(
-            "a union type annotation is not supported. PyMCU needs one concrete type, because "
-            "the storage for a value is decided at compile time and two types do not share a "
-            "size", node)
+        return annotation_of(node.left) + "|" + annotation_of(node.right)
     if isinstance(node, ast.Constant) and node.value is None:
         return "void"
     # A string annotation is the SAME annotation with quotes round it (#261). PyMCU already
@@ -361,10 +365,24 @@ def annotation_of(node):
     # kind: measured on the pre-#240 binary, `self.x: a.b[2] = [1, 2]` is refused by one front
     # end and compiles to an 803-byte MIR under the other. Pre-existing, not introduced here, and
     # closed by this line.
-    if isinstance(node, ast.Subscript) and not isinstance(node.value, ast.Name):
+    # The name before the '[' must be a plain name or a DOTTED CHAIN of plain names. The chain
+    # was refused here, which was right before ParseTypeAnnotation learned to read one (#342)
+    # and is a divergence now: the hand-written parser reads `typing.Optional[uint8[2]]` and
+    # hands it to the normaliser, and this reader refused it at the bracket. Anything else --
+    # `f(1)[2]`, a subscript of a subscript -- is still not a name and is still refused, which
+    # is the acceptance divergence this guard was written for.
+    if isinstance(node, ast.Subscript) and not isinstance(node.value, (ast.Name, ast.Attribute)):
         raise Unsupported(
             f"'{ast.unparse(node)}' is not a type annotation PyMCU can read. The name before "
             "the '[' must be a plain type name, e.g. uint8[4]", node)
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute):
+        cur = node.value
+        while isinstance(cur, ast.Attribute):
+            cur = cur.value
+        if not isinstance(cur, ast.Name):
+            raise Unsupported(
+                f"'{ast.unparse(node)}' is not a type annotation PyMCU can read. The name "
+                "before the '[' must be a plain type name, e.g. uint8[4]", node)
 
     # `busio.I2C`, the module-qualified spelling of a class (#342). Returned as the dotted
     # text, which is exactly what ParseTypeAnnotation now builds from its tokens, and resolved

@@ -444,6 +444,24 @@ public class Parser
             Advance();
             return "...";
         }
+        // `None` is a KEYWORD token, not an identifier, so a union member spelled `None` never
+        // reached the identifier below: `uint8 | None` ended the parse asking for a type name
+        // in a program that had written one. The return position has always read it; every
+        // other position now does too, and the normaliser is what decides what it means.
+        if (Check(TokenType.None))
+        {
+            Advance();
+            // NOT a return: `None | uint8` is the same union written the other way round, and
+            // returning here ended the annotation at the `None` and asked for the closing
+            // bracket of the parameter list.
+            typeStr = "None";
+            while (Check(TokenType.Pipe))
+            {
+                Advance();
+                typeStr += "|" + ParseTypeAnnotation();
+            }
+            return PyMCU.Common.AnnotationText.Normalize(typeStr);
+        }
         if (Check(TokenType.String))
         {
             // A string annotation is the SAME annotation with quotes round it (#261).
@@ -484,16 +502,19 @@ public class Parser
         if (Check(TokenType.LBracket))
             typeStr += ReadAnnotationSubscript();
 
-        // `uint8 | None` and friends. Refused HERE, where the annotation is being read, rather
-        // than left to the caller's ConsumeStatementEnd, which used to answer with "Expected
-        // newline or end of block" -- true, unhelpful, and about the parser's predicament
-        // rather than the program's (#240).
+        // `uint8 | None` is READ here and JUDGED downstream, like every other annotation shape.
         //
-        // One check covers every annotation position (variable, parameter, return, instance
-        // member) because they all come through here. Word for word the same refusal as the
-        // CPython bridge's, which raises it from annotation_of for the same reason.
-        if (Check(TokenType.Pipe))
-            ErrorSpanning(annotationStart, UnionEndToken(), UnionAnnotationRefusal);
+        // It used to be refused right here, because a union of two real types has no width the
+        // two share. `X | None` is not that: None-ness is a compile-time property in this
+        // compiler, so the annotation means X and the compiler already knows which call sites
+        // passed a value. Whether the members include None is a question about the TEXT, and
+        // one normaliser answers it for both front ends; a union that is still a union after
+        // that keeps its refusal, from the site that judges every other annotation.
+        while (Check(TokenType.Pipe))
+        {
+            Advance();
+            typeStr += "|" + ParseTypeAnnotation();
+        }
 
         // The spellings that mean something this compiler already has, rewritten to the
         // spelling the rest of it reads (#356, #357). The CPython bridge's reader calls the

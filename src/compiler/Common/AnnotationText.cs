@@ -36,8 +36,36 @@ public static class AnnotationText
         string head = lb >= 0 ? annotation[..lb] : annotation;
         string bare = head[(head.LastIndexOf('.') + 1)..];
 
+        // `X | None` (#358-adjacent, the Optional decision). Split before the bracket test,
+        // because the bare-pipe spelling has no brackets of its own and because a member may
+        // itself be a bracketed form.
+        if (TopLevelPipeMembers(annotation) is { } pipeMembers)
+        {
+            var kept = pipeMembers.Where(m => !IsNoneName(m)).ToList();
+            if (kept.Count == 1) return Normalize(kept[0]);
+            // Two real types still have no width they share, so the text is handed on
+            // unchanged and refused downstream, by the sentence that has always answered it.
+            return annotation;
+        }
+
         if (lb < 0 || !annotation.EndsWith("]", StringComparison.Ordinal))
             return BufferNames.Contains(bare) ? "bytearray" : annotation;
+
+        // `Optional[X]` IS `X` here, and `Union[X, None]` is the same statement spelled out.
+        //
+        // None-ness is a COMPILE-TIME property in this compiler: a name bound to None is
+        // tracked, `p is None` folds, and `if p:` decides its branch without lowering the
+        // other side. So `Optional[X]` does not need a width that holds both -- it needs X's
+        // width, plus the knowledge of which call sites passed a value, which the compiler
+        // already keeps. A union of two REAL types is a different question and keeps its
+        // refusal: there the two members both need storage and disagree about how much.
+        if (bare is "Optional" or "Union")
+        {
+            var members = SplitTopLevel(annotation[(lb + 1)..^1])
+                .Select(m => m.Trim()).Where(m => m.Length > 0 && !IsNoneName(m)).ToList();
+            if (members.Count == 1) return Normalize(members[0]);
+            return annotation;
+        }
 
         // `Tuple[...]` IS `tuple[...]` (#357). The capitalised spelling is what a library
         // annotated for `typing` writes, and the compiler answered it with "did you mean
@@ -60,6 +88,39 @@ public static class AnnotationText
         }
 
         return BufferNames.Contains(bare) ? "bytearray" : annotation;
+    }
+
+    /// <summary>Whether an annotation member names None (or the void spelling of it).</summary>
+    private static bool IsNoneName(string member)
+    {
+        string m = member.Trim();
+        m = m[(m.LastIndexOf('.') + 1)..];
+        return m is "None" or "NoneType" or "void";
+    }
+
+    /// <summary>
+    /// The members of a top-level `A | B` union, or null when there is no top-level `|`.
+    ///
+    /// Top level only: a `|` inside brackets belongs to a nested form and is not this union's.
+    /// </summary>
+    private static List<string>? TopLevelPipeMembers(string annotation)
+    {
+        var parts = new List<string>();
+        int depth = 0, start = 0;
+        for (int i = 0; i < annotation.Length; ++i)
+        {
+            char c = annotation[i];
+            if (c == '[' || c == '(') depth++;
+            else if (c == ']' || c == ')') depth--;
+            else if (c == '|' && depth == 0)
+            {
+                parts.Add(annotation[start..i].Trim());
+                start = i + 1;
+            }
+        }
+        if (parts.Count == 0) return null;
+        parts.Add(annotation[start..].Trim());
+        return parts;
     }
 
     /// <summary>Whether a tuple annotation says its length is open, with a `...` element.</summary>

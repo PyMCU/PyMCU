@@ -956,6 +956,36 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Whether the inline callee was WRITTEN with a return type that has a width.
+    ///
+    /// The result slot alone does not say so: it is allocated for any callee whose return type
+    /// is not literally "void" or "None", and an unannotated `def` has neither.
+    /// </summary>
+    private bool DeclaresARealResult(string calleeKey)
+    {
+        if (string.IsNullOrEmpty(calleeKey)) return false;
+        if (!inlineFunctions.TryGetValue(calleeKey, out var fn) || fn == null) return false;
+        string rt = fn.ReturnType ?? "";
+        if (rt.Length == 0 || rt == "void" || rt == "None") return false;
+        // A WIDTH, not a class. A factory declared `-> ADC` returns its instance out of band
+        // through instanceClasses and hands back a NoneVal here, so testing the Val alone
+        // refused every `return ADC(Pin(ch))` -- a function returning nothing and a function
+        // returning an object are indistinguishable at this point, and only the declared type
+        // tells them apart.
+        return DataTypeExtensions.StringToDataType(rt) != DataType.UNKNOWN;
+    }
+
+    /// The name a reader would recognise from an inline callee key (`Cls_method` / `f`).
+    private static string CalleeShortName(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return "this function";
+        int dunder = key.IndexOf("___", StringComparison.Ordinal);
+        if (dunder > 0) return key[(dunder + 1)..];
+        int us = key.LastIndexOf('_');
+        return us > 0 && us + 1 < key.Length ? key[(us + 1)..] : key;
+    }
+
     private void VisitReturn(ReturnStmt stmt)
     {
         // Returning a (multi-char) string from a function declared to return an integer is
@@ -1169,6 +1199,36 @@ public partial class IRGenerator
                 // constants). Variable/Temporary returns always update regardless of order —
                 // this preserves the `return -1; ... return result` pattern where a runtime
                 // return must clear a stale constant set by an earlier const return.
+                // `return None` on a path the caller REACHES, from a function whose result has
+                // a width.
+                //
+                // `Optional[X]` is read as X, because None-ness is a compile-time property and
+                // the compiler knows which call sites passed a value. A return is the one
+                // position where that knowledge runs out: the caller asked for a number, this
+                // path answers None, and None has no width. It used to be copied into the
+                // result slot anyway, so the caller read whatever that slot held.
+                //
+                // Only a REACHED path. `if a == 0: return None` under a call with a != 0 is
+                // pruned before it gets here, which is the whole point of folding the guard,
+                // and is why the sentence names the return rather than the annotation.
+                // Only when the callee DECLARED a result. An unannotated `def` gets a result
+                // slot allocated speculatively -- an empty return type is neither "void" nor
+                // "None" at the site that allocates it -- and its implicit `return` is the
+                // ordinary "this returns nothing", which is not what this sentence is about.
+                // A `__init__` delegating to its base is that shape, and refusing it would
+                // refuse every class with a base.
+                // The RETURN HAS TO BE WRITTEN `return None`. A NoneVal is also what a
+                // constructor call hands back -- the instance travels out of band through
+                // instanceClasses -- so testing the Val refused `return Vec(...)` and
+                // `return ADC(Pin(ch))`, which are three fixtures and not a mistake. Only the
+                // literal says what this sentence claims it says.
+                if (stmt.Value is NoneLiteral && DeclaresARealResult(ctx.CalleeName))
+                    throw UserError(
+                        "PyMCU reads Optional[X] as X, and this return gives None at run time, "
+                        + $"which has no width to put in the result of '{CalleeShortName(ctx.CalleeName)}'. "
+                        + "Return a value on this path, or let the caller decide before calling "
+                        + "(the compiler folds `is None` on an argument it can see).", stmt);
+
                 bool wasAlreadyAssigned = ctx.ResultAssigned;
                 Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;

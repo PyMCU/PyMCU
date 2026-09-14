@@ -1008,6 +1008,28 @@ public partial class IRGenerator
 
         if (!(value is NoneVal)) Emit(new Copy(value, target));
 
+        // `x = None` on an UNANNOTATED local, and its mirror.
+        //
+        // None-ness is a compile-time property here: a parameter defaulting to None, a field
+        // assigned None and an annotated local all record it, and `x is None` and `if x:` read
+        // that record. The bare `x = None` was the one binding that did not, so the record
+        // said nothing, `if x is None:` answered FALSE, and the branch that would have given
+        // `x` a value was dropped -- leaving a read of a name nothing ever wrote. That is the
+        // shape `if end is None: end = len(buf)` has, which is how a bus driver spells an
+        // optional bound.
+        //
+        // The Remove is the half that matters just as much: `x = None` then `x = 5` has to stop
+        // being None, or the assignment that fixed it is the one the compiler ignores.
+        // The SOURCE has to be the None literal, not a NoneVal result. A constructor whose
+        // `__init__` returns void also hands back NoneVal, and marking the instance as None
+        // made `match p:` report that the subject's class was not known -- for a program that
+        // had just built it one line above.
+        if (target is Variable noneTgt)
+        {
+            if (stmt.Value is NoneLiteral) noneValuedNames.Add(noneTgt.Name);
+            else if (value is not NoneVal) noneValuedNames.Remove(noneTgt.Name);
+        }
+
         if (value is Variable vv2 && target is Variable tv2)
         {
             variableAliases[tv2.Name] = vv2.Name;
@@ -1500,7 +1522,13 @@ public partial class IRGenerator
             // `obj.field is None` folds to True (IsNoneValued checks this set). A later non-None
             // write clears the mark (the field now holds a real value). Without this the field
             // read 0 and `is None` silently returned False (broke optional/sentinel fields).
-            if (value is NoneVal)
+            //
+            // `self._pin = pin`, where `pin` is a parameter that arrived None, counts as one.
+            // That is the whole shape `Optional[X] = None` has once a driver stores it, and the
+            // value resolves to the parameter's BINDING rather than to a NoneVal, so testing the
+            // Val alone missed it: a later `if self._pin is not None:` in a method then lowered
+            // both sides, and the instance that has no pin ran the branch that uses one.
+            if (value is NoneVal || SourceIsNoneInThisScope(stmt.Value))
             {
                 noneValuedNames.Add(flattenedName);
                 constantVariables.Remove(flattenedName);
@@ -2329,6 +2357,32 @@ public partial class IRGenerator
     /// reason, and clearing is what makes the wrong answer here an ACCEPTED write rather than a
     /// refused one: a name this misses is exactly where the compiler stands today.
     /// </summary>
+    /// <summary>
+    /// Whether the right-hand side is a NAME that is None IN THIS SCOPE.
+    ///
+    /// Deliberately NOT `IsNoneValued`, whose last resort is the BARE name: any scope that ever
+    /// binds `value` to None would then make every `self.x = value` anywhere in the program a
+    /// None field, and a ZCA bit index recorded that way stops being a constant. Measured on
+    /// fixtures/compat-cp-bitbangio-i2c, which went from 272 bytes to "runtime bit index is
+    /// only supported on a chip register".
+    ///
+    /// The scoped key is the one the parameter binding writes, which is the shape this exists
+    /// for: `self._pin = pin` inside a constructor whose `pin` arrived None.
+    /// </summary>
+    private bool SourceIsNoneInThisScope(Expression? value)
+    {
+        if (value is not VariableExpr ve) return false;
+        foreach (string? key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                 })
+        {
+            if (key != null && noneValuedNames.Contains(key)) return true;
+        }
+        return false;
+    }
+
     /// Whether a write through this name is a write through a tuple, under any of the keys a
     /// binding may have recorded it as.
     private bool IsTupleBound(string name)
@@ -3604,6 +3658,18 @@ public partial class IRGenerator
         // `Bogus[uint8, bool]` were all accepted in silence -- and those are the spellings a
         // typing-annotated library writes, so the hole was closed for the rare spelling and
         // left open for the common one.
+        // A union that is STILL a union after the normaliser has read it: two real types, and
+        // no width they share. `X | None` never reaches here, because None-ness is a
+        // compile-time property and the annotation means X; what is left is the case the
+        // refusal was always about.
+        //
+        // Judged here rather than in the two readers, which is where it used to be refused
+        // twice, word for word. Neither reader can tell `uint8 | None` from `uint8 | bool`
+        // without the rule, and a rule kept in two files by a comment is the divergence this
+        // one site exists to close.
+        if (annotation.Contains('|'))
+            throw UserError(UnionAnnotationRefusal, at);
+
         int lb = annotation.IndexOf('[');
         if (lb >= 0)
         {

@@ -39,9 +39,11 @@ public class AnnotationSubscriptTests
     }
 
     [Fact]
-    public void OptionalOfADottedName_GetsTheSameSentence()
+    public void OptionalOfADottedName_IsTheDottedName()
     {
-        Assert.Contains("union type annotation", Refusal(
+        // `Optional[X]` is X, so what is left to judge is the dotted name itself -- here one
+        // that names no module this program imports.
+        Assert.Contains("unknown type", Refusal(
             "def f(p: Optional[digitalio.DigitalInOut] = None):\n" +
             "    pass\n\n" +
             "def main():\n" +

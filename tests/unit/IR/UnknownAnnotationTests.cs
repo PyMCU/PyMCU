@@ -279,12 +279,13 @@ public class UnknownAnnotationTests
         Assert.Contains("did you mean 'list'", ex.Message);
     }
 
-    // ONE IDEA, ONE ANSWER. `Optional[X]` IS `Union[X, None]` and `Union[a, b]` IS `a | b`, so
-    // all three get the sentence the `|` spelling already got, word for word. "unknown type
-    // 'Union'" would be true and useless.
+    // ONE IDEA, ONE ANSWER for the unions that REMAIN. `Union[a, b]` IS `a | b`, so both get
+    // the same sentence; "unknown type 'Union'" would be true and useless. `Optional[X]` and
+    // `Union[X, None]` are no longer in this list: None-ness is a compile-time property here,
+    // so those mean X and are read as X.
     [Theory]
     [InlineData("Union[uint8, bool]")]
-    [InlineData("Optional[uint8]")]
+    [InlineData("uint8 | bool")]
     public void TheTypingSpellingsOfAUnion_GetTheUnionMessage(string ann)
     {
         var ex = Fails(

@@ -120,17 +120,21 @@ def _program(tmp_path: Path, source: str) -> Path:
 
 
 @pytest.mark.parametrize("source", [
-    # A union type annotation (#240), in all four positions, because one check in
-    # ParseTypeAnnotation and one in annotation_of have to cover every one of them.
+    # A union type annotation (#240), in all four positions, because the readers have to carry
+    # every one of them to the single site that judges it.
     #
     # Before: the hand-written parser fell through to the caller's ConsumeStatementEnd and said
     # "Expected newline or end of block" at the `|`; the bridge did not notice at all until IR
     # generation, where a guard about instance-member ARRAY types answered, telling the reader
     # to write the array type they had already written. Two phases, two texts, one program.
-    'from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 | None = 5\n',
-    'from pymcu.types import uint8\ndef f(a: uint8 | None) -> None:\n    pass\ndef main() -> None:\n    f(1)\n',
-    'from pymcu.types import uint8\ndef f() -> uint8 | None:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
-    'from pymcu.types import uint8\nclass C:\n    def __init__(self) -> None:\n        self.x: uint8[2] | None = [1, 2]\ndef main() -> None:\n    c = C()\n',
+    #
+    # `| None` is no longer one of these: None-ness is a compile-time property here, so
+    # `X | None` IS X and compiles. A union of two REAL types still has no width they share,
+    # and that is what these four now spell.
+    'from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 | bool = 5\n',
+    'from pymcu.types import uint8\ndef f(a: uint8 | bool) -> None:\n    pass\ndef main() -> None:\n    f(1)\n',
+    'from pymcu.types import uint8\ndef f() -> uint8 | bool:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
+    'from pymcu.types import uint8\nclass C:\n    def __init__(self) -> None:\n        self.x: uint8[2] | bool = [1, 2]\ndef main() -> None:\n    c = C()\n',
     # A CALL in the raise message (#236 for the location, #262 for the refusal). Nine
     # spellings diverged: the hand-written parser reported wherever its cursor stopped looking
     # for `)` and the bridge reported the `raise` keyword. Both now mark the whole argument.
@@ -606,6 +610,13 @@ def _verdict(src: Path, py_parser: bool) -> int:
     "f(1)[2]",
     "uint8[2] | None",
     "uint8[2] + None",
+    # The Optional spellings, which now COMPILE: the verdict has to agree on an acceptance
+    # exactly as it does on a refusal, and an acceptance in one front end only is the
+    # divergence that is a miscompile rather than a message.
+    "Optional[uint8[2]]",
+    "Union[uint8[2], None]",
+    "None | uint8[2]",
+    "typing.Optional[uint8[2]]",
 ])
 def test_both_front_ends_reach_the_same_verdict(tmp_path, annotation):
     src = _program(tmp_path,
