@@ -66,6 +66,16 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
                     importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context, imp.Symbols);
                     importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context, imp.Symbols);
                 }
+                catch (CompilerError) when (imp.IsOptional)
+                {
+                    // An import written inside a `try` that catches ImportError (#351). The
+                    // module not being there is the case the handler exists for, so the build
+                    // continues instead of stopping -- and the try is recorded as having taken
+                    // its HANDLER, so the fallback the program wrote is the branch compiled.
+                    // An UNCONDITIONAL import of the same missing module still stops, below.
+                    imp.OptionalLoadFailed = true;
+                    continue;
+                }
                 catch (CompilerError e) when (e.File == null)
                 {
                     // The loader knows what failed; only the caller knows WHERE it was
@@ -89,6 +99,18 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
                 // which is what Python binds too.
                 foreach (var extra in RewriteSubmoduleImports(imp, importedAst, currentAst, currentPath, context))
                     allImports.Add(extra);
+
+                // An optional import whose module IS here (#351). Copied up into the module's
+                // own import list so the names it binds are in scope at the call site, which
+                // is where the try body's import was invisible: the module compiled and
+                // `PulseIn(echo_pin)` was still an undefined function.
+                //
+                // Done HERE and not in ConditionalCompilator because this is the one place
+                // that knows the load SUCCEEDED. Promoting it earlier meant promoting it
+                // blind, and an optional import of a module that really is absent -- the case
+                // the handler exists for -- was then loaded again by a later pass and failed.
+                if (imp.IsOptional && !currentAst.Imports.Contains(imp))
+                    currentAst.Imports.Add(imp);
 
                 graph.AddDependencyEdge(importedAst, currentAst);
 

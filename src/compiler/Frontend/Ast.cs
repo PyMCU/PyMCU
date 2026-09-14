@@ -742,6 +742,17 @@ public class ImportStmt : Statement
     // it actually brought in.
     public bool WasStarImport { get; set; }
 
+    // Written inside a `try` whose handler catches ImportError (#351): the optional-import
+    // idiom every CircuitPython driver opens with. The module is loaded when it is there and
+    // the import is SKIPPED when it is not, which is what the handler says to do -- an import
+    // in this position must not fail the build the way an unconditional one does.
+    public bool IsOptional { get; set; }
+
+    // Set by DependencyGraphBuilder on an optional import whose module is NOT there. It is the
+    // answer `except ImportError` is written to ask, and it is only knowable once the loader
+    // has tried, so it is recorded on the node for ConditionalCompilator to fold the try on.
+    public bool OptionalLoadFailed { get; set; }
+
     public ImportStmt(string modName, List<string> symbols, int level = 0)
     {
         ModuleName = modName;

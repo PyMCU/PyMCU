@@ -45,6 +45,12 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- The optional-import idiom every CircuitPython driver opens with works, and picks the branch
+  that is true. An import inside a `try` that catches ImportError was never discovered, so the
+  module was not loaded and the name it binds was undefined at the call site -- while the flag
+  the same block sets bound fine. The try is now a compile-time branch: the module decides it,
+  nothing at run time can, and the body's `_USE_PULSEIO = True` used to be emitted whether or
+  not `pulseio` existed, so the flag said True on a build that had no such module (#351).
 - `super().__init__(a)` applies the base constructor's defaults. The binding loop stopped at
   the end of the argument list it was given and left the rest unbound, so the base body read
   its own defaulted parameter and was told the name "is read here but never assigned,

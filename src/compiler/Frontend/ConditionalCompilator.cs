@@ -140,6 +140,33 @@ public class ConditionalCompilator(DeviceConfig config)
         }
     }
 
+    /// <summary>
+    /// The statements a try holding an optional import reduces to, or null when it holds none
+    /// and must keep its own lowering (#351).
+    ///
+    /// The try body when every optional import in it resolved, the first handler's body when
+    /// any did not. `else` is folded in with the body, as Python runs it when nothing raised;
+    /// a `finally` runs either way, so it follows the chosen branch.
+    /// </summary>
+    private static List<Statement>? FoldedBranchOf(TryStmt tryStmt)
+    {
+        var optional = tryStmt.Body.OfType<ImportStmt>().Where(i => i.IsOptional).ToList();
+        if (optional.Count == 0) return null;
+
+        var chosen = new List<Statement>();
+        if (optional.Any(i => i.OptionalLoadFailed))
+        {
+            if (tryStmt.Handlers.Count > 0) chosen.AddRange(tryStmt.Handlers[0].Handler);
+        }
+        else
+        {
+            chosen.AddRange(tryStmt.Body);
+            if (tryStmt.ElseBody != null) chosen.AddRange(tryStmt.ElseBody);
+        }
+        if (tryStmt.Finally != null) chosen.AddRange(tryStmt.Finally);
+        return chosen;
+    }
+
     private ImportStmt CloneImport(ImportStmt src) =>
         new(src.ModuleName, [..src.Symbols], src.RelativeLevel)
         {
@@ -147,6 +174,7 @@ public class ConditionalCompilator(DeviceConfig config)
             ModuleAlias = src.ModuleAlias,
             Aliases = new Dictionary<string, string>(src.Aliases),
             WasStarImport = src.WasStarImport,
+            IsOptional = src.IsOptional,
             Line = src.Line,
         };
 
@@ -170,6 +198,23 @@ public class ConditionalCompilator(DeviceConfig config)
         {
             case ImportStmt imp:
                 prog.Imports.Add(CloneImport(imp));
+                return true;
+            // A `try` holding an optional import is a COMPILE-TIME branch, like `if __CHIP__`
+            // above it (#351). Whether the module is there is decided by the loader and by
+            // nothing at run time, so one of the two branches is dead and folding it away is
+            // what keeps the program honest: the try body's `_USE_PULSEIO = True` used to be
+            // emitted whether or not pulseio existed, because there is no run-time ImportError
+            // for the handler to catch. The flag then said True on a chip with no pulseio, and
+            // the program took a branch that cannot work.
+            //
+            // Untouched for every other try: a try with no optional import in it is ordinary
+            // control flow and keeps its own lowering.
+            case TryStmt tryStmt when FoldedBranchOf(tryStmt) is { } chosen:
+                foreach (var inner in chosen)
+                {
+                    if (inner is ImportStmt nested) prog.Imports.Add(CloneImport(nested));
+                    else if (!ProcessStatement(inner, prog, newStmts)) newStmts.Add(inner);
+                }
                 return true;
             case IfStmt ifStmt:
                 try

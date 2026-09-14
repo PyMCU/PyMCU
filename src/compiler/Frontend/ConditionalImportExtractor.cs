@@ -66,6 +66,35 @@ internal static class ConditionalImportExtractor
                 break;
             }
 
+            // The optional-import idiom (#351):
+            //
+            //   try:
+            //       from pulseio import PulseIn
+            //       _USE_PULSEIO = True
+            //   except (ImportError, NotImplementedError):
+            //       pass
+            //
+            // The TRY BODY is the branch that runs when the module is there, so its imports
+            // are the ones to take; the handler's are for the case where it is not, and taking
+            // both would load two implementations of the same thing. Marked optional so a
+            // module that really is absent is skipped rather than failing the build, which is
+            // what the `except ImportError` says to do.
+            //
+            // Only a handler that catches ImportError counts. A try whose handler catches
+            // something else is not saying the import may be missing, and treating it as if it
+            // were would silence a real failure.
+            case TryStmt tryStmt:
+            {
+                if (!CatchesImportError(tryStmt)) yield break;
+                foreach (var st in tryStmt.Body)
+                foreach (var imp in ExtractFromStatement(st, eval))
+                {
+                    imp.IsOptional = true;
+                    yield return imp;
+                }
+                break;
+            }
+
             case MatchStmt matchStmt:
             {
                 string? targetVal = null;
@@ -98,6 +127,21 @@ internal static class ConditionalImportExtractor
         foreach (var inner in block.Statements)
         foreach (var imp in ExtractFromStatement(inner, eval))
             yield return imp;
+    }
+
+    /// <summary>Whether any handler of this try would catch an ImportError.</summary>
+    private static bool CatchesImportError(TryStmt tryStmt)
+    {
+        foreach (var (exnType, _) in tryStmt.Handlers)
+        {
+            // A bare `except:` catches everything, and so do the two roots. A tuple arrives as
+            // its alternatives joined by commas (#346), so one split covers both spellings.
+            if (string.IsNullOrEmpty(exnType)) return true;
+            foreach (var alternative in exnType.Split(','))
+                if (alternative.Trim() is "ImportError" or "Exception" or "BaseException")
+                    return true;
+        }
+        return false;
     }
 
     private static Statement? ChooseBranch(IfStmt ifStmt, CompileTimeEvaluator eval)
