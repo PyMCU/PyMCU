@@ -104,6 +104,22 @@
   instead of writing a phantom field that shadows the method: `p.value = 1` on a HAL Pin,
   the CircuitPython spelling, built clean and emitted no write to the port at all. The
   refusal names `p.value(1)` and `p.value()` (#316).
+- A MicroPython driver library compiles unmodified. Measured on
+  `github.com/kritishmohapatra/micropython-sevenseg`, which needed eight edits and now needs
+  none: a comprehension of instances over a list of pin numbers (#332), a constant subscript
+  of that list (#333), an optional peripheral guarded by a field set to None (#334), a dict
+  literal in a field (#335) whose values are lists (#336), and `zip` over the field of pins
+  against a row of that dict (#337).
+- A dict of constant rows -- the shape of every digit, font and gamma table -- is a
+  rectangle in flash, laid out only when a run-time key needs it. A constant key folds to
+  the row and emits nothing (#336).
+- `zip` walks whatever a `for` loop walks: a fixed array by name, a compile-time sequence of
+  instances held in a field, a list of constants, or a dict row (#337).
+- A branch that cannot be taken is not lowered. `if self.dp:` on a field holding None, and
+  the same as a ternary, used to be lowered on the dead side and fail inside it (#334).
+- A method that reads a compile-time table from a field is inlined rather than compiled as
+  a shared subroutine, where the table is unreachable and the reader was told the method
+  could not be dispatched.
 - A lookup table written as a plain list reads at run time. `DIGITS = [0x3F, 0x06, ...]`
   then `DIGITS[digit]` is how every 7-segment table, font and gamma curve is written, and
   it was refused: the list lives as separate variables, which have nothing to index. The

@@ -509,6 +509,29 @@ A list of NUMBERS in a field works the same way for a constant subscript, `for` 
 a field. It is refused where it is written, and told to call `p.value(1)` instead. The
 CircuitPython `digitalio.DigitalInOut.value` IS a property and takes the assignment.
 
+**A driver library, unmodified.** The shapes a MicroPython or CircuitPython driver is
+written in now compile as their authors wrote them:
+
+```python
+class SevenSeg:
+    def __init__(self, pins, common_anode=False, dp_pin=None):
+        self.segments = [Pin(p, Pin.OUT) for p in pins]     # a comprehension of instances
+        self.dp = Pin(dp_pin, Pin.OUT) if dp_pin else None  # the dead branch is not lowered
+        self.digits = {0: [1,1,1,1,1,1,0], ...}             # a dict of rows, in a field
+
+    def show(self, num):
+        pattern = self.digits[num]                          # a run-time key picks a row
+        for pin, seg_on in zip(self.segments, pattern):     # zip over a field and a row
+            pin.value(seg_on ^ self.common_anode)
+```
+
+A comprehension of instances is the literal of constructions written once instead of N
+times, so it needs a compile-time iterable: a constant list, a name or parameter bound to
+one, or `range(N)`. A comprehension whose length is decided at run time is still refused.
+
+A dict of rows must be a rectangle keyed 0..N-1: same-length rows of constants. Ragged rows
+have no table and are refused, saying so.
+
 **A lookup table written as a plain list.** `DIGITS = [0x3F, 0x06, ...]` read as
 `DIGITS[digit]` with a run-time digit is the shape of every 7-segment table, font and gamma
 curve. The values are constants and nothing writes them, so the table is placed in flash,
