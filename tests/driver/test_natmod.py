@@ -20,6 +20,8 @@ import pytest
 
 from src.driver.commands.natmod import (
     NatmodError,
+    buffer_pairings,
+    check_no_module_state,
     collect_exports,
     generate_adapter,
 )
@@ -159,7 +161,8 @@ def test_adapter_unboxes_boxes_and_registers(tmp_path):
     assert "extern int16_t add(int16_t, int16_t);" in c
     assert "extern void brightness(uint8_t *, int16_t, uint8_t);" in c
     # Unboxing, calling, boxing.
-    assert "int16_t p0 = (int16_t)mp_obj_get_int(a0);" in c
+    assert "mp_int_t r0 = mp_obj_get_int(a0);" in c
+    assert "int16_t p0 = (int16_t)r0;" in c
     assert "mp_get_buffer_raise(a0, &b0, MP_BUFFER_RW);" in c
     assert "return mp_obj_new_int((mp_int_t)add(p0, p1));" in c
     assert "return mp_const_none;" in c
@@ -199,3 +202,113 @@ def test_three_arguments_still_uses_the_fixed_macro(tmp_path):
     src = write(tmp_path, "def f(a: int, b: int, c: int) -> int:\n    return a\n")
     out = generate_adapter("m", collect_exports(src), src)
     assert "MP_DEFINE_CONST_FUN_OBJ_3(nm_f_obj, nm_f);" in out
+
+
+# ── the checks the adapter puts between the interpreter and the kernel ───────
+
+
+def test_an_out_of_range_int_raises_instead_of_wrapping(tmp_path):
+    """add(40000, 1) returned -25535 on real silicon before this. A bare `int` is 16
+    bits here by design, so the value cannot be carried -- but it must be refused, not
+    delivered wrong."""
+    src = write(tmp_path, "def add(a: int, b: int) -> int:\n    return a + b\n")
+    c = generate_adapter("m", collect_exports(src), src)
+
+    assert "mp_raise_ValueError(what);" in c
+    assert 'nm_range(r0, -32768, 32767, "add(): a is out of range for int");' in c
+    assert 'nm_range(r1, -32768, 32767, "add(): b is out of range for int");' in c
+
+
+@pytest.mark.parametrize(
+    "ann, lo, hi",
+    [("uint8", 0, 255), ("int8", -128, 127), ("uint16", 0, 65535), ("int16", -32768, 32767)],
+)
+def test_each_width_is_checked_against_its_own_bounds(tmp_path, ann, lo, hi):
+    src = write(tmp_path, f"def f(x: {ann}) -> None:\n    pass\n")
+    c = generate_adapter("m", collect_exports(src), src)
+    assert f"nm_range(r0, {lo}, {hi}," in c
+
+
+def test_int32_is_not_checked_because_the_check_could_never_fail(tmp_path):
+    """mp_int_t is 32 bits, so an int32 bound is the whole range the interpreter can
+    hand over. Emitting the comparison would be dead code in every module."""
+    src = write(tmp_path, "def f(x: int32) -> None:\n    pass\n")
+    c = generate_adapter("m", collect_exports(src), src)
+    assert "nm_range(" not in c
+    assert "int32_t p0 = (int32_t)r0;" in c
+
+
+def test_a_length_argument_is_checked_against_the_buffer(tmp_path):
+    src = write(tmp_path, (
+        "def brightness(buf: bytearray, n: int, scale: uint8) -> None:\n"
+        "    buf[0] = scale\n"
+    ))
+    exports = collect_exports(src)
+    c = generate_adapter("m", exports, src)
+
+    assert 'nm_fits(b0.len, r1, "brightness(): n is larger than buf");' in c
+    # The pairing is reported so the build can print it: a convention nobody sees is a
+    # convention nobody can correct.
+    assert buffer_pairings(exports) == [("brightness", "buf", "n")]
+
+
+def test_a_buffer_with_no_length_after_it_is_reported_as_unchecked(tmp_path):
+    src = write(tmp_path, "def f(buf: bytearray) -> None:\n    buf[0] = 1\n")
+    exports = collect_exports(src)
+    assert buffer_pairings(exports) == [("f", "buf", "")]
+    assert "nm_fits" not in generate_adapter("m", exports, src)
+
+
+def test_a_bool_is_normalised_and_not_range_checked(tmp_path):
+    src = write(tmp_path, "def f(flag: bool) -> None:\n    pass\n")
+    c = generate_adapter("m", collect_exports(src), src)
+    assert "mp_obj_is_true(a0)" in c
+    assert "nm_range(" not in c
+
+
+# ── module state ─────────────────────────────────────────────────────────────
+
+
+def test_a_rebound_module_global_is_refused_by_name(tmp_path):
+    src = write(tmp_path, (
+        "COUNT: int = 0\n"
+        "\n"
+        "\n"
+        "def bump() -> int:\n"
+        "    global COUNT\n"
+        "    COUNT = COUNT + 1\n"
+        "    return COUNT\n"
+    ))
+    with pytest.raises(NatmodError) as e:
+        check_no_module_state(src)
+    msg = str(e.value)
+    assert "'COUNT' is module state" in msg
+    assert "keeps state only in what the caller passes in" in msg
+    # Located at the `global`, not at the top of the file.
+    assert msg.startswith(f"{src}:5:")
+
+
+def test_writing_through_a_module_tables_subscript_is_refused(tmp_path):
+    src = write(tmp_path, (
+        "TABLE = [1, 2, 3, 4]\n"
+        "\n"
+        "\n"
+        "def poke(i: int, v: int) -> None:\n"
+        "    TABLE[i] = v\n"
+    ))
+    with pytest.raises(NatmodError) as e:
+        check_no_module_state(src)
+    assert "'TABLE' is module state" in str(e.value)
+
+
+def test_a_read_only_module_table_is_allowed(tmp_path):
+    """It becomes constant data in the module. Only WRITING needs storage that
+    outlives the call."""
+    src = write(tmp_path, (
+        "TABLE = [1, 2, 3, 4]\n"
+        "\n"
+        "\n"
+        "def lookup(i: int) -> int:\n"
+        "    return TABLE[i]\n"
+    ))
+    check_no_module_state(src)   # does not raise

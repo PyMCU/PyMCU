@@ -276,23 +276,107 @@ def collect_exports(path: Path) -> list[Exported]:
     return out
 
 
+def check_no_module_state(path: Path) -> None:
+    """Refuse a module that keeps state of its own, before any tool runs.
+
+    A native module is code the interpreter maps somewhere and calls; it has no data
+    segment of its own that survives a call, and CircuitPython's linker says so in its
+    own terms -- "fixed relocation to bss (bss variables can't be static)" -- naming a
+    section, a relocation and a C rule, none of which appear in the user's file.
+
+    Two shapes reach that error, and both are visible in the source: rebinding a
+    module-level name from inside a function (which Python already makes explicit with
+    `global`), and writing through a subscript of one. A module-level name that is only
+    READ is fine: it becomes a constant table in the module's own read-only data.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    module_names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            module_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and isinstance(node.target, ast.Name):
+            module_names.add(node.target.id)
+
+    def refuse(node: ast.AST, name: str, how: str) -> NatmodError:
+        return _located(
+            path, node,
+            f"'{name}' is module state: {how}. A native module has no storage that "
+            f"outlives a call, so it keeps state only in what the caller passes in. "
+            f"Take a bytearray argument and write the value there, or return it.",
+        )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Global):
+            for name in node.names:
+                if name in module_names:
+                    raise refuse(node, name, "a function rebinds it with `global`")
+        if isinstance(node, (ast.Assign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) \
+                        and t.value.id in module_names:
+                    raise refuse(node, t.value.id, "a function writes through its subscript")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Adapter generation
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _unbox(p: Param, slot: str) -> str:
-    if p.kind == "buffer":
-        return ""  # handled separately, it needs a local
-    return f"    {p.ctype} p{slot} = ({p.ctype})mp_obj_get_int(a{slot});"
+# Inclusive range each declared width accepts, as checked in the adapter. int32 and
+# uint32 are absent on purpose: mp_int_t is 32 bits, so an int32 check could never
+# fail, and a uint32 is handled by rejecting a negative and letting the interpreter
+# raise OverflowError above 2**31-1 (see _RANGES_NOTE).
+_RANGES: dict[str, tuple[int, int]] = {
+    "int":    (-32768, 32767),
+    "int8":   (-128, 127),
+    "int16":  (-32768, 32767),
+    "uint8":  (0, 255),
+    "uint16": (0, 65535),
+    "uint32": (0, 2147483647),
+}
+
+
+def _length_of(params: list[Param], i: int) -> Optional[int]:
+    """Index of the parameter taken as the length of the buffer at *i*, if any.
+
+    The convention is positional: the scalar immediately after a buffer is that
+    buffer's length. It is a convention and not a deduction, so the build PRINTS
+    every pairing it made. A kernel receives a bare pointer and the interpreter
+    receives an object that knows its size; nothing in the signature connects the
+    two, and silence here is what turns a wrong length into a write past the end
+    of someone's bytearray.
+    """
+    j = i + 1
+    if j < len(params) and params[j].kind == "scalar" and params[j].ann != "bool":
+        return j
+    return None
+
+
+def buffer_pairings(exports: list["Exported"]) -> list[tuple[str, str, str]]:
+    """(function, buffer, length) for every pairing the adapter will check."""
+    out = []
+    for e in exports:
+        for i, prm in enumerate(e.params):
+            if prm.kind != "buffer":
+                continue
+            j = _length_of(e.params, i)
+            out.append((e.name, prm.name, e.params[j].name if j is not None else ""))
+    return out
 
 
 def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
     """The C adapter: one thunk per exported function, plus mpy_init.
 
-    Every thunk has the same three parts -- unbox by declared type, call the PyMCU
-    symbol, box the result -- so the generated file reads the same way for every
-    module and a reviewer only has to check the types.
+    Every thunk has the same four parts -- unbox by declared type, CHECK, call the
+    PyMCU symbol, box the result -- so the generated file reads the same way for
+    every module and a reviewer only has to check the types.
+
+    The checks are the point of generating this rather than hand-writing it. The
+    interpreter passes an arbitrary Python int and an object that knows its own
+    size; the kernel takes a fixed-width integer and a bare pointer. Without a
+    check in between, `add(40000, 1)` returns -25535 and a wrong length walks off
+    the end of a bytearray, both in silence.
     """
     L: list[str] = []
     L.append(f"/* GENERATED by `pymcu natmod` for module '{module}' from {source.name} -- do not edit. */")
@@ -303,6 +387,28 @@ def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
         args = ", ".join(p.ctype for p in e.params) or "void"
         L.append(f"extern {e.ret_ctype or 'void'} {e.name}({args});")
     L.append("")
+
+    # Emit a helper only where it is used: -Werror rejects an unused static function.
+    needs_range = any(p.ann in _RANGES for e in exports for p in e.params)
+    needs_len = any(lp for _, _, lp in buffer_pairings(exports))
+    if needs_range:
+        L.append("/* One raise for every integer that does not fit the width it was declared")
+        L.append("   with. Shared, so the cost is one routine and one string per argument. */")
+        L.append("static void nm_range(mp_int_t v, mp_int_t lo, mp_int_t hi, const char *what) {")
+        L.append("    if (v < lo || v > hi) {")
+        L.append("        mp_raise_ValueError(what);")
+        L.append("    }")
+        L.append("}")
+        L.append("")
+    if needs_len:
+        L.append("/* A length argument is checked against the buffer the caller actually passed,")
+        L.append("   never trusted, because the kernel receives only a pointer. */")
+        L.append("static void nm_fits(size_t have, mp_int_t want, const char *what) {")
+        L.append("    if (want < 0 || (size_t)want > have) {")
+        L.append("        mp_raise_ValueError(what);")
+        L.append("    }")
+        L.append("}")
+        L.append("")
 
     for e in exports:
         n = len(e.params)
@@ -315,14 +421,37 @@ def generate_adapter(module: str, exports: list[Exported], source: Path) -> str:
             L.append(f"static mp_obj_t nm_{e.name}({formal or 'void'}) {{")
 
         actual: list[str] = []
-        for i, p in enumerate(e.params):
-            if p.kind == "buffer":
+        for i, prm in enumerate(e.params):
+            if prm.kind == "buffer":
                 L.append(f"    mp_buffer_info_t b{i};")
-                L.append(f"    mp_get_buffer_raise(a{i}, &b{i}, {p.buffer_flag});")
-                actual.append(f"({p.ctype})b{i}.buf")
-            else:
-                L.append(_unbox(p, str(i)))
+                L.append(f"    mp_get_buffer_raise(a{i}, &b{i}, {prm.buffer_flag});")
+                actual.append(f"({prm.ctype})b{i}.buf")
+            elif prm.ann == "bool":
+                L.append(f"    {prm.ctype} p{i} = ({prm.ctype})(mp_obj_is_true(a{i}) ? 1 : 0);")
                 actual.append(f"p{i}")
+            else:
+                lo_hi = _RANGES.get(prm.ann)
+                L.append(f"    mp_int_t r{i} = mp_obj_get_int(a{i});")
+                if lo_hi is not None:
+                    lo, hi = lo_hi
+                    L.append(
+                        f"    nm_range(r{i}, {lo}, {hi}, "
+                        f'"{e.name}(): {prm.name} is out of range for {prm.ann}");'
+                    )
+                L.append(f"    {prm.ctype} p{i} = ({prm.ctype})r{i};")
+                actual.append(f"p{i}")
+
+        # Length checks come after every argument exists, so the message can name both.
+        for i, prm in enumerate(e.params):
+            if prm.kind != "buffer":
+                continue
+            j = _length_of(e.params, i)
+            if j is None:
+                continue
+            L.append(
+                f"    nm_fits(b{i}.len, r{j}, "
+                f'"{e.name}(): {e.params[j].name} is larger than {prm.name}");'
+            )
 
         call = f"{e.name}({', '.join(actual)})"
         if e.ret_ctype is None:
@@ -546,6 +675,7 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     build_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 1. read the signatures and refuse what cannot cross ──────────────────
+    check_no_module_state(entry)
     exports = collect_exports(entry)
     if verbose:
         for e in exports:
@@ -671,15 +801,33 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     )
     console.print(f"  [dim]copy it to CIRCUITPY and `import {name}`[/dim]")
 
-    # A bare `int` is 16 bits in PyMCU and unbounded in the interpreter calling in, so the
-    # conversion is lossy at a boundary where nothing else is. Said once, and only when the
-    # module actually has one, because on a module written in int32 it would be noise.
+    # What the caller is now protected from, and what is still on them. Said at build
+    # time because a check the user cannot see is a check they will not rely on.
     narrow = sorted({
         e.name for e in exports
         if e.ret_ann == "int" or any(p.ann == "int" for p in e.params)
     })
     if narrow:
         console.print(
-            "  [yellow]note:[/yellow] a bare `int` crosses as 16 bits, so a value outside "
-            "-32768..32767 wraps: " + ", ".join(narrow) + ". Annotate int32 for a wider one."
+            "  [dim]a bare `int` is 16 bits here: an argument outside -32768..32767 raises "
+            "ValueError rather than wrapping (" + ", ".join(narrow) + "). Annotate int32 "
+            "for a wider one.[/dim]"
         )
+    if any(p.ann == "uint32" for e in exports for p in e.params):
+        console.print(
+            "  [yellow]note:[/yellow] a uint32 argument accepts 0 to 2147483647; a negative "
+            "raises ValueError and a larger value raises OverflowError in the interpreter, "
+            "so the top half of the range is not reachable yet."
+        )
+    for fn, buf, length in buffer_pairings(exports):
+        if length:
+            console.print(
+                f"  [dim]{fn}(): '{length}' is taken as the length of '{buf}' and checked "
+                f"against it.[/dim]"
+            )
+        else:
+            console.print(
+                f"  [yellow]note:[/yellow] {fn}() takes the buffer '{buf}' with no length "
+                f"argument after it, so how far the kernel reads or writes cannot be checked. "
+                f"Add a length parameter directly after the buffer to have it checked."
+            )
