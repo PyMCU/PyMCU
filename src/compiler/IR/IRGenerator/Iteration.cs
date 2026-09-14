@@ -93,6 +93,91 @@ public partial class IRGenerator
         }
     }
 
+    // The compile-time array a bare name denotes: its base key and length, or a negative length
+    // when the name is not one. The probe order is inline expansion, enclosing function, bare
+    // name, then the alias chain -- the same order every other lookup on this path uses.
+    private void ResolveForBase(string name, out string baseKey, out int size)
+    {
+        baseKey = "";
+        size = -1;
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            string key = currentInlinePrefix + name;
+            if (arraySizes.TryGetValue(key, out int s)) { size = s; baseKey = key; }
+        }
+        if (size < 0 && !string.IsNullOrEmpty(currentFunction))
+        {
+            string key = currentFunction + "." + name;
+            if (arraySizes.TryGetValue(key, out int s)) { size = s; baseKey = key; }
+        }
+        if (size < 0 && arraySizes.TryGetValue(name, out int s2)) { size = s2; baseKey = name; }
+        if (size < 0)
+        {
+            int s3 = ResolveAliasedArraySize(name, out var b3);
+            if (s3 > 0) { size = s3; baseKey = b3; }
+        }
+    }
+
+    // Unrolls `for v in <compile-time array>` over `base__0` .. `base__(size-1)`. The elements
+    // are scalars, ZCA instances, or an SRAM-resident array read with an indexed load.
+    private void EmitSequenceUnroll(ForStmt stmt, string forBase, int forSize)
+    {
+        // Qualify the loop variable the same way ResolveBinding does for a bare name,
+        // so the loop body's references (e.g. a `pin.direction = ...` property setter)
+        // resolve to the same key the loop binds -- including the currentFunction prefix
+        // when iterating inside a def. Without this, ZCA per-element state registered on
+        // the loop var is invisible to the body inside a function.
+        string forVarKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + stmt.VarName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+        DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
+        variableTypes[forVarKey] = elemDt2;
+        // An SRAM-resident array (runtime-indexed or module-level) has no per-element
+        // arr__k vars — its elements live in memory and must be read with an indexed
+        // load, exactly as the enumerate path does. Without this a `for v in arr` over
+        // such an array read 0 from the missing element vars.
+        bool forSram = arraysWithVariableIndex.Contains(forBase) || moduleSramArrays.Contains(forBase);
+
+        // Only bracket iterations with labels when the body actually uses break/continue
+        // (else keep the plain unroll so constant folding is not split by labels).
+        bool forBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+        string forBreakLabel = forBrk ? MakeLabel() : "";
+
+        for (int fk = 0; fk < forSize; fk++)
+        {
+            string forContLabel = forBrk ? MakeLabel() : "";
+            if (forBrk)
+                loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel, FinallyDepth = finallyStack.Count });
+
+            string elemKey2 = forBase + "__" + fk;
+            bool isZca = instanceClasses.ContainsKey(elemKey2) ||
+                         instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
+            if (forSram)
+            {
+                Temporary tmp = MakeTemp(elemDt2);
+                Emit(new ArrayLoad(forBase, new Constant(fk), tmp, elemDt2, forSize));
+                Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
+            }
+            else if (isZca)
+                BindInstanceForIteration(elemKey2, forVarKey);
+            else if (constantVariables.TryGetValue(elemKey2, out int cv2))
+                constantVariables[forVarKey] = cv2;
+            else
+                Emit(new Copy(new Variable(elemKey2, elemDt2), new Variable(forVarKey, elemDt2)));
+
+            VisitStatement(stmt.Body);
+
+            if (forBrk)
+            {
+                loopStack.RemoveAt(loopStack.Count - 1);
+                Emit(new Label(forContLabel));   // continue lands here: end of this iteration
+            }
+            CleanCtState(forVarKey);
+            constantVariables.Remove(forVarKey);
+        }
+        if (forBrk) Emit(new Label(forBreakLabel));
+    }
+
     /// <summary>
     /// The elements of a name bound to a short all-constant list/tuple, following aliases the
     /// way the parameter lookup does. Null when the name is not such a binding.
@@ -1357,82 +1442,10 @@ public partial class IRGenerator
             // for v in ct_array: — unroll over compile-time array (scalars or ZCA instances)
             if (iter is VariableExpr forVarExpr2)
             {
-                string forBase = "";
-                int forSize = -1;
-                if (!string.IsNullOrEmpty(currentInlinePrefix))
-                {
-                    string fk = currentInlinePrefix + forVarExpr2.Name;
-                    if (arraySizes.TryGetValue(fk, out int fs)) { forSize = fs; forBase = fk; }
-                }
-                if (forSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                {
-                    string fk = currentFunction + "." + forVarExpr2.Name;
-                    if (arraySizes.TryGetValue(fk, out int fs)) { forSize = fs; forBase = fk; }
-                }
-                if (forSize < 0 && arraySizes.TryGetValue(forVarExpr2.Name, out int fs2))
-                { forSize = fs2; forBase = forVarExpr2.Name; }
-                if (forSize < 0)
-                {
-                    int fs3 = ResolveAliasedArraySize(forVarExpr2.Name, out var fb3);
-                    if (fs3 > 0) { forSize = fs3; forBase = fb3; }
-                }
-
+                ResolveForBase(forVarExpr2.Name, out string forBase, out int forSize);
                 if (forSize > 0)
                 {
-                    // Qualify the loop variable the same way ResolveBinding does for a bare name,
-                    // so the loop body's references (e.g. a `pin.direction = ...` property setter)
-                    // resolve to the same key the loop binds -- including the currentFunction prefix
-                    // when iterating inside a def. Without this, ZCA per-element state registered on
-                    // the loop var is invisible to the body inside a function.
-                    string forVarKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + stmt.VarName
-                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
-                    DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
-                    variableTypes[forVarKey] = elemDt2;
-                    // An SRAM-resident array (runtime-indexed or module-level) has no per-element
-                    // arr__k vars — its elements live in memory and must be read with an indexed
-                    // load, exactly as the enumerate path does. Without this a `for v in arr` over
-                    // such an array read 0 from the missing element vars.
-                    bool forSram = arraysWithVariableIndex.Contains(forBase) || moduleSramArrays.Contains(forBase);
-
-                    // Only bracket iterations with labels when the body actually uses break/continue
-                    // (else keep the plain unroll so constant folding is not split by labels).
-                    bool forBrk = LoopBodyHasBreakOrContinue(stmt.Body);
-                    string forBreakLabel = forBrk ? MakeLabel() : "";
-
-                    for (int fk = 0; fk < forSize; fk++)
-                    {
-                        string forContLabel = forBrk ? MakeLabel() : "";
-                        if (forBrk)
-                            loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel, FinallyDepth = finallyStack.Count });
-
-                        string elemKey2 = forBase + "__" + fk;
-                        bool isZca = instanceClasses.ContainsKey(elemKey2) ||
-                                     instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
-                        if (forSram)
-                        {
-                            Temporary tmp = MakeTemp(elemDt2);
-                            Emit(new ArrayLoad(forBase, new Constant(fk), tmp, elemDt2, forSize));
-                            Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
-                        }
-                        else if (isZca)
-                            BindInstanceForIteration(elemKey2, forVarKey);
-                        else if (constantVariables.TryGetValue(elemKey2, out int cv2))
-                            constantVariables[forVarKey] = cv2;
-                        else
-                            Emit(new Copy(new Variable(elemKey2, elemDt2), new Variable(forVarKey, elemDt2)));
-
-                        VisitStatement(stmt.Body);
-
-                        if (forBrk)
-                        {
-                            loopStack.RemoveAt(loopStack.Count - 1);
-                            Emit(new Label(forContLabel));   // continue lands here: end of this iteration
-                        }
-                        CleanCtState(forVarKey);
-                        constantVariables.Remove(forVarKey);
-                    }
-                    if (forBrk) Emit(new Label(forBreakLabel));
+                    EmitSequenceUnroll(stmt, forBase, forSize);
                     return;
                 }
             }
