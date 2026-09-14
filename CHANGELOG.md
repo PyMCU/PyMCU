@@ -30,8 +30,11 @@
   `self._pins[i].method()` all answer. Before, the field became a scalar and every read
   was zero, or the spelling was refused outright (#313, #314).
 - A list argument is built once. It used to stay raw AST bound to the parameter, so every
-  subscript re-evaluated it: `ps[0]` constructed a second `Pin` with the same port and
-  bit, and the write through it went where nothing could read it back (#313).
+  subscript re-evaluated it and `ps[0]` ran the constructor again. A method call through
+  the rebuilt instance still reached the right pin, because the duplicate folds to the
+  same port and bit; a property setter did not, because it resolves its receiver to a
+  name and an anonymous re-construction is not one, so the write was dropped with no
+  diagnostic (#313).
 - A bytearray handed to a driver and stored in a field keeps its storage, so
   `self._data[i] = v` writes the caller's buffer instead of being refused as a bit index
   into a scalar (#315).
