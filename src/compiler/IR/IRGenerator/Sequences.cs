@@ -212,6 +212,114 @@ public partial class IRGenerator
         return true;
     }
 
+    /// <summary>
+    /// The values a comprehension's loop variable takes, as expressions, or null when the
+    /// iterable is not a compile-time sequence. A filter or a second iterable disqualifies it:
+    /// both decide the length somewhere this cannot see.
+    /// </summary>
+    private List<Expression>? ComprehensionValues(ListCompExpr comp)
+    {
+        if (comp.Filter != null || comp.Iterable2 != null) return null;
+        switch (comp.Iterable)
+        {
+            case ListExpr le: return le.Elements.Count > 0 ? le.Elements : null;
+            case TupleExpr te: return te.Elements.Count > 0 ? te.Elements : null;
+            case VariableExpr ve:
+                if (ResolveListLiteralParam(ve.Name) is { } lp && lp.Elements.Count > 0)
+                    return lp.Elements;
+                if (ResolveConstSequence(ve.Name) is { Count: > 0 } cs) return cs;
+                return null;
+            case CallExpr { Callee: VariableExpr { Name: "range" } } rc when rc.Args.Count is 1 or 2 or 3:
+            {
+                var bounds = new List<int>();
+                foreach (var a in rc.Args)
+                {
+                    if (a is IntegerLiteral il) bounds.Add(il.Value);
+                    else if (a is UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral n })
+                        bounds.Add(-n.Value);
+                    else return null;
+                }
+                int start = bounds.Count > 1 ? bounds[0] : 0;
+                int stop = bounds.Count > 1 ? bounds[1] : bounds[0];
+                int step = bounds.Count > 2 ? bounds[2] : 1;
+                if (step == 0) return null;
+                var values = new List<Expression>();
+                for (int v = start; step > 0 ? v < stop : v > stop; v += step)
+                {
+                    values.Add(new IntegerLiteral(Math.Abs(v)) is var _ && v >= 0
+                        ? new IntegerLiteral(v)
+                        : (Expression)new UnaryExpr(Frontend.UnaryOp.Negate, new IntegerLiteral(-v)));
+                    if (values.Count > 64) return null;
+                }
+                return values.Count > 0 ? values : null;
+            }
+            default: return null;
+        }
+    }
+
+    /// <summary>
+    /// True when the comprehension builds instances over a compile-time sequence, which is the
+    /// literal of constructions written once instead of N times.
+    /// </summary>
+    private bool IsInstanceComprehension(ListCompExpr comp)
+        => CtorClassOfCall(comp.Element) != null && ComprehensionValues(comp) != null;
+
+    /// <summary>
+    /// Builds the elements of an instance COMPREHENSION once, in the scope it was written in,
+    /// binding the loop variable to each compile-time value in turn, and returns the base key.
+    /// Nothing is substituted: the element expression is visited once per value with the loop
+    /// variable bound, which is what the unrolled `for` over the same sequence already does.
+    /// </summary>
+    private string HoistInstanceComprehension(ListCompExpr comp)
+    {
+        var values = ComprehensionValues(comp)!;
+        string name = "__ctseq" + (++ctSequenceCounter);
+        string baseKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        string loopKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + comp.VarName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + comp.VarName : comp.VarName);
+
+        string savedCtorTarget = pendingConstructorTarget;
+        pendingConstructorTarget = "";
+        bool hadConst = constantVariables.TryGetValue(loopKey, out int savedConst);
+        bool hadStr = strConstantVariables.TryGetValue(loopKey, out var savedStr);
+
+        for (int k = 0; k < values.Count; k++)
+        {
+            BindComprehensionVar(loopKey, values[k]);
+            VisitStatement(new AssignStmt(new VariableExpr(name + "__" + k), comp.Element));
+        }
+
+        constantVariables.Remove(loopKey);
+        strConstantVariables.Remove(loopKey);
+        if (hadConst) constantVariables[loopKey] = savedConst;
+        if (hadStr) strConstantVariables[loopKey] = savedStr!;
+        pendingConstructorTarget = savedCtorTarget;
+
+        arraySizes[baseKey] = values.Count;
+        arrayElemTypes[baseKey] = DataType.UINT8;
+        return baseKey;
+    }
+
+    private void BindComprehensionVar(string loopKey, Expression value)
+    {
+        constantVariables.Remove(loopKey);
+        strConstantVariables.Remove(loopKey);
+        switch (value)
+        {
+            case IntegerLiteral il: constantVariables[loopKey] = il.Value; break;
+            case BooleanLiteral bl: constantVariables[loopKey] = bl.Value ? 1 : 0; break;
+            case UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }:
+                constantVariables[loopKey] = -n.Value; break;
+            case StringLiteral sl: strConstantVariables[loopKey] = sl.Value; break;
+            default:
+                if (VisitExpression(value) is Constant c) constantVariables[loopKey] = c.Value;
+                break;
+        }
+    }
+
     // Names the hoisted sequences apart from anything a user can write.
     private int ctSequenceCounter;
 

@@ -1338,6 +1338,15 @@ public partial class IRGenerator
                 // raw AST to re-evaluate at each subscript -- the elements are built once here
                 // and the parameter is bound to the base key they live under, which is the same
                 // shape `objs = [A(1), A(2)]` already produces at module level.
+                if (arg is ListCompExpr argComp && IsInstanceComprehension(argComp))
+                {
+                    rawSeqBases.Add(HoistInstanceComprehension(argComp));
+                    rawConstSeqArgs.Add(null);
+                    rawListArgs.Add(null);
+                    argValues.Add(new NoneVal());
+                    continue;
+                }
+
                 if (seqLit != null && IsInstanceSequenceLiteral(seqLit))
                 {
                     rawSeqBases.Add(HoistInstanceSequence(seqLit));

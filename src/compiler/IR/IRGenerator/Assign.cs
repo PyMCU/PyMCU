@@ -510,6 +510,8 @@ public partial class IRGenerator
             string? seqSourceBase = null;
             if (stmt.Value is ListExpr seqFieldLit && IsInstanceSequenceLiteral(seqFieldLit))
                 seqSourceBase = HoistInstanceSequence(seqFieldLit);
+            else if (stmt.Value is ListCompExpr seqFieldComp && IsInstanceComprehension(seqFieldComp))
+                seqSourceBase = HoistInstanceComprehension(seqFieldComp);
             else if (stmt.Value is not ListExpr
                      && TryResolveInstanceSequence(stmt.Value, out var seqBoundBase, out _))
                 seqSourceBase = seqBoundBase;
