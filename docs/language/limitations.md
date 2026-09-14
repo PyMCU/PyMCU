@@ -423,6 +423,12 @@ always was. A type declared on the loop variable before the loop is used as writ
 `CompileError` when constant bounds do not fit it. A signed runtime step picks its direction at
 run time; an unsigned one counts up.
 
+An unannotated accumulator at module level is typed the way a local is, from the promoted
+width of what feeds it (`n = 0` then `n = n + 1` over `range(300)` is a 16-bit counter); a
+written annotation keeps its width and wraps at it. A comparison is decided by the values on
+both sides: `count >= 404` with `count: uint8` is False, and `x < n` with `n: uint16` compares
+all sixteen bits.
+
 After the loop the variable holds the last value visited, as in Python, whether the loop
 unrolled or ran as a counter. The one difference: a range that runs zero times leaves the
 variable at `start` (Python leaves it unbound). `enumerate(range(...))` with runtime bounds

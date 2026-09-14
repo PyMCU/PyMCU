@@ -12,6 +12,17 @@
 - A signed runtime step (`range(10, 0, step)` with `step: int8 = -2`) counts down instead
   of exiting before the first iteration (#286).
 - List comprehensions over `range(start, stop, step)` honour the step (#287).
+- One width per variable name, program-wide: a name typed two bytes wide at one site and
+  one byte at another reached a register allocator that sizes a name once (#291).
+- A module-level unannotated accumulator is typed like a local, with promotion: `n = 0`
+  then `n = n + 1` over `range(300)` counted to 44 at module level and to 300 in a def.
+  A written annotation keeps its width (#289).
+- A comparison is decided by the values, not by the left operand's width: `count >= 404`
+  with `count: uint8` tested against 148, `count < 300` against 44, and `x < n` with
+  `n: uint16` read n's low byte. Sides that cannot overlap fold to Python's answer (#290).
+- A single-field instance mutated inside a method's loop keeps its value and the method
+  returns it: an unannotated method's `return self.value` arrived as None, and the field
+  folded to the constructor's value after the loop (#292).
 
 ### Language
 - `x in range(a, b[, s])`, `reversed(range(...))` and `enumerate(range(...))` over runtime
