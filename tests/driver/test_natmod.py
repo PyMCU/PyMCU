@@ -312,3 +312,16 @@ def test_a_read_only_module_table_is_allowed(tmp_path):
         "    return TABLE[i]\n"
     ))
     check_no_module_state(src)   # does not raise
+
+
+def test_the_interpreter_probe_ignores_the_current_directory():
+    """A CircuitPython project has a `code.py` in it by definition, and `python -c` puts
+    the current directory on sys.path, where it shadows the stdlib `code` that pyelftools
+    pulls in. Measured on the plasma example: the probe failed with "No module named
+    'board'", raised by the user's own example file. -P is what stops it."""
+    import inspect
+
+    from src.driver.commands import natmod as m
+
+    src = inspect.getsource(m._python_for_cp_tools)
+    assert '"-P", "-c", probe' in src

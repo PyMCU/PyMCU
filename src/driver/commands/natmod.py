@@ -583,11 +583,18 @@ def _python_for_cp_tools() -> str:
     pyelftools and a venv usually lacks it, so a system python3 that has it is
     accepted rather than making the user install into the wrong environment.
     """
+    # -P, and it is not decoration. `python -c` puts the CURRENT DIRECTORY on sys.path,
+    # and a CircuitPython project has a `code.py` in it by definition -- which shadows the
+    # stdlib `code` that pyelftools pulls in, and then the probe fails with
+    # "No module named 'board'" from the user's own example file. Measured on the plasma
+    # project. The tools themselves are run by path, so their sys.path[0] is the
+    # CircuitPython tools directory and they must NOT be isolated: mpy_ld.py imports
+    # ar_util from beside itself.
     probe = "import elftools.elf.elffile"
     for py in (sys.executable, shutil.which("python3"), shutil.which("python")):
         if not py:
             continue
-        if subprocess.run([py, "-c", probe], capture_output=True).returncode == 0:
+        if subprocess.run([py, "-P", "-c", probe], capture_output=True).returncode == 0:
             return py
     raise NatmodError(
         "CircuitPython's tools/mpy_ld.py needs pyelftools and no interpreter on this "
