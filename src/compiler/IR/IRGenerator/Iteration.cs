@@ -231,11 +231,19 @@ public partial class IRGenerator
                 throw UserError("range() bounds must be integers", node);
 
         var (lo, hi) = CounterValueRange(startVal, stopVal, stepVal);
+        bool exact = startVal is Constant && stopVal is Constant && stepVal is Constant;
+        return ChooseCounterType(stmt, varName, lo, hi, exact);
+    }
+
+    // The declared type when the loop variable has one (refused when `exact` constant bounds
+    // do not fit it), otherwise the narrowest type for [lo, hi], remembered as inferred.
+    private DataType ChooseCounterType(ForStmt stmt, string varName, long lo, long hi, bool exact)
+    {
         DataType inferred = NarrowestTypeFor(lo, hi);
         if (DeclaredLoopVarType(stmt.VarName) is { } declared)
         {
             var (dLo, dHi) = RangeOfType(declared);
-            if (startVal is Constant && stopVal is Constant && stepVal is Constant && (lo < dLo || hi > dHi))
+            if (exact && (lo < dLo || hi > dHi))
                 throw UserError(
                     $"loop variable '{stmt.VarName}' is declared {declared.ToString().ToLowerInvariant()} " +
                     $"but range(...) reaches {(hi > dHi ? hi : lo)}; declare it " +
@@ -1558,16 +1566,32 @@ public partial class IRGenerator
             string unrollKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.VarName
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
-            string unrollBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+            bool unrollBreaks = LoopBodyHasBreakOrContinue(stmt.Body);
+            string unrollBrk = unrollBreaks ? MakeLabel() : "";
+
+            // Python leaves the loop variable at the last value visited. The body reads it as
+            // a constant per iteration, but anything after the loop reads a real variable, so
+            // the value has to be stored too -- once at the end when the loop always runs to
+            // completion, or per iteration when a break decides where it stops. Unread, the
+            // stores are dead and go with the rest. Before this the binding was dropped on
+            // exit and `for i in range(3): ...` then `print(i)` printed 0.
+            int unrollLast = (int)(unrollStart + (RangeTripCount(unrollStart, unrollStop, unrollStep) - 1) * unrollStep);
+            DataType unrollType = ChooseCounterType(stmt, unrollKey,
+                Math.Min(unrollStart, unrollLast), Math.Max(unrollStart, unrollLast), exact: true);
+            variableTypes[unrollKey] = unrollType;
+            var unrollVar = new Variable(unrollKey, unrollType);
+            bool unrollReadAfter = loopVarReadAfter.Contains(stmt);
 
             for (int i = unrollStart; unrollStep > 0 ? i < unrollStop : i > unrollStop; i += unrollStep)
             {
                 constantVariables[unrollKey] = i;
+                if (unrollBreaks && unrollReadAfter) Emit(new Copy(new Constant(i), unrollVar));
                 EmitUnrolledIteration(stmt.Body, unrollBrk);
             }
             if (unrollBrk.Length > 0) Emit(new Label(unrollBrk));
 
             constantVariables.Remove(unrollKey);
+            if (!unrollBreaks && unrollReadAfter) Emit(new Copy(new Constant(unrollLast), unrollVar));
             return;
         }
 
@@ -1599,10 +1623,25 @@ public partial class IRGenerator
         variableTypes[varName] = counterType;
         var loopVar = new Variable(varName, counterType);
         Emit(new Copy(startVal, loopVar));
+        // The exit fix-up below compares the counter with where it started; a start that is
+        // not a constant is kept in a temporary of its own, since the body may rewrite the
+        // variable it was read from.
+        bool readAfter = loopVarReadAfter.Contains(stmt);
+        Val startKeep = startVal;
+        if (readAfter && startVal is not Constant)
+        {
+            var keep = MakeTemp(counterType);
+            Emit(new Copy(startVal, keep));
+            startKeep = keep;
+        }
 
         string startLabel = MakeLabel();
         string contLabel = MakeLabel();
         string endLabel = MakeLabel();
+        // Where the exit test lands. A `break` lands on endLabel with the counter already at
+        // the value Python leaves; the exit test lands one step past it, so when the value is
+        // read after the loop that path gets a label of its own and a step back (below).
+        string exitLabel = readAfter ? MakeLabel() : endLabel;
         // `continue` must run the step before re-testing, otherwise the loop variable never
         // advances and the loop spins forever — so the continue target is the step, not the
         // condition check at the top.
@@ -1620,7 +1659,7 @@ public partial class IRGenerator
         // stop (Python's range(hi, lo, -1)); a positive step ends at/above stop. The previous
         // unconditional `>= stop` test made any negative-step runtime range exit immediately.
         if (stepVal is Constant stepC && stepC.Value < 0)
-            Emit(new JumpIfLessOrEqual(loopVar, stopVal, endLabel));
+            Emit(new JumpIfLessOrEqual(loopVar, stopVal, exitLabel));
         else if (stepVal is not Constant && GetValType(stepVal).IsSigned())
         {
             // A step held in a signed variable is decided at run time, so the direction of
@@ -1631,20 +1670,33 @@ public partial class IRGenerator
             string negLabel = MakeLabel();
             string bodyLabel = MakeLabel();
             Emit(new JumpIfLessThan(stepVal, new Constant(0), negLabel));
-            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
+            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, exitLabel));
             Emit(new Jump(bodyLabel));
             Emit(new Label(negLabel));
-            Emit(new JumpIfLessOrEqual(loopVar, stopVal, endLabel));
+            Emit(new JumpIfLessOrEqual(loopVar, stopVal, exitLabel));
             Emit(new Label(bodyLabel));
         }
         else
-            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
+            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, exitLabel));
 
         VisitStatement(stmt.Body);
 
         Emit(new Label(contLabel));
         Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, loopVar, stepVal));
         Emit(new Jump(startLabel));
+
+        // Python leaves the loop variable at the last value visited; the exit test fires one
+        // step past it. When something after the loop reads the name, step it back on that
+        // path -- unless the loop never ran, in which case the counter still holds `start`
+        // and stays there (Python would have left the name as it was). A `break` skips this:
+        // it lands on endLabel with the value it broke at. Nothing is emitted for a variable
+        // no one reads afterwards, which is the common case and stays free.
+        if (readAfter)
+        {
+            Emit(new Label(exitLabel));
+            Emit(new JumpIfEqual(loopVar, startKeep, endLabel));
+            Emit(new AugAssign(PyMCU.IR.BinaryOp.Sub, loopVar, stepVal));
+        }
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
 
