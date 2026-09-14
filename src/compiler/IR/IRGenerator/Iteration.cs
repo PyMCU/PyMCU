@@ -1200,6 +1200,17 @@ public partial class IRGenerator
                         if (e is MemberAccessExpr && TryResolveInstanceSequence(e, out var isb, out int isn))
                             return (isn, (qk, k) => BindInstanceForIteration(isb + "__" + k, qk));
 
+                        // A list of constants reached by name, through a parameter, or through
+                        // a field. `zip(self.segments, ROW)` is the same walk with the values
+                        // known, and a row selected by a CONSTANT key lands here too.
+                        if (ResolveConstSequenceExpr(e) is { Count: > 0 } cseq)
+                            return (cseq.Count, (qk, k) =>
+                            {
+                                if (TryEvalConstElement(cseq[k], out int cv)) constantVariables[qk] = cv;
+                                else Emit(new Copy(VisitExpression(cseq[k]), new Variable(qk, DataType.UINT8)));
+                                variableTypes[qk] = DataType.UINT8;
+                            });
+
                         if (e is VariableExpr rve && ResolveRowView(rve.Name) is { } rv)
                             return (rv.Width, (qk, k) =>
                             {
