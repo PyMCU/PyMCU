@@ -1,10 +1,10 @@
 from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A, OCR0B
-from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL, OCR1AH, OCR1BH
+from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL, OCR1AH, OCR1BH, ICR1L, ICR1H
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
-from pymcu.chips import __TIMEBASE__
+from pymcu.chips import __TIMEBASE__, __FREQ__
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, uint16, inline, ptr, const, claim
+from pymcu.types import uint8, uint16, uint32, inline, ptr, const, claim
 
 
 # Compile-time (pin, freq) -> TCCRxB CS value.
@@ -400,5 +400,201 @@ def pwm_claim_prescaler(pin: const, code: uint8):
                   "The two channels of one timer run at one frequency. Timer2 codes: 1 = 62500 Hz, "
                   "2 = 7812 Hz, 3 = 1953 Hz, 4 = 976 Hz, 5 = 488 Hz, 6 = 244 Hz, 7 = 61 Hz. Ask "
                   "both for the same frequency, or move one to PD5/PD6 (Timer0) or PB1/PB2 (Timer1)")
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
+
+# --------------------------------------------------------------------------- #
+# Timer1 at an exact frequency
+# --------------------------------------------------------------------------- #
+#
+# The eight-bit fast PWM the rest of this module uses gives Timer1 five frequencies and
+# nothing between: 62500, 7812, 976, 244 and 61 Hz. Asking for 50 gets 61, which is what a
+# servo idiom runs into -- measured, PWM("PB1", freq=50) put a 16 384 us period on the pin
+# and the layer above reported the 50 that was asked for.
+#
+# Mode 14 (fast PWM, TOP = ICR1) reaches any frequency the prescaler can divide to, and its
+# compare registers are the full 16 bits, so a 50 Hz period is 40 000 counts of 0.5 us
+# instead of 256 counts of 64 us: a servo gets about 2000 steps of angle where it had 16.
+#
+# This is a SECOND path, taken only when the frequency asked for is not one of the five
+# buckets, so every program that asks for a bucket compiles to the byte it always did.
+# Collapsing the two into one is PyMCU#304.
+
+# The prescaler for an exact frequency: the smallest divider whose period still fits in the
+# 16-bit TOP register, because a smaller divider means more counts and finer duty.
+@inline
+def pwm_t1_exact_divider(freq: uint16) -> uint16:
+    if __FREQ__ // freq <= 65536:
+        return 1
+    if __FREQ__ // (8 * freq) <= 65536:
+        return 8
+    if __FREQ__ // (64 * freq) <= 65536:
+        return 64
+    if __FREQ__ // (256 * freq) <= 65536:
+        return 256
+    return 1024
+
+
+@inline
+def pwm_t1_exact_cs(freq: uint16) -> uint8:
+    if pwm_t1_exact_divider(freq) == 1:
+        return 0x01
+    if pwm_t1_exact_divider(freq) == 8:
+        return 0x02
+    if pwm_t1_exact_divider(freq) == 64:
+        return 0x03
+    if pwm_t1_exact_divider(freq) == 256:
+        return 0x04
+    return 0x05
+
+
+# TOP: one less than the number of counts in a period.
+@inline
+def pwm_t1_exact_top(freq: uint16) -> uint16:
+    if freq == 0:
+        raise CompileError(
+            "a PWM frequency of zero has no period. Ask for a frequency, or leave it out to "
+            "take the pin's default.")
+    if __FREQ__ // (1024 * freq) < 2:
+        raise CompileError(
+            "this PWM frequency is too low for Timer1. With the slowest prescaler the period "
+            "register still has to hold the whole period, which at this clock bottoms out "
+            "near 0.25 Hz. Ask for a higher frequency.")
+    if __FREQ__ // freq < 4:
+        raise CompileError(
+            "this PWM frequency is too high for Timer1 to resolve. A period of fewer than "
+            "four counts leaves no duty cycle to speak of; at this clock that is anything "
+            "above a quarter of the CPU clock. Ask for a lower frequency.")
+    return uint16(__FREQ__ // (pwm_t1_exact_divider(freq) * freq) - 1)
+
+
+# The frequency the timer will actually run at, which is not always the one asked for: the
+# period register is an integer. 50 Hz at 16 MHz is exact; 1000 Hz is 1000.0 Hz; an awkward
+# one lands within a count.
+@inline
+def pwm_t1_exact_frequency(freq: uint16) -> uint16:
+    return uint16(__FREQ__ // (pwm_t1_exact_divider(freq) * (pwm_t1_exact_top(freq) + 1)))
+
+
+# 1 when this pin and frequency want the exact path: a Timer1 channel asking for something
+# the eight-bit buckets do not already give exactly.
+@inline
+def pwm_uses_exact_t1(pin: const, freq: uint16) -> uint8:
+    match pin:
+        case "PB1" | "PB2":
+            if freq == 0 or freq == 62500 or freq == 7812 or freq == 976 or freq == 244 or freq == 61:
+                return 0
+            return 1
+        case _:
+            return 0
+
+
+# The compare value for a 16-bit duty against this period. 0 is off and is handled by the
+# caller; 65535 is the whole period.
+@inline
+def pwm_t1_exact_steps(freq: uint16, duty_u16: uint16) -> uint16:
+    return uint16((uint32(pwm_t1_exact_top(freq)) + 1) * uint32(duty_u16) // 65536)
+
+
+@inline
+def pwm_t1_exact_write_ocr(pin: const, value: uint16):
+    # Every 16-bit register on this timer commits through one shared TEMP byte, so the high
+    # byte goes first and the low byte commits the pair.
+    match pin:
+        case "PB1":
+            OCR1AH.value = uint8(value >> 8)
+            OCR1AL.value = uint8(value)
+        case "PB2":
+            OCR1BH.value = uint8(value >> 8)
+            OCR1BL.value = uint8(value)
+        case _:
+            raise CompileError("PWM: the exact-frequency path is Timer1 only -- PB1 or PB2")
+
+
+@inline
+def pwm_t1_exact_init(pin: const, freq: uint16, duty_u16: uint16, invert: const[uint8] = 0):
+    # Two claims, because this mode shares two registers between the timer's channels.
+    #
+    # The prescaler, under the same key the bucket path uses, so that a bucket channel and an
+    # exact one cannot share the timer: they are different modes and the second would
+    # reprogram the first. The codes are offset by 100 so they never read as a bucket code.
+    #
+    # And the period, which in this mode lives in ICR1: one register for both channels, so
+    # two exact channels at different frequencies are refused even when their prescalers
+    # agree. The prescaler claim alone let PWM("PB1", 128, 5000) and PWM("PB2", 128, 100)
+    # through, which is two periods in one register.
+    pwm_claim_prescaler(pin, 100 + pwm_t1_exact_cs(freq))
+    claim("Timer1 period (PB1 and PB2 share ICR1)", freq, pin,
+          "In the mode that honours a frequency exactly, the period is one register for both "
+          "of the timer's channels, so they run at one frequency. Ask both for the same one, "
+          "or move one to PD5/PD6 (Timer0) or PB3/PD3 (Timer2)")
+    match pin:
+        case "PB1":
+            DDRB[1] = 1
+        case "PB2":
+            DDRB[2] = 1
+        case _:
+            raise CompileError("PWM: the exact-frequency path is Timer1 only -- PB1 or PB2")
+    # Mode 14: WGM13 and WGM12 in TCCR1B, WGM11 in TCCR1A, WGM10 clear.
+    TCCR1B.value = 0x18 | pwm_t1_exact_cs(freq)
+    ICR1H.value = uint8(pwm_t1_exact_top(freq) >> 8)
+    ICR1L.value = uint8(pwm_t1_exact_top(freq))
+    pwm_t1_exact_write_ocr(pin, pwm_t1_exact_steps(freq, duty_u16))
+    if pwm_t1_exact_steps(freq, duty_u16) == 0:
+        # A compare value of zero in fast PWM still emits a one-clock pulse every period, so
+        # off is the output disconnected, not the register at the bottom.
+        TCCR1A.value = TCCR1A.value | 0x02
+    else:
+        match pin:
+            case "PB1":
+                TCCR1A.value = (TCCR1A.value | 0x02) | (0xC0 if invert else 0x80)
+            case "PB2":
+                TCCR1A.value = (TCCR1A.value | 0x02) | (0x30 if invert else 0x20)
+            case _:
+                raise CompileError("PWM: the exact-frequency path is Timer1 only -- PB1 or PB2")
+
+
+@inline
+def pwm_t1_exact_start_val(freq: uint16) -> uint8:
+    return uint8(0x18 | pwm_t1_exact_cs(freq))
+
+
+# The frequency a channel actually emits when it takes the bucket path: the eight-bit period
+# is 256 counts, so it is the clock over the prescaler over 256. It is NOT the frequency
+# asked for, and every layer above used to report that one -- measured, PWMOut(D6, 5000)
+# emitted 7812 Hz and said 5000.
+#
+# freq = 0 means the pin's own default, which is the prescaler pwm_select_start_val picks.
+@inline
+def pwm_bucket_frequency(pin: const, freq: uint16) -> uint16:
+    if freq == 0:
+        return uint16(__FREQ__ // (64 * 256))
+    match pin:
+        case "PD6" | "PD5" | "PB1" | "PB2":
+            if freq > 22097:
+                return uint16(__FREQ__ // 256)
+            elif freq > 2762:
+                return uint16(__FREQ__ // (8 * 256))
+            elif freq > 488:
+                return uint16(__FREQ__ // (64 * 256))
+            elif freq > 122:
+                return uint16(__FREQ__ // (256 * 256))
+            else:
+                return uint16(__FREQ__ // (1024 * 256))
+        case "PB3" | "PD3":
+            if freq > 22097:
+                return uint16(__FREQ__ // 256)
+            elif freq > 3906:
+                return uint16(__FREQ__ // (8 * 256))
+            elif freq > 1381:
+                return uint16(__FREQ__ // (32 * 256))
+            elif freq > 690:
+                return uint16(__FREQ__ // (64 * 256))
+            elif freq > 345:
+                return uint16(__FREQ__ // (128 * 256))
+            elif freq > 122:
+                return uint16(__FREQ__ // (256 * 256))
+            else:
+                return uint16(__FREQ__ // (1024 * 256))
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")

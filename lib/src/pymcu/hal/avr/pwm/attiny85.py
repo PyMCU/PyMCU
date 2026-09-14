@@ -1,5 +1,6 @@
 from pymcu.chips.attiny85 import DDRB, PORTB, OCR0A, OCR0B, TCCR0A, TCCR0B, TCCR1
 from pymcu.exceptions import CompileError
+from pymcu.chips import __FREQ__
 from pymcu.types import uint8, uint16, inline, ptr, const, claim
 
 # ATtiny85/45/25 PWM HAL
@@ -294,3 +295,63 @@ def pwm_claim_prescaler(pin: const, code: uint8):
             pass
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
+
+
+# --------------------------------------------------------------------------- #
+# The exact-frequency path, which this part does not have
+# --------------------------------------------------------------------------- #
+#
+# On the ATmega family a Timer1 channel can run in a mode whose TOP is a register, so it
+# reaches any frequency instead of five buckets. This part's timers have no such mode wired
+# to a pin here, so the predicate is a constant 0 and the whole branch folds away in the
+# facade. The bodies exist so that the facade has one shape on every AVR.
+@inline
+def pwm_uses_exact_t1(pin: const, freq: uint16) -> uint8:
+    return 0
+
+
+@inline
+def pwm_t1_exact_init(pin: const, freq: uint16, duty_u16: uint16, invert: const[uint8] = 0):
+    raise CompileError(
+        "this chip has no PWM channel that can take an arbitrary frequency: its timers run "
+        "from a fixed set of prescalers with a fixed period, so the frequencies on offer are "
+        "the buckets pymcu.hal.pwm already picks between. Ask for one of those.")
+
+
+@inline
+def pwm_t1_exact_steps(freq: uint16, duty_u16: uint16) -> uint16:
+    return 0
+
+
+@inline
+def pwm_t1_exact_write_ocr(pin: const, value: uint16):
+    pass
+
+
+@inline
+def pwm_t1_exact_start_val(freq: uint16) -> uint8:
+    return 0
+
+
+@inline
+def pwm_t1_exact_frequency(freq: uint16) -> uint16:
+    return freq
+
+
+# The frequency a channel actually emits, which is not the one asked for: the period is 256
+# counts and the prescaler is one of a fixed set. Every layer above used to report the
+# request.
+@inline
+def pwm_bucket_frequency(pin: const, freq: uint16) -> uint16:
+    if freq == 0:
+        return uint16(__FREQ__ // (64 * 256))
+    if freq > 22097:
+        return uint16(__FREQ__ // 256)
+    elif freq > 2762:
+        return uint16(__FREQ__ // (8 * 256))
+    elif freq > 488:
+        return uint16(__FREQ__ // (64 * 256))
+    elif freq > 122:
+        return uint16(__FREQ__ // (256 * 256))
+    else:
+        return uint16(__FREQ__ // (1024 * 256))

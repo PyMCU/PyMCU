@@ -20,6 +20,9 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
         pwm_select_start_val, pwm_prescaler_for_freq,
         pwm_connect, pwm_disconnect, pwm_release, pwm_clear_ocr_high,
         pwm_init_raw, pwm_u16_steps,
+        pwm_uses_exact_t1, pwm_t1_exact_init, pwm_t1_exact_steps,
+        pwm_t1_exact_write_ocr, pwm_t1_exact_start_val, pwm_t1_exact_frequency,
+        pwm_bucket_frequency,
     )
 elif (__CHIP__.name == "atmega32u4" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
           or __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny24"
@@ -38,6 +41,9 @@ else:
         pwm_select_start_val, pwm_prescaler_for_freq,
         pwm_connect, pwm_disconnect, pwm_release, pwm_clear_ocr_high,
         pwm_init_raw, pwm_u16_steps,
+        pwm_uses_exact_t1, pwm_t1_exact_init, pwm_t1_exact_steps,
+        pwm_t1_exact_write_ocr, pwm_t1_exact_start_val, pwm_t1_exact_frequency,
+        pwm_bucket_frequency,
     )
 
 
@@ -54,19 +60,31 @@ class PWM:
         # set on compare match and cleared at BOTTOM, so duty counts the LOW time.
         self._pin = pin
         self._invert = invert
+        self._freq = freq
+        # A Timer1 channel asking for a frequency the eight-bit buckets do not already give
+        # exactly takes the mode whose TOP is a register, which reaches any frequency the
+        # prescaler can divide to and whose compare registers are the full 16 bits. That is
+        # what makes the servo idiom work: 50 Hz asked used to run at 61, and the duty had
+        # 256 steps of 64 us where it now has 40 000 of 0.5. The predicate is a compile-time
+        # constant, so a program asking for a bucket takes the path it always did.
+        self._exact = pwm_uses_exact_t1(pin, freq)
         prescaler: uint8 = 0
-        if freq == 0:
-            prescaler = pwm_select_start_val(pin)
+        if self._exact:
+            pwm_t1_exact_init(pin, freq, duty_u16, invert)
+            prescaler = pwm_t1_exact_start_val(freq)
         else:
-            prescaler = pwm_prescaler_for_freq(pin, freq)
-        if duty_u16 != 0:
-            steps: uint16 = pwm_u16_steps(pin, duty_u16)
-            if steps == 0:
-                pwm_init_raw(pin, 0, 1, prescaler, invert)
+            if freq == 0:
+                prescaler = pwm_select_start_val(pin)
             else:
-                pwm_init_raw(pin, uint8(steps - 1), 0, prescaler, invert)
-        else:
-            pwm_init(pin, duty, prescaler, invert)
+                prescaler = pwm_prescaler_for_freq(pin, freq)
+            if duty_u16 != 0:
+                steps: uint16 = pwm_u16_steps(pin, duty_u16)
+                if steps == 0:
+                    pwm_init_raw(pin, 0, 1, prescaler, invert)
+                else:
+                    pwm_init_raw(pin, uint8(steps - 1), 0, prescaler, invert)
+            else:
+                pwm_init(pin, duty, prescaler, invert)
         self._ocr       = pwm_select_ocr(pin)
         self._tccr_b    = pwm_select_tccr_b(pin)
         self._start_val = prescaler
@@ -99,15 +117,24 @@ class PWM:
         # traffic as set_duty(); written out rather than shared through a helper
         # method, because a method called from another method loses the const
         # binding of self._pin (it reached the chip module as a run-time value).
-        steps: uint16 = pwm_u16_steps(self._pin, duty_u16)
-        if steps == 0:
-            pwm_clear_ocr_high(self._pin)
-            self._ocr.value = 0
-            pwm_disconnect(self._pin)
+        if self._exact:
+            # The whole 16-bit compare register, against a period of up to 65 536 counts.
+            if pwm_t1_exact_steps(self._freq, duty_u16) == 0:
+                pwm_t1_exact_write_ocr(self._pin, 0)
+                pwm_disconnect(self._pin)
+            else:
+                pwm_t1_exact_write_ocr(self._pin, pwm_t1_exact_steps(self._freq, duty_u16))
+                pwm_connect(self._pin, self._invert)
         else:
-            pwm_clear_ocr_high(self._pin)
-            self._ocr.value = uint8(steps - 1)
-            pwm_connect(self._pin, self._invert)
+            steps: uint16 = pwm_u16_steps(self._pin, duty_u16)
+            if steps == 0:
+                pwm_clear_ocr_high(self._pin)
+                self._ocr.value = 0
+                pwm_disconnect(self._pin)
+            else:
+                pwm_clear_ocr_high(self._pin)
+                self._ocr.value = uint8(steps - 1)
+                pwm_connect(self._pin, self._invert)
 
     @inline
     def start(self):
@@ -138,5 +165,24 @@ class PWM:
     def set_freq(self, freq: uint16):
         # Retuning the timer retunes its other channel too; the selector claims the
         # prescaler on the way out, so a channel with a sibling is refused here.
+        if self._exact:
+            # The exact path's period is a register whose value comes from a division by the
+            # frequency, and this frequency arrives at run time. Reprogramming it would need
+            # that division in the emitted code, and the compare value would have to be
+            # rescaled against the new period with it. Refused rather than half-done.
+            raise CompileError(
+                "a PWM running at an exact frequency cannot be retuned at run time. Its "
+                "period lives in a register computed from the frequency, and so does every "
+                "duty cycle measured against it, so changing one at run time needs a "
+                "division this HAL does not emit. Construct the PWM at the frequency you "
+                "want, or ask for one of the frequencies the fixed prescalers give "
+                "(62500, 7812, 976, 244 or 61 Hz on this timer), which can be retuned.")
         self._start_val = pwm_prescaler_for_freq(self._pin, freq)
         self._tccr_b.value = self._start_val
+
+    # The frequency this channel actually emits, which is not always the one asked for.
+    @inline
+    def frequency(self) -> uint16:
+        if self._exact:
+            return pwm_t1_exact_frequency(self._freq)
+        return pwm_bucket_frequency(self._pin, self._freq)
