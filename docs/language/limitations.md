@@ -477,6 +477,11 @@ A list of NUMBERS in a field works the same way for a constant subscript, `for` 
 `len()`. A `bytearray` or a fixed array handed to a driver keeps its storage, so
 `self._data[i] = v` writes the caller's buffer.
 
+**A method is not a field.** `Pin.value` is an overloaded method (`value()` reads,
+`value(x)` writes), so `p.value = 1` is an assignment to a name the class does not have as
+a field. It is refused where it is written, and told to call `p.value(1)` instead. The
+CircuitPython `digitalio.DigitalInOut.value` IS a property and takes the assignment.
+
 **A lookup table written as a plain list.** `DIGITS = [0x3F, 0x06, ...]` read as
 `DIGITS[digit]` with a run-time digit is the shape of every 7-segment table, font and gamma
 curve. The values are constants and nothing writes them, so the table is placed in flash,

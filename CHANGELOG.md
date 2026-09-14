@@ -38,6 +38,10 @@
 - A bytearray handed to a driver and stored in a field keeps its storage, so
   `self._data[i] = v` writes the caller's buffer instead of being refused as a bit index
   into a scalar (#315).
+- Assigning to a name the class defines as a METHOD is refused where it is written,
+  instead of writing a phantom field that shadows the method: `p.value = 1` on a HAL Pin,
+  the CircuitPython spelling, built clean and emitted no write to the port at all. The
+  refusal names `p.value(1)` and `p.value()` (#316).
 - A lookup table written as a plain list reads at run time. `DIGITS = [0x3F, 0x06, ...]`
   then `DIGITS[digit]` is how every 7-segment table, font and gamma curve is written, and
   it was refused: the list lives as separate variables, which have nothing to index. The
