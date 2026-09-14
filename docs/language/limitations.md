@@ -786,7 +786,7 @@ refusal that names a bracket instead of a construct is a defect, not a limitatio
 | `adafruit_ds18x20` | `tuple[Literal[...], ...]` | `...` is not a type annotation PyMCU can read |
 | `adafruit_74hc595` | `**kwargs` | it collects arguments into a run-time dictionary |
 | `adafruit_hcsr04` | `Optional[...]` on a parameter | a union type annotation is not supported |
-| `adafruit_ht16k33` (matrix) | `m[x, y] = 1`, a tuple subscript | tuples are not supported as runtime values |
+| `adafruit_ht16k33` (matrix) | `m[x, y] = 1`, a two-index subscript | it hands the pair to `__getitem__` as a tuple |
 | `adafruit_ht16k33` (segments) | `Tuple[int, ...]` | `...` is not a type annotation PyMCU can read |
 | `adafruit_ina219` | `WriteableBuffer`, through `bus_device` | unknown type in the annotation |
 | `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |
@@ -814,5 +814,11 @@ share. Whether PyMCU should read `Optional[X]` as `X` is a language decision, no
 **Two need a module that does not exist yet**: `adafruit_pixelbuf` for `neopixel` and
 `adafruit_framebuf` for `adafruit_ssd1306`. Both report the missing module by name.
 
-**A tuple subscript** (`matrix[x, y]`) is a genuine gap in the parser, and it is the one
-entry above whose message still points at a bracket.
+**A two-index subscript** (`matrix[x, y]`) is the same no-runtime-tuple limit reached through
+a subscript: the pair becomes one tuple before `__getitem__` sees it. Whether the compiler
+should bind that pair at compile time, so the `x, y = key` upstream writes unpacks the way
+`a, b = f()` already does, is open.
+
+Every one of the twenty now names its construct at the line it is written on. None is reported
+as a missing bracket, and none names anything internal to the compiler. That is the property to
+check when one of these messages changes.
