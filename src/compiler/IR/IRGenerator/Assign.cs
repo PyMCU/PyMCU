@@ -2674,6 +2674,18 @@ public partial class IRGenerator
     //     Sweeping all qualifications here destroyed zero-cost @inline param bindings: a
     //     write to the expansion-local `inline1.write_hex.hi` must not kill the caller's
     //     `byte -> main.hi` param alias.
+    /// <summary>Drops every spelling of a name from the locals map: it has just been written.</summary>
+    private void ForgetLocalConstant(string bareName)
+    {
+        foreach (var k in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + bareName,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + bareName,
+            bareName,
+        })
+            if (k != null) localConstantValues.Remove(k);
+    }
+
     private void InvalidateAliasesForWrite(string name)
     {
         foreach (var k in new[]
@@ -4509,6 +4521,12 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr ve)
         {
             Val target = ResolveBinding(ve.Name, ve);
+            // An augmented assignment is a WRITE, so whatever the name was known to hold stops
+            // being true here. Only the Constant case cleared constantVariables, which is all
+            // that was needed while locals were not tracked; `total = 0` followed by
+            // `total += v` left the locals map saying 0, and a call after the loop was handed
+            // that (PyMCU#327).
+            ForgetLocalConstant(ve.Name);
             if (target is Constant)
             {
                 string q = !string.IsNullOrEmpty(currentInlinePrefix)
@@ -4711,6 +4729,9 @@ public partial class IRGenerator
 
     private void VisitTupleUnpack(TupleUnpackStmt stmt)
     {
+        // Every target is written here, so none of them still holds what it held.
+        foreach (var unpacked in stmt.Targets) ForgetLocalConstant(unpacked);
+
         string QualifyTarget(string name)
         {
             if (!string.IsNullOrEmpty(currentInlinePrefix)) return currentInlinePrefix + name;

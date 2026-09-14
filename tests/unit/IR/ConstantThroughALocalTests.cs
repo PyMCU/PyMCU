@@ -104,6 +104,42 @@ public class ConstantThroughALocalTests
     }
 
     [Fact]
+    public void ANameTheBranchesDisagreeOn_IsNotTakenAsAConstant()
+    {
+        // Each arm assigns a different value, so past the chain the name holds neither. Kept
+        // separate because the arms are lowered in order and the last one would otherwise be
+        // the answer: a PWM duty came out 0x3F where 0x7F was asked for.
+        var ir = Gen(Prelude +
+            "def main():\n" +
+            "    n: uint8 = 0\n" +
+            "    if GPIOR0.value:\n" +
+            "        n = 1\n" +
+            "    else:\n" +
+            "        n = 2\n" +
+            "    plain(n)\n");
+        var writes = RegisterWrites(ir);
+        Assert.Contains(11, writes);
+        Assert.Contains(22, writes);
+        Assert.Contains(99, writes);
+    }
+
+    [Fact]
+    public void ANameAnAugmentedAssignmentChanged_IsNotTakenAsAConstant()
+    {
+        // `total = 0` then `total += ...`: the write is augmented, and it is still a write.
+        // Taken as 0, a sum printed 0 for every list.
+        var ir = Gen(Prelude +
+            "def main():\n" +
+            "    total: uint8 = 0\n" +
+            "    total += GPIOR0.value\n" +
+            "    plain(total)\n");
+        var writes = RegisterWrites(ir);
+        Assert.Contains(11, writes);
+        Assert.Contains(22, writes);
+        Assert.Contains(99, writes);
+    }
+
+    [Fact]
     public void ANameTheLoopReassignsIsNotTakenAsAConstant()
     {
         // `n` is 1 before the loop and something else inside it. The call is lowered once for

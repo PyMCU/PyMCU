@@ -1705,6 +1705,9 @@ public partial class IRGenerator
     // so that the backend can load and then store back the modified value.
     private Val ResolveAsmOperand(string name)
     {
+        // The assembly may write it, and nothing here can say whether it does.
+        ForgetLocalConstant(name);
+
         string localName = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);

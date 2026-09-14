@@ -1839,6 +1839,25 @@ public partial class IRGenerator
                 continue;
             }
 
+            // The argument as WRITTEN, folded with the caller's locals in scope. The value
+            // branches below see what VisitExpression made of it, and a width conversion of a
+            // local -- `delay_ms(uint16(ms))`, which is how a HAL narrows a computed value --
+            // arrives as a run-time Temporary even where every input is known. Asking the
+            // folder about the expression itself is what lets the callee dispatch on it (#327).
+            if (!IsConstType(func.Params[paramIdx].Type)
+                && argValues[i] is Temporary or Variable
+                && i < rawArgExprs.Count && rawArgExprs[i] is { } rawArg
+                && TryFoldArgumentExpression(rawArg, func.Params[paramIdx].Type, out int foldedArg)
+                && !ParameterIsAssignedIn(func, func.Params[paramIdx].Name))
+            {
+                constantVariables[paramName] = foldedArg;
+                strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                continue;
+            }
+
             if (argValues[i] is Temporary tArg)
             {
                 // A Temporary can carry a compile-time string or numeric constant
@@ -5822,6 +5841,58 @@ public partial class IRGenerator
         CollectMutatedNames(func.Body, names, receivers);
         return names.Contains(paramName);
     }
+
+    /// <summary>
+    /// The compile-time value of an argument EXPRESSION, with the caller's locals in scope, or
+    /// false when it has none. A width conversion is transparent while the value fits the width
+    /// it converts to; where it would truncate, the number the callee sees is not the one the
+    /// folder returns, so the argument is left to the run-time path.
+    /// </summary>
+    private bool TryFoldArgumentExpression(Expression e, string paramType, out int value)
+    {
+        bool saved = foldLocalConstants;
+        foldLocalConstants = true;
+        try
+        {
+            if (!TryFoldThroughConversions(e, out value)) return false;
+            // The parameter's own width has the last word for the same reason.
+            return FitsInScalar(value, paramType);
+        }
+        finally
+        {
+            foldLocalConstants = saved;
+        }
+    }
+
+    private bool TryFoldThroughConversions(Expression e, out int value)
+    {
+        if (e is CallExpr { Callee: VariableExpr conv, Args.Count: 1 } call
+            && IsScalarWidthName(conv.Name))
+        {
+            if (!TryFoldThroughConversions(call.Args[0], out value)) return false;
+            return FitsInScalar(value, conv.Name);
+        }
+
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
+    }
+
+    private static bool IsScalarWidthName(string name) => name
+        is "uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32" or "int" or "bool";
+
+    /// <summary>Whether a folded value survives a store of the named width unchanged.</summary>
+    private static bool FitsInScalar(int value, string type) => type switch
+    {
+        "uint8" or "bool" => value is >= 0 and <= 255,
+        "int8" => value is >= -128 and <= 127,
+        "uint16" => value is >= 0 and <= 65535,
+        "int16" or "int" => value is >= -32768 and <= 32767,
+        "uint32" => value >= 0,
+        "int32" => true,
+        // An unannotated or non-numeric parameter: the store width is not stated here, so the
+        // value is only carried when it fits the narrowest one the backend could choose.
+        _ => value is >= 0 and <= 255,
+    };
 
     private Val EmitCompileIsrIntrinsic(CallExpr expr)
     {

@@ -520,6 +520,12 @@ public partial class IRGenerator
 
     private void VisitFor(ForStmt stmt)
     {
+        // The loop rebinds its variable, so whatever the name held before the loop stops being
+        // true inside it. The unroller puts a value back per iteration; a run-time loop does
+        // not, and must not answer with the one from before.
+        ForgetLocalConstant(stmt.VarName);
+        if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLocalConstant(stmt.Var2Name);
+
         // The loop variable (and enumerate's index) is a binding even when no type is filed for
         // it -- a range loop and a runtime-bounded slice both bind a name that never enters
         // variableTypes. Recorded before any lowering decision, because `for i in range(...)`

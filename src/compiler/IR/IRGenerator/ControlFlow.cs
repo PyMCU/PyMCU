@@ -517,6 +517,12 @@ public partial class IRGenerator
         // 1. The field never accumulated and a state machine never left that arm.
         var snapBeforeInt = new Dictionary<string, int>(constantVariables);
         var branchSnapsInt = new List<Dictionary<string, int>>();
+        // The locals map travels with constantVariables through every arm and is reconciled on
+        // the same rule. Left out, a name each arm assigns differently kept whichever arm was
+        // lowered last, and a call AFTER the chain handed the callee that arm's value: a PWM
+        // duty came out 0x3F where 0x7F was asked for, and a list sum printed 0 (PyMCU#327).
+        var snapBeforeLocals = new Dictionary<string, int>(localConstantValues);
+        var branchSnapsLocals = new List<Dictionary<string, int>>();
         bool hasElse = stmt.ElseBranch != null;
 
         if (!skipThen)
@@ -530,6 +536,8 @@ public partial class IRGenerator
             strConstantVariables = new Dictionary<string, string>(snapBefore);
             branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
             constantVariables = new Dictionary<string, int>(snapBeforeInt);
+            branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
+            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
         }
 
         for (int i = 0; i < stmt.ElifBranches.Count; ++i)
@@ -587,6 +595,8 @@ public partial class IRGenerator
                 strConstantVariables = new Dictionary<string, string>(snapBefore);
                 branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
                 constantVariables = new Dictionary<string, int>(snapBeforeInt);
+                branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
+                localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
             }
         }
 
@@ -601,6 +611,8 @@ public partial class IRGenerator
             strConstantVariables = new Dictionary<string, string>(snapBefore);
             branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
             constantVariables = new Dictionary<string, int>(snapBeforeInt);
+            branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
+            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
         }
 
         Emit(new Label(endLabel));
@@ -637,6 +649,35 @@ public partial class IRGenerator
 
                 if (allAgree && !first && hasElse) constantVariables[key] = agreed;
                 else constantVariables.Remove(key);
+            }
+        }
+
+        // The locals, on the same rule: a value survives the chain only when every arm agrees
+        // on it and one arm always runs.
+        if (branchSnapsLocals.Count > 0)
+        {
+            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+            foreach (var dead in killedConstants) localConstantValues.Remove(dead);
+
+            var changedLocals = new HashSet<string>();
+            foreach (var kvp in branchSnapsLocals.SelectMany(snap => snap))
+                if (!snapBeforeLocals.TryGetValue(kvp.Key, out var oldV) || oldV != kvp.Value)
+                    changedLocals.Add(kvp.Key);
+
+            foreach (var key in changedLocals)
+            {
+                bool allAgree = true;
+                int agreed = 0;
+                bool first = true;
+                foreach (var snap in branchSnapsLocals)
+                {
+                    if (!snap.TryGetValue(key, out var v)) { allAgree = false; break; }
+                    if (first) { agreed = v; first = false; }
+                    else if (v != agreed) { allAgree = false; break; }
+                }
+
+                if (allAgree && !first && hasElse) localConstantValues[key] = agreed;
+                else localConstantValues.Remove(key);
             }
         }
 

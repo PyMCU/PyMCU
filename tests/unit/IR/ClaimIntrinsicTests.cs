@@ -25,6 +25,11 @@ public class ClaimIntrinsicTests
         "def use(pin: const, code: uint8):\n" +
         "    claim(\"Timer0 prescaler\", code, pin, \"share it or move\")\n\n";
 
+    // The same, with a register in scope: the rows that need a value the compiler cannot know
+    // read one. Kept separate because the line numbers of Prelude are asserted below.
+    private const string PreludeWithRegister =
+        "from pymcu.chips.atmega328p import GPIOR0\n" + Prelude;
+
     [Fact]
     public void ASecondOwnerAskingAnotherValue_IsRefusedNamingBoth()
     {
@@ -76,12 +81,28 @@ public class ClaimIntrinsicTests
     [Fact]
     public void ARunTimeValue_HasNothingToClaim()
     {
-        var ir = Gen(Prelude +
+        // Read from a register: since PyMCU#327 a local that holds a compile-time constant IS
+        // passed as one, so `v: uint8 = 3` claims exactly as the literal does, which is the
+        // case above. A value nobody knows is what this row is about.
+        var ir = Gen(PreludeWithRegister +
             "def main():\n" +
-            "    v: uint8 = 3\n" +
+            "    v: uint8 = GPIOR0.value\n" +
             "    use(\"PD5\", v)\n" +
             "    use(\"PD6\", v + 1)\n");
         Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void AConstantHeldInALocal_ClaimsLikeALiteral()
+    {
+        // PyMCU#327: the local carries the value into the claim, so the conflict is seen.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Prelude +
+            "def main():\n" +
+            "    v: uint8 = 3\n" +
+            "    use(\"PD5\", v)\n" +
+            "    use(\"PD6\", v + 1)\n"));
+        Assert.Contains("PD5", ex.Message);
+        Assert.Contains("PD6", ex.Message);
     }
 
     [Fact]

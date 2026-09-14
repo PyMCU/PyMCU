@@ -84,6 +84,10 @@ public partial class IRGenerator
             var vr = new Variable(key, dt);
             variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
+            // A walrus writes the name like any assignment; it carries a constant only when
+            // the value it stores is one.
+            if (rhs is Constant walrusConst) localConstantValues[key] = walrusConst.Value;
+            else localConstantValues.Remove(key);
             return vr;
         }
 
