@@ -228,10 +228,58 @@ def pwm_init_raw(pin: const, ocr: uint8, off: uint8, prescaler: uint8, invert: c
 
 # The 8-bit entry every HAL user has: duty 0 is off, 255 is fully on, and a value in
 # between is high for duty + 1 of 256 counts (fast PWM sets at BOTTOM and clears on the
-# match, inclusive). The exact 16-bit path is pwm_u16_steps + pwm_init_raw below.
+# match, inclusive). Written out rather than routed through pwm_init_raw with a flag:
+# a run-time duty then computed the flag and branched on it twice (+30 bytes on the
+# duty-zero fixture). The exact 16-bit path is pwm_u16_steps + pwm_init_raw.
 @inline
 def pwm_init(pin: const, duty: uint8, prescaler: uint8, invert: const[uint8] = 0):
-    pwm_init_raw(pin, duty, 1 if duty == 0 else 0, prescaler, invert)
+    # TCCRxA is shared by both channels of a timer: the COM bits are OR-ed in so
+    # initializing OC1B does not silently disconnect an already-running OC1A
+    # (Arduino's analogWrite on D9+D10 together froze D9 before this). The two
+    # channels of one timer necessarily share WGM and prescaler.
+    match pin:
+        case "PD6":
+            # Timer0 OC0A: Fast PWM non-inverting, WGM01:00=11 -> TCCR0A=0x83
+            DDRD[6] = 1
+            OCR0A.value = duty
+            TCCR0A.value = TCCR0A.value | (0xC3 if invert else 0x83)
+            TCCR0B.value = prescaler
+        case "PD5":
+            # Timer0 OC0B: Fast PWM non-inverting, WGM01:00=11 -> TCCR0A=0x23
+            DDRD[5] = 1
+            OCR0B.value = duty
+            TCCR0A.value = TCCR0A.value | (0x33 if invert else 0x23)
+            TCCR0B.value = prescaler
+        case "PB1":
+            # Timer1 OC1A: Fast PWM 8-bit (WGM=0101), COM1A1=1
+            DDRB[1] = 1
+            OCR1AH.value = 0          # see pwm_clear_ocr_high: TEMP commits with the low byte
+            OCR1AL.value = duty
+            TCCR1A.value = TCCR1A.value | (0xC1 if invert else 0x81)
+            TCCR1B.value = prescaler
+        case "PB2":
+            # Timer1 OC1B: Fast PWM 8-bit, COM1B1=1
+            DDRB[2] = 1
+            OCR1BH.value = 0          # see pwm_clear_ocr_high: TEMP commits with the low byte
+            OCR1BL.value = duty
+            TCCR1A.value = TCCR1A.value | (0x31 if invert else 0x21)
+            TCCR1B.value = prescaler
+        case "PB3":
+            # Timer2 OC2A: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x83
+            DDRB[3] = 1
+            OCR2A.value = duty
+            TCCR2A.value = TCCR2A.value | (0xC3 if invert else 0x83)
+            TCCR2B.value = prescaler
+        case "PD3":
+            # Timer2 OC2B: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x23
+            DDRD[3] = 1
+            OCR2B.value = duty
+            TCCR2A.value = TCCR2A.value | (0x33 if invert else 0x23)
+            TCCR2B.value = prescaler
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
+    if duty == 0:
+        pwm_disconnect(pin)
 
 
 # A 16-bit duty (0..65535 = 0..100 %, what CircuitPython and MicroPython speak) as the

@@ -180,10 +180,36 @@ def pwm_init_raw(pin: const, ocr: uint8, off: uint8, prescaler: uint8, invert: c
 
 # The 8-bit entry every HAL user has: duty 0 is off, 255 is fully on, and a value in
 # between is high for duty + 1 of 256 counts (fast PWM sets at BOTTOM and clears on the
-# match, inclusive). The exact 16-bit path is pwm_u16_steps + pwm_init_raw below.
+# match, inclusive). Written out rather than routed through pwm_init_raw with a flag:
+# a run-time duty then computed the flag and branched on it twice (+30 bytes on the
+# duty-zero fixture). The exact 16-bit path is pwm_u16_steps + pwm_init_raw.
 @inline
 def pwm_init(pin: const, duty: uint8, prescaler: uint8, invert: const[uint8] = 0):
-    pwm_init_raw(pin, duty, 1 if duty == 0 else 0, prescaler, invert)
+    match pin:
+        case "PB0":
+            # Timer0 OC0A: Fast PWM non-inverting
+            # TCCR0A = COM0A1 | WGM01 | WGM00 = 0x83
+            DDRB[0] = 1
+            OCR0A.value = duty
+            TCCR0A.value = 0xC3 if invert else 0x83
+            TCCR0B.value = prescaler
+        case "PB1":
+            # Timer0 OC0B: Fast PWM non-inverting
+            # TCCR0A = COM0B1 | WGM01 | WGM00 = 0x23
+            DDRB[1] = 1
+            OCR0B.value = duty
+            TCCR0A.value = 0x33 if invert else 0x23
+            TCCR0B.value = prescaler
+        case "PB4":
+            # Timer1 OC1B: Fast PWM mode via PWM1B bit and COM1B1
+            # TCCR1: PWM1B=bit6, COM1B1=bit5, COM1B0=bit4, CS1[3:0]=prescaler
+            DDRB[4] = 1
+            OCR0A.value = duty   # OCR1B shares physical register with OCR0A
+            TCCR1.value = prescaler
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
+    if duty == 0:
+        pwm_disconnect(pin)
 
 
 # A 16-bit duty (0..65535 = 0..100 %, what CircuitPython and MicroPython speak) as the
