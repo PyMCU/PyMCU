@@ -9,6 +9,9 @@ namespace PyMCU.UnitTests;
 ///
 ///     except E as e     ->  Expected ':' after exception type       (the colon is there)
 ///     except (A, B)     ->  Expected exception type after 'except'  (there are two)
+///
+/// The tuple is no longer refused at all: #346 made the compiler follow its own advice and
+/// catch either type. What these tests hold for it now is that both front ends take it.
 ///     except* E         ->  Expected exception type after 'except'  (it is right there)
 ///
 /// The third is not in the issue. It is the same defect three tokens away in the same clause,
@@ -112,36 +115,43 @@ public class ExceptFormDiagnosticTests
 
     // ── `except (A, B)` ──────────────────────────────────────────────────────
 
-    [Fact]
-    public void ATupleOfTypes_IsRefusedByName()
-    {
-        var msg = Refusal(TupleHandler);
+    // The refusal these three used to assert is gone: #346 made the compiler do what its own
+    // advice said, so a tuple of types now catches either. What is left to hold is that BOTH
+    // front ends take it, which is the half that was a divergence before #196.
 
-        Assert.Contains("'except (A, B):' is not supported", msg);
-        Assert.DoesNotContain("Expected exception type after 'except'", msg);
+    [Fact]
+    public void ATupleOfTypes_Parses()
+    {
+        Parse(TupleHandler);
+        PythonAstReader.ParseSource(TupleHandler, "main.py");
     }
 
     [Fact]
-    public void TheRefusalSaysToWriteOneClausePerType()
+    public void ASingleTypeInParentheses_Parses()
     {
-        var msg = Refusal(TupleHandler);
-
-        Assert.Contains("one 'except' clause per exception type", msg);
-    }
-
-    [Fact]
-    public void ASingleTypeInParentheses_GetsTheSameAnswer()
-    {
-        // CPython accepts `except (ValueError):` as well, and the advice covers it: the way out
-        // is the type without the parentheses either way.
-        var msg = Refusal(
+        // CPython accepts `except (ValueError):` as well, and it is the same program as the
+        // bare spelling.
+        const string src =
             "def main():\n" +
             "    try:\n" +
             "        raise ValueError\n" +
             "    except (ValueError):\n" +
-            "        pass\n");
+            "        pass\n";
+        Parse(src);
+        PythonAstReader.ParseSource(src, "main.py");
+    }
 
-        Assert.Contains("without parentheses", msg);
+    [Fact]
+    public void AnEmptyTuple_IsRefusedBySayingNothingCanReachTheHandler()
+    {
+        const string src =
+            "def main():\n" +
+            "    try:\n" +
+            "        raise ValueError\n" +
+            "    except ():\n" +
+            "        pass\n";
+        Assert.Contains("names no exception type", Refusal(src));
+        Assert.Contains("names no exception type", TranslatorRefusal(src));
     }
 
     // ── `except*` ────────────────────────────────────────────────────────────
@@ -186,14 +196,6 @@ public class ExceptFormDiagnosticTests
         // It used to BUILD, silently dropping the binding, so this is where the two front ends
         // disagreed about what the language is.
         Assert.Equal(Refusal(AsHandler), TranslatorRefusal(AsHandler));
-    }
-
-    [Fact]
-    public void TheTranslatorRefusesTheTuple_WithTheSameSentence()
-    {
-        // It used to reach name resolution and report that `(ValueError, TypeError)` is not
-        // defined, which is a name no one wrote.
-        Assert.Equal(Refusal(TupleHandler), TranslatorRefusal(TupleHandler));
     }
 
     // ── invariants: the forms that work ──────────────────────────────────────
