@@ -329,6 +329,11 @@ A class declared inside another class is constructible, and its constants are re
 through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the module that
 declares it. That is how CircuitPython spells the UART parity, `busio.UART.Parity.ODD`.
 
+A call argument that holds a compile-time constant is passed as that constant, so a callee
+that dispatches on it takes the same path whether the caller wrote the value at the call or
+put it in a local first. The value has to be one the compiler can still see: a name a branch
+or a loop can change is not one, and neither is anything read from a register.
+
 An unannotated field takes its width from the widest value the constructor assigns — a
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic
 expression its widest operand. An explicit `self.x: T = ...` still wins.
@@ -449,6 +454,10 @@ list comprehensions with compile-time constant bounds (`range(start, stop, step)
 the step), nested list comprehensions, `if`-filtered list comprehensions (constant condition),
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
+
+A `range()` bound is folded before the loop is lowered, whatever shape it is written in: a
+literal, a name, or an expression over either. A count of at most eight unrolls, an empty
+range emits nothing, and anything the program really decides at run time stays a loop.
 
 A `for` over a short constant list unrolls, and the loop variable is a compile-time constant
 in each iteration, so a `const` parameter receiving it resolves as it would from a literal.

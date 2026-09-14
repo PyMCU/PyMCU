@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Zero cost
+- A call argument that HOLDS a compile-time constant binds the parameter as that constant, not
+  as a variable containing it. The difference used to be only whether the argument mentioned a
+  local: `f(int(s * 1000))` bound a constant and `x = int(s * 1000); f(x)` bound a variable,
+  so every callee that dispatches on the value -- the calibrated delays,
+  `pwm_prescaler_for_freq`, `claim()`, any `match` on a `const` parameter -- lost its constant
+  path, and a `const` parameter refused the call outright (#327).
+- A `range()` bound written as an EXPRESSION decides the loop. Only a literal or a name folded
+  before, so `range(total_us // 60000000)` was a run-time counter loop over a 32-bit bound;
+  1814 bytes on a 380-byte program. A folded count of at most eight unrolls, and an empty
+  range emits nothing (#326).
+
 ### Silent wrong code
 - A keyword argument clears the None an earlier expansion of the same `@inline` function left
   on that parameter. Any call that let `parity` default to None made the NEXT call's
