@@ -2060,6 +2060,18 @@ public partial class IRGenerator
         var paramTypes = new Dictionary<string, string>();
         foreach (var p in init.Params) paramTypes[p.Name] = p.Type;
 
+        // The annotated locals of __init__: a field first stored from `w: uint16 = v` is as
+        // wide as w says, the way one stored from a `v: uint16` parameter already was. It
+        // was laid out as a byte, and every later store, the runtime ones included,
+        // truncated into it: a uint16 duty read back 0 (PyMCU#294).
+        var localTypes = new Dictionary<string, string>();
+        foreach (var s in init.Body.Statements)
+            switch (s)
+            {
+                case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): localTypes[vd.Name] = vd.VarType; break;
+                case AnnAssign an when !string.IsNullOrEmpty(an.Annotation): localTypes[an.Target] = an.Annotation; break;
+            }
+
         foreach (var s in init.Body.Statements)
         {
             string? field = null;
@@ -2106,6 +2118,11 @@ public partial class IRGenerator
                     type = pt.StartsWith("const[") && pt.EndsWith("]")
                         ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
                         : pt;
+            }
+            else if (rhs is VariableExpr lv && annotatedType == null
+                     && localTypes.TryGetValue(lv.Name, out var lt) && !string.IsNullOrEmpty(lt))
+            {
+                type = lt.StartsWith("const[") && lt.EndsWith("]") ? lt.Substring(6, lt.Length - 7) : lt;
             }
             layout.Add((field, type, srcParam));
         }
