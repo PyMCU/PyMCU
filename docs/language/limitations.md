@@ -779,7 +779,8 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
 
 Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's file
 **byte-identical to its repository** and a `main()` written after the library's own example
-that constructs the object and calls its methods.
+that constructs the object and calls its methods. Re-measured the same day after #352, #356
+and #357.
 
 None of the twenty builds unmodified. Every one now stops at a construct the compiler names at
 the line it is written on, which is the thing to check when one of these messages changes: a
@@ -788,16 +789,16 @@ refusal that names a bracket instead of a construct is a defect, not a limitatio
 | Library | Stops at | What the compiler says |
 |---|---|---|
 | `adafruit_bmp280` | `Optional[...]` on a parameter | a union type annotation is not supported |
-| `adafruit_bus_device` | `WriteableBuffer` annotation | unknown type in the annotation |
+| `adafruit_bus_device` | `Optional[int]` on a parameter | a union type annotation is not supported |
 | `adafruit_character_lcd` | `Optional[digitalio.DigitalInOut]` | a union type annotation is not supported |
 | `adafruit_debouncer` | `**kwargs` | it collects arguments into a run-time dictionary |
 | `adafruit_dht` | `import array` | `array` is a Python standard module; use a bytearray |
-| `adafruit_ds18x20` | `tuple[Literal[...], ...]` | `...` is not a type annotation PyMCU can read |
+| `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_74hc595` | `**kwargs` | it collects arguments into a run-time dictionary |
 | `adafruit_hcsr04` | `Optional[...]` on a parameter | a union type annotation is not supported |
-| `adafruit_ht16k33` (matrix) | `m[x, y] = 1`, a two-index subscript | it hands the pair to `__getitem__` as a tuple |
-| `adafruit_ht16k33` (segments) | `Tuple[int, ...]` | `...` is not a type annotation PyMCU can read |
-| `adafruit_ina219` | `WriteableBuffer`, through `bus_device` | unknown type in the annotation |
+| `adafruit_ht16k33` (matrix) | `m[x, y] = 1`, a tuple subscript | a subscript with more than one index hands the pair to `__getitem__` as a tuple |
+| `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
+| `adafruit_ina219` | `Optional[int]`, through `bus_device` | a union type annotation is not supported |
 | `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |
 | `adafruit_mcp3xxx` | `Optional[...]` on a parameter | a union type annotation is not supported |
 | `neopixel` | `import adafruit_pixelbuf` | module not found |
@@ -805,23 +806,34 @@ refusal that names a bracket instead of a construct is a defect, not a limitatio
 | `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
 | `adafruit_motor` (servo) | `Optional[float]` on a property | a union type annotation is not supported |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
-| `adafruit_tcs34725` | `Tuple[...]` | unknown type in the annotation (did you mean `tuple`?) |
-| `adafruit_veml7700` | `WriteableBuffer`, through `bus_device` | unknown type in the annotation |
+| `adafruit_tcs34725` | `Optional[int]`, through `bus_device` | a union type annotation is not supported |
+| `adafruit_veml7700` | `Optional[int]`, through `bus_device` | a union type annotation is not supported |
 
 ### Which of these are limits and which are gaps
 
 **Limits of the no-heap, fixed-width model.** `**kwargs` needs a run-time dictionary.
 `except X as e` needs an exception object, and a raise here carries only which exception was
-raised. An f-string in a raise message would be built and then discarded, because the message
-never reaches the image. `array` is dynamic storage. Each says so in one sentence at the line
-it is written on.
+raised. An f-string OR A CALL in a raise message would be built and then discarded, because
+the message never reaches the image. `array` is dynamic storage. Each says so in one sentence
+at the line it is written on.
 
-**A union annotation is the largest single blocker**, stopping five of the twenty. `Optional[X]`
-is `X` or `None`, and storage here is decided at compile time, so there is no width the two
-share. Whether PyMCU should read `Optional[X]` as `X` is a language decision, not an oversight.
+**A union annotation is now the largest single blocker by a wide margin**, stopping nine of
+the twenty where it stopped five before. `Optional[X]` is `X` or `None`, and storage here is
+decided at compile time, so there is no width the two share. Whether PyMCU should read
+`Optional[X]` as `X` is a language decision, not an oversight, and it is the one decision that
+would move the most libraries.
 
-**Two need a module that does not exist yet**: `adafruit_pixelbuf` for `neopixel` and
-`adafruit_framebuf` for `adafruit_ssd1306`. Both report the missing module by name.
+**Three need a module that does not exist yet**: `adafruit_pixelbuf` for `neopixel`,
+`adafruit_framebuf` for `adafruit_ssd1306`, and `onewireio` for `adafruit_ds18x20`. All three
+report the missing module by name.
+
+**What moved on 2026-09-14.** `WriteableBuffer` and `ReadableBuffer` are read as the byte
+buffer they name (#356), so `adafruit_bus_device` and the three libraries behind it reach the
+union instead of an unknown type. `Tuple[...]`, and a `...` or a `Literal[...]` inside a tuple
+annotation, are read (#357): `adafruit_tcs34725` moves off the annotation, `adafruit_ds18x20`
+reaches its missing module, and `adafruit_ht16k33` segments moves from the annotation on line
+181 to the call in a raise message on line 210. Nothing now stops on an annotation naming a
+type the compiler has.
 
 **A two-index subscript** (`matrix[x, y]`) is the same no-runtime-tuple limit reached through
 a subscript: the pair becomes one tuple before `__getitem__` sees it. Whether the compiler
