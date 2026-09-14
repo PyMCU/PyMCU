@@ -26,7 +26,14 @@ def select_port(name: const) -> ptr[uint8]:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
             return PORTB
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. It has one port, so the pin names are "
+                "PB0 to PB5 -- board.D0 to board.D5 in the CircuitPython layer are "
+                "the same six legs. A bare number is not one of them: these are bare "
+                "chips with no silkscreen to number, so Pin(0) is refused rather than "
+                "guessed at. PB5 is the RESET pin and drives anything only after the "
+                "RSTDISBL fuse is burnt, after which the chip can no longer be "
+                "programmed over ISP.")
 
 @inline
 def select_ddr(name: const) -> ptr[uint8]:
@@ -34,7 +41,14 @@ def select_ddr(name: const) -> ptr[uint8]:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
             return DDRB
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. It has one port, so the pin names are "
+                "PB0 to PB5 -- board.D0 to board.D5 in the CircuitPython layer are "
+                "the same six legs. A bare number is not one of them: these are bare "
+                "chips with no silkscreen to number, so Pin(0) is refused rather than "
+                "guessed at. PB5 is the RESET pin and drives anything only after the "
+                "RSTDISBL fuse is burnt, after which the chip can no longer be "
+                "programmed over ISP.")
 
 @inline
 def select_pin(name: const) -> ptr[uint8]:
@@ -42,7 +56,14 @@ def select_pin(name: const) -> ptr[uint8]:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
             return PINB
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. It has one port, so the pin names are "
+                "PB0 to PB5 -- board.D0 to board.D5 in the CircuitPython layer are "
+                "the same six legs. A bare number is not one of them: these are bare "
+                "chips with no silkscreen to number, so Pin(0) is refused rather than "
+                "guessed at. PB5 is the RESET pin and drives anything only after the "
+                "RSTDISBL fuse is burnt, after which the chip can no longer be "
+                "programmed over ISP.")
 
 @inline
 def select_bit(name: const) -> uint8:
@@ -60,7 +81,14 @@ def select_bit(name: const) -> uint8:
         case 'PB5':
             return 5
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. It has one port, so the pin names are "
+                "PB0 to PB5 -- board.D0 to board.D5 in the CircuitPython layer are "
+                "the same six legs. A bare number is not one of them: these are bare "
+                "chips with no silkscreen to number, so Pin(0) is refused rather than "
+                "guessed at. PB5 is the RESET pin and drives anything only after the "
+                "RSTDISBL fuse is burnt, after which the chip can no longer be "
+                "programmed over ISP.")
 
 
 # No board numbering: these are bare chips with no silkscreen to number. Refusing

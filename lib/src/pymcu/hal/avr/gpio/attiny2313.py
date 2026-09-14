@@ -31,7 +31,11 @@ def select_port(name: const) -> ptr[uint8]:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 'PB6' | 'PB7':
             return PORTB
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. The pin names are PB0 to PB7 and PD0 to "
+                "PD6 -- board.D0 to board.D13 in the CircuitPython layer are the same "
+                "legs. A bare number is not one of them: these are bare chips with no "
+                "silkscreen to number, so Pin(0) is refused rather than guessed at.")
 
 @inline
 def select_ddr(name: const) -> ptr[uint8]:
@@ -41,7 +45,11 @@ def select_ddr(name: const) -> ptr[uint8]:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 'PB6' | 'PB7':
             return DDRB
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. The pin names are PB0 to PB7 and PD0 to "
+                "PD6 -- board.D0 to board.D13 in the CircuitPython layer are the same "
+                "legs. A bare number is not one of them: these are bare chips with no "
+                "silkscreen to number, so Pin(0) is refused rather than guessed at.")
 
 @inline
 def select_pin(name: const) -> ptr[uint8]:
@@ -51,7 +59,11 @@ def select_pin(name: const) -> ptr[uint8]:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 'PB6' | 'PB7':
             return PINB
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. The pin names are PB0 to PB7 and PD0 to "
+                "PD6 -- board.D0 to board.D13 in the CircuitPython layer are the same "
+                "legs. A bare number is not one of them: these are bare chips with no "
+                "silkscreen to number, so Pin(0) is refused rather than guessed at.")
 
 @inline
 def select_bit(name: const) -> uint8:
@@ -73,7 +85,11 @@ def select_bit(name: const) -> uint8:
         case 'PB7':
             return 7
         case _:
-            raise NotImplementedError('Unsupported Pin')
+            raise CompileError(
+                "unknown pin on this ATtiny. The pin names are PB0 to PB7 and PD0 to "
+                "PD6 -- board.D0 to board.D13 in the CircuitPython layer are the same "
+                "legs. A bare number is not one of them: these are bare chips with no "
+                "silkscreen to number, so Pin(0) is refused rather than guessed at.")
 
 
 # No board numbering: bare chip, no silkscreen to number. See attiny_b.py.

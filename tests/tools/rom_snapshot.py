@@ -682,6 +682,11 @@ NO_BUILD_KINDS = [
     ("Address label duplicated", "backend-roto", "el backend acuna la misma etiqueta dos veces"),
     ("Unsupported Pin", "sin-mapa-de-pines", "el HAL no conoce los pines de este chip"),
     ("Unknown pin for", "pin-inexistente", "ese pin no existe en este chip: el arnes probo mal"),
+    # Los ATtiny desnudos dejaron de decir "Unsupported Pin" y ahora nombran los pines que
+    # el chip SI tiene. Sin esta entrada la celda caeria en "sin-clasificar", que se lee
+    # como un fallo nuevo del backend en vez de como un pin mal elegido por el arnes.
+    ("unknown pin on this ATtiny", "pin-inexistente",
+     "ese pin no existe en este chip: el arnes probo mal"),
     ("no pin candidate", "sin-facade", "el facade portable no cubre esta arquitectura o el chip"),
     ("no adc candidate", "sin-periferico", "el chip no tiene ese periferico, o el facade no lo expone"),
     ("not supported on this architecture", "sin-facade", "el facade rechaza la arquitectura"),
