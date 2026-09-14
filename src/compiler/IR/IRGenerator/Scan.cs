@@ -2203,6 +2203,99 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// The refusal for a call whose result was never produced: the callee reached the end of
+    /// its body without returning, and the caller reads the value anyway.
+    ///
+    /// Python has None for the path that falls off the end. There is none here: the result of
+    /// an @inline is a temporary the expansion copies its `return` into, and the result of a
+    /// subroutine is a register. A body that reaches its end without returning leaves both
+    /// untouched, and the caller reads whatever was in them.
+    ///
+    /// Measured (#302): an AVR PWM HAL whose `pwm_prescaler_for_freq(pin, freq) -> uint8` had
+    /// lost its `return` compiled to `MOV R4, R16` -- R16 being the low byte of RAMEND, left
+    /// there by the reset prologue -- and `PWM("PD6", 128, 500)` programmed TCCR0B = 0x3F
+    /// instead of 3. The timer then ran off the T0 pin and the output never toggled. The
+    /// firmware built clean, and the value was wrong by whatever the prologue happened to
+    /// leave behind, which is the worst kind of wrong: it is stable, plausible and silent.
+    ///
+    /// Raised at the CALL, and only when the result is read. A call written as a statement
+    /// discards the result, produces no wrong value, and is left alone -- which matters: the
+    /// stdlib has accessors (`Pin.mode(m)`) whose no-argument path returns nothing and whose
+    /// one-argument path is written as a statement everywhere it is used.
+    /// </summary>
+    private Exception UnproducedResultError(FunctionDef func)
+    {
+        return UserError(
+            $"'{func.Name}' is declared to return {func.ReturnType} and this call reads the "
+            + "value, but a path through its body reaches the end without returning one. "
+            + "Python would hand back None; there is no None here, so this reads whatever the "
+            + "register or stack slot happened to hold. Return a value on every path -- a "
+            + "`match` needs a `case _:` arm and an `if` needs an `else:` -- or call it as a "
+            + "statement and drop the return type.");
+    }
+
+    /// <summary>
+    /// True when control cannot reach the end of this statement: every path through it either
+    /// returns or raises. Answering "no" is always safe; answering "yes" wrongly would let a
+    /// miscompile through, so every case here is one that can be shown.
+    /// </summary>
+    private static bool AlwaysLeaves(Statement? s) => s switch
+    {
+        null => false,
+        ReturnStmt => true,
+        RaiseStmt => true,
+        Block b => b.Statements.Any(AlwaysLeaves),
+        // No `else` means the condition being false walks straight past the statement.
+        IfStmt ifs => ifs.ElseBranch != null
+                      && AlwaysLeaves(ifs.ThenBranch)
+                      && ifs.ElifBranches.All(e => AlwaysLeaves(e.Body))
+                      && AlwaysLeaves(ifs.ElseBranch),
+        // A `match` with no arm for the subject falls through, so a wildcard is required.
+        MatchStmt m => m.Branches.Any(IsCatchAll)
+                       && m.Branches.All(c => AlwaysLeaves(c.Body)),
+        // `while True:` is left only by a `return` or a `raise` -- unless a `break` leaves it.
+        WhileStmt w => IsAlwaysTrue(w.Condition) && !HasOwnBreak(w.Body),
+        WithStmt wi => AlwaysLeaves(wi.Body),
+        // The handlers are what runs when the body does not finish, so both halves have to
+        // leave; a `finally` that leaves settles it on its own.
+        TryStmt t => (t.Finally != null && t.Finally.Any(AlwaysLeaves))
+                     || (t.Body.Any(AlwaysLeaves)
+                         && t.Handlers.All(h => h.Handler.Any(AlwaysLeaves))
+                         && (t.ElseBody == null || t.ElseBody.Any(AlwaysLeaves))),
+        // A `for` can run zero times, so its body proves nothing about the path around it.
+        _ => false
+    };
+
+    /// A `case _:` or a bare capture pattern, either of which matches whatever is left.
+    private static bool IsCatchAll(CaseBranch c) =>
+        c.Guard == null && (c.Pattern == null || c.CaptureName.Length > 0);
+
+    private static bool IsAlwaysTrue(Expression? cond) => cond switch
+    {
+        BooleanLiteral b => b.Value,
+        IntegerLiteral n => n.Value != 0,
+        _ => false
+    };
+
+    /// A `break` that leaves THIS loop: one inside a nested loop belongs to that one.
+    private static bool HasOwnBreak(Statement? s) => s switch
+    {
+        null => false,
+        BreakStmt => true,
+        Block b => b.Statements.Any(HasOwnBreak),
+        IfStmt ifs => HasOwnBreak(ifs.ThenBranch)
+                      || ifs.ElifBranches.Any(e => HasOwnBreak(e.Body))
+                      || HasOwnBreak(ifs.ElseBranch),
+        MatchStmt m => m.Branches.Any(c => HasOwnBreak(c.Body)),
+        WithStmt wi => HasOwnBreak(wi.Body),
+        TryStmt t => t.Body.Any(HasOwnBreak)
+                     || t.Handlers.Any(h => h.Handler.Any(HasOwnBreak))
+                     || (t.ElseBody?.Any(HasOwnBreak) ?? false)
+                     || (t.Finally?.Any(HasOwnBreak) ?? false),
+        _ => false
+    };
+
     /// Every FunctionDef a module declares, paired with the class that owns it, or null.
     private static IEnumerable<(FunctionDef Func, string? Owner)> FunctionsWithOwners(ProgramNode ast)
     {

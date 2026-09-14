@@ -355,6 +355,18 @@ public partial class IRGenerator
     /// generator in a value position cannot work; a generator whose result is thrown away is
     /// something else entirely, and the message says so.
     private bool loweringDiscardedExprStmt;
+
+    /// <summary>
+    /// True while the call about to be lowered is a whole statement, so nobody reads its
+    /// result. Set by VisitStatement, read and cleared by the call lowering before it visits
+    /// the arguments -- a call in an argument IS read, by this call.
+    ///
+    /// What it gates: a callee that reaches the end of its body without returning leaves the
+    /// result temporary unwritten, and reading it is a miscompile (#302). Discarding it is
+    /// not, and the stdlib does discard it (`Pin.mode(m)` returns nothing on the path that
+    /// takes an argument, and every use of that path is a statement).
+    /// </summary>
+    private bool callResultIsDiscarded;
     // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
     private Dictionary<string, string> slotInstances = new();
     // @outline method symbol -> field -> byte offset within the slot (for self.field loads).

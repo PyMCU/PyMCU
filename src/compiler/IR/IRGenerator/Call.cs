@@ -1200,6 +1200,11 @@ public partial class IRGenerator
             Console.Error.WriteLine($"[pymcuc] warning: {func.WarningMessage}");
         }
 
+        // Read and cleared here, before the arguments are visited: a call nested in an argument
+        // is read by THIS call, whatever this call's own result becomes (#302).
+        bool resultDiscarded = callResultIsDiscarded;
+        callResultIsDiscarded = false;
+
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
         var newPrefix = $"inline{newDepth}.{func?.Name}.";
@@ -2102,6 +2107,22 @@ public partial class IRGenerator
         // A result temporary the expansion allocated itself (a value return in a callee the
         // parser filed as void) is the call's value too.
         result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;
+
+        // The expansion is over and no `return` ran on the path it took, so the result
+        // temporary this call hands back was never written. Reading it is a miscompile and the
+        // firmware builds clean, so it is refused rather than handed on (#302). A call written
+        // as a statement reads nothing and is left alone. Raised below, after this frame's
+        // saved file and line are back: the refusal is about the CALL.
+        var finishedCtx = Enumerable.Last<InlineContext>(inlineStack);
+        // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
+        // expansion actually walked, which is exact for a body whose branches fold away. A
+        // body that returns under a RUN-TIME condition assigns the result on the path taken
+        // here and still falls through on the other, so the syntax has to be read as well.
+        bool resultWasNeverProduced =
+            !resultDiscarded && func != null && finishedCtx.ResultTemp != null
+            && finishedCtx.ResultVars.Count == 0
+            && (!finishedCtx.ResultAssigned || !AlwaysLeaves(func.Body));
+
         inlineStack.RemoveAt(inlineStack.Count - 1);
         activeInlineExpansions.Remove(callee);
         // Nested expansions pop innermost-first, so after the RHS finishes this holds
@@ -2116,6 +2137,8 @@ public partial class IRGenerator
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedModulePrefix;
         inlineDepth--;
+
+        if (resultWasNeverProduced) throw UnproducedResultError(func!);
 
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);

@@ -866,8 +866,18 @@ public partial class IRGenerator
             loweringDiscardedExprStmt =
                 exprStmt.Expr is CallExpr { Callee: VariableExpr gv }
                 && generatorClasses.Contains(ResolveCallee(gv.Name));
+
+            // A call written as a whole statement throws its result away. The call lowering
+            // reads this once and clears it, so the calls nested in the arguments -- whose
+            // results this one DOES read -- do not inherit it (#302).
+            bool prevDiscardedResult = callResultIsDiscarded;
+            callResultIsDiscarded = exprStmt.Expr is CallExpr;
             try { VisitExprStmt(exprStmt); }
-            finally { loweringDiscardedExprStmt = prevDiscarded; }
+            finally
+            {
+                loweringDiscardedExprStmt = prevDiscarded;
+                callResultIsDiscarded = prevDiscardedResult;
+            }
             return;
         }
 
