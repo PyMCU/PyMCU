@@ -204,6 +204,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer x inner product unroll |
 | `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
 | `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance array from list comp; `enumerate` also supported |
+| A list given to a class (`Bar([Pin(a), Pin(b)])`, `Bar(pins)`) | Compile-time sequence bound to the parameter and to the `self` field: constant subscript, `for`, `len()`, and a run-time subscript that calls a method (up to 8 elements, lowered as a selection) |
+| A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
 
 ---
