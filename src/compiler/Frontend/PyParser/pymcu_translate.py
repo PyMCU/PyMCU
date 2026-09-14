@@ -328,6 +328,13 @@ def annotation_of(node):
     # Kept in step with Parser.cs's IsBareTypeName. Change one, change both.
     if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
         return node.value
+    # `...` inside an annotation is CARRIED as its text now (#357). The C# reader does the
+    # same, one normaliser in Common/AnnotationText.cs reads both, and the judging happens
+    # downstream where the position is known. Refusing it in the readers meant `tuple[int, ...]`
+    # was a SyntaxError about an ellipsis in a program whose real blocker was the union around
+    # it, and meant the two front ends disagreed about `Callable[..., None]`.
+    if isinstance(node, ast.Constant) and node.value is Ellipsis:
+        return "..."
     if isinstance(node, ast.Tuple):
         return "tuple[" + ",".join(annotation_of(e) for e in node.elts) + "]"
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \

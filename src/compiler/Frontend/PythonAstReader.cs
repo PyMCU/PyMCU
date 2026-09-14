@@ -196,7 +196,7 @@ public static class PythonAstReader
     }
 
     private static Param ReadParam(JsonElement e) =>
-        Located(new Param(Str(e, "name"), Str(e, "type"),
+        Located(new Param(Str(e, "name"), PyMCU.Common.AnnotationText.Normalize(Str(e, "type")),
                           Has(e, "default") ? ReadExpr(e.GetProperty("default")) : null), e);
 
     private static FunctionDef ReadFunction(JsonElement e)
@@ -206,7 +206,8 @@ public static class PythonAstReader
             parameters.Add(ReadParam(p));
 
         var body = (Block)ReadStatement(e.GetProperty("body"));
-        var fn = new FunctionDef(Str(e, "name"), parameters, Str(e, "returnType"), body,
+        var fn = new FunctionDef(Str(e, "name"), parameters,
+                PyMCU.Common.AnnotationText.Normalize(Str(e, "returnType")), body,
             Flag(e, "isInline"), Flag(e, "isInterrupt"), Int(e, "vector"))
         {
             IsPropertyGetter = Flag(e, "isPropertyGetter"),
@@ -262,10 +263,10 @@ public static class PythonAstReader
                 return Located(cls, e);
             }
             case "VarDecl":
-                return Located(new VarDecl(Str(e, "name"), Str(e, "varType"),
+                return Located(new VarDecl(Str(e, "name"), PyMCU.Common.AnnotationText.Normalize(Str(e, "varType")),
                     Has(e, "init") ? ReadExpr(e.GetProperty("init")) : null), e);
             case "AnnAssign":
-                return Located(new AnnAssign(Str(e, "target"), Str(e, "annotation"),
+                return Located(new AnnAssign(Str(e, "target"), PyMCU.Common.AnnotationText.Normalize(Str(e, "annotation")),
                     Has(e, "value") ? ReadExpr(e.GetProperty("value")) : null), e);
             case "Assign":
             {

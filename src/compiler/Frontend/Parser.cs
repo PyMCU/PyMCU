@@ -413,17 +413,15 @@ public class Parser
                 Error("the type annotation is missing its closing ']'");
             }
 
-            // `...` inside an annotation. Refused HERE rather than carried into the text,
-            // because the head that holds it is usually a known one (`tuple[X, ...]`) and a
-            // known head returns from CheckAnnotationNames without looking inside -- so
-            // carrying it would let one front end compile what the other refuses, which is the
-            // divergence this reader exists to close, opened in the other direction.
+            // `...` inside an annotation is CARRIED into the text now, not refused here (#357).
             //
-            // Word for word annotation_of's sentence in pymcu_translate.py for the same node.
-            if (AtEllipsis())
-                Error("'...' is not a type annotation PyMCU can read. Write one type name, "
-                      + "optionally with a size or element type in brackets, e.g. uint8 or "
-                      + "uint8[4]");
+            // It was refused because a known head returns from CheckAnnotationNames without
+            // looking inside, so carrying it would have let one front end compile what the
+            // other refuses. That reasoning was right about the risk and wrong about the cure:
+            // the CPython bridge accepted `Callable[..., None]` all along, so refusing it here
+            // WAS the divergence. Both readers now produce the same text, one normaliser reads
+            // it, and the judging happens downstream where the position is known -- which is
+            // the only place that can tell a tuple whose length matters from one whose does not.
 
             if (t.Type == TokenType.LBracket) depth++;
             else if (t.Type == TokenType.RBracket) depth--;
@@ -459,6 +457,16 @@ public class Parser
         // does not produce.
         Token annotationStart = Peek();
         string typeStr;
+        // `x: ...` -- the whole annotation is an ellipsis. Read as the text, so the sentence it
+        // gets comes from the one place that answers for every unreadable annotation name and
+        // is therefore the same sentence the CPython bridge produces (#357).
+        if (AtEllipsis())
+        {
+            Advance();
+            Advance();
+            Advance();
+            return "...";
+        }
         if (Check(TokenType.String))
         {
             // A string annotation is the SAME annotation with quotes round it (#261).
@@ -510,7 +518,10 @@ public class Parser
         if (Check(TokenType.Pipe))
             ErrorSpanning(annotationStart, UnionEndToken(), UnionAnnotationRefusal);
 
-        return typeStr;
+        // The spellings that mean something this compiler already has, rewritten to the
+        // spelling the rest of it reads (#356, #357). The CPython bridge's reader calls the
+        // same function on the same text, so the two front ends cannot drift here.
+        return PyMCU.Common.AnnotationText.Normalize(typeStr);
     }
 
     // Return position also accepts the parenthesized multi-value form
