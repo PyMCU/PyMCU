@@ -361,6 +361,79 @@ public class Parser
         return true;
     }
 
+    /// <summary>
+    /// The bracketed part of an annotation, from the '[' to its match, as text (#345).
+    ///
+    /// The reader this replaces accepted one bracket holding a bare name or a number, so the
+    /// moment anything else appeared inside -- a dotted name, a nested subscript, a `...`, an
+    /// empty `[]` -- the parse stopped at the bracket it wanted, at a column inside the
+    /// annotation, without ever using the word annotation. Every one of those shapes has a
+    /// true sentence waiting for it in CheckAnnotationNames, which was simply never reached.
+    ///
+    /// So the shape is READ here and JUDGED there. This function decides nothing about which
+    /// annotations are legal; it only gets the whole of one into the string the rest of the
+    /// compiler already reads.
+    ///
+    /// The spelling is unchanged for everything that compiled before: tokens are joined with
+    /// no separator at all, which is what the old reader produced for `uint8[4]`, `uint8[n*3]`,
+    /// `const[uint8[4]]` and `tuple[uint8,uint16]`, and what pymcu_translate.py produces on the
+    /// other side by stripping the spaces out of ast.unparse.
+    /// </summary>
+    private string ReadAnnotationSubscript()
+    {
+        int openPos = pos;
+        var text = new System.Text.StringBuilder();
+        int depth = 0;
+        do
+        {
+            Token t = Peek();
+            if (t.Type == TokenType.EndOfFile || t.Type == TokenType.Newline)
+            {
+                // At the token the reader can act on -- the '[' that was never closed -- and
+                // not at wherever the run of tokens gave out, which is the end of the file.
+                pos = openPos;
+                Error("the type annotation is missing its closing ']'");
+            }
+
+            // `...` inside an annotation. Refused HERE rather than carried into the text,
+            // because the head that holds it is usually a known one (`tuple[X, ...]`) and a
+            // known head returns from CheckAnnotationNames without looking inside -- so
+            // carrying it would let one front end compile what the other refuses, which is the
+            // divergence this reader exists to close, opened in the other direction.
+            //
+            // Word for word annotation_of's sentence in pymcu_translate.py for the same node.
+            if (AtEllipsis())
+                Error("'...' is not a type annotation PyMCU can read. Write one type name, "
+                      + "optionally with a size or element type in brackets, e.g. uint8 or "
+                      + "uint8[4]");
+
+            if (t.Type == TokenType.LBracket) depth++;
+            else if (t.Type == TokenType.RBracket) depth--;
+            text.Append(TokenText(t));
+            Advance();
+        } while (depth > 0);
+        return text.ToString();
+    }
+
+    /// <summary>The characters a token was written with, for rebuilding annotation text.</summary>
+    private static string TokenText(Token t) => t.Type switch
+    {
+        TokenType.LBracket => "[",
+        TokenType.RBracket => "]",
+        TokenType.Comma => ",",
+        TokenType.Dot => ".",
+        TokenType.Star => "*",
+        TokenType.Plus => "+",
+        TokenType.Minus => "-",
+        TokenType.Pipe => "|",
+        TokenType.Colon => ":",
+        TokenType.LParen => "(",
+        TokenType.RParen => ")",
+        TokenType.None => "None",
+        TokenType.String => (char)34 + t.Value + (char)34,
+        _ => t.Value,
+    };
+
     private string ParseTypeAnnotation()
     {
         // The first token of the annotation, kept so the union refusal below can underline
@@ -405,70 +478,8 @@ public class Parser
             }
         }
 
-        if (Match(TokenType.LBracket))
-        {
-            typeStr += "[";
-            if (Check(TokenType.Identifier))
-            {
-                var inner = Consume(TokenType.Identifier, "Expected inner type");
-                typeStr += inner.Value;
-
-                // Array size given as a named constant times a literal, e.g.
-                // uint8[n*3] for a per-instance framebuffer. The product is folded
-                // against the (compile-time constant) identifier in the IR generator.
-                if (Match(TokenType.Star))
-                {
-                    var factor = Consume(TokenType.Number, "Expected a numeric factor after '*' in array size");
-                    typeStr += "*" + factor.Value;
-                }
-
-                // Handle nested bracket: e.g. const[uint8[4]] or const[str]
-                if (Match(TokenType.LBracket))
-                {
-                    typeStr += "[";
-                    if (Check(TokenType.Identifier))
-                    {
-                        var innerType = Consume(TokenType.Identifier, "Expected inner type name");
-                        typeStr += innerType.Value;
-                    }
-                    else if (Check(TokenType.Number))
-                    {
-                        var innerSize = Consume(TokenType.Number, "Expected array size");
-                        typeStr += innerSize.Value;
-                    }
-                    else
-                    {
-                        Error("Expected type name or array size inside '['");
-                    }
-                    Consume(TokenType.RBracket, "Expected ']'");
-                    typeStr += "]";
-                }
-            }
-            else if (Check(TokenType.Number))
-            {
-                var inner = Consume(TokenType.Number, "Expected array size");
-                typeStr += inner.Value;
-            }
-            else
-            {
-                Error("Expected type name or array size inside '['");
-            }
-
-            // Comma-separated subscript args, e.g. a tuple type tuple[uint8, uint16] used as a
-            // function return annotation. Accepted (and recorded textually); for an @inline
-            // function returning multiple values the annotation is documentation — the caller's
-            // unpack targets receive the values.
-            while (Match(TokenType.Comma))
-            {
-                typeStr += ",";
-                if (Check(TokenType.Identifier)) typeStr += Consume(TokenType.Identifier, "Expected type name").Value;
-                else if (Check(TokenType.Number)) typeStr += Consume(TokenType.Number, "Expected array size").Value;
-                else Error("Expected type name or size after ',' in '['");
-            }
-
-            Consume(TokenType.RBracket, "Expected ']'");
-            typeStr += "]";
-        }
+        if (Check(TokenType.LBracket))
+            typeStr += ReadAnnotationSubscript();
 
         // `uint8 | None` and friends. Refused HERE, where the annotation is being read, rather
         // than left to the caller's ConsumeStatementEnd, which used to answer with "Expected

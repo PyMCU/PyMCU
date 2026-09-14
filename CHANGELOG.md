@@ -45,6 +45,12 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- An annotation with a dotted name, a nested subscript or an empty `[]` inside its brackets is
+  read whole, so the sentence that names the construct is reached instead of `Expected ']'` at
+  a column inside the annotation. `Union[int, List[int]]` and `Optional[digitalio.DigitalInOut]`
+  now get the union refusal, and `tuple[X, ...]` is told that `...` is not a type annotation, on
+  both front ends at the same line and column. An unclosed bracket points at the bracket rather
+  than at the end of the file (#345).
 - `self.column, self.row = 0, 0` unpacks into attributes, as it already did into names. The
   right-hand side is snapshotted before any store, so an attribute swap is still a swap, and
   each target is then written through the assignment it would have been on its own line. It
