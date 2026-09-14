@@ -45,6 +45,14 @@ from pymcu.types import uint8, uint16, uint32, inline, const, claim, compile_isr
 from pymcu.time import delay_us
 from pymcu.hal.avr.gpio.atmega328p import pin_irq_enable
 
+# Timer1 ticks per microsecond at prescaler 8: two at 16 MHz, one at 8. A compile-time
+# constant. It is NOT used inside the interrupt handler, where a division by it would carry
+# a divide-by-zero check and an interrupt handler must not be able to raise.
+@inline
+def _pulse_ticks_per_us() -> uint8:
+    return uint8(__FREQ__ // 8 // 1000000)
+
+
 # The capture ring. Its size is fixed at compile time because a global array is, so a
 # PulseCapture asking for more than this is refused rather than quietly given less.
 # 128 entries is 256 bytes of SRAM, and it costs nothing in a program that captures no
@@ -60,13 +68,6 @@ _pulse_last:  uint16 = 0
 _pulse_armed: uint8  = 0
 _pulse_paused: uint8 = 0
 _pulse_maxlen: uint8 = 128
-
-
-# Timer1 ticks per microsecond at prescaler 8. Two at 16 MHz, one at 8 MHz. A compile-time
-# constant, so the division in the ISR folds to a shift.
-@inline
-def _pulse_ticks_per_us() -> uint8:
-    return uint8(__FREQ__ // 8 // 1000000)
 
 
 # The pin-change ISR. NOT @inline: the vector jumps here, so it needs an address.
@@ -89,7 +90,16 @@ def pulse_isr():
     delta: uint16 = now - _pulse_last
     _pulse_last = now
     if _pulse_len < _pulse_maxlen:
-        _pulse_buf[_pulse_head] = delta // _pulse_ticks_per_us()
+        # Ticks to microseconds, as a SHIFT chosen at compile time rather than a division.
+        # The divisor was __FREQ__ // 8 // 1000000 -- 2 at 16 MHz, 1 at 8 -- and a division by
+        # anything that is not a literal carries a divide-by-zero check, which is a raise.
+        # An interrupt handler has no caller to hand an error to, so the compiler refuses one
+        # that can raise, and it only sees it with the optimizer off: the fixture built and
+        # passed by default and failed on the unoptimized differential axis.
+        if __FREQ__ >= 16000000:
+            _pulse_buf[_pulse_head] = delta >> 1
+        else:
+            _pulse_buf[_pulse_head] = delta
         _pulse_head = (_pulse_head + 1) & 0x7F
         _pulse_len = _pulse_len + 1
 

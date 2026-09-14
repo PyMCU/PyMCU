@@ -9,6 +9,6 @@ from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
 
 if __CHIP__.arch == "avr":
-    from pymcu.hal.avr.eeprom import EEPROM
+    from pymcu.hal.avr.eeprom import EEPROM, EEPROM_SIZE
 else:
     raise CompileError("EEPROM not supported on this architecture")

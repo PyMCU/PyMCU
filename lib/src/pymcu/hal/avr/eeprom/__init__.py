@@ -32,6 +32,34 @@ else:
     from pymcu.hal.avr.eeprom.atmega328p import eeprom_write, eeprom_read
 
 
+# How many bytes this part's EEPROM holds, as a module-level constant.
+#
+# A constant and not a method: a slice of microcontroller.nvm needs its length to fold to a
+# literal, and even one method hop into this HAL is enough to stop it -- the nvm-slice-repr
+# fixture failed with "slice indexing is only supported on named fixed-size arrays". The
+# EEPROM class keeps size() for callers that just want the number.
+#
+# A layer reporting a size had nowhere to ask, so microcontroller.nvm reported the
+# ATmega328P's 1024 on every chip: an ATtiny85 has 512 and an ATmega2560 has 4096.
+if __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a" or __CHIP__.name == "attiny25":
+    EEPROM_SIZE: uint16 = 64
+elif (__CHIP__.name == "attiny24" or __CHIP__.name == "attiny2313"
+      or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny4313"
+      or __CHIP__.name == "attiny44"):
+    EEPROM_SIZE: uint16 = 128
+elif __CHIP__.name == "attiny85" or __CHIP__.name == "attiny84":
+    EEPROM_SIZE: uint16 = 512
+elif __CHIP__.name == "atmega48" or __CHIP__.name == "atmega48p":
+    EEPROM_SIZE: uint16 = 256
+elif (__CHIP__.name == "atmega88" or __CHIP__.name == "atmega88p"
+      or __CHIP__.name == "atmega168" or __CHIP__.name == "atmega168p"):
+    EEPROM_SIZE: uint16 = 512
+elif __CHIP__.name == "atmega2560" or __CHIP__.name == "atmega32u4":
+    EEPROM_SIZE: uint16 = 4096
+else:
+    EEPROM_SIZE: uint16 = 1024
+
+
 class EEPROM:
     """On-chip EEPROM, zero-cost abstraction (all methods @inline)."""
 
@@ -52,18 +80,4 @@ class EEPROM:
     # trusted len(nvm) wrote past the end of the first and used a quarter of the second.
     @inline
     def size(self) -> uint16:
-        match __CHIP__.name:
-            case "attiny13" | "attiny13a" | "attiny25":
-                return 64
-            case "attiny24" | "attiny2313" | "attiny45" | "attiny4313" | "attiny44":
-                return 128
-            case "attiny85" | "attiny84":
-                return 512
-            case "atmega48" | "atmega48p":
-                return 256
-            case "atmega88" | "atmega88p" | "atmega168" | "atmega168p":
-                return 512
-            case "atmega2560" | "atmega32u4":
-                return 4096
-            case _:
-                return 1024
+        return EEPROM_SIZE

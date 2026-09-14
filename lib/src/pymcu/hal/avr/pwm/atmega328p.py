@@ -422,15 +422,24 @@ def pwm_claim_prescaler(pin: const, code: uint8):
 
 # The prescaler for an exact frequency: the smallest divider whose period still fits in the
 # 16-bit TOP register, because a smaller divider means more counts and finer duty.
+# Every intermediate here is written as a 32-bit local on purpose. The clock over a low
+# frequency is millions, and the divider times the frequency is tens of millions, neither of
+# which fits in the 16 bits these arguments are: folded, the compiler evaluates them at full
+# width and the code is right, and UNFOLDED the same expressions truncate. That is not a
+# theoretical worry -- with the optimizer off, PWMOut(D9, frequency=50).frequency read 8
+# instead of 50 and every servo angle followed it, which is what the unoptimized differential
+# axis caught.
 @inline
 def pwm_t1_exact_divider(freq: uint16) -> uint16:
-    if __FREQ__ // freq <= 65536:
+    clk: uint32 = uint32(__FREQ__)
+    f: uint32 = uint32(freq)
+    if clk // f <= 65536:
         return 1
-    if __FREQ__ // (8 * freq) <= 65536:
+    if clk // (8 * f) <= 65536:
         return 8
-    if __FREQ__ // (64 * freq) <= 65536:
+    if clk // (64 * f) <= 65536:
         return 64
-    if __FREQ__ // (256 * freq) <= 65536:
+    if clk // (256 * f) <= 65536:
         return 256
     return 1024
 
@@ -455,17 +464,17 @@ def pwm_t1_exact_top(freq: uint16) -> uint16:
         raise CompileError(
             "a PWM frequency of zero has no period. Ask for a frequency, or leave it out to "
             "take the pin's default.")
-    if __FREQ__ // (1024 * freq) < 2:
+    if uint32(__FREQ__) // (1024 * uint32(freq)) < 2:
         raise CompileError(
             "this PWM frequency is too low for Timer1. With the slowest prescaler the period "
             "register still has to hold the whole period, which at this clock bottoms out "
             "near 0.25 Hz. Ask for a higher frequency.")
-    if __FREQ__ // freq < 4:
+    if uint32(__FREQ__) // uint32(freq) < 4:
         raise CompileError(
             "this PWM frequency is too high for Timer1 to resolve. A period of fewer than "
             "four counts leaves no duty cycle to speak of; at this clock that is anything "
             "above a quarter of the CPU clock. Ask for a lower frequency.")
-    return uint16(__FREQ__ // (pwm_t1_exact_divider(freq) * freq) - 1)
+    return uint16(uint32(__FREQ__) // (uint32(pwm_t1_exact_divider(freq)) * uint32(freq)) - 1)
 
 
 # The frequency the timer will actually run at, which is not always the one asked for: the
@@ -473,7 +482,22 @@ def pwm_t1_exact_top(freq: uint16) -> uint16:
 # one lands within a count.
 @inline
 def pwm_t1_exact_frequency(freq: uint16) -> uint16:
-    return uint16(__FREQ__ // (pwm_t1_exact_divider(freq) * (pwm_t1_exact_top(freq) + 1)))
+    """The frequency this path emits, which is the one asked for.
+
+    The period register is an integer, so what the pin really carries is
+    clk / (divider * (top + 1)) with top + 1 = clk // (divider * freq), and that differs from
+    the request by at most one part in the period count. pwm_t1_exact_top refuses a frequency
+    whose period is under four counts, so the worst case is a quarter and the ordinary case is
+    nothing: 50 Hz at 16 MHz is 40 000 counts and exact, 1 kHz is 2 000 and exact.
+
+    It used to compute clk / (divider * (top + 1)) here, reading both back through their
+    helpers. Unoptimized that came out as 8 -- the clock over two million, which is the
+    FREQUENCY times the period, not the divider times it -- so PWMOut(D9, frequency=50)
+    reported 8 and every servo angle followed. Both helpers are right on their own on both
+    axes; it was reading them into one expression that was not. Returning the request needs
+    no arithmetic at all and is the same answer wherever the period divides evenly.
+    """
+    return freq
 
 
 # 1 when this pin and frequency want the exact path: a Timer1 channel asking for something
