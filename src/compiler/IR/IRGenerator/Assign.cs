@@ -500,6 +500,41 @@ public partial class IRGenerator
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
         }
 
+        // `pattern = self.digits[num]`: a row of a rectangular dict. A constant key folds to
+        // the row's values; a run-time key binds a ROW VIEW, which is the flash table, the row
+        // width and the run-time row index, because seven bytes have nothing to be held in.
+        if (stmt.Target is VariableExpr rowTgt && stmt.Value is IndexExpr rowIdx
+            && TryGetDictFor(rowIdx.Target, out var rowDict)
+            && DictRows(rowDict) is { } dictRows)
+        {
+            string rowKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + rowTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + rowTgt.Name : rowTgt.Name);
+            string rowSource = rowIdx.Target is MemberAccessExpr rm ? rm.Member
+                             : (rowIdx.Target is VariableExpr rv ? rv.Name : rowTgt.Name);
+            Val rowKeyVal = VisitExpression(rowIdx.Index);
+            rowViews.Remove(rowKey);
+            constSequenceBindings.Remove(rowKey);
+
+            if (rowKeyVal is Constant rowConst)
+            {
+                if (rowConst.Value < 0 || rowConst.Value >= dictRows.Count)
+                    throw UserError(
+                        $"KeyError: {rowConst.Value} is not a key of this dict literal "
+                        + "(checked at compile time)", rowIdx.Index);
+                constSequenceBindings[rowKey] =
+                    dictRows[rowConst.Value].Select(v => (Expression)new IntegerLiteral(v)).ToList();
+                return;
+            }
+
+            if (MaterialiseDictRows("dictrows:" + SequenceKeyOf(rowIdx.Target), rowSource, dictRows)
+                    is { } rowTable)
+            {
+                rowViews[rowKey] = (rowTable, dictRows[0].Count, rowKeyVal);
+                return;
+            }
+        }
+
         // `self._pins = pins` / `self._levels = levels`: a FIELD that holds a compile-time
         // sequence. The field is another name for the sequence, not a scalar: before this it
         // became one, and every `self._pins[0]` read the zero that nothing had written -- built
@@ -519,6 +554,23 @@ public partial class IRGenerator
             if (seqSourceBase != null)
             {
                 BindSequenceAlias(seqFieldKey, seqSourceBase);
+                return;
+            }
+
+            // `self.digits = {...}`: a dict or set literal kept in a FIELD. It is a
+            // compile-time lookup table, and a driver keeps its table where it keeps
+            // everything else. Bound to a name it already worked, read from a method
+            // included; only the field turned it into a value position and refused it.
+            if (stmt.Value is DictExpr fieldDict)
+            {
+                dictLiteralBindings[seqFieldKey] = fieldDict;
+                setLiteralBindings.Remove(seqFieldKey);
+                return;
+            }
+            if (stmt.Value is SetExpr fieldSet)
+            {
+                setLiteralBindings[seqFieldKey] = fieldSet;
+                dictLiteralBindings.Remove(seqFieldKey);
                 return;
             }
 

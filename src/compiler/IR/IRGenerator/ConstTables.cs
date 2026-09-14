@@ -222,6 +222,92 @@ public partial class IRGenerator
         return name;
     }
 
+
+    // ------------------------------------------------------------------ dict of rows
+    //
+    // `{0: [1,1,1,1,1,1,0], 1: [0,1,1,0,0,0,0], ...}` is the canonical digit table, and every
+    // font and every gamma curve is written the same way. It is not a container: it is ten rows
+    // of seven constants, a rectangle with a known shape, so it is a flat table in flash and the
+    // key picks the row.
+    //
+    // A ROW VIEW is what a run-time lookup yields: the table, the row width, and the run-time
+    // row index. It is not a value -- there is nothing to hold seven bytes in -- so it lives
+    // under the name it was assigned to, and `row[k]`, `len(row)`, `for v in row` and
+    // `zip(seq, row)` read through it.
+    private readonly Dictionary<string, (string Table, int Width, Val Index)> rowViews = new();
+
+    /// <summary>
+    /// The rows of a dict whose values are all lists of the same length and all constants, keyed
+    /// 0..N-1 so the key IS the row index. Null when the dict is not that rectangle.
+    /// </summary>
+    private List<List<int>>? DictRows(Frontend.DictExpr d)
+    {
+        if (d.Entries.Count == 0) return null;
+        var rows = new List<List<int>>();
+        int width = -1;
+        for (int i = 0; i < d.Entries.Count; i++)
+        {
+            var (kE, vE) = d.Entries[i];
+            if (kE is not IntegerLiteral kl || kl.Value != i) return null;   // keys must be 0..N-1
+            var elements = vE switch
+            {
+                ListExpr le => le.Elements,
+                TupleExpr te => te.Elements,
+                _ => null,
+            };
+            if (elements == null) return null;
+            if (ConstValuesOf(elements) is not { } values) return null;
+            if (width < 0) width = values.Count;
+            else if (values.Count != width) return null;                     // not a rectangle
+            rows.Add(values);
+        }
+        return width > 0 ? rows : null;
+    }
+
+    /// <summary>
+    /// Lays the rows out end to end in flash and returns the table name, or null when the values
+    /// cannot live there. Row k starts at k * width.
+    /// </summary>
+    private string? MaterialiseDictRows(string cacheKey, string writtenName, List<List<int>> rows,
+                                        int bindings = 1)
+    {
+        var flat = new List<int>();
+        foreach (var row in rows) flat.AddRange(row);
+        return TryMaterialiseConstTableFromValues(cacheKey, writtenName, flat, bindings);
+    }
+
+    /// <summary>
+    /// The row view a name holds, following the same qualification order every other lookup
+    /// here uses. Null when the name is not one.
+    /// </summary>
+    private (string Table, int Width, Val Index)? ResolveRowView(string name)
+    {
+        string?[] candidates =
+        {
+            !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+            !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+            name,
+        };
+        foreach (var c in candidates)
+            if (c != null && rowViews.TryGetValue(c, out var rv)) return rv;
+        return null;
+    }
+
+    /// <summary>
+    /// The flash offset of element <paramref name="k"/> of a row: `index * width + k`, folded
+    /// when the row index is itself a constant.
+    /// </summary>
+    private Val EmitRowOffset((string Table, int Width, Val Index) rv, int k)
+    {
+        if (rv.Index is Constant ic) return new Constant(ic.Value * rv.Width + k);
+        Temporary scaled = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, rv.Index, new Constant(rv.Width), scaled));
+        if (k == 0) return scaled;
+        Temporary off = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, scaled, new Constant(k), off));
+        return off;
+    }
+
     private static string Sanitise(string s)
         => new(s.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 }
