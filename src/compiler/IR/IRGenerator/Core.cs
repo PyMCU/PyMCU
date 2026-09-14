@@ -431,6 +431,7 @@ public partial class IRGenerator
                 intrinsicNames.Add("interrupt");
                 intrinsicNames.Add("asm");
                 intrinsicNames.Add("compile_isr");
+                intrinsicNames.Add("claim");
                 intrinsicNames.Add("_set_irq_zca_arg");
                 intrinsicNames.Add("funcref");
             }
@@ -476,6 +477,7 @@ public partial class IRGenerator
                     intrinsicNames.Add("interrupt");
                     intrinsicNames.Add("asm");
                     intrinsicNames.Add("compile_isr");
+                intrinsicNames.Add("claim");
                     intrinsicNames.Add("_set_irq_zca_arg");
                 }
 

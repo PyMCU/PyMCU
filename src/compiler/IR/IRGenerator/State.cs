@@ -676,6 +676,22 @@ public partial class IRGenerator
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();
 
+    /// <summary>
+    /// Compile-time resource claims, `claim(key, value, owner, hint)` from pymcu.types. A
+    /// HAL registers a value it is about to program into a resource that other code may
+    /// program too (a timer's prescaler shared by its two channels), and the compiler
+    /// refuses the second site that asks the same resource for a different value. Runtime
+    /// values cannot be claimed and are let through. The registry lives for the whole
+    /// program: claims are visited in lowering order and never released.
+    /// </summary>
+    private sealed class ClaimRecord
+    {
+        public int Value;
+        public readonly List<string> Owners = new();
+        public string Site = "";
+    }
+    private readonly Dictionary<string, ClaimRecord> claims = new();
+
     // Depth counter for runtime-conditional branches currently being compiled.
     // > 0 means we are inside a branch whose predicate could not be folded at compile time.
     // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)

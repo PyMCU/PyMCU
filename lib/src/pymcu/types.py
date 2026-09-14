@@ -246,6 +246,15 @@ def interrupt(f, vector: int = 0):
     return f
 
 
+def claim(key: str, value: int, owner: str = "", hint: str = ""):
+    # Compiler intrinsic, emits nothing: registers that `owner` programs `value` into the
+    # resource named `key` (a timer's prescaler shared by its two channels, say). A later
+    # claim of the same key with another value from another owner is refused at compile
+    # time, where it is written, naming both owners and `hint`. The sole owner of a key
+    # may change its value. A run-time value cannot be claimed and is let through.
+    pass
+
+
 def compile_isr(handler: Callable, vector: int = 0):
     # Compiler intrinsic: marks `handler` as an ISR at `vector` without
     # requiring an @interrupt decorator on the function definition.

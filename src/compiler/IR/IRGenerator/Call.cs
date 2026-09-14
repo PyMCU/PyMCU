@@ -1,3 +1,4 @@
+using System.IO;
 /*
  * -----------------------------------------------------------------------------
  * PyMCU Compiler (pymcuc)
@@ -694,6 +695,9 @@ public partial class IRGenerator
 
         if (callee == "compile_isr" && intrinsicNames.Contains("compile_isr"))
             return EmitCompileIsrIntrinsic(expr);
+
+        if (callee == "claim" && intrinsicNames.Contains("claim"))
+            return EmitClaimIntrinsic(expr);
 
         if (externFunctionMap.TryGetValue(callee, out string cSym))
             return EmitExternCall(expr, callee, cSym);
@@ -5497,6 +5501,86 @@ public partial class IRGenerator
     // synthesized ZCA wrapper when a _set_irq_zca_arg binding was recorded).
     private int IsrCallLine(CallExpr expr) =>
         expr.Line > 0 ? expr.Line : (currentStmtLine > 0 ? currentStmtLine : lastLine);
+
+    /// <summary>
+    /// `claim(key, value, owner="", hint="")`: a compile-time resource claim. Emits nothing.
+    ///
+    /// The first claim on a key records the value and its owner. A later claim with the same
+    /// value adds its owner. A later claim with a DIFFERENT value is refused where it is
+    /// written, unless the only owner so far is the claimant itself (a channel retuning the
+    /// timer it alone uses). Measured need: two PWM channels of one AVR timer both wrote the
+    /// prescaler and the last construction won in silence, PyMCU#300; a run-time check was
+    /// measured at +104 bytes on a 52-byte program because the raise drags in the exception
+    /// runtime, which is why the claim is a compile-time fact and not an instruction.
+    ///
+    /// `key`, `owner` and `hint` must be compile-time strings (a literal, a const[str]
+    /// parameter, a string constant). `value` must fold to a constant; a run-time value has
+    /// nothing to claim and is let through, so the visit of it is the only thing this call
+    /// can cost, and a bare local costs nothing.
+    /// </summary>
+    /// A claim() string argument: a literal or a name the AST resolver knows, else whatever
+    /// the expression folds to when visited -- a const[str] parameter bound two @inline
+    /// expansions deep (`pin` in the chip module's helper) reaches the visitor as the
+    /// interned id of its text. Visiting a name emits nothing.
+    private string ClaimString(CallExpr expr, int index, string what)
+    {
+        string? text = StaticStringOf(expr.Args[index]);
+        if (text != null) return text;
+        Val v = VisitExpression(expr.Args[index]);
+        if (v is Constant c && stringIdToStr.TryGetValue(c.Value, out var s)) return s;
+        throw UserError($"claim() {what} must be a compile-time string", ArgAt(expr, index));
+    }
+
+    private Val EmitClaimIntrinsic(CallExpr expr)
+    {
+        if (expr.Args.Count < 2 || expr.Args.Count > 4)
+            throw UserError("claim() takes claim(key, value, owner=\"\", hint=\"\")", expr.Callee);
+
+        string key = ClaimString(expr, 0, "key");
+        string owner = expr.Args.Count > 2 ? ClaimString(expr, 2, "owner") : "";
+        string hint = expr.Args.Count > 3 ? ClaimString(expr, 3, "hint") : "";
+
+        // Only a branch that is decided at compile time can hold a claim. Inside a branch
+        // that stays a run-time decision (the HAL's threshold chain over a run-time
+        // frequency, say) every arm would register its own value and the arms would
+        // conflict with each other; nothing is known there, so nothing is claimed. Same
+        // rule and same measure as a `raise CompileError` in that position.
+        int baseDepth = inlineStack.Count > 0 ? inlineStack[^1].EntryBranchDepth : 0;
+        if (_runtimeBranchDepth > baseDepth) return new NoneVal();
+
+        Val v = VisitExpression(expr.Args[1]);
+        if (v is not Constant c) return new NoneVal();   // a run-time value: nothing to hold
+
+        int line = inlineDepth > 0 && currentStmtLine > 0 ? currentStmtLine : expr.Line;
+        string? sitePath = CallSiteSourcePath();
+        string site = sitePath != null ? $"{Path.GetFileName(sitePath)}:{line}" : $"line {line}";
+        string who = owner.Length > 0 ? owner : "an earlier site";
+
+        if (!claims.TryGetValue(key, out var rec))
+        {
+            rec = new ClaimRecord { Value = c.Value, Site = site };
+            rec.Owners.Add(who);
+            claims[key] = rec;
+            return new NoneVal();
+        }
+        if (rec.Value == c.Value)
+        {
+            if (!rec.Owners.Contains(who)) rec.Owners.Add(who);
+            return new NoneVal();
+        }
+        if (rec.Owners.Count == 1 && rec.Owners[0] == who)
+        {
+            rec.Value = c.Value;    // the sole owner may retune what only it uses
+            rec.Site = site;
+            return new NoneVal();
+        }
+
+        string others = string.Join(" and ", rec.Owners.Where(o => o != who));
+        if (others.Length == 0) others = string.Join(" and ", rec.Owners);
+        string msg = $"{key}: already {rec.Value} for {others} at {rec.Site}, and {who} asks for {c.Value}";
+        if (hint.Length > 0) msg += ". " + hint;
+        throw new ArchitectureError(msg, line, 0) { File = sitePath, LocationIsFinal = true };
+    }
 
     private Val EmitCompileIsrIntrinsic(CallExpr expr)
     {
