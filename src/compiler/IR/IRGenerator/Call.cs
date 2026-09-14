@@ -2001,6 +2001,24 @@ public partial class IRGenerator
                     constantAddressVariables.Remove(paramName);
                     constantAddressVariables.Remove(paramName + "_type");
 
+                    // A keyword argument binds the parameter exactly as a positional one does,
+                    // and has to clear the same state. The parameter key is the inline prefix
+                    // plus the name, reused by every expansion at the same depth, so a None
+                    // left by an EARLIER call site (its own, or the parameter's default)
+                    // answered for this one: `UART(bits=7, parity=EVEN)` after any call that
+                    // let `parity` default took the `case None` arm and programmed no parity,
+                    // clean and silent (#324).
+                    if (kvp.Value is NoneVal)
+                    {
+                        noneValuedNames.Add(paramName);
+                        constantVariables.Remove(paramName);
+                        strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        break;
+                    }
+                    noneValuedNames.Remove(paramName);
+
                     if (kvp.Value is Variable vkw) variableAliases[paramName] = vkw.Name;
 
                     // Where this keyword argument was written, on the same terms as a
@@ -2102,6 +2120,9 @@ public partial class IRGenerator
                     noneValuedNames.Add(paramName);
                     continue;
                 }
+                // And the mirror of it: a default that is NOT None has to clear a None an
+                // earlier expansion of the same parameter left behind (#324).
+                noneValuedNames.Remove(paramName);
                 // A default value is written in the CALLEE's file, so this one expression
                 // is lowered under the callee's location. Without it the pair inverts rather
                 // than being repaired: a diagnostic about `def f(n: const[uint8] = REG.value)`
