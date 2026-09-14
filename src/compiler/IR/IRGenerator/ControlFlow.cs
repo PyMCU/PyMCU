@@ -838,7 +838,11 @@ public partial class IRGenerator
 
     private void VisitMatchBody(MatchStmt stmt)
     {
-        Val targetVal = VisitExpression(stmt.Target);
+        // Read the subject's None-ness from the AST, before lowering it. A name bound to None
+        // has no value to read -- that is what None means here -- so visiting it would emit a
+        // read of a name nothing writes, and the match would be decided on it (#306).
+        bool subjectIsNone = IsNoneValued(stmt.Target);
+        Val targetVal = subjectIsNone ? new NoneVal() : VisitExpression(stmt.Target);
         bool ctAlreadyMatched = false;
         string endLabel = MakeLabel();
 
@@ -959,6 +963,16 @@ public partial class IRGenerator
                 Flatten(branch.Pattern);
 
                 var altVals = alts.Select(VisitExpression).ToList<Val>();
+
+                // `match x:` where x is None. None is not a Constant -- it has no value to
+                // compare against -- so every arm stayed a run-time comparison and every arm
+                // was LOWERED, including arms whose bodies refuse at compile time. `pull = None`
+                // is how CircuitPython spells "no pull", and it was refused with "Pull-down
+                // resistor not supported on AVR", from the arm the program never selected
+                // (#306).
+                //
+                // None is decidable here: it matches `case None` and the wildcard, and nothing
+                // else. A pattern that is itself None is the only hit.
                 bool allAltsConst = targetVal is Constant;
                 if (allAltsConst)
                 {
@@ -969,8 +983,21 @@ public partial class IRGenerator
                             break;
                         }
                 }
+                bool subjectIsDecided = allAltsConst || subjectIsNone;
                 bool skipBody = false;
-                if (allAltsConst)
+                if (subjectIsNone)
+                {
+                    if (altVals.Any(v => v is NoneVal))
+                    {
+                        ctAlreadyMatched = true;
+                    }
+                    else
+                    {
+                        Emit(new Jump(nextCaseLabel));
+                        skipBody = true;
+                    }
+                }
+                else if (allAltsConst)
                 {
                     bool anyMatch = false;
                     var ct = targetVal as Constant;
@@ -1045,7 +1072,7 @@ public partial class IRGenerator
                     // Non-CT match body: the pattern comparison was runtime, so the body
                     // is guarded by a runtime condition. Increment depth so that any
                     // CompileError raise inside the body is not a false-positive abort.
-                    bool matchBodyIsRuntime = !allAltsConst;
+                    bool matchBodyIsRuntime = !subjectIsDecided;
                     if (matchBodyIsRuntime) _runtimeBranchDepth++;
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
                     if (matchBodyIsRuntime) _runtimeBranchDepth--;
@@ -1077,7 +1104,9 @@ public partial class IRGenerator
                         Emit(new JumpIfZero(g, nextCaseLabel));
                     }
 
-                    bool wildcardIsRuntime = !(targetVal is Constant);
+                    // A None subject is as decided as a constant one: reaching the wildcard
+                    // means no `case None` matched it, which is a compile-time fact (#306).
+                    bool wildcardIsRuntime = !(targetVal is Constant) && targetVal is not NoneVal;
                     if (wildcardIsRuntime) _runtimeBranchDepth++;
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
                     if (wildcardIsRuntime) _runtimeBranchDepth--;
