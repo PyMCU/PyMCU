@@ -11,9 +11,18 @@ writes with zero SRAM allocation.
 
 ## class `UART`
 
-### `UART(baud=9600)`
+### `UART(baud=9600, bits=8, parity=0, stop=1)`
 
 Initializes the hardware UART peripheral. On AVR, configures USART0.
+
+`bits`, `parity` and `stop` are the frame format. Parity is numbered the same on every
+architecture: `0` none, `1` even, `2` odd. All three are compile-time constants, so an 8N1
+UART emits the same single register write it always did, and a frame the part cannot send is
+refused where the `UART` is constructed: a 9-bit frame keeps its ninth bit in a different
+register and this HAL reads one register per byte, so it says so rather than sending eight.
+
+They used to be nowhere at all, and every layer above accepted them from its caller and
+dropped them: a program that asked for 7E1 ran 8N1 and the frames went out wrong in silence.
 
 | Baud rate | UBRR0 (16 MHz) |
 |---|---|
@@ -32,7 +41,12 @@ Initializes the hardware UART peripheral. On AVR, configures USART0.
 | `read_nb() -> uint8` | Non-blocking read; returns byte if available, else 0 |
 | `read_blocking() -> uint8` | Poll RXC until byte arrives and return it |
 | `read_byte_isr() -> uint8` | Direct UDR0 read for use inside `@interrupt` handlers |
-| `available() -> uint8` | Returns 1 if a byte is waiting in the receive buffer |
+| `available() -> uint8` | Returns 1 if a byte is waiting in the hardware's receive register |
+| `read_timeout(ms: uint16) -> int16` | Poll for a byte, giving up after `ms` milliseconds; `-1` means nothing arrived |
+| `start_buffered_rx(size=0)` | Turn on the interrupt-driven receive ring: RXCIE, SEI and the ISR that fills it. A `size` larger than the ring is refused |
+| `rx_count() -> uint8` | How many bytes are waiting in the ring (a count, where `available()` is a flag) |
+| `rx_buffer_size() -> uint8` | The ring's capacity, 64 bytes, as a compile-time constant |
+| `rx_read_timeout(ms: uint16) -> int16` | Read one byte from the ring, giving up after `ms` milliseconds; `-1` means nothing arrived |
 | `write_str(s: const[str])` | Send a flash string via LPM loop |
 | `println(s: const[str])` | `write_str(s)` + newline (0x0A) |
 | `print_byte(value: uint8)` | Print `value` as decimal digits + newline |
@@ -132,3 +146,43 @@ def main():
 `read_line` reads bytes until a `\n` (0x0A) is received or `max_len` bytes have been
 stored — whichever comes first. The newline is **not** stored in the buffer. Returns the
 number of bytes written.
+
+---
+
+## Receiving with a deadline
+
+A read that never returns is not a timeout. `read_timeout` and `rx_read_timeout` poll for a
+byte and give up:
+
+```python
+from pymcu.hal.uart import UART
+from pymcu.types import int16
+
+u = UART(9600)
+b: int16 = u.read_timeout(500)     # half a second
+if b < 0:
+    u.write_str("no answer\n")
+else:
+    u.write(b & 0xFF)
+```
+
+The inner loop runs 100 times per millisecond and spends 9 us of calibrated delay in each
+pass. Measured in avr8sharp at 16 MHz, a 100 ms timeout with nothing arriving takes
+1 581 950 cycles, which is 98.9 ms: **1.1 % short**. That is the accuracy on offer.
+
+## Buffered receive
+
+Polled, the UART holds one byte and `available()` is a flag. `start_buffered_rx()` turns on
+the receive interrupt and the 64-byte ring behind it, and `rx_count()` becomes a real count:
+
+```python
+u = UART(115200)
+u.start_buffered_rx()
+while u.rx_count() < 4:
+    pass
+```
+
+The ring is a fixed array allocated at compile time and costs nothing in a program that never
+turns it on: a UART program that only writes is the same size with the ring as without,
+because nothing references the array and it is eliminated. A byte that arrives with the ring
+full is dropped.

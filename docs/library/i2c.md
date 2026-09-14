@@ -17,9 +17,23 @@ I2C (TWI) bus communication. Available for AVR (ATmega328P).
 
 ## class `I2C`
 
-### `I2C(freq: uint32 = 100000)`
+### `I2C(addr=0, general_call=0, freq=100000)`
 
-Initializes the TWI peripheral. Default frequency is 100 kHz.
+Initializes the TWI peripheral. `addr = 0` is controller mode; a non-zero address makes the
+part a peripheral at that address.
+
+`freq` is the SCL rate in Hz and reaches the bit-rate register:
+`TWBR = (F_CPU / SCL - 16) / 2`, so 100 kHz at 16 MHz is 72 and 400 kHz is 12. It used to be
+the literal 72 and nothing else, so every layer above took a frequency from its caller and
+threw it away, and a bus asked for 400 kHz ran at a quarter of that with nothing said.
+
+A rate the hardware cannot clock is refused where the `I2C` is constructed: the bit-rate
+register has to stay at 10 or above in controller mode (about 444 kHz at 16 MHz) and tops out
+at 255 with the prescaler at 1 (about 30.5 kHz). Below that, bit-bang the bus with
+{doc}`softi2c <i2c>`, which has no such limit.
+
+`frequency()` returns what the bus actually clocks, which is not always what was asked for:
+the bit-rate register is an integer. 100 kHz and 400 kHz at 16 MHz are both exact.
 
 ### Status constants
 
