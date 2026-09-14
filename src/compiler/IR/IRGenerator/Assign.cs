@@ -633,6 +633,44 @@ public partial class IRGenerator
     // `obj.prop = v` where prop has a registered @property setter: expand the setter.
     // Returns true when a matching setter was applied; false to fall through to the
     // normal member/assignment handling.
+    // True when the class (or one it inherits from) defines `member` as a method. Overloads are
+    // registered under suffixed keys and the bare key is vacated, so both spellings count.
+    private bool ClassDefinesMethod(string cls, string member)
+    {
+        string bare = cls + "_" + member;
+        if (inlineFunctions.ContainsKey(bare) || functionParams.ContainsKey(bare)) return true;
+        string overloadPfx = bare + "___";
+        foreach (var key in inlineFunctions.Keys)
+            if (key.StartsWith(overloadPfx, StringComparison.Ordinal)) return true;
+        return classDirectMethods.TryGetValue(cls, out var direct) && direct.Contains(member);
+    }
+
+    // Assigning to a name the class defines as a METHOD wrote a phantom field that shadowed the
+    // method, and the write went nowhere. `p.value = 1` on a HAL Pin is the CircuitPython
+    // spelling and `Pin.value` is an overloaded method here (value() reads, value(x) writes), so
+    // the program built clean and drove nothing: measured on the Uno, firmware.gas.asm held the
+    // DDR bit from the constructor and no write to the port at all (#316).
+    private void RejectAssignmentToAMethod(MemberAccessExpr memTarget)
+    {
+        if (memTarget.Object is not VariableExpr) return;
+        string owner = ResolveNameKey(((VariableExpr)memTarget.Object).Name);
+        if (!instanceClasses.TryGetValue(owner, out var cls) || string.IsNullOrEmpty(cls)) return;
+        string concrete = ResolveConcreteClass(cls) ?? cls;
+        if (!ClassDefinesMethod(concrete, memTarget.Member)) return;
+        // A class that also declares the name as a FIELD is not this mistake; the layout is what
+        // decides, and a name in it is storage whatever else shares the spelling.
+        if (classFieldLayout.TryGetValue(concrete, out var layout)
+            && layout.Any(f => f.Item1 == memTarget.Member)) return;
+
+        int seg = concrete.LastIndexOf('_');
+        string shownCls = seg >= 0 ? concrete[(seg + 1)..] : concrete;
+        string target = FormatMemberTarget(memTarget);
+        throw UserError(
+            $"'{memTarget.Member}' is a method on '{shownCls}', not a field: assigning to it "
+            + "would hide the method and the write would go nowhere. Call it instead, "
+            + $"`{target}(...)` to set and `{target}()` to read.", memTarget);
+    }
+
     private bool EmitPropertySetterAssign(AssignStmt stmt, MemberAccessExpr memTarget)
     {
         bool isCtor = false;
@@ -1172,6 +1210,8 @@ public partial class IRGenerator
 
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
+        RejectAssignmentToAMethod(memExpr2);
+
         // Class variable write: `ClassName.attr = value`. The read side resolves ClassName.attr
         // to the mutable class global (via classModuleMap); mirror it here with a real store.
         // Without this the write fell through to the ZCA-field path and was constant-folded into
