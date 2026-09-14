@@ -21,6 +21,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `match / case` | Literal, wildcard, OR (`\|`), guard `if cond`, sequence, capture, dotted-name patterns; DCE on `__CHIP__` |
 | `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (`@inline` only, annotated `-> (T1, T2)` or `-> tuple[T1, T2]`) |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level statements |
+| Module-level `main()` (bare, or under `if __name__ == "__main__":`) | Says where the entry point's body runs: what is written after the call runs after the body. A second call, and an early `return` with module-level code after the call, are refused |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |

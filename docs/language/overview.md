@@ -148,6 +148,28 @@ while True:
 The compiler synthesizes a `main` entry point from top-level executable statements
 automatically.
 
+**Calling `main()` yourself.** `def main():` is called for you, so the call is optional —
+but writing it is not an error, and it is not ignored either. It says *where* main's body
+runs among the module-level statements, exactly as it does in CPython:
+
+```python
+def main():
+    print("work")
+
+print("before")
+main()
+print("after")       # before, work, after
+```
+
+`if __name__ == "__main__": main()` is the same thing: the guard is always true in the
+entry file, so the call it contains is the split point. With nothing written after it,
+main's body simply runs last, which is what the bare `def main():` form already does.
+
+Two shapes are refused instead of being approximated. Calling `main()` twice at module
+level is refused — the entry point runs once. So is a `main()` that can `return` early
+when module-level code follows the call, because main's body is spliced in where the call
+is written and the `return` would skip that code.
+
 ---
 
 ## Conditional compilation

@@ -41,6 +41,18 @@
 - `x in range(a, b[, s])`, `reversed(range(...))` and `enumerate(range(...))` over runtime
   bounds are supported; `range()` as a value is refused with a message that names the
   spellings that work (#288).
+- A module-level `main()` says where the entry point's body runs: the statements written
+  after it run after that body, as they do in CPython. The call used to be dropped, so
+  `main(); print("END")` printed END first and main's output last, with nothing reported.
+  A second `main()` and a `main()` that returns early with module-level code after the
+  call are refused where the call is written (#301).
+
+### Diagnostics
+- A line a message quotes for an EARLIER site is a line of the file the reader wrote. The
+  citation now names its file (`already 3 for PD6 at main.py:38`) and `pymcu build` maps it
+  back from the synthetic entry it compiles, like the header. A program that calls
+  `print()` is four lines longer in `dist/_generated`, so the quoted line pointed past the
+  end of the source: measured at "at line 11" for an eight-line program (#303).
 
 ## 0.1.0a10 — 2026-08-18
 
