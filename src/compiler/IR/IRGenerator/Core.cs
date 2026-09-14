@@ -343,6 +343,7 @@ public partial class IRGenerator
         this.modulePaths = modulePaths ?? new Dictionary<string, string>();
         loopVarReadAfter.Clear();
         ScanLoopVarReadsAfter(mainAst, importedModules.Values);
+        ScanNameWrites(mainAst, importedModules.Values);
 
         // Join the two maps the caller already provides, so a debug listing can be looked up
         // by the path a compiled function carries rather than by a module name reconstructed

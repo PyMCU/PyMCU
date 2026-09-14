@@ -4228,6 +4228,10 @@ public partial class IRGenerator
         arraySizes[qualified] = count;
         arrayElemTypes[qualified] = elemDt;
         variableTypes[qualified] = elemDt;
+        // Keep the values: a run-time subscript reaching this array later can turn them into a
+        // flash table, which is the storage a lookup table written as a plain list wants.
+        if (allConst) ctArrayConstElements[qualified] = constElems;
+        else ctArrayConstElements.Remove(qualified);
         return true;
     }
 
