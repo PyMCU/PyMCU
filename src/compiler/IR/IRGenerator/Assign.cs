@@ -998,7 +998,7 @@ public partial class IRGenerator
                 {
                     // Resolve a module alias (import machine as m) to the real module
                     // name so `m.Pin(...)` resolves the machine_Pin class.
-                    string realMod = importedAliases.TryGetValue(objVar.Name, out var rm) && rm != null
+                    string realMod = TryImportedAlias(objVar.Name, out var rm) && rm != null
                         ? rm : objVar.Name;
                     string mangled = realMod.Replace('.', '_');
                     resolvedClass = mangled + "_" + calleeMem.Member;
@@ -1027,7 +1027,7 @@ public partial class IRGenerator
                 && ownerMem.Object is VariableExpr ownerModVar
                 && modules.ContainsKey(ownerModVar.Name))
             {
-                string ownerMod = importedAliases.TryGetValue(ownerModVar.Name, out var orm) && orm != null
+                string ownerMod = TryImportedAlias(ownerModVar.Name, out var orm) && orm != null
                     ? orm : ownerModVar.Name;
                 string ownerKey = ownerMod.Replace('.', '_') + "_" + ownerMem.Member;
                 if (instanceClasses.TryGetValue(ownerKey, out var ownerCls) && ownerCls != null)
@@ -3321,7 +3321,7 @@ public partial class IRGenerator
         if (ScalarTypeNames.Contains(annotation)) return;
         if (annotation is "ptr" or "object" or "self") return;
         if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
-        if (importedAliases.ContainsKey(annotation) || aliasToOriginal.ContainsKey(annotation)) return;
+        if (IsImportedAlias(annotation) || aliasToOriginal.ContainsKey(annotation)) return;
         if (classNames.Any(c => c.EndsWith("." + annotation, StringComparison.Ordinal)
                                 || c.EndsWith("_" + annotation, StringComparison.Ordinal))) return;
         if (ResolveCallee(annotation) is { } resolved

@@ -447,6 +447,7 @@ public partial class IRGenerator
                 // Map the used name (alias or real) to the real module so member/method
                 // resolution mangles `t.sleep_ms` (import time as t) to time_sleep_ms.
                 importedAliases[modKey] = imp.ModuleName;
+                RegisterModuleAlias("", modKey, imp.ModuleName, null);
             }
 
             foreach (var sym in imp.Symbols)
@@ -457,6 +458,8 @@ public partial class IRGenerator
                 // module -- mangling against the facade produced an undefined
                 // pymcu_hal_Pin. A module that defines the symbol itself ends the chase.
                 importedAliases[key] = ResolveReExport(importedModules, imp.ModuleName, sym);
+                RegisterModuleAlias("", key, importedAliases[key],
+                                    imp.Aliases.ContainsKey(sym) ? sym : null);
                 if (imp.Aliases.ContainsKey(sym))
                     aliasToOriginal[key] = sym;
             }
@@ -466,6 +469,7 @@ public partial class IRGenerator
         {
             var modName = kvp.Key;
             var modAst = kvp.Value;
+            string ownPrefix = modName.Replace('.', '_') + "_";
             foreach (var imp in modAst.Imports)
             {
                 if (imp.ModuleName == "pymcu.types")
@@ -485,6 +489,9 @@ public partial class IRGenerator
                 foreach (var sym in imp.Symbols)
                 {
                     string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
+                    // This module's OWN binding, which no other module can take from it.
+                    RegisterModuleAlias(ownPrefix, key, imp.ModuleName,
+                                        imp.Aliases.ContainsKey(sym) ? sym : null);
                     // Don't overwrite aliases established by the main file — sub-module
                     // imports use the same flat dictionary and would otherwise shadow the
                     // user's own `from machine import Pin` with a stdlib-internal
@@ -504,6 +511,7 @@ public partial class IRGenerator
                 if (imp.Symbols.Count == 0)
                 {
                     string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
+                    RegisterModuleAlias(ownPrefix, modKey, imp.ModuleName, null);
                     if (!importedAliases.ContainsKey(modKey))
                         importedAliases[modKey] = imp.ModuleName;
                     if (!modules.ContainsKey(modKey))
@@ -1427,9 +1435,9 @@ public partial class IRGenerator
         }
 
         // `from module import sym` where sym is a mutable global (e.g. `from machine import mem8`)
-        if (importedAliases.TryGetValue(name, out var importedAliasMod))
+        if (TryImportedAlias(name, out var importedAliasMod) && importedAliasMod != null)
         {
-            var origName = aliasToOriginal.TryGetValue(name, out var origAlias) ? origAlias : name;
+            var origName = AliasOriginal(name);
             string importedPrefix = importedAliasMod.Replace('.', '_') + "_";
             string importedKey = importedPrefix + origName;
             if (mutableGlobals.TryGetValue(importedKey, out var importedAliasType))
@@ -1662,7 +1670,7 @@ public partial class IRGenerator
         }
 
         // A name that denotes something other than a variable: a class, a function, an import.
-        if (classNames.Contains(name) || importedAliases.ContainsKey(name)
+        if (classNames.Contains(name) || IsImportedAlias(name)
             || aliasToOriginal.ContainsKey(name) || inlineFunctions.ContainsKey(name)
             || functionParams.ContainsKey(name) || functionReturnTypes.ContainsKey(name)
             || externFunctionMap.ContainsKey(name))
@@ -1731,9 +1739,93 @@ public partial class IRGenerator
     /// </summary>
     private string? ImportedGlobalKey(string name)
     {
-        if (!importedAliases.TryGetValue(name, out var mod) || mod == null) return null;
-        string original = aliasToOriginal.TryGetValue(name, out var orig) ? orig : name;
+        if (!TryImportedAlias(name, out var mod) || mod == null) return null;
+        string original = AliasOriginal(name);
         return mod.Replace('.', '_') + "_" + original;
+    }
+
+    // --- Import aliases, scoped to the module that wrote them (#320, #324) ---------------
+    //
+    // `from x import C as _C` binds _C in ONE file. The flat importedAliases table is shared
+    // by every module, so a second file writing `from y import D as _C` either lost its own
+    // binding or stole the first one's, and the call that named _C was lowered against the
+    // wrong class: a constructor that appeared to call itself, or a keyword argument whose
+    // callee no longer had that parameter, so it silently took the default.
+    //
+    // The per-module tables hold each file's own imports. A name the file imports itself
+    // resolves there; anything else falls back to the flat table, which is what the rest of
+    // the pipeline (star imports, re-export chases, inline-body imports) still populates.
+
+    private string _owningPrefixCacheKey = " ";
+    private string _owningPrefixCacheValue = "";
+
+    /// <summary>
+    /// The mangled prefix of the module whose import table governs the code being lowered.
+    /// `currentModulePrefix` can carry a class segment inside a method, so the longest
+    /// registered module prefix it starts with is the owner; the entry file is "".
+    /// </summary>
+    private string OwningModulePrefix()
+    {
+        if (_owningPrefixCacheKey == currentModulePrefix) return _owningPrefixCacheValue;
+        string best = "";
+        foreach (var p in perModuleImportedAliases.Keys)
+            if (p.Length > best.Length && currentModulePrefix.StartsWith(p, StringComparison.Ordinal))
+                best = p;
+        _owningPrefixCacheKey = currentModulePrefix;
+        _owningPrefixCacheValue = best;
+        return best;
+    }
+
+    /// <summary>The module an imported name refers to, preferring the current module's own import.</summary>
+    private bool TryImportedAlias(string name, out string? mod)
+    {
+        if (perModuleImportedAliases.TryGetValue(OwningModulePrefix(), out var own)
+            && own.TryGetValue(name, out mod))
+            return true;
+        return importedAliases.TryGetValue(name, out mod);
+    }
+
+    /// <summary>Whether any module in the program imported this name.</summary>
+    private bool IsImportedAlias(string name) => TryImportedAlias(name, out _) || importedAliases.ContainsKey(name);
+
+    /// <summary>
+    /// The name as the defining module spells it. When the current module imports the name
+    /// WITHOUT renaming it, another module's `as` mapping must not rename it here.
+    /// </summary>
+    private string AliasOriginal(string name)
+    {
+        if (perModuleImportedAliases.TryGetValue(OwningModulePrefix(), out var own)
+            && own.ContainsKey(name))
+        {
+            if (perModuleAliasToOriginal.TryGetValue(OwningModulePrefix(), out var ownOrig)
+                && ownOrig.TryGetValue(name, out var scoped) && scoped != null)
+                return scoped;
+            return name;
+        }
+        return aliasToOriginal.TryGetValue(name, out var orig) && orig != null ? orig : name;
+    }
+
+    /// <summary>Whether the current module (or, failing that, any module) renamed this name.</summary>
+    private bool HasAliasOriginal(string name)
+    {
+        if (perModuleImportedAliases.TryGetValue(OwningModulePrefix(), out var own)
+            && own.ContainsKey(name))
+            return perModuleAliasToOriginal.TryGetValue(OwningModulePrefix(), out var ownOrig)
+                   && ownOrig.ContainsKey(name);
+        return aliasToOriginal.ContainsKey(name);
+    }
+
+    /// <summary>Record `name -> module` (and its original spelling) in one module's own table.</summary>
+    private void RegisterModuleAlias(string modulePrefix, string name, string? module, string? original)
+    {
+        if (!perModuleImportedAliases.TryGetValue(modulePrefix, out var tbl))
+            perModuleImportedAliases[modulePrefix] = tbl = new Dictionary<string, string?>();
+        tbl[name] = module;
+        _owningPrefixCacheKey = " ";
+        if (original == null) return;
+        if (!perModuleAliasToOriginal.TryGetValue(modulePrefix, out var otbl))
+            perModuleAliasToOriginal[modulePrefix] = otbl = new Dictionary<string, string?>();
+        otbl[name] = original;
     }
 
     // --- Strings whose value is decided at run time (issue #145) -------------------------
@@ -1959,7 +2051,7 @@ public partial class IRGenerator
             {
                 VariableExpr cv => ResolveCallee(cv.Name),
                 MemberAccessExpr { Object: VariableExpr mo } ma when modules.ContainsKey(mo.Name)
-                    => (importedAliases.TryGetValue(mo.Name, out var real) && real != null ? real : mo.Name)
+                    => (TryImportedAlias(mo.Name, out var real) && real != null ? real : mo.Name)
                        .Replace('.', '_') + "_" + ma.Member,
                 _ => "",
             };
@@ -1986,17 +2078,17 @@ public partial class IRGenerator
             string qualifier = name[..lastDot];
             string member = name[(lastDot + 1)..];
             if (intrinsicNames.Contains(member)
-                && (importedAliases.ContainsKey(qualifier) || modules.ContainsKey(qualifier)))
+                && (IsImportedAlias(qualifier) || modules.ContainsKey(qualifier)))
                 return member;
             return mod + "_" + func;
         }
 
         if (intrinsicNames.Contains(name)) return name;
 
-        if (importedAliases.TryGetValue(name, out var modName))
+        if (TryImportedAlias(name, out var modName))
         {
             var mangledMod = modName?.Replace('.', '_');
-            var original = aliasToOriginal.GetValueOrDefault(name, name);
+            var original = AliasOriginal(name);
             // `from pymcu.hal.console import print as p`: the alias renames a builtin, so the
             // call must reach the builtin. Mangling it to `pymcu_hal_console_print` named a
             // function that is never emitted, and the error blamed the module rather than

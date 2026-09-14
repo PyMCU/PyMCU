@@ -754,6 +754,11 @@ public partial class IRGenerator
                 {
                     string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
                     importedAliases[key] = imp.ModuleName;
+                    // The inlined body belongs to the module that wrote the import, so its
+                    // own table has to carry it too or the module-scoped lookup (#320) would
+                    // keep answering with that module's top-level binding of the same name.
+                    RegisterModuleAlias(OwningModulePrefix(), key, imp.ModuleName,
+                                        imp.Aliases.ContainsKey(sym) ? sym : null);
                     if (imp.Aliases.ContainsKey(sym))
                         aliasToOriginal[key] = sym;
                 }

@@ -1799,7 +1799,7 @@ public partial class IRGenerator
 
             if (classNames.Contains(baseName) || classFieldLayout.ContainsKey(baseName)) continue;
             if (classNames.Contains(prefix + baseName)) continue;
-            if (importedAliases.ContainsKey(baseName) || aliasToOriginal.ContainsKey(baseName)) continue;
+            if (IsImportedAlias(baseName) || aliasToOriginal.ContainsKey(baseName)) continue;
             if (classNames.Any(c => c.EndsWith("." + baseName, StringComparison.Ordinal)
                                     || c.EndsWith("_" + baseName, StringComparison.Ordinal))) continue;
             if (ResolveCallee(baseName) is { } resolved

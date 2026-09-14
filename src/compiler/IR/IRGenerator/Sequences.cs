@@ -182,7 +182,7 @@ public partial class IRGenerator
                 // `digitalio.DigitalInOut(...)`: the module qualifier says where the class came
                 // from. Try the mangled module name the call path itself builds, then the bare
                 // member, so a class re-exported under an alias still resolves.
-                string realMod = importedAliases.TryGetValue(mv.Name, out var rm) && rm != null
+                string realMod = TryImportedAlias(mv.Name, out var rm) && rm != null
                     ? rm : mv.Name;
                 string mangled = realMod.Replace('.', '_') + "_" + cm.Member;
                 if (classFieldLayout.ContainsKey(mangled)) return mangled;

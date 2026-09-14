@@ -2307,7 +2307,7 @@ public partial class IRGenerator
             // Resolve a module alias (import machine as m) to the real module name so
             // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
             string moduleBase = modules.ContainsKey(varExpr.Name)
-                && importedAliases.TryGetValue(varExpr.Name, out var realModName) && realModName != null
+                && TryImportedAlias(varExpr.Name, out var realModName) && realModName != null
                 ? realModName : varExpr.Name;
             string mangledName = moduleBase + "_" + expr.Member;
 
@@ -2349,9 +2349,9 @@ public partial class IRGenerator
                 return new Variable(mangledName, DataType.UINT8);
             }
 
-            if (importedAliases.TryGetValue(varExpr.Name, out var modName))
+            if (TryImportedAlias(varExpr.Name, out var modName))
             {
-                var originalName = aliasToOriginal.TryGetValue(varExpr.Name, out var orig) ? orig : varExpr.Name;
+                var originalName = AliasOriginal(varExpr.Name);
                 var modPrefix = modName?.Replace('.', '_');
                 var modMangled = modPrefix + "_" + expr.Member;
                 if (globals.TryGetValue(modMangled, out var sym2))

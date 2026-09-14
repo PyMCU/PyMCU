@@ -205,7 +205,7 @@ public partial class IRGenerator
                     {
                         // Mangle with the real module name, not the alias: `import time as t`
                         // registers modules["t"] but compiles functions as time_sleep_ms.
-                        string realMod = importedAliases.TryGetValue(ve.Name, out var rm) && rm != null ? rm : ve.Name;
+                        string realMod = TryImportedAlias(ve.Name, out var rm) && rm != null ? rm : ve.Name;
                         string mangledMod = realMod.Replace('.', '_');
                         callee = mangledMod + "_" + memC.Member;
                         resolvedAsModule = true;
@@ -895,10 +895,10 @@ public partial class IRGenerator
             // there, and the mangled symbol (pymcu_hal_adc_ADC) is internal name construction
             // leaking into a user-facing message. Say which module does not export it, and
             // offer the near miss.
-            if (expr.Callee is VariableExpr impVe && importedAliases.TryGetValue(impVe.Name, out var impMod)
+            if (expr.Callee is VariableExpr impVe && TryImportedAlias(impVe.Name, out var impMod)
                 && !string.IsNullOrEmpty(impMod))
             {
-                string wanted = aliasToOriginal.GetValueOrDefault(impVe.Name, impVe.Name) ?? impVe.Name;
+                string wanted = AliasOriginal(impVe.Name);
                 var exports = ExportedNames(impMod);
                 string near = NearestName(exports, wanted);
                 string tail = near.Length > 0
@@ -2391,8 +2391,7 @@ public partial class IRGenerator
                 // the const[uint8] channel overload.
                 if (arg is CallExpr { Callee: VariableExpr ctor })
                 {
-                    string ctorName = aliasToOriginal.TryGetValue(ctor.Name, out var orig) && orig != null
-                        ? orig : ctor.Name;
+                    string ctorName = AliasOriginal(ctor.Name);
                     if (classNames.Contains(ctorName)) return ctorName;
                     string shortCtor = ShortClassName(ctorName);
                     if (classNames.Contains(shortCtor)) return shortCtor;
@@ -3394,7 +3393,7 @@ public partial class IRGenerator
     {
         if (c.Callee is MemberAccessExpr { Object: VariableExpr mv } ma && ma.Member == member)
         {
-            string mod = importedAliases.TryGetValue(mv.Name, out var real) && real != null
+            string mod = TryImportedAlias(mv.Name, out var real) && real != null
                 ? real : mv.Name;
             return mod == "struct";
         }
@@ -4959,7 +4958,7 @@ public partial class IRGenerator
 
         var candidates = new List<string>();
         string moduleBase = modules.ContainsKey(recv.Name)
-                            && importedAliases.TryGetValue(recv.Name, out var realMod) && realMod != null
+                            && TryImportedAlias(recv.Name, out var realMod) && realMod != null
             ? realMod : recv.Name;
         candidates.Add(moduleBase + "_" + ma.Member);
 

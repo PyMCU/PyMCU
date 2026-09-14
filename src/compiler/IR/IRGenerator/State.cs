@@ -202,6 +202,16 @@ public partial class IRGenerator
     private HashSet<string> enumClassNames = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
 
+    // The same table, kept per module, because an import binds a name in ONE module and the
+    // flat table above is shared by all of them: two modules that alias different things to
+    // the same name got whichever was registered first, so a class could end up constructing
+    // itself (#320) and a keyword argument could stop folding because the callee resolved to
+    // another module's class (#324). Keyed by the module's mangled prefix ("bus_"), with the
+    // entry file under "". Read through ModuleScopedAlias/ModuleScopedOriginal, which prefer
+    // the module being lowered and fall back to the flat table.
+    private Dictionary<string, Dictionary<string, string?>> perModuleImportedAliases = new();
+    private Dictionary<string, Dictionary<string, string?>> perModuleAliasToOriginal = new();
+
     // Star imports in scope, module name -> the names the star actually brought in. A star
     // binds what its module defines at top level, so a name it only re-exports is missing;
     // without this the reader was told the name was "never imported" with the import that
