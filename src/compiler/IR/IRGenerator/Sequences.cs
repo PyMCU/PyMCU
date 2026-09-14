@@ -66,6 +66,7 @@ public partial class IRGenerator
             // it, whatever it holds.
             if (!variableAliases.ContainsKey(candidate) && !instanceClasses.ContainsKey(candidate)
                 && !arraySizes.ContainsKey(candidate) && !constSequenceBindings.ContainsKey(candidate)
+                && !listLiteralParams.ContainsKey(candidate)
                 && !variableTypes.ContainsKey(candidate) && !constantVariables.ContainsKey(candidate)
                 && !bytearrayParams.Contains(candidate))
                 continue;
@@ -148,8 +149,12 @@ public partial class IRGenerator
     {
         if (e is VariableExpr nameVe)
         {
-            if (ResolveConstSequence(nameVe.Name) is { } byName) return byName;
+            // The parameter binding comes FIRST: it is the innermost scope, and it lives in a
+            // different map from the named one, so the ordinary prefix walk cannot rank them.
+            // With the walk first, `Table([10, 20, 30])` read a module-level `levels = [7, 8, 9]`
+            // that merely shared the parameter's name, and both drivers reported the same table.
             if (ResolveListLiteralParam(nameVe.Name) is { } asParam) return asParam.Elements;
+            if (ResolveConstSequence(nameVe.Name) is { } byName) return byName;
         }
 
         if (SequenceKeyOf(e) is not { } key) return null;

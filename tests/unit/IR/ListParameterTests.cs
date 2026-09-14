@@ -145,10 +145,30 @@ public class ListParameterTests
             "             Part(6), Part(7), Part(8), Part(9), Part(10)])\n" +
             "    x = b.count()\n"));
 
-    // The instances have no run-time storage, so a run-time subscript has nothing to index.
-    // Refused where it is written, naming the two things that do work.
+    // A run-time index that CALLS a method selects among the elements: one comparison and
+    // one expansion each, the same lowering the named form already had.
     [Fact]
-    public void ARunTimeSubscriptOfInstances_IsRefusedByName()
+    public void ARunTimeSubscriptCallingAMethod_SelectsAmongTheElements()
+        => Assert.NotNull(Gen(Part +
+            "class Bar:\n" +
+            "    def __init__(self, parts):\n" +
+            "        self._parts = parts\n" +
+            "    def walk(self) -> uint8:\n" +
+            "        i: uint8 = 0\n" +
+            "        t: uint8 = 0\n" +
+            "        while i < 2:\n" +
+            "            t = t + self._parts[i].get()\n" +
+            "            i = i + 1\n" +
+            "        return t\n" +
+            "def main():\n" +
+            "    b = Bar([Part(1), Part(2)])\n" +
+            "    x = b.walk()\n"));
+
+    // Taking the element itself at run time has nothing to take: the instances are flattened
+    // at compile time and have no slot. Refused where it is written, naming the field and the
+    // two spellings that do work.
+    [Fact]
+    public void ARunTimeSubscriptTakingTheElement_IsRefusedByName()
     {
         var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Part +
             "class Bar:\n" +
@@ -158,7 +178,8 @@ public class ListParameterTests
             "        i: uint8 = 0\n" +
             "        t: uint8 = 0\n" +
             "        while i < 2:\n" +
-            "            t = t + self._parts[i].get()\n" +
+            "            p = self._parts[i]\n" +
+            "            t = t + p.get()\n" +
             "            i = i + 1\n" +
             "        return t\n" +
             "def main():\n" +
@@ -247,6 +268,24 @@ public class ListParameterTests
         Assert.Contains("self._levels", ex.Message);
         Assert.Contains("uint8[3]", ex.Message);
     }
+
+    // Two drivers of the same class, one given a literal and one given a module-level list
+    // that happens to share the parameter's name. The literal must not be answered by the
+    // module: measured on the AVR, both drivers reported 7, 8, 9.
+    [Fact]
+    public void AModuleListSharingTheParameterName_DoesNotShadowTheLiteral()
+        => Assert.NotNull(Gen(
+            "class Bar:\n" +
+            "    def __init__(self, levels):\n" +
+            "        self._levels = levels\n" +
+            "    def first(self) -> uint8:\n" +
+            "        return self._levels[0]\n" +
+            "levels = [7, 8, 9]\n" +
+            "def main():\n" +
+            "    a = Bar([10, 20, 30])\n" +
+            "    b = Bar(levels)\n" +
+            "    x = a.first()\n" +
+            "    y = b.first()\n"));
 
     // ---------------------------------------------------------------- bytearray
 
