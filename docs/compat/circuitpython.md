@@ -58,8 +58,14 @@ pymcu build
 | `pwmio` | `PWMOut` | ✅ Complete |
 | `adafruit_motor.servo` | `Servo`, `ContinuousServo` | ✅ On D9/D10, where the frequency is exact. Import the submodule's members by name |
 | `pulseio` | `PulseIn`, `PulseOut` | ✅ On the ATmega 48/88/168/328 family. `PulseOut.send()` takes the length as a second argument, and the carrier pin is fixed by the timer channel |
+| `bitbangio` | `I2C`, `SPI` | ✅ The same API as `busio`, driven in software on any pins. SPI is mode 0 only |
+| `countio` | `Counter`, `Edge` | ✅ A pin interrupt and a 32-bit count. One per program; telling a rising edge from a falling one needs D2 or D3 |
+| `keypad` | `Keys`, `Event` | ⚠️ Takes a list of `digitalio.DigitalInOut`, not pin names. `KeyMatrix` is not written |
+| `rainbowio` | `colorwheel` | ✅ Complete |
+| `rotaryio` | — | ❌ Not implemented |
+| `neopixel_write` | — | ❌ Not implemented as a module; the WS2812 timing lives in the `pymcu-lib-neopixel` library |
 | `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
-| `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ Complete. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**, not CircuitPython: upstream `time` defines no such names, so code using them will not run under real CircuitPython |
+| `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ `sleep()` takes any duration, from microseconds to minutes; it used to wrap past 65.535 s and to round anything under a millisecond to zero. `monotonic_ns()` wraps at 4.295 s and says so. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**: upstream `time` defines no such names |
 | `supervisor` | `ticks_ms`, `ticks_add`, `ticks_diff`, `reload`, `runtime` | ✅ Complete |
 | `alarm` | `time.TimeAlarm`, `pin.PinAlarm`, `sleep_until_alarms`, `light_sleep_until_alarms`, `exit_and_deep_sleep_until_alarms`, `wake_alarm` | ✅ Complete |
 | `microcontroller` | `cpu.frequency`, `cpu.voltage`, `cpu.uid`, `cpu.reset_reason`, `nvm`, `watchdog`, `reset`, `delay_us` | ✅ Partial |
@@ -378,6 +384,108 @@ time and says so.
 
 The first parameter is `pin`, as CircuitPython names it. It was `pin_name`, so
 `PWMOut(pin=board.D9, ...)` did not compile.
+
+---
+
+### `bitbangio`
+
+```python
+import board, bitbangio
+
+i2c = bitbangio.I2C(board.D2, board.D3, frequency=100000)
+i2c.writeto(0x68, b"\xA5")
+
+spi = bitbangio.SPI(board.D5, MOSI=board.D6, MISO=board.D7)
+spi.configure(baudrate=250000)
+spi.write(b"\x9F")
+```
+
+The same buses as `busio`, driven in software on any pins, which is what a board with two
+sensors at the same address needs: an ATmega has one hardware TWI and one SPI. The API is
+`busio`'s method for method, so a driver written against `busio.I2C` takes a `bitbangio.I2C`
+without knowing.
+
+Both I2C lines need external pull-ups: the bus is open-drain and neither pin is ever driven
+high, only released. Measured on an Arduino Uno, 100 kHz asked comes out at about 85 kHz,
+because the bit loop costs time on top of the half-period; `frequency` reports the rate the
+half-period gives rather than the request.
+
+SPI is mode 0 only, and `configure()` refuses any other polarity or phase naming `busio.SPI`,
+which is the hardware peripheral and takes all four.
+
+---
+
+### `countio`
+
+```python
+import board, countio
+
+flow = countio.Counter(board.D2, edge=countio.Edge.FALL)
+while True:
+    print(flow.count)
+    flow.reset()
+```
+
+A pin interrupt and a 32-bit counter, not a hardware counter: every timer on the ATmega328P
+is already spoken for, and a timer's external clock input is D4 or D5 and nothing else, while
+an interrupt counts on any of 23 pins. About 30 cycles an edge.
+
+Rising and falling are told apart by **D2 and D3** only. Every other pin has a pin-change
+interrupt that fires on both and cannot say which, so asking one of those for a single edge
+is refused rather than counted twice and quietly doubled.
+
+`counter.count = 0` clears it, as CircuitPython allows; any other value is refused, because a
+counter counts edges as they arrive and there is nowhere to start it from.
+
+One `Counter` per program: the counter and the interrupt are module state in the HAL.
+
+---
+
+### `keypad`
+
+```python
+import board, digitalio, keypad
+
+buttons = [digitalio.DigitalInOut(board.D4),
+           digitalio.DigitalInOut(board.D5)]
+for b in buttons:
+    b.switch_to_input(pull=digitalio.Pull.UP)
+
+keys = keypad.Keys(buttons, value_when_pressed=False)
+event = keypad.Event()
+while True:
+    if keys.events.get_into(event):
+        print(event.key_number, event.pressed)
+```
+
+`Keys` takes a list of `digitalio.DigitalInOut` the caller has already made inputs, not a
+list of pin names: a list of names has no storage behind it and cannot be indexed at run
+time.
+
+**The queue holds no events of its own.** A key's stored state moves only when its change is
+reported, so what is waiting to be read is exactly the set of keys whose pins disagree with
+it. That costs one bit a key instead of a buffer, and it is why `overflowed` is always false
+and `max_events` is refused: there is nothing to size.
+
+CircuitPython scans in the background on a tick; there is none here, so the scan happens
+inside `events.get_into()` and `interval` is refused for the same reason.
+
+`events.get()` returns a new `Event` and there is no heap; it is refused naming `get_into`,
+which is upstream's own allocation-free call. `keypad.KeyMatrix` is not written.
+
+---
+
+### `rainbowio`
+
+```python
+from rainbowio import colorwheel
+
+pixels[i] = colorwheel(pos)
+```
+
+Red, green, blue and back to red across 0 to 255. Between the corners one channel falls by 3
+a step while the next rises by 3, so two channels are lit at a time and they always add
+to 255.
 
 ---
 
