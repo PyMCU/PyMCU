@@ -404,7 +404,15 @@ public partial class IRGenerator
                         Scan(i.ElseBranch);
                         return;
                     case WhileStmt w: Scan(w.Body); return;
-                    case ForStmt f: Scan(f.Body); return;
+                    case ForStmt f:
+                        // The loop variable of a constant range is evidence too: `s = s + i`
+                        // over range(300) needs sixteen bits for i and thirty-two for s. Only
+                        // literal bounds are read here; anything else leaves i untyped, which
+                        // contributes no widening, as before.
+                        if (f.Iterable == null && RangeLiteralBounds(f) is { } rb)
+                            localTypes[f.VarName] = NarrowestTypeFor(rb.Lo, rb.Hi);
+                        Scan(f.Body);
+                        return;
                     case WithStmt wi: Scan(wi.Body); return;
                     case TryStmt t:
                         foreach (var s in t.Body) Scan(s);
@@ -451,11 +459,45 @@ public partial class IRGenerator
                 var l = WidthOf(b.Left, localTypes, selfName);
                 var r = WidthOf(b.Right, localTypes, selfName);
                 if (l == DataType.UNKNOWN || r == DataType.UNKNOWN) return DataType.UNKNOWN;
-                return l.SizeOf() >= r.SizeOf() ? l : r;
+                var wider = l.SizeOf() >= r.SizeOf() ? l : r;
+                // Add, subtract, multiply and shift promote to the next wider type, the rule
+                // VisitBinary applies to a local: a module-level `n = n + 1` stayed a byte
+                // while the same two lines inside a def counted to 300.
+                if (b.Op is PyMCU.Frontend.BinaryOp.Add or PyMCU.Frontend.BinaryOp.Sub
+                    or PyMCU.Frontend.BinaryOp.Mul or PyMCU.Frontend.BinaryOp.LShift)
+                    wider = wider switch
+                    {
+                        DataType.UINT8 => DataType.UINT16,
+                        DataType.INT8 => DataType.INT16,
+                        DataType.UINT16 => DataType.UINT32,
+                        DataType.INT16 => DataType.INT32,
+                        _ => wider,
+                    };
+                return wider;
             }
             default:
                 return DataType.UNKNOWN;
         }
+    }
+
+    // The values a `for` over range() with literal bounds visits, or null when a bound is
+    // not a plain literal. start..stop-1 for a positive step and the mirror for a negative
+    // one; the overshoot does not matter here, only what the body can read.
+    private static (long Lo, long Hi)? RangeLiteralBounds(ForStmt f)
+    {
+        long? Lit(Expression? e, long whenAbsent)
+        {
+            if (e == null) return whenAbsent;
+            if (e is IntegerLiteral il) return il.Value;
+            if (e is UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }) return -n.Value;
+            return null;
+        }
+        if (Lit(f.RangeStart, 0) is not { } start || Lit(f.RangeStop, 0) is not { } stop
+            || Lit(f.RangeStep, 1) is not { } step || step == 0) return null;
+        long trips = IRGenerator.RangeTripCount(start, stop, step);
+        if (trips <= 0) return (start, start);
+        long last = start + (trips - 1) * step;
+        return (Math.Min(start, last), Math.Max(start, last));
     }
 
     /// <summary>The narrowest integer type that holds the whole closed range [min, max].</summary>

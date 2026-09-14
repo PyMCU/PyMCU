@@ -739,7 +739,15 @@ public partial class IRGenerator
         // adds room, so a function assigning something this cannot type still keeps whatever the
         // narrowing pass allowed, and a name the narrowing pass already sized is untouched.
         var initializerWidths = CollectLiteralOnlyWidths(ast.GlobalStatements, []);
-        var fromFunctions = CollectGlobalWidthsFromFunctions(ast.Functions);
+        // The module's own statements are scanned the way `main`'s are: an accumulator fed
+        // at module level (`n = 0` then `n = n + 1` inside a module-level loop) is typed from
+        // the promoted width of its right-hand side, exactly as it would be inside a def. It
+        // was not, and the same two lines counted to 300 in a function and to 44 at module
+        // level -- the MicroPython and CircuitPython spelling.
+        var moduleAsMain = new FunctionDef("main", new List<Param>(), "",
+            new Block { Statements = { } });
+        moduleAsMain.Body.Statements.AddRange(ast.GlobalStatements);
+        var fromFunctions = CollectGlobalWidthsFromFunctions(ast.Functions.Append(moduleAsMain));
 
         foreach (var name in fromFunctions.Keys.Concat(initializerWidths.Keys).Distinct())
         {
