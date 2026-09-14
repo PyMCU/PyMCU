@@ -242,6 +242,18 @@ class Pin:
 
     @inline
     def mode(self, m: const = -1) -> uint8:
+        # With no argument this is the GETTER the signature advertises, and it did not exist:
+        # every path wrote the direction and none produced a value, so the read was refused
+        # (PyMCU#312). The direction bit answers OUT (0) or IN (1); an input whose pull-up
+        # latch is set is IN_PULLUP (3), which is the mode that was asked for.
+        #
+        # `m` is const, so exactly one of these branches survives in any expansion.
+        if m == -1:
+            if self._ddr[self._bit]:
+                return 0
+            if self._port[self._bit]:
+                return 3
+            return 1
         # IN (1) and IN_PULLUP (3) clear the direction bit and set the pull-up latch from
         # what the pin remembers; OUT (0) sets it. `m ^ 1` used to go straight into the
         # bit, which for IN_PULLUP wrote a 2 and for OPEN_DRAIN a 3 into a one-bit slot.
@@ -255,3 +267,6 @@ class Pin:
             self._port[self._bit] = self._pull_up
         elif m == 0:
             self._ddr[self._bit] = 1
+        # The write half is used as a statement, so this value is never read. It is here
+        # because the declared return has to exist on every path.
+        return 0

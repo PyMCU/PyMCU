@@ -1,5 +1,6 @@
 from pymcu.chips.pic10f200 import TRISGPIO, GPIO, OPTION
 from pymcu.types import uint8, inline
+from pymcu.exceptions import CompileError
 
 @inline
 def pin_set_mode(name: str, mode: uint8):
@@ -45,6 +46,9 @@ def pin_read(name: str) -> uint8:
         return GPIO[1]
     elif name == "GP2":
         return GPIO[2]
+    # A pin this part does not have. Falling off the end handed the caller whatever the
+    # register held, with nothing said (PyMCU#312).
+    raise CompileError("this pin has no port bit on this part")
 
 @inline
 def pin_write(name: str, val: uint8):

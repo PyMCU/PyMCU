@@ -98,3 +98,19 @@ def pin_pull_up(name: str):
 @inline
 def pin_pull_off(name: str):
     raise CompileError(NO_PER_PIN_PULLUP)
+
+@inline
+def pin_get_mode(name: str) -> uint8:
+    # The reading half of pin_set_mode: the direction bit as the part holds it, 1 for input
+    # and 0 for output, which is what Pin.mode() with no argument advertises (PyMCU#312).
+    if name == "GP0":
+        return TRISGPIO[0]
+    elif name == "GP1":
+        return TRISGPIO[1]
+    elif name == "GP2":
+        return TRISGPIO[2]
+    elif name == "GP3":
+        # Input-only on this part: there is no direction bit, and only one answer.
+        return 1
+    else:
+        raise CompileError(UNKNOWN)

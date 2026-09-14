@@ -231,3 +231,43 @@ def pin_pull_off(name: str):
         OPTION_REG[7] = 1
     else:
         raise CompileError("Weak pull-ups on the PIC16F628A exist on PORTB only")
+
+@inline
+def pin_get_mode(name: str) -> uint8:
+    # The reading half of pin_set_mode: the direction bit as the part holds it, 1 for input
+    # and 0 for output, which is what Pin.mode() with no argument advertises (PyMCU#312).
+    if name == "RA0":
+        return TRISA[0]
+    elif name == "RA1":
+        return TRISA[1]
+    elif name == "RA2":
+        return TRISA[2]
+    elif name == "RA3":
+        return TRISA[3]
+    elif name == "RA4":
+        return TRISA[4]
+    elif name == "RA5":
+        # Input-only (MCLR/VPP): its direction is not a bit that can read anything else.
+        return 1
+    elif name == "RA6":
+        return TRISA[6]
+    elif name == "RA7":
+        return TRISA[7]
+    elif name == "RB0":
+        return TRISB[0]
+    elif name == "RB1":
+        return TRISB[1]
+    elif name == "RB2":
+        return TRISB[2]
+    elif name == "RB3":
+        return TRISB[3]
+    elif name == "RB4":
+        return TRISB[4]
+    elif name == "RB5":
+        return TRISB[5]
+    elif name == "RB6":
+        return TRISB[6]
+    elif name == "RB7":
+        return TRISB[7]
+    else:
+        raise CompileError("Unknown pin for PIC16F628A")

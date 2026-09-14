@@ -1,5 +1,6 @@
 from pymcu.chips.pic16f84a import TRISA, TRISB, PORTA, PORTB, OPTION_REG, INTCON
 from pymcu.types import uint8, inline
+from pymcu.exceptions import CompileError
 
 @inline
 def pin_set_mode(name: str, mode: uint8):
@@ -145,6 +146,9 @@ def pin_read(name: str) -> uint8:
         return PORTB[6]
     elif name == "RB7":
         return PORTB[7]
+    # A pin this part does not have. Falling off the end handed the caller whatever the
+    # register held, with nothing said (PyMCU#312).
+    raise CompileError("this pin has no port bit on this part")
 
 @inline
 def pin_write(name: str, val: uint8):
@@ -279,3 +283,35 @@ def pin_irq_setup(name: str, trigger: uint8):
         INTCON[7] = 1
     else:
         raise NotImplementedError("IRQ not available on this pin for PIC16F84A")
+
+@inline
+def pin_get_mode(name: str) -> uint8:
+    # The reading half of pin_set_mode: the direction bit as the part holds it, 1 for input
+    # and 0 for output, which is what Pin.mode() with no argument advertises (PyMCU#312).
+    if name == "RA0":
+        return TRISA[0]
+    elif name == "RA1":
+        return TRISA[1]
+    elif name == "RA2":
+        return TRISA[2]
+    elif name == "RA3":
+        return TRISA[3]
+    elif name == "RA4":
+        return TRISA[4]
+    elif name == "RB0":
+        return TRISB[0]
+    elif name == "RB1":
+        return TRISB[1]
+    elif name == "RB2":
+        return TRISB[2]
+    elif name == "RB3":
+        return TRISB[3]
+    elif name == "RB4":
+        return TRISB[4]
+    elif name == "RB5":
+        return TRISB[5]
+    elif name == "RB6":
+        return TRISB[6]
+    elif name == "RB7":
+        return TRISB[7]
+    raise CompileError("this pin has no direction bit on this part")
