@@ -69,7 +69,7 @@ def printed_widths(mir):
             if i["$t"] == "call" and "write_decimal" in i["functionName"]]
 
 
-# --- what the widening must leave alone ---------------------------------------------------
+# --- a module-level accumulator follows the local rule (PyMCU#289) ------------------------
 
 EIGHT_BIT = (
     HEAD
@@ -84,20 +84,22 @@ EIGHT_BIT = (
 )
 
 
-def test_an_eight_bit_accumulator_is_left_alone(tmp_path):
-    """The invariant that catches the expensive mistake, and it is not hypothetical.
+def test_an_unannotated_accumulator_is_as_wide_as_its_sum(tmp_path):
+    """The rule a local already had, now at module level too (PyMCU#289).
 
-    `uint8 + uint8` promotes to a uint16 temporary so the sum cannot overflow before it is
-    stored. A width pass that reads the RESULT type widens this accumulator to 16 bits, and
-    every other 8-bit accumulator with it -- silently, since the program still computes the
-    right numbers and no behavioural test can see the difference. It shows up as flash and
-    SRAM, on a part where SRAM is the scarce thing.
-
-    Wrapping an 8-bit counter is PyMCU's integer model, not a narrowing to be repaired.
+    This test used to pin the opposite: `uint8 + uint8` promotes to a uint16 temporary, and
+    the module-level scan deliberately did NOT read that result type, so `total` stayed a
+    byte and wrapped -- "PyMCU's integer model", at the cost of the same two lines inside a
+    def counting to 300 while these counted to 44. Python counts to 300 in both, the
+    MicroPython and CircuitPython spelling is the module-level one, and the width the sum
+    needs is now the width the name gets. What that costs, measured on the corpus:
+    global-accumulator-width grew 44 bytes and literal-width-module 2; every other program
+    was byte-identical. A written annotation (`total: uint8 = 0`) keeps the byte and the
+    wrap, and is the spelling for a counter that is meant to wrap.
     """
     mir = build(tmp_path, EIGHT_BIT)
-    assert global_width(mir, "total") == 1, "the 8-bit accumulator was widened"
-    assert printed_widths(mir) == ["u8"], printed_widths(mir)
+    assert global_width(mir, "total") == 2, "the accumulator follows the promoted width of its sum"
+    assert printed_widths(mir) == ["u16"], printed_widths(mir)
 
 
 ANNOTATED = (
