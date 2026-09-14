@@ -334,6 +334,11 @@ def pwm_t1_exact_start_val(freq: uint16) -> uint8:
 
 
 @inline
+def pwm_t1_exact_is_off(pin: const) -> uint8:
+    return 1
+
+
+@inline
 def pwm_t1_exact_frequency(freq: uint16) -> uint16:
     return freq
 

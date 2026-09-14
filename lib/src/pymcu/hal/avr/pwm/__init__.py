@@ -22,7 +22,7 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
         pwm_init_raw, pwm_u16_steps,
         pwm_uses_exact_t1, pwm_t1_exact_init, pwm_t1_exact_steps,
         pwm_t1_exact_write_ocr, pwm_t1_exact_start_val, pwm_t1_exact_frequency,
-        pwm_bucket_frequency,
+        pwm_t1_exact_is_off, pwm_bucket_frequency,
     )
 elif (__CHIP__.name == "atmega32u4" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
           or __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny24"
@@ -43,7 +43,7 @@ else:
         pwm_init_raw, pwm_u16_steps,
         pwm_uses_exact_t1, pwm_t1_exact_init, pwm_t1_exact_steps,
         pwm_t1_exact_write_ocr, pwm_t1_exact_start_val, pwm_t1_exact_frequency,
-        pwm_bucket_frequency,
+        pwm_t1_exact_is_off, pwm_bucket_frequency,
     )
 
 
@@ -141,8 +141,14 @@ class PWM:
         # The prescaler, then the compare output back on the pin. A duty of 0 stays
         # off: reconnecting it would emit the one-clock pulse OCRx = BOTTOM gives.
         self._tccr_b.value = self._start_val
-        if self._ocr.value != 0:
-            pwm_connect(self._pin, self._invert)
+        if self._exact:
+            # The compare value is 16 bits here, so both bytes decide whether it is off: a
+            # compare of 256 has a zero low byte and is not off.
+            if pwm_t1_exact_is_off(self._pin) == 0:
+                pwm_connect(self._pin, self._invert)
+        else:
+            if self._ocr.value != 0:
+                pwm_connect(self._pin, self._invert)
 
     @inline
     def stop(self):

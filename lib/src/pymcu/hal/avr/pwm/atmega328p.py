@@ -559,6 +559,24 @@ def pwm_t1_exact_start_val(freq: uint16) -> uint8:
     return uint8(0x18 | pwm_t1_exact_cs(freq))
 
 
+# Whether this channel's compare value is zero, which in this mode means "off". The bucket
+# path can read the single compare byte; here the value is 16 bits, and a compare of 256
+# would have looked off by its low byte alone.
+@inline
+def pwm_t1_exact_is_off(pin: const) -> uint8:
+    match pin:
+        case "PB1":
+            if OCR1AH.value == 0 and OCR1AL.value == 0:
+                return 1
+            return 0
+        case "PB2":
+            if OCR1BH.value == 0 and OCR1BL.value == 0:
+                return 1
+            return 0
+        case _:
+            raise CompileError("PWM: the exact-frequency path is Timer1 only -- PB1 or PB2")
+
+
 # The frequency a channel actually emits when it takes the bucket path: the eight-bit period
 # is 256 counts, so it is the clock over the prescaler over 256. It is NOT the frequency
 # asked for, and every layer above used to report that one -- measured, PWMOut(D6, 5000)
