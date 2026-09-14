@@ -10,9 +10,9 @@
 #
 # Single implementation covers all AVR chips with hardware TWI.
 # -----------------------------------------------------------------------------
-from pymcu.types import uint8, inline, Callable
+from pymcu.types import uint8, uint32, inline, const, Callable
 from pymcu.hal.avr.i2c.avr import (
-    i2c_init, i2c_start, i2c_stop, i2c_write, i2c_read_ack, i2c_read_nack,
+    i2c_init, i2c_frequency, i2c_start, i2c_stop, i2c_write, i2c_read_ack, i2c_read_nack,
     i2c_ping, i2c_write_to, i2c_write_byte, i2c_write_bytes, i2c_read_from, i2c_read_n,
     i2c_writeto_mem, i2c_readfrom_mem,
     i2c_peripheral_init, i2c_peripheral_ready, i2c_peripheral_status,
@@ -42,13 +42,24 @@ class I2C:
     DATA_SENT     = 0xB8
     LAST_SENT     = 0xC0
 
-    def __init__(self, addr: uint8 = 0, general_call: uint8 = 0):
+    # freq is the SCL rate in Hz. It used to be nowhere: the bit-rate register was the
+    # literal for 100 kHz, so every layer above took a frequency from its caller and threw
+    # it away, and a bus asked for 400 kHz ran at a quarter of that with nothing said.
+    def __init__(self, addr: uint8 = 0, general_call: uint8 = 0,
+                 freq: const[uint32] = 100000):
+        self._freq = freq
         if addr == 0:
-            i2c_init()
+            i2c_init(freq)
             self._mode = "c"
         else:
             i2c_peripheral_init(addr, general_call)
             self._mode = "p"
+
+    # The SCL rate the hardware actually produces, which is not always the one asked for:
+    # the bit-rate register is an integer. A layer reporting `frequency` reports this.
+    @inline
+    def frequency(self) -> uint32:
+        return i2c_frequency(self._freq)
 
     @inline
     def ping(self, addr: uint8) -> uint8:

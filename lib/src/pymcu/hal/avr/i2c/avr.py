@@ -32,6 +32,8 @@
 
 from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR, SREG
 from pymcu.types import uint8, uint16, inline, compile_isr, Callable
+from pymcu.chips import __FREQ__
+from pymcu.exceptions import CompileError
 
 
 def _twi_wait() -> uint8:
@@ -74,12 +76,41 @@ def i2c_ping(addr: uint8) -> uint8:
 
 
 @inline
-def i2c_init():
-    # 100 kHz at F_CPU = 16 MHz, prescaler = 1
-    # TWBR = (F_CPU / SCL_freq - 16) / (2 * prescaler) = (160 - 16) / 2 = 72
-    TWBR.value = 72
+def i2c_init(freq: const[uint32] = 100000):
+    # The bit-rate register from the clock and the requested SCL rate, both compile-time
+    # constants, so this folds to the same single register write the literal 72 was:
+    #
+    #   TWBR = (F_CPU / SCL - 16) / (2 * prescaler),  prescaler = 1
+    #
+    # 100 kHz at 16 MHz is 72, 400 kHz is 12. It used to be the literal 72 and nothing else,
+    # so `frequency=400000` was accepted by every layer above and the bus ran at 100 kHz:
+    # a sensor read four times slower than the program asked for, with nothing said.
+    if __FREQ__ // freq < 36:
+        # TWBR below 10 is outside the part's master-mode range (the datasheet's own limit),
+        # which at 16 MHz is anything above 444 kHz.
+        raise CompileError(
+            "this I2C frequency is too high for the hardware TWI on this chip. The bit-rate "
+            "register has to stay at 10 or above in controller mode, which at this clock "
+            "means about 444 kHz at most. Ask for 400000 (fast mode) or 100000 (standard "
+            "mode), or bit-bang the bus with pymcu.hal.softi2c, which has no such limit.")
+    if __FREQ__ // freq > 526:
+        # TWBR tops out at 255 with prescaler 1, which at 16 MHz is 30.5 kHz.
+        raise CompileError(
+            "this I2C frequency is too low for the hardware TWI as this HAL programs it. "
+            "With the prescaler at 1 the slowest SCL is about F_CPU / 526, which at 16 MHz "
+            "is 30.5 kHz. Ask for a higher frequency, or bit-bang the bus with "
+            "pymcu.hal.softi2c, which can go as slow as you like.")
+    TWBR.value = uint8((__FREQ__ // freq - 16) // 2)
     # TWSR prescaler bits[1:0] default to 00 (prescaler = 1x) after reset -- no write needed.
     TWCR.value = 0x04   # TWEN(2) = 1: enable TWI (takes over PC4/PC5 pins)
+
+
+# The SCL rate the bit-rate register above actually produces, which is not always the one
+# asked for: TWBR is an integer. A layer reporting `frequency` has to report this, not the
+# request. 100 kHz and 400 kHz at 16 MHz are both exact.
+@inline
+def i2c_frequency(freq: const[uint32]) -> uint32:
+    return uint32(__FREQ__ // (16 + 2 * ((__FREQ__ // freq - 16) // 2)))
 
 
 def i2c_start() -> uint8:
