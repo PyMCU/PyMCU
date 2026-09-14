@@ -273,6 +273,18 @@ public partial class IRGenerator
                         }
                     }
 
+                    // A name bound by `with C(...) as v:` is a pure alias of the manager: nothing
+                    // is registered under v, so this lookup found no class and the call degraded
+                    // into a free function called `v_method`. Field access through v always
+                    // worked, because that path walks the alias chain. Give v the class the chain
+                    // ends at, rather than swapping the receiver for the manager: the self-binding
+                    // further down re-resolves the receiver from the AST, where the name is still
+                    // v, and the field reads it emits follow the chain on their own (#305).
+                    if (!instanceClasses.ContainsKey(vObj.Name)
+                        && AliasedInstanceName(vObj.Name) is { } aliasedRecv
+                        && instanceClasses.TryGetValue(aliasedRecv, out var aliasedCls))
+                        instanceClasses[vObj.Name] = aliasedCls;
+
                     // A nested ZCA field instance reached as a flattened global (e.g. a module-level
                     // `sensor._pin`, resolved to the name "sensor__pin") carries no class of its own.
                     // Recover it from the parent instance's class + the field's declared class so the

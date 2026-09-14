@@ -2054,6 +2054,32 @@ public partial class IRGenerator
         return instanceClasses.TryGetValue(name, out var cls) ? cls : null;
     }
 
+    /// <summary>
+    /// The name at the end of this name's alias chain, when that name is a known instance.
+    ///
+    /// `with C(...) as v:` binds v by writing `variableAliases[v] = <manager>` and nothing else:
+    /// there is no instance registered under v, because v IS the manager. Reading a field
+    /// through v works, because `InstanceClassOfName` walks that chain. A METHOD call did not
+    /// walk it, looked v up in `instanceClasses`, found nothing, and degraded into a free
+    /// function named `v_method` -- which is what `with digitalio.DigitalInOut(...) as pin:`
+    /// then `pin.switch_to_output(True)` was refused as (#305).
+    ///
+    /// Returns the name rather than the class, because the receiver of the method has to become
+    /// the manager: binding `self` to v would look for fields under a name that has none.
+    /// </summary>
+    private string? AliasedInstanceName(string startName)
+    {
+        string name = startName;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(name, out var next)
+                || next == null || next.StartsWith("tmp_")) break;
+            name = next;
+            if (instanceClasses.ContainsKey(name)) return name;
+        }
+        return null;
+    }
+
     // True when <member> could legitimately be reached through this receiver.
     //
     // When the receiver's class is known, that class and its bases answer, and `receiverClass` is
