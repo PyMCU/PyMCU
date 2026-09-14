@@ -3958,7 +3958,7 @@ public partial class IRGenerator
             var vals = new List<int>();
             if (iterExpr is CallExpr call && call.Callee is VariableExpr cv && cv.Name == "range")
             {
-                int start = 0, stop = 0;
+                int start = 0, stop = 0, step = 1;
                 if (call.Args.Count == 1)
                 {
                     var sv = EvalConst(call.Args[0]);
@@ -3972,9 +3972,19 @@ public partial class IRGenerator
                     if (sv == null || ev == null) throw UserError("List comprehension const err", lc);
                     start = sv.Value;
                     stop = ev.Value;
+                    // The third argument was never read here, so `range(0, 10, 2)` yielded
+                    // every value in [0, 10) (PyMCU#287).
+                    if (call.Args.Count >= 3)
+                    {
+                        var stv = EvalConst(call.Args[2]);
+                        if (stv == null) throw UserError("List comprehension const err", lc);
+                        if (stv.Value == 0) throw UserError("range() step cannot be zero.", call.Args[2]);
+                        step = stv.Value;
+                    }
                 }
 
-                for (int i = start; i < stop; i++) vals.Add(i);
+                long trips = IRGenerator.RangeTripCount(start, stop, step);
+                for (long k = 0; k < trips; k++) vals.Add((int)(start + k * step));
             }
             else if (iterExpr is ListExpr or TupleExpr)
             {
@@ -4174,16 +4184,23 @@ public partial class IRGenerator
                 items = bound;
                 break;
             case CallExpr { Callee: VariableExpr { Name: "range" } } rangeCall:
-                int start = 0, stop;
+                int start = 0, stop, step = 1;
                 if (rangeCall.Args.Count == 1) stop = EvaluateConstantExpr(rangeCall.Args[0]);
                 else if (rangeCall.Args.Count >= 2)
                 {
                     start = EvaluateConstantExpr(rangeCall.Args[0]);
                     stop = EvaluateConstantExpr(rangeCall.Args[1]);
+                    // The step was dropped here too (PyMCU#287).
+                    if (rangeCall.Args.Count >= 3)
+                    {
+                        step = EvaluateConstantExpr(rangeCall.Args[2]);
+                        if (step == 0) throw UserError("range() step cannot be zero.", rangeCall.Args[2]);
+                    }
                 }
                 else return null;
                 items = new List<Expression>();
-                for (int i = start; i < stop; ++i) items.Add(new IntegerLiteral(i));
+                long rtrips = IRGenerator.RangeTripCount(start, stop, step);
+                for (long k = 0; k < rtrips; ++k) items.Add(new IntegerLiteral((int)(start + k * step)));
                 break;
             default: return null;
         }
