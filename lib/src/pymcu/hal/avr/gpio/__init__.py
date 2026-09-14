@@ -129,8 +129,16 @@ class Pin:
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
 
+        # The pull-up and the output level are the same latch on this family (PORTx), so
+        # the pin remembers which pull the program asked for and mode() re-applies it
+        # whenever the pin becomes an input. Without that a pin driven high and then
+        # made an input came back with the pull-up on: measured on an Arduino Uno,
+        # `high()` then `mode(IN)` left D6 at a firm 5 V (PyMCU#309). A constant pull
+        # folds this field away.
+        self._pull_up = 0
         if mode == 3:
             # IN_PULLUP: input direction, pull-up on.
+            self._pull_up = 1
             self._ddr[self._bit] = 0
             self._port[self._bit] = 1
         else:
@@ -138,6 +146,7 @@ class Pin:
         if pull != -1:
             if pull == 2:
                 raise CompileError("Pull-down resistor not supported on AVR")
+            self._pull_up = pull
             self._port[self._bit] = pull
         if value != -1:
             self._port[self._bit] = value
@@ -175,12 +184,13 @@ class Pin:
 
     @inline
     def init(self, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
-        if mode != -1:
-            self._ddr[self._bit] = mode ^ 1
         if pull != -1:
             if pull == 2:
                 raise CompileError("Pull-down resistor not supported on AVR")
+            self._pull_up = pull
             self._port[self._bit] = pull
+        if mode != -1:
+            self.mode(mode)
         if value != -1:
             self._port[self._bit] = value
         if drive:
@@ -192,6 +202,7 @@ class Pin:
     def pull(self, pull_mode: const):
         if pull_mode == 2:
             raise CompileError("Pull-down resistor not supported on AVR")
+        self._pull_up = pull_mode
         self._port[self._bit] = pull_mode
 
     @inline
@@ -231,5 +242,16 @@ class Pin:
 
     @inline
     def mode(self, m: const = -1) -> uint8:
-        if m != -1:
-            self._ddr[self._bit] = m ^ 1
+        # IN (1) and IN_PULLUP (3) clear the direction bit and set the pull-up latch from
+        # what the pin remembers; OUT (0) sets it. `m ^ 1` used to go straight into the
+        # bit, which for IN_PULLUP wrote a 2 and for OPEN_DRAIN a 3 into a one-bit slot.
+        if m == 2:
+            raise CompileError("Open-drain mode not supported on AVR -- drive the pin low for 0 "
+                               "and make it an input (mode(Pin.IN)) for 1, with an external pull-up")
+        if m == 1 or m == 3:
+            if m == 3:
+                self._pull_up = 1
+            self._ddr[self._bit] = 0
+            self._port[self._bit] = self._pull_up
+        elif m == 0:
+            self._ddr[self._bit] = 1
