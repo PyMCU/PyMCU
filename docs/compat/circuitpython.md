@@ -62,7 +62,7 @@ pymcu build
 | `countio` | `Counter`, `Edge` | ✅ A pin interrupt and a 32-bit count. One per program; telling a rising edge from a falling one needs D2 or D3 |
 | `keypad` | `Keys`, `Event` | ⚠️ Takes a list of `digitalio.DigitalInOut`, not pin names. `KeyMatrix` is not written |
 | `rainbowio` | `colorwheel` | ✅ Complete |
-| `rotaryio` | — | ❌ Not implemented |
+| `rotaryio` | `IncrementalEncoder` | ✅ On the ATmega 48/88/168/328 family. Both lines on one port; `divisor` is fixed when the encoder is built |
 | `neopixel_write` | — | ❌ Not implemented as a module; the WS2812 timing lives in the `pymcu-lib-neopixel` library |
 | `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
 | `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ `sleep()` takes any duration, from microseconds to minutes; it used to wrap past 65.535 s and to round anything under a millisecond to zero. `monotonic_ns()` wraps at 4.295 s and says so. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**: upstream `time` defines no such names |
@@ -438,6 +438,48 @@ is refused rather than counted twice and quietly doubled.
 counter counts edges as they arrive and there is nowhere to start it from.
 
 One `Counter` per program: the counter and the interrupt are module state in the HAL.
+
+---
+
+### `rotaryio`
+
+```python
+import board, rotaryio
+
+knob = rotaryio.IncrementalEncoder(board.D2, board.D3)
+last = knob.position
+while True:
+    now = knob.position
+    if now != last:
+        print(now)
+        last = now
+```
+
+Two lines a quarter turn out of phase, an interrupt on each, and three lines of arithmetic:
+which line changed first says which way the knob went. About 40 cycles an edge, so a
+hand-turned knob costs nothing and an encoder fast enough to matter would swamp the part.
+
+A common panel knob makes four line changes per click of detent, which is why `divisor` is 4
+by default and why one click moves `position` by one. A knob with a detent every other change
+takes `divisor=2` and a continuous one takes `divisor=1`. The division rounds towards zero, so
+one click back from where the program started reads `-1`. The divisor is fixed when the
+encoder is built, because the position is divided by it with a shift and a shift needs its
+count known; assigning to `encoder.divisor` afterwards is refused and names the constructor.
+
+**Both lines have to be on one port**: both among D0 to D7, or both among D8 to D13, or both
+among A0 to A5. The handler that decodes them reads one port register, and a register address
+is fixed when the firmware is built, so it cannot read a second port the program chose. A pair
+on two ports is refused with the three groups named.
+
+D2 and D3 are the pair to reach for. They are INT0 and INT1, they have a vector each, and they
+are what every encoder guide wires a knob to.
+
+Both lines get their pull-ups, and the decoder primes itself from them rather than starting at
+zero: a knob idles with both lines released, so starting at zero made the very first edge look
+like a step that never happened.
+
+One `IncrementalEncoder` per program: the position and the interrupts are module state in the
+HAL.
 
 ---
 
