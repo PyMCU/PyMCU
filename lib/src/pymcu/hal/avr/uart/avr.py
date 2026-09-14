@@ -32,13 +32,20 @@
 from pymcu.chips import __FREQ__
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
 from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
+from pymcu.exceptions import CompileError
+from pymcu.time import delay_us
 from pymcu.hal.avr.uart.frame import uart_frame_ucsrc
 
-# Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
+# Ring buffer for interrupt-driven UART receive (64 bytes, power-of-two).
+# 64 because that is what CircuitPython's receiver_buffer_size defaults to, and a
+# compatibility layer asking for it should not be refused. It costs nothing in a
+# program that never turns the interrupt on: measured, a UART program that only
+# writes is the same size with a 16-byte ring and a 64-byte one, because nothing
+# references the array and it is eliminated.
 # _rx_buf: circular storage; _rx_head: write index (ISR advances);
 # _rx_tail: read index (main loop advances).
-# Full condition: ((head + 1) & 0x0F) == tail (drop on overflow).
-_rx_buf:  uint8[16] = bytearray(16)
+# Full condition: ((head + 1) & 0x3F) == tail (drop on overflow).
+_rx_buf:  uint8[64] = bytearray(64)
 _rx_head: uint8 = 0
 _rx_tail: uint8 = 0
 
@@ -78,6 +85,7 @@ def uart_init(baud: const[uint16], bits: const[uint8] = 8, parity: const[uint8] 
     else:
         UBRR0H.value = uint8(((__FREQ__ + 8 * baud) // (16 * baud) - 1) >> 8)
         UBRR0L.value = uint8((__FREQ__ + 8 * baud) // (16 * baud) - 1)
+
 
     # Frame format: data bits, parity and stop bits, all compile-time constants, so this
     # folds to one register write. It used to be the literal 0x06, which is 8N1 and
@@ -243,13 +251,16 @@ def uart_enable_rx_interrupt():
     UCSR0B[7] = 1
 
 
-@inline
+# NOT @inline: this is the body the USART_RX vector jumps to, so it has to be a function
+# with an address. compile_isr() could not resolve it while it was inline, which meant
+# uart_rx_irq_setup() -- the only way to turn the receive ring on -- refused to compile.
+# Nothing called it, so the failure sat there unseen.
 def uart_rx_isr():
     # Called from the USART_RX ISR (vector 0x0024 / word 0x0012).
     # Reads UDR0 and stores in ring buffer at _rx_head; advances head with wrap.
     # Drops byte silently if buffer is full (head+1 == tail).
     global _rx_head, _rx_tail, _rx_buf
-    next_head: uint8 = (_rx_head + 1) & 0x0F
+    next_head: uint8 = (_rx_head + 1) & 0x3F
     if next_head != _rx_tail:
         _rx_buf[_rx_head] = UDR0.value
         _rx_head = next_head
@@ -272,15 +283,78 @@ def uart_rx_read() -> uint8:
     if _rx_head == _rx_tail:
         return 0
     data: uint8 = _rx_buf[_rx_tail]
-    _rx_tail = (_rx_tail + 1) & 0x0F
+    _rx_tail = (_rx_tail + 1) & 0x3F
     return data
 
 
 @inline
-def uart_rx_irq_setup():
-    # Enable RXCIE0 (UCSR0B bit 7) + SEI and register uart_rx_isr at the
-    # USART_RX vector (byte 0x0024, word 0x0012).
-    # After this call, received bytes are automatically stored in the ring buffer.
-    UCSR0B[7] = 1        # RXCIE0: enable USART RX complete interrupt
+def uart_rx_irq_setup(size: const[uint16] = 0):
+    # Enable the receive-complete interrupt and global interrupts, and register the ISR that
+    # fills the ring. After this the UART is buffered and uart_rx_count() is a real count.
+    #
+    # `size` is what the caller wants the buffer to hold, 0 meaning "whatever there is". The
+    # ring is a fixed array and cannot be sized per program, so a caller asking for more than
+    # it holds is refused HERE, where the number is, rather than being quietly given less.
+    if size > 64:
+        raise CompileError(
+            "this UART's receive ring holds 64 bytes and cannot be sized per program: it is "
+            "a fixed array in the HAL, allocated at compile time. Ask for 64 or fewer, or "
+            "drain the ring more often -- a byte that arrives with the ring full is dropped.")
+    UCSR0B[7] = 1        # receive-complete interrupt enable
     SREG[7] = 1          # SEI: enable global interrupts
     compile_isr(uart_rx_isr, 0x0024)
+
+# How many bytes are waiting in the ring. uart_rx_available() answers "any at all" in one
+# bit; a caller that wants to size a read needs the count, and a compatibility layer
+# reporting in_waiting has nothing else to report.
+@inline
+def uart_rx_count() -> uint8:
+    global _rx_head, _rx_tail
+    return (_rx_head - _rx_tail) & 0x3F
+
+
+# The ring's capacity, as a compile-time constant. A layer that takes a buffer size from the
+# caller has to know what it can actually promise.
+@inline
+def uart_rx_buffer_size() -> uint8:
+    return 64
+
+
+# Read one byte from the ring, giving up after `ms` milliseconds; -1 means nothing arrived.
+# A shared subroutine, not @inline: it is a loop, and every call site would carry a copy.
+def uart_rx_read_timeout(ms: uint16) -> int16:
+    left: uint16 = ms
+    while left != 0:
+        n: uint8 = 0
+        while n < 100:
+            if uart_rx_available():
+                return int16(uart_rx_read())
+            n = n + 1
+            delay_us(9)
+        left = left - 1
+    if uart_rx_available():
+        return int16(uart_rx_read())
+    return -1
+
+
+# The same with no ring: poll the receive-complete flag until a byte lands or the deadline
+# passes. -1 means nothing arrived.
+#
+# The inner loop runs 100 times per millisecond and spends 9 us of calibrated delay plus its
+# own test and decrement in each pass. Measured in avr8sharp at 16 MHz, a 100 ms timeout with
+# nothing arriving takes 1 581 950 cycles, which is 98.9 ms: 1.1 % short. That is the accuracy
+# on offer, and it is stated rather than implied. A blocking read that never returns is not a
+# timeout, and every layer above had to pretend the timeout it was given did not exist.
+def uart_read_timeout(ms: uint16) -> int16:
+    left: uint16 = ms
+    while left != 0:
+        n: uint8 = 0
+        while n < 100:
+            if UCSR0A[7]:
+                return int16(UDR0.value)
+            n = n + 1
+            delay_us(9)
+        left = left - 1
+    if UCSR0A[7]:
+        return int16(UDR0.value)
+    return -1

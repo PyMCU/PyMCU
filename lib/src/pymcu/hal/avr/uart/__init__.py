@@ -29,6 +29,8 @@ if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
         uart_rx_available, uart_rx_read,
         uart_read_line,
         uart_write_fmt,
+        uart_rx_count, uart_rx_buffer_size, uart_rx_irq_setup,
+        uart_rx_read_timeout, uart_read_timeout,
     )
 elif __CHIP__.name == "atmega32u4":
     from pymcu.hal.avr.uart.atmega32u4 import (
@@ -38,6 +40,8 @@ elif __CHIP__.name == "atmega32u4":
         uart_rx_available, uart_rx_read,
         uart_read_line,
         uart_write_fmt,
+        uart_rx_count, uart_rx_buffer_size, uart_rx_irq_setup,
+        uart_rx_read_timeout, uart_read_timeout,
     )
 elif (__CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
       or __CHIP__.name == "attiny25" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny85"
@@ -58,6 +62,8 @@ else:
         uart_rx_available, uart_rx_read,
         uart_read_line,
         uart_write_fmt,
+        uart_rx_count, uart_rx_buffer_size, uart_rx_irq_setup,
+        uart_rx_read_timeout, uart_read_timeout,
     )
 
 
@@ -204,3 +210,33 @@ class UART:
     @inline
     def rx_read(self) -> uint8:
         return uart_rx_read()
+
+    # How many bytes are waiting in the ring. rx_available() answers "any at all"; a caller
+    # sizing a read, or a layer reporting in_waiting, needs the count.
+    @inline
+    def rx_count(self) -> uint8:
+        return uart_rx_count()
+
+    # The ring's capacity, as a compile-time constant: what a layer taking a buffer size from
+    # its caller can actually promise.
+    @inline
+    def rx_buffer_size(self) -> uint8:
+        return uart_rx_buffer_size()
+
+    # Turn on the interrupt-driven receive path: enable RXCIE and global interrupts, and
+    # register the ISR that fills the ring. Until this is called the UART is polled and only
+    # the hardware's own one-byte register holds anything.
+    @inline
+    def start_buffered_rx(self, size: const[uint16] = 0):
+        uart_rx_irq_setup(size)
+
+    # Read one byte, giving up after `ms` milliseconds; -1 means nothing arrived. Two forms
+    # because there are two receive paths: the ring, and the hardware register when the
+    # interrupt is off. A blocking read that never returns is not a timeout.
+    @inline
+    def rx_read_timeout(self, ms: uint16) -> int16:
+        return uart_rx_read_timeout(ms)
+
+    @inline
+    def read_timeout(self, ms: uint16) -> int16:
+        return uart_read_timeout(ms)

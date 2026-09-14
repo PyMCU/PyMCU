@@ -72,7 +72,7 @@ WIFI = ('from pymcu.hal.wifi import CYW43\n\n\n'
 @pytest.mark.parametrize("py_parser", [False, True], ids=["hand-written", "cpython"])
 @pytest.mark.parametrize("source,target,module,guard_line", [
     (ADC, "attiny4313", "__init__.py", 22),
-    (UART, "attiny85", "__init__.py", 49),
+    (UART, "attiny85", "__init__.py", 53),
 ])
 def test_a_use_inside_the_library_points_at_the_guard(
         tmp_path, source, target, module, guard_line, py_parser):
