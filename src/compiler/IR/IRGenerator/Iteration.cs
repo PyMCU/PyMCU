@@ -1481,6 +1481,10 @@ public partial class IRGenerator
                                 "iterate range() with the stride explicitly",
                                 slc.Step);
                         string slIdx = "__slci" + (++sliceLoopId);
+                        // The index walks a fixed array, so it is as wide as the array's size
+                        // needs and no wider: filed as declared, so the range lowering does not
+                        // size it from a bound like `n + 1`, which promotes past a byte.
+                        variableTypes[QualifyLoopVar(slIdx)] = NarrowestTypeFor(0, slSize);
                         var slBody = new Block();
                         slBody.Statements.Add(new AssignStmt(
                             new VariableExpr(stmt.VarName),
