@@ -31,6 +31,13 @@ public class ZcaInlineRegressionTests
     // temporary, so the body read 0 and one branch was DCE'd. The correct fix
     // materializes the runtime value into the param's SRAM slot.
 
+    // Since PyMCU#331 a read of a local whose value the compiler tracks folds to that value, so
+    // the run-time argument these two tests are about has to come from somewhere the compiler
+    // cannot read. G is a register, and G.value is such a value.
+    private const string RegisterSeed =
+        "from pymcu.types import uint8, ptr\n" +
+        "G: ptr[uint8] = ptr(0x3E)\n";
+
     private const string SetterClass =
         "class Out:\n" +
         "    @inline\n    def __init__(self):\n        self._v = 0\n        self._hi = 0\n" +
@@ -40,8 +47,8 @@ public class ZcaInlineRegressionTests
     [Fact]
     public void PropertySetter_RuntimeValue_EmitsBothBranches()
     {
-        var body = MainBody(Gen(SetterClass +
-            "def main():\n    o = Out()\n    a: uint8 = 5\n    o.v = a & 1\n"));
+        var body = MainBody(Gen(RegisterSeed + SetterClass +
+            "def main():\n    o = Out()\n    a: uint8 = G.value\n    o.v = a & 1\n"));
 
         // Both branch bodies survive -> the setter branched on a real runtime value,
         // not a constant-folded 0 that would have DCE'd one side.
@@ -53,8 +60,8 @@ public class ZcaInlineRegressionTests
     [Fact]
     public void PropertySetter_RuntimeValue_MaterializesIntoParamSlot()
     {
-        var body = MainBody(Gen(SetterClass +
-            "def main():\n    o = Out()\n    a: uint8 = 5\n    o.v = a & 1\n"));
+        var body = MainBody(Gen(RegisterSeed + SetterClass +
+            "def main():\n    o = Out()\n    a: uint8 = G.value\n    o.v = a & 1\n"));
 
         // The `a & 1` result is computed into a temp, then copied into the setter's
         // own Variable slot (not left as a dangling alias to the temp).

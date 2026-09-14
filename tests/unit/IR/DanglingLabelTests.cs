@@ -61,7 +61,7 @@ public class DanglingLabelTests
             .ToList();
     }
 
-    private const string Preamble = "from pymcu.types import uint8, const, inline\n\n";
+    private const string Preamble = "from pymcu.types import uint8, const, inline, ptr\n\n";
 
     [Fact]
     public void TheReportedProgram_LeavesNoUndefinedLabel()
@@ -141,9 +141,14 @@ public class DanglingLabelTests
     {
         // The fix only defines a label; it must not turn a run-time condition into a folded
         // one, so the comparison instructions have to survive.
+        //
+        // `n` is read from a register because since PyMCU#331 a local that holds a literal is a
+        // compile-time value: with `n: uint8 = 3` both comparisons are decided by the compiler
+        // and there is no run-time branch left for this test to look at.
         var ir = Gen(Preamble +
+                     "G: ptr[uint8] = ptr(0x3E)\n" +
                      "def main():\n" +
-                     "    n: uint8 = 3\n" +
+                     "    n: uint8 = G.value\n" +
                      "    if n == 1 or n == 2:\n" +
                      "        a: uint8 = 1\n" +
                      "    else:\n" +

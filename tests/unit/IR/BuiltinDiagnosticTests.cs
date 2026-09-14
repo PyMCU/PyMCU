@@ -103,7 +103,12 @@ public class BuiltinDiagnosticTests
     [Fact]
     public void Bool_Compiles_AndLowersToANotEqualZeroTest()
     {
-        var ir = Gen("def main():\n    a: uint8 = 7\n    b: uint8 = bool(a)\n");
+        // The operand is read from a register because since PyMCU#331 a local that holds a
+        // literal is a compile-time value: `bool(7)` folds to 1 and never reaches the lowering
+        // this test is about.
+        var ir = Gen("from pymcu.types import uint8, ptr\n" +
+                     "G: ptr[uint8] = ptr(0x3E)\n" +
+                     "def main():\n    a: uint8 = G.value\n    b: uint8 = bool(a)\n");
         var main = ir.Functions.Single(f => f.Name == "main");
 
         Assert.Contains(main.Body, i => i is Binary { Op: PyMCU.IR.BinaryOp.NotEqual });

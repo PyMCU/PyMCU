@@ -40,7 +40,11 @@ public class CallDiagnosticColumnTests
 {
     private static CompilerError Fails(string body)
     {
-        string src = "from pymcu.types import uint8\ndef main() -> None:\n" + body;
+        // Line 1 is the register import rather than a types import, and stays exactly one line:
+        // every column below is counted against this source, so its line numbering must not move.
+        // A body that needs a value the compiler cannot fold reads it from GPIOR0; the annotation
+        // names uint8 without importing it, which the generator accepts.
+        string src = "from pymcu.chips.atmega328p import GPIOR0\ndef main() -> None:\n" + body;
         return Assert.Throws<CompilerError>(() =>
             new IRGenerator().Generate(
                 new Parser(new Lexer(src).Tokenize()).ParseProgram(),
@@ -72,7 +76,9 @@ public class CallDiagnosticColumnTests
     {
         //          1234567890123456
         // line 4: "    s = hex(a + 1)"  -- the '+' of the argument is at column 15
-        var ex = Fails("    a: uint8 = 5\n    s = hex(a + 1)\n");
+        // `a` is read from a register because since PyMCU#331 a local that holds a literal is a
+        // compile-time value, and hex() of a compile-time constant is accepted rather than blamed.
+        var ex = Fails("    a: uint8 = GPIOR0.value\n    s = hex(a + 1)\n");
 
         Assert.Equal(4, ex.Line);
         Assert.Equal(15, ex.Column);

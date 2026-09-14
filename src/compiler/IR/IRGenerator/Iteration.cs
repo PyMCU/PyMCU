@@ -586,6 +586,14 @@ public partial class IRGenerator
                     string sStart = MakeLabel();
                     string sCont = MakeLabel();
                     string sEnd = MakeLabel();
+                    // A RUN-TIME loop: the body is lowered once and runs many times, so nothing
+                    // it can write may be folded from the value it holds on the way in. The
+                    // range and while paths have always done this; these two did not, and it
+                    // went unnoticed until reads of locals began to fold (#331) -- an
+                    // accumulator then read its starting value on every pass and
+                    // `for v in x: total = total + v` answered 0.
+                    InvalidateConstantsAssignedIn(stmt.Body);
+
                     // continue advances the index then re-tests (else the loop spins on one char).
                     loopStack.Add(new LoopLabels { ContinueLabel = sCont, BreakLabel = sEnd, FinallyDepth = finallyStack.Count });
 
@@ -1557,6 +1565,14 @@ public partial class IRGenerator
                     string loopStart = MakeLabel();
                     string loopCont = MakeLabel();
                     string loopEnd = MakeLabel();
+                    // A RUN-TIME loop: the body is lowered once and runs many times, so nothing
+                    // it can write may be folded from the value it holds on the way in. The
+                    // range and while paths have always done this; these two did not, and it
+                    // went unnoticed until reads of locals began to fold (#331) -- an
+                    // accumulator then read its starting value on every pass and
+                    // `for v in x: total = total + v` answered 0.
+                    InvalidateConstantsAssignedIn(stmt.Body);
+
                     // continue advances the index then re-tests (else the loop spins on one elem).
                     loopStack.Add(new LoopLabels { ContinueLabel = loopCont, BreakLabel = loopEnd, FinallyDepth = finallyStack.Count });
 

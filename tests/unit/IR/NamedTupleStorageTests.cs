@@ -22,13 +22,21 @@ public class NamedTupleStorageTests
 
     private static List<Instruction> Main(string src) => Gen(src).Functions.Single(f => f.Name == "main").Body;
 
-    private const string Prelude = "from pymcu.types import uint8, uint16\n\n";
+    private const string Prelude =
+        "from pymcu.types import uint8, uint16, ptr\n" +
+        "G: ptr[uint8] = ptr(0x3E)\n\n";
 
-    private static string Program(string literal) =>
+    // Since PyMCU#331 a read of a local whose value the compiler tracks folds to that value, so
+    // an accumulator seeded with 0 makes every add in an unrolled loop a compile-time sum and
+    // leaves one constant behind. A test that reads the unrolled arithmetic seeds it from G, a
+    // register the compiler cannot read, so the per-element adds survive.
+    private const string RuntimeSeed = "G.value";
+
+    private static string Program(string literal, string accInit = "0") =>
         Prelude +
         "def main():\n" +
         $"    T = {literal}\n" +
-        "    acc: uint16 = 0\n" +
+        $"    acc: uint16 = {accInit}\n" +
         "    for d in T:\n" +
         "        acc = acc + d\n\n" +
         "main()\n";
@@ -62,7 +70,7 @@ public class NamedTupleStorageTests
     [Fact]
     public void ATupleOfEightConstants_StillUnrollsWithNoStorage()
     {
-        var body = Main(Program($"({Eight})"));
+        var body = Main(Program($"({Eight})", RuntimeSeed));
         Assert.DoesNotContain(body, i => i is Copy { Dst: Variable { Name: "main.T__0" } });
         Assert.Contains(body, i => i is Binary { Src2: Constant { Value: 49 }, Dst: Temporary });
     }
@@ -72,7 +80,7 @@ public class NamedTupleStorageTests
     {
         var body = Main(Prelude +
             "def main():\n" +
-            "    acc: uint16 = 0\n" +
+            $"    acc: uint16 = {RuntimeSeed}\n" +
             $"    for d in ({Nine}):\n" +
             "        acc = acc + d\n\n" +
             "main()\n");

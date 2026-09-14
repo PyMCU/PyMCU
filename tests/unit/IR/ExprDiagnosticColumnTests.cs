@@ -38,7 +38,11 @@ public class ExprDiagnosticColumnTests
     private static CompilerError Fails(string body) =>
         Assert.Throws<CompilerError>(() =>
             new IRGenerator().Generate(
-                new Parser(new Lexer("from pymcu.types import uint8\ndef main() -> None:\n" + body)
+                // Line 1 is the register import rather than a types import, and stays exactly
+                // one line: the columns asserted below are counted against this source, so its
+                // line numbering must not move. An annotation still names uint8 without
+                // importing it, which the generator accepts.
+                new Parser(new Lexer("from pymcu.chips.atmega328p import GPIOR0\ndef main() -> None:\n" + body)
                     .Tokenize()).ParseProgram(),
                 new Dictionary<string, ProgramNode>(),
                 new DeviceConfig { Arch = "avr" }));
@@ -46,7 +50,10 @@ public class ExprDiagnosticColumnTests
     [Theory]
     //           1234567890123456789012
     // line 3+ of "from pymcu...\ndef main...\n" + body
-    [InlineData("    a: uint8 = 2\n    n: uint8 = 3\n    b: uint8 = a ** n\n", 5, 21)]  // the exponent
+    // The exponent is read from a register because since PyMCU#331 a local that holds a literal
+    // is a compile-time value: `n: uint8 = 3` would make `a ** n` fold instead of reaching the
+    // diagnostic that this row is here to place.
+    [InlineData("    a: uint8 = 2\n    n: uint8 = GPIOR0.value\n    b: uint8 = a ** n\n", 5, 21)]  // the exponent
     [InlineData("    a: uint8 = 1\n    if a in 5:\n        pass\n", 4, 13)]              // the container
     [InlineData("    d = {1: 2}\n    v = d[9]\n", 4, 11)]                               // the key
     [InlineData("    xs: uint8[3] = [1, 2, 3]\n    v = xs[\"a\"]\n", 4, 12)]            // the index

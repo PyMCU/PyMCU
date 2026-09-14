@@ -24,9 +24,16 @@ namespace PyMCU.UnitTests;
 /// </summary>
 public class AssertFoldingTests
 {
+    // Since PyMCU#331 a read of a local whose value the compiler tracks folds to that value, so
+    // a literal in a local no longer describes anything decided at run time. G is a register the
+    // compiler cannot read, which makes G.value the shortest run-time value a body can ask for.
+    private const string Preamble =
+        "from pymcu.types import uint8, ptr\n" +
+        "G: ptr[uint8] = ptr(0x3E)\n";
+
     private static ProgramIR Gen(string body) =>
         new IRGenerator().Generate(
-            new Parser(new Lexer("def main() -> None:\n" + body + "\n").Tokenize()).ParseProgram(),
+            new Parser(new Lexer(Preamble + "def main() -> None:\n" + body + "\n").Tokenize()).ParseProgram(),
             new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" });
 
     private static string Refusal(string body)
@@ -54,9 +61,15 @@ public class AssertFoldingTests
     // it stands is the policy that already shipped rather than a new one. Pinned because it is
     // the trade: `assert False` cannot mark an unreachable branch, and could not when spelled
     // `assert 0` either.
+    //
+    // The branch has to be a genuine run-time one. These rows were written as `x: uint8 = 1`,
+    // which since PyMCU#331 is a compile-time value: the compiler decides `x == 3` is false,
+    // drops the branch, and the assert inside it is never visited, so the row stopped saying
+    // anything about where an assert stands. Reading x from a register restores the run-time
+    // branch the rows were about.
     [Theory]
-    [InlineData("    x: uint8 = 1\n    if x == 3:\n        assert False")]
-    [InlineData("    x: uint8 = 1\n    if x == 3:\n        x = 2\n    else:\n        assert 1 == 2")]
+    [InlineData("    x: uint8 = G.value\n    if x == 3:\n        assert False")]
+    [InlineData("    x: uint8 = G.value\n    if x == 3:\n        x = 2\n    else:\n        assert 1 == 2")]
     public void AFalseAssertIsRefusedWhereverItStands(string body)
         => Assert.Contains("AssertionError", Refusal(body));
 

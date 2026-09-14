@@ -92,7 +92,10 @@ public class RangeCounterTypeTests
     [InlineData("n: uint8 = 200", "range(n)", DataType.UINT8)]
     [InlineData("a: int8 = -5", "range(a, 5)", DataType.INT8)]
     [InlineData("a: int8 = -5\n    n: uint8 = 200", "range(a, n)", DataType.INT16)]
-    [InlineData("n: uint8 = 200\n    s: uint8 = 9", "range(0, n, s)", DataType.UINT16)]   // stops on 207
+    // Sized exactly, so the overshoot has to cross the byte on the real numbers: the last value
+    // is 252 and the counter stops on 261. The row used to read 200 and 9, which stopped on 207
+    // and told a byte-wide counter apart from nothing at all.
+    [InlineData("n: uint8 = 255\n    s: uint8 = 9", "range(0, n, s)", DataType.UINT16)]   // stops on 261
     public void BoundsThroughAName_SizeTheCounter(string decls, string header, DataType expected)
         => Assert.Equal(expected, Counter(Gen(Loop(header, "    " + decls + "\n")), "main.i").Type);
 

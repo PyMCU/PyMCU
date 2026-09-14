@@ -1764,6 +1764,20 @@ public partial class IRGenerator
             }
 
             if (defaultExpr != null) return VisitExpression(defaultExpr);
+
+            // A miss the program HANDLES is not a compile error (#331). `try: d[k] except
+            // KeyError:` is a program that works, and the compiler seeing the key became a
+            // reason to refuse it as soon as reads of locals began to fold: `k = 7` then
+            // `d[k]` inside a try went from raising at run time and being caught to not
+            // compiling at all. Getting better at reading a program must not make a working
+            // program stop building, so the raise is emitted where the handler can take it,
+            // which is the same instruction the run-time key path emits for the same miss.
+            if (tryCatchStack.Count > 0)
+            {
+                Emit(new SignalError(new Constant(4 /* KeyError */), tryCatchStack[^1]));
+                return MakeTemp(DataType.UINT8);
+            }
+
             throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC)} is not a key of " +
                             "this dict literal (checked at compile time)", keyExpr);
         }

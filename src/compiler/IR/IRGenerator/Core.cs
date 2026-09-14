@@ -1489,6 +1489,22 @@ public partial class IRGenerator
             return new Constant(finVal, ResolveStrConstant(finalLocalName));
         }
 
+        // WHAT THE LOCAL HOLDS (#331).
+        //
+        // `localConstantValues` has tracked this since #327 and was only ever asked by a CALL,
+        // so that a callee dispatching on a value still saw the value when the caller put it in
+        // a local first. Every ordinary READ went to run time, and that is what an @inline HAL
+        // computing at full width pays: `7954f4ec` had to write the exact-Timer1 helpers
+        // through 32-bit locals, because unfolded the 16-bit expressions truncate, and the same
+        // arithmetic then cost 148 bytes where the expression form cost 78.
+        //
+        // The map is already invalidated at every write to the name, at every name a loop body
+        // can assign, and where the arms of an if-chain disagree, so answering from it here is
+        // one lookup rather than a new analysis. It is asked AFTER constantVariables and BEFORE
+        // the run-time slot, which is the order every other constant source is asked in.
+        if (localConstantValues.TryGetValue(finalLocalName, out int localHeld))
+            return new Constant(localHeld, ResolveStrConstant(finalLocalName));
+
         string? strVal = ResolveStrConstant(finalLocalName);
         if (strVal != null)
         {
