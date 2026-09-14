@@ -239,11 +239,20 @@ is produced.
 **Unhandled exception output (AVR with UART0):**
 
 When a `raise` has no active `except` handler, PyMCU prints `"E:<TypeName>\r\n"` to UART0
-(if initialized) then halts with `cli; rjmp .-2`. Useful for debugging from a serial monitor:
+then halts with `cli; rjmp .-2`. Useful for debugging from a serial monitor:
 
 ```
 E:ValueError
 ```
+
+**The transmitter does not have to be on already.** UART0 is set up when the program calls
+`print()`/`input()` or constructs a `UART(...)`, and a program that does neither used to halt
+with nothing on the wire (PyMCU#340). When nothing in the program owns the UART, this path
+turns the transmitter on itself, at the `[tool.pymcu] stdout_baud` rate (115200 by default),
+8N1. About 30 bytes of flash, and only in a program that can raise and never prints; a program
+that does print keeps the image it had, byte for byte, because the initialisation is not
+emitted at all. A program that owns the UART at its own rate is never reprogrammed under a
+live stream: the path checks TXEN0 first and writes only when it is already set.
 
 Only exception types actually raised in the program have their name strings emitted in flash
 — no overhead for unused exception codes. Chips without UART0 (attiny85 etc.) skip output
