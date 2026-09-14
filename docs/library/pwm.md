@@ -30,8 +30,9 @@ optional; `0` leaves the timer at its default prescaler.
 
 | Method | Description |
 |---|---|
-| `start()` | Enable PWM output |
-| `stop()` | Disable PWM output |
+| `start()` | Put the compare output back on the pin (a duty of 0 stays off) |
+| `stop()` | Take the compare output off the pin and drive it low; the timer keeps running for its other channel and for the time base |
+| `deinit()` | `stop()`, then the pin back to an input without pull-up |
 | `set_duty(duty: uint8)` | Update duty cycle while running |
 | `set_freq(freq: uint16)` | Select the prescaler closest to `freq` |
 
