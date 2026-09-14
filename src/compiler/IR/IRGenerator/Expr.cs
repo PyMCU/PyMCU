@@ -2512,7 +2512,7 @@ public partial class IRGenerator
         receiverClass = null;
         receiverMembers = "";
         if (baseName != null
-            && instanceClasses.TryGetValue(baseName, out var cls) && !string.IsNullOrEmpty(cls))
+            && ReceiverClassThroughAliases(baseName) is { } cls && !string.IsNullOrEmpty(cls))
         {
             var seen = new SortedSet<string>(StringComparer.Ordinal);
             bool known = false;
@@ -2540,6 +2540,36 @@ public partial class IRGenerator
             }
         }
         return assignedMemberNames.Contains(member);
+    }
+
+    /// <summary>
+    /// The class of a receiver, resolved through the alias chain to the ARGUMENT it came from
+    /// (#318).
+    ///
+    /// Asking `instanceClasses` about the name directly is what made this unreliable inside a
+    /// constructor: the receiver bindings are still being established there, so a PARAMETER
+    /// answers with the class under construction rather than with its own. `machine.ADC`'s
+    /// `__init__(self, pin: Pin)` reads `pin._name`, the lookup said `machine_ADC`, and a valid
+    /// read was refused -- which is why the undefined-attribute check was scoped out of
+    /// `__init__` entirely, and why `ADC(an_adc)` was then accepted and lowered against a slot
+    /// nothing writes.
+    ///
+    /// The LAST answer along the chain is the right one, because the chain ends at the caller's
+    /// value. `ADC(Pin("PC0"))` ends at the Pin, which has `_name`; `Wrap(ADC(Pin("PC0")))`
+    /// ends at the ADC, which does not, and that is the program that used to compile into a
+    /// 39-instruction comparison of a pin name against a byte of BSS.
+    /// </summary>
+    private string? ReceiverClassThroughAliases(string baseName)
+    {
+        string? answer = null;
+        string cur = baseName;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (instanceClasses.TryGetValue(cur, out var c) && !string.IsNullOrEmpty(c)) answer = c;
+            if (!variableAliases.TryGetValue(cur, out var next) || string.IsNullOrEmpty(next)) break;
+            cur = next;
+        }
+        return answer;
     }
 
     // True when this reads a @property getter on a known instance: the receiver is a plain
@@ -2949,8 +2979,15 @@ public partial class IRGenerator
             // The underlying receiver-resolution weakness is NOT fixed here, only avoided, and it
             // is worth its own issue: a wrong answer from instanceClasses is a hazard for anything
             // that trusts it, not just for this check.
+            // No longer scoped out of __init__ (#318). The exclusion existed because the
+            // receiver's class could not be resolved reliably there, and the resolution is
+            // fixed above rather than avoided: a read of a field the receiver's class does not
+            // have is refused inside a constructor exactly as it is everywhere else. Accepting
+            // it is what let `ADC(an_adc)` lower a HAL table into a run-time comparison chain
+            // whose subject nothing writes, and degrade the refusal in its default arm to a
+            // warning -- so a pin with no channel behind it read channel 0 instead of being
+            // refused.
             if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
-                && !IsInsideInit()
                 && !IsKnownMethodName(expr.Member)
                 && !MemberReachableFromReceiver(baseName, expr.Member, out var recvCls, out var recvMembers))
                 throw UserError(
