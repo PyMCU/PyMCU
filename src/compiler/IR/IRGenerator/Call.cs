@@ -3342,6 +3342,8 @@ public partial class IRGenerator
         // container with a run-time length.
         if (expr.Args[0] is MemberAccessExpr lenMem)
         {
+            if (TryGetDictFor(lenMem, out var lenDict)) return new Constant(lenDict.Entries.Count);
+            if (TryGetSetFor(lenMem, out var lenSet)) return new Constant(lenSet.Elements.Count);
             if (TryResolveInstanceSequence(lenMem, out _, out int lenSeqCount))
                 return new Constant(lenSeqCount);
             if (ResolveMemberArrayName(lenMem) is { } lenFlat) return new Constant(arraySizes[lenFlat]);

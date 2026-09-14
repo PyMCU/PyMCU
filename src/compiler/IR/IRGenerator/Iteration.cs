@@ -1188,24 +1188,34 @@ public partial class IRGenerator
                         return null;
                     }
 
-                    if (ResolveArr(arg0) is var ra && ra is not null
-                        && ResolveArr(arg1) is var rb && rb is not null)
+                    // A zip side is anything `for x in ...` already walks: a fixed array by
+                    // name, a compile-time sequence of instances held in a FIELD, or a ROW of a
+                    // rectangular dict selected at run time. Each answers how many elements it
+                    // has and how to bind the loop variable to element k; the unroll below does
+                    // not care which it is. Before this, only the first was resolved, so
+                    // `zip(self.segments, pattern)` -- the shape every segment driver has -- was
+                    // refused as not being a constant array (PyMCU#337).
+                    (int Len, Action<string, int> Bind)? ResolveSide(Expression e)
                     {
-                        string qk1 = !string.IsNullOrEmpty(currentInlinePrefix)
-                            ? key1 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
-                        string qk2 = !string.IsNullOrEmpty(currentInlinePrefix)
-                            ? key2 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
-                        variableTypes[qk1] = ra.Value.Elem;
-                        variableTypes[qk2] = rb.Value.Elem;
-                        bool sram0 = arraysWithVariableIndex.Contains(ra.Value.Base) || moduleSramArrays.Contains(ra.Value.Base);
-                        bool sram1 = arraysWithVariableIndex.Contains(rb.Value.Base) || moduleSramArrays.Contains(rb.Value.Base);
-                        int zlen = Math.Min(ra.Value.Size, rb.Value.Size);
-                        bool zbrk = LoopBodyHasBreakOrContinue(stmt.Body);
-                        string zBreak = zbrk ? MakeLabel() : "";
+                        if (e is MemberAccessExpr && TryResolveInstanceSequence(e, out var isb, out int isn))
+                            return (isn, (qk, k) => BindInstanceForIteration(isb + "__" + k, qk));
 
-                        void Bind(string qk, (string Base, int Size, DataType Elem) arr, bool sram, int k)
+                        if (e is VariableExpr rve && ResolveRowView(rve.Name) is { } rv)
+                            return (rv.Width, (qk, k) =>
+                            {
+                                Val off = EmitRowOffset(rv, k);
+                                Val v = EmitFlashArrayRead(rv.Table, off, rv.Width);
+                                Emit(new Copy(v, new Variable(qk, DataType.UINT8)));
+                                variableTypes[qk] = DataType.UINT8;
+                            });
+
+                        if (ResolveArr(e) is not { } arr) return null;
+                        bool sram = arraysWithVariableIndex.Contains(arr.Base) || moduleSramArrays.Contains(arr.Base);
+                        return (arr.Size, (qk, k) =>
                         {
                             string ek = arr.Base + "__" + k;
+                            if (instanceClasses.ContainsKey(ek)) { BindInstanceForIteration(ek, qk); return; }
+                            variableTypes[qk] = arr.Elem;
                             if (sram)
                             {
                                 Temporary tmp = MakeTemp(arr.Elem);
@@ -1214,16 +1224,29 @@ public partial class IRGenerator
                             }
                             else if (constantVariables.TryGetValue(ek, out int cv)) constantVariables[qk] = cv;
                             else Emit(new Copy(new Variable(ek, arr.Elem), new Variable(qk, arr.Elem)));
-                        }
+                        });
+                    }
+
+                    if (ResolveSide(arg0) is { } side0 && ResolveSide(arg1) is { } side1)
+                    {
+                        string qk1 = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? key1 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                        string qk2 = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? key2 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
+                        int zlen = Math.Min(side0.Len, side1.Len);
+                        bool zbrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                        string zBreak = zbrk ? MakeLabel() : "";
 
                         for (int k = 0; k < zlen; ++k)
                         {
                             string zCont = zbrk ? MakeLabel() : "";
                             if (zbrk) loopStack.Add(new LoopLabels { ContinueLabel = zCont, BreakLabel = zBreak, FinallyDepth = finallyStack.Count });
-                            Bind(qk1, ra.Value, sram0, k);
-                            Bind(qk2, rb.Value, sram1, k);
+                            side0.Bind(qk1, k);
+                            side1.Bind(qk2, k);
                             VisitStatement(stmt.Body);
                             if (zbrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(zCont)); }
+                            CleanCtState(qk1);
+                            CleanCtState(qk2);
                             constantVariables.Remove(qk1);
                             constantVariables.Remove(qk2);
                         }

@@ -821,6 +821,13 @@ public partial class IRGenerator
                 // `x in data` was refused by a sentence recommending the spelling it refused.
                 VariableExpr rlv when ElementsOfNamedSequence(rlv.Name) is { } listBound
                     => listBound,
+                // The same three tables reached through a FIELD. `num not in self.digits` is
+                // how a driver validates its argument, and it was refused by a sentence
+                // listing the spellings it had just been given.
+                MemberAccessExpr when TryGetDictFor(expr.Right, out var fd)
+                    => fd.Entries.Select(en => en.Key).ToList(),
+                MemberAccessExpr when TryGetSetFor(expr.Right, out var fs) => fs.Elements,
+                MemberAccessExpr when ResolveConstSequenceExpr(expr.Right) is { } fseq => fseq,
                 _ => throw UserError(
                     "'in' / 'not in' requires a list, tuple, set or dict literal (or a name " +
                     "bound to one) on the right-hand side", expr.Right)
@@ -1800,6 +1807,10 @@ public partial class IRGenerator
         // below (string keys are legal on dicts).
         if (expr.Target is VariableExpr dictVe && TryGetDictBinding(dictVe.Name, out var dictLit))
             return EmitDictLookup(dictLit, expr.Index);
+
+        // `self.digits[num]`: the same lookup table reached through a field.
+        if (expr.Target is MemberAccessExpr && TryGetDictFor(expr.Target, out var fieldDictLit))
+            return EmitDictLookup(fieldDictLit, expr.Index);
 
         // A string subscript is a mistake — a single-char string would otherwise fold to
         // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
