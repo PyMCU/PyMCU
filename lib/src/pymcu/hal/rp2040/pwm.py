@@ -26,7 +26,12 @@ _CLK_SYS = 125000000
 class PWM:
     """Hardware PWM on one GPIO, zero-cost abstraction."""
 
-    def __init__(self, pin: const, freq: const = 1000, duty: const = 0):
+    def __init__(self, pin: const, freq: const = 1000, duty: const = 0, duty_u16: const = 0):
+        # duty and duty_u16 are both 0..65535 = 0..100 % on this chip; duty_u16 is the
+        # name every architecture's HAL takes (the compat layers pass it) and wins when
+        # non-zero.
+        if duty_u16 != 0:
+            duty = duty_u16
         self._base = PWM_BASE + ((pin >> 1) & 7) * PWM_CH_STRIDE
         self._chan = pin & 1                       # 0 = A, 1 = B
 
@@ -66,6 +71,11 @@ class PWM:
             cc.value = (cc.value & 0xFFFF0000) | (compare & 0xFFFF)
         else:
             cc.value = (cc.value & 0x0000FFFF) | ((compare & 0xFFFF) << 16)
+
+    @inline
+    def set_duty_u16(self, duty_u16: uint16):
+        # The 16-bit entry is this chip's native one.
+        self.set_duty(duty_u16)
 
     @inline
     def stop(self):

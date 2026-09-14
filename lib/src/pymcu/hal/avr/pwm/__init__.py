@@ -19,6 +19,7 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
         pwm_connect, pwm_disconnect, pwm_release, pwm_clear_ocr_high,
+        pwm_init_raw, pwm_u16_steps,
     )
 elif (__CHIP__.name == "atmega32u4" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
           or __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny24"
@@ -36,13 +37,19 @@ else:
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
         pwm_connect, pwm_disconnect, pwm_release, pwm_clear_ocr_high,
+        pwm_init_raw, pwm_u16_steps,
     )
 
 
 class PWM:
     """Hardware PWM channel for AVR, zero-cost abstraction (all methods @inline)."""
 
-    def __init__(self, pin: const, duty: uint8, freq: uint16 = 0, invert: const[uint8] = 0):
+    def __init__(self, pin: const, duty: uint8 = 0, freq: uint16 = 0, invert: const[uint8] = 0,
+                 duty_u16: uint16 = 0):
+        # duty is the 8-bit entry (0 off, 255 fully on); duty_u16, when non-zero, is the
+        # 16-bit one every architecture's HAL takes (0..65535 = 0..100 %, what the
+        # CircuitPython and MicroPython layers speak) and it wins over duty. The chip
+        # module turns it into this channel's exact number of high counts.
         # invert selects the inverting compare output mode (COMxn0 set): the pin is
         # set on compare match and cleared at BOTTOM, so duty counts the LOW time.
         self._pin = pin
@@ -52,17 +59,25 @@ class PWM:
             prescaler = pwm_select_start_val(pin)
         else:
             prescaler = pwm_prescaler_for_freq(pin, freq)
-        pwm_init(pin, duty, prescaler, invert)
+        if duty_u16 != 0:
+            steps: uint16 = pwm_u16_steps(pin, duty_u16)
+            if steps == 0:
+                pwm_init_raw(pin, 0, 1, prescaler, invert)
+            else:
+                pwm_init_raw(pin, uint8(steps - 1), 0, prescaler, invert)
+        else:
+            pwm_init(pin, duty, prescaler, invert)
         self._ocr       = pwm_select_ocr(pin)
         self._tccr_b    = pwm_select_tccr_b(pin)
         self._start_val = prescaler
 
     @inline
     def set_duty(self, duty: uint8):
-        # 0 is off, not OCRx = 0: fast PWM with the compare register at BOTTOM
-        # still emits a one-clock pulse every period. Disconnect the compare
-        # output and drive the pin low instead, and reconnect it on the next
-        # non-zero duty. A constant duty folds this to one path with no branch.
+        # The 8-bit entry: 0 is off, 255 fully on, anything else high for duty + 1 of
+        # 256 counts. 0 is off, not OCRx = 0: fast PWM with the compare register at
+        # BOTTOM still emits a one-clock pulse every period. Disconnect the compare
+        # output and drive the pin low instead, and reconnect it on the next duty. A
+        # constant duty folds this to one path with no branch.
         if duty == 0:
             # The compare register goes to 0 as well, so that start() can tell an
             # off channel (nothing to reconnect) from a paused one by reading it back.
@@ -75,6 +90,23 @@ class PWM:
             # Folds to nothing on the 8-bit channels.
             pwm_clear_ocr_high(self._pin)
             self._ocr.value = duty
+            pwm_connect(self._pin, self._invert)
+
+    @inline
+    def set_duty_u16(self, duty_u16: uint16):
+        # The 16-bit entry, 0..65535 = 0..100 %, exact to this channel's resolution:
+        # 32768 is 50.0 %, 65535 fully on, below half a count is off. Same register
+        # traffic as set_duty(); written out rather than shared through a helper
+        # method, because a method called from another method loses the const
+        # binding of self._pin (it reached the chip module as a run-time value).
+        steps: uint16 = pwm_u16_steps(self._pin, duty_u16)
+        if steps == 0:
+            pwm_clear_ocr_high(self._pin)
+            self._ocr.value = 0
+            pwm_disconnect(self._pin)
+        else:
+            pwm_clear_ocr_high(self._pin)
+            self._ocr.value = uint8(steps - 1)
             pwm_connect(self._pin, self._invert)
 
     @inline

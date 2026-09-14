@@ -150,32 +150,55 @@ def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
 
 
 @inline
-def pwm_init(pin: const, duty: uint8, prescaler: uint8, invert: const[uint8] = 0):
+def pwm_init_raw(pin: const, ocr: uint8, off: uint8, prescaler: uint8, invert: const[uint8] = 0):
     match pin:
         case "PB0":
             # Timer0 OC0A: Fast PWM non-inverting
             # TCCR0A = COM0A1 | WGM01 | WGM00 = 0x83
             DDRB[0] = 1
-            OCR0A.value = duty
+            OCR0A.value = ocr
             TCCR0A.value = 0xC3 if invert else 0x83
             TCCR0B.value = prescaler
         case "PB1":
             # Timer0 OC0B: Fast PWM non-inverting
             # TCCR0A = COM0B1 | WGM01 | WGM00 = 0x23
             DDRB[1] = 1
-            OCR0B.value = duty
+            OCR0B.value = ocr
             TCCR0A.value = 0x33 if invert else 0x23
             TCCR0B.value = prescaler
         case "PB4":
             # Timer1 OC1B: Fast PWM mode via PWM1B bit and COM1B1
             # TCCR1: PWM1B=bit6, COM1B1=bit5, COM1B0=bit4, CS1[3:0]=prescaler
             DDRB[4] = 1
-            OCR0A.value = duty   # OCR1B shares physical register with OCR0A
+            OCR0A.value = ocr   # OCR1B shares physical register with OCR0A
             TCCR1.value = prescaler
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
-    if duty == 0:
+    if off:
         pwm_disconnect(pin)
+
+
+# The 8-bit entry every HAL user has: duty 0 is off, 255 is fully on, and a value in
+# between is high for duty + 1 of 256 counts (fast PWM sets at BOTTOM and clears on the
+# match, inclusive). The exact 16-bit path is pwm_u16_steps + pwm_init_raw below.
+@inline
+def pwm_init(pin: const, duty: uint8, prescaler: uint8, invert: const[uint8] = 0):
+    pwm_init_raw(pin, duty, 1 if duty == 0 else 0, prescaler, invert)
+
+
+# A 16-bit duty (0..65535 = 0..100 %, what CircuitPython and MicroPython speak) as the
+# number of counts the pin is high per period on this channel, 0..256 on the 8-bit
+# channels: round(duty * 256 / 65535). The compare register then holds steps - 1, since
+# fast PWM is high for OCR + 1 counts, and 0 steps means off. Measured before this
+# existed: every duty came out 1/256 above what was asked, 50.4 % for 32768
+# (pymcu-circuitpython#30). Rounding without a 16-bit overflow: the high byte plus the
+# top bit of the low byte.
+@inline
+def pwm_u16_steps(pin: const, duty_u16: uint16) -> uint16:
+    match pin:
+        case _:
+            return (duty_u16 >> 8) + ((duty_u16 >> 7) & 1)
+
 
 
 # duty 0 means off, and OCRx = BOTTOM is not off: in fast PWM the output is set at
