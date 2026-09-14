@@ -227,6 +227,44 @@ public partial class IRGenerator
         return new Constant(0);
     }
 
+    /// <summary>
+    /// The one sentence for `m[x, y]` on a class that cannot receive the pair (#352).
+    ///
+    /// It lived in BOTH readers, word for word, kept in step by a comment asking the next
+    /// person to change both. It lives here now because the answer depends on the class and no
+    /// reader knows the classes: a class whose `__getitem__`/`__setitem__` takes the key binds
+    /// the pair at compile time, and only what is left gets this.
+    ///
+    /// It says what the construct DOES rather than that it is unsupported, because the reader
+    /// who wrote `m[x, y]` is usually not thinking about tuples at all.
+    /// </summary>
+    internal const string TwoIndexSubscriptRefusal =
+        "a subscript with more than one index needs a __getitem__ or __setitem__ that takes " +
+        "the pair as one key (`def __getitem__(self, key): x, y = key`), and this one does " +
+        "not. Call the method the subscript stands for, passing the indices separately " +
+        "(e.g. 'm.pixel(x, y)')";
+
+    /// <summary>
+    /// Whether the class of <paramref name="target"/> defines an @inline dunder that can take a
+    /// two-index subscript's pair as one key (#352).
+    ///
+    /// Asked WITHOUT lowering anything: the caller is deciding whether to refuse, and visiting
+    /// the target to find out would emit instructions for a program that is about to be
+    /// rejected. An OUTLINED dunder is deliberately not enough -- it is a real call, and a
+    /// compile-time pair cannot be passed through one -- so those keep the refusal and its
+    /// advice, which is to call the method the subscript stands for.
+    /// </summary>
+    private bool SubscriptTakesAPair(Expression target, string dunder)
+    {
+        string? cls = target switch
+        {
+            VariableExpr ve => InstanceClassOfName(ve.Name),
+            MemberAccessExpr m when SequenceKeyOf(m) is { } key && instanceClasses.TryGetValue(key, out var mc) => mc,
+            _ => null,
+        };
+        return cls != null && inlineFunctions.ContainsKey(cls + "_" + dunder);
+    }
+
     public string GetValClass(Val v)
     {
         string TryName(string name)
@@ -1904,6 +1942,14 @@ public partial class IRGenerator
             }
         }
 
+        // `m[x, y]` on a target whose class cannot take the pair (#352). Refused HERE rather
+        // than in the readers, which cannot know the class, and before the index is visited so
+        // the generic "tuples are not supported as runtime values" refusal, which is true and
+        // about a different program, never claims it. The caret goes on the Tuple, which both
+        // front ends stamp at its first element.
+        if (expr.Index is TupleExpr && !SubscriptTakesAPair(expr.Target, "__getitem__"))
+            throw UserError(TwoIndexSubscriptRefusal, expr.Index);
+
         // A string subscript is a mistake — a single-char string would otherwise fold to
         // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
         if (expr.Index is StringLiteral)
@@ -2235,6 +2281,13 @@ public partial class IRGenerator
                 if (inlineFunctions.ContainsKey(funcKey))
                 {
                     string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
+                    // `m[x, y]` (#352): the pair is bound to `key` as a compile-time sequence,
+                    // which is the same mechanism `pixels[i] = (r, g, b)` already uses for the
+                    // VALUE parameter. The dunder then unpacks it with `x, y = key` or reads
+                    // `key[0]`, and neither needs a tuple to exist at run time.
+                    if (expr.Index is TupleExpr keyTup)
+                        return EmitDunderCall(selfName, cls, funcKey, new List<Val> { new NoneVal() },
+                            new Dictionary<int, ListExpr> { { 0, new ListExpr(keyTup.Elements) } });
                     Val idxVal = VisitExpression(expr.Index);
                     return EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal });
                 }

@@ -544,20 +544,13 @@ def e_call(node):
 
 
 def e_subscript(node):
-    # `m[x, y]` (#352). Refused HERE, while the subscript is being read, so that both front ends
-    # answer in the same phase and with the same sentence -- the C# parser names it at the comma.
+    # `m[x, y]` (#352) is READ here and JUDGED in the IR generator. The pair is one Tuple index,
+    # which is what CPython builds and what `__getitem__(self, key)` receives; whether it means
+    # anything depends on the class, and no reader knows the classes.
     #
-    # It used to fall through to the generic tuple refusal in VisitExpression, which names the
-    # right model limit and then advises building a fixed list for indexable storage: true of
-    # tuples in general, and not what a reader indexing a matrix is doing.
-    #
-    # Text is word for word Parser.cs's TwoIndexSubscriptRefusal. Change one, change both.
-    if isinstance(node.slice, ast.Tuple):
-        raise Unsupported(
-            "a subscript with more than one index is not supported: 'm[x, y]' hands the pair "
-            "to __getitem__ as a tuple, and a tuple is not a runtime value on this target. "
-            "Call the method the subscript stands for, passing the indices separately "
-            "(e.g. 'm.pixel(x, y)')", node.slice)
+    # The refusal that remains, for a class with no such dunder, therefore lives in ONE place
+    # that both front ends reach, instead of the same sentence written twice and asked to stay
+    # in step by a comment.
     return {"k": "Index", "target": expr(node.value), "index": expr(node.slice)}
 
 

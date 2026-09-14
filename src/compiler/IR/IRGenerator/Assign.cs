@@ -2359,6 +2359,12 @@ public partial class IRGenerator
         // The refusal names the tuple and says what to write instead. The elements go into the
         // same array either way, so a list is not a workaround for a missing capability -- it is
         // the spelling that means "this is written to".
+        // `m[x, y] = v` on a target whose class cannot take the pair (#352), refused before the
+        // index is visited so the generic tuple sentence never claims it. Same site and same
+        // text as the read path, so the two spellings of one mistake get one answer.
+        if (indexExpr.Index is TupleExpr && !SubscriptTakesAPair(indexExpr.Target, "__setitem__"))
+            throw UserError(TwoIndexSubscriptRefusal, indexExpr.Index);
+
         if (indexExpr.Target is VariableExpr tupTgt && IsTupleBound(tupTgt.Name))
             throw UserError(
                 $"'{tupTgt.Name}' is a tuple, and a tuple does not support item assignment. "
@@ -2508,6 +2514,23 @@ public partial class IRGenerator
                 if (inlineFunctions.ContainsKey(funcKey))
                 {
                     string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
+                    // `m[x, y] = v` (#352). The KEY is bound as a compile-time sequence, the
+                    // same way the VALUE already is below, so `x, y = key` in the dunder
+                    // unpacks and no tuple exists at run time. Both may be sequences at once,
+                    // which is `m[x, y] = (r, g, b)`.
+                    if (indexExpr.Index is TupleExpr keyTup)
+                    {
+                        var seq = new Dictionary<int, ListExpr>
+                        {
+                            { 0, new ListExpr(keyTup.Elements) },
+                        };
+                        var args = new List<Val> { new NoneVal(), new NoneVal() };
+                        if (stmt.Value is ListExpr vle) seq[1] = vle;
+                        else if (stmt.Value is TupleExpr vte) seq[1] = new ListExpr(vte.Elements);
+                        else args[1] = VisitExpression(stmt.Value);
+                        EmitDunderCall(selfName, cls, funcKey, args, seq);
+                        return;
+                    }
                     Val idxVal = VisitExpression(indexExpr.Index);
                     // A tuple/list literal RHS (pixels[i] = (r, g, b)) is bound to the
                     // color parameter as a sequence literal so __setitem__ can read it
@@ -5172,6 +5195,26 @@ public partial class IRGenerator
 
     private void VisitTupleUnpack(TupleUnpackStmt stmt)
     {
+        // `x, y = key`, where `key` is a NAME standing for a compile-time sequence (#352).
+        //
+        // This is what a two-index subscript's dunder writes: the pair arrives bound to the
+        // parameter, and the body unpacks it. It used to reach the refusal at the bottom of
+        // this method, which says the right-hand side has to be a tuple literal or an inline
+        // call -- true of the shapes that were handled, and no help to someone whose name IS a
+        // tuple literal one binding away.
+        //
+        // Rewritten into the literal form rather than given a fourth branch, so the size
+        // mismatch, the starred target and the evaluate-before-assign snapshot are the same
+        // code and cannot drift from it.
+        if (stmt.Value is not TupleExpr && stmt.Value is not CallExpr
+            && ResolveConstSequenceExpr(stmt.Value) is { } seqElements)
+        {
+            VisitTupleUnpack(new TupleUnpackStmt(
+                stmt.Targets, new TupleExpr(seqElements), stmt.StarredIndex)
+                { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
+            return;
+        }
+
         if (TryUnpackIntoAttributes(stmt)) return;
 
         // Every target is written here, so none of them still holds what it held.
