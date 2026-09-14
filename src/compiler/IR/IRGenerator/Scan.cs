@@ -2124,10 +2124,96 @@ public partial class IRGenerator
             {
                 type = lt.StartsWith("const[") && lt.EndsWith("]") ? lt.Substring(6, lt.Length - 7) : lt;
             }
+
+            // A field whose value is an EXPRESSION took uint8 and truncated silently: the
+            // width came from the field, not from what was stored in it, so
+            // `self._period = uint16(1000000 // uint32(hz))` read back as 20000 & 0xFF. Nothing
+            // was said, and a servo driven from such a field ran at a fraction of the pulse it
+            // was asked for (PyMCU#322). An explicit annotation still wins -- that is the
+            // reader's declaration -- and everything else takes the widest value assigned.
+            if (annotatedType == null)
+                foreach (var s2 in init.Body.Statements)
+                {
+                    if (s2 is not AssignStmt a2 || a2.Target is not MemberAccessExpr m2
+                        || m2.Object is not VariableExpr sv2 || sv2.Name != "self"
+                        || m2.Member != field) continue;
+                    string? w = InferAssignedFieldType(a2.Value, paramTypes, localTypes);
+                    if (w != null && ScalarWidthRank(w) > ScalarWidthRank(type)) type = w;
+                }
+
             layout.Add((field, type, srcParam));
         }
 
         return layout;
+    }
+
+    /// <summary>
+    /// How wide a scalar type name is, for "the widest value assigned wins". Anything that is
+    /// not a plain integer or float width ranks 0, so it never widens a field on its own.
+    /// </summary>
+    private static int ScalarWidthRank(string ty) => ty switch
+    {
+        "bool" or "uint8" or "int8" or "char" => 1,
+        "uint16" or "int16" => 2,
+        "int" or "uint32" or "int32" => 3,
+        "float" => 4,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// The width an expression stored into an unannotated field needs, or null when nothing
+    /// here decides it. Deliberately narrow: a conversion call says its own type, a literal
+    /// says the narrowest type that holds it, a parameter or annotated local says its
+    /// declaration, and an arithmetic expression is as wide as its widest operand. Anything
+    /// else (a call to a function, a field read, an index) answers null and leaves the field
+    /// at the width it already had.
+    /// </summary>
+    private string? InferAssignedFieldType(Expression? e,
+                                           Dictionary<string, string> paramTypes,
+                                           Dictionary<string, string> localTypes)
+    {
+        switch (e)
+        {
+            case null:
+                return null;
+
+            case CallExpr { Callee: VariableExpr cv } when ScalarWidthRank(cv.Name) > 0:
+                return cv.Name;
+
+            case IntegerLiteral il:
+                if (il.Value < -32768) return "int32";
+                if (il.Value < -128) return "int16";
+                if (il.Value > 65535) return "uint32";
+                if (il.Value > 255) return "uint16";
+                return null;
+
+            case FloatLiteral:
+                return "float";
+
+            case VariableExpr ve:
+            {
+                string? d = paramTypes.TryGetValue(ve.Name, out var pv) ? pv
+                          : localTypes.TryGetValue(ve.Name, out var lv2) ? lv2 : null;
+                if (string.IsNullOrEmpty(d)) return null;
+                if (d.StartsWith("const[") && d.EndsWith("]")) d = d.Substring(6, d.Length - 7);
+                return ScalarWidthRank(d) > 0 ? d : null;
+            }
+
+            case UnaryExpr ue:
+                return InferAssignedFieldType(ue.Operand, paramTypes, localTypes);
+
+            case BinaryExpr be:
+            {
+                string? l = InferAssignedFieldType(be.Left, paramTypes, localTypes);
+                string? r = InferAssignedFieldType(be.Right, paramTypes, localTypes);
+                if (l == null) return r;
+                if (r == null) return l;
+                return ScalarWidthRank(l) >= ScalarWidthRank(r) ? l : r;
+            }
+
+            default:
+                return null;
+        }
     }
 
     /// Refuses the two decorators a METHOD cannot honour, whatever path the method then takes.
