@@ -1320,13 +1320,35 @@ public class Parser
                       + "exception at a time, so there is no group to split. Write "
                       + "'except <Type>:'");
 
-            if (Check(TokenType.LParen))
-                Error("'except (A, B):' is not supported. Write one 'except' clause per "
-                      + "exception type, each naming the type without parentheses");
-
-            string exnType = Check(TokenType.Colon)
-                ? ""
-                : Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+            // `except (A, B):` (#346). The advice this used to give -- write one clause per
+            // type -- is what the compiler now does itself: the alternatives are carried as
+            // one comma-joined string and the dispatcher compares the error code against each
+            // in turn, all of them falling into the one body. The types are names resolved at
+            // compile time, the same as the single-type form's one name, so there is nothing
+            // here that wants a run-time tuple.
+            string exnType;
+            if (Match(TokenType.LParen))
+            {
+                var alternatives = new List<string>();
+                if (!Check(TokenType.RParen))
+                    do
+                    {
+                        if (Check(TokenType.RParen)) break;   // trailing comma
+                        alternatives.Add(Consume(TokenType.Identifier,
+                            "Expected an exception type inside the parentheses after 'except'").Value);
+                    } while (Match(TokenType.Comma));
+                Consume(TokenType.RParen, "Expected ')' after the exception types");
+                if (alternatives.Count == 0)
+                    Error("'except ():' names no exception type, so nothing can reach this "
+                          + "handler. Name the types to catch, or write 'except:' to catch any");
+                exnType = string.Join(",", alternatives);
+            }
+            else
+            {
+                exnType = Check(TokenType.Colon)
+                    ? ""
+                    : Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+            }
 
             // A raise carries the exception's identity and nothing else, so there is no object
             // to bind. Saying so is what stops the reader from looking for the exception object

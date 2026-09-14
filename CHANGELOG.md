@@ -45,6 +45,11 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- `except (A, B):` catches either, which is what the refusal used to tell the reader to write
+  by hand. The alternatives are compared against the error code in turn and all reach the one
+  handler body; a single type still emits the one comparison and one skip it always did, so
+  every existing firmware is byte-identical. It is the optional-import fallback that opens
+  `adafruit_dht`, `adafruit_hcsr04` and `adafruit_motor` (#346).
 - An annotation with a dotted name, a nested subscript or an empty `[]` inside its brackets is
   read whole, so the sentence that names the construct is reached instead of `Expected ']'` at
   a column inside the annotation. `Union[int, List[int]]` and `Optional[digitalio.DigitalInOut]`

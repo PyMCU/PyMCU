@@ -1965,13 +1965,39 @@ public partial class IRGenerator
             var (exnType, handlerBody) = stmt.Handlers[i];
             string skipLabel = MakeLabel();
 
-            bool catchAll = string.IsNullOrEmpty(exnType) || exnType is "Exception" or "BaseException";
+            // `except (A, B):` arrives as the comma-joined text of its alternatives (#346).
+            // One name is the ordinary case and is the single-element split, so the two
+            // spellings share this code rather than one of them getting a second path.
+            string[] alternatives = exnType.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            bool catchAll = alternatives.Length == 0
+                            || alternatives.Any(a => a is "Exception" or "BaseException");
             if (!catchAll)
             {
-                Val expectedCode = ResolveBinding(exnType);
-                Val matchTemp = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
-                Emit(new JumpIfZero(matchTemp, skipLabel));
+                if (alternatives.Length == 1)
+                {
+                    // The single-type form keeps the instructions it has had, to the byte: one
+                    // comparison and a skip. A tuple of one is the same program as a bare name
+                    // and must not cost more than one.
+                    Val expectedCode = ResolveBinding(alternatives[0]);
+                    Val matchTemp = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
+                    Emit(new JumpIfZero(matchTemp, skipLabel));
+                }
+                else
+                {
+                    // Each alternative jumps INTO the body, and only after the last one has
+                    // failed does control fall through to the next handler.
+                    string bodyLabel = MakeLabel();
+                    foreach (string alternative in alternatives)
+                    {
+                        Val expectedCode = ResolveBinding(alternative);
+                        Val matchTemp = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
+                        Emit(new JumpIfNotZero(matchTemp, bodyLabel));
+                    }
+                    Emit(new Jump(skipLabel));
+                    Emit(new Label(bodyLabel));
+                }
             }
 
             // The finally is pending while the handler body runs, so a `return`/`break`/`continue`

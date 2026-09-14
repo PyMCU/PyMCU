@@ -930,11 +930,21 @@ def s_try(node):
         # Both refusals are the C# parser's, word for word (#196). This front end used to take
         # `as e` and drop the binding, and to unparse a tuple into a type name nothing defines,
         # so the same program built here and was refused there.
+        # `except (A, B):` (#346). Carried as the comma-joined text the C# parser builds from
+        # its tokens; VisitTry compares the error code against each alternative, all of them
+        # reaching the one body.
         if isinstance(h.type, ast.Tuple):
-            raise Unsupported(
-                "'except (A, B):' is not supported. Write one 'except' clause per "
-                "exception type, each naming the type without parentheses", h)
-        if h.type is not None:
+            if not h.type.elts:
+                raise Unsupported(
+                    "'except ():' names no exception type, so nothing can reach this handler. "
+                    "Name the types to catch, or write 'except:' to catch any", h)
+            for el in h.type.elts:
+                if not isinstance(el, ast.Name):
+                    raise Unsupported(
+                        "an exception type inside the parentheses after 'except' must be a "
+                        f"plain name, and '{ast.unparse(el)}' is not", h)
+            exn = ",".join(el.id for el in h.type.elts)
+        elif h.type is not None:
             exn = ast.unparse(h.type)
         if h.name is not None:
             raise Unsupported(
