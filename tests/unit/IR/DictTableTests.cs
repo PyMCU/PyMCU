@@ -149,6 +149,88 @@ public class DictTableTests
         Assert.Equal(new List<int> { 1, 2, 3, 4 }, tables[0].Bytes);
     }
 
+    // ------------------------------------------------- #338 keys that are not 0..N-1
+
+    // A glyph table is keyed by characters. A one-character literal folds to its code, so the
+    // keys are constants that simply are not contiguous from zero.
+    [Fact]
+    public void ADictOfRowsKeyedByCharacters_GoesToFlashWithItsKeys()
+    {
+        var tables = Tables(Gen(
+            "G = {\"0\": [1, 2], \"A\": [3, 4], \"-\": [5, 6]}\n" +
+            "def main():\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 3:\n" +
+            "        row = G[i]\n" +
+            "        a = row[0]\n" +
+            "        i = i + 1\n"));
+        // The rectangle, and the keys next to it so the lookup can find the row.
+        Assert.Equal(2, tables.Count);
+        Assert.Contains(tables, t => t.Bytes.SequenceEqual(new List<int> { 1, 2, 3, 4, 5, 6 }));
+        Assert.Contains(tables, t => t.Bytes.SequenceEqual(new List<int> { (int)'0', (int)'A', (int)'-' }));
+    }
+
+    // Sparse integer keys are the same shape.
+    [Fact]
+    public void ADictOfRowsWithSparseKeys_Compiles()
+        => Assert.NotNull(Gen(
+            "G = {10: [1, 2], 20: [3, 4], 99: [5, 6]}\n" +
+            "def main():\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 3:\n" +
+            "        row = G[i]\n" +
+            "        a = row[0]\n" +
+            "        i = i + 1\n"));
+
+    // Contiguous keys need no key row: the index is the subtraction.
+    [Fact]
+    public void ContiguousKeysNeedNoKeyRow()
+        => Assert.Single(Tables(Gen(
+            "G = {5: [1, 2], 6: [3, 4], 7: [5, 6]}\n" +
+            "def main():\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 3:\n" +
+            "        row = G[i]\n" +
+            "        a = row[0]\n" +
+            "        i = i + 1\n")));
+
+    // A constant character key folds to its row and emits nothing.
+    [Fact]
+    public void AConstantCharacterKey_EmitsNoTable()
+        => Assert.Empty(Tables(Gen(
+            "G = {\"0\": [1, 2], \"A\": [3, 4]}\n" +
+            "def main():\n" +
+            "    row = G[\"A\"]\n" +
+            "    a = row[1]\n")));
+
+    // A multi-character key is an interned id, which no run-time value equals. It stays
+    // constant-only, and the message says which half of the rule applies.
+    [Fact]
+    public void AMultiCharacterKeyWithARunTimeLookup_SaysWhichKeysDoWork()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            "G = {\"on\": 1, \"off\": 0}\n" +
+            "def main():\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 2:\n" +
+            "        a = G[i]\n" +
+            "        i = i + 1\n"));
+        Assert.Contains("multi-character", ex.Message);
+        Assert.Contains("One-character keys are character codes", ex.Message);
+    }
+
+    // The scalar table keyed by characters, read with a run-time byte: the compare chain is
+    // over codes, which is what `in` on the line above already did.
+    [Fact]
+    public void AScalarDictKeyedByCharacters_TakesARunTimeKey()
+        => Assert.NotNull(Gen(
+            "M = {\"0\": 63, \"A\": 119, \"-\": 64}\n" +
+            "def main():\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 3:\n" +
+            "        a = M[i]\n" +
+            "        i = i + 1\n"));
+
     // ---------------------------------------------------------------- #337 zip
 
     [Fact]
