@@ -1858,6 +1858,31 @@ public partial class IRGenerator
         // Inside a try body in the same function -> deliver to the local catch
         // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
         string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+
+        // Except in the entry function, which has no caller. Propagating there emits
+        // `SET; RET`, and the RET pops a return address that was never pushed: the stack
+        // pointer is at the top of SRAM and execution goes wherever those bytes point.
+        // avr8sharp reports a stack underflow at that instruction and nothing reaches the
+        // UART, where the documented behaviour is `E:<TypeName>` and a halt (#339).
+        //
+        // The unhandled path was reached only by an exception RETURNING into main from a
+        // callee; a raise written in main's own body, or in an @inline expansion inside it
+        // -- a driver's `raise ValueError` in a method called from the top level -- took the
+        // propagate form. `currentFunction` stays "main" through an expansion, so both are
+        // this one test.
+        //
+        // The code still has to reach R22 for the handler to name the type, which is what
+        // the label form of SignalError does: it loads R22 and jumps. The jump lands on the
+        // next instruction, which is the call the exception runtime keys off.
+        if (localCatch == null && currentFunction == "main")
+        {
+            string unhandled = MakeLabel();
+            Emit(new SignalError(code, unhandled));
+            Emit(new Label(unhandled));
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+            return;
+        }
+
         Emit(new SignalError(code, localCatch));
     }
 
