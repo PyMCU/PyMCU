@@ -122,6 +122,7 @@ def _ensure_venv():
 # Application definition
 from .commands.new import new
 from .commands.build import build
+from .commands.natmod import natmod
 from .commands.clean import clean
 from .commands.flash import flash
 from .commands.sync import sync
@@ -157,6 +158,7 @@ def main(
 
 app.command()(new)
 app.command()(build)
+app.command()(natmod)
 # `version` backs the --version flag, but people type `pymcu version` too and
 # used to get "No such command". bench/profile/coffee stay hidden on purpose:
 # they work, they are just not part of the advertised surface.
