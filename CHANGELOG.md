@@ -14,6 +14,10 @@
 - Every PWM HAL takes a 16-bit duty (`PWM(pin, duty_u16=...)`, `set_duty_u16()`), the entry
   the CircuitPython and MicroPython layers now use exclusively; on the AVR 8-bit channels
   it lands exactly (32768 is 50.0 %, it read 50.4 % on the Uno; pymcu-circuitpython#30).
+- `Pin.mode(Pin.IN)` gives an input with the pull the pin asked for, not the level it
+  was driving (a pin made an input after `high()` stayed at 5 V on the Uno);
+  `mode(IN_PULLUP)` sets the pull-up instead of writing 2 into the direction bit, and
+  `mode(OPEN_DRAIN)` is refused (#309). `digitalio.deinit()` releases without pull.
 - The two channels of one timer share its prescaler: the second `PWM()` (or a
   `set_freq()` next to a running sibling) asking for another bucket is refused at compile
   time, where it is written, through the new `claim()` intrinsic in `pymcu.types` (#300).
@@ -49,6 +53,15 @@
   `main(); print("END")` printed END first and main's output last, with nothing reported.
   A second `main()` and a `main()` that returns early with module-level code after the
   call are refused where the call is written (#301).
+- A method called on the name bound by `with ... as` reaches the manager's class. The name is
+  a pure alias of the manager and only the field path followed it, so
+  `with digitalio.DigitalInOut(board.D6) as pin:` then `pin.switch_to_output(True)` was
+  refused as a call to an undefined `pin_switch_to_output` (#305).
+- `None` passed as an argument, or assigned through a property setter, binds the parameter as
+  `None` instead of leaving it unbound, and a `match` whose subject is `None` is decided at
+  compile time: it matches `case None` and the wildcard, and only that arm is lowered.
+  `pin.pull = None`, CircuitPython's spelling for "no pull", was refused with "Pull-down
+  resistor not supported on AVR" from the arm the program never selected (#306).
 
 ### Guardrails (was silent, now a located error)
 - A call whose callee reaches the end of its body without returning is refused where the

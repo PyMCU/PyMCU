@@ -46,8 +46,8 @@ Creates a GPIO pin. All parameters except `name` and `mode` are optional.
 | `off()` | Alias for `low()` |
 | `toggle()` | XOR pin with 1 |
 | `value(x=-1)` | Read pin if `x == -1`, else write `x` |
-| `mode(m=-1)` | Read current mode if `m == -1`, else set mode |
-| `pull(p)` | Configure pull resistor |
+| `mode(m=-1)` | Read current mode if `m == -1`, else set mode. `Pin.IN` gives an input with the pull the pin was asked for (none unless `pull()` or `IN_PULLUP` said so), whatever level it was driving before; `Pin.OPEN_DRAIN` is refused on AVR |
+| `pull(p)` | Configure pull resistor; the pin remembers it and `mode(Pin.IN)` re-applies it |
 | `irq(trigger)` | Configure interrupt trigger hardware |
 | `pulse_in(state, timeout_us=1000)` | Measure pulse width in microseconds |
 
@@ -65,6 +65,15 @@ led.high()
 led.low()
 led.toggle()
 ```
+
+### An input after an output
+
+On the AVR the pull-up and the output level share one latch (PORTx). A pin that drove
+high and is then made an input would keep that latch as a pull-up, which is what
+`pinMode(INPUT)` does on Arduino; PyMCU's `mode(Pin.IN)` instead writes the pull the pin
+was asked for, so an input with no pull floats. Measured on an Arduino Uno before this
+rule: `high()` then `mode(Pin.IN)` left D6 at a firm 5 V (PyMCU#309). A constant pull
+costs nothing; the pin only keeps a byte when the pull is decided at run time.
 
 ### Input pin with pull-up
 
