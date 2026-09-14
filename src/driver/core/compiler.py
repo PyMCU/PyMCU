@@ -48,6 +48,18 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
         return (os.path.basename(path) == syn_name
                 and "_generated" in path.replace("\\", "/"))
 
+    # `main.py:43` written INSIDE a message, not as its header. A diagnostic that refuses a
+    # site because of an earlier one cites that earlier site in its own sentence, and the
+    # compiler numbers it against the synthetic file like everything else. Only the header and
+    # the snippet were mapped, so one message stated a line the reader's file does not have:
+    # "already 3 for PD6 at line 43" in a 41-line program (#303). The citation now carries the
+    # file name, which is what makes it recognisable here -- a bare number could not be told
+    # from a duty cycle or a prescaler in the same sentence.
+    cited = re.compile(r"(?<![\w./\\])" + re.escape(syn_name) + r":(\d+)")
+
+    def map_citations(text: str) -> str:
+        return cited.sub(lambda m: f"{syn_name}:{max(1, int(m.group(1)) - offset)}", text)
+
     out: list[str] = []
     # Whether the snippet currently being read belongs to the entry file. Decided per block
     # rather than per line: a diagnostic reported against an imported module has numbering of
@@ -58,6 +70,9 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
         header = _DIAG_HEADER_RE.match(line)
         if header:
             path, num, rest = header.group(1), int(header.group(2)), header.group(3)
+            # The cited site belongs to the entry file whichever file the header names: a
+            # refusal raised inside an imported HAL can still quote the caller's line.
+            rest = map_citations(rest)
             if is_synthetic(path):
                 # A line at or below the offset is inside the preamble, so the generated file
                 # really is where it went wrong. Its frame stays as the compiler drew it;
@@ -67,7 +82,7 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
                 out.append(f"{real}:{max(1, num - offset)}{rest}")
             else:
                 renumber = False
-                out.append(line)
+                out.append(f"{path}:{num}{rest}")
             continue
 
         gutter = _DIAG_GUTTER_RE.match(line) if renumber else None
