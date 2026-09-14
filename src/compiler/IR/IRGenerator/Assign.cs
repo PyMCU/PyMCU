@@ -479,11 +479,21 @@ public partial class IRGenerator
         // The compile-time-unrolled array path (slots name__k + instanceClasses for ZCA
         // elements) is normally reached only through an annotated target; handle the plain
         // form here so CircuitPython-style code compiles.
+        //
+        // A TUPLE right-hand side arrives here too. Up to ConstSequenceUnrollLimit constant
+        // elements the binding above already claimed it (the `for` unrolls and nothing is
+        // stored), but past that limit a LIST fell through to this path and became a real
+        // array while a tuple fell through to the expression visitor and was refused as a
+        // runtime value -- so `DUTIES = (256, 383, ...)` with ten elements did not compile
+        // and `DUTIES = [256, 383, ...]` did. Immutability is a Python-level property of the
+        // name, not of the storage: the elements go into the same array either way, which is
+        // already what a short tuple's binding does one screen up.
         if (stmt.Target is VariableExpr listTarget)
         {
             List<Expression>? elemExprs = stmt.Value switch
             {
                 ListExpr le => le.Elements,
+                TupleExpr te => te.Elements,
                 ListCompExpr lc => ExpandCtListComp(lc),
                 _ => null
             };
