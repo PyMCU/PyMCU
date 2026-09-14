@@ -193,6 +193,8 @@ def run_backend(
     emit_symbols_path: Path | None = None,
     emit_linemap_path: Path | None = None,
     emit_varmap_path: Path | None = None,
+    stdout_baud: int | None = None,
+    uart_owned: bool = False,
 ) -> None:
     """
     Invoke an external backend binary (e.g. pymcuc-avr) to translate a .mir
@@ -230,6 +232,14 @@ def run_backend(
         cmd.extend(["--emit-linemap", str(emit_linemap_path)])
     if emit_varmap_path is not None:
         cmd.extend(["--emit-varmap", str(emit_varmap_path)])
+    # PyMCU#340. The unhandled-exception path prints E:<Type> on the UART, and the UART is only
+    # set up when this driver sees print()/input() or an explicit UART(). When nobody sets it
+    # up, that path turns the transmitter on itself, at the rate stdout is configured for --
+    # and when somebody does, it emits no initialisation, so the image is unchanged.
+    if stdout_baud is not None:
+        cmd.extend(["--stdout-baud", str(stdout_baud)])
+    if uart_owned:
+        cmd.append("--uart-owned")
 
     # returncode == -9 means the backend was SIGKILL'd by the OS -- on macOS the kernel
     # reclaims processes under load (jetsam) when many builds run in parallel. That is

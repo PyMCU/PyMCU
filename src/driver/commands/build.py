@@ -1200,6 +1200,8 @@ def build(
                         on_output=compiler_handler,
                         emit_linemap_path=linemap_path,
                         emit_varmap_path=varmap_path,
+                        stdout_baud=_get_stdout_config(pymcu_config)[1],
+                        uart_owned=_has_uart or _has_print or _has_input,
                     )
                     # Correct linemap line numbers when preamble was injected.
                     # The compiler saw the synthetic file (with prepended lines),
