@@ -2770,9 +2770,77 @@ public partial class IRGenerator
     private static bool IsReceiverParamName(string name) =>
         name == "self" || name.StartsWith("self_", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Bind a call's arguments to a method's parameters by NAME as well as by position (#349).
+    ///
+    /// The binding loop below is positional, so a `KeywordArgExpr` reached VisitExpression and
+    /// came out as "Unknown Expression type: KeywordArgExpr" -- the name of a class in this
+    /// compiler, about a program that contains no such word. That is what
+    /// `super().__init__(pwm_out, min_pulse=min_pulse, max_pulse=max_pulse)` printed, which is
+    /// line 110 of adafruit_motor/servo.py and the normal way a driver subclass forwards.
+    ///
+    /// Against the FunctionDef's own parameters rather than through ReorderCallArgs, which
+    /// reads the `functionParams` tables a method is not registered in. The rules are Python's
+    /// and the ordinary path's: positional arguments fill the leading parameters, keywords bind
+    /// by name, a gap before the last supplied argument takes the parameter's default, and an
+    /// unknown or repeated keyword is refused by name at the keyword itself.
+    /// </summary>
+    private List<Expression> BindMethodArgs(FunctionDef fn, List<Expression> args, string spelling)
+    {
+        if (!args.Any(a => a is KeywordArgExpr)) return args;
+
+        var parameters = fn.Params.Where(p => !IsReceiverParamName(p.Name)).ToList();
+        var positional = new List<Expression>();
+        var byName = new Dictionary<string, Expression>();
+        foreach (var a in args)
+        {
+            if (a is not KeywordArgExpr kw) { positional.Add(a); continue; }
+            if (!parameters.Any(p => p.Name == kw.Key))
+                throw UserError($"unknown keyword argument '{kw.Key}' in call to '{spelling}'", kw);
+            if (!byName.TryAdd(kw.Key, kw.Value))
+                throw UserError($"keyword argument '{kw.Key}' repeated in call to '{spelling}'", kw);
+        }
+
+        // Up to the last parameter that HAS a value, from any source -- a position, a keyword,
+        // or its own default. The positional loop this feeds binds nothing past the end of the
+        // list it is given and leaves the rest unbound, so stopping at the last EXPLICIT value
+        // left a trailing defaulted parameter with no value at all: `super().__init__(a, b=7)`
+        // against `(a, b=1, c=2)` reached the base body and read `c` as a name nobody defined.
+        // Up to the last parameter that HAS a value, from any source -- a position, a keyword,
+        // or its own default. The positional loop this feeds binds nothing past the end of the
+        // list it is given and leaves the rest unbound, so stopping at the last EXPLICIT value
+        // left a trailing defaulted parameter with no value at all: `super().__init__(a, b=7)`
+        // against `(a, b=1, c=2)` reached the base body and read `c` as a name nobody defined.
+        int lastIdx = positional.Count - 1;
+        for (int i = 0; i < parameters.Count; i++)
+            if (byName.ContainsKey(parameters[i].Name) || parameters[i].DefaultValue is not null)
+                lastIdx = Math.Max(lastIdx, i);
+
+        var ordered = new List<Expression>();
+        for (int i = 0; i <= lastIdx; i++)
+        {
+            if (i < positional.Count)
+            {
+                if (byName.ContainsKey(parameters[i].Name))
+                    throw UserError(
+                        $"multiple values for argument '{parameters[i].Name}' in call to '{spelling}'",
+                        args.OfType<KeywordArgExpr>().First(k => k.Key == parameters[i].Name));
+                ordered.Add(positional[i]);
+            }
+            else if (byName.TryGetValue(parameters[i].Name, out var v)) ordered.Add(v);
+            else if (parameters[i].DefaultValue is { } dflt) ordered.Add(dflt);
+            else
+                throw UserError(
+                    $"missing argument '{parameters[i].Name}' in call to '{spelling}'", fn);
+        }
+        return ordered;
+    }
+
     private Val EmitUnboundMethodBody(string basePrefix, FunctionDef funcSuper,
         string selfAliasKey, List<Expression> args, string spelling)
     {
+        args = BindMethodArgs(funcSuper, args, spelling);
+
         // Too many positional arguments, refused here as an ordinary call already refuses them
         // (see 7b5097ff). The binding loop below stops at the end of the parameter list, so a base
         // silently dropped the extras: `super().__init__(offset, 99)` built clean and the 99

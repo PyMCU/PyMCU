@@ -140,6 +140,20 @@ public partial class IRGenerator
                 + "parameter default are not among them.",
                 expr);
 
+        // A keyword argument that no call path bound (#349). It reaches here as a VALUE, which
+        // it never is, and the fallback below would answer with the name of a class in this
+        // compiler about a word the program does not contain. Say which argument and where.
+        //
+        // The binding itself is done where the call is lowered -- BindMethodArgs for a base
+        // method, ReorderCallArgs for a function -- so arriving here means this particular
+        // callee has no binding path yet, and that is what the sentence has to say.
+        if (expr is KeywordArgExpr kwArg)
+            throw UserError(
+                $"the keyword argument '{kwArg.Key}=' is not supported in this call. PyMCU "
+                + "binds keyword arguments to functions, to base-class methods and to @inline "
+                + "methods; this callee is none of those. Pass the value positionally.",
+                expr);
+
         throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}", expr);
     }
 

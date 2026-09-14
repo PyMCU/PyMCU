@@ -45,6 +45,11 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- A keyword argument binds to a base-class method: `super().__init__(pwm, min_pulse=500)` is
+  line 110 of `adafruit_motor/servo.py` and the normal way a driver subclass forwards. It used
+  to reach the value path and print "Unknown Expression type: KeywordArgExpr", the name of a
+  class in the compiler about a word the program does not contain. Any callee that still
+  cannot bind one now names the argument instead (#349).
 - `except (A, B):` catches either, which is what the refusal used to tell the reader to write
   by hand. The alternatives are compared against the error code in turn and all reach the one
   handler body; a single type still emits the one comparison and one skip it always did, so
