@@ -18,7 +18,7 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
     from pymcu.hal.avr.pwm.attiny85 import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
-        pwm_connect, pwm_disconnect, pwm_clear_ocr_high,
+        pwm_connect, pwm_disconnect, pwm_release, pwm_clear_ocr_high,
     )
 elif (__CHIP__.name == "atmega32u4" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
           or __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny24"
@@ -35,7 +35,7 @@ else:
     from pymcu.hal.avr.pwm.atmega328p import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
-        pwm_connect, pwm_disconnect, pwm_clear_ocr_high,
+        pwm_connect, pwm_disconnect, pwm_release, pwm_clear_ocr_high,
     )
 
 
@@ -64,6 +64,10 @@ class PWM:
         # output and drive the pin low instead, and reconnect it on the next
         # non-zero duty. A constant duty folds this to one path with no branch.
         if duty == 0:
+            # The compare register goes to 0 as well, so that start() can tell an
+            # off channel (nothing to reconnect) from a paused one by reading it back.
+            pwm_clear_ocr_high(self._pin)
+            self._ocr.value = 0
             pwm_disconnect(self._pin)
         else:
             # Timer1's compare registers are 16-bit and commit through a shared TEMP
@@ -75,11 +79,28 @@ class PWM:
 
     @inline
     def start(self):
+        # The prescaler, then the compare output back on the pin. A duty of 0 stays
+        # off: reconnecting it would emit the one-clock pulse OCRx = BOTTOM gives.
         self._tccr_b.value = self._start_val
+        if self._ocr.value != 0:
+            pwm_connect(self._pin, self._invert)
 
     @inline
     def stop(self):
-        self._tccr_b.value = 0x00
+        # Off is this channel's compare output disconnected and the pin driven low,
+        # the same as duty 0. It is NOT TCCRxB = 0: that stops the timer for the
+        # sibling channel too, and on Timer0 for the time base behind monotonic()
+        # and ticks_ms(), while the pin keeps whatever level the OCxA latch had when
+        # the clock went away. Measured on an Arduino Uno: after deinit() D6 stayed
+        # at 5 V about half the time (PyMCU#296).
+        pwm_disconnect(self._pin)
+
+    @inline
+    def deinit(self):
+        # stop(), and the pin back to an input without pull-up, which is what
+        # CircuitPython leaves behind a deinit'd PWMOut.
+        pwm_disconnect(self._pin)
+        pwm_release(self._pin)
 
     @inline
     def set_freq(self, freq: uint16):

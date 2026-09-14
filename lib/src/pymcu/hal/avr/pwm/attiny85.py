@@ -195,3 +195,18 @@ def pwm_connect(pin: const, invert: const[uint8] = 0):
             TCCR1.value = TCCR1.value | (0x30 if invert else 0x20)
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
+
+
+# deinit(): the pin back to an input, no pull-up; pwm_disconnect has already taken the
+# compare output off the pin and cleared the port bit.
+@inline
+def pwm_release(pin: const):
+    match pin:
+        case "PB0":
+            DDRB[0] = 0
+        case "PB1":
+            DDRB[1] = 0
+        case "PB4":
+            DDRB[4] = 0
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")

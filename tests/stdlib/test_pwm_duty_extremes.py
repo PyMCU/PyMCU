@@ -106,8 +106,14 @@ def test_duty_zero_disconnects_the_output_and_drives_the_pin_low(tmp_path, pin):
         f"{pin}: duty 0 must clear the COM bits in TCCR at {hex(tccra)}"
     assert (port, bit) in bit_clears(ops), \
         f"{pin}: duty 0 must drive the pin low once the compare output is off"
-    assert not [w for w in stores(ops) if w[0] == ocr], \
-        f"{pin}: duty 0 must not be expressed as OCR = BOTTOM -- that is a spike, not off"
+    # Off is the disconnect above, never a compare value. The compare register does go
+    # to 0 alongside it since PyMCU#296, so start() can read back whether there is a
+    # duty to reconnect; with the output disconnected that store drives nothing. What
+    # must never appear is a non-zero compare value, or the output being reconnected.
+    assert [w for w in stores(ops) if w[0] == ocr] in ([], [(ocr, 0)]), \
+        f"{pin}: duty 0 must not be expressed as a compare value -- that is a spike, not off"
+    assert not [w for w in mem_writes(ops) if w[0] == tccra and w[1] == OR], \
+        f"{pin}: duty 0 must not reconnect the compare output"
 
 
 @pytest.mark.parametrize("pin", sorted(CHANNELS))

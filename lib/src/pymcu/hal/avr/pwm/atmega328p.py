@@ -243,3 +243,25 @@ def pwm_connect(pin: const, invert: const[uint8] = 0):
             TCCR2A.value = TCCR2A.value | (0x30 if invert else 0x20)
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
+
+
+# deinit(): the pin back to an input, no pull-up. pwm_disconnect has already taken the
+# compare output off the pin and cleared the port bit, so clearing the direction bit is
+# all that is left; leaving it an output is how a released pin kept driving a load.
+@inline
+def pwm_release(pin: const):
+    match pin:
+        case "PD6":
+            DDRD[6] = 0
+        case "PD5":
+            DDRD[5] = 0
+        case "PB1":
+            DDRB[1] = 0
+        case "PB2":
+            DDRB[2] = 0
+        case "PB3":
+            DDRB[3] = 0
+        case "PD3":
+            DDRD[3] = 0
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
