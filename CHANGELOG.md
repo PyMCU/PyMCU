@@ -110,6 +110,14 @@
   of that list (#333), an optional peripheral guarded by a field set to None (#334), a dict
   literal in a field (#335) whose values are lists (#336), and `zip` over the field of pins
   against a row of that dict (#337).
+- A glyph table keyed by CHARACTERS works: a one-character string literal folds to its
+  character code, so any set of distinct constant integer keys is the same rectangle, with
+  the lookup mapping the key to its row index -- a subtraction when the keys are
+  contiguous, a search over a key row in flash otherwise, so a 96-glyph font costs the same
+  code as a 7-glyph one. A run-time key against one-character keys is allowed, because
+  those are codes; a multi-character key is an interned id and stays constant-only, which
+  the refusal now says. A key that matches nothing raises KeyError, where the contiguous
+  case used to read past the table (#338).
 - A dict of constant rows -- the shape of every digit, font and gamma table -- is a
   rectangle in flash, laid out only when a run-time key needs it. A constant key folds to
   the row and emits nothing (#336).

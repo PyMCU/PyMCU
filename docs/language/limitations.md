@@ -529,8 +529,14 @@ A comprehension of instances is the literal of constructions written once instea
 times, so it needs a compile-time iterable: a constant list, a name or parameter bound to
 one, or `range(N)`. A comprehension whose length is decided at run time is still refused.
 
-A dict of rows must be a rectangle keyed 0..N-1: same-length rows of constants. Ragged rows
-have no table and are refused, saying so.
+A dict of rows must be a rectangle: same-length rows of constants, keyed by distinct
+constants. Ragged rows have no table and are refused, saying so.
+
+**Character keys.** A ONE-CHARACTER string literal is its character code, so
+`{"0": [...], "A": [...], "-": [...]}` is a rectangle like any other and a byte read at run
+time indexes it. A MULTI-character key is an interned id instead, which no run-time value
+equals, so a table keyed by one can only be looked up with a constant. That is the rule for
+every dict, not only a table of rows.
 
 **A lookup table written as a plain list.** `DIGITS = [0x3F, 0x06, ...]` read as
 `DIGITS[digit]` with a run-time digit is the shape of every 7-segment table, font and gamma
