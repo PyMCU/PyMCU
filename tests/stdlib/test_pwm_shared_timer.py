@@ -22,7 +22,8 @@ pytestmark = pytest.mark.skipif(
 
 def build(tmp_path: Path, body: str) -> str:
     src = tmp_path / "main.py"
-    src.write_text("from pymcu.hal.pwm import PWM\nfrom pymcu.types import uint16\n\n\ndef main():\n"
+    src.write_text("from pymcu.hal.pwm import PWM\nfrom pymcu.types import uint16\n"
+                   "from pymcu.chips.atmega328p import GPIOR0\n\n\ndef main():\n"
                    + "".join(f"    {line}\n" for line in body.splitlines())
                    + "    while True:\n        pass\n")
     proc = subprocess.run(
@@ -70,5 +71,16 @@ def test_timer1_and_timer2_pairs_are_guarded_too(tmp_path, a, b):
 
 
 def test_a_run_time_frequency_has_nothing_to_claim(tmp_path):
-    out = build(tmp_path, 'f: uint16 = 5000\na = PWM("PD5", 128, f)\nb = PWM("PD6", 128, 100)')
+    # Read from a register, not assigned a literal: since PyMCU#327 a local that holds a
+    # compile-time constant IS passed as one, so `f: uint16 = 5000` claims exactly as the
+    # literal does -- which is the row below.
+    out = build(tmp_path, 'f: uint16 = GPIOR0.value\na = PWM("PD5", 128, f)\n'
+                          'b = PWM("PD6", 128, 100)')
     assert "[BUILD_OK]" in out, out
+
+
+def test_a_constant_frequency_held_in_a_local_claims_like_a_literal(tmp_path):
+    # PyMCU#327: the local carries the constant into the claim, so the conflict is seen.
+    out = build(tmp_path, 'f: uint16 = 5000\na = PWM("PD5", 128, f)\nb = PWM("PD6", 128, 100)')
+    assert "[BUILD_OK]" not in out
+    assert "Timer0 prescaler" in out and "PD5" in out and "PD6" in out

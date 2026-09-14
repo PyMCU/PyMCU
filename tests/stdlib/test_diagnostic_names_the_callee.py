@@ -216,13 +216,18 @@ WINDOW_HELPER = (
 
 
 def window_main(call: str) -> str:
-    """Every call sits on line 7, and helper.py:7 is a blank line."""
+    """Every call sits on line 7, and helper.py:7 is a blank line.
+
+    `v` is read from a register rather than assigned a literal: since PyMCU#327 a local that
+    holds a compile-time constant IS passed as one, so `v: uint8 = 3` would satisfy every
+    `const` parameter below and there would be no refusal left to locate.
+    """
     return (
         "from pymcu.types import uint8\n"                       # 1
         "from helper import hold, one, holdstr, holdc, defc\n"  # 2
-        "\n\n"                                                 # 3-4
+        "from pymcu.chips.atmega328p import GPIOR0\n\n"         # 3-4
         "def main():\n"                                         # 5
-        "    v: uint8 = 3\n"                                    # 6
+        "    v: uint8 = GPIOR0.value\n"                          # 6
         f"    {call}\n"                                         # 7
         "    while True:\n"                                     # 8
         "        pass\n"                                        # 9
