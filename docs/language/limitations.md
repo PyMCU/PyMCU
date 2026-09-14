@@ -442,6 +442,42 @@ the step), nested list comprehensions, `if`-filtered list comprehensions (consta
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
 
+**A driver that takes a list.** A class is handed several pins, several devices or a table
+of numbers the way every embedded library does it, and keeps the list in a field:
+
+```python
+class LedBar:
+    def __init__(self, pins):
+        self._pins = pins
+
+    def all_on(self):
+        for p in self._pins:
+            p.value(1)
+
+    def one(self, i: uint8):
+        self._pins[i].value(1)
+
+bar = LedBar([Pin("PD5", Pin.OUT), Pin("PD6", Pin.OUT), Pin("PD7", Pin.OUT)])
+```
+
+The list is a compile-time sequence: the elements are built once at the call site, and the
+parameter and the field are other names for them, never copies. So `self._pins[0]`,
+`for p in self._pins`, `len(self._pins)` and a method call through a run-time index all
+work, and so does the same list written into a name first (`pins = [...]`, `LedBar(pins)`),
+a list given to a method rather than to the constructor, and a list of instances that each
+hold a pin. There is no length limit on the sequence itself.
+
+Two things it is not. A run-time subscript that takes the ELEMENT
+(`p = self._pins[i]`) is refused: the instances are flattened at compile time and have no
+slot to select, so walk them with `for` or index with a constant. And a run-time subscript
+that CALLS a method is lowered as one comparison and one expansion per element, so past
+eight it is refused as more code than it is worth.
+
+A list of NUMBERS in a field works the same way for a constant subscript, `for` and
+`len()`, but has no storage behind it: index it at run time and the compiler names the
+declaration that does (`self._levels: uint8[3] = [...]`). A `bytearray` or a fixed array
+handed to a driver keeps its storage, so `self._data[i] = v` writes the caller's buffer.
+
 **A sequence bound to a name.** `DUTIES = [256, 383, ...]` and `DUTIES = (256, 383, ...)`
 are the same thing to iterate over, at any length: up to eight constant elements the `for`
 unrolls against the literal, and past that the name gets a fixed array the loop walks.

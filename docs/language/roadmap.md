@@ -51,6 +51,8 @@ This page tracks which language and HAL features have been implemented, and what
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |
 | Nested list comprehensions | Full outer × inner product unroll; `if` filter supported |
 | `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported |
+| A list given to a class (`Bar([Pin(a), Pin(b)])`, `Bar(pins)`) | Compile-time sequence bound to the parameter and to the `self` field: constant subscript, `for`, `len()`, and a run-time subscript that calls a method (up to 8 elements, lowered as a selection) |
+| A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
 | `str.join` | `s = sep.join([...])` folds compile-time strings; `s = ''.join([chr(b) for b in buf])` lowers to a runtime string (the MicroPython/CircuitPython bytes-to-string idiom). Outside an assignment it is a diagnostic |
 | Slice indexing `arr[1:3]`, `arr[::2]` | READ needs compile-time constant bounds and yields a fixed-size array. Equal-length slice ASSIGNMENT (`arr[a:b] = src`) with list/`bytes`/array/slice sources, incl. overlapping same-array copies (snapshot semantics), and through `__setitem__` objects (`nvm[0:4] = b'...'`). ITERATION accepts runtime bounds (`for b in buf[0:n]`); a runtime `step` is a diagnostic |
 | `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function |

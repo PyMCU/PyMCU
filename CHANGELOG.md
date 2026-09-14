@@ -22,6 +22,23 @@
   `set_freq()` next to a running sibling) asking for another bucket is refused at compile
   time, where it is written, through the new `claim()` intrinsic in `pymcu.types` (#300).
 
+### Classes and variables
+- A driver takes a list and keeps it. A list of instances (`Bar([Pin("PD5", Pin.OUT),
+  Pin("PD6", Pin.OUT)])`) or of numbers, given to a constructor or to a method and stored
+  in a `self` field, is now a compile-time sequence the field is another name for:
+  `self._pins[0]`, `for p in self._pins`, `len(self._pins)` and a run-time
+  `self._pins[i].method()` all answer. Before, the field became a scalar and every read
+  was zero, or the spelling was refused outright (#313, #314).
+- A list argument is built once. It used to stay raw AST bound to the parameter, so every
+  subscript re-evaluated it: `ps[0]` constructed a second `Pin` with the same port and
+  bit, and the write through it went where nothing could read it back (#313).
+- A bytearray handed to a driver and stored in a field keeps its storage, so
+  `self._data[i] = v` writes the caller's buffer instead of being refused as a bit index
+  into a scalar (#315).
+- A run-time subscript of a compile-time list of numbers is refused with the declaration
+  that would give it storage, in place of `Bit index must be constant for reading` on a
+  program containing no register (#317).
+
 ### Correctness (silent-miscompile class)
 - The counter of `for i in range(...)` is sized from its bounds instead of being an
   unconditional uint8: `range(300)` ran 44 times, `range(0, 256)` never ran,
