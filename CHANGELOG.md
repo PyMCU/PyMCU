@@ -45,6 +45,11 @@
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- An annotation spelled `module.Class` is read as the class it names, so `p: busio.I2C` says
+  what `p: I2C` already said. The parser used to stop at the dot and ask for the closing
+  bracket of the parameter list, which is about a bracket in a program whose brackets are
+  balanced; a dotted name that ends in a typo is still reported, by the sentence about type
+  names (#342).
 - A list literal accepts a trailing comma, as a call, a parameter list, a dict and a set
   already did. It was the one bracketed construct without the guard, so `[1, 2,]` was
   reported as a missing expression pointing at the closing bracket -- and every formatter in

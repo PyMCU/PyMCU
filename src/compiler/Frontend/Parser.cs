@@ -389,6 +389,20 @@ public class Parser
         {
             var t = Consume(TokenType.Identifier, "Expected type identifier");
             typeStr = t.Value;
+
+            // `busio.I2C`, the module-qualified spelling of a class (#342). It is the same
+            // class the bare name reaches -- `from busio import I2C` and `p: I2C` compiles
+            // today -- and the same dotted name is already read in an expression one line
+            // below the annotation that refused it. Read here and resolved with the rest of
+            // the annotation names, so the reader who wrote a real class gets the program
+            // and the reader who wrote a typo gets a sentence about the name, not about a
+            // bracket the parser wanted.
+            while (Check(TokenType.Dot))
+            {
+                Advance();
+                typeStr += "." + Consume(TokenType.Identifier,
+                    "Expected a name after '.' in the type annotation").Value;
+            }
         }
 
         if (Match(TokenType.LBracket))

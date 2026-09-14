@@ -359,6 +359,20 @@ def annotation_of(node):
             f"'{ast.unparse(node)}' is not a type annotation PyMCU can read. The name before "
             "the '[' must be a plain type name, e.g. uint8[4]", node)
 
+    # `busio.I2C`, the module-qualified spelling of a class (#342). Returned as the dotted
+    # text, which is exactly what ParseTypeAnnotation now builds from its tokens, and resolved
+    # downstream with every other annotation name. Only a chain of plain names: the head has to
+    # be a module for the name to mean anything, and `f(x).I2C` is not one.
+    if isinstance(node, ast.Attribute):
+        parts = []
+        cur = node
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name):
+            parts.append(cur.id)
+            return ".".join(reversed(parts))
+
     if not isinstance(node, (ast.Name, ast.Subscript)):
         raise Unsupported(
             f"'{ast.unparse(node)}' is not a type annotation PyMCU can read. Write one type "

@@ -3456,6 +3456,35 @@ public partial class IRGenerator
         if (ScalarTypeNames.Contains(annotation)) return;
         if (annotation is "ptr" or "object" or "self") return;
         if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
+
+        // `busio.I2C`, the module-qualified spelling of a class (#342). The bare name the
+        // dotted one ends in is what every check below is written against, and the two reach
+        // the same class: `from busio import I2C` with `p: I2C` compiles today, and the
+        // dotted form is what a CircuitPython library writes because a module-level import is
+        // what it has.
+        //
+        // The head must NAME A MODULE, so `Direction.OUTPUT` -- a class attribute, not a type
+        // -- keeps the refusal it has rather than being read as the type `OUTPUT`. Only then
+        // is the tail retried through the whole check, which is why this is a rewrite of
+        // `annotation` and not a `return`: a dotted name ending in a typo must still be
+        // reported, by the same sentence, against the name the reader wrote.
+        int lastDot = annotation.LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            string head = annotation[..annotation.IndexOf('.')];
+            if (modules.ContainsKey(head) || IsImportedAlias(head) || aliasToOriginal.ContainsKey(head))
+            {
+                string tail = annotation[(lastDot + 1)..];
+                if (ScalarTypeNames.Contains(tail)
+                    || classNames.Contains(tail) || classFieldLayout.ContainsKey(tail)
+                    || IsImportedAlias(tail) || aliasToOriginal.ContainsKey(tail)
+                    || classNames.Any(c => c.EndsWith("." + tail, StringComparison.Ordinal)
+                                           || c.EndsWith("_" + tail, StringComparison.Ordinal))
+                    || (ResolveCallee(tail) is { } dotted
+                        && (classNames.Contains(dotted) || classFieldLayout.ContainsKey(dotted))))
+                    return;
+            }
+        }
         if (IsImportedAlias(annotation) || aliasToOriginal.ContainsKey(annotation)) return;
         if (classNames.Any(c => c.EndsWith("." + annotation, StringComparison.Ordinal)
                                 || c.EndsWith("_" + annotation, StringComparison.Ordinal))) return;
