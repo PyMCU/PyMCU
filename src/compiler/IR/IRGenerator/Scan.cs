@@ -1718,7 +1718,12 @@ public partial class IRGenerator
                         // deferred rather than done in place. ResolveBase() below cannot do it
                         // either: it falls back to `basePrefix` unconditionally, which is what
                         // let an undefined base through in the first place.
-                        pendingBaseChecks.Add((classDef, baseName, oldPrefix));
+                        // The PATH as well, for the same reason the check is deferred at all
+                        // (#347): every module's classes reach one sweep after the scan, and
+                        // by then nothing says which file any of them was written in, so the
+                        // refusal carried the class's line under the entry program's name --
+                        // adafruit_ssd1306.py:63 reported as main.py:63.
+                        pendingBaseChecks.Add((classDef, baseName, oldPrefix, currentSourcePath));
 
                         string basePrefix = oldPrefix + baseName + "_";
 
@@ -1788,7 +1793,7 @@ public partial class IRGenerator
 
     /// Every `class C(Base)` seen, with the module prefix it was seen under, checked once all
     /// modules have been scanned. See CheckBaseClassNames.
-    private readonly List<(ClassDef Def, string BaseName, string Prefix)> pendingBaseChecks = new();
+    private readonly List<(ClassDef Def, string BaseName, string Prefix, string Path)> pendingBaseChecks = new();
 
     /// <summary>
     /// Reject a base class that names nothing this compiler knows (#279).
@@ -1815,9 +1820,13 @@ public partial class IRGenerator
     /// </summary>
     private void CheckBaseClassNames()
     {
-        foreach (var (def, baseName, prefix) in pendingBaseChecks)
+        foreach (var (def, baseName, prefix, definedIn) in pendingBaseChecks)
         {
             if (string.IsNullOrEmpty(baseName)) continue;
+            // The file the class is written in, so the refusal below names it rather than the
+            // entry program (#347).
+            currentSourcePath = definedIn;
+            currentSourceFile = definedIn.Length > 0 ? SourceFileLabel(definedIn) : "";
             // Bases the language gives meaning to rather than the program. Enum/IntEnum and the
             // exception bases are handled before the scan reaches here, but a class carrying one
             // alongside a real base still records it, so they are named again rather than relied on.

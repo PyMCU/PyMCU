@@ -180,3 +180,97 @@ def test_a_raise_inside_an_inlined_callee_reports_the_call_site(tmp_path):
     assert "main.py:6:" in header, header
     assert "drivers/led.py" not in header, header
     assert "^" not in err, "no caret: the location is the call site, not a measured column"
+
+
+def test_a_parameter_annotation_in_a_module_names_that_module(tmp_path):
+    """PyMCU#347. Every module's signatures reach ONE sweep after the scan, and it ran with no
+    module in scope, so the line came from the definition and the file from the entry program.
+
+    The line number here is deliberately larger than main.py is long: the pair that was being
+    printed named a line that does not exist in the file it named, which is what made the
+    location worse than none. `adafruit_motor/servo.py:52` arrived as `main.py:52` in a
+    fifteen-line main.py.
+    """
+    err = _compile(
+        tmp_path,
+        """
+        from drivers.led import helper
+
+        def main() -> None:
+            helper(1)
+        """,
+        """
+        # 1
+        # 2
+        # 3
+        # 4
+        # 5
+        # 6
+        # 7
+        def helper(v: Bogus) -> None:
+            pass
+        """,
+    )
+
+    header = next(l for l in err.splitlines() if "error:" in l)
+    assert "Bogus" in header, header
+    assert "drivers/led.py:8:" in header, header
+    assert "main.py:" not in header, header
+
+
+def test_a_return_annotation_in_a_module_names_that_module(tmp_path):
+    """The other half of the same sweep, which shares its one source-path switch."""
+    err = _compile(
+        tmp_path,
+        """
+        from drivers.led import helper
+
+        def main() -> None:
+            helper()
+        """,
+        """
+        # 1
+        # 2
+        # 3
+        # 4
+        # 5
+        def helper() -> Bogus:
+            return 1
+        """,
+    )
+
+    header = next(l for l in err.splitlines() if "error:" in l)
+    assert "drivers/led.py:6:" in header, header
+    assert "main.py:" not in header, header
+
+
+def test_an_undefined_base_class_in_a_module_names_that_module(tmp_path):
+    """The other sweep deferred until every module is scanned (#279), with the same gap: it
+    knew the class and its prefix and not the file it came from.
+
+    `adafruit_ssd1306.py:63` arrived as `main.py:63`.
+    """
+    err = _compile(
+        tmp_path,
+        """
+        from drivers.led import Sub
+
+        def main() -> None:
+            s = Sub()
+        """,
+        """
+        # 1
+        # 2
+        # 3
+        # 4
+        # 5
+        class Sub(NotDefinedAnywhere):
+            def __init__(self) -> None:
+                self.x: uint8 = 1
+        """,
+    )
+
+    header = next(l for l in err.splitlines() if "error:" in l)
+    assert "NotDefinedAnywhere" in header, header
+    assert "drivers/led.py:6:" in header, header
+    assert "main.py:" not in header, header

@@ -91,6 +91,11 @@
   falling off the end (#312).
 
 ### Diagnostics
+- A refusal about a parameter annotation, a return annotation or an undefined base class
+  inside an imported module names THAT module's file. Both checks are deferred until every
+  module has been scanned, and both ran with no module in scope, so the line came from the
+  definition and the file from the entry program: a union inside `adafruit_motor/servo.py`
+  line 52 was printed as `main.py:52`, in a `main.py` fifteen lines long (#347).
 - A refused comprehension says which thing is unsupported. A comprehension of class instances
   was told it has a filter, and sent the reader looking for an `if` that is not there (#307).
 - A diagnostic about a module-level line above `def main():` is reported at the line it is on.

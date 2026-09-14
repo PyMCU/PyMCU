@@ -3556,8 +3556,33 @@ public partial class IRGenerator
     {
         void Fn(FunctionDef f)
         {
-            foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f);
-            CheckAnnotationNames(f.ReturnType ?? "", f);
+            // The FILE the signature is written in, for as long as it is being checked (#347).
+            // Every module's functions reach this one sweep, and it used to run with
+            // `currentSourcePath` at whatever the last module left it -- empty by the time the
+            // sweep runs -- so `LocatedFile` meant "the entry file" while the line came from
+            // the definition, in its own module. The pair named a location that does not
+            // exist: a union inside adafruit_motor/servo.py was reported as main.py:52, in a
+            // main.py fifteen lines long.
+            //
+            // The scan already recorded the path per definition, which is the same answer the
+            // inline-expansion path takes from the same map, so there is one source of truth
+            // for where a function was written rather than two.
+            string savedPath = currentSourcePath;
+            if (functionSourcePath.TryGetValue(f, out var defPath))
+            {
+                currentSourcePath = defPath;
+                currentSourceFile = defPath.Length > 0 ? SourceFileLabel(defPath) : "";
+            }
+
+            try
+            {
+                foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f);
+                CheckAnnotationNames(f.ReturnType ?? "", f);
+            }
+            finally
+            {
+                currentSourcePath = savedPath;
+            }
         }
 
         foreach (var f in ast.Functions) Fn(f);
