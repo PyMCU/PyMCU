@@ -500,14 +500,6 @@ public partial class IRGenerator
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
         }
 
-        // `self.buf = [0, 0, 0]`: a list FIELD with no annotation. It reached the generic
-        // expression visitor, which has no lowering for a list literal, and answered "Unknown
-        // Expression type: ListExpr", the name of a compiler class, about a field written
-        // exactly the way a local list is. The literal carries the length, and the widest
-        // element carries the type, so the field is the same fixed array that
-        // `self.buf: list[uint8] = [...]` declares. Only all-constant literals qualify: a list
-        // of instances (`self.pins = [Pin(1), Pin(2)]`) is a different shape with its own path,
-        // and a literal whose size cannot be read still asks for the annotation by name.
         // `self._pins = pins` / `self._levels = levels`: a FIELD that holds a compile-time
         // sequence. The field is another name for the sequence, not a scalar: before this it
         // became one, and every `self._pins[0]` read the zero that nothing had written -- built
@@ -555,6 +547,14 @@ public partial class IRGenerator
             }
         }
 
+        // `self.buf = [0, 0, 0]`: a list FIELD with no annotation. It reached the generic
+        // expression visitor, which has no lowering for a list literal, and answered "Unknown
+        // Expression type: ListExpr", the name of a compiler class, about a field written
+        // exactly the way a local list is. The literal carries the length, and the widest
+        // element carries the type, so the field is the same fixed array that
+        // `self.buf: list[uint8] = [...]` declares. Only all-constant literals qualify: a list
+        // of instances (`self.pins = [Pin(1), Pin(2)]`) is a different shape with its own path,
+        // and a literal whose size cannot be read still asks for the annotation by name.
         if (stmt.Target is MemberAccessExpr listMem && stmt.Value is ListExpr fieldList)
         {
             if (fieldList.Elements.Count > 0
