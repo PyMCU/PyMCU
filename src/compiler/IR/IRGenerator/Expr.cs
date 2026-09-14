@@ -1685,9 +1685,16 @@ public partial class IRGenerator
                             "this dict literal (checked at compile time)", keyExpr);
         }
 
-        if (entries.Any(e => e.StrKey))
-            throw UserError("a dict with string keys needs a compile-time constant key; " +
-                            "runtime keys can only match integer keys", keyExpr);
+        // A ONE-CHARACTER string key IS a character code: the literal folds to it, which is
+        // what already lets `ch in d` compare a run-time byte against these keys. Only a
+        // MULTI-character key is different -- it resolves to an interned id, which a byte read
+        // off a UART can never equal -- so only that one has to be constant (PyMCU#338).
+        if (entries.Any(e => e.StrKey && (e.Text?.Length ?? 0) != 1))
+            throw UserError(
+                "a dict with multi-character string keys needs a compile-time constant key: "
+                + "such a key is an interned id, and a run-time value is never one. "
+                + "One-character keys are character codes and DO match a run-time byte.",
+                keyExpr);
         if (entries.Count == 0)
             throw UserError("KeyError: lookup on an empty dict literal", d);
 
@@ -1817,40 +1824,38 @@ public partial class IRGenerator
         // (`row = D[k]` then `row[j]`) it is the row-view path in the assignment. Without it the
         // inner lookup tried to evaluate a list in a value position and said so.
         if (expr.Target is IndexExpr rowChain && TryGetDictFor(rowChain.Target, out var chainDict)
-            && DictRows(chainDict) is { } chainRows)
+            && DictKeyedRows(chainDict) is { } chainRows)
         {
             Val rowIdxVal = VisitExpression(rowChain.Index);
             Val colIdxVal = VisitExpression(expr.Index);
-            int width = chainRows[0].Count;
+            int width = chainRows[0].Row.Count;
+            string chainSource = rowChain.Target is MemberAccessExpr cm ? cm.Member
+                               : (rowChain.Target is VariableExpr cv ? cv.Name : "table");
+            string chainCache = SequenceKeyOf(rowChain.Target) ?? chainSource;
 
             if (rowIdxVal is Constant rc && colIdxVal is Constant cc)
             {
-                if (rc.Value < 0 || rc.Value >= chainRows.Count)
-                    throw UserError($"KeyError: {rc.Value} is not a key of this dict literal "
-                                    + "(checked at compile time)", rowChain.Index);
+                int at = chainRows.FindIndex(r => r.Key == rc.Value);
+                if (at < 0)
+                    throw UserError($"KeyError: {DescribeDictKey(rowChain.Index, rc)} is not a key "
+                                    + "of this dict literal (checked at compile time)", rowChain.Index);
                 if (cc.Value < 0 || cc.Value >= width)
                     throw new IndexError($"array index {cc.Value} out of range for size {width}",
                                          expr.Line > 0 ? expr.Line : lastLine, expr.Column);
-                return new Constant(chainRows[rc.Value][cc.Value]);
+                return new Constant(chainRows[at].Row[cc.Value]);
             }
 
-            string chainSource = rowChain.Target is MemberAccessExpr cm ? cm.Member
-                               : (rowChain.Target is VariableExpr cv ? cv.Name : "table");
-            if (MaterialiseDictRows("dictrows:" + SequenceKeyOf(rowChain.Target), chainSource,
-                                    chainRows) is { } chainTable)
+            if (MaterialiseDictRows("dictrows:" + chainCache, chainSource,
+                                    chainRows.Select(r => r.Row).ToList()) is { } chainTable)
             {
-                Val flat;
-                if (rowIdxVal is Constant rc2 && colIdxVal is Constant cc2)
-                    flat = new Constant(rc2.Value * width + cc2.Value);
-                else
-                {
-                    Temporary scaled = MakeTemp(DataType.UINT16);
-                    Emit(new Binary(BinaryOp.Mul, rowIdxVal, new Constant(width), scaled));
-                    Temporary sum = MakeTemp(DataType.UINT16);
-                    Emit(new Binary(BinaryOp.Add, scaled, colIdxVal, sum));
-                    flat = sum;
-                }
-                return EmitFlashArrayRead(chainTable, flat, chainRows.Count * width);
+                Val rowIndex = rowIdxVal is Constant
+                    ? new Constant(chainRows.FindIndex(r => r.Key == ((Constant)rowIdxVal).Value))
+                    : EmitDictRowIndex(chainRows, chainCache, chainSource, rowIdxVal);
+                Temporary scaled = MakeTemp(DataType.UINT16);
+                Emit(new Binary(BinaryOp.Mul, rowIndex, new Constant(width), scaled));
+                Temporary sum = MakeTemp(DataType.UINT16);
+                Emit(new Binary(BinaryOp.Add, scaled, colIdxVal, sum));
+                return EmitFlashArrayRead(chainTable, sum, chainRows.Count * width);
             }
         }
 
