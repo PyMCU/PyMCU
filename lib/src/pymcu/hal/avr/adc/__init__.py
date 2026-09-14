@@ -32,7 +32,11 @@ else:
 class AnalogPin:
     """Analog input pin, zero-cost abstraction (all methods @inline)."""
 
-    def __init__(self, channel: str):
+    # Unannotated: the channel is named by register name, Arduino name, board number or
+    # channel number, so `str` was wrong for four of the six spellings. Declaring it `const`
+    # would say what the match needs, but the declaration check is stricter than the fold and
+    # refuses machine.ADC(Pin(...)), which folds and works (PyMCU#318).
+    def __init__(self, channel):
         self._admux = adc_channel_admux(channel)
         adc_init(self._admux)
 

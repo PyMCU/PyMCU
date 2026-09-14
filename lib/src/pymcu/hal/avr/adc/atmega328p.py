@@ -1,32 +1,39 @@
 from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
+from pymcu.exceptions import CompileError
 from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH, SREG
 
 
+# Returns the ADMUX register value for an analog input.
+#
+# The argument is whatever names the input on this part, exactly as pymcu.hal.gpio.Pin takes
+# it: the register name ("PC0"), the Arduino analog name ("A0"), the Arduino board number
+# (14) or the converter's own channel number (0). They were not all here before: "A1" and
+# every other Arduino analog name fell through to the default and read channel 0, so a
+# program that asked for A1 read A0 and said nothing.
+#
+# External channels: bits 7:6 = REFS1:0 = 01 (AVcc reference); bits 3:0 = MUX3:0 = channel.
+# Internal temperature sensor (ch8): REFS1:0 = 11 (internal 1.1V); MUX = 1000.
+# Folded at compile time; `const` is what the match needs to answer correctly.
 @inline
-def adc_channel_admux(channel: str) -> uint8:
-    # Returns the ADMUX register value for the given AVR pin name.
-    # External channels: bits 7:6 = REFS1:0 = 01 (AVcc reference);
-    #                    bits 3:0 = MUX3:0 = channel number.
-    # Internal temp sensor (ch8): REFS1:0 = 11 (internal 1.1V); MUX = 1000.
-    # Folded at compile time when channel is a const[str].
+def adc_channel_admux(channel) -> uint8:
     match channel:
-        case "PC0":
+        case "PC0" | "A0" | 0 | 14:
             return 0x40
-        case "PC1":
+        case "PC1" | "A1" | 1 | 15:
             return 0x41
-        case "PC2":
+        case "PC2" | "A2" | 2 | 16:
             return 0x42
-        case "PC3":
+        case "PC3" | "A3" | 3 | 17:
             return 0x43
-        case "PC4":
+        case "PC4" | "A4" | 4 | 18:
             return 0x44
-        case "PC5":
+        case "PC5" | "A5" | 5 | 19:
             return 0x45
         case "TEMP":
             # Internal temperature sensor: REFS1:0=11 (1.1V), MUX=1000 (ch8)
             # ADMUX = 0b11001000 = 0xC8
             return 0xC8
-        case "ADC8":
+        case "ADC8" | 8:
             return 0xC8
         case "VBG":
             # Internal 1.1V bandgap measured against AVcc reference:
@@ -34,7 +41,16 @@ def adc_channel_admux(channel: str) -> uint8:
             # Used to compute Vcc = 1.1 * 1024 / ADCraw.
             return 0x4E
         case _:
-            return 0x40
+            # An unknown name used to return ADMUX for channel 0, so a program that asked
+            # for a pin with no converter behind it built clean and read A0 forever. The
+            # only honest answer is to refuse where the AnalogPin is written.
+            raise CompileError(
+                "this pin has no ADC channel. On the ATmega 328P/168/48 the analog inputs "
+                "are PC0 to PC5, spelled \"PC0\" to \"PC5\", \"A0\" to \"A5\", 14 to 19 (the "
+                "Arduino board numbers) or 0 to 5 (the channel numbers); the internal "
+                "sources are \"TEMP\" (the die temperature sensor) and \"VBG\" (the 1.1 V "
+                "bandgap). Pass one of those, or read the signal through a pin that has "
+                "a channel.")
 
 
 @inline
