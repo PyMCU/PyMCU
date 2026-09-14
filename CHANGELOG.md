@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Peripherals (measured on an Arduino Uno with a scope)
+- `PWM.stop()` takes the channel off the pin and drives it low instead of stopping the
+  timer, which froze the sibling channel and the time base and left the pin at whatever
+  level the compare latch had (5 V half the time after `pwmio.deinit()`); `PWM.deinit()`
+  is new and returns the pin to an input, which `pwmio.PWMOut.deinit()` now calls (#296).
+- A PWM on PD5/PD6 at a frequency the Timer0 time base cannot share is refused at
+  compile time, naming D3/D11 and D9/D10; `millis_init()` no longer clears TCCR0A. The
+  driver passes `--timebase` and the compiler binds `__TIMEBASE__` next to `__FREQ__`
+  (#295).
+- The two channels of one timer share its prescaler: the second `PWM()` (or a
+  `set_freq()` next to a running sibling) asking for another bucket is refused at compile
+  time, where it is written, through the new `claim()` intrinsic in `pymcu.types` (#300).
+
 ### Correctness (silent-miscompile class)
 - The counter of `for i in range(...)` is sized from its bounds instead of being an
   unconditional uint8: `range(300)` ran 44 times, `range(0, 256)` never ran,

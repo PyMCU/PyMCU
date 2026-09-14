@@ -54,8 +54,31 @@ Use PD3/PB3 (D3/D11, Timer2) or PB1/PB2 (D9/D10, Timer1) for that frequency. Wit
 time base every bucket stays available on Timer0. Measured before this rule existed: a
 5000 Hz PWM on D6 made `monotonic()` run 8.44 times too fast on an Arduino Uno.
 
-The two channels of one timer always share its prescaler: the last `PWM()` built decides
-the frequency of both, and nothing warns yet (see PyMCU#300).
+### The two channels of one timer share its prescaler
+
+PD5 and PD6 (Timer0), PB1 and PB2 (Timer1), PB3 and PD3 (Timer2) come in pairs, and each
+pair runs at one frequency. The `PWM()` that is built second, or a `set_freq()` on a
+channel whose sibling is running, used to reprogram the prescaler for both in silence
+(measured on an Arduino Uno: 5000 Hz asked on D5 and 100 Hz on D6 left both at 61 Hz).
+The HAL now records the prescaler it programs with `claim()` from `pymcu.types`, a
+compile-time intrinsic that emits nothing, and the compiler refuses a second channel
+asking for another bucket where it is written:
+
+```
+error: CompileError: Timer0 prescaler (PD5 and PD6 share it): already 2 for PD5 at line 10,
+and PD6 asks for 5. The two channels of one timer run at one frequency. Timer0 codes:
+1 = 62500 Hz, 2 = 7812 Hz, 3 = 976 Hz, 4 = 244 Hz, 5 = 61 Hz. Ask both for the same
+frequency, or move one to PB1/PB2 (Timer1) or PB3/PD3 (Timer2)
+```
+
+Two channels asking the same bucket share it; a channel alone on its timer may retune it
+with `set_freq()`. A run-time frequency cannot be checked at compile time and goes through.
+
+`claim(key, value, owner="", hint="")` is available to any HAL: the first claim on a key
+records the value and its owner, the same value from another owner is shared, another
+value is refused unless the only owner so far is the claimant. Claims are visited in
+lowering order, hold for the whole program, and are ignored inside a branch the compiler
+cannot decide.
 
 ### Inverting output
 
