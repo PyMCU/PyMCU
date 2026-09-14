@@ -2937,14 +2937,30 @@ public partial class IRGenerator
 
     private Val? TryEmitUnrolledInstanceArrayCall(CallExpr expr, MemberAccessExpr memC)
     {
-        if (memC.Object is not IndexExpr { Target: VariableExpr arrVe } idxExpr) return null;
+        if (memC.Object is not IndexExpr idxExpr) return null;
 
-        string sourceName = arrVe.Name;
-        string q = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + arrVe.Name
-            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name);
-        if (!instanceClasses.ContainsKey(q + "__0") && instanceClasses.ContainsKey(arrVe.Name + "__0"))
-            q = arrVe.Name;
+        // The sequence may be reached by name (`pins[i].on()`) or through a FIELD
+        // (`self._pins[i].on()`, which is how a driver that was handed its pins writes it).
+        // Both denote the same compile-time elements, so both get the same selection.
+        string q;
+        string sourceName;
+        if (idxExpr.Target is VariableExpr arrVe)
+        {
+            sourceName = arrVe.Name;
+            q = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + arrVe.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name);
+            if (!instanceClasses.ContainsKey(q + "__0") && instanceClasses.ContainsKey(arrVe.Name + "__0"))
+                q = arrVe.Name;
+        }
+        else if (idxExpr.Target is MemberAccessExpr fieldMem
+                 && TryResolveInstanceSequence(fieldMem, out var fieldBase, out _))
+        {
+            sourceName = FormatMemberTarget(fieldMem);
+            q = fieldBase;
+        }
+        else return null;
+
         if (!instanceClasses.ContainsKey(q + "__0")) return null;
 
         // A constant index is already handled by the normal path.
@@ -3256,6 +3272,23 @@ public partial class IRGenerator
                 if (arraySizes.TryGetValue(lenResolved, out int sAlias)) return new Constant(sAlias);
             }
         }
+
+        // A compile-time sequence held in a field: `len(self._pins)` / `len(self._levels)`.
+        // Both are fixed at compile time, so the count is the answer -- the field is not a
+        // container with a run-time length.
+        if (expr.Args[0] is MemberAccessExpr lenMem)
+        {
+            if (TryResolveInstanceSequence(lenMem, out _, out int lenSeqCount))
+                return new Constant(lenSeqCount);
+            if (ResolveMemberArrayName(lenMem) is { } lenFlat) return new Constant(arraySizes[lenFlat]);
+            if (ResolveConstSequenceExpr(lenMem) is { } lenConstSeq)
+                return new Constant(lenConstSeq.Count);
+        }
+
+        // A name bound to a short constant list keeps its elements, not an array: `len(xs)`
+        // inside a method whose parameter was handed `levels = [7, 8, 9]`.
+        if (expr.Args[0] is VariableExpr lenSeqVe && ResolveConstSequence(lenSeqVe.Name) is { } lenSeqElems)
+            return new Constant(lenSeqElems.Count);
 
         Val argVal = VisitExpression(expr.Args[0]);
         string cls = GetValClass(argVal);

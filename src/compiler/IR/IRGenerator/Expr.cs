@@ -1690,6 +1690,50 @@ public partial class IRGenerator
             throw UserError("Slice indexing is only supported on named fixed-size arrays", expr.Target);
         }
 
+        // `self._pins[0]`: an element of a compile-time sequence of instances held in a FIELD.
+        // The elements have no run-time storage -- each is its own flattened instance -- so the
+        // subscript names one of them rather than loading from anywhere.
+        if (expr.Target is MemberAccessExpr
+            && TryResolveInstanceSequence(expr.Target, out string seqBase, out int seqCount))
+        {
+            Val seqIdxVal = VisitExpression(expr.Index);
+            if (seqIdxVal is not Constant seqIdxConst)
+                throw UserError(
+                    $"'{FormatMemberTarget((MemberAccessExpr)expr.Target)}' holds {seqCount} "
+                    + "compile-time instances, which have no run-time storage to index. Use a "
+                    + "constant index, or walk them with `for p in "
+                    + $"{FormatMemberTarget((MemberAccessExpr)expr.Target)}:`.", expr.Index);
+            int seqIdx = seqIdxConst.Value;
+            if (seqIdx < 0) seqIdx += seqCount;
+            if (seqIdx < 0 || seqIdx >= seqCount)
+                throw new IndexError(
+                    $"array index {seqIdxConst.Value} out of range for size {seqCount}",
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+            return new Variable(seqBase + "__" + seqIdx, DataType.UINT8);
+        }
+
+        // `self._levels[0]`: an element of a list of NUMBERS held in a field. The elements are
+        // compile-time values, so a constant subscript folds to one of them.
+        if (expr.Target is MemberAccessExpr constSeqMem
+            && ResolveMemberArrayName(constSeqMem) is null
+            && ResolveConstSequenceExpr(expr.Target) is { } constSeqElems)
+        {
+            Val cseqIdxVal = VisitExpression(expr.Index);
+            if (cseqIdxVal is not Constant cseqIdxConst)
+                throw UserError(
+                    $"'{FormatMemberTarget(constSeqMem)}' holds {constSeqElems.Count} compile-time "
+                    + "values with no storage behind them, so it cannot be indexed at run time. "
+                    + $"Declare the field with its size (`{FormatMemberTarget(constSeqMem)}: "
+                    + $"uint8[{constSeqElems.Count}] = [...]`) to get an array that is.", expr.Index);
+            int cseqIdx = cseqIdxConst.Value;
+            if (cseqIdx < 0) cseqIdx += constSeqElems.Count;
+            if (cseqIdx < 0 || cseqIdx >= constSeqElems.Count)
+                throw new IndexError(
+                    $"array index {cseqIdxConst.Value} out of range for size {constSeqElems.Count}",
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+            return VisitExpression(constSeqElems[cseqIdx]);
+        }
+
         if (expr.Target is VariableExpr ve)
         {
             // Tuple/list/bytes literal bound to an inline parameter: fold a constant
@@ -1701,7 +1745,11 @@ public partial class IRGenerator
                 int li;
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
-                else throw UserError("Tuple/list parameter subscript must be a compile-time constant", expr.Index);
+                else throw UserError(
+                    $"'{ve.Name}' holds {litArg.Elements.Count} compile-time values with no "
+                    + "storage behind them, so it cannot be indexed at run time. Declare an "
+                    + $"array and pass that (`table: uint8[{litArg.Elements.Count}] = [...]`), "
+                    + $"or walk the values with `for v in {ve.Name}:`.", expr.Index);
                 if (li < 0) li += litArg.Elements.Count;
                 if (li < 0 || li >= litArg.Elements.Count)
                     throw UserError("Tuple/list parameter subscript index out of range", expr.Index);
