@@ -239,8 +239,14 @@ public partial class IRGenerator
                 or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
                 or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq)
             {
+                if (FoldComparisonByRange(binExpr.Op, v1, v2) is { } known)
+                {
+                    if (jumpIfTrue) { if (known) Emit(new Jump(targetLabel)); }
+                    else            { if (!known) Emit(new Jump(targetLabel)); }
+                    return known ? 2 : -1;
+                }
                 DataType cmpType = ComparisonType(v1, v2);
-                v1 = WidenForComparison(v1, cmpType);
+                v1 = WidenForComparison(v1, cmpType, left: true);
                 v2 = WidenForComparison(v2, cmpType);
             }
 

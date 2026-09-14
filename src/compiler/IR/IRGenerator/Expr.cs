@@ -1276,8 +1276,10 @@ public partial class IRGenerator
         if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Less
             or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq)
         {
+            if (FoldComparisonByRange(expr.Op, v1, v2) is { } known)
+                return new Constant(known ? 1 : 0);
             DataType cmp = ComparisonType(v1, v2);
-            v1 = WidenForComparison(v1, cmp);
+            v1 = WidenForComparison(v1, cmp, left: true);
             v2 = WidenForComparison(v2, cmp);
         }
 
@@ -1297,16 +1299,14 @@ public partial class IRGenerator
         if (!IsIntegerType(t1) || !IsIntegerType(t2)) return DataType.VOID;
         if (t1 == t2) return DataType.VOID;
 
+        // The backends compare at the width of the LEFT operand, so "one side fits the
+        // other's type" was only enough when the wider side was the left one: `count < 300`
+        // with count: uint8 compared against 44, and `x < n` with n: uint16 read n's low byte.
+        // Any two different types now meet in the narrowest one that covers both, and
+        // WidenForComparison puts the left side there.
         var (lo1, hi1) = ValRange(v1);
         var (lo2, hi2) = ValRange(v2);
         long lo = Math.Min(lo1, lo2), hi = Math.Max(hi1, hi2);
-
-        // Both readable as they stand: same signedness, or one side's values all fit the
-        // other's type. Nothing to widen -- this is the common case and must stay free.
-        var (r1Lo, r1Hi) = RangeOfType(t1);
-        var (r2Lo, r2Hi) = RangeOfType(t2);
-        if (lo >= r1Lo && hi <= r1Hi && t1.SizeOf() >= t2.SizeOf()) return DataType.VOID;
-        if (lo >= r2Lo && hi <= r2Hi && t2.SizeOf() >= t1.SizeOf()) return DataType.VOID;
 
         foreach (var candidate in new[]
                  { DataType.INT8, DataType.UINT8, DataType.INT16, DataType.UINT16,
@@ -1318,13 +1318,40 @@ public partial class IRGenerator
         return DataType.VOID;
     }
 
+    // A comparison whose two sides cannot overlap has one answer for every run: `count < 300`
+    // with count: uint8 is always true, `count == 300` never. Python says so, and the
+    // alternative -- reading 300 at count's width as 44 -- was wrong code. Null when the
+    // ranges overlap and the test is a real one.
+    private bool? FoldComparisonByRange(Frontend.BinaryOp op, Val v1, Val v2)
+    {
+        if (!IsIntegerType(GetValType(v1)) || !IsIntegerType(GetValType(v2))) return null;
+        if (v1 is not (Constant or Variable or Temporary) || v2 is not (Constant or Variable or Temporary)) return null;
+        var (lo1, hi1) = ValRange(v1);
+        var (lo2, hi2) = ValRange(v2);
+        bool alwaysLess = hi1 < lo2, alwaysGreater = lo1 > hi2;
+        if (!alwaysLess && !alwaysGreater) return null;
+        return op switch
+        {
+            Frontend.BinaryOp.Less => alwaysLess,
+            Frontend.BinaryOp.LessEq => alwaysLess,
+            Frontend.BinaryOp.Greater => alwaysGreater,
+            Frontend.BinaryOp.GreaterEq => alwaysGreater,
+            Frontend.BinaryOp.Equal => false,
+            Frontend.BinaryOp.NotEqual => true,
+            _ => null,
+        };
+    }
+
     private static bool IsIntegerType(DataType t) => t is DataType.UINT8 or DataType.INT8
         or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
 
-    private Val WidenForComparison(Val v, DataType to)
+    private Val WidenForComparison(Val v, DataType to, bool left = false)
     {
         if (to is DataType.VOID || GetValType(v) == to) return v;
-        if (v is Constant) return v;   // a literal carries its value, not a width
+        // A literal on the RIGHT is materialised at the left side's width, which is the
+        // covering one by now. On the LEFT it decides the width, so it is widened like a
+        // variable: `5 < n` with n: uint16 compared n's low byte before this.
+        if (v is Constant && !left) return v;
 
         Temporary wide = MakeTemp(to);
         Emit(new Copy(v, wide));
