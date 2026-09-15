@@ -465,7 +465,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 | `complex` / `Decimal` | Not available |
 | `f"..."` inline in arbitrary expressions | Streaming (`print(f"...")`) and assignment (`s = f"..."`, fixed buffer) are supported; an f-string used inline in any other expression position has no lowering — assign it to a name first |
 | Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
-| `*args` / `**kwargs` | Requires heap |
+| `*args` / `**kwargs` over a run-time call | The forms are compile-time sequences and mappings: the callee is specialised per call site, so the extra arguments are known there and splice into the callee's named parameters, `super().__init__` included. A `**` built from a run-time mapping is refused |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
 | Metaclasses | No runtime type system |
 | Reflection / `getattr` / `hasattr` | No runtime type info |

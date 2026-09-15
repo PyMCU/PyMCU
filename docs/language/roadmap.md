@@ -30,7 +30,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `global` / `nonlocal` | Cross-function variable access; `nonlocal` in `@inline` |
-| `try / except / else / finally`, `raise`, bare `raise` | AVR + ARM (RP2040/RP2350); zero-cost T-flag propagation (AVR: `SET`/`CLT`/`BRTS`; ARM: an internal flag+code global pair — no `setjmp`/`longjmp` on either); errors propagate across calls to any depth and are caught at the call site; `finally` runs on every exit path (caught, propagated, `return`/`break`/`continue`); unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
+| `try / except / else / finally`, `raise`, bare `raise` | AVR + ARM (RP2040/RP2350); zero-cost T-flag propagation (AVR: `SET`/`CLT`/`BRTS`; ARM: an internal flag+code global pair — no `setjmp`/`longjmp` on either); errors propagate across calls to any depth and are caught at the call site; `finally` runs on every exit path (caught, propagated, `return`/`break`/`continue`); unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts; `except E as e` binds a bounded object -- `print(e)`, `str(e)`, `e.args[0]` read the raise's string-literal message and `isinstance(e, X)` compares the code, at the cost of one module word and one store per raise, emitted only when some handler in the program binds a name |
 | Integer arithmetic promotion | `+`/`-`/`*`/`<<` promote to the next wider type (`uint8 255 + 45 == 300`); the annotation is a storage width; `uint8(a + b)` is the fixed-width escape hatch; out-of-range literals / folded constants are `CompileError` |
 | True division `/` vs `//` | `/` yields `float` (soft-float, warns on integer operands); `//` / `%` are integer floor div / mod; runtime divide-by-zero raises `ZeroDivisionError` |
 | f-strings (streamed) | `print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")` with runtime interpolations and format specs (`{x:02x}`, `{x:08b}`, `{x:04d}`, …); lowered to direct writes, no heap. `float` interpolations print two rounded decimals |
@@ -194,7 +194,7 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 | `await` on another coroutine, `await` as an expression | The compile-time state machine (v2) covers `await asyncio.sleep/sleep_ms` anywhere in the body — `if`/`elif`/`else`, `while`, `for`, `break`/`continue`, `return expr` — plus `asyncio.run`/`gather`. A sub-future needs ZCA construction outside `__init__`, which is the remaining gap |
 | `f"..."` inline in arbitrary expressions | Streaming (`print(f"...")`) and assignment (`s = f"..."` — built into a fixed buffer, no heap) are supported; other expression positions have no lowering — assign to a name first |
 | Closures capturing mutable vars | `nonlocal` in `@inline` is supported |
-| `*args` / `**kwargs` | Requires heap |
+| `*args` / `**kwargs` over a run-time call | The forms are compile-time sequences and mappings: the callee is specialised per call site, so the extra arguments are known there and splice into the callee's named parameters, `super().__init__` included. A `**` built from a run-time mapping is refused |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
 | Reflection / `getattr` / `hasattr` | No runtime type info |
 | `eval()` / `exec()` | No interpreter on MCU |

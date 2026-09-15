@@ -214,7 +214,7 @@ match read_sensor():
     case STATUS_OK:    ...
     case STATUS_RANGE: ...
 ```
-| One type per handler | `except ValueError:`, without parentheses and without `as`. A raise carries the type code and nothing else, so there is no exception object for `except E as e:` to bind, and `except (A, B):` has no single code to compare. Both are refused by name, as is `except*` (exception groups) |
+| A bounded exception object | `except E as e:` binds a name (#369). One exception is live at a time, so the object is two static facts and no allocation: the type code the dispatcher already compares, and the flash address of a string-literal message. `print(e)`, `str(e)` and `e.args[0]` read the message; `isinstance(e, X)` compares the code. Every other use of `e` is refused by a sentence naming those four. A message that is not a literal stays refused, and a field set in a user exception's `__init__` is not available yet. `except*` (exception groups) is still refused by name |
 :::
 
 **`CompileError` — compile-time intrinsic:**
@@ -268,7 +268,7 @@ is a `CompileError`; a true or runtime assertion is stripped.
 | Feature | Why it fails | Alternative |
 |---|---|---|
 | Closures capturing mutable vars | Closure cell requires heap | Pass captured values as explicit parameters |
-| `*args` / `**kwargs` | Variadic convention needs stack inspection | Fixed parameter lists |
+| `*args` / `**kwargs` over a run-time call | The forms themselves are supported as COMPILE-TIME sequences and mappings (#368): the callee is specialised per call site, where the extra arguments are written out, so `f(**kwargs)` and `super().__init__(self, **kwargs)` splice the known keys, and `kwargs["k"]`, `.get`, `in`, `len` and `.items()` fold or unroll. What is refused is a `**` built from a run-time mapping, and a key no callee accepts, which is named | Write the keys at the call, or declare the parameter |
 | `functools.partial` | Runtime partial object | Wrapper `@inline` function |
 | A function value whose target varies at run time | The address must be known at compile time | Pick with `match / case`, or index a `Callable[N]` table of known functions |
 | Recursion of any depth, direct or mutual | No per-call frame: PyMCU uses a static stack layout | Iterative equivalent |
@@ -837,10 +837,10 @@ their own code, which is where the next round of work is.
 | `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available (#373) |
 | `adafruit_bus_device` | `bytes()` in the example's own `main` | `bytes()` is a Python builtin PyMCU does not provide |
 | `adafruit_character_lcd` | a union of two real types | a union type annotation is not supported |
-| `adafruit_debouncer` | `**kwargs` | it collects arguments into a run-time dictionary |
+| `adafruit_debouncer` | a union of two real types on `Debouncer.__init__` | a union type annotation is not supported |
 | `adafruit_dht` | `import array` | `array` is a Python standard module; use a bytearray |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
-| `adafruit_74hc595` | `**kwargs` | it collects arguments into a run-time dictionary |
+| `adafruit_74hc595` | `-> digitalio.Direction.OUTPUT` on a property | unknown type in the annotation |
 | `adafruit_hcsr04` | **builds unmodified, 4 160 bytes** | |
 | `adafruit_ht16k33` (matrix) | a PIL `Image` annotation on a READ parameter | unknown type in the annotation |
 | `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
@@ -848,7 +848,7 @@ their own code, which is where the next round of work is.
 | `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |
 | `adafruit_mcp3xxx` | the `MCP3008` constructor | call to an undefined function |
 | `neopixel` | `import adafruit_pixelbuf` | module not found |
-| `adafruit_pcf8574` | `**kwargs` | it collects arguments into a run-time dictionary |
+| `adafruit_pcf8574` | `-> digitalio.Pull.UP` on a property | unknown type in the annotation |
 | `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
 | `adafruit_motor` (servo) | `self._min_duty` assigned outside `__init__` | the class has no such field |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
@@ -857,11 +857,17 @@ their own code, which is where the next round of work is.
 
 ### Which of these are limits and which are gaps
 
-**Limits of the no-heap, fixed-width model.** `**kwargs` needs a run-time dictionary.
-`except X as e` needs an exception object, and a raise here carries only which exception was
-raised. An f-string OR A CALL in a raise message would be built and then discarded, because
-the message never reaches the image. `array` is dynamic storage. Each says so in one sentence
-at the line it is written on.
+**Limits of the no-heap, fixed-width model.** An f-string OR A CALL in a raise message would
+be built and then discarded, because the message never reaches the image. `array` is dynamic
+storage. Each says so in one sentence at the line it is written on.
+
+Two entries left this list rather than staying on it. `**kwargs` was read as needing a
+run-time dictionary, which is true of CPython and false here: the callee is specialised per
+call site and the extra keyword arguments are literals there, so it is a compile-time mapping
+(#368). `except X as e` was read as needing an exception object, and it does -- a bounded one,
+which one live exception at a time makes static rather than allocated (#369). Both were
+restrictions of the lowering, not of the model, and all three libraries that stopped on
+`**kwargs` now stop somewhere else entirely.
 
 **An annotation naming something with no representation here is now the largest single
 blocker**, stopping ten of the twenty. Eight of those are the same line: the three parameters
