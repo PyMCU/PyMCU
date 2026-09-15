@@ -47,6 +47,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `pow(x, n)` / `x ** n` | Compile-time constant fold |
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
 | `bytearray` | Mutable SRAM buffer |
+| `bytes([...])` / `bytes(N)` as a call argument | Written inline at a call site: unrolls into an `@inline` callee's unannotated buffer parameter the same way a list literal does, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function. `bytes(n)` with a run-time `n` is refused (`bytearray(n)` takes one) |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART init preamble |
 | `int.from_bytes(b, 'little'/'big')` | Compile-time fold or runtime |
 | Raw strings `r"\n"` | No escape processing |
