@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from importlib.metadata import entry_points
 import os
+import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -179,6 +180,87 @@ def binary_for_plugin(plugin) -> Path | None:
     return override if override is not None else plugin.get_backend_binary()
 
 
+# ---------------------------------------------------------------------------
+# Capability probing
+#
+# PyMCU#405: the driver started passing --stdout-baud/--uart-owned (#340) to
+# every backend unconditionally, and the PIC/ARM/RISC-V binaries -- which
+# have never implemented that AVR feature -- died on "Unrecognized command
+# or argument", three steps removed from the real cause. Probing --help
+# turns that into either a silent, correct omission (a feature the backend
+# genuinely does not have yet) or a named refusal (a flag the caller
+# actually needs and the backend cannot honour), instead of the backend's
+# raw usage error surfacing as a missing firmware.asm.
+# ---------------------------------------------------------------------------
+
+_CAPABILITY_CACHE: dict[tuple[str, float, int], frozenset[str]] = {}
+
+# Every backend must speak at least this much of the protocol; if a probe
+# succeeds but these are missing, the binary is not a pymcuc-<family> backend
+# in any version this driver understands.
+_BASE_FLAGS = ("--output", "--target", "--freq")
+
+
+def get_backend_capabilities(backend_binary: Path) -> frozenset[str]:
+    """The long-option flags *backend_binary* declares in its own --help text.
+
+    The cheapest probe available without a rebuild: every backend shipped so
+    far already implements System.CommandLine's auto-generated --help.
+    Cached per (path, mtime, size) so a build does not re-spawn --help per
+    file, and a binary rebuilt at the same path is reprobed rather than
+    trusted stale.
+
+    Returns an empty set when the probe itself did not work (binary
+    missing, non-zero exit, timeout). Callers must treat that as *unknown*,
+    not *unsupported* -- see ``_capable``.
+    """
+    try:
+        stat_result = backend_binary.stat()
+    except OSError:
+        return frozenset()
+    key = (str(backend_binary), stat_result.st_mtime, stat_result.st_size)
+    cached = _CAPABILITY_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    import subprocess
+    try:
+        proc = subprocess.run(
+            [str(backend_binary), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        help_text = (proc.stdout or "") + (proc.stderr or "")
+    except (OSError, subprocess.TimeoutExpired):
+        help_text = ""
+
+    flags = frozenset(re.findall(r"--[a-z][a-z0-9-]*", help_text))
+    _CAPABILITY_CACHE[key] = flags
+    return flags
+
+
+def _capable(caps: frozenset[str], flag: str) -> bool:
+    """Whether *flag* is safe to pass, given a capability probe.
+
+    An empty *caps* means the probe did not work -- unknown, not
+    unsupported -- so callers fall back to always passing the flag, as they
+    did before this gate existed.
+    """
+    return not caps or flag in caps
+
+
+def _backend_family(backend_binary: Path) -> str:
+    name = backend_binary.stem
+    return name[len("pymcuc-"):] if name.startswith("pymcuc-") else name
+
+
+def _refuse_unsupported(backend_binary: Path, flag: str, reason: str) -> None:
+    raise RuntimeError(
+        f"Backend '{_backend_family(backend_binary)}' ({backend_binary.name}) does not "
+        f"declare {flag} in its own --help, but {reason}. Rebuild this backend from a "
+        "version that supports it, or drop the setting that requires it."
+    )
+
+
 def run_backend(
     backend_binary: Path,
     ir_file: Path,
@@ -211,6 +293,11 @@ def run_backend(
     import subprocess
     import time
 
+    caps = get_backend_capabilities(backend_binary)
+    for flag in _BASE_FLAGS:
+        if not _capable(caps, flag):
+            _refuse_unsupported(backend_binary, flag, "every build needs it")
+
     cmd = [
         str(backend_binary),
         str(ir_file),
@@ -219,26 +306,43 @@ def run_backend(
         "--freq", str(freq),
     ]
     if reset_vector is not None:
+        if not _capable(caps, "--reset-vector"):
+            _refuse_unsupported(backend_binary, "--reset-vector", "this project sets one")
         cmd.extend(["--reset-vector", str(reset_vector)])
     if interrupt_vector is not None:
+        if not _capable(caps, "--interrupt-vector"):
+            _refuse_unsupported(backend_binary, "--interrupt-vector", "this project sets one")
         cmd.extend(["--interrupt-vector", str(interrupt_vector)])
-    for key, val in configs.items():
-        cmd.extend(["--config", f"{key}={val}"])
-    if verbose:
+    if configs:
+        if not _capable(caps, "--config"):
+            _refuse_unsupported(backend_binary, "--config", "this project sets configuration bits")
+        for key, val in configs.items():
+            cmd.extend(["--config", f"{key}={val}"])
+    if verbose and _capable(caps, "--verbose"):
         cmd.append("--verbose")
     if emit_symbols_path is not None:
+        if not _capable(caps, "--emit-symbols"):
+            _refuse_unsupported(backend_binary, "--emit-symbols", "a debug build asked for symbols")
         cmd.extend(["--emit-symbols", str(emit_symbols_path)])
     if emit_linemap_path is not None:
+        if not _capable(caps, "--emit-linemap"):
+            _refuse_unsupported(backend_binary, "--emit-linemap", "a debug build asked for a linemap")
         cmd.extend(["--emit-linemap", str(emit_linemap_path)])
     if emit_varmap_path is not None:
+        if not _capable(caps, "--emit-varmap"):
+            _refuse_unsupported(backend_binary, "--emit-varmap", "a debug build asked for a varmap")
         cmd.extend(["--emit-varmap", str(emit_varmap_path)])
     # PyMCU#340. The unhandled-exception path prints E:<Type> on the UART, and the UART is only
     # set up when this driver sees print()/input() or an explicit UART(). When nobody sets it
     # up, that path turns the transmitter on itself, at the rate stdout is configured for --
     # and when somebody does, it emits no initialisation, so the image is unchanged.
-    if stdout_baud is not None:
+    #
+    # PyMCU#405: unlike the flags above, a backend that does not declare these has simply
+    # never implemented the #340 behaviour -- there is nothing for this project to lose that
+    # it had before #340, so this omits rather than refuses.
+    if stdout_baud is not None and _capable(caps, "--stdout-baud"):
         cmd.extend(["--stdout-baud", str(stdout_baud)])
-    if uart_owned:
+    if uart_owned and _capable(caps, "--uart-owned"):
         cmd.append("--uart-owned")
 
     # returncode == -9 means the backend was SIGKILL'd by the OS -- on macOS the kernel
