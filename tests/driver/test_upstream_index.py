@@ -1,6 +1,7 @@
 # Tests for the upstream half of `pymcu index build`: parsing libraries.txt's
 # `upstream ...` line form, and measuring a submission's committed example.
 
+import json
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,46 @@ class TestMeasureUpstreamExample:
         )
         assert result.build == idx.BUILD_OK
         assert result.flash == 4264
+
+    def test_the_measurement_subprocess_can_discover_the_submission_itself(
+            self, tmp_path, monkeypatch):
+        """
+        Regression: the very first measurement of a submission is exactly the
+        case where no published index describes it yet, so the `pymcu build`
+        subprocess this function shells out to would otherwise never stage it
+        (core.upstream_libraries.resolve_upstream_for_target reads a cached or
+        overridden index, and neither exists for a brand new submission).
+        PYMCU_UPSTREAM_INDEX is how this function hands that one entry to the
+        subprocess instead.
+        """
+        example = tmp_path / "hcsr04_simpletest.py"
+        example.write_text("import adafruit_hcsr04\n")
+
+        captured = {}
+
+        def fake_run(cmd, cwd, capture_output, text, env):
+            index_path = env.get("PYMCU_UPSTREAM_INDEX")
+            assert index_path, "PYMCU_UPSTREAM_INDEX was not set for the subprocess"
+            captured["index"] = json.loads(Path(index_path).read_text())
+            class R:
+                returncode = 0
+                stdout = "Flash: 4062 bytes\n"
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(uidx.subprocess, "run", fake_run)
+        uidx.measure_upstream_example(
+            _submission(), "atmega328p", pymcu=Path("/fake/pymcu"),
+            example_source=example, version="0.4.25",
+        )
+
+        entries = captured["index"]["libraries"]
+        assert len(entries) == 1
+        assert entries[0]["kind"] == "upstream"
+        assert entries[0]["distribution"] == "adafruit-circuitpython-hcsr04"
+        assert entries[0]["version"] == "0.4.25"
+        assert entries[0]["provides"] == ["adafruit_hcsr04"]
+        assert entries[0]["layer"] == "circuitpython"
 
 
 class TestUpstreamIndexEntry:

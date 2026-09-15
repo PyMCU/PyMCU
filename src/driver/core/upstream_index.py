@@ -27,6 +27,7 @@ the library itself.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -121,7 +122,7 @@ class UpstreamIndexEntry:
 
 
 def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu: Path,
-                             example_source: Path,
+                             example_source: Path, version: str = "",
                              env_paths: list[str] | None = None) -> TargetResult:
     """
     Compile *submission*'s committed measurement program for *chip*.
@@ -130,6 +131,14 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
     an examples/ directory with its own pyproject.toml -- an upstream
     submission's example is exactly one file, since the whole point is that
     nothing else about the library lives in this repository.
+
+    The measurement subprocess is a plain `pymcu build`, which stages an
+    upstream library onto the include path by reading PYMCU_UPSTREAM_INDEX or
+    the cached library index (core.upstream_libraries). Neither exists yet
+    for a submission being measured for the very first time -- that is
+    exactly what this run produces -- so a one-entry index describing just
+    this submission is written and pointed to with PYMCU_UPSTREAM_INDEX for
+    the duration of this one subprocess call.
     """
     if not example_source.is_file():
         return TargetResult(chip, BUILD_UNSUPPORTED,
@@ -161,7 +170,21 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
         doc["tool"] = tool
         (work / "pyproject.toml").write_text(tomlkit.dumps(doc), encoding="utf-8")
 
+        upstream_index = Path(tmp) / "upstream-index.json"
+        upstream_index.write_text(json.dumps({
+            "v": 1,
+            "libraries": [{
+                "kind": "upstream",
+                "name": submission.name or submission.provides[0],
+                "distribution": submission.distribution,
+                "version": version or "0.0.0",
+                "provides": list(submission.provides),
+                "layer": submission.layer,
+            }],
+        }), encoding="utf-8")
+
         env = dict(os.environ)
+        env["PYMCU_UPSTREAM_INDEX"] = str(upstream_index)
         if env_paths:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = os.pathsep.join(
@@ -201,7 +224,8 @@ def build_upstream_entry(submission: UpstreamSubmission, *, pymcu: Path, repo_ro
     example_source = (repo_root / submission.example).resolve()
     for chip in chips_to_measure_upstream():
         entry.targets[chip] = measure_upstream_example(
-            submission, chip, pymcu=pymcu, example_source=example_source, env_paths=env_paths,
+            submission, chip, pymcu=pymcu, example_source=example_source,
+            version=version, env_paths=env_paths,
         )
 
     return entry, ""
