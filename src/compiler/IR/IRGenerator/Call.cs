@@ -1090,6 +1090,25 @@ public partial class IRGenerator
                 continue;
             }
 
+            // `f(bytes([...]))` / `f(bytes(N))`: the same shape one call spelling later, and a
+            // `bytes` parameter already receives it exactly as `bytearray` does (#365, #431).
+            if (arg is CallExpr { Callee: VariableExpr { Name: "bytes" } } bytesArgCall)
+            {
+                string hiddenName = $"__inline_bytes_arg{tempCounter++}";
+                VisitVarDecl(new VarDecl(hiddenName, "bytes", bytesArgCall) { Line = expr.Line });
+                string hiddenQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix
+                    : currentFunction + ".") + hiddenName;
+                if (!arraySizes.ContainsKey(hiddenQualified))
+                {
+                    string altHQ = currentModulePrefix + hiddenName;
+                    if (arraySizes.ContainsKey(altHQ)) hiddenQualified = altHQ;
+                    else if (arraySizes.ContainsKey(hiddenName)) hiddenQualified = hiddenName;
+                }
+                argValuesL.Add(new ArrayBase(hiddenQualified));
+                continue;
+            }
+
             argValuesL.Add(VisitExpression(arg));
         }
 
@@ -1394,8 +1413,12 @@ public partial class IRGenerator
                 // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
                 // and bind it to the inline parameter so the callee can consume
                 // it via `for x in param` (unrolled) or `param[const]` indexing.
+                // `bytes([...])` / `bytes(N)` written at the call site is the same shape one
+                // call spelling later (#431; adafruit_bus_device's `bus_device.write(bytes([REG]))`,
+                // where `write` is an @inline `for i, b in enumerate(buffer)`).
                 ListExpr? seqLit = arg as ListExpr
-                    ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null);
+                    ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null)
+                    ?? (TryBytesLiteralElements(arg) is { } bytesLitElems ? new ListExpr(bytesLitElems) : null);
 
                 // `Bar([Pin("PD5", Pin.OUT), Pin("PD6", Pin.OUT)])`: a list of INSTANCES is not
                 // raw AST to re-evaluate at each subscript -- the elements are built once here
