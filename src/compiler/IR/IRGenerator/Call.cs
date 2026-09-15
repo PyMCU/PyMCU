@@ -268,6 +268,18 @@ public partial class IRGenerator
                     objVal = new Variable(tObj.Name, tObj.Type);
                 if (objVal is Variable vObj)
                 {
+                    // `buf.extend(...)` on a fixed-size buffer grows it while compiling (#362).
+                    // Asked before the list dispatch below, because a bytearray is not a list and
+                    // was falling through to the message written for an untyped one.
+                    //
+                    // Keyed off the SOURCE name, the way len() is, and not off the lowered
+                    // variable's: a buffer declared in an imported module is registered under the
+                    // spelling the module wrote, while the value it lowers to carries the
+                    // qualified one, so matching on the lowered name saw the single-module case
+                    // and missed every library.
+                    if (memC.Member == "extend" && ResolveBufferKey(memC.Object) is { } bufKey)
+                        return EmitBufferExtend(bufKey, expr, memC);
+
                     // list[T] method dispatch
                     if (listVarElemTypes.ContainsKey(vObj.Name))
                     {
@@ -6798,6 +6810,98 @@ public partial class IRGenerator
             Emit(new Binary(BinaryOp.Add, ptrU16, scaledPlusTwo, finalAddr));
         }
         return finalAddr;
+    }
+
+    /// <summary>
+    /// `buf.extend(bytes(n))` on a fixed-size buffer, with `n` known at compile time (PyMCU#362).
+    ///
+    /// A buffer that starts at one byte and is grown to its final size by the constructors that
+    /// use it is the standard CircuitPython shape, and nothing about it is dynamic: every caller
+    /// asks for a size that is a literal by the time it arrives here, so the set of sizes the
+    /// buffer is ever asked for is known while compiling. The buffer takes the LARGEST of them,
+    /// which is why a later, smaller `extend` adds nothing rather than shrinking anything --
+    /// the `claim()` intrinsic's registry with `max` where claim has `equal`.
+    ///
+    /// The bytes added are zeroed here rather than at the declaration, because the declaration
+    /// does not yet know the final size. Without that a grown byte reads whatever the SRAM held.
+    ///
+    /// A size only known at run time is refused, naming the buffer: there is no allocator to
+    /// grow one with, and taking the declared size in silence is how a driver writes past its
+    /// own buffer.
+    /// </summary>
+    private Val EmitBufferExtend(string bufKey, CallExpr expr, MemberAccessExpr memC)
+    {
+        if (expr.Args.Count != 1)
+            throw UserError($"{bufKey}.extend() takes exactly one argument", memC);
+
+        int added = BufferExtendCount(expr.Args[0], bufKey);
+        int current = arraySizes[bufKey];
+        int grown = Math.Max(current, current + added);
+
+        if (grown > current)
+        {
+            arraySizes[bufKey] = grown;
+            var elem = arrayElemTypes.TryGetValue(bufKey, out var et) ? et : DataType.UINT8;
+            for (int i = current; i < grown; i++)
+                Emit(new ArrayStore(bufKey, new Constant(i), new Constant(0), elem, grown));
+        }
+        return new NoneVal();
+    }
+
+    /// <summary>
+    /// The arraySizes key a source-level buffer name stands for here, tried in the same order
+    /// len() tries it: under the inline expansion's prefix, under the current function, bare,
+    /// and then through the alias chain an @inline parameter binding leaves behind.
+    /// </summary>
+    private string? ResolveBufferKey(Expression objExpr)
+    {
+        if (objExpr is not VariableExpr ve) return null;
+
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && arraySizes.ContainsKey(currentInlinePrefix + ve.Name))
+            return currentInlinePrefix + ve.Name;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && arraySizes.ContainsKey(currentFunction + "." + ve.Name))
+            return currentFunction + "." + ve.Name;
+        if (arraySizes.ContainsKey(ve.Name)) return ve.Name;
+
+        string key = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(key, out string next)) break;
+            key = next;
+            if (arraySizes.ContainsKey(key)) return key;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// How many bytes an `extend()` argument adds, refusing anything the compiler cannot count.
+    /// </summary>
+    private int BufferExtendCount(Expression arg, string bufName)
+    {
+        // `bytes([a, b, c])` and a bare list add one byte per element.
+        Expression counted = arg is CallExpr { Callee: VariableExpr { Name: "bytes" } } bc
+                             && bc.Args.Count == 1
+            ? bc.Args[0]
+            : arg;
+        if (counted is ListExpr le) return le.Elements.Count;
+        if (counted is StringLiteral sl) return sl.Value.Length;
+        if (ResolveConstSequenceExpr(counted) is { } seq) return seq.Count;
+
+        // `bytes(n)` adds n zero bytes. The count is lowered rather than pattern-matched so a
+        // size that only becomes a literal through an inlined call site still folds.
+        Val v = VisitExpression(counted);
+        if (v is Constant c) return c.Value;
+
+        throw UserError(
+            $"{bufName}.extend(): how many bytes this adds decides the size of '{bufName}', and a "
+            + "buffer's size is fixed while compiling -- there is no allocator to grow one at run "
+            + "time. This count is only known at run time. Declare the buffer at its final size "
+            + $"(`{bufName} = bytearray(N)`), or extend it by an amount that is a literal or a const.",
+            arg);
     }
 
     // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).

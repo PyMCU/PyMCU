@@ -1396,7 +1396,17 @@ public partial class IRGenerator
                 // arguments were written. A subroutine would have nothing to bind them to, so
                 // the body only has meaning expanded where it is called (#368).
                 bool hasVariadicParam = func.Params.Any(p => p.IsVarArg || p.IsKwArg);
-                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type)) || hasVariadicParam;
+                // Growing a buffer from an enclosing scope has the same property for the same
+                // reason: how many bytes the call adds decides that buffer's size, a size is
+                // fixed while compiling, and there is no allocator to grow one at run time. So
+                // the body only has meaning expanded where the number of bytes is known (#362).
+                //
+                // Never the entry point, whatever it does. `main` is called by the runtime and
+                // not from any call site this could expand at, so registering it for expansion
+                // would leave it compiled nowhere and the program would do nothing at all.
+                bool growsAnOuterBuffer = func.Name != "main" && FunctionGrowsAnOuterBuffer(func);
+                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type))
+                    || hasVariadicParam || growsAnOuterBuffer;
 
                 // The first-position form is also the ISR handler shape (`def on_irq(pin: Pin)`),
                 // which is synthesized separately from the AST when the handler is registered.
@@ -2963,6 +2973,71 @@ public partial class IRGenerator
         }
 
         return Walk(method);
+    }
+
+    /// <summary>
+    /// True when the function grows a buffer that is not one of its own parameters, by calling
+    /// <c>.extend()</c> on a name from an enclosing scope (PyMCU#362).
+    ///
+    /// How many bytes such a call adds decides that buffer's SIZE, and a buffer's size is fixed
+    /// while compiling: there is no allocator to grow one at run time. So the body only has
+    /// meaning expanded where the number of bytes is known, which is the same property a ZCA
+    /// parameter and a variadic parameter have, and it is registered the same way.
+    ///
+    /// A receiver that IS a parameter is excluded: the buffer then belongs to the caller, the
+    /// call reaches it by reference, and the size question is the caller's.
+    /// </summary>
+    private static bool FunctionGrowsAnOuterBuffer(FunctionDef func)
+    {
+        var ownNames = new HashSet<string>(func.Params.Select(p => p.Name), StringComparer.Ordinal);
+        bool found = false;
+
+        void E(Expression? e)
+        {
+            if (found || e == null) return;
+            switch (e)
+            {
+                case CallExpr { Callee: MemberAccessExpr { Member: "extend", Object: VariableExpr bv } }
+                    when !ownNames.Contains(bv.Name):
+                    found = true;
+                    return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case MemberAccessExpr ma: E(ma.Object); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+            }
+        }
+
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); break;
+                case AssignStmt asg: E(asg.Value); break;
+                case AugAssignStmt aug: E(aug.Value); break;
+                case VarDecl vd: E(vd.Init); break;
+                case AnnAssign an: E(an.Value); break;
+                case ReturnStmt r: E(r.Value); break;
+                case ExprStmt ex: E(ex.Expr); break;
+                case IfStmt iff:
+                    E(iff.Condition);
+                    S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) { E(br.Condition); S(br.Body); }
+                    S(iff.ElseBranch);
+                    break;
+                case WhileStmt wh: E(wh.Condition); S(wh.Body); break;
+                case ForStmt fr: S(fr.Body); break;
+            }
+        }
+
+        foreach (var st in func.Body.Statements) S(st);
+        return found;
     }
 
     // True if the method contains any return statement (value-returning or bare). Write-back
