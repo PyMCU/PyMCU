@@ -1670,7 +1670,16 @@ public partial class IRGenerator
             return;
         }
 
-        if (memExpr2.Member == "value")
+        // A field literally named "value" (Base/Sub's `self.value` in #430, but any class is
+        // exposed to this) collides with the MMIO/pointer `.value` write below, which has no
+        // guard at all here (unlike its read-side counterpart in Expr.cs): every write to
+        // `self.value` took the register path regardless of whether the receiver was an
+        // actual ZCA instance. For an instance whose fields folded away as compile-time
+        // constants (no runtime slot to fail the earlier slot-write check either), the
+        // register path's own fallback silently dropped the store: the field never received
+        // its value AND was never registered as a constant, so a later read landed on an
+        // uninitialized flattened variable. Same guard as the read side.
+        if (memExpr2.Member == "value" && !IsKnownInstanceField(memExpr2.Object, "value"))
         {
             var target = VisitExpression(memExpr2.Object);
             var varType = DataType.UINT8;

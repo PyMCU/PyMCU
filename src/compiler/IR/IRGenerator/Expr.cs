@@ -382,7 +382,24 @@ public partial class IRGenerator
     // relies on that) -- but once the instance has a slot the writes go there, and every read
     // through the scalar saw the constructor's value: `self.value = self.value + 1` in a
     // method never added up, and a Fader that summed 0..9 answered 3.
-    private bool IsSlotInstanceField(Expression obj, string field)
+    // Was IsSlotInstanceField: required a live runtime slot, which a receiver whose
+    // constructor arguments folded entirely to compile-time constants never gets (RFC 0001's
+    // "fast construction path" materializes a slot only when something needs one at run
+    // time). A field named "value" on such a receiver then fell through to the register-
+    // pointer read below, which chased no alias of its own and answered with the raw,
+    // never-written inline-frame variable -- not the field's folded constant (#430). Knowing
+    // the field by NAME, on the receiver's resolved class, does not depend on how that
+    // instance happens to be stored, so drop the slotInstances requirement: a class-field
+    // read routes to the field logic below regardless of whether it materialized a slot, is
+    // still a flattened Model-A name, or folded away entirely into constantVariables.
+    //
+    // `layout.Count > 1` on purpose: a SINGLE-field class collapses onto the instance's own
+    // name (self IS the value, RFC 0001 Model B), which is exactly what the `.value` register
+    // path below already does for it -- routing a single-field class here instead sent it to
+    // the multi-field/flattened-name logic, which expects a field distinct from the instance
+    // and wrote/read the wrong storage (`c_value` instead of `c`) for the everyday single-
+    // field case (regressed a nested-@inline-closure fixture from #427 while fixing #430).
+    private bool IsKnownInstanceField(Expression obj, string field)
     {
         if (obj is not VariableExpr ve) return false;
         foreach (var start in new[]
@@ -396,9 +413,8 @@ public partial class IRGenerator
             string? key = start;
             for (int depth = 0; depth < 20 && key != null; depth++)
             {
-                if (slotInstances.ContainsKey(key)
-                    && instanceClasses.TryGetValue(key, out var cls) && cls != null
-                    && classFieldLayout.TryGetValue(cls, out var layout)
+                if (instanceClasses.TryGetValue(key, out var cls) && cls != null
+                    && classFieldLayout.TryGetValue(cls, out var layout) && layout.Count > 1
                     && layout.Any(f => f.Field == field))
                     return true;
                 if (!variableAliases.TryGetValue(key, out key)) break;
@@ -3028,7 +3044,7 @@ public partial class IRGenerator
         if (expr.Member == "value" && propertyGetters.Count > 0 && IsPropertyGetterRead(expr))
             return VisitCall(new CallExpr(expr, new List<Expression>()));
 
-        if (expr.Member == "value" && !IsSlotInstanceField(expr.Object, "value"))
+        if (expr.Member == "value" && !IsKnownInstanceField(expr.Object, "value"))
         {
             Val obj = VisitExpression(expr.Object);
 
