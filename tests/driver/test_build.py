@@ -256,3 +256,124 @@ class TestBuildUnknownBoardWithTarget:
         assert result.exit_code == 1
         assert "Cannot set both" in out
         assert 'implies target = "atmega328p"' in out
+
+
+# ---------------------------------------------------------------------------
+# Upstream library include-path ordering (issue #377)
+#
+# A manifest library's directory must precede an upstream library's staged
+# directory on the compiler's -I list: the manifest one can declare a compat
+# adapter that has to win a name clash, and neither may ever get to shadow a
+# flavor package. This drives a full (mocked) build and inspects the
+# extra_includes PyMCUCompiler.compile actually received, rather than only
+# the ordering that core.upstream_libraries computes on its own.
+# ---------------------------------------------------------------------------
+
+class TestBuildUpstreamLibraryIncludeOrder:
+    @staticmethod
+    def _site_packages(tmp_path: Path) -> Path:
+        import sys as _sys
+        site = (tmp_path / ".venv" / "lib"
+                / f"python{_sys.version_info.major}.{_sys.version_info.minor}"
+                / "site-packages")
+        site.mkdir(parents=True)
+        return site
+
+    @staticmethod
+    def _install_manifest_library(site: Path) -> None:
+        pkg = site / "pymcu_lib_fake"
+        sources = pkg / "mcu"
+        sources.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("")
+        (pkg / "pymcu.toml").write_text(
+            "[library]\n"
+            'name = "fakelib"\n'
+            "\n"
+            "[library.provides]\n"
+            'modules = ["fakelib"]\n'
+            "\n"
+            "[library.supports]\n"
+            'layer = "circuitpython"\n'
+        )
+        (sources / "fakelib.py").write_text("VALUE = 1\n")
+
+        dist_info = site / "pymcu_lib_fake-1.0.0.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pymcu-lib-fake\nVersion: 1.0.0\n")
+        (dist_info / "entry_points.txt").write_text(
+            "[pymcu.libraries]\nfakelib = pymcu_lib_fake\n")
+
+    @staticmethod
+    def _install_upstream_distribution(site: Path) -> None:
+        (site / "adafruit_hcsr04.py").write_text("VALUE = 1\n")
+        dist_info = site / "adafruit_circuitpython_hcsr04-0.4.25.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: adafruit-circuitpython-hcsr04\nVersion: 0.4.25\n")
+        (dist_info / "RECORD").write_text(
+            f"{dist_info.name}/METADATA,,\nadafruit_hcsr04.py,,\n")
+
+    def test_manifest_library_precedes_upstream_library_on_the_include_path(
+            self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
+        pytest.importorskip("pymcu_circuitpython", reason="pymcu-circuitpython not installed")
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("def main(): pass\n")
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.pymcu]\n"
+            'board = "arduino_uno"\n'
+            "frequency = 16000000\n"
+            'sources = "src"\n'
+            'entry = "main.py"\n'
+            'stdlib = ["circuitpython"]\n'
+        )
+
+        site = self._site_packages(tmp_path)
+        self._install_manifest_library(site)
+        self._install_upstream_distribution(site)
+
+        from src.driver.core import upstream_libraries as up
+
+        monkeypatch.setattr(up, "read_cached_library_index", lambda: {
+            "v": 1,
+            "libraries": [{
+                "kind": "upstream",
+                "name": "adafruit_hcsr04",
+                "distribution": "adafruit-circuitpython-hcsr04",
+                "version": "0.4.25",
+                "provides": ["adafruit_hcsr04"],
+                "layer": "circuitpython",
+            }],
+        })
+
+        from src.driver.core.compiler import PyMCUCompiler
+
+        captured: dict = {}
+        original_compile = PyMCUCompiler.compile
+
+        def spy(self, *args, **kwargs):
+            captured["extra_includes"] = list(kwargs.get("extra_includes") or [])
+            return original_compile(self, *args, **kwargs)
+
+        monkeypatch.setattr(PyMCUCompiler, "compile", spy)
+
+        # The include path is resolved and handed to PyMCUCompiler.compile
+        # before anything downstream (assembling, linking) runs, so what
+        # happens to the rest of this mocked build is not this test's
+        # concern -- only whether compile() was called, and with what.
+        _invoke_build()
+        assert "extra_includes" in captured, "PyMCUCompiler.compile was never called"
+
+        includes = captured["extra_includes"]
+        manifest_dir = str(site / "pymcu_lib_fake" / "mcu")
+        upstream_dir = str(tmp_path / "dist" / "_upstream" / "adafruit-circuitpython-hcsr04")
+
+        assert manifest_dir in includes
+        assert upstream_dir in includes
+        assert includes.index(manifest_dir) < includes.index(upstream_dir)
+        # And the staged upstream directory holds only what it declared.
+        assert (tmp_path / "dist" / "_upstream" / "adafruit-circuitpython-hcsr04"
+               / "adafruit_hcsr04.py").is_file()

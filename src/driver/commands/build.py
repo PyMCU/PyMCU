@@ -43,6 +43,7 @@ from ..core.libraries import (
     search_path_for_project as library_search_path,
 )
 from ..core.update_check import get_available_updates, get_installed_pymcu_versions
+from ..core.upstream_libraries import resolve_upstream_for_target
 
 console = Console()
 
@@ -943,6 +944,24 @@ def build(
 
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
+
+        # Upstream libraries: a plain PyPI distribution the (cached) library
+        # index vouches for and measures, with no pymcu.toml of its own. Added
+        # after the manifest libraries above, so neither can shadow `board`,
+        # `digitalio`, `pulseio` or a curated library, and staged into
+        # dist/_upstream rather than pointed at site-packages directly (see
+        # core/upstream_libraries.py for why).
+        upstream_includes, upstream_skipped, upstream_errors = resolve_upstream_for_target(
+            search_path=library_search_path(pyproject_path.parent.absolute()),
+            flavors=stdlib_flavors,
+            stage_root=output_dir / "_upstream",
+            enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
+        )
+        for note in upstream_skipped:
+            console.print(f"[bold yellow]Skipping upstream library[/bold yellow] {note}")
+        for problem in upstream_errors:
+            console.print(f"[bold yellow]Warning:[/bold yellow] upstream library {problem}")
+        extra_includes.extend(upstream_includes)
 
         # Shared generated-files directory (board shim + print preamble).
         generated_dir = output_dir / "_generated"
