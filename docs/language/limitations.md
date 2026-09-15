@@ -828,20 +828,20 @@ Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. Re-measured the same day after #352, #356,
 #357, #367 and the `Optional` decision.
 
-None of the twenty builds unmodified. What changed in this pass is WHERE they stop: nothing
-stops on an annotation any more except two names that are genuinely unknown, and the rest have
-moved into the libraries' own code, which is where the next round of work is.
+**One of the twenty builds unmodified**: `adafruit_hcsr04`, at 4 160 bytes, since the
+optional-import flag folds (#372). The other nineteen have moved off their annotations and into
+their own code, which is where the next round of work is.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
-| `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available |
+| `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available (#373) |
 | `adafruit_bus_device` | `bytes()` in the example's own `main` | `bytes()` is a Python builtin PyMCU does not provide |
 | `adafruit_character_lcd` | a union of two real types | a union type annotation is not supported |
 | `adafruit_debouncer` | `**kwargs` | it collects arguments into a run-time dictionary |
 | `adafruit_dht` | `import array` | `array` is a Python standard module; use a bytearray |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_74hc595` | `**kwargs` | it collects arguments into a run-time dictionary |
-| `adafruit_hcsr04` | `DigitalInOut.clear()` | call to an undefined function |
+| `adafruit_hcsr04` | **builds unmodified, 4 160 bytes** | |
 | `adafruit_ht16k33` (matrix) | a PIL `Image` annotation on a READ parameter | unknown type in the annotation |
 | `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
 | `adafruit_ina219` | `I2CDeviceDriver`, through `adafruit_register` | unknown type in the annotation |
