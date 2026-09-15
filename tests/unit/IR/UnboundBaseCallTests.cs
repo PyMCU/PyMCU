@@ -322,9 +322,16 @@ public class UnboundBaseCallTests
             "    r = Registry(10)\n" +
             "    G.value = uint8(Base.read(r.probe(), uint16(seed) + 5))\n");
 
-        int probeCalls = ir.Functions
+        // Counted as "produced once", not "called once": `probe()` reads a field that HOLDS an
+        // instance, and such a method is expanded at its call sites rather than compiled as a
+        // shared body, because a shared body receives the field as a number and has no `self`
+        // at all (#385). Either shape is right for what this test is about; producing the
+        // receiver TWICE is what is not. Measured on atmega328p before and after that change:
+        // the same program counts one call to `probe()` at run time and prints the same value.
+        int probeProduced = ir.Functions
             .SelectMany(f => f.Body)
-            .Count(i => i is Call { FunctionName: "Registry_probe" });
-        Assert.Equal(1, probeCalls);
+            .Count(i => i is Call { FunctionName: "Registry_probe" }
+                        or InlineExpansionMarker { FuncName: "Registry_probe", IsEnd: false });
+        Assert.Equal(1, probeProduced);
     }
 }

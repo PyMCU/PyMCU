@@ -488,6 +488,14 @@ public partial class IRGenerator
     // is constant-false by accident is worse to debug than a compile error.
     private Expression LowerInstanceTruthiness(Expression cond)
     {
+        if (cond is MemberAccessExpr fieldAccess && FieldInstanceClass(fieldAccess) is { } fieldCls)
+        {
+            foreach (var m in new[] { "__bool__", "__len__" })
+                if (ClassDefinesMethod(ResolveMROMethod(fieldCls, m), m))
+                    return new CallExpr(new MemberAccessExpr(fieldAccess, m), new List<Expression>())
+                        { Line = cond.Line, Column = cond.Column, Length = cond.Length };
+        }
+
         if (cond is not VariableExpr ve) return cond;
         if (InstanceClassOfName(ve.Name) is not { } cls) return cond;
         foreach (var m in new[] { "__bool__", "__len__" })
@@ -498,6 +506,35 @@ public partial class IRGenerator
         throw UserError(
             $"'{ve.Name}' is an instance of '{shown}' with no __bool__ or __len__, so it has no " +
             $"truth value. Test a field or a method result instead (e.g. `if {ve.Name}.<field>:`).", ve);
+    }
+
+    private string? FieldInstanceClass(MemberAccessExpr access)
+    {
+        if (access.Object is not VariableExpr recv) return null;
+        string? recvCls = InstanceClassOfName(recv.Name);
+        if (string.IsNullOrEmpty(recvCls))
+            foreach (string? key in new[]
+                     {
+                         string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + recv.Name,
+                         string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + recv.Name,
+                         recv.Name,
+                     })
+            {
+                if (key == null) continue;
+                recvCls = ReceiverClassThroughAliases(key);
+                if (!string.IsNullOrEmpty(recvCls)) break;
+            }
+        if (string.IsNullOrEmpty(recvCls) && recv.Name == "self" && !string.IsNullOrEmpty(currentFunction))
+            foreach (var kv in fieldClasses)
+            {
+                int bar = kv.Key.IndexOf('|');
+                if (bar <= 0 || kv.Key[(bar + 1)..] != access.Member) continue;
+                string owner = kv.Key[..bar];
+                if (currentFunction.StartsWith(owner + "_", StringComparison.Ordinal)) { recvCls = owner; break; }
+            }
+        if (string.IsNullOrEmpty(recvCls)) return null;
+        return fieldClasses.TryGetValue(recvCls + "|" + access.Member, out var raw)
+            ? ResolveConcreteClass(raw) : null;
     }
 
     /// <summary>

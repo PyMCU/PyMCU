@@ -286,6 +286,38 @@ public partial class IRGenerator
         }
     }
 
+    /// Record the class of every `self.<field> = SomeClass(...)` this statement reaches, at any
+    /// depth. The FIRST assignment wins, so a branch choosing between two implementations
+    /// records the one written first.
+    private void RecordConstructedFieldClasses(Statement? s, string classKey)
+    {
+        switch (s)
+        {
+            case null: return;
+            case Block b: foreach (var st in b.Statements) RecordConstructedFieldClasses(st, classKey); return;
+            case IfStmt iff:
+                RecordConstructedFieldClasses(iff.ThenBranch, classKey);
+                foreach (var br in iff.ElifBranches) RecordConstructedFieldClasses(br.Body, classKey);
+                RecordConstructedFieldClasses(iff.ElseBranch, classKey);
+                return;
+            case WhileStmt w: RecordConstructedFieldClasses(w.Body, classKey); return;
+            case ForStmt f: RecordConstructedFieldClasses(f.Body, classKey); return;
+            case WithStmt wi: RecordConstructedFieldClasses(wi.Body, classKey); return;
+            case MatchStmt m: foreach (var br in m.Branches) RecordConstructedFieldClasses(br.Body, classKey); return;
+            case TryStmt t:
+                foreach (var st in t.Body) RecordConstructedFieldClasses(st, classKey);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) RecordConstructedFieldClasses(st, classKey);
+                if (t.ElseBody != null) foreach (var st in t.ElseBody) RecordConstructedFieldClasses(st, classKey);
+                if (t.Finally != null) foreach (var st in t.Finally) RecordConstructedFieldClasses(st, classKey);
+                return;
+            case AssignStmt { Target: MemberAccessExpr { Object: VariableExpr sv } m2, Value: CallExpr { Callee: VariableExpr cv } }
+                when sv.Name == "self" && !IsScalarTypeName(cv.Name)
+                     && !fieldClasses.ContainsKey(classKey + "|" + m2.Member):
+                fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv.Name);
+                return;
+        }
+    }
+
     private void RecordClassAttrWriteTarget(Expression target)
     {
         switch (target)
@@ -1589,15 +1621,15 @@ public partial class IRGenerator
                         // (2) constructor-assigned fields (`self.x = SomeClass(...)`): the layout
                         //     records these as a scalar (the class collapses), so recover the class
                         //     from the __init__ RHS. Resolved here in the defining module's scope.
+                        //     Every statement of `__init__`, not only its top level: a driver
+                        //     chooses its implementation in a branch, and the field it assigns
+                        //     there is the one a program tests. `adafruit_hcsr04` writes
+                        //     `self._echo = PulseIn(echo_pin)` under `if _USE_PULSEIO:` and the
+                        //     `DigitalInOut` form under the `else`, so at the top level there is
+                        //     no assignment at all and the field had no recorded class (#385).
                         foreach (var s0 in block.Statements)
                             if (s0 is FunctionDef fdI && fdI.Name == "__init__")
-                                foreach (var st in fdI.Body.Statements)
-                                    if (st is AssignStmt asg2 && asg2.Target is MemberAccessExpr m2
-                                        && m2.Object is VariableExpr sv2 && sv2.Name == "self"
-                                        && asg2.Value is CallExpr ce2 && ce2.Callee is VariableExpr cv2
-                                        && !IsScalarTypeName(cv2.Name)
-                                        && !fieldClasses.ContainsKey(classKey + "|" + m2.Member))
-                                        fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv2.Name);
+                                RecordConstructedFieldClasses(fdI.Body, classKey);
                         if (InitCallsSuperInit(block, classDef.Bases)) classInitCallsSuper.Add(classKey);
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
@@ -1817,7 +1849,8 @@ public partial class IRGenerator
                                         // about this one.
                                         classPlainFunctions.Add(fullName);
                                     }
-                                    else if (IsOutlineSafe(func, defLayout, ctFields))
+                                    else if (IsOutlineSafe(func, defLayout, ctFields,
+                                                 InstanceFieldsOf(classKey)))
                                     {
                                         // A single-field mutator that ALSO has explicit returns
                                         // cannot use write-back-via-return (one return slot can't
@@ -2746,9 +2779,22 @@ public partial class IRGenerator
         return fields;
     }
 
+    /// The fields of <paramref name="classKey"/> that are known to hold another instance.
+    /// Null when there are none, so the common class costs nothing.
+    private HashSet<string>? InstanceFieldsOf(string classKey)
+    {
+        HashSet<string>? found = null;
+        string prefix = classKey + "|";
+        foreach (var key in fieldClasses.Keys)
+            if (key.StartsWith(prefix, StringComparison.Ordinal))
+                (found ??= new HashSet<string>(StringComparer.Ordinal)).Add(key[prefix.Length..]);
+        return found;
+    }
+
     private bool IsOutlineSafe(FunctionDef method,
         List<(string Field, string Type, string SourceParam)> layout,
-        HashSet<string>? compileTimeFields = null)
+        HashSet<string>? compileTimeFields = null,
+        HashSet<string>? instanceFields = null)
     {
         if (layout.Count == 0) return false;
 
@@ -2794,6 +2840,14 @@ public partial class IRGenerator
                     // A field holding a compile-time table has no run-time value to pass, so a
                     // shared body cannot reach it.
                     if (compileTimeFields != null && compileTimeFields.Contains(ma.Member)) safe = false;
+                    // Nor can a field that holds another INSTANCE. `self.field.<anything>` is
+                    // already refused below, and a BARE read of the same field was not: the
+                    // layout types such a field uint8 because __init__ constructs it, so the
+                    // scalar check above cannot see it either. An outlined body then received
+                    // the field as a number and `self` did not exist in it at all -- its
+                    // parameter is `self__field` -- so anything the body later did WITH the
+                    // instance had no receiver to resolve against (#385).
+                    if (instanceFields != null && instanceFields.Contains(ma.Member)) safe = false;
                     return; // do NOT descend into the `self` leaf -- it is a field access
                 // `self.<field>.<anything>` -- a member reached THROUGH a field, so the field is
                 // another instance, not the scalar an outlined body would take as a parameter.
