@@ -870,6 +870,43 @@ public partial class IRGenerator
     private bool IsMemoryAddressGlobal(string name) =>
         globals.TryGetValue(name, out var sym) && sym.IsMemoryAddress;
 
+    /// <summary>
+    /// The width of a FRESH local inside an @inline expansion, taken from what is stored in it.
+    ///
+    /// Such a name has no recorded type, and the binding the fallback hands back is a BYTE, so
+    /// the store truncated whatever was put there: a uint16 came back as its low byte and a
+    /// float as 0. The same method compiled as a shared subroutine answers correctly, which is
+    /// why this only ever showed up in a body that something forced inline -- `timestamp =
+    /// time.monotonic()` in adafruit_hcsr04, whose method is expanded because it reaches
+    /// through a field, read back 0 and made every measurement after the first time out (#385).
+    ///
+    /// Only when the name resolved to THIS expansion's own local. A name that resolved to a
+    /// parameter, a constant, an enclosing frame or a module global already has a width, and
+    /// that width is not ours to change.
+    /// </summary>
+    private Val WidenInlineLocalToValue(VariableExpr varExpr, Val target, Val value)
+    {
+        if (target is not Variable tv) return target;
+        string key = currentInlinePrefix + varExpr.Name;
+        if (tv.Name != key || variableTypes.ContainsKey(key)) return target;
+
+        DataType vt = value switch
+        {
+            Temporary t => t.Type,
+            Variable v => v.Type,
+            FloatConstant => DataType.FLOAT,
+            _ => DataType.UNKNOWN,
+        };
+        if (vt == DataType.UNKNOWN || vt == tv.Type) return target;
+        // Only ever WIDER. Narrowing a binding here would be a new truncation, and FLOAT is
+        // not comparable by size to an integer: it is a different representation, and a store
+        // into an integer slot loses the value rather than its high bytes.
+        if (vt != DataType.FLOAT && vt.SizeOf() <= tv.Type.SizeOf()) return target;
+
+        variableTypes[key] = vt;
+        return new Variable(key, vt);
+    }
+
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
     {
         if (stmt.AnnotatedType is { Length: > 0 } declared
@@ -1044,6 +1081,9 @@ public partial class IRGenerator
         {
             target = ResolveBinding(varExpr.Name, varExpr);
         }
+
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+            target = WidenInlineLocalToValue(varExpr, target, value);
 
         if (!(value is NoneVal)) Emit(new Copy(value, target));
 
