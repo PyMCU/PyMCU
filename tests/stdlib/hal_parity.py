@@ -392,6 +392,13 @@ def universality_violations() -> list[UniversalityViolation]:
         if not root.exists():
             continue
         for path in sorted(root.rglob("*.py")):
+            if "boards" in path.relative_to(root).parts:
+                # board.D5 mapping to PD5 on the Uno IS the design: a board
+                # module's whole job is naming a chip's pins for a specific
+                # piece of hardware. The universality rule is about the
+                # layer's own modules (digitalio, busio, pwmio, ...), not
+                # about the board pin tables they are handed.
+                continue
             tree = parse_source(path)
             by_line: dict[int, list[tuple[str, str]]] = {}
 

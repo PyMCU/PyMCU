@@ -405,11 +405,6 @@ reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 # -- compatibility universality ---------------------------------------------
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/boards/*"
-status = "tracked:#38"
-reason = "CircuitPython board modules expose chip port names directly."
-
-[[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/adafruit_minimqtt/adafruit_minimqtt.py:2"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
@@ -483,11 +478,6 @@ reason = "CircuitPython adapters should not import pymcu.chips."
 symbol = "compat.circuitpython.pymcu_circuitpython/socketpool.py:20"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
-
-[[deviation]]
-symbol = "compat.micropython.pymcu_micropython/boards/*"
-status = "tracked:#9"
-reason = "MicroPython board modules expose chip port names directly."
 
 [[deviation]]
 symbol = "compat.micropython.pymcu_micropython/machine.py:*"
