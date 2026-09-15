@@ -1282,36 +1282,41 @@ def build(
                     avr_math_path = math_lib_path / "avr"
                     
                     # List of runtime functions to check. The signed floor div/mod
-                    # routines (__divs*/__mods*) wrap the unsigned core, which lives in
-                    # the same .S file, so pulling in their file also brings the core.
+                    # routines (__divs*/__mods*) build on the unsigned core, so a
+                    # reference to one of them pulls in the core's file as well.
                     runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32",
                                      "__divs8", "__mods8", "__divs16", "__mods16", "__divs32", "__mods32",
                                      "__mul32"]
                     needed_funcs = [f for f in runtime_funcs if f in asm_content]
 
                     if needed_funcs:
-                        # Build the math runtime text
+                        # Which source files each entry point needs. A whole file is
+                        # spliced in, so anything sharing a file is paid for whether or
+                        # not it is called: the 32-bit signed pair sits in its own file
+                        # for that reason, and an unsigned-only program -- the decimal
+                        # printer among them -- no longer carries its 226 bytes.
                         func_map = {
-                            "__div8": "div.S",
-                            "__mod8": "div.S",
-                            "__divs8": "div.S",
-                            "__mods8": "div.S",
-                            "__mul8": "mul.S",
-                            "__div16": "div16.S",
-                            "__mod16": "div16.S",
-                            "__divs16": "div16.S",
-                            "__mods16": "div16.S",
-                            "__div32": "div32.S",
-                            "__mod32": "div32.S",
-                            "__divs32": "div32.S",
-                            "__mods32": "div32.S",
-                            "__mul32": "mul32.S",
+                            "__div8": ("div.S",),
+                            "__mod8": ("div.S",),
+                            "__divs8": ("div.S",),
+                            "__mods8": ("div.S",),
+                            "__mul8": ("mul.S",),
+                            "__div16": ("div16.S",),
+                            "__mod16": ("div16.S",),
+                            "__divs16": ("div16.S",),
+                            "__mods16": ("div16.S",),
+                            "__div32": ("div32.S",),
+                            "__mod32": ("div32.S",),
+                            "__divs32": ("div32.S", "div32s.S"),
+                            "__mods32": ("div32.S", "div32s.S"),
+                            "__mul32": ("mul32.S",),
                         }
                         math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
                         included_files = set()
                         for func in [f for f in needed_funcs if not f.startswith("__fp")]:
-                            fname = func_map.get(func)
-                            if fname and fname not in included_files:
+                            for fname in func_map.get(func, ()):
+                                if fname in included_files:
+                                    continue
                                 src_path = avr_math_path / fname
                                 if src_path.exists():
                                     with open(src_path, "r") as lib_f:
