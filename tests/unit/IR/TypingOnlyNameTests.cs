@@ -33,6 +33,24 @@ public class TypingOnlyNameTests
     private static string Refusal(string src) =>
         Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(src)).Message;
 
+    // Runs the AST through ConditionalCompilator first, the way the real pipeline does
+    // (Pipeline/Phases/Processors/ConditionalCompilationProcessor) and the bare Gen() above
+    // does not. A `try: ... except ImportError: pass` or `if TYPE_CHECKING:` guard is folded
+    // there -- Gen() alone never populates ProgramNode.TypingOnlyNames at all, so a test
+    // relying on a GUARDED name (rather than the small hardcoded TypingModuleNames set) needs
+    // this one instead.
+    private static ProgramIR GenWithGuardFolding(string src)
+    {
+        var config = new DeviceConfig { Arch = "avr" };
+        var program = new Parser(new Lexer(src).Tokenize()).ParseProgram();
+        new ConditionalCompilator(config).Process(program);
+        return new IRGenerator().Generate(
+            program, new Dictionary<string, ProgramNode>(), config);
+    }
+
+    private static string GuardedRefusal(string src) =>
+        Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => GenWithGuardFolding(src)).Message;
+
     [Fact]
     public void AnUnreadTypingOnlyParameterIsAccepted()
     {
@@ -129,5 +147,50 @@ public class TypingOnlyNameTests
         // The call folds to 6, so the ignored parameter left no instruction behind.
         Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
             c => c.Src is Constant k && k.Value == 6);
+    }
+
+    // ── PyMCU#417: `if TYPE_CHECKING:` populates typingOnlyNames the same way a folded ────
+    // ── `try/except ImportError` already does ─────────────────────────────────────────────
+
+    [Fact]
+    public void AnIfTypeCheckingGuard_AlsoPopulatesTheTypingOnlyName()
+    {
+        // The other spelling of the guard: `if TYPE_CHECKING:` around the import, no
+        // try/except involved. CompileTimeEvaluator has no notion of TYPE_CHECKING, so
+        // before #417 this `if` was left as ordinary (unresolvable) control flow and its
+        // import's name never reached TypingOnlyNames at all.
+        Assert.NotNull(GenWithGuardFolding(Hdr +
+            "if TYPE_CHECKING:\n" +
+            "    from circuitpython_typing import ReadableBuffer\n\n" +
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        pass\n" +
+            "    @inline\n" +
+            "    def take(self, buf: ReadableBuffer) -> uint8:\n" +
+            "        return 1\n" +
+            "d = Dev()\n" +
+            "def main():\n    GPIOR0.value = d.take(0)\n"));
+    }
+
+    [Fact]
+    public void AnIfTypeCheckingGuardedName_ARealMemberRead_IsRefused()
+    {
+        // A real use still has to be refused -- accepting the annotation is only half of
+        // #367/#417's guarantee. The message is not required to be the tailored typing-only
+        // sentence here (member access has its own refusal path); what matters is that it
+        // does NOT silently compile as an unknown-width read.
+        GuardedRefusal(Hdr +
+            "if TYPE_CHECKING:\n" +
+            "    from circuitpython_typing import ReadableBuffer\n\n" +
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        pass\n" +
+            "    @inline\n" +
+            "    def take(self, buf: ReadableBuffer) -> uint8:\n" +
+            "        return buf.something\n" +
+            "d = Dev()\n" +
+            "def main():\n    GPIOR0.value = d.take(0)\n");
     }
 }

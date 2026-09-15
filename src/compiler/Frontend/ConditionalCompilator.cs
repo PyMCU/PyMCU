@@ -178,6 +178,19 @@ public class ConditionalCompilator(DeviceConfig config)
             Line = src.Line,
         };
 
+    // `if TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` -- the bare name (however it was
+    // imported, typically under the very same kind of guard this file already folds) or the
+    // dotted spelling written without importing the name at all. Only this exact shape: a
+    // compound condition (`if x or TYPE_CHECKING:`) is not this idiom and is left to the
+    // generic evaluator, which reports its own "Unsupported condition" rather than silently
+    // taking a branch on a guess about the other operand.
+    private static bool IsTypeCheckingGuard(Expression? cond) => cond switch
+    {
+        VariableExpr { Name: "TYPE_CHECKING" } => true,
+        MemberAccessExpr { Object: VariableExpr, Member: "TYPE_CHECKING" } => true,
+        _ => false,
+    };
+
     // Returns the winning branch body for a compile-time if/elif/else.
     // Throws if any condition is not evaluable at compile time.
     private Statement? ChooseBranch(IfStmt ifStmt)
@@ -229,6 +242,29 @@ public class ConditionalCompilator(DeviceConfig config)
                     else if (!ProcessStatement(inner, prog, newStmts)) newStmts.Add(inner);
                 }
                 return true;
+            // `if TYPE_CHECKING:` is the other spelling of an optional-import guard (#367):
+            // TYPE_CHECKING is False at run time by definition (a type checker sets it True,
+            // this compiler never does), so the body never runs and its imports bind nothing
+            // here either. Handled before the generic IfStmt case below, because
+            // CompileTimeEvaluator has no notion of TYPE_CHECKING and would otherwise throw
+            // "Unsupported condition", leaving the whole `if` as ordinary (and unresolvable)
+            // control flow -- which is what used to happen, so the names it imports (a
+            // `circuitpython_typing` device driver, most often) were plain undefined rather
+            // than typing-only.
+            case IfStmt { Condition: var cond } ifStmt when IsTypeCheckingGuard(cond):
+            {
+                foreach (var imp in (ifStmt.ThenBranch as Block)?.Statements.OfType<ImportStmt>()
+                                     ?? Enumerable.Empty<ImportStmt>())
+                {
+                    foreach (var sym in imp.Symbols) prog.TypingOnlyNames.Add(sym);
+                    foreach (var alias in imp.Aliases.Values) prog.TypingOnlyNames.Add(alias);
+                    if (!string.IsNullOrEmpty(imp.ModuleAlias))
+                        prog.TypingOnlyNames.Add(imp.ModuleAlias!);
+                }
+                // No `else` on this idiom in practice, but Python allows one and it DOES run.
+                if (ifStmt.ElseBranch != null) FlushBlock(ifStmt.ElseBranch, prog, newStmts);
+                return true;
+            }
             case IfStmt ifStmt:
                 try
                 {

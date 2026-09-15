@@ -329,6 +329,91 @@ public class ConditionalCompilatorTests
         prog.GlobalStatements.Should().ContainSingle()
             .Which.Should().BeOfType<ReturnStmt>();
     }
+    // -------------------------------------------------------------------------
+    // PyMCU#417: typing-only names from a guarded import
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void OptionalImportFailed_RecordsItsSymbolsAsTypingOnly()
+    {
+        // The try/except ImportError idiom every CircuitPython driver opens with
+        // (adafruit_register/i2c_bits.py): the module is not there on this target, the try
+        // folds to its (empty) handler, and the names it would have bound are recorded so an
+        // annotation naming one is accepted rather than reported as a typo.
+        var failedImport = new ImportStmt(
+            "circuitpython_typing.device_drivers", new List<string> { "I2CDeviceDriver" })
+        {
+            IsOptional = true,
+            OptionalLoadFailed = true,
+        };
+        var tryStmt = new TryStmt(
+            new List<Statement> { failedImport },
+            new List<(string, List<Statement>)> { ("ImportError", new List<Statement>()) });
+        var prog = EmptyProgram();
+        prog.GlobalStatements.Add(tryStmt);
+
+        new ConditionalCompilator(AvrConfig()).Process(prog);
+
+        prog.TypingOnlyNames.Should().Contain("I2CDeviceDriver");
+    }
+
+    [Fact]
+    public void IfTypeChecking_RecordsItsImportsSymbolsAsTypingOnly_AndDropsTheBlock()
+    {
+        // The other spelling of the same guard: `if TYPE_CHECKING:` around the import, no
+        // try/except at all. TYPE_CHECKING is False at run time by definition, so the body
+        // never runs -- CompileTimeEvaluator has no notion of the name and would otherwise
+        // throw "Unsupported condition", leaving the whole `if` as ordinary (unresolvable)
+        // control flow and its imports as plain undefined names.
+        var guardedImport = new ImportStmt(
+            "circuitpython_typing", new List<string> { "ReadableBuffer" });
+        var thenBlock = MakeBlock(guardedImport);
+        var ifStmt = new IfStmt(new VariableExpr("TYPE_CHECKING"), thenBlock);
+        var prog = EmptyProgram();
+        prog.GlobalStatements.Add(ifStmt);
+
+        new ConditionalCompilator(AvrConfig()).Process(prog);
+
+        prog.TypingOnlyNames.Should().Contain("ReadableBuffer");
+        // Folded away like a dead `if False:` branch: nothing of the guard survives.
+        prog.GlobalStatements.Should().NotContain(ifStmt);
+        prog.Imports.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void IfTypeChecking_DottedSpelling_IsAlsoRecognized()
+    {
+        var guardedImport = new ImportStmt(
+            "circuitpython_typing", new List<string> { "ReadableBuffer" });
+        var thenBlock = MakeBlock(guardedImport);
+        var cond = new MemberAccessExpr(new VariableExpr("typing"), "TYPE_CHECKING");
+        var ifStmt = new IfStmt(cond, thenBlock);
+        var prog = EmptyProgram();
+        prog.GlobalStatements.Add(ifStmt);
+
+        new ConditionalCompilator(AvrConfig()).Process(prog);
+
+        prog.TypingOnlyNames.Should().Contain("ReadableBuffer");
+    }
+
+    [Fact]
+    public void IfTypeChecking_WithAnElse_StillRunsTheElseBranch()
+    {
+        // Rare in practice, but Python allows it and the else DOES run: only the `then` body
+        // is dead code here, not the whole statement.
+        var guardedImport = new ImportStmt(
+            "circuitpython_typing", new List<string> { "ReadableBuffer" });
+        var elseImport = MakeImport("pymcu.avr", "DDRB");
+        var ifStmt = new IfStmt(
+            new VariableExpr("TYPE_CHECKING"), MakeBlock(guardedImport),
+            elseBranch: MakeBlock(elseImport));
+        var prog = EmptyProgram();
+        prog.GlobalStatements.Add(ifStmt);
+
+        new ConditionalCompilator(AvrConfig()).Process(prog);
+
+        prog.Imports.Should().ContainSingle().Which.ModuleName.Should().Be("pymcu.avr");
+    }
 }
 
 public class CompileTimeEvaluatorTests
@@ -476,5 +561,5 @@ public class CompileTimeEvaluatorTests
         var act = () => Evaluator().EvaluateCondition(new IntegerLiteral(1));
         act.Should().Throw<Exception>();
     }
-}
 
+}
