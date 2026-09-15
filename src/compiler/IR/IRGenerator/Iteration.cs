@@ -2152,10 +2152,27 @@ public partial class IRGenerator
 
             if (!string.IsNullOrEmpty(stmt.AsName))
             {
-                string qualified = string.IsNullOrEmpty(currentFunction)
-                    ? stmt.AsName
-                    : currentFunction + "." + stmt.AsName;
-                string qualifiedObj = string.IsNullOrEmpty(currentFunction) ? objName : currentFunction + "." + objName;
+                // The AS-name is a LOCAL of whichever body the `with` is written in, qualified
+                // the same way every other local is: by the inline frame when one is active
+                // (a `with` inside a force-inlined method, as bmp280's `with self._i2c as
+                // i2c:` inside `_read_register` is), else by the enclosing function, else bare
+                // at true module level. `currentFunction` alone missed the inline case: the
+                // alias was written under "main.bus" while the call inside the SAME inlined
+                // body read "self"'s inline-qualified "bus", so nothing found the alias and
+                // the receiver fell to a plain, classless local (#390's method-call half).
+                string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + stmt.AsName
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + stmt.AsName
+                        : stmt.AsName);
+                // NOT `currentFunction + "." + objName`: a module-level `with g as h:` runs
+                // inside the synthesized/explicit main as module init, but every LATER
+                // reference to `g` resolves it as a module global under its bare name (the
+                // same reason SlotInstanceKey exists for construction) -- so aliasing `h` to
+                // the qualified "main.g" pointed the alias at a name nothing else ever wrote,
+                // and `h.state` read whatever storage happened to exist under it (zero) while
+                // `__enter__`'s own body kept writing the field the bare name owns (#390).
+                string qualifiedObj = SlotInstanceKey(objName);
                 variableAliases[qualified] = qualifiedObj;
             }
 
@@ -2169,10 +2186,15 @@ public partial class IRGenerator
             // would otherwise leave v bound to the manager itself.
             if (!string.IsNullOrEmpty(stmt.AsName))
             {
-                string qualified = string.IsNullOrEmpty(currentFunction)
-                    ? stmt.AsName
-                    : currentFunction + "." + stmt.AsName;
-                string qualifiedObj = string.IsNullOrEmpty(currentFunction) ? objName : currentFunction + "." + objName;
+                // Same qualification as above -- kept in step because this second write is
+                // what stays live once the block below decides whether __enter__ returned
+                // something else entirely.
+                string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + stmt.AsName
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + stmt.AsName
+                        : stmt.AsName);
+                string qualifiedObj = SlotInstanceKey(objName);
                 // A ZCA `__enter__` whose body is `return self` hands back the instance, but the
                 // instance has no single runtime value to hand back: the expansion yields a
                 // temporary that stands for nothing. Reading the AST settles it -- when the
