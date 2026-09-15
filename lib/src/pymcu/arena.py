@@ -65,3 +65,13 @@ def read8(off: uint16) -> uint8:
 @inline
 def write8(off: uint16, v: uint8) -> None:
     _arena[off] = v
+
+
+@inline
+def high_water() -> uint16:
+    # A plain module-level global cannot be read as `module.name` from outside the
+    # module today (a separate, pre-existing gap -- module member access resolves
+    # functions, not data). arena_high_water itself stays the named global the RFC
+    # asks for, readable directly from a .lst/.map or a debugger; this getter is only
+    # so an integration test can read it the same way it reads anything else here.
+    return arena_high_water
