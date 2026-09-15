@@ -1,5 +1,6 @@
-# expect: refuse isinstance() is a Python builtin that PyMCU does not provide
-# doc: docs/language/limitations.md (Built-ins summary); enhancement requested in #423/#424
+# expect: match
+# tracked: #386
+# doc: isinstance() folds at compile time since #424; the remaining mismatch is #386 (a computed bool prints 1, CPython prints True)
 class Base:
     def __init__(self, v: int) -> None:
         self.v = v

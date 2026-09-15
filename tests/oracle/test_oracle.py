@@ -14,11 +14,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PROBES = Path(__file__).resolve().parent / "probes"
-DEFAULT_PYMCU_BIN = (
-    Path.home() / "PycharmProjects/cp-hcsr04/.venv/bin/pymcu"
-)
-AVR8SHARP_SITE = (
-    Path.home() / "Repos/PyMCU/.venv/lib/python3.14/site-packages"
+# The compiler of record is this checkout's own venv: the driver is installed editable there
+# and resolves pymcuc through src/driver/pymcuc, so a rebuilt build/bin is what gets measured.
+# PYMCU_BIN overrides it (a worktree with its own build points here at its own venv). A user
+# project's venv is never a test dependency: its wheels are whatever was built for that
+# project on that day, and a probe measured through it reports that wheel, not this tree.
+DEFAULT_PYMCU_BIN = ROOT / ".venv" / "bin" / "pymcu"
+AVR8SHARP_SITE = next(
+    iter(sorted((ROOT / ".venv" / "lib").glob("python3.*/site-packages"))),
+    ROOT / ".venv" / "lib" / "python3.14" / "site-packages",
 )
 END = "END\n"
 
