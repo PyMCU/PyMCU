@@ -2584,6 +2584,48 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// True when `&lt;name&gt;.&lt;member&gt;` reads a FIELD OF A BOXED INSTANCE, so the slot
+    /// read in <see cref="VisitMemberAccess"/> owns it and nothing before that branch may
+    /// claim it.
+    ///
+    /// The test is the slot branch's own -- the instance has a slot, the instance has a class,
+    /// and the class lays that member out at a byte offset -- so the guard and the branch it
+    /// guards cannot disagree about which reads belong to the slot.
+    ///
+    /// What differs is only HOW THE NAME IS SPELLED. The slot branch runs after the object has
+    /// been visited, so it holds the qualified name; the guard runs on the name as written. The
+    /// four candidates below are the four spellings <c>SlotInstanceKey</c> can have produced
+    /// when the instance was constructed, and each is walked through the alias chain the way
+    /// the branch walks its own.
+    /// </summary>
+    private bool NamesABoxedField(string name, string member)
+    {
+        if (slotInstances.Count == 0) return false;
+
+        foreach (string candidate in new[]
+                 {
+                     name,
+                     currentInlinePrefix + name,
+                     string.IsNullOrEmpty(currentFunction) ? name : currentFunction + "." + name,
+                     currentModulePrefix + name,
+                 })
+        {
+            string cur = candidate;
+            for (int depth = 0; depth < 20; depth++)
+            {
+                if (slotInstances.ContainsKey(cur)
+                    && instanceClasses.TryGetValue(cur, out var cls)
+                    && TryGetSlotFieldOffset(cls, member, out _, out _))
+                    return true;
+                if (!variableAliases.TryGetValue(cur, out var next) || string.IsNullOrEmpty(next))
+                    break;
+                cur = next;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// The value of a CLASS-level attribute, reached through an instance of the class rather
     /// than through the class name (PyMCU#268).
     ///
@@ -2829,7 +2871,31 @@ public partial class IRGenerator
             return iaLoaded;
         }
 
-        if (expr.Object is VariableExpr varExpr)
+        // A field of a BOXED instance is answered by the slot branch below, never by the
+        // module-attribute mangling that follows.
+        //
+        // That mangling joins a base and a member with an underscore to reach a module's
+        // global (`machine.mem8` -> `machine_mem8`), and instance-field flattening spells its
+        // names the same way, so `c._t` mangled to `c__t` -- which `mutableGlobals` always
+        // carries a placeholder for, whether or not the class was later boxed into an SRAM
+        // slot. The branch matched and RETURNED, about two hundred lines before the slot read
+        // that knows better could run.
+        //
+        // The flattened name is written when at least one field is initialised from something
+        // other than a bare constructor parameter, because that shape takes the materialising
+        // path through `__init__`. When EVERY field comes straight from a parameter, the fast
+        // construction path writes the slot and only the slot, so the flattened name is never
+        // written and the read answers 0. Two classes of the same shape in one program, one
+        // right and one wrong, which is what made it hard to see (#409).
+        //
+        // Guarded here rather than by gating the mangling on `varExpr` naming a module: the
+        // test is the slot branch's own, so the two cannot disagree about which reads belong
+        // to it.
+        if (expr.Object is VariableExpr slotVe && NamesABoxedField(slotVe.Name, expr.Member))
+        {
+            // Fall through to the slot read below.
+        }
+        else if (expr.Object is VariableExpr varExpr)
         {
             // Resolve a module alias (import machine as m) to the real module name so
             // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
@@ -2974,6 +3040,8 @@ public partial class IRGenerator
 
         var objVal = VisitExpression(expr.Object);
         var baseName = objVal is Variable vv ? vv.Name : (objVal is Temporary tt ? tt.Name : "");
+
+        // (see NamesABoxedField, used by the guard above)
 
         // string_constant.name → the string itself (e.g. cs="PB2" → cs.name == "PB2")
         // This supports passing a bare pin-name string where a Pin typed param is expected.
