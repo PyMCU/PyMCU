@@ -359,6 +359,18 @@ public partial class IRGenerator
         this.currentSourcePath = "";
 
         var irProgram = new ProgramIR { Device = GeometryOf(config) };
+
+        // The names an absent optional import would have bound, from every module (#366). The
+        // frontend recorded them as it folded each `try` to its handler, which is the last
+        // moment anything knows: after that the import statement is gone and `I2CDeviceDriver`
+        // is indistinguishable from a misspelling. One set for the whole program, because an
+        // annotation in one module names what another module's try imported as often as not.
+        typingOnlyNames.Clear();
+        foreach (var n in mainAst.TypingOnlyNames) typingOnlyNames.Add(n);
+        foreach (var modAst0 in importedModules.Values)
+            foreach (var n in modAst0.TypingOnlyNames) typingOnlyNames.Add(n);
+        typingOnlyValues.Clear();
+
         globals.Clear();
         mutableGlobals.Clear();
         functionReturnTypes.Clear();
