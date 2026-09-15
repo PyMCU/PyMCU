@@ -2010,24 +2010,51 @@ public partial class IRGenerator
             return;
         }
 
+        var (bits, bitsTy) = AsStorableBits(value, fieldTy);
+
         for (int i = 0; i < sz; ++i)
         {
             Temporary b = MakeTemp(DataType.UINT8);
             if (i == 0)
             {
-                Emit(new Copy(value, b));   // low byte (truncating copy)
+                Emit(new Copy(bits, b));   // low byte (truncating copy)
             }
             else
             {
-                // Byte i = (value >> 8*i) & 0xFF. The truncating Copy to UINT8 keeps the low byte,
-                // which equals byte i of value regardless of the shift's sign behaviour.
-                Temporary sh = MakeTemp(fieldTy);
-                Emit(new Binary(BinaryOp.RShift, value, new Constant(8 * i), sh));
+                // Byte i = (bits >> 8*i) & 0xFF. The truncating Copy to UINT8 keeps the low byte,
+                // which equals byte i of bits regardless of the shift's sign behaviour.
+                Temporary sh = MakeTemp(bitsTy);
+                Emit(new Binary(BinaryOp.RShift, bits, new Constant(8 * i), sh));
                 Emit(new Copy(sh, b));
             }
 
             StoreByte(off + i, b);
         }
+    }
+
+    /// <summary>
+    /// The value to split into bytes for a field of <paramref name="fieldTy"/>, and the type to
+    /// shift it as.
+    ///
+    /// For an integer field that is the value itself. For a FLOAT it is not: a float's bytes are
+    /// its IEEE-754 representation and not an arithmetic quantity, so `value >> 8` is not an
+    /// operation that exists on one. The AVR backend said so -- "no float lowering for RShift...
+    /// an earlier pass rewrote a float operation into one, which is a bug in that pass" -- and
+    /// this was that pass. It named the constructor's line and a pass rather than a cause, and it
+    /// refused an ordinary class: a float field alongside ANY second field is enough, because one
+    /// field alone collapses to a scalar and never reaches a slot at all (#404).
+    ///
+    /// A Bitcast is the reinterpretation the store wanted in the first place. It costs nothing at
+    /// run time on a target whose float is already four little-endian bytes, and it is what the
+    /// READ side has been doing all along: a multi-byte field is loaded back through ONE typed
+    /// LoadIndirect over the same four bytes.
+    /// </summary>
+    private (Val Bits, DataType Ty) AsStorableBits(Val value, DataType fieldTy)
+    {
+        if (fieldTy != DataType.FLOAT) return (value, fieldTy);
+        Temporary bits = MakeTemp(DataType.UINT32);
+        Emit(new Bitcast(value, bits));
+        return (bits, DataType.UINT32);
     }
 
     // `b = a[lo:hi]` without an array annotation. Infer `b` as a fixed-size array whose length is
@@ -3666,17 +3693,21 @@ public partial class IRGenerator
             // consecutive bytes (a uint16/uint32 element field was otherwise truncated to 1 byte).
             DataType fdt = DataTypeExtensions.StringToDataType(type);
             int fsz = fdt.SizeOf();
+            // Same reinterpretation as the single-instance slot: a float's bytes are its
+            // IEEE-754 representation, so they are split as an integer and not shifted as a
+            // float. This is the second site of the one rule, and both call one helper.
+            var (vBits, vBitsTy) = AsStorableBits(v, fdt);
             for (int k = 0; k < fsz; ++k)
             {
                 Temporary b = MakeTemp(DataType.UINT8);
                 if (k == 0)
                 {
-                    Emit(new Copy(v, b));
+                    Emit(new Copy(vBits, b));
                 }
                 else
                 {
-                    Temporary sh = MakeTemp(fdt);
-                    Emit(new Binary(BinaryOp.RShift, v, new Constant(8 * k), sh));
+                    Temporary sh = MakeTemp(vBitsTy);
+                    Emit(new Binary(BinaryOp.RShift, vBits, new Constant(8 * k), sh));
                     Emit(new Copy(sh, b));
                 }
 
