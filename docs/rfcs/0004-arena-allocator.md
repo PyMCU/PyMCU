@@ -1,16 +1,17 @@
 # RFC 0004: arena allocator for runtime-sized buffers
 
-- Status: **PHASE 1 IMPLEMENTED and measured** (module-level and `__init__`-once
-  allocation, the once rule, `MemoryError`, observability, AVR only -- section 7). Not
-  implemented: zero-copy slice/`memoryview` views over a runtime-sized buffer, passing
-  one to a function's `bytearray` parameter (PyMCU#414), a general call-site-count proof
-  for allocation inside a non-inlined function or method, and indexing an arena buffer
-  two `@inline` levels deep (PyMCU#415). All named as follow-up work in section 6,
-  alongside pre-existing gaps this work found but does not fix: constructing a
-  `bytearray` as a per-instance field; reading a plain module global as `module.name`;
-  `ptr(some_array)` silently reading the array's first byte instead of computing its
-  address or refusing (PyMCU#413, filed as wrongcode); and `__TIMEBASE__` never being
-  bound to anything but its shipped `0` (PyMCU#416).
+- Status: **PHASE 1 IMPLEMENTED and measured** (module-level, `__init__`-once local, and
+  (after rebasing onto PyMCU#392) `__init__`-once field allocation; the once rule,
+  `MemoryError`, observability; AVR only -- section 7). Not implemented: zero-copy
+  slice/`memoryview` views over a runtime-sized buffer, passing one to a function's
+  `bytearray` parameter (PyMCU#414), a general call-site-count proof for allocation
+  inside a non-inlined function or method, indexing an arena buffer two `@inline` levels
+  deep (PyMCU#415), and indexing an arena-backed FIELD with `[i]` at all (PyMCU#418, a
+  silent-wrongcode bit-operation miscompile, more severe than #415). All named as
+  follow-up work in section 6, alongside pre-existing gaps this work found: reading a
+  plain module global as `module.name`; `ptr(some_array)` silently reading the array's
+  first byte instead of computing its address or refusing (PyMCU#413, wrongcode); and
+  `__TIMEBASE__` never being bound to anything but its shipped `0` (PyMCU#416).
 - Date: 2026-09-15
 - Affects: `lib/src/pymcu/arena.py` (new),
   `extensions/pymcu-sdk/csharp/Common/BuiltinExceptionNames.cs`,
@@ -283,21 +284,31 @@ architecture on any other target (`arch != "avr" && arch != ""`), pointing at
   reader in the PWM HAL; nothing anywhere sets `__TIMEBASE__` away from its shipped `0`
   literal, so the PWM/Timer0 refusal the HAL comment documents can never fire). Filed as
   PyMCU#416.
-- **Constructing a `bytearray` as a per-instance field does not compile at all yet**,
-  found while testing the `__init__` case this RFC's once rule is built around --
-  `self.buf: bytearray = bytearray(4)` and the unannotated `self.buf = bytearray(4)` both
-  fail identically, with a compile-time size, on a build with none of this RFC's changes:
-  `bytearray() is a Python builtin that PyMCU does not provide`. A member-target
-  assignment's RHS is evaluated as an ordinary expression with no special case for
-  `bytearray(...)`, unlike a plain local or module-level declaration. This is a
-  pre-existing gap in ZCA field construction, unrelated to arenas and larger than this
-  RFC (it blocks every `self.buf: bytearray = ...` shape, constant-sized or not) --
-  phase 1 does not fix it. What phase 1's once rule does verify: a `bytearray(n)`
-  allocation as a **local** inside an `@inline __init__` that constructs at module level
-  is accepted (`currentFunction` stays `"main"` through the inlining, exactly as
-  section 2 predicts), so the mechanism is right; only the field-assignment spelling
-  needs the separate fix to reach it. Filed as a finding rather than fixed here because
-  fixing it is a ZCA field-layout change with its own blast radius, not an arena change.
+- **UPDATE, now fixed:** constructing a `bytearray` as a per-instance field did not
+  compile at all when this was first written (`self.buf = bytearray(4)` failing
+  identically to a runtime size, on a build with none of this RFC's changes --
+  `bytearray() is a Python builtin that PyMCU does not provide`; a pre-existing gap in
+  ZCA field construction, unrelated to arenas). Filed as PyMCU#392, fixed by another
+  agent, landed on `main`. After rebasing onto it, `self.buf = bytearray(n)` with a
+  runtime `n` allocates from the arena the same way the local-variable spelling always
+  did: a hidden local (the existing once-rule-checked path) followed by an ordinary
+  field write of its value, reusing the existing scalar-field machinery rather than
+  teaching the field-construction code its own storage resolution. `self.buf`'s width
+  needed forcing to `uint16` explicitly (`AssignStmt.AnnotatedType`) -- an arena offset
+  can exceed 255 on any part with more than 255 bytes of SRAM, and an unannotated field
+  defaults to `uint8` from the assigned value's apparent shape.
+
+  **What construction fixing did NOT fix, and should not be assumed to:** `self.buf[i]`
+  bracket indexing on the resulting field silently compiles to a **bit operation**
+  instead of a byte access -- `self.buf[0] = v` sets bit 0 of the field and discards `v`
+  entirely, `self.buf[0]` reads bit 0 back as 0/1. No diagnostic, no refusal, just wrong
+  firmware. This is a DIFFERENT and more severe bug than the "two `@inline` levels deep"
+  case above (PyMCU#415, which at least raises `TypeError`): filed separately as
+  PyMCU#418, and no fixture or test here indexes an arena-backed field with `[i]`.
+  `arena-in-init-field` (`pymcu-avr` repo) verifies construction and the once rule only,
+  by reading the field's raw offset value (deterministically 0 for the program's first
+  allocation), alongside `arena-in-init` (kept, the local-variable spelling, unaffected
+  by either bug).
 - **A plain module-level global cannot be read as `module.name` from outside the
   module**, found writing the `arena-high-water` AVR fixture: `_pymcu_arena.
   arena_high_water` (a public, non-underscore data global) fails the same
