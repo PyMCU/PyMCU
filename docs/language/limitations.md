@@ -355,6 +355,32 @@ An unannotated field takes its width from the widest value the constructor assig
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic
 expression its widest operand. An explicit `self.x: T = ...` still wins.
 
+A field's layout is derived from every `self.x = ...` in the class body, not from `__init__`
+alone — a property setter (`@x.setter`) or a plain method `__init__` calls directly at the top
+level of its own body also introduces a field, exactly as `__init__` itself does (PyMCU#441).
+A method reachable only from outside construction does not: a name novel to such a method is
+refused as a typo rather than silently becoming a field of its own, since nothing here can
+tell the two apart the way `__init__` and a setter can be told apart from an arbitrary helper.
+
+A field's type is fixed at the first site that writes it (scalar widening across sites stays
+allowed, as it already was for multiple writes within `__init__`); a **later** write of a
+categorically different kind (numeric vs. `str` vs. anything else) is a located compile error.
+This is a PyMCU design choice, not an attempt to track what CPython, MicroPython or
+CircuitPython actually do — measured (PyMCU#441): all three let a field change type freely
+across writes, with no error or warning at all.
+
+**Divergence** (PyMCU#441): a field read somewhere and never written anywhere reachable in the
+class is refused at compile time, worded like the `AttributeError` every one of CPython,
+MicroPython and CircuitPython would raise for the same program at run time — that refusal is
+sound, since no run of the program could ever supply a value. What PyMCU cannot decide
+statically is *when*, in one instance's actual execution, a write reaches a field relative to
+a read of it: the three interpreters resolve attribute existence dynamically, per instance, by
+execution order, so a write that happens to run before a given read makes that read succeed
+even when it is not the field's "defining" site in the class body PyMCU scans. A read that (in
+execution order) precedes every write reachable from it gets PyMCU's zero-initialized default
+instead of the `AttributeError` the interpreters would raise at that point. `tests/oracle/probes/`
+has a probe of this shape marked `# expect: divergence`, citing this paragraph.
+
 ---
 
 ## Type system limitations

@@ -96,6 +96,11 @@ DIVERGENCE_TRANSFORMS: dict[str, "callable[[str], str]"] = {
     # A triple-quoted string's leading newline, right after the opening quote, is stripped
     # (roadmap.md:64).
     "docs/language/roadmap.md:64": lambda text: text[1:] if text.startswith("\n") else text,
+    # A field read before any write reachable from it executes: the interpreters resolve
+    # attribute existence dynamically, per instance, by execution order and raise
+    # AttributeError; PyMCU lays the field out statically and cannot see that the write comes
+    # later in THIS run, so it reads the zero-initialized default instead (limitations.md:372).
+    "docs/language/limitations.md:372": lambda text: text.replace("AttributeError", "0", 1),
 }
 
 
