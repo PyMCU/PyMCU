@@ -632,6 +632,14 @@ public partial class IRGenerator
                 paramDt = DataTypeExtensions.PointerWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
 
             variableTypes[qualifiedParam] = paramDt;
+
+            // A TYPING-ONLY annotation (#367). The name was accepted, because a parameter the
+            // body never reads costs nothing; reading it is refused at the line that does,
+            // where the sentence can name the value rather than the signature.
+            if (IsTypingOnlyName(param.Type ?? ""))
+                typingOnlyValues[qualifiedParam] = param.Type!;
+            else
+                typingOnlyValues.Remove(qualifiedParam);
         }
 
         arraysWithVariableIndex.Clear();

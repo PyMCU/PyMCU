@@ -210,6 +210,19 @@ public class ConditionalCompilator(DeviceConfig config)
             // Untouched for every other try: a try with no optional import in it is ordinary
             // control flow and keeps its own lowering.
             case TryStmt tryStmt when FoldedBranchOf(tryStmt) is { } chosen:
+                // The names the absent module would have bound (#367). Once the try folds to
+                // its handler the import is gone, and with it every trace that `Type` and
+                // `TracebackType` are annotation names standing for nothing at run time rather
+                // than types the reader misspelled. Recorded here because this is the last
+                // place that knows.
+                foreach (var failed in tryStmt.Body.OfType<ImportStmt>()
+                             .Where(i => i.IsOptional && i.OptionalLoadFailed))
+                {
+                    foreach (var sym in failed.Symbols) prog.TypingOnlyNames.Add(sym);
+                    foreach (var alias in failed.Aliases.Values) prog.TypingOnlyNames.Add(alias);
+                    if (!string.IsNullOrEmpty(failed.ModuleAlias))
+                        prog.TypingOnlyNames.Add(failed.ModuleAlias!);
+                }
                 foreach (var inner in chosen)
                 {
                     if (inner is ImportStmt nested) prog.Imports.Add(CloneImport(nested));

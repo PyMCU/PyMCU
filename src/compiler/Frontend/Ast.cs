@@ -772,4 +772,13 @@ public class ProgramNode : ASTNode
     public List<ImportStmt> Imports { get; } = new();
     public List<FunctionDef> Functions { get; } = new();
     public List<Statement> GlobalStatements { get; } = new();
+
+    /// The names an OPTIONAL import would have bound, when the module was not there and the
+    /// `try` folded to its handler (#351, #367).
+    ///
+    /// They are annotation names and nothing else: the library wrote them inside
+    /// `try: from typing import Optional, Type / except ImportError: pass` precisely because a
+    /// board does not have them. A name in this set stands for no value at run time, which is
+    /// the fact the annotation reader needs and cannot recover once the import has folded away.
+    public HashSet<string> TypingOnlyNames { get; } = new();
 }

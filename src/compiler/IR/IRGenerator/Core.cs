@@ -1322,7 +1322,33 @@ public partial class IRGenerator
     /// that hold no node pass none and get a statement-level location with no caret.
     /// </param>
     private Val ResolveBinding(string name, PyMCU.Frontend.ASTNode? at = null)
-        => ResolveBindingCore(name, at, probe: false)!;
+    {
+        // THE FIRST READ of a value whose annotation names something with no representation
+        // here (#367). The annotation was accepted on the parameter, because a parameter the
+        // body never reads costs nothing and refusing it stopped eight Adafruit libraries on
+        // the three arguments of a context manager's `__exit__`. Reading it is the other half:
+        // the value has no width, so it is refused at the line that asks for it, and #278's
+        // guarantee holds where it matters -- nothing the program touches has an unknown width.
+        //
+        // Not in ProbeBinding, which asks rather than lowers.
+        foreach (string key in TypingOnlyCandidateKeys(name))
+            if (typingOnlyValues.TryGetValue(key, out var ann))
+                throw UserError(
+                    $"'{name}' is annotated '{ann}', which names nothing this target has a "
+                    + "representation for, so it has no width to be read at. The annotation is "
+                    + "accepted on a value the program does not touch; this line touches it. "
+                    + "Give it a concrete type, or do not read it.", at);
+
+        return ResolveBindingCore(name, at, probe: false)!;
+    }
+
+    /// The spellings a parameter may have been recorded under, for the typing-only check.
+    private IEnumerable<string> TypingOnlyCandidateKeys(string name)
+    {
+        if (typingOnlyValues.Count == 0) yield break;
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
+    }
 
     /// Resolves <paramref name="name"/> for a caller that is ASKING rather than lowering, and
     /// answers null instead of throwing when the name is simply not defined.

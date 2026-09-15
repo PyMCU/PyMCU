@@ -3735,6 +3735,17 @@ public partial class IRGenerator
         // told "did you mean 'int'?", which is true, unhelpful, and teaches that `int` exists
         // rather than the spelling that works. Same slot, same sentence, a hint that fits the
         // mistake instead of a suggestion that does not.
+        // A TYPING-ONLY name (#367): `Type`, `Sequence`, `TracebackType`, a PIL `Image` -- a name
+        // that comes from `typing` or from an import the module itself wrote inside a `try`
+        // because a board does not have it. It names nothing this target has a representation
+        // for, which is exactly why it is not a typo: the library is telling a type checker
+        // something, and the value it annotates is usually one the body never touches.
+        //
+        // Accepted here and REFUSED AT THE FIRST READ, in ResolveBinding, so no computation is
+        // deleted and nothing the program touches has an unknown width. The sentence moves to
+        // the line that uses the value instead of a signature whose parameters the body ignores.
+        if (IsTypingOnlyName(annotation)) return;
+
         string hint = BracketedFormHeads.Contains(annotation)
             ? $" ('{annotation}' is the head of a bracketed type, not a type on its own: "
               + $"write '{annotation}[...]' with the element type, e.g. {ExampleForm(annotation)})"
@@ -3743,6 +3754,42 @@ public partial class IRGenerator
         throw UserError($"unknown type '{annotation}' in the annotation" + hint
             + ". An unrecognized annotation used to be read as uint8, which changed the "
             + "arithmetic without saying so.", at);
+    }
+
+    /// The `typing` spellings a library writes whether or not it imports them. Kept alongside
+    /// the names collected from folded imports rather than instead of them: a module may write
+    /// `Type[...]` under `if TYPE_CHECKING:` with no import this compiler ever sees.
+    private static readonly HashSet<string> TypingModuleNames = new()
+    {
+        "Type", "Sequence", "Iterable", "Iterator", "Mapping", "MutableMapping", "MutableSequence",
+        "Any", "AnyStr", "Text", "NoReturn", "ClassVar", "Final", "Annotated", "Generic",
+        "TypeVar", "Protocol", "Hashable", "Sized", "Container", "Collection", "Reversible",
+        "Awaitable", "Coroutine", "AsyncIterable", "AsyncIterator", "ContextManager", "IO",
+        "TracebackType", "ModuleType", "FunctionType",
+    };
+
+    /// <summary>
+    /// Whether an annotation is built from a name that stands for nothing at run time here.
+    ///
+    /// The HEAD decides, because `Type[type]` and `Sequence[int]` are the shapes these appear
+    /// in, and the bracket holds another such name as often as not. A dotted spelling
+    /// (`typing.Type`) answers on its tail, the way every other dotted annotation does.
+    /// </summary>
+    private bool IsTypingOnlyName(string annotation)
+    {
+        if (string.IsNullOrEmpty(annotation)) return false;
+        int lb = annotation.IndexOf('[');
+        string head = lb >= 0 ? annotation[..lb] : annotation;
+        head = head[(head.LastIndexOf('.') + 1)..];
+        if (head.Length == 0) return false;
+        return TypingModuleNames.Contains(head)
+               || typingOnlyNames.Contains(head)
+               // A builtin exception NAME in an annotation position. There is no exception
+               // object on this target -- a raise carries only which exception was raised --
+               // so `exc_val: BaseException` is a promise about a value that cannot exist,
+               // which is the same situation as the two above.
+               || PyMCU.Common.BuiltinExceptionNames.Codes.ContainsKey(head)
+               || head is "BaseException" or "Exception";
     }
 
     /// <summary>The closest known type name to <paramref name="annotation"/>, as a parenthesised

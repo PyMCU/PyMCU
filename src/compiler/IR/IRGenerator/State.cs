@@ -75,6 +75,16 @@ public partial class IRGenerator
     // an integer or a concrete instance is NOT. This is what keeps None from
     // colliding with a real value like 255 / 0xFFFF / -1.
     private HashSet<string> noneValuedNames = new();
+
+    // Names that stand for nothing at run time on this target: the symbols an OPTIONAL import
+    // would have bound before its `try` folded to the handler, plus the `typing` spellings a
+    // library writes whether or not it imports them (#367). An annotation built from one of
+    // these is accepted where nothing reads the value and refused at the first read.
+    private readonly HashSet<string> typingOnlyNames = new();
+
+    // The values currently carrying such an annotation, by their qualified name, with the
+    // annotation as the reader wrote it so the refusal can quote it.
+    private readonly Dictionary<string, string> typingOnlyValues = new();
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
     private int inlineDepth = 0;
