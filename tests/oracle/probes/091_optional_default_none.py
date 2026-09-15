@@ -1,6 +1,9 @@
 # expect: match
 # doc: docs/language/limitations.md:377
-from typing import Optional
+try:
+    from typing import Optional
+except ImportError:
+    pass
 from pymcu.types import uint8
 class Dev:
     def __init__(self, pin: Optional[uint8] = None):

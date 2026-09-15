@@ -1,6 +1,6 @@
 # expect: match
 # doc: docs/language/roadmap.md:23
-from pymcu import inline
+from pymcu.types import inline
 @inline
 def pair(x) -> (int, int):
     return x, x + 1

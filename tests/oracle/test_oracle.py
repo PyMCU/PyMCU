@@ -166,6 +166,7 @@ def install_cpython_shims() -> dict[str, types.ModuleType | None]:
     types_mod.Callable = _Type("Callable")
     types_mod.WriteableBuffer = bytearray
     types_mod.ReadableBuffer = bytearray
+    types_mod.inline = identity
 
     exceptions_mod.CompileError = type("CompileError", (Exception,), {})
     ffi_mod.extern = extern

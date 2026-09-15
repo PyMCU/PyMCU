@@ -1,6 +1,6 @@
 # expect: match
 # doc: docs/language/roadmap.md:32
-from pymcu import inline
+from pymcu.types import inline
 def outer():
     total = 1
     @inline
