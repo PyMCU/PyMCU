@@ -873,7 +873,8 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
 Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's file
 **byte-identical to its repository** and a `main()` written after the library's own example
 that constructs the object and calls its methods. Re-measured the same day after #352, #356,
-#357, #367 and the `Optional` decision.
+#357, #367 and the `Optional` decision. Re-run 2026-09-15 for the beta 1 release prep
+(same harness, pinned to the 0.1.0a10/a9 wheels): every first blocker below is unchanged.
 
 **One of the twenty builds unmodified**: `adafruit_hcsr04`, at 4 160 bytes, since the
 optional-import flag folds (#372). The other nineteen have moved off their annotations and into
