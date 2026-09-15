@@ -1,17 +1,25 @@
 # RFC 0004: arena allocator for runtime-sized buffers
 
-- Status: **PHASE 1 IMPLEMENTED and measured** (module-level, `__init__`-once local, and
-  (after rebasing onto PyMCU#392) `__init__`-once field allocation; the once rule,
-  `MemoryError`, observability; AVR only -- section 7). Not implemented: zero-copy
+- Status: **PHASE 1 IMPLEMENTED and measured** -- module-level, `__init__`-once local,
+  and (after rebasing onto PyMCU#392) `__init__`-once field allocation; indexing and
+  `len()` on both the local and the field form, including through further `@inline`
+  method calls (PyMCU#418, fixed on this branch -- see the correction below); the once
+  rule; `MemoryError`; observability; AVR only -- section 7. Not implemented: zero-copy
   slice/`memoryview` views over a runtime-sized buffer, passing one to a function's
-  `bytearray` parameter (PyMCU#414), a general call-site-count proof for allocation
-  inside a non-inlined function or method, indexing an arena buffer two `@inline` levels
-  deep (PyMCU#415), and indexing an arena-backed FIELD with `[i]` at all (PyMCU#418, a
-  silent-wrongcode bit-operation miscompile, more severe than #415). All named as
-  follow-up work in section 6, alongside pre-existing gaps this work found: reading a
-  plain module global as `module.name`; `ptr(some_array)` silently reading the array's
-  first byte instead of computing its address or refusing (PyMCU#413, wrongcode); and
-  `__TIMEBASE__` never being bound to anything but its shipped `0` (PyMCU#416).
+  `bytearray` parameter (PyMCU#414), and a general call-site-count proof for allocation
+  inside a non-inlined function or method. All named as follow-up work in section 6,
+  alongside pre-existing gaps this work found: reading a plain module global as
+  `module.name`; `ptr(some_array)` silently reading the array's first byte instead of
+  computing its address or refusing (PyMCU#413, wrongcode); and `__TIMEBASE__` never
+  being bound to anything but its shipped `0` (PyMCU#416).
+  **Correction:** an earlier draft of this RFC claimed indexing an arena buffer two
+  `@inline` levels deep does not resolve, filed as PyMCU#415. That claim was wrong --
+  every repro behind it was run with `ARENA_SIZE` left at its shipped `0` default (a raw
+  `pymcuc` invocation with no override shim, not the real `pymcu build` driver, which
+  always generates one for a program that uses the arena), and a zero-element `_arena`
+  fails for reasons that have nothing to do with `@inline` nesting. Closed as invalid;
+  the real nesting-depth case (a method calling into `read8()`/`write8()`) is exercised
+  and green in both the unit and the AVR suites (section 7).
 - Date: 2026-09-15
 - Affects: `lib/src/pymcu/arena.py` (new),
   `extensions/pymcu-sdk/csharp/Common/BuiltinExceptionNames.cs`,
@@ -256,23 +264,14 @@ architecture on any other target (`arch != "avr" && arch != ""`), pointing at
   as PyMCU#414, and PyMCU#413 for the `ptr(some_array)` silent-wrongcode bug this found
   along the way (it must refuse or compute the address; reading the array's first byte
   silently is neither).
-- **Indexing an arena buffer two levels of `@inline` deep does not resolve.**
-  `buf[i]` / `buf[i] = v` rewrites to a call into `read8()`/`write8()`, themselves
-  `@inline`, so indexing from inside an already-inlined context nests a SECOND `@inline`
-  expansion inside the first. One level deep (a bare module-level statement calling
-  `read8`/`write8`, or an `@inline __init__`'s local indexed directly) works, measured
-  directly. Two levels deep (indexing a LOCAL created inside an `@inline __init__`, so
-  module -> `__init__` -> `read8`/`write8`) does not: `_arena`'s own resolution inside
-  `read8`/`write8`'s inlined body falls through to a different, wrong interpretation
-  ("runtime bit index is only supported on a chip register"). Reproduced with a minimal
-  non-arena, non-cross-module case that did NOT trigger it (two inline levels, a runtime
-  value, a module-local array), so the trigger is narrower than "nested inlining" alone
-  and was not isolated further under this RFC's time budget. The `arena-in-init` AVR
-  fixture (`pymcu-avr` repo) works around it by not indexing the buffer inside
-  `__init__` -- it allocates and stores the offset in a plain field, which is enough to
-  exercise the once rule this RFC is actually about, and is a real, if narrower,
-  demonstration of "allocate inside `__init__`, use the buffer afterward through the
-  stored offset." Filed as PyMCU#415.
+- **RETRACTED (was: "indexing an arena buffer two levels of `@inline` deep does not
+  resolve", filed as PyMCU#415).** The repro behind this claim used the shipped
+  `ARENA_SIZE = 0` default, not the real `pymcu build` driver's generated override --
+  see the correction at the top of this RFC. With a real reservation, indexing through
+  a second `@inline` level (a method calling into `read8()`/`write8()`) works and is
+  exercised by `IndexingAndLenOnAnArenaFieldWorkThroughMethods`
+  (`tests/unit/IR/ArenaAllocatorTests.cs`) and `arena-in-init-field` (`pymcu-avr`
+  repo, green on avr8sharp). #415 closed as invalid.
 - **No general call-site-count proof.** A `bytearray(n)` inside a plain (non-`@inline`,
   non-`__init__`) function is refused unconditionally today, even when the author can see
   by hand that the function has exactly one call site. Proving that in general needs a
@@ -298,17 +297,21 @@ architecture on any other target (`arch != "avr" && arch != ""`), pointing at
   can exceed 255 on any part with more than 255 bytes of SRAM, and an unannotated field
   defaults to `uint8` from the assigned value's apparent shape.
 
-  **What construction fixing did NOT fix, and should not be assumed to:** `self.buf[i]`
-  bracket indexing on the resulting field silently compiles to a **bit operation**
-  instead of a byte access -- `self.buf[0] = v` sets bit 0 of the field and discards `v`
-  entirely, `self.buf[0]` reads bit 0 back as 0/1. No diagnostic, no refusal, just wrong
-  firmware. This is a DIFFERENT and more severe bug than the "two `@inline` levels deep"
-  case above (PyMCU#415, which at least raises `TypeError`): filed separately as
-  PyMCU#418, and no fixture or test here indexes an arena-backed field with `[i]`.
-  `arena-in-init-field` (`pymcu-avr` repo) verifies construction and the once rule only,
-  by reading the field's raw offset value (deterministically 0 for the program's first
-  allocation), alongside `arena-in-init` (kept, the local-variable spelling, unaffected
-  by either bug).
+  **UPDATE, also fixed (PyMCU#418):** `self.buf[i]` bracket indexing on the resulting
+  field originally compiled to a **bit operation** instead of a byte access --
+  `self.buf[0] = v` set bit 0 of the field and discarded `v` entirely, `self.buf[0]`
+  read bit 0 back as 0/1, no diagnostic, no refusal, just wrong firmware. The field
+  write lands in `EmitMemberAssign`'s flattened `<object>_<member>` fallback name, a
+  SEPARATE name from the hidden local's own arena-buffer registration, and
+  `TryResolveArenaBuffer` had never heard of it. Fixed by registering that same
+  flattened name (`TryResolveArenaBufferField`) at the construction site, and
+  extending the index/`len()` hooks to recognize a `MemberAccessExpr` target, not just
+  a bare `VariableExpr`. `arena-in-init-field` (`pymcu-avr` repo) now writes and reads
+  back three indices through `self.buf[i]` (via two more `@inline` methods, `poke()`/
+  `peek()`) and reports `len(self.buf)`, all green on avr8sharp -- kept alongside
+  `arena-in-init` (the local-variable spelling), which continues to demonstrate the
+  once rule through a deterministic offset (0, the program's first allocation) without
+  indexing anything.
 - **A plain module-level global cannot be read as `module.name` from outside the
   module**, found writing the `arena-high-water` AVR fixture: `_pymcu_arena.
   arena_high_water` (a public, non-underscore data global) fails the same
