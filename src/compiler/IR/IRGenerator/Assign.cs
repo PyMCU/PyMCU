@@ -632,6 +632,50 @@ public partial class IRGenerator
             }
         }
 
+        // `self.data = bytearray(N)` / `= bytearray([...])` / `= bytearray(b"...")` inside
+        // __init__ (#392): the same call bound to a local already routes through VisitVarDecl
+        // (see the `baTgt` case above), which lays out a fixed SRAM buffer instead of trying to
+        // evaluate bytearray() as a runtime call. A field target reached the generic expression
+        // visitor instead, which has no lowering for the bytearray() builtin and fell into the
+        // "unsupported Python builtin" fallback -- the same diagnostic #380 reports for a call
+        // argument, fired here because Assign.cs never routes a MemberAccessExpr target through
+        // the bytearray-recognizing path at all. Only a compile-time-sized buffer is handled
+        // here; a runtime-sized `bytearray(n)` is a different (arena-allocated) shape.
+        if (stmt.Target is MemberAccessExpr baFieldTgt
+            && stmt.Value is CallExpr { Callee: VariableExpr { Name: "bytearray" } } baFieldCall)
+        {
+            Expression? baFieldSizeSource = null;
+            var baFieldInit = new List<int>();
+            int baFieldCount = 0;
+
+            if (baFieldCall.Args.Count > 0)
+            {
+                var baArg0 = baFieldCall.Args[0];
+                baFieldSizeSource = baArg0;
+                if (baArg0 is ListExpr baList)
+                {
+                    baFieldCount = baList.Elements.Count;
+                    foreach (var e in baList.Elements)
+                        baFieldInit.Add(TryEvalElemConst(e, out int ev) ? ev : 0);
+                }
+                // Integer literal or any compile-time constant (bytearray(WINDOW)).
+                else if (TryEvalElemConst(baArg0, out int baConstN))
+                {
+                    baFieldCount = baConstN;
+                    baFieldInit.AddRange(Enumerable.Repeat(0, baFieldCount));
+                }
+            }
+
+            if (baFieldCount <= 0)
+                throw UserError(
+                    "bytearray: could not determine buffer size from initializer.",
+                    baFieldSizeSource);
+
+            EmitMemberArrayInit(baFieldTgt.Object, baFieldTgt.Member, DataType.UINT8,
+                baFieldCount, baFieldInit, FormatMemberTarget(baFieldTgt));
+            return;
+        }
+
         // `self.buf = [0, 0, 0]`: a list FIELD with no annotation. It reached the generic
         // expression visitor, which has no lowering for a list literal, and answered "Unknown
         // Expression type: ListExpr", the name of a compiler class, about a field written
