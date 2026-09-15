@@ -34,17 +34,21 @@ public class LocalReadFoldsTests
             new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" });
 
     [Fact]
-    public void AChainOfLocalsFoldsToItsAnswer()
+    public void AChainOfLocalsStillCompiles()
     {
         // The shape the HAL is written in: every intermediate is a wide local, on purpose,
-        // because unfolded the expressions truncate. Folded, the whole chain is one number.
-        var ir = Gen(Hdr +
+        // because unfolded the expressions truncate.
+        //
+        // It does NOT fold today. Answering a read from localConstantValues is worth 6 894
+        // bytes over the corpus and is not sound as the map stands, so the query is reverted
+        // and #331/#370 carry the precondition that has to hold first: the value must be the
+        // one on EVERY PATH that reaches the read. What this pins meanwhile is that the shape
+        // compiles and computes at full width, which is what #326/#327 bought.
+        Assert.NotNull(Gen(Hdr +
             "def main():\n" +
             "    top: uint32 = 16000000 // (8 * 50) - 1\n" +
             "    half: uint32 = top // 2\n" +
-            "    GPIOR0.value = uint8(half & 0xFF)\n");
-
-        Assert.Empty(ir.Functions.SelectMany(f => f.Body).OfType<Binary>());
+            "    GPIOR0.value = uint8(half & 0xFF)\n"));
     }
 
     [Fact]
@@ -80,18 +84,17 @@ public class LocalReadFoldsTests
     [Fact]
     public void ADictMissTheProgramCatchesIsRaised_NotRefused()
     {
-        // `k = 7` folds now, so the compiler can see the key is missing. Seeing it is not a
-        // reason to refuse a program that HANDLES it: getting better at reading a program must
-        // not make a working program stop building. The raise goes where the handler can take
-        // it, which is the same instruction the run-time key path emits for the same miss.
+        // A key the compiler can see is missing is not a reason to refuse a program that
+        // HANDLES it: getting better at reading a program must not make a working program stop
+        // building. The raise goes where the handler can take it, which is the same instruction
+        // the run-time key path emits for the same miss.
         var ir = Gen(
             "from pymcu.types import uint8\n" +
             "from pymcu.chips.atmega328p import GPIOR0\n\n" +
             "SCALE = {1: 10, 2: 20}\n\n" +
             "def main():\n" +
             "    try:\n" +
-            "        k: uint8 = 7\n" +
-            "        bad: uint8 = SCALE[k]\n" +
+            "        bad: uint8 = SCALE[7]\n" +
             "        GPIOR0.value = bad\n" +
             "    except KeyError:\n" +
             "        GPIOR0.value = 255\n");
@@ -111,8 +114,7 @@ public class LocalReadFoldsTests
             "from pymcu.chips.atmega328p import GPIOR0\n\n" +
             "SCALE = {1: 10, 2: 20}\n\n" +
             "def main():\n" +
-            "    k: uint8 = 7\n" +
-            "    GPIOR0.value = SCALE[k]\n"));
+            "    GPIOR0.value = SCALE[7]\n"));
         Assert.Contains("KeyError", ex.Message);
     }
 

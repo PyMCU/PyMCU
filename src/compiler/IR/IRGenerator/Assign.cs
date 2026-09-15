@@ -2955,6 +2955,18 @@ public partial class IRGenerator
     private void RecordLocalConstant(string key, Val value, Expression? init,
                                      string? declaredType, DataType storedType)
     {
+        // A FLOAT name is never recorded here, and the map is never asked about one. This map
+        // holds INTEGERS; a float local reaching it answers a read with the integer part, and
+        // `x: float = 1.0` then a read of x came back as the integer 1, whose bytes are not
+        // 1.0's. Measured: the compat-cp float probes read OCR0A as 0x00 where 1.0's MSB is
+        // 0x3F. The float constants live in floatConstantVariables and are asked for there.
+        if (storedType == DataType.FLOAT
+            || (declaredType != null && declaredType.Contains("float", StringComparison.Ordinal)))
+        {
+            localConstantValues.Remove(key);
+            return;
+        }
+
         string width = !string.IsNullOrEmpty(declaredType) ? declaredType! : storedType switch
         {
             DataType.INT8 => "int8",

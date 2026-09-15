@@ -1527,21 +1527,32 @@ public partial class IRGenerator
             return new Constant(finVal, ResolveStrConstant(finalLocalName));
         }
 
-        // WHAT THE LOCAL HOLDS (#331).
+        // WHAT THE LOCAL HOLDS (#331) -- REVERTED, and the reason is written down so the next
+        // attempt starts from it rather than from the measurement alone.
         //
-        // `localConstantValues` has tracked this since #327 and was only ever asked by a CALL,
-        // so that a callee dispatching on a value still saw the value when the caller put it in
-        // a local first. Every ordinary READ went to run time, and that is what an @inline HAL
-        // computing at full width pays: `7954f4ec` had to write the exact-Timer1 helpers
-        // through 32-bit locals, because unfolded the 16-bit expressions truncate, and the same
-        // arithmetic then cost 148 bytes where the expression form cost 78.
+        // Answering reads from `localConstantValues` is worth 6 894 bytes over the corpus (84
+        // fixtures smaller, none bigger) and it is not sound as the map stands. The map records
+        // what a name held along the LINE that was just lowered; a read is only entitled to it
+        // when that value holds on EVERY PATH THAT REACHES THE READ, and three shapes break
+        // that and were measured breaking it:
         //
-        // The map is already invalidated at every write to the name, at every name a loop body
-        // can assign, and where the arms of an if-chain disagree, so answering from it here is
-        // one lookup rather than a new analysis. It is asked AFTER constantVariables and BEFORE
-        // the run-time slot, which is the order every other constant source is asked in.
-        if (localConstantValues.TryGetValue(finalLocalName, out int localHeld))
-            return new Constant(localHeld, ResolveStrConstant(finalLocalName));
+        //   * a FLOAT local, whose value is not an integer at all: the map is integer-only, so
+        //     `x: float = 1.0` answered a read with the integer 1 and the float probes read
+        //     OCR0A as 0x00 where 1.0's MSB is 0x3F;
+        //   * a MIXED SIGNED/UNSIGNED comparison, which came out {1, 0} where the program
+        //     computes {1, 1};
+        //   * fixtures/compat-cp-keypad, which stops reaching its second BREAK. Its region
+        //     between the two is straight-line with no call and no backward jump, so the
+        //     escape is not in the code the fold emitted and is not yet understood.
+        //
+        // Two OTHER shapes it broke are fixed and stay fixed, because they were defects of
+        // their own that nothing had reached: the run-time list and string loops never
+        // invalidated what their body writes, an unrolled body with `continue`/`break` has
+        // paths the linear lowering does not walk, and a dict miss the program catches must
+        // raise rather than refuse.
+        //
+        // PyMCU#331 and #370 carry this. The precondition to implement is the one stated
+        // above, and it needs the map to know the paths, which today it does not.
 
         string? strVal = ResolveStrConstant(finalLocalName);
         if (strVal != null)

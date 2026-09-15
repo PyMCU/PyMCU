@@ -105,8 +105,11 @@ public class TypingOnlyNameTests
             "    return n\n\n" +
             "def main():\n    GPIOR0.value = total([1, 2, 3])\n");
 
-        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
-            c => c.Src is Constant k && k.Value == 6);
+        // Three additions, one per element: the elements bound against the name and the `for`
+        // unrolled over them, which is what "the compile-time list form" means. Whether the
+        // additions then fold is a separate question (#331), and not this test's.
+        Assert.Equal(3, ir.Functions.SelectMany(f => f.Body).OfType<Binary>()
+            .Count(b => b.Op == PyMCU.IR.BinaryOp.Add));
     }
 
     [Fact]

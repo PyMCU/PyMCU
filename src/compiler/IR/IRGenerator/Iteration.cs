@@ -511,6 +511,20 @@ public partial class IRGenerator
     private void EmitUnrolledIteration(Statement body, string breakLabel)
     {
         if (breakLabel.Length == 0) { VisitStatement(body); return; }
+
+        // A `continue` or a `break` gives this iteration MORE THAN ONE WAY IN AND OUT, and a
+        // local is only known-constant between its assignment and the next write ON EVERY PATH
+        // THAT REACHES THE READ. An unrolled body with either of those has paths the linear
+        // lowering did not walk: control arrives at the next iteration from a `continue` in the
+        // middle of this one, carrying whatever that path left. Folding from the linear state
+        // then answers with a value no run of the program holds -- measured on
+        // fixtures/continue-break, whose two accumulators came out 100, 100 where the program
+        // computes 70, 30.
+        //
+        // An unrolled body WITHOUT them keeps its folds, which is where the win is: every
+        // iteration is lowered on its own and its state is exactly what reaches it.
+        InvalidateConstantsAssignedIn(body);
+
         string cont = MakeLabel();
         loopStack.Add(new LoopLabels { ContinueLabel = cont, BreakLabel = breakLabel, FinallyDepth = finallyStack.Count });
         VisitStatement(body);
