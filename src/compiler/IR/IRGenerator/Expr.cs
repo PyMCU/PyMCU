@@ -2084,6 +2084,16 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // docs/rfcs/0004-arena-allocator.md: `buf[i]` on an arena-allocated runtime-sized
+        // bytearray -- see the matching write-side comment in Assign.cs EmitIndexAssign.
+        if (expr.Target is VariableExpr arenaReadVe && TryResolveArenaBuffer(arenaReadVe.Name, out _))
+        {
+            string arenaMod = ResolveArenaModuleAlias(expr);
+            return VisitExpression(new CallExpr(
+                new MemberAccessExpr(new VariableExpr(arenaMod), "read8"),
+                new List<Expression> { new BinaryExpr(arenaReadVe, AstBinOp.Add, expr.Index) }));
+        }
+
         // `memoryview(buf)[k]`/`[a:b]`: a slice is a writable window of the
         // buffer (ssd1306's `memoryview(self.buffer)[1:]`). A single index
         // is the argument's own subscript (PyMCU#361).

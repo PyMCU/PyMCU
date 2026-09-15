@@ -87,6 +87,18 @@ public partial class IRGenerator
     private readonly Dictionary<string, string> typingOnlyValues = new();
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
+    // docs/rfcs/0004-arena-allocator.md: nonzero while lowering the body of a WhileStmt or
+    // ForStmt, compile-time-unrolled or not (ControlFlow.cs VisitWhile / Iteration.cs
+    // VisitFor increment/decrement it around the body). The once rule an arena allocation
+    // must satisfy checks this alongside currentFunction; nothing else reads it.
+    private int loopDepth = 0;
+    // Qualified names (the same qualification arraySizes/bytearrayParams use) of arena-
+    // backed bytearrays: a plain uint16 global holding the byte OFFSET arena.alloc()
+    // returned, not a pointer -- indexing rewrites to pymcu.arena.read8/write8 at that
+    // offset (TryResolveArenaBuffer, TryLowerArenaBytearray in Assign.cs). The paired value
+    // is the qualified name of the uint16 global len() reads.
+    private readonly HashSet<string> arenaBufferNames = new();
+    private readonly Dictionary<string, string> arenaBufferLenVar = new();
     private int inlineDepth = 0;
     private int ctorAnonId = 0; // Counter for synthetic ZCA constructor-as-arg targets
     private string currentInlinePrefix = "";

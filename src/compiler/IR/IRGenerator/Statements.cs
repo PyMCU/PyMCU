@@ -899,13 +899,20 @@ public partial class IRGenerator
 
         if (stmt is WhileStmt whileStmt)
         {
-            VisitWhile(whileStmt);
+            // docs/rfcs/0004-arena-allocator.md: nonzero for the entire lowering of a loop's
+            // body, compile-time-unrolled or not -- the once rule an arena allocation must
+            // satisfy. Wrapped at this single central dispatch point (rather than inside
+            // VisitWhile/VisitFor, which have several/many body-visitation call sites each)
+            // so every path through either is covered by one increment/decrement.
+            loopDepth++;
+            try { VisitWhile(whileStmt); } finally { loopDepth--; }
             return;
         }
 
         if (stmt is ForStmt forStmt)
         {
-            VisitFor(forStmt);
+            loopDepth++;
+            try { VisitFor(forStmt); } finally { loopDepth--; }
             return;
         }
 

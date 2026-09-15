@@ -4154,6 +4154,14 @@ public partial class IRGenerator
             if (TryGetRuntimeStr(vLen.Name, out var rsLen))
                 return VisitExpression(new VariableExpr(rsLen.LenVar));
 
+            // docs/rfcs/0004-arena-allocator.md: len() on an arena-allocated runtime-sized
+            // bytearray reads the paired uint16 that TryLowerArenaBytearray stored the
+            // allocation size into (arraySizes has no entry for one of these -- it is not a
+            // compile-time-sized array).
+            if (TryResolveArenaBuffer(vLen.Name, out string arenaLenQ)
+                && arenaBufferLenVar.TryGetValue(arenaLenQ, out string arenaLenVar))
+                return new Variable(arenaLenVar, DataType.UINT16);
+
             // Dict/set literal bindings have a compile-time size.
             if (TryGetDictBinding(vLen.Name, out var dLen)) return new Constant(dLen.Entries.Count);
             if (TryGetSetBinding(vLen.Name, out var sLen)) return new Constant(sLen.Elements.Count);

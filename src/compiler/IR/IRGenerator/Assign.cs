@@ -3230,6 +3230,24 @@ public partial class IRGenerator
 
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
+        // docs/rfcs/0004-arena-allocator.md: `buf[i] = v` on an arena-allocated runtime-sized
+        // bytearray. `buf` is a plain uint16 holding an offset (not a pointer -- see
+        // TryLowerArenaBytearray), so `buf + i` is ordinary integer arithmetic the normal
+        // pipeline already evaluates correctly by re-visiting the SAME VariableExpr node;
+        // write8() is the @inline helper (lib/src/pymcu/arena.py) that turns an offset into
+        // the actual `_arena[offset] = v` store, inlined here at the call site.
+        if (indexExpr.Target is VariableExpr arenaWriteVe && TryResolveArenaBuffer(arenaWriteVe.Name, out _))
+        {
+            string arenaMod = ResolveArenaModuleAlias(indexExpr);
+            VisitExpression(new CallExpr(
+                new MemberAccessExpr(new VariableExpr(arenaMod), "write8"),
+                new List<Expression> {
+                    new BinaryExpr(arenaWriteVe, PyMCU.Frontend.BinaryOp.Add, indexExpr.Index),
+                    stmt.Value,
+                }));
+            return;
+        }
+
         // A tuple does not support item assignment, here or in CPython (#299). Refused before
         // the slice and array paths below, which cannot tell a tuple from a list: the two share
         // their storage, and the name is the only place the difference is recorded.
@@ -4110,10 +4128,6 @@ public partial class IRGenerator
                 }
             }
 
-            if (count <= 0)
-                throw UserError("bytearray: could not determine buffer size from initializer.",
-                                sizeSource);
-
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
@@ -4136,6 +4150,17 @@ public partial class IRGenerator
                 // sees the assignment in boundNames (adafruit_framebuf).
                 variableAliases[qualified] = stmt.Name;
                 qualified = stmt.Name;
+            }
+
+            if (count <= 0)
+            {
+                // docs/rfcs/0004-arena-allocator.md: a runtime n (not a bytes literal, not a
+                // constant that just happened to fold to <= 0) allocates from the arena when
+                // the once rule proves the statement runs at most once. Returns false (falls
+                // through to the refusal below, unchanged) for every other case.
+                if (TryLowerArenaBytearray(sizeSource, qualified)) return;
+                throw UserError("bytearray: could not determine buffer size from initializer.",
+                                sizeSource);
             }
 
             int grown = KeepGrownArraySize(qualified, count);
@@ -5530,6 +5555,116 @@ public partial class IRGenerator
                 tc),
         };
         return typeName;
+    }
+
+    // docs/rfcs/0004-arena-allocator.md: `x = bytearray(n)` / `x: bytearray = bytearray(n)`
+    // where n did not fold as a compile-time constant. Called where the static-array path
+    // has just given up on `sizeSource`; returns false (do nothing -- the caller keeps its
+    // original "could not determine buffer size" refusal, unchanged) when sizeSource is not
+    // a real candidate at all: null, a bytes literal (`bytearray([...])`), or a value that
+    // DID fold, just to something <= 0 (an explicit `bytearray(0)`). Returns true once the
+    // declaration has been lowered to an arena allocation, registered under `qualified`
+    // exactly like any other module-level uint16 global -- the caller must return without
+    // falling through to the static-array registration that follows it.
+    //
+    // `qualified` becomes the offset variable itself (not a separate name): nothing else
+    // uses this name for anything but holding the arena.alloc() result, so there is no
+    // second binding to keep in sync. TryResolveArenaBuffer / arenaBufferLenVar (State.cs)
+    // are the read side: indexing, len() and this registration all key off the same string.
+    private bool TryLowerArenaBytearray(Expression? sizeSource, string qualified)
+    {
+        if (sizeSource == null || sizeSource is ListExpr) return false;
+        if (TryEvalElemConst(sizeSource, out _)) return false;
+
+        if (!string.IsNullOrEmpty(deviceConfig.Arch) && deviceConfig.Arch != "avr")
+            throw UserError(
+                $"a runtime-sized bytearray(n) allocates from PyMCU's arena, which is " +
+                $"AVR-only (target arch: '{deviceConfig.Arch}'). Give it a compile-time " +
+                "size (bytearray(N)) instead.", sizeSource);
+
+        // The once rule (RFC 0004 section 2): loopDepth is nonzero inside ANY loop, unrolled
+        // or not, and currentFunction is "main" (or ends "___module_init" for a library
+        // module) exactly where a statement is module-level code being replayed by the
+        // synthesized entry point -- including inside an `@inline __init__` expanding at a
+        // module-level construction site, since inlining never reassigns currentFunction
+        // (only currentInlinePrefix changes). Anywhere else is a real (non-inlined) function
+        // or method, called an unproven number of times, refused unconditionally rather than
+        // attempting a call-site-count proof (see the RFC for why that is in scope, not why
+        // it is missing).
+        if (loopDepth > 0)
+            throw UserError(
+                "a runtime-sized bytearray(n) here would allocate a new region every time " +
+                "this loop runs, and PyMCU's arena never frees. Either give it a " +
+                "compile-time size (bytearray(N)), or move the allocation to a module-level " +
+                "statement that runs once.", sizeSource);
+        bool onceRoot = currentFunction == "main"
+            || currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+        if (!onceRoot)
+            throw UserError(
+                $"a runtime-sized bytearray(n) inside '{currentFunction}' cannot be proven " +
+                "to run at most once (PyMCU's arena never frees). Either give it a " +
+                "compile-time size (bytearray(N)), or move the construction to a " +
+                "module-level statement (or an @inline __init__ reached only through " +
+                "inlining from one).", sizeSource);
+
+        string? arenaMod = null;
+        foreach (var kv in importedAliases)
+            if (kv.Value == "pymcu.arena") { arenaMod = kv.Key; break; }
+        if (arenaMod == null)
+            throw UserError(
+                "a runtime-sized bytearray(n) needs the pymcu.arena allocator; `pymcu build` " +
+                "injects it automatically -- if invoking the compiler by hand, add " +
+                "`import pymcu.arena as _pymcu_arena` to the entry file.", sizeSource);
+
+        Val offVal = VisitExpression(new CallExpr(
+            new MemberAccessExpr(new VariableExpr(arenaMod), "alloc"),
+            new List<Expression> { sizeSource }));
+        Val lenVal = VisitExpression(sizeSource);
+
+        variableTypes[qualified] = DataType.UINT16;
+        Emit(new Copy(offVal, new Variable(qualified, DataType.UINT16)));
+
+        string lenQualified = qualified + "__arena_len";
+        variableTypes[lenQualified] = DataType.UINT16;
+        Emit(new Copy(lenVal, new Variable(lenQualified, DataType.UINT16)));
+
+        arenaBufferNames.Add(qualified);
+        arenaBufferLenVar[qualified] = lenQualified;
+        return true;
+    }
+
+    // Membership test only: does `bareName`, resolved the same way arraySizes/bytearrayParams
+    // already are (qualified-with-currentFunction, then bare), name an arena-backed
+    // bytearray? Used by Expr.cs (index read), here (index write) and Call.cs (len()) to
+    // decide whether to intercept at all -- it does not compute a value. Reading the
+    // buffer's offset, once this returns true, is a plain variable read of `qualified`
+    // through the ordinary path (the offset IS the variable; see TryLowerArenaBytearray),
+    // so callers pass the ORIGINAL VariableExpr back into VisitExpression rather than
+    // rebuilding one from the string this returns.
+    private bool TryResolveArenaBuffer(string bareName, out string qualified)
+    {
+        string q1 = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + bareName : bareName;
+        if (arenaBufferNames.Contains(q1)) { qualified = q1; return true; }
+        string q2 = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bareName : bareName;
+        if (arenaBufferNames.Contains(q2)) { qualified = q2; return true; }
+        if (arenaBufferNames.Contains(bareName)) { qualified = bareName; return true; }
+        qualified = bareName;
+        return false;
+    }
+
+    // The import alias `pymcu.arena` was given in the entry file (`pymcu build` injects
+    // `import pymcu.arena as _pymcu_arena` when a runtime-sized bytearray(n) is detected --
+    // same mechanism as pymcu.strfmt for f-string values). Null when the module was never
+    // imported, which TryLowerArenaBytearray already refuses at the allocation site; a name
+    // reaching TryResolveArenaBuffer successfully can therefore trust this is non-null.
+    private string ResolveArenaModuleAlias(ASTNode? at)
+    {
+        foreach (var kv in importedAliases)
+            if (kv.Value == "pymcu.arena") return kv.Key;
+        throw UserError(
+            "an arena-allocated bytearray is indexed here but pymcu.arena is not imported " +
+            "-- this should be unreachable (TryLowerArenaBytearray refuses the allocation " +
+            "itself first); please report this as a PyMCU bug.", at);
     }
 
     private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
