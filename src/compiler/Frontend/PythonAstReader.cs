@@ -197,7 +197,11 @@ public static class PythonAstReader
 
     private static Param ReadParam(JsonElement e) =>
         Located(new Param(Str(e, "name"), PyMCU.Common.AnnotationText.Normalize(Str(e, "type")),
-                          Has(e, "default") ? ReadExpr(e.GetProperty("default")) : null), e);
+                          Has(e, "default") ? ReadExpr(e.GetProperty("default")) : null)
+        {
+            IsVarArg = Flag(e, "vararg"),
+            IsKwArg = Flag(e, "kwarg"),
+        }, e);
 
     private static FunctionDef ReadFunction(JsonElement e)
     {
@@ -463,6 +467,7 @@ public static class PythonAstReader
                 return Located(new LambdaExpr(parameters, ReadExpr(e.GetProperty("body"))!), e);
             }
             case "StarArg": return Located(new StarArgExpr(ReadExpr(e.GetProperty("value"))!), e);
+            case "DoubleStarArg": return Located(new DoubleStarArgExpr(ReadExpr(e.GetProperty("value"))!), e);
             case "Await": return Located(new AwaitExpr(ReadExpr(e.GetProperty("operand"))!), e);
             case "Yield":
                 return Located(new YieldExpr(Has(e, "value") ? ReadExpr(e.GetProperty("value")) : null), e);

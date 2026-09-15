@@ -139,6 +139,7 @@ public partial class IRGenerator
                         if (arg is VariableExpr av) Note(av.Name);
                         else if (arg is KeywordArgExpr { Value: VariableExpr kv }) Note(kv.Name);
                         else if (arg is StarArgExpr { Value: VariableExpr sv }) Note(sv.Name);
+                        else if (arg is DoubleStarArgExpr { Value: VariableExpr dv }) Note(dv.Name);
                     }
                     break;
             }

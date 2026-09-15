@@ -47,15 +47,11 @@ public class UnsupportedFormDiagnosticTests
         Assert.DoesNotContain("Expected newline or end of block", msg);
     }
 
-    [Fact]
-    public void KwargsParameter_NamesIt_AndSaysToDeclareTheKeywordsExplicitly()
-    {
-        var msg = ErrorFor("def f(**kwargs):\n    pass\n");
-
-        Assert.Contains("'**kwargs'", msg);
-        Assert.Contains("explicitly", msg);
-        Assert.DoesNotContain("Expected parameter name", msg);
-    }
+    // `def f(**kwargs)` used to be refused here, on the grounds that it collects arguments
+    // into a run-time dictionary. That is true of CPython and false of this target: the
+    // callee is specialised per call site, where the extra keyword arguments are literals,
+    // so the name binds a compile-time mapping. The form and what it supports are held in
+    // StaticKwargsFormTests now (#368).
 
     [Fact]
     public void Del_NamesIt_AndSaysWhyStaticStorageHasNothingToUnbind()

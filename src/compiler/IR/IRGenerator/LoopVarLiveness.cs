@@ -143,6 +143,7 @@ public partial class IRGenerator
             case MemberAccessExpr m: yield return m.Object; break;
             case CallExpr c: yield return c.Callee; foreach (var a in c.Args) yield return a; break;
             case StarArgExpr s: yield return s.Value; break;
+            case DoubleStarArgExpr ds: yield return ds.Value; break;
             case KeywordArgExpr k: yield return k.Value; break;
             case BinaryExpr b: yield return b.Left; yield return b.Right; break;
             case UnaryExpr u: yield return u.Operand; break;

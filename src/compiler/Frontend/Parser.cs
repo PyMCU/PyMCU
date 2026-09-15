@@ -872,25 +872,46 @@ public class Parser
             // Bare '*' is the PEP 3102 keyword-only separator (common in
             // CircuitPython APIs, e.g. busio.UART(tx, rx, *, baudrate=9600)).
             // PyMCU resolves arguments by name/position regardless, so we accept
-            // the marker and treat following parameters like any other. A
-            // '*args' varargs form is not supported.
+            // the marker and treat following parameters like any other.
+            //
+            // `*args` is the other reading of the same token, and it is a PARAMETER: the
+            // positions the call site did not give a declared parameter are known there, so
+            // the name binds a compile-time sequence (#368).
             if (Check(TokenType.Star))
             {
                 Advance();
-                if (!Check(TokenType.Comma) && !Check(TokenType.RParen))
+                if (Check(TokenType.Comma) || Check(TokenType.RParen))
                 {
-                    Error("Variadic '*args' parameters are not supported; '*' is only valid as a keyword-only separator");
+                    if (Check(TokenType.RParen)) break;
+                    continue;
                 }
-                if (Check(TokenType.RParen)) break;
+
+                var varName = Consume(TokenType.Identifier, "Expected parameter name after '*'");
+                parameters.Add(Located(new Param(varName.Value, ParseOptionalParamAnnotation())
+                {
+                    IsVarArg = true,
+                }, varName));
                 continue;
             }
 
-            // `def f(**kwargs)`: a keyword dictionary is a run-time dict, which this target
-            // does not have. Named here instead of failing as "Expected parameter name".
+            // `def f(**kwargs)`: the keyword arguments the call site wrote and this function
+            // does not declare. They are literals at the call, so the name binds a
+            // compile-time mapping and there is no dictionary to allocate (#368).
             if (Check(TokenType.DoubleStar))
-                Error("'**kwargs' is not supported: it collects arguments into a run-time "
-                      + "dictionary, and there is no heap for one. Declare the keyword "
-                      + "arguments explicitly, with defaults if they are optional.");
+            {
+                Advance();
+                var kwName = Consume(TokenType.Identifier, "Expected parameter name after '**'");
+                parameters.Add(Located(new Param(kwName.Value, ParseOptionalParamAnnotation())
+                {
+                    IsKwArg = true,
+                }, kwName));
+
+                // Python puts `**kwargs` last, and so does the CPython front end by grammar.
+                // Without this the same signature parsed here and was refused there.
+                if (Match(TokenType.Comma) && !Check(TokenType.RParen))
+                    Error("'**" + kwName.Value + "' must be the last parameter");
+                break;
+            }
 
             var name = Consume(TokenType.Identifier, "Expected parameter name");
             string type = "";
@@ -916,6 +937,13 @@ public class Parser
 
         return parameters;
     }
+
+    /// The annotation on a `*args` or `**kwargs` parameter, which Python allows and which
+    /// libraries do write. It describes an element or a value, never the collection, so
+    /// nothing downstream reads it; it is carried rather than refused so that annotating a
+    /// signature cannot be what stops a library from compiling.
+    private string ParseOptionalParamAnnotation() =>
+        Match(TokenType.Colon) ? ParseTypeAnnotation() : "";
 
     /// <summary>
     /// The body after a `:`, in either of Python's two spellings (#250).
@@ -2626,6 +2654,15 @@ public class Parser
                             // `f(*xs)`: the elements of a compile-time sequence, spliced in.
                             Advance();
                             args.Add(new StarArgExpr(ParseExpression()) { Line = Peek().Line });
+                        }
+                        else if (Check(TokenType.DoubleStar))
+                        {
+                            // `f(**d)`: the entries of a compile-time mapping, spliced in.
+                            // Without this arm the parser walked off the end of the argument
+                            // list and reported `Expected expression` against line 1 of the
+                            // file, which is a comment the driver injects (#368).
+                            Advance();
+                            args.Add(new DoubleStarArgExpr(ParseExpression()) { Line = Peek().Line });
                         }
                         else
                         {

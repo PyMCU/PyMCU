@@ -556,7 +556,10 @@ def e_call(node):
     args = [expr(a) for a in node.args]
     for kw in node.keywords:
         if kw.arg is None:
-            raise Unsupported("**kwargs in a call", node)
+            # `f(**d)`: the entries of a compile-time mapping, spliced in by the IR
+            # generator. CPython puts it in `keywords` with arg=None (#368).
+            args.append({"k": "DoubleStarArg", "value": expr(kw.value), "line": line_of(node)})
+            continue
         args.append({"k": "Keyword", "key": kw.arg, "value": expr(kw.value), "line": line_of(node)})
     return {"k": "Call", "callee": expr(node.func), "args": args}
 
@@ -1109,11 +1112,6 @@ STMT = {
 # ── functions and classes ────────────────────────────────────────────────────
 
 def params_of(args, default_type=""):
-    if args.vararg is not None:
-        raise Unsupported("*args", args.vararg)
-    if args.kwarg is not None:
-        raise Unsupported("**kwargs", args.kwarg)
-
     positional = list(args.posonlyargs) + list(args.args)
     defaults = list(args.defaults)
     pad = len(positional) - len(defaults)
@@ -1123,10 +1121,18 @@ def params_of(args, default_type=""):
         out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
                     "default": expr(default) if default is not None else None,
                     **param_position(a)})
+    # `*args` sits between the positional parameters and the keyword-only ones, exactly where
+    # Python puts it, so a keyword-only parameter after it keeps its position in the list.
+    if args.vararg is not None:
+        out.append({"name": args.vararg.arg, "type": annotation_of(args.vararg.annotation) or "",
+                    "default": None, "vararg": True, **param_position(args.vararg)})
     for a, d in zip(args.kwonlyargs, args.kw_defaults):
         out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
                     "default": expr(d) if d is not None else None,
                     **param_position(a)})
+    if args.kwarg is not None:
+        out.append({"name": args.kwarg.arg, "type": annotation_of(args.kwarg.annotation) or "",
+                    "default": None, "kwarg": True, **param_position(args.kwarg)})
     return out
 
 

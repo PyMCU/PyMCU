@@ -255,6 +255,15 @@ public class StarArgExpr : Expression
     public StarArgExpr(Expression value) => Value = value;
 }
 
+// `f(**d)` -- the entries of a compile-time mapping. Same model as StarArgExpr one production
+// up: there is no run-time keyword dictionary on this target, so the known keys are spliced
+// into the call as KeywordArgExprs and the node never survives IR generation.
+public class DoubleStarArgExpr : Expression
+{
+    public Expression Value { get; }
+    public DoubleStarArgExpr(Expression value) => Value = value;
+}
+
 public class KeywordArgExpr : Expression
 {
     public string Key { get; }
@@ -637,6 +646,16 @@ public class Param : ASTNode
     public string Name { get; }
     public string Type { get; set; }   // settable: TypeInference fills empty annotations in
     public Expression? DefaultValue { get; }
+
+    /// `def f(*args)`. The name stands for the positions the call site did not give a
+    /// parameter, which are known there, so it binds a compile-time sequence rather than a
+    /// run-time argument list (#368).
+    public bool IsVarArg { get; set; }
+
+    /// `def f(**kwargs)`. The name stands for the keyword arguments the call site wrote and
+    /// the callee does not declare, which are literals there, so it binds a compile-time
+    /// mapping rather than a run-time dictionary (#368).
+    public bool IsKwArg { get; set; }
 
     public Param(string name, string type, Expression? defaultValue = null)
     {

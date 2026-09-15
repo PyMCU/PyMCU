@@ -77,6 +77,8 @@ public static class AstJsonWriter
         w.WriteString("type", p.Type);
         w.WritePropertyName("default");
         WriteExpr(w, p.DefaultValue);
+        if (p.IsVarArg) w.WriteBoolean("vararg", true);
+        if (p.IsKwArg) w.WriteBoolean("kwarg", true);
         w.WriteEndObject();
     }
 
@@ -581,6 +583,14 @@ public static class AstJsonWriter
                 w.WriteString("k", "StarArg");
                 w.WritePropertyName("value"); WriteExpr(w, sa.Value);
                 w.WriteNumber("line", sa.Line);
+                w.WriteEndObject();
+                return;
+
+            case DoubleStarArgExpr dsa:
+                w.WriteStartObject();
+                w.WriteString("k", "DoubleStarArg");
+                w.WritePropertyName("value"); WriteExpr(w, dsa.Value);
+                w.WriteNumber("line", dsa.Line);
                 w.WriteEndObject();
                 return;
 

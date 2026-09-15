@@ -3274,6 +3274,7 @@ public partial class IRGenerator
                 case YieldExpr y: Expr(y.Value); return;
                 case MemberAccessExpr m: Expr(m.Object); return;
                 case StarArgExpr st: Expr(st.Value); return;
+                case DoubleStarArgExpr dst: Expr(dst.Value); return;
                 case KeywordArgExpr kw: Expr(kw.Value); return;
                 case CallExpr c:
                     Expr(c.Callee);
