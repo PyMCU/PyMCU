@@ -1677,6 +1677,14 @@ public partial class IRGenerator
             }
 
 
+            // A TYPING-ONLY annotation on this parameter (#367). Recorded before the binding
+            // below, and CLEARED when it is not one, because the key is the inline prefix plus
+            // the name and that key is reused by every expansion at the same depth.
+            if (i < func.Params.Count && IsTypingOnlyName(func.Params[i].Type ?? ""))
+                typingOnlyValues[paramName] = func.Params[i].Type!;
+            else
+                typingOnlyValues.Remove(paramName);
+
             if (i < rawListArgs.Count && rawListArgs[i] != null)
             {
                 // Bytes/list/tuple literal bound to this parameter: record the raw AST
@@ -5223,7 +5231,15 @@ public partial class IRGenerator
     }
 
     // Write an already-evaluated value to the stream as a number/float.
-    private void EmitStreamVal(string floatFn, Val val)
+    /// <param name="declared">
+    /// The width the SOURCE was declared with, when the caller has it (#331). A Constant
+    /// carries no type, so the guess below reads one off the value -- and a value cannot say
+    /// whether 4294967295 is a uint32 or the int -1, nor whether -2147483648 is an int32 or
+    /// something narrower. That guess was only ever reached by a literal, whose magnitude does
+    /// answer for it; a NAME holding a wide value now folds to a Constant too, and then the
+    /// name's declared width is the answer and the value is not.
+    /// </param>
+    private void EmitStreamVal(string floatFn, Val val, DataType? declared = null)
     {
         bool isFloat = val is FloatConstant ||
                        (val is Variable vf && vf.Type == DataType.FLOAT) ||
@@ -5235,11 +5251,12 @@ public partial class IRGenerator
             Emit(new Call(floatFn, new List<Val> { ftmp }, ftmp));
             return;
         }
-        DataType argType = val switch
+        DataType argType = declared ?? val switch
         {
             Variable v2 => v2.Type,
             Temporary t2 => t2.Type,
-            Constant cc => cc.Value < 0 ? DataType.INT16
+            Constant cc => cc.Value < 0
+                         ? (cc.Value >= short.MinValue ? DataType.INT16 : DataType.INT32)
                          : cc.Value <= 0xFF ? DataType.UINT8
                          : cc.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
             _ => DataType.UINT8,
@@ -5248,6 +5265,23 @@ public partial class IRGenerator
         Temporary tmp = MakeTemp(tmpType);
         Emit(new Copy(val, tmp));
         Emit(new Call(decFn, new List<Val> { tmp }, tmp));
+    }
+
+    /// <summary>The width a NAME was declared with, or null when the expression is not one.</summary>
+    private DataType? DeclaredWidthOfName(Expression e)
+    {
+        if (e is not VariableExpr ve) return null;
+        foreach (string? key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                     ve.Name,
+                 })
+        {
+            if (key != null && variableTypes.TryGetValue(key, out var dt) && dt != DataType.UNKNOWN)
+                return dt;
+        }
+        return null;
     }
 
     // Compile-time string text of an expression if it is statically a string (literal or const
@@ -5726,7 +5760,9 @@ public partial class IRGenerator
             if (TryEmitByteArrayReprArg(writeStrFn, arg)) return;
 
             RejectInstanceInterpolation(arg);
-            EmitStreamVal(floatWriteFn, VisitExpression(arg));
+            // The declared width of a NAME travels with its value, because a folded constant no
+            // longer carries one (#331): `lo: int32 = -2147483648` printed its low byte.
+            EmitStreamVal(floatWriteFn, VisitExpression(arg), DeclaredWidthOfName(arg));
         }
 
         if (posArgs.Count == 0)
