@@ -40,6 +40,13 @@ All modules compile to tight native machine code — there is no Python runtime 
 {doc}`Writing a PyMCU library <authoring>` — package layout, manifest, architecture
 dispatch and publishing, for anyone shipping a driver of their own.
 
+## Cross-backend parity
+
+{doc}`HAL Parity <hal-parity>` — a generated report comparing the public API each
+architecture backend offers against the facade, and auditing the CircuitPython and
+MicroPython compatibility layers for chip-specific code that should live in the HAL
+instead.
+
 ## Design principles
 
 All HAL classes are `@inline` — they have **zero SRAM cost**. Instantiating a `Pin` or `UART`
@@ -65,4 +72,5 @@ power
 time
 drivers/index
 authoring
+hal-parity
 ```
