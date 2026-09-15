@@ -174,4 +174,36 @@ public class MethodFactoryReturnsClassTests
             .ToList();
         Assert.Contains(stores, s => s.Src is Variable sv && sv.Name == "o_written");
     }
+
+    [Fact]
+    public void ASingleFieldFactoryWithAnUnannotatedFieldThreadsTheHandleIntoTheFlattenedFieldName()
+    {
+        // PyMCU#429. Sensor's field is a bare parameter passthrough with NO annotation
+        // (`self.base = base`), unlike every other factory test in this file, which types
+        // the field explicitly (`self._n: uint8 = n`). DeriveFieldLayout derived an empty
+        // type string for such a field, and IsOutlineSafe's scalar check reads "" as "not a
+        // plain value", so read() was never outlined; its call site fell back to the
+        // ordinary Model A flattened `<inst>_<field>` name -- one this factory-handle
+        // assignment (RFC 0001 Model B) never wrote -- and read the field as zero. A
+        // GPIOR0-seeded argument, not a literal, so the assertion measures the runtime
+        // value thread rather than a compile-time fold ([[medir-no-es-compilar]]).
+        var ir = Gen(Preamble +
+            "class Sensor:\n" +
+            "    def __init__(self, base):\n" +
+            "        self.base = base\n\n" +
+            "    def read(self):\n" +
+            "        return self.base + 1\n\n" +
+            "def make_sensor(base: uint8) -> Sensor:\n" +
+            "    return Sensor(base)\n\n" +
+            "s = make_sensor(GPIOR0.value)\n" +
+            "GPIOR1.value = s.read()\n");
+
+        // The handle assignment has to ALSO write the flattened field name: whichever
+        // dispatch a later method call on `s` takes (an outlined call, or the ordinary
+        // force-inline expansion) reads the value from there.
+        var flattenedStores = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name == "s_base")
+            .ToList();
+        Assert.NotEmpty(flattenedStores);
+    }
 }
