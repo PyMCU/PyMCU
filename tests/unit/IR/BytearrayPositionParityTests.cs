@@ -23,17 +23,18 @@ using PyMCU.IR.IRGenerator;
 namespace PyMCU.UnitTests;
 
 /// <summary>
-/// PyMCU#392. `bytearray(...)` is recognized -- and laid out as a fixed SRAM buffer -- only
-/// from the two positions that reach VisitVarDecl: a bare local assignment
+/// PyMCU#392 and PyMCU#380. `bytearray(...)` is recognized -- and laid out as a fixed SRAM
+/// buffer -- only from the two positions that reach VisitVarDecl: a bare local assignment
 /// (`buf = bytearray(N)`) and its annotated spelling. A field-assignment TARGET
-/// (`self.data = bytearray(...)` inside `__init__`) falls to the generic expression visitor
-/// instead, which has no lowering for the bytearray() builtin and answers "a Python builtin
-/// that PyMCU does not provide" -- true of no import adding it, false of what already works
-/// one binding away (`buf = bytearray(N); self.data = buf`).
+/// (`self.data = bytearray(...)` inside `__init__`, #392) and an inline CALL ARGUMENT
+/// (`f(bytearray([...]))`, #380) both fall to the generic expression visitor instead, which
+/// has no lowering for the bytearray() builtin and answers "a Python builtin that PyMCU does
+/// not provide" -- true of no import adding it, false of what already works one binding away
+/// (`buf = bytearray(N); self.data = buf` / `buf = bytearray([...]); f(buf)`).
 ///
 /// Only a COMPILE-TIME-SIZED bytearray is in scope here (a literal count, or a list/bytes
 /// literal whose length is known while compiling). `bytearray(n)` for a runtime `n` is a
-/// different, arena-allocated shape and is not what this issue asks for.
+/// different, arena-allocated shape and is not what either issue asks for.
 /// </summary>
 public class BytearrayPositionParityTests
 {
@@ -97,6 +98,41 @@ public class BytearrayPositionParityTests
             "h = Holder(buf)\n" +
             "def main():\n" +
             "    h.data[0] = 1\n" +
+            "    while True:\n        pass\n"));
+    }
+
+    // ── #380: bytearray() written INLINE as a call argument ──────────────────────────────
+
+    [Fact]
+    public void ABytearrayCallArgument_WrittenInline_IsAcceptedLikeANamedOne()
+    {
+        var ir = Gen(
+            "def f(b) -> None:\n" +
+            "    b[0] = 9\n" +
+            "def main():\n" +
+            "    f(bytearray([1, 2]))\n" +
+            "    while True:\n        pass\n");
+
+        // The literal's two elements are laid out as a real fixed buffer in the CALLER --
+        // not refused, not silently dropped -- which is what #380 asks for: the same
+        // recognition `buf = bytearray([1, 2]); f(buf)` already gets, reached this time
+        // from an argument position instead of an assignment target.
+        var hiddenBufferStores = ir.Functions.SelectMany(fn => fn.Body).OfType<ArrayStore>()
+            .Where(s => s.ArrayName.EndsWith(".__inline_bytearray_arg0")).ToList();
+        Assert.Contains(hiddenBufferStores, s => s.Index is Constant k && k.Value == 0 && s.Src is Constant v && v.Value == 1);
+        Assert.Contains(hiddenBufferStores, s => s.Index is Constant k && k.Value == 1 && s.Src is Constant v && v.Value == 2);
+    }
+
+    [Fact]
+    public void ABytearrayLocal_BoundThenPassed_StillWorks()
+    {
+        // The pre-existing workaround this issue's own repro names, kept green.
+        Assert.NotNull(Gen(
+            "def f(b) -> None:\n" +
+            "    b[0] = 9\n" +
+            "def main():\n" +
+            "    buf = bytearray([1, 2])\n" +
+            "    f(buf)\n" +
             "    while True:\n        pass\n"));
     }
 }

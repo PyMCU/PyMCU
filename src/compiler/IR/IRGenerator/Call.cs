@@ -1061,6 +1061,35 @@ public partial class IRGenerator
                     continue;
                 }
             }
+
+            // `f(bytearray(N))` / `f(bytearray([...]))`: bytearray() written INLINE as a call
+            // argument (#380), rather than bound to a name first (`buf = bytearray(N); f(buf)`,
+            // which already works -- the VariableExpr branch above passes it by address). The
+            // recognition that lays out a fixed buffer for `bytearray(...)` lives in
+            // VisitVarDecl (Assign.cs), reached until now only from an assignment target; a
+            // call argument assigns nothing, so it fell to the generic call-expression
+            // visitor, which has no lowering for the bytearray() builtin and answered
+            // "unsupported Python builtin" -- true of no import providing it, false of what
+            // happens with a name in between. Give the argument the same hidden binding
+            // VisitVarDecl gives a name, under a name this expression alone cannot collide
+            // with, and pass its address exactly as a named bytearray argument already is.
+            if (arg is CallExpr { Callee: VariableExpr { Name: "bytearray" } } baArgCall)
+            {
+                string hiddenName = $"__inline_bytearray_arg{tempCounter++}";
+                VisitVarDecl(new VarDecl(hiddenName, "bytearray", baArgCall) { Line = expr.Line });
+                string hiddenQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix
+                    : currentFunction + ".") + hiddenName;
+                if (!arraySizes.ContainsKey(hiddenQualified))
+                {
+                    string altHQ = currentModulePrefix + hiddenName;
+                    if (arraySizes.ContainsKey(altHQ)) hiddenQualified = altHQ;
+                    else if (arraySizes.ContainsKey(hiddenName)) hiddenQualified = hiddenName;
+                }
+                argValuesL.Add(new ArrayBase(hiddenQualified));
+                continue;
+            }
+
             argValuesL.Add(VisitExpression(arg));
         }
 
