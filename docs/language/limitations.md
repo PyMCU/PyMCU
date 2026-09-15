@@ -63,11 +63,11 @@ once at start-up and never shrinks, which is why the once rule exists at all -- 
 would free the buffer when it goes out of scope, and there is nothing here that can. The
 allocator itself is Python (`lib/src/pymcu/arena.py`), not a compiler intrinsic; `pymcu
 build` reports its reservation (`Arena: reserved <N> B ...`) and reserves zero bytes,
-linking none of it in, for a program that never uses it. `x[i]`, `x[i] = v`, `len(x)` and
-passing `x` to a function declared to take `bytearray` all work; slicing / `memoryview` on
-a runtime-sized buffer, and allocating inside a non-inlined, non-`__init__` function
-(however many times it is actually called), do not yet. **AVR only**, like `list[T]`. See
-`docs/rfcs/0004-arena-allocator.md`.
+linking none of it in, for a program that never uses it. `x[i]`, `x[i] = v` and `len(x)`
+work. Not yet: slicing / `memoryview` on a runtime-sized buffer, passing one to a
+function's `bytearray` parameter, indexing one two `@inline` levels deep, and allocating
+inside a non-inlined, non-`__init__` function (however many times it is actually
+called). **AVR only**, like `list[T]`. See `docs/rfcs/0004-arena-allocator.md`.
 
 **Rule of thumb:** if the size is not known at compile time, it cannot be compiled --
 except a `bytearray(n)` that the compiler can prove allocates at most once, above.

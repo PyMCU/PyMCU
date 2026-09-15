@@ -452,7 +452,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Notes |
 |---------|-------|
-| Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) instead of being refused, wherever the compiler can prove the statement runs at most once: a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one. Refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`, passing to a `bytearray` parameter; new `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
+| Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) instead of being refused, wherever the compiler can prove the statement runs at most once: a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one. Refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`; new `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
 
 ---
 
