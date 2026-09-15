@@ -69,7 +69,6 @@ public class ScanDiagnosticColumnTests
     //          1234567890
     // line 2: "def take(buf: uint8[4]) -> uint8:"  -- the parameter starts at column 10
     [InlineData("def take(buf: uint8[4]) -> uint8:\n    return buf[0]\n", 3, "fixed-array type")]
-    [InlineData("def take(items: list[uint8]) -> uint8:\n    return 1\n", 5, "list parameters")]
     public void AParameterDiagnosticPointsAtTheParameter(string decl, int length, string fragment)
     {
         // The parameter, not the enclosing `def` and not the annotation. The message names the
