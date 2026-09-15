@@ -3188,7 +3188,14 @@ public partial class IRGenerator
             Temporary tv => tv.Type,
             _ => DataType.UINT8,
         };
+        // MODULE-LEVEL, and that is the whole point of the pin. A local is spelled
+        // `<prefix><name>` inside an expansion, so writing the bare name here and reading it
+        // one hop down wrote `__variadicN` and read `inline1.__init__.__variadicN`: two
+        // different variables, the second never written, and `interval_ms=pick(n)` arrived as
+        // 0 while `interval_ms=n` arrived correctly. A global has one spelling from every
+        // prefix, which is what a value carried ACROSS a binding needs.
         variableTypes[pinned] = type;
+        mutableGlobals[pinned] = type;
         Emit(new Copy(value, new Variable(pinned, type)));
         return new VariableExpr(pinned);
     }
