@@ -3266,8 +3266,9 @@ public partial class IRGenerator
         currentInlinePrefix = newPrefix;
         currentModulePrefix = basePrefix;
         inlineDepth = newDepth;
-        inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult,
-            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath });
+        var superCtx = new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult,
+            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath };
+        inlineStack.Add(superCtx);
 
         VisitBlock(funcSuper.Body);
         Emit(new Label(exitLabel));
@@ -3276,7 +3277,18 @@ public partial class IRGenerator
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedMod;
         inlineDepth = savedDepth;
-        return superResult ?? (Val)new NoneVal();
+
+        // The base method is UNANNOTATED as often as not (`def describe(self): return
+        // self.value`), which the parser reads as returning "void" -- so `superResult` above
+        // stayed null and this returned NoneVal outright, no matter what the body actually
+        // returned. VisitReturn already covers exactly this for an ordinary @inline call (see
+        // its own comment: "the first value return decides the width") by lazily creating
+        // ResultTemp on the context the FIRST time it sees a real value -- but that lazy
+        // creation mutates `superCtx`, which this function never looked at again, holding on
+        // to its own now-stale `null` copy instead. `super().describe() + self.extra` read
+        // None for the base call on every instance, constant-argument or not: `describe()`
+        // has no annotation regardless of what built the receiver (#430).
+        return superCtx.ResultTemp ?? (Val)new NoneVal();
     }
 
     // RFC 0001 Model B (Class[N]): `arr[i].method(args)` — compute the element address
