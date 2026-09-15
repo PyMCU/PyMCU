@@ -1,6 +1,5 @@
 # expect: match
 # doc: docs/language/roadmap.md:30
-# tracked: #390
 class Gate:
     def __init__(self, v):
         self.v = v
