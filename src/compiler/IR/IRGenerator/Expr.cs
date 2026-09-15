@@ -2562,13 +2562,27 @@ public partial class IRGenerator
                     ? (bp.EndsWith("_") ? bp[..^1] : bp)
                     : null;
             }
-            // Only refuse on a class we actually learned something about. A class the collector
-            // never keyed says nothing about its members, and treating silence as "no fields"
-            // would turn every read on it into an error.
+            // Only refuse BY NAME on a class we actually learned something about. A class the
+            // collector never keyed says nothing about its members, and treating silence as "no
+            // fields" would turn every read on it into an error.
             if (known)
             {
                 receiverClass = cls;
                 receiverMembers = seen.Count > 0 ? string.Join(", ", seen) : "(none)";
+                return false;
+            }
+            // A class the SCANNER visited (classDirectMethods gets an entry for every class
+            // definition, even one with no methods and no fields at all -- #441) but that
+            // genuinely assigns nothing anywhere is a real "no fields" class, not scanner
+            // blindness about it. Naming it here is what lets the caller's refusal read
+            // '<Class> object has no attribute <member>' -- the exact shape CPython, MicroPython
+            // and CircuitPython all raise for this program (measured, #441) -- instead of the
+            // anonymous fallback below, which exists for a receiver whose class this pass never
+            // visited at all.
+            if (classDirectMethods.ContainsKey(cls))
+            {
+                receiverClass = cls;
+                receiverMembers = "(none)";
                 return false;
             }
         }
