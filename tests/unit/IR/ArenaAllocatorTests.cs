@@ -315,4 +315,28 @@ public class ArenaAllocatorTests
             "except MemoryError:\n" +
             "    x = 0\n");
     }
+
+    // ------------------------------------------------------------------
+    // self.field = bytearray(n): construction only (PyMCU#392 made the field-
+    // assignment target reach the bytearray-aware path at all; indexing the result is
+    // PyMCU#418, a separate silent-wrongcode bug, and not exercised here).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void RuntimeSizedFieldAssignmentAllocatesFromTheArena()
+    {
+        var program = Generate(
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self, n: uint16):\n" +
+            "        self.buf = bytearray(n)\n\n" +
+            "n: uint16 = uint16(GPIOR0.value) + 3\n" +
+            "d: Dev = Dev(n)\n");
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        // alloc()'s own MemoryError bounds check is present, proving the once rule
+        // accepted the allocation and it was actually inlined -- same evidence as the
+        // local-variable case (LocalInsideAModuleLevelConstructedInlineInitIsAccepted).
+        Assert.Contains(main.Body, i => i is SignalError);
+    }
 }
