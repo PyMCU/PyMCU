@@ -39,6 +39,7 @@ from pathlib import Path
 import tomlkit
 
 from .libraries import (
+    LAYERS,
     Library,
     ManifestError,
     discover_libraries,
@@ -73,6 +74,108 @@ BUILD_UNMEASURED = "unmeasured"
 
 # What the driver prints when the backend for a chip is not installed.
 _MISSING_BACKEND = "pymcu-compiler["
+
+
+# ---------------------------------------------------------------------------
+# libraries.txt -- two line forms
+# ---------------------------------------------------------------------------
+
+UPSTREAM_KEYWORD = "upstream"
+
+
+class LibrariesFileError(Exception):
+    """One line of libraries.txt could not be parsed."""
+
+
+@dataclass(frozen=True)
+class UpstreamSubmission:
+    """
+    One `upstream ...` line of libraries.txt, not yet measured.
+
+    Unlike a manifest library, the distribution supplies none of this itself
+    -- no pymcu.toml, no pymcu.libraries entry point -- so the line carries
+    what the compiler needs to know instead: which module(s) it provides,
+    which stdlib layer it is written against, and where to find the
+    measurement program. `example` is a path relative to the directory
+    holding libraries.txt, and names a file *this* repository commits (a copy
+    of the library's own example, kept only as the measurement program --
+    never a copy of the library).
+    """
+
+    distribution: str
+    provides: tuple[str, ...]
+    layer: str
+    example: str
+    name: str = ""
+
+
+def _parse_upstream_line(fields: list[str], lineno: int) -> UpstreamSubmission:
+    if not fields or "=" in fields[0]:
+        raise LibrariesFileError(f"line {lineno}: 'upstream' needs a distribution name")
+    distribution = fields[0]
+
+    kv: dict[str, str] = {}
+    for token in fields[1:]:
+        if "=" not in token:
+            raise LibrariesFileError(f"line {lineno}: unrecognized token '{token}'")
+        key, _, value = token.partition("=")
+        kv[key] = value
+
+    provides = tuple(m for m in kv.get("provides", "").split(",") if m)
+    if not provides:
+        raise LibrariesFileError(
+            f"line {lineno}: {distribution} needs provides=<module>[,<module>...]"
+        )
+
+    layer = kv.get("layer", "native")
+    if layer not in LAYERS:
+        raise LibrariesFileError(
+            f"line {lineno}: {distribution} declares unknown layer '{layer}' "
+            f"(expected one of {', '.join(LAYERS)})"
+        )
+
+    example = kv.get("example", "")
+    if not example:
+        raise LibrariesFileError(
+            f"line {lineno}: {distribution} needs example=<path to the committed "
+            "measurement program>"
+        )
+
+    return UpstreamSubmission(
+        distribution=distribution, provides=provides, layer=layer,
+        example=example, name=kv.get("name", ""),
+    )
+
+
+def read_libraries_file(path: Path) -> tuple[list[str], list[UpstreamSubmission], list[str]]:
+    """
+    Parse libraries.txt into (manifest distributions, upstream submissions, problems).
+
+    A bare distribution name is a manifest library, resolved the way it
+    always has been: through its own pymcu.libraries entry point. A line
+    starting with 'upstream' names a third-party distribution the index only
+    measures and vouches for. A malformed 'upstream' line is reported rather
+    than raised, so one bad submission does not stop every other line in the
+    file from being read.
+    """
+    manifest: list[str] = []
+    upstream: list[UpstreamSubmission] = []
+    problems: list[str] = []
+
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = line.split()
+        if fields[0] == UPSTREAM_KEYWORD:
+            try:
+                upstream.append(_parse_upstream_line(fields[1:], lineno))
+            except LibrariesFileError as exc:
+                problems.append(str(exc))
+        else:
+            manifest.append(fields[0])
+
+    return manifest, upstream, problems
 
 
 def _claims_chip(lib: "Library", chip: str) -> bool:
@@ -121,6 +224,7 @@ class IndexEntry:
     def to_json(self, compiler_version: str, generated: str) -> dict:
         lib = self.library
         return {
+            "kind": "library",
             "name": lib.name,
             "distribution": lib.distribution,
             "version": lib.version,
@@ -427,23 +531,45 @@ def build_entry(lib: Library, *, pymcu: Path,
 
 
 def build_index(venv: Path, *, pymcu: Path, compiler_version: str,
-                generated: str) -> tuple[dict, list[str]]:
+                generated: str, upstream: "list[UpstreamSubmission] | None" = None,
+                repo_root: Path | None = None) -> tuple[dict, list[str]]:
     """
     Build the whole index from the libraries installed in *venv*.
 
     Returns (index, problems).  Problems are per-package failures -- an invalid
     manifest, a package that registers no entry point -- reported rather than
     raised, so one bad submission cannot stop the regeneration of the rest.
+
+    *upstream* measures the same way, but from a submission (core/upstream_index.py)
+    rather than a manifest: *repo_root* is where its `example=` path -- a file
+    this repository commits, not the distribution's own -- resolves from.
     """
+    # Deferred: upstream_index imports TargetResult and friends from here, so
+    # importing it at module load time would be circular.
+    from .upstream_index import build_upstream_entry  # noqa: PLC0415
+
     search = site_packages_of(venv)
     libraries, problems = discover_libraries(search_path=search or None)
 
     entries = [build_entry(lib, pymcu=pymcu, env_paths=search) for lib in libraries]
+    upstream_json: list[dict] = []
+    for submission in (upstream or []):
+        entry, problem = build_upstream_entry(
+            submission, pymcu=pymcu, repo_root=repo_root or Path("."), env_paths=search,
+        )
+        if problem:
+            problems.append(problem)
+            continue
+        upstream_json.append(entry.to_json(compiler_version, generated))
+
     index = {
         "v": 1,
         "generated": generated,
         "compiler": compiler_version,
-        "libraries": [entry.to_json(compiler_version, generated) for entry in entries],
+        "libraries": [
+            *[entry.to_json(compiler_version, generated) for entry in entries],
+            *upstream_json,
+        ],
     }
     return index, problems
 
