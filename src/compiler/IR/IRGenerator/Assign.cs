@@ -3761,6 +3761,66 @@ public partial class IRGenerator
         "a union type annotation is not supported. PyMCU needs one concrete type, because the " +
         "storage for a value is decided at compile time and two types do not share a size";
 
+    /// The 64-bit integer names this compiler has no lowering for, mapped to the widest name it
+    /// does have. `DataType` has no 64-bit member on any backend.
+    private static readonly Dictionary<string, string> SixtyFourBitNames = new()
+    {
+        ["uint64"] = "uint32",
+        ["int64"] = "int32",
+    };
+
+    /// <summary>
+    /// Refuses `uint64` and `int64`, which were accepted and compiled as ONE BYTE.
+    ///
+    /// Both names are in this compiler's own list of built-in type names, so the annotation was
+    /// legal, and `StringToDataType` has no branch for either, so it returned `UNKNOWN` -- whose
+    /// `SizeOf()` is 1. Measured across all five annotation positions, both front ends and both
+    /// targets: 40 of 40 accepted, exit 0, and the name carried `UNKNOWN` in the IR wherever a
+    /// width was observable (#410).
+    ///
+    /// Removing the two names from the known set instead would produce "unknown type 'uint64'",
+    /// which is worse: the name IS a type, it is just one this target has no storage for, and a
+    /// reader told it is unknown goes looking for a typo. So the refusal names the widest type
+    /// that does exist, which is the edit the reader has to make.
+    ///
+    /// Judged here rather than in the two readers, for the reason the union refusal above gives:
+    /// this is the one site both front ends reach, so they cannot diverge by a comment going
+    /// unread. `pymcu.types` exports neither name, so a program using one does not compile under
+    /// CPython either -- which is the second reason it cannot be made to work by widening a case
+    /// somewhere.
+    /// </summary>
+    private void RefuseSixtyFourBit(string annotation, ASTNode? at)
+    {
+        foreach (var (name, widest) in SixtyFourBitNames)
+        {
+            if (annotation != name && !annotation.Contains(name, StringComparison.Ordinal)) continue;
+            // Substring, so `myuint64` and `uint64_t` are somebody else's names, not this one.
+            if (annotation != name && !IsWholeTypeName(annotation, name)) continue;
+            throw UserError(
+                $"'{name}' is not a width PyMCU can store: no target it compiles for has 64-bit "
+                + $"integers, and the name was being given ONE byte. The widest integer type is "
+                + $"'{widest}'.", at);
+        }
+    }
+
+    /// True when <paramref name="name"/> appears in <paramref name="annotation"/> as a complete
+    /// type name rather than as part of a longer identifier.
+    private static bool IsWholeTypeName(string annotation, string name)
+    {
+        int i = 0;
+        while ((i = annotation.IndexOf(name, i, StringComparison.Ordinal)) >= 0)
+        {
+            bool leftOk = i == 0 || !IsNameChar(annotation[i - 1]);
+            int end = i + name.Length;
+            bool rightOk = end == annotation.Length || !IsNameChar(annotation[end]);
+            if (leftOk && rightOk) return true;
+            i = end;
+        }
+        return false;
+
+        static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+    }
+
     /// <summary>
     /// Reject an annotation that names no type this compiler knows. An unknown name used to
     /// fall back to uint8 without a word, so `x: unit8 = a * 300` truncated to 8 bits and
@@ -3818,10 +3878,15 @@ public partial class IRGenerator
             // useless "unknown type 'Union'".
             if (head is "Union" or "Optional" or "typing.Union" or "typing.Optional")
                 throw UserError(UnionAnnotationRefusal, at);
+            // The 64-bit names before the known-head return, and inside the brackets as well
+            // as at the head: `const[uint64]` and `uint64[4]` both put a width this compiler
+            // does not have where storage is decided.
+            RefuseSixtyFourBit(annotation, at);
             if (head.Length == 0 || IsKnownBracketedHead(head)) return;
             annotation = head;   // fall through and report the head as the unknown type
         }
 
+        RefuseSixtyFourBit(annotation, at);
         if (ScalarTypeNames.Contains(annotation)) return;
         if (annotation is "ptr" or "object" or "self") return;
         if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
