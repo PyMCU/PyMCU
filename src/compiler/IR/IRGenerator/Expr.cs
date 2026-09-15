@@ -1593,9 +1593,17 @@ public partial class IRGenerator
         // `Pin(dp_pin, Pin.OUT) if dp_pin else None` with dp_pin None: the true branch cannot
         // run, and lowering it refused the program for a constructor argument that only the
         // dead side ever supplies (PyMCU#334).
-        if (IsNoneValued(expr.Condition)) return VisitExpression(expr.FalseVal);
+        // The protocol rewrite comes FIRST, as it does for an `if` (EmitOptimizedConditionalJump
+        // lowers before it asks about None). In the other order a field holding an instance was
+        // read as None -- a field whose own name never receives a value, because the class
+        // collapsed onto the field below it -- and the conditional expression answered with its
+        // false side without ever reaching the class: `1 if self._echo else 0` was 0 for an
+        // object whose __len__ says otherwise (#385). A field that really is None has no class,
+        // so the rewrite leaves it alone and the check below still decides it (#334).
+        Expression truthCond = LowerInstanceTruthiness(expr.Condition);
+        if (IsNoneValued(truthCond)) return VisitExpression(expr.FalseVal);
 
-        Val cond = VisitExpression(LowerInstanceTruthiness(expr.Condition));
+        Val cond = VisitExpression(truthCond);
         if (cond is Constant c)
         {
             if (c.Value != 0) return VisitExpression(expr.TrueVal);
