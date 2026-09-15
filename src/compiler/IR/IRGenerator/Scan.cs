@@ -2741,6 +2741,7 @@ public partial class IRGenerator
     {
         if (annotatedType != null)
         {
+            if (annotatedType == "const") return "unknown";
             var t = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
                 ? annotatedType.Substring(6, annotatedType.Length - 7) : annotatedType;
             return ClassifyFieldKind(t);
@@ -2752,6 +2753,15 @@ public partial class IRGenerator
                       : localTypes.TryGetValue(ve.Name, out var lv) ? lv : null;
             if (!string.IsNullOrEmpty(d))
             {
+                // A bare `const` parameter (e.g. `pull_mode: const`) is PyMCU's own
+                // compile-time-constant placeholder -- its real value type is whatever the
+                // call site passes, not a fixed kind this scan can see. Real case: AVR's Pin
+                // class had `self._pull_up = 0` in __init__ and `self._pull_up = pull_mode`
+                // (a bare `const` param, always called with an int) in a later method; treating
+                // the placeholder as its own "kind" misclassified this as numeric-vs-other and
+                // refused the whole stdlib build. `const[X]` (a KNOWN wrapped type) is unwrapped
+                // and classified normally, same as everywhere else in this file.
+                if (d == "const") return "unknown";
                 if (d.StartsWith("const[") && d.EndsWith("]")) d = d.Substring(6, d.Length - 7);
                 return ClassifyFieldKind(d);
             }
