@@ -1554,7 +1554,10 @@ def build(
                         # spliced in, so anything sharing a file is paid for whether or
                         # not it is called: the 32-bit signed pair sits in its own file
                         # for that reason, and an unsigned-only program -- the decimal
-                        # printer among them -- no longer carries its 226 bytes.
+                        # printer among them -- no longer carries its 226 bytes. __mod32
+                        # is split out to mod32.S for the same reason (PyMCU/PyMCU#408):
+                        # a program that only divides no longer carries the modulo
+                        # wrapper it never calls.
                         func_map = {
                             "__div8": ("div.S",),
                             "__mod8": ("div.S",),
@@ -1566,7 +1569,7 @@ def build(
                             "__divs16": ("div16.S",),
                             "__mods16": ("div16.S",),
                             "__div32": ("div32.S",),
-                            "__mod32": ("div32.S",),
+                            "__mod32": ("div32.S", "mod32.S"),
                             "__divs32": ("div32.S", "div32s.S"),
                             "__mods32": ("div32.S", "div32s.S"),
                             "__mul32": ("mul32.S",),

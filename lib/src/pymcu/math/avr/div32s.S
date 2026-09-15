@@ -17,16 +17,14 @@
 ;   Input:  R23:R22:R25:R24 (Dividend a, MSB..LSB), R21:R20:R19:R18 (Divisor b)
 ;   Output: __divs32 -> R23:R22:R25:R24 = floor(a/b)
 ;           __mods32 -> R23:R22:R25:R24 = a - b*floor(a/b)   (sign of b)
-; Each is self-contained (one __div32_core pass). R4-R13 are saved/restored, so
-; the net clobber matches __div32/__mod32 (R4-R7 used internally and restored);
-; R16 (counter) and R0 (scratch) are caller-saved. 32-bit in-place negate:
-;   com b3 / com b2 / com b1 / neg b0 / sbci b1 / sbci b2 / sbci b3 (each ,0xFF).
+; Each is self-contained (one __div32_core pass). __div32_core's remainder
+; comes back in R31:R30:R27:R26 (X, Z -- caller-saved, PyMCU/PyMCU#408), so
+; only R8:R9 (sign flags) and, for __mods32, R10:R13 (the original divisor)
+; need saving; R16 (counter) and R0 (scratch) are caller-saved too. 32-bit
+; in-place negate: com b3 / com b2 / com b1 / neg b0 / sbci b1 / sbci b2 /
+; sbci b3 (each ,0xFF).
 ; -----------------------------------------------------------------------------
 __divs32:
-    push r4
-    push r5
-    push r6
-    push r7
     push r8             ; sign(a)
     push r9             ; sign(b)
     mov  r8, r23
@@ -51,12 +49,12 @@ __divs32_absb:
     sbci r20, 0xFF
     sbci r21, 0xFF
 __divs32_div:
-    clr  r4
-    clr  r5
-    clr  r6
-    clr  r7
+    clr  r26
+    clr  r27
+    clr  r30
+    clr  r31
     ldi  r16, 33
-    rcall __div32_core  ; quotient R23:R22:R25:R24 ; remainder R7:R6:R5:R4
+    rcall __div32_core  ; quotient R23:R22:R25:R24 ; remainder R31:R30:R27:R26
     mov  r0, r8
     eor  r0, r9
     sbrs r0, 7
@@ -68,10 +66,10 @@ __divs32_div:
     sbci r25, 0xFF
     sbci r22, 0xFF
     sbci r23, 0xFF
-    mov  r0, r4         ; remainder != 0 ?
-    or   r0, r5
-    or   r0, r6
-    or   r0, r7
+    mov  r0, r26        ; remainder != 0 ?
+    or   r0, r27
+    or   r0, r30
+    or   r0, r31
     breq __divs32_done
     subi r24, 1         ; floor: q -= 1
     sbci r25, 0
@@ -80,17 +78,9 @@ __divs32_div:
 __divs32_done:
     pop  r9
     pop  r8
-    pop  r7
-    pop  r6
-    pop  r5
-    pop  r4
     ret
 
 __mods32:
-    push r4
-    push r5
-    push r6
-    push r7
     push r8             ; sign(a)
     push r9             ; sign(b)
     push r10            ; original b (signed): r13:r12:r11:r10
@@ -123,50 +113,46 @@ __mods32_absb:
     sbci r20, 0xFF
     sbci r21, 0xFF
 __mods32_div:
-    clr  r4
-    clr  r5
-    clr  r6
-    clr  r7
+    clr  r26
+    clr  r27
+    clr  r30
+    clr  r31
     ldi  r16, 33
-    rcall __div32_core  ; remainder R7:R6:R5:R4
+    rcall __div32_core  ; remainder R31:R30:R27:R26
     sbrs r8, 7
     rjmp __mods32_floor
-    com  r4             ; truncating remainder takes the sign of a.
-    com  r5             ; R4-R7 are low regs (no SBCI), so negate as ~v + 1 using the
-    com  r6             ; zero register R1: complement all bytes, then add 1 with carry.
-    com  r7
+    com  r26            ; truncating remainder takes the sign of a.
+    com  r27            ; X, Z support SBCI, but the negate stays a plain
+    com  r30            ; complement-then-add-with-carry so this diff is a
+    com  r31            ; rename, not a rewrite of the algorithm.
     sec
-    adc  r4, r1
-    adc  r5, r1
-    adc  r6, r1
-    adc  r7, r1
+    adc  r26, r1
+    adc  r27, r1
+    adc  r30, r1
+    adc  r31, r1
 __mods32_floor:
     mov  r0, r8
     eor  r0, r9
     sbrs r0, 7
     rjmp __mods32_out   ; signs equal -> trunc remainder == floor
-    mov  r0, r4         ; remainder != 0 ?
-    or   r0, r5
-    or   r0, r6
-    or   r0, r7
+    mov  r0, r26        ; remainder != 0 ?
+    or   r0, r27
+    or   r0, r30
+    or   r0, r31
     breq __mods32_out
-    add  r4, r10        ; floor: r += original b
-    adc  r5, r11
-    adc  r6, r12
-    adc  r7, r13
+    add  r26, r10       ; floor: r += original b
+    adc  r27, r11
+    adc  r30, r12
+    adc  r31, r13
 __mods32_out:
-    mov  r24, r4        ; remainder -> output registers
-    mov  r25, r5
-    mov  r22, r6
-    mov  r23, r7
+    mov  r24, r26       ; remainder -> output registers
+    mov  r25, r27
+    mov  r22, r30
+    mov  r23, r31
     pop  r13
     pop  r12
     pop  r11
     pop  r10
     pop  r9
     pop  r8
-    pop  r7
-    pop  r6
-    pop  r5
-    pop  r4
     ret
