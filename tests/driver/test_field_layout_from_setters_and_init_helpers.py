@@ -134,9 +134,20 @@ def test_a_field_read_and_never_written_is_refused_like_an_attributeerror(tmp_pa
     """Measured (issue #441): CPython/MicroPython/CircuitPython all raise
     `AttributeError: 'C' object has no attribute 'x'` for this program. PyMCU refuses it at
     compile time instead, worded to say plainly that this is the same error.
+
+    `other` gives the class at least one field the scanner has genuinely learned about, so the
+    refusal takes the path that names the class. A class with NO known fields at all -- also
+    refused, just with the older, class-name-less wording -- is a separate, narrower case: an
+    attempt to name it too by treating every scanned class definition as "known" was tried and
+    reverted (see the comment on MemberReachableFromReceiver in Expr.cs), because it also fired
+    on a nested class whose fields the collector genuinely knows about, just under a key this
+    check was not looking at -- a pre-existing gap unrelated to this issue.
     """
     ok, err = _compile(tmp_path, HEADER + """
 class C:
+    def __init__(self):
+        self.other: uint8 = 1
+
     def method(self):
         pass
 
