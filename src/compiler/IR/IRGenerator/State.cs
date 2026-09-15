@@ -443,6 +443,14 @@ public partial class IRGenerator
     // assignment can recover the width of a call result that folded to a Constant.
     private DataType lastInlineReturnType = DataType.UNKNOWN;
 
+    // Declared return type TEXT of the most recently emitted call (regular or force-inlined),
+    // so a bare `x = f()` assigning a fresh local can recognise a `list[T]` result: the return
+    // temp's DataType is UNKNOWN (StringToDataType has no case for "list["), and UNKNOWN alone
+    // does not say the local is a list rather than an ordinary unrecognised-width value, nor
+    // carries the element type len()/subscript need. Left unset it is null, which every use
+    // treats the same as "not a list return".
+    private string? lastCallReturnTypeText;
+
     // Unique suffix for the synthesized index of a runtime-bounds slice iteration.
     private int sliceLoopId = 0;
 

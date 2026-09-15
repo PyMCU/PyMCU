@@ -1251,6 +1251,23 @@ public partial class IRGenerator
                 Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;
 
+                // `return pulses` where pulses is a list[T] local (declared type `array.array`
+                // or `list[T]`, both UNKNOWN to StringToDataType, per PyMCU#433): the result
+                // slot was allocated before this ran, from the TEXT of the declared return type,
+                // and neither spelling has a case there, so it kept UNKNOWN's default width
+                // instead of the GC pointer it actually carries. The caller's `x = f()` (see
+                // WidenInlineLocalToValue) resolves x's own list-ness from THIS registration.
+                if (val is Variable lv3 && listVarElemTypes.TryGetValue(lv3.Name, out var lvElem3))
+                {
+                    listVarElemTypes[ctx.ResultTemp.Name] = lvElem3;
+                    variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
+                }
+                else if (val is Temporary lt3 && listVarElemTypes.TryGetValue(lt3.Name, out var ltElem3))
+                {
+                    listVarElemTypes[ctx.ResultTemp.Name] = ltElem3;
+                    variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
+                }
+
                 // A return already visited at this expansion's own branch depth ends control
                 // flow: everything after it is dead code and must not change what the result
                 // is tracked as.

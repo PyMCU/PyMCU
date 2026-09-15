@@ -979,6 +979,28 @@ public partial class IRGenerator
     {
         if (target is not Variable tv) return target;
         string key = currentInlinePrefix + varExpr.Name;
+
+        // `pulses = self.get_pulses()` inside a force-inlined method, where get_pulses is
+        // ALSO force-inlined and its `return pulses` hands back the callee's own list[T]
+        // variable directly (no fresh temp for a plain `return <local>`): `value` here is
+        // that Variable, already registered in listVarElemTypes under ITS OWN name. `key`
+        // needs the same registration, and GC_REF, regardless of whatever scalar width an
+        // earlier scan gave it -- a list is never the "prior scalar use" the width-only
+        // check below exists for. Adafruit_dht's array.array-returning methods are exactly
+        // this shape (PyMCU#433).
+        string? valueListKey = value switch
+        {
+            Variable lv when listVarElemTypes.ContainsKey(lv.Name) => lv.Name,
+            Temporary lt when listVarElemTypes.ContainsKey(lt.Name) => lt.Name,
+            _ => null,
+        };
+        if (valueListKey != null)
+        {
+            listVarElemTypes[key] = listVarElemTypes[valueListKey];
+            variableTypes[key] = DataType.GC_REF;
+            return new Variable(key, DataType.GC_REF);
+        }
+
         if (tv.Name != key || variableTypes.ContainsKey(key)) return target;
 
         DataType vt = value switch
@@ -1138,7 +1160,22 @@ public partial class IRGenerator
                         if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
                         else
                         {
-                            if (value is Temporary tmp) type = tmp.Type;
+                            // `x = f()` where f's declared return is `list[T]`: the result temp
+                            // is already GC_REF (see EmitRegularFunctionCall/
+                            // EmitInlineFunctionCall), but `x` also needs its OWN
+                            // listVarElemTypes entry -- len(x)/x[i]/x.append() all resolve the
+                            // qualified NAME, not the temp that flows through the Copy below.
+                            // Left unregistered, x kept UNKNOWN-turned-uint8 and a subscript
+                            // silently fell to the register-bit-index path (adafruit_dht's
+                            // `pulses = self._get_pulses_pulseio()`, PyMCU#433).
+                            if (stmt.Value is CallExpr && value is Temporary
+                                && lastCallReturnTypeText is { } lcrt
+                                && lcrt.StartsWith("list[") && lcrt.EndsWith("]"))
+                                listVarElemTypes[qualifiedName] = DataTypeExtensions.StringToDataType(
+                                    lcrt.Substring(5, lcrt.Length - 6));
+
+                            if (listVarElemTypes.ContainsKey(qualifiedName)) type = DataType.GC_REF;
+                            else if (value is Temporary tmp) type = tmp.Type;
                             else if (value is Variable vv) type = vv.Type;
                             // A float literal with no annotation. There was no case for it, so
                             // it fell past every branch below and kept the UINT8 default: the

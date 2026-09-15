@@ -1259,8 +1259,16 @@ public partial class IRGenerator
         // Type the result temp with the callee's declared return type. Defaulting to uint8 lost
         // the signedness/width of a direct call result (e.g. `print(neg_of(x))` where neg_of
         // returns int8 picked the unsigned formatter, showing 251 instead of -5).
-        DataType retDt = rType != null && rType.Length > 0
-            ? DataTypeExtensions.StringToDataType(rType) : DataType.UINT8;
+        //
+        // `list[T]` (and array.array, which reaches the same UNKNOWN width) has no case in
+        // StringToDataType, so it fell to UNKNOWN here -- the actual runtime shape is a GC
+        // pointer, not "no known width". lastCallReturnTypeText carries the raw text past this
+        // return so a bare `x = f()` assignment can register x as that list, not merely widen
+        // the UNKNOWN it would otherwise keep.
+        lastCallReturnTypeText = rType;
+        DataType retDt = IsListLikeReturnType(rType) ? DataType.GC_REF
+            : rType != null && rType.Length > 0 ? DataTypeExtensions.StringToDataType(rType)
+            : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
         Emit(new Call(callee, argValuesL, dstC));
         return dstC;
@@ -1341,7 +1349,12 @@ public partial class IRGenerator
         }
         else if (func.ReturnType != "void" && func.ReturnType != "None")
         {
-            result = MakeTemp(DataTypeExtensions.StringToDataType(func.ReturnType));
+            // See the identical note in EmitRegularFunctionCall: `list[T]` (and array.array)
+            // has no StringToDataType case, so the result temp needs GC_REF, not UNKNOWN, and
+            // a bare `x = f()` assignment needs the raw text to register x as that list.
+            lastCallReturnTypeText = func.ReturnType;
+            result = MakeTemp(IsListLikeReturnType(func.ReturnType)
+                ? DataType.GC_REF : DataTypeExtensions.StringToDataType(func.ReturnType));
         }
 
         var argValues = new List<Val>();
@@ -6827,19 +6840,46 @@ public partial class IRGenerator
 
     // Resolves a short variable name to its fully qualified list variable name,
     // or returns "" if the variable is not a list[T].
+    /// <summary>
+    /// `list[T]`, and `array.array` (whose element width is never in the TEXT -- it comes from
+    /// whatever the body actually builds and returns), both reach the same UNKNOWN width in
+    /// StringToDataType. Getting this wrong at the point a call result's Temporary is CREATED
+    /// is not something a later dictionary registration can repair: codegen moves bytes by the
+    /// WIDTH baked into that Temporary's own Type field, not by a name looked up afterwards, so
+    /// a 1-byte-wide temp holding a 2-byte GC pointer had its high byte zeroed on the way into
+    /// the caller's list variable -- silently, since 8-bit garbage still looks like a plausible
+    /// (wrong) address (PyMCU#433).
+    /// </summary>
+    private static bool IsListLikeReturnType(string? returnType)
+        => returnType != null && (returnType.StartsWith("list[") || returnType == "array.array");
+
     private string ResolveListVarQualified(string name)
     {
+        string? qualified = null;
         if (!string.IsNullOrEmpty(currentInlinePrefix))
         {
             string k = currentInlinePrefix + name;
             if (listVarElemTypes.ContainsKey(k)) return k;
+            qualified = k;
         }
         if (!string.IsNullOrEmpty(currentFunction))
         {
             string k = currentFunction + "." + name;
             if (listVarElemTypes.ContainsKey(k)) return k;
+            qualified ??= k;
         }
         if (listVarElemTypes.ContainsKey(name)) return name;
+
+        // Follow variableAliases to resolve through a force-inlined callee's list[T]
+        // parameter (e.g. len(buf) inside a plain-Python `array.array`-annotated method,
+        // expanded at the call site the same way a bytearray/ZCA parameter already is).
+        string resolved = qualified ?? name;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(resolved, out string next)) break;
+            resolved = next;
+            if (listVarElemTypes.ContainsKey(resolved)) return resolved;
+        }
         return "";
     }
 
