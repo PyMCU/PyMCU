@@ -2094,6 +2094,24 @@ public partial class IRGenerator
                 new List<Expression> { new BinaryExpr(arenaReadVe, AstBinOp.Add, expr.Index) }));
         }
 
+        // PyMCU#418: the FIELD form, `self.buf[i]` / `d.buf[i]` -- see
+        // TryResolveArenaBufferField and the matching write-side hook in Assign.cs
+        // EmitIndexAssign. The field's value is read into an ordinary local first, for
+        // the same reason the write side does: passed straight through as read8's
+        // argument, an inline parameter bound to a member-access expression re-resolves
+        // it INSIDE read8's own expansion, where _arena's resolution silently breaks
+        // (PyMCU#415's symptom) even one level deep.
+        if (expr.Target is MemberAccessExpr arenaReadMem
+            && TryResolveArenaBufferField(arenaReadMem.Object, arenaReadMem.Member, out _))
+        {
+            string tempOff = $"__arena_field_off_{arenaFieldTempId++}";
+            VisitStatement(new VarDecl(tempOff, "uint16", arenaReadMem) { Line = expr.Line });
+            string arenaMod = ResolveArenaModuleAlias(expr);
+            return VisitExpression(new CallExpr(
+                new MemberAccessExpr(new VariableExpr(arenaMod), "read8"),
+                new List<Expression> { new BinaryExpr(new VariableExpr(tempOff), AstBinOp.Add, expr.Index) }));
+        }
+
         // `memoryview(buf)[k]`/`[a:b]`: a slice is a writable window of the
         // buffer (ssd1306's `memoryview(self.buffer)[1:]`). A single index
         // is the argument's own subscript (PyMCU#361).

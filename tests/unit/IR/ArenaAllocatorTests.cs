@@ -317,9 +317,12 @@ public class ArenaAllocatorTests
     }
 
     // ------------------------------------------------------------------
-    // self.field = bytearray(n): construction only (PyMCU#392 made the field-
-    // assignment target reach the bytearray-aware path at all; indexing the result is
-    // PyMCU#418, a separate silent-wrongcode bug, and not exercised here).
+    // self.field = bytearray(n): construction (PyMCU#392 made the field-assignment
+    // target reach the bytearray-aware path at all) and indexing the result (PyMCU#418:
+    // a field holding an arena buffer was never marked as one at the field-write site,
+    // so indexing it fell through to the generic bit-index fallback and silently
+    // compiled to a bit operation instead of a byte access -- fixed here, not just
+    // documented).
     // ------------------------------------------------------------------
 
     [Fact]
@@ -338,5 +341,40 @@ public class ArenaAllocatorTests
         // accepted the allocation and it was actually inlined -- same evidence as the
         // local-variable case (LocalInsideAModuleLevelConstructedInlineInitIsAccepted).
         Assert.Contains(main.Body, i => i is SignalError);
+    }
+
+    [Fact]
+    public void IndexingAndLenOnAnArenaFieldWorkThroughMethods()
+    {
+        // PyMCU#418 regression: before the fix, this raised "runtime bit index is only
+        // supported on a chip register" from inside write8()'s own inlined body (the
+        // field write landed in a flattened name TryResolveArenaBuffer had never heard
+        // of). poke()/peek() are themselves separate @inline methods, so this also
+        // covers indexing two @inline levels deep through a field (module -> poke/peek
+        // -> write8/read8), the same nesting depth #415 was originally, and wrongly,
+        // thought to still refuse.
+        var program = Generate(
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self, n: uint16):\n" +
+            "        self.buf = bytearray(n)\n\n" +
+            "    @inline\n" +
+            "    def poke(self, i: uint16, v: uint8) -> None:\n" +
+            "        self.buf[i] = v\n\n" +
+            "    @inline\n" +
+            "    def peek(self, i: uint16) -> uint8:\n" +
+            "        return self.buf[i]\n\n" +
+            "    @inline\n" +
+            "    def size(self) -> uint16:\n" +
+            "        return len(self.buf)\n\n" +
+            "n: uint16 = uint16(GPIOR0.value) + 3\n" +
+            "d: Dev = Dev(n)\n" +
+            "d.poke(0, 11)\n" +
+            "x: uint8 = d.peek(0)\n" +
+            "sz: uint16 = d.size()\n");
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is ArrayStore st && st.ArrayName == "_arena");
+        Assert.Contains(main.Body, i => i is ArrayLoad ld && ld.ArrayName == "_arena");
     }
 }

@@ -4201,6 +4201,12 @@ public partial class IRGenerator
         // container with a run-time length.
         if (expr.Args[0] is MemberAccessExpr lenMem)
         {
+            // PyMCU#418: len(self.buf) / len(d.buf) on an arena-allocated field -- see
+            // TryResolveArenaBufferField (Assign.cs) and the matching index hooks in
+            // Expr.cs / Assign.cs.
+            if (TryResolveArenaBufferField(lenMem.Object, lenMem.Member, out string lenFieldQ)
+                && arenaBufferLenVar.TryGetValue(lenFieldQ, out string lenFieldVar))
+                return new Variable(lenFieldVar, DataType.UINT16);
             if (TryGetDictFor(lenMem, out var lenDict)) return new Constant(lenDict.Entries.Count);
             if (TryGetSetFor(lenMem, out var lenSet)) return new Constant(lenSet.Elements.Count);
             if (TryResolveInstanceSequence(lenMem, out _, out int lenSeqCount))

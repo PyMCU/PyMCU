@@ -799,6 +799,31 @@ public partial class IRGenerator
                 // an unannotated field to uint8 from the assigned value's width.
                 VisitStatement(new AssignStmt(baFieldTgt, new VariableExpr(hiddenLocal))
                     { Line = stmt.Line, AnnotatedType = "uint16" });
+
+                // PyMCU#418: the field write above lands in EmitMemberAssign's flattened
+                // "<object>_<member>" fallback variable, a SEPARATE name from hiddenLocal's
+                // own arena-buffer registration -- so self.buf[i] / d.buf[i] fell through
+                // to the generic bit-index path and silently compiled to a bit operation
+                // instead of a byte access. Registered under the same flattened-name
+                // computation EmitMemberAssign itself uses (Assign.cs, the
+                // "flattenedName = baseName + '_' + member" fallback), so
+                // TryResolveArenaBufferField (Expr.cs / Assign.cs / Call.cs) matches it.
+                if (TryResolveArenaBuffer(hiddenLocal, out string hiddenQualified))
+                {
+                    Val fieldObjVal = VisitExpression(baFieldTgt.Object);
+                    string fieldBase = fieldObjVal is Variable fov ? fov.Name
+                                      : fieldObjVal is Temporary fot ? fot.Name : "";
+                    while (!string.IsNullOrEmpty(fieldBase)
+                           && variableAliases.TryGetValue(fieldBase, out var fieldAlias))
+                        fieldBase = fieldAlias;
+                    if (!string.IsNullOrEmpty(fieldBase))
+                    {
+                        string flattenedField = fieldBase + "_" + baFieldTgt.Member;
+                        arenaBufferNames.Add(flattenedField);
+                        if (arenaBufferLenVar.TryGetValue(hiddenQualified, out var lenVar))
+                            arenaBufferLenVar[flattenedField] = lenVar;
+                    }
+                }
                 return;
             }
 
@@ -3270,6 +3295,30 @@ public partial class IRGenerator
             return;
         }
 
+        // PyMCU#418: the FIELD form, `self.buf[i] = v` / `d.buf[i] = v`. See
+        // TryResolveArenaBufferField and the matching read-side hook in Expr.cs
+        // VisitIndex. The field's value is read into an ORDINARY local first, rather
+        // than passing the MemberAccessExpr straight through as write8's argument the
+        // way the local-variable case passes its VariableExpr: an inline parameter bound
+        // directly to a member-access expression re-resolves it INSIDE write8's own
+        // expansion, where _arena's own resolution silently breaks (PyMCU#415's
+        // symptom) even one level deep. A plain local sidesteps that -- it is exactly
+        // the shape that already works.
+        if (indexExpr.Target is MemberAccessExpr arenaWriteMem
+            && TryResolveArenaBufferField(arenaWriteMem.Object, arenaWriteMem.Member, out _))
+        {
+            string tempOff = $"__arena_field_off_{arenaFieldTempId++}";
+            VisitStatement(new VarDecl(tempOff, "uint16", arenaWriteMem) { Line = stmt.Line });
+            string arenaMod = ResolveArenaModuleAlias(indexExpr);
+            VisitExpression(new CallExpr(
+                new MemberAccessExpr(new VariableExpr(arenaMod), "write8"),
+                new List<Expression> {
+                    new BinaryExpr(new VariableExpr(tempOff), PyMCU.Frontend.BinaryOp.Add, indexExpr.Index),
+                    stmt.Value,
+                }));
+            return;
+        }
+
         // A tuple does not support item assignment, here or in CPython (#299). Refused before
         // the slice and array paths below, which cannot tell a tuple from a list: the two share
         // their storage, and the name is the only place the difference is recorded.
@@ -5672,6 +5721,27 @@ public partial class IRGenerator
         if (arenaBufferNames.Contains(bareName)) { qualified = bareName; return true; }
         qualified = bareName;
         return false;
+    }
+
+    // PyMCU#418: the FIELD form (`self.buf[i]`, `d.buf[i]`) -- a MemberAccessExpr index
+    // target, not a bare VariableExpr. Computes the same "<object>_<member>" flattened
+    // name EmitMemberAssign's fallback field-write path stores into (and
+    // TryLowerArenaBytearray's field-construction hook registers under), rather than
+    // reusing TryResolveArenaBuffer's currentFunction/currentInlinePrefix-qualified
+    // candidates, which are for a plain local, not an instance field.
+    private bool TryResolveArenaBufferField(Expression target, string member, out string flattened)
+    {
+        flattened = "";
+        if (target is not (VariableExpr or MemberAccessExpr)) return false;
+        Val objVal = VisitExpression(target);
+        string baseName = objVal is Variable v ? v.Name : objVal is Temporary t ? t.Name : "";
+        while (!string.IsNullOrEmpty(baseName) && variableAliases.TryGetValue(baseName, out var alias))
+            baseName = alias;
+        if (string.IsNullOrEmpty(baseName)) return false;
+        string candidate = baseName + "_" + member;
+        if (!arenaBufferNames.Contains(candidate)) return false;
+        flattened = candidate;
+        return true;
     }
 
     // The import alias `pymcu.arena` was given in the entry file (`pymcu build` injects
