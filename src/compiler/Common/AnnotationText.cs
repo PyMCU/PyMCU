@@ -22,9 +22,18 @@ public static class AnnotationText
     /// subscripted in the body. `ReadableBuffer` is the same storage, read only, and this
     /// compiler has no way to enforce that distinction, so recording it would be a promise
     /// nothing keeps.
+    ///
+    /// `bytes` is that same storage under Python's own name, and it belongs here by the same
+    /// argument: read-only is a promise this compiler cannot keep, and the storage is a
+    /// pointer to bytes either way. Left out, it was not refused -- it was taken for the name
+    /// of a CLASS, because no other part of the compiler had a width for it, and a function
+    /// with a `bytes` parameter was registered for call-site expansion instead of compiled.
+    /// The expansion then lowered to a debug marker and no statements: the function vanished,
+    /// the assignment of its result vanished with it, and the build said BUILD_OK and exited
+    /// 0 on both front ends and every target (#365).
     private static readonly HashSet<string> BufferNames = new()
     {
-        "WriteableBuffer", "ReadableBuffer",
+        "WriteableBuffer", "ReadableBuffer", "bytes",
     };
 
     /// <summary>The annotation as the rest of the compiler reads it.</summary>
