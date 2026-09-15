@@ -92,7 +92,7 @@ def main():
     )
     # The diagnostic must name the RECEIVER'S class, or it cannot tell the reader which of the
     # two classes in the program is the one missing the field.
-    assert "'C' has no attribute 'nope'" in err, err
+    assert "'C' object has no attribute 'nope'" in err, err
     # And it must list what C does have, which is the data needed to spot a typo.
     assert "Assigned members: real" in err, err
 
@@ -115,7 +115,7 @@ def main():
 """, py_parser)
 
     assert not ok
-    assert "'C' has no attribute 'nope'" in err, err
+    assert "'C' object has no attribute 'nope'" in err, err
 
 
 @BOTH_FRONT_ENDS
@@ -155,7 +155,7 @@ def main():
 """, py_parser)
 
     assert not ok, "self.nope compiled because an unrelated class declared `nope`"
-    assert "'C' has no attribute 'nope'" in err, err
+    assert "'C' object has no attribute 'nope'" in err, err
 
 
 @BOTH_FRONT_ENDS
