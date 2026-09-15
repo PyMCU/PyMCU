@@ -58,6 +58,7 @@ from ..core.libraries import (
     site_packages_of,
     ssl_context,
 )
+from ..core.upstream_libraries import installed_distribution_version
 
 console = Console()
 
@@ -320,6 +321,7 @@ def _installed_json(lib: Library, project: Project) -> dict:
     reasons = (check_compatibility(lib, chip=project.chip, flavors=project.flavors)
                if project.chip else ["no board or target declared"])
     return {
+        "kind": "library",
         "name": lib.name,
         "distribution": lib.distribution,
         "version": lib.version,
@@ -543,6 +545,22 @@ def verify_imports(lib: Library, project: Project) -> tuple[bool, str]:
     measurement is the index's job, where the sdist is at hand.
     """
     modules = [m for m in lib.modules if not m.startswith("_")]
+    return _verify_module_imports(modules, project)
+
+
+def verify_upstream_imports(entry: dict, project: Project) -> tuple[bool, str]:
+    """
+    The same check as verify_imports(), for an upstream entry.
+
+    There is no Library object to read `modules` off: an upstream
+    distribution ships no manifest, so what it provides comes from the index
+    entry itself instead.
+    """
+    modules = [str(m) for m in entry.get("provides", [])]
+    return _verify_module_imports(modules, project)
+
+
+def _verify_module_imports(modules: list[str], project: Project) -> tuple[bool, str]:
     if not modules:
         return True, "nothing public to verify"
 
@@ -650,6 +668,41 @@ def resolve_from_index(project: Project, name: str, *, refresh: bool = False
     return entry, distribution, ""
 
 
+def _finish_upstream_install(project: Project, entry: dict, distribution: str, *,
+                             verify: bool, result: ChangeResult) -> ChangeResult:
+    """
+    Finish installing an upstream distribution.
+
+    There is no pymcu.toml and no pymcu.libraries entry point to find it by,
+    so the preflight a manifest library goes through below does not apply:
+    this only confirms a distribution by this name actually landed in the
+    project's environment, then verifies its declared modules the same way.
+    """
+    search = site_packages_of(project.venv) if project.venv.exists() else None
+    version = installed_distribution_version(distribution, search)
+    if version is None:
+        return result.failed(rollback(
+            project, distribution,
+            "it did not install (nothing by that name is in the project's environment)"
+        ))
+
+    if verify:
+        ok, detail = verify_upstream_imports(entry, project)
+        if not ok:
+            return result.failed(rollback(
+                project, distribution,
+                f"it does not compile for {project.chip}: {detail}"))
+        result.log.append(f"Verified: {detail}")
+
+    # `uv add` already recorded it; writing again would list it twice.
+    if not _uses_uv_add(project):
+        _add_dependency(project, f"{distribution}>={version}")
+
+    result.entry = entry
+    result.message = f"{entry.get('name') or distribution} {version} installed"
+    return result
+
+
 def install_library(project: Project, name: str, *, verify: bool = True,
                     from_pypi: bool = False, refresh: bool = False,
                     pre: bool = True) -> ChangeResult:
@@ -695,6 +748,13 @@ def install_library(project: Project, name: str, *, verify: bool = True,
     result.log.append(f"Installing {distribution} ...")
     if not _run(cmd, project.root):
         return result.failed(f"Installation of {distribution} failed.")
+
+    if entry is not None and str(entry.get("kind", "")) == "upstream":
+        # No pymcu.toml, no pymcu.libraries entry point: there is no Library
+        # to find on disk the way a manifest library's preflight below does,
+        # so the check is simpler -- did a distribution by this name actually
+        # land in the project's environment.
+        return _finish_upstream_install(project, entry, distribution, verify=verify, result=result)
 
     # Preflight against what actually landed on disk. The index can lag behind a
     # release; the manifest in the wheel cannot. The package is found through the
@@ -818,10 +878,18 @@ def install(
 
     lib = result.library
     console.print(f"[bold green]+[/bold green] {result.message}.")
-    console.print(f"  import with: [bold]from {lib.modules[0]} import ...[/bold]")
-    for flavor in project.flavors:
-        if lib.adapter_dir(flavor) is not None:
-            console.print(f"  using the [bold]{flavor}[/bold] adapter")
+    if lib is not None:
+        console.print(f"  import with: [bold]from {lib.modules[0]} import ...[/bold]")
+        for flavor in project.flavors:
+            if lib.adapter_dir(flavor) is not None:
+                console.print(f"  using the [bold]{flavor}[/bold] adapter")
+    elif result.entry:
+        # Upstream: no Library object, no adapters -- the index entry is all
+        # there is, and it is exactly what it shipped from PyPI.
+        provides = [str(m) for m in result.entry.get("provides", [])]
+        if provides:
+            console.print(f"  import with: [bold]from {provides[0]} import ...[/bold]")
+        console.print("  [dim]upstream: unmodified, from PyPI[/dim]")
     if result.entry:
         _print_measured(result.entry, project.chip)
 
@@ -853,6 +921,36 @@ def uninstall(
     console.print(f"[bold green]-[/bold green] {result.message}.")
 
 
+def _installed_upstream(project: Project) -> list:
+    """
+    Upstream distributions installed here, cross-referenced against the
+    (cached) index -- the same source a build reads (core.upstream_libraries).
+    A project that never ran `pymcu install`/`search` has no cache yet, so
+    this is empty rather than wrong: there is no manifest inside the
+    distribution itself to fall back to.
+    """
+    from ..core.upstream_libraries import discover_installed_upstream, upstream_entries
+
+    index = core_libraries.read_cached_library_index()
+    entries = upstream_entries(index)
+    if not entries:
+        return []
+    search = site_packages_of(project.venv) if project.venv.exists() else None
+    return discover_installed_upstream(entries, search)
+
+
+def _upstream_json(entry) -> dict:
+    return {
+        "kind": "upstream",
+        "name": entry.name,
+        "distribution": entry.distribution,
+        "version": entry.version,
+        "provides": list(entry.provides),
+        "layer": entry.layer,
+        "repository": entry.repository,
+    }
+
+
 def libraries(
     all_targets: bool = typer.Option(
         False, "--all", help="List every installed library, not just the usable ones."),
@@ -862,6 +960,7 @@ def libraries(
     """List the PyMCU libraries installed in this project."""
     project = _load_project()
     installed, problems = _installed_libraries(project)
+    upstream = _installed_upstream(project)
 
     if json_output:
         print(json.dumps({
@@ -869,6 +968,7 @@ def libraries(
             "board": project.board,
             "flavors": project.flavors,
             "libraries": [_installed_json(lib, project) for lib in installed],
+            "upstream": [_upstream_json(entry) for entry in upstream],
             "collisions": find_module_collisions(installed),
             "invalid": problems,
         }))
@@ -877,7 +977,7 @@ def libraries(
     for problem in problems:
         console.print(f"[bold red]Invalid library[/bold red] {problem}")
 
-    if not installed:
+    if not installed and not upstream:
         console.print("[dim]No PyMCU libraries installed in this project.[/dim]")
         console.print("[dim]Add one with: pymcu install <name>[/dim]")
         return
@@ -886,6 +986,7 @@ def libraries(
     table.add_column("Library")
     table.add_column("Version")
     table.add_column("Modules")
+    table.add_column("Kind")
     table.add_column("Status")
 
     for lib in installed:
@@ -898,6 +999,26 @@ def libraries(
             lib.name,
             lib.version,
             ", ".join(lib.modules),
+            "library",
+            "[green]ok[/green]" if usable else f"[yellow]{reasons[0]}[/yellow]",
+        )
+
+    for entry in upstream:
+        reasons = []
+        if project.chip and entry.layer != "native" and entry.layer not in project.flavors:
+            declared = ", ".join(project.flavors) if project.flavors else "none"
+            reasons.append(
+                f"is written against the {entry.layer} layer, but this project "
+                f"declares stdlib = [{declared}]"
+            )
+        usable = not reasons
+        if not usable and not all_targets:
+            continue
+        table.add_row(
+            entry.name,
+            entry.version,
+            ", ".join(entry.provides),
+            "upstream",
             "[green]ok[/green]" if usable else f"[yellow]{reasons[0]}[/yellow]",
         )
 
