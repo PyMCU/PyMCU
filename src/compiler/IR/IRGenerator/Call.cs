@@ -1785,8 +1785,8 @@ public partial class IRGenerator
             // A TYPING-ONLY annotation on this parameter (#367). Recorded before the binding
             // below, and CLEARED when it is not one, because the key is the inline prefix plus
             // the name and that key is reused by every expansion at the same depth.
-            if (i < func.Params.Count && IsTypingOnlyName(func.Params[i].Type ?? ""))
-                typingOnlyValues[paramName] = func.Params[i].Type!;
+            if (paramIdx < func.Params.Count && IsTypingOnlyName(func.Params[paramIdx].Type ?? ""))
+                typingOnlyValues[paramName] = func.Params[paramIdx].Type!;
             else
                 typingOnlyValues.Remove(paramName);
 

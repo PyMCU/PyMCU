@@ -149,7 +149,62 @@ public class TypingOnlyNameTests
             c => c.Src is Constant k && k.Value == 6);
     }
 
-    // ── PyMCU#417: `if TYPE_CHECKING:` populates typingOnlyNames the same way a folded ────
+    // ── PyMCU#417: a guarded name is checked against the RIGHT parameter ─────────────────
+
+    /// `RWBits.__set__(self, obj, value)` -- the exact adafruit_register/i2c_bits.py shape.
+    /// `obj` (index 1, past `self`) carries the guarded name; `value` (index 2) is a plain
+    /// `uint8`. Before #417, the inline-call argument binder checked `func.Params[i]`
+    /// instead of the self-offset index, so it read `value`'s slot against `obj`'s
+    /// annotation (and `obj`'s slot against `self`'s, which has none) -- the WRONG parameter
+    /// was flagged, and the actual offender was never tracked at all.
+    ///
+    /// `if TYPE_CHECKING:` here rather than try/except: the try/except branch is chosen by
+    /// `ImportStmt.OptionalLoadFailed`, which only `DependencyGraphBuilder` sets (it asks the
+    /// loader whether the module is actually there) -- absent in this bare parser-plus-
+    /// ConditionalCompilator harness, so the try never folds and the name never reaches
+    /// `TypingOnlyNames` here regardless of the off-by-one this is testing. `if TYPE_CHECKING:`
+    /// folds from AST shape alone (previous test group) and exercises the identical
+    /// downstream call-argument-binding code; the try/except form of this exact scenario is
+    /// covered against a real toolchain by the driver-level parity test
+    /// (test_typing_only_guarded_import.py).
+    private const string GuardedI2CDeviceDriver =
+        "if TYPE_CHECKING:\n" +
+        "    from circuitpython_typing.device_drivers import I2CDeviceDriver\n\n" +
+        "class RWBits:\n" +
+        "    @inline\n" +
+        "    def __init__(self, lowest_bit: uint8):\n" +
+        "        self.lowest_bit = lowest_bit\n" +
+        "    @inline\n" +
+        "    def __set__(self, obj: I2CDeviceDriver, value: uint8) -> uint8:\n" +
+        "        return value << self.lowest_bit\n";
+
+    [Fact]
+    public void AGuardedName_OnAParameterPastSelf_IsAcceptedAndUnreadValuesStillWork()
+    {
+        // `value` (a plain uint8, one slot past the guarded `obj`) must compile and fold
+        // normally -- the off-by-one used to make ITS read the one that was refused.
+        var ir = GenWithGuardFolding(Hdr +
+            GuardedI2CDeviceDriver +
+            "r = RWBits(2)\n" +
+            "def main():\n    GPIOR0.value = r.__set__(0, 5)\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
+            c => c.Src is Constant k && k.Value == 20);   // 5 << 2
+    }
+
+    [Fact]
+    public void AGuardedName_ARealReadOfTheRightParameter_IsRefusedByItsOwnName()
+    {
+        string msg = GuardedRefusal(Hdr +
+            GuardedI2CDeviceDriver.Replace(
+                "return value << self.lowest_bit", "return obj") +
+            "r = RWBits(2)\n" +
+            "def main():\n    GPIOR0.value = r.__set__(0, 5)\n");
+        Assert.Contains("'obj'", msg);
+        Assert.Contains("I2CDeviceDriver", msg);
+        Assert.DoesNotContain("'value'", msg);
+    }
+
+    // ── `if TYPE_CHECKING:` populates typingOnlyNames the same way a folded ───────────────
     // ── `try/except ImportError` already does ─────────────────────────────────────────────
 
     [Fact]
