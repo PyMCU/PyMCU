@@ -329,6 +329,58 @@ CI. `PYMCU_LIBRARY_INDEX` overrides both, which is also how you test against a l
 
 ---
 
+## Upstream libraries: no wrapper needed
+
+Everything above is for a library written *for* PyMCU. A library someone already
+publishes on PyPI for CircuitPython or MicroPython, that happens to be plain Python with
+no interpreter-only surface, does not need any of it: no `pymcu.toml`, no
+`pymcu.libraries` entry point, no fork. The index can list it directly as an **upstream**
+entry. It names the distribution, what it provides, and a measurement program, and the
+compiler is told where to find the module(s) it already installed.
+
+The bytes stay the author's. The index only vouches for the distribution and measures
+whether it compiles; it never carries a copy of the library's code, only of the one file
+used to measure it.
+
+Adding one is a maintainer action on the [`pymcu-libraries`](https://github.com/PyMCU/pymcu-libraries)
+repository, not something the library's own author does. `libraries.txt` grows a second
+line form:
+
+```
+upstream <distribution> provides=<module>[,<module>...] layer=<native|micropython|circuitpython> example=<path> [name=<name>]
+```
+
+- `provides`: the top-level module(s) the distribution installs (comma-separated for
+  more than one). Read from the distribution's own files at build time, never imported.
+- `layer`: which stdlib flavor a project must declare for the library to apply
+  (`layer=circuitpython` for an `adafruit_*` module). Defaults to `native`.
+- `example`: a path, relative to the `pymcu-libraries` repository root, to a **copy of
+  the library's own example** committed under `upstream-examples/<distribution>/`. This
+  is the measurement program, the same bar a manifest library's `examples/basic/` clears,
+  kept because the index has nowhere else to read one from: an upstream distribution's
+  sdist is not guaranteed to carry its examples the way a PyMCU library's is required to.
+- `name`: optional; defaults to the first `provides` module, and is what `pymcu install
+  <name>` and `pymcu search` match against, alongside the distribution name itself.
+
+At build time, an installed distribution the index lists this way contributes its
+declared module(s) to the compiler's include path, staged into `dist/_upstream/`, never
+pointed at site-packages directly, so nothing else installed alongside it becomes
+importable from a user's firmware. This happens after every manifest library, so an
+upstream one can never shadow `board`, `digitalio`, `pulseio`, or a curated library.
+
+`pymcu index build`/`verify` measure an upstream entry exactly like a manifest one: one
+chip per architecture, the declared layer enabled, and record the verified installed
+version, the license and summary read from the distribution's own metadata, and the same
+per-chip `measured` block every entry carries. There is no `supports.arch` to compare the
+measurement against, since there is no manifest to hold that promise; the measurement is
+the entry's only claim about compatibility.
+
+An upstream entry is re-measured on the same schedule as everything else, and is removed
+from the index when it stops building. That, too, is a maintainer action, since there is
+no author to notify.
+
+---
+
 ## Checklist
 
 - [ ] Public API takes pin identifiers, not layer objects
