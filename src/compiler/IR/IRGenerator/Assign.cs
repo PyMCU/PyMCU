@@ -1266,16 +1266,47 @@ public partial class IRGenerator
                     // site like any other instance method, and validation code such as the
                     // assert above executes); this only tells the ASSIGNMENT TARGET what
                     // class the value it receives is.
-                    foreach (var fbs in factoryMethod.Body.Statements)
-                        if (fbs is ReturnStmt fr && fr.Value is CallExpr frcall
-                            && frcall.Callee is VariableExpr frcv)
+                    //
+                    // Resolved under the DEFINING module's prefix, not the caller's: a
+                    // cross-module `pcf.get_pin(...)` (adafruit_pcf8574's own shape --
+                    // PCF8574 and its DigitalInOut return type are both defined in
+                    // adafruit_pcf8574.py, used from main.py) has `Pin`/`DigitalInOut`
+                    // written unqualified inside a method that belongs to the OTHER module,
+                    // and ResolveCallee reads a name against `currentModulePrefix`, which at
+                    // this assignment is the CALLER's module, not the one that wrote it.
+                    string savedFactoryPrefix = currentModulePrefix;
+                    // classModuleMap is keyed by the BARE class name (however InstanceClassOfName
+                    // answers qualified, e.g. "pinlib_Owner" for a cross-module receiver) -- find
+                    // the entry whose prefix + bare name reconstructs it, rather than assuming
+                    // either spelling.
+                    if (InstanceClassOfName(objVar.Name) is { } recvCls)
+                    {
+                        foreach (var (bareName, modPrefix) in classModuleMap)
                         {
-                            string frc = ResolveCallee(frcv.Name);
-                            if (inlineFunctions.ContainsKey(frc + "___init__")
-                                || overloadedFunctions.Contains(frc + "___init__")
-                                || classFieldLayout.ContainsKey(frc))
-                                resolvedClass = frc;
+                            if (modPrefix + bareName == recvCls || bareName == recvCls)
+                            {
+                                currentModulePrefix = modPrefix;
+                                break;
+                            }
                         }
+                    }
+                    try
+                    {
+                        foreach (var fbs in factoryMethod.Body.Statements)
+                            if (fbs is ReturnStmt fr && fr.Value is CallExpr frcall
+                                && frcall.Callee is VariableExpr frcv)
+                            {
+                                string frc = ResolveCallee(frcv.Name);
+                                if (inlineFunctions.ContainsKey(frc + "___init__")
+                                    || overloadedFunctions.Contains(frc + "___init__")
+                                    || classFieldLayout.ContainsKey(frc))
+                                    resolvedClass = frc;
+                            }
+                    }
+                    finally
+                    {
+                        currentModulePrefix = savedFactoryPrefix;
+                    }
                 }
             }
 

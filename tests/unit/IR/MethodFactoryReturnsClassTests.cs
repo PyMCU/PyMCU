@@ -18,6 +18,13 @@ namespace PyMCU.UnitTests;
 /// handle" tracking (a bare, non-@inline free function returning a single-field class)
 /// qualified the assignment target as `currentFunction + "." + name` instead of
 /// `SlotInstanceKey(name)` -- the same mismatch #390 fixed for `with`-bound names.
+///
+/// A third bug, found only once the fix above was measured against the real library:
+/// adafruit_pcf8574's PCF8574 and DigitalInOut are both defined in a DIFFERENT module from
+/// the program that calls get_pin(). The class name inside get_pin()'s own `return
+/// DigitalInOut(...)` is written unqualified, from that module's own point of view, but was
+/// read (ResolveCallee) against the CALLING module's prefix -- the same class of cross-module
+/// resolution gap #420 fixed for inheritance, here for a factory method's return statement.
 /// </summary>
 public class MethodFactoryReturnsClassTests
 {
@@ -26,6 +33,22 @@ public class MethodFactoryReturnsClassTests
             new Parser(new Lexer(src).Tokenize()).ParseProgram(),
             new Dictionary<string, ProgramNode>(),
             new DeviceConfig { Arch = "avr" });
+
+    private static ProgramIR GenWithModule(string mainSrc, string moduleName, string moduleSrc)
+    {
+        var imported = new Dictionary<string, ProgramNode>
+        {
+            [moduleName] = new Parser(new Lexer(moduleSrc).Tokenize()).ParseProgram(),
+        };
+        var mainAst = new Parser(new Lexer(mainSrc).Tokenize()).ParseProgram();
+        var ctx = new PyMCU.Common.CompilationContext(new CompilerOptions(
+            FilePath: "main.py", OutputPath: "", Arch: "avr", Target: "atmega328p",
+            Frequency: 16000000, Configs: [], Includes: [], ResetVector: 0, InterruptVector: 0,
+            Verbose: false));
+        ctx.ProjectModules.Add(moduleName);
+        return new IRGenerator().Generate(mainAst, imported, new DeviceConfig { Arch = "avr" },
+                                          projectModules: ctx.ProjectModules);
+    }
 
     private const string Preamble =
         "from pymcu.chips.atmega328p import GPIOR0, GPIOR1\n" +
@@ -106,6 +129,45 @@ public class MethodFactoryReturnsClassTests
             "led = o.get_pin(7)\n" +
             "led.switch_to_output(value=True)\n" +
             "GPIOR1.value = o.written\n");
+
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.EndsWith("GPIOR1", StringComparison.Ordinal))
+            .ToList();
+        Assert.Contains(stores, s => s.Src is Variable sv && sv.Name == "o_written");
+    }
+
+    [Fact]
+    public void ACrossModuleFactoryMethodsClassResolvesInItsOwnModule()
+    {
+        // adafruit_pcf8574's real shape: PCF8574.get_pin() and its DigitalInOut return type
+        // are both defined in a module DIFFERENT from the one that calls get_pin(). It built
+        // fine when everything lived in one file (the test above) and failed again, the
+        // same "led_switch_to_output" way, once split across two -- the class name inside
+        // get_pin()'s own return statement was resolved against the CALLER's module prefix
+        // instead of its own.
+        const string pinlibMod =
+            "from pymcu.types import uint8\n\n" +
+            "class Pin:\n" +
+            "    def __init__(self, n: uint8, owner: \"Owner\") -> None:\n" +
+            "        self._n: uint8 = n\n" +
+            "        self._owner: Owner = owner\n\n" +
+            "    def switch_to_output(self, value: bool = False) -> None:\n" +
+            "        self._owner.written = value\n\n" +
+            "class Owner:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self.written: bool = False\n\n" +
+            "    def get_pin(self, n: uint8) -> Pin:\n" +
+            "        return Pin(n, self)\n";
+
+        var ir = GenWithModule(
+            "from pymcu.chips.atmega328p import GPIOR0, GPIOR1\n" +
+            "from pymcu.types import uint8\n" +
+            "import pinlib\n\n" +
+            "o = pinlib.Owner()\n" +
+            "led = o.get_pin(7)\n" +
+            "led.switch_to_output(True)\n" +
+            "GPIOR1.value = o.written\n",
+            "pinlib", pinlibMod);
 
         var stores = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
             .Where(c => c.Dst is Variable v && v.Name.EndsWith("GPIOR1", StringComparison.Ordinal))
