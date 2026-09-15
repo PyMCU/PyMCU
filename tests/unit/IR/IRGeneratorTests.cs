@@ -2094,6 +2094,102 @@ public class IRGeneratorTests
         Assert.NotNull(ir);
     }
 
+    // PyMCU#441: a field first assigned from a property SETTER (adafruit_tcs34725's
+    // integration_time.setter sets self._integration_time) used to be invisible to the layout
+    // and refused as "not a field". Measured against CPython, MicroPython and CircuitPython
+    // (issue #441): a field a setter assigns is exactly as real as one __init__ assigns.
+    [Fact]
+    public void FieldWrite_FromPropertySetter_BecomesARealField()
+    {
+        const string src =
+            "class Sensor:\n" +
+            "    def __init__(self, raw: uint8):\n" +
+            "        self._raw: uint8 = raw\n" +
+            "    @property\n" +
+            "    def offset(self) -> uint8:\n" +
+            "        return self._offset\n" +
+            "    @offset.setter\n" +
+            "    def offset(self, val: uint8):\n" +
+            "        self._offset = val\n" +
+            "def main():\n" +
+            "    s = Sensor(10)\n" +
+            "    s.offset = 5\n" +
+            "    x: uint8 = s.offset\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.NotNull(ir);
+    }
+
+    // PyMCU#441: a field first assigned from a plain method __init__ calls directly
+    // (adafruit_motor.servo's __init__ calls set_pulse_width_range, which sets
+    // self._min_duty) used to hit the same refusal.
+    [Fact]
+    public void FieldWrite_FromMethodCalledByInit_BecomesARealField()
+    {
+        const string src =
+            "class Servo:\n" +
+            "    def __init__(self, raw: uint8):\n" +
+            "        self._raw: uint8 = raw\n" +
+            "        self.configure(raw)\n" +
+            "    def configure(self, raw: uint8):\n" +
+            "        self._min_duty = raw\n" +
+            "def main():\n" +
+            "    s = Servo(10)\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.NotNull(ir);
+    }
+
+    // PyMCU#441: the SAME typo shape FieldWrite_UndeclaredOutsideInit_NamesTheClassAndTheField
+    // guards must still be refused when the misspelled write sits in a method that is neither a
+    // property setter nor called from __init__ -- extending field discovery to setters and
+    // __init__-called helpers must not also reopen the typo hole for everything else.
+    [Fact]
+    public void FieldWrite_InUnrelatedMethod_StillRefused()
+    {
+        const string src =
+            "class Sensor:\n" +
+            "    def __init__(self, raw: uint8):\n" +
+            "        self.temperature: uint8 = raw\n" +
+            "    def update(self, raw: uint8):\n" +
+            "        self.tempreature = raw\n" +
+            "def main():\n" +
+            "    s = Sensor(1)\n" +
+            "    s.update(2)\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("tempreature", err.Message);
+    }
+
+    // PyMCU#441: PyMCU lays each field out at one fixed type, so a field first typed numeric
+    // and later assigned a string in a different method is a located compile error -- a design
+    // choice, not interpreter fidelity (measured: CPython/MicroPython/CircuitPython allow a
+    // field to change type freely across writes).
+    [Fact]
+    public void FieldWrite_LaterIncompatibleType_RaisesLocatedError()
+    {
+        const string src =
+            "class C:\n" +
+            "    def __init__(self):\n" +
+            "        self.v: uint8 = 5\n" +
+            "    def change(self):\n" +
+            "        self.v = 'hello'\n" +
+            "def main():\n" +
+            "    c = C()\n" +
+            "    c.change()\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("v", err.Message);
+        Assert.Contains("numeric", err.Message);
+        Assert.Contains("str", err.Message);
+    }
+
     // ── Reflected operators dispatch when the instance is on the right ─────
     // PyMCU#168: only the LEFT operand was consulted, so `2 + a` lowered numerically over the
     // instance slot, which is never written. The answer was 2, and every reflected dunder in
