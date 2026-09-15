@@ -63,7 +63,8 @@ This page tracks which language and HAL features have been implemented, and what
 | `@extern("symbol")` | External C/C++ symbol interop with AVR ABI |
 | `__name__` / `if __name__ == "__main__":` | Compile-time guard; body promoted in main, eliminated in libs |
 | Triple-quoted strings `"""..."""` / `'''...'''` | Multiline string literals; leading newline after opening quote stripped; useful for multiline `asm()` |
-| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; `append()`, `len()`, `x[i]`, `for v in x:`; bounded bump allocator + GC; suitable for ATmega328P (2 KB SRAM) and larger |
+| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; `append()`, `len()`, `x[i]`, `for v in x:`; bounded bump allocator + GC; suitable for ATmega328P (2 KB SRAM) and larger. A `list[T]` parameter or return also works on a real (non-`@inline`) function, expanded at each call site |
+| `import array` / `array.array(typecode)` | The same `list[T]`, one call spelling later: the typecode decides T (`B`/`b`, `H`/`h`, `I`/`L`/`i`/`l`; `f`/`d`/`q` refused). `array.array` with no typecode, on a parameter or return, takes its element width from the caller's actual list |
 | Closed `dict` / `set` literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables with no storage: `d[const]` folds, `d[runtime]` compare-chains and raises `KeyError`, `x in d` and `len(d)` fold. Read-only |
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict — open addressing over per-instance fixed arrays, no heap and no GC |
 | f-string as a **value** | `s = f"t={t} C"` builds into a compiler-managed fixed `bytearray`; `len(s)`, `s[i]`, `print(s)`, buffer reuse on re-assignment. No float interpolations in this form |

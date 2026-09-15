@@ -394,7 +394,8 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Notes |
 |---------|-------|
-| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; GC-managed; `append()`, `len()`, `x[i]`, `for v in x:`. Overflow triggers automatic realloc (capacity × 2). |
+| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; GC-managed; `append()`, `len()`, `x[i]`, `for v in x:`. Overflow triggers automatic realloc (capacity × 2). A `list[T]` parameter or return type works on a real (non-`@inline`) function too, expanded at each call site (#433). |
+| `import array` / `array.array(typecode)` | The same `list[T]`, one call spelling later (#433): the typecode decides T (`B`/`b`, `H`/`h`, `I`/`L`/`i`/`l`; `f`/`d`/`q` refused by name). `array.array` with no typecode, on a parameter or return, takes its element width from the caller's actual list |
 
 ---
 

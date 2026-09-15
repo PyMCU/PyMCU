@@ -28,9 +28,17 @@ suggests the idiomatic PyMCU alternative where one exists.
 | **Mutable** `set` (`.add()`) | Hash set requires heap | Closed set literal (below), or a `uint8` bitmask |
 
 **Supported:** `list[T]` (`x: list[uint8] = list()`) compiles to a bounded bump-allocator
-with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`. It is **AVR-only** -- on ARM,
-PIC and RISC-V it is refused at build time, naming AVR; use a fixed `uint8[N]` array there.
-`bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
+with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`, and a parameter or return
+annotation on any function (real subroutine or `@inline`) -- a plain function's parameter is
+expanded at each call site, the same mechanism a class-instance parameter already uses,
+because `list[T]` has no fixed-width ABI to give it a standalone one. It is **AVR-only** -- on
+ARM, PIC and RISC-V it is refused at build time, naming AVR; use a fixed `uint8[N]` array
+there. `bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
+**`import array`** / **`array.array(typecode)`** is this same `list[T]`, one call spelling
+later: the typecode decides T (`B`/`b` uint8/int8, `H`/`h` uint16/int16, `I`/`L`/`i`/`l`
+uint32/int32; `f`/`d`/`q` are refused by name, there is no float/double/64-bit element width
+here). A parameter or return annotated bare `array.array` (no typecode) takes its element
+width from whatever list the caller actually passes.
 **Closed dict/set literals** (`d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}`) bind compile-time
 lookup tables with no storage: `d[const]` folds to its value, `d[runtime_key]` lowers to a
 compare chain that raises `KeyError` (catchable with `try/except`) on no match, `x in d` /
@@ -835,10 +843,10 @@ their own code, which is where the next round of work is.
 | Library | Stops at | What the compiler says |
 |---|---|---|
 | `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available (#373) |
-| `adafruit_bus_device` | `bytes()` in the example's own `main` | `bytes()` is a Python builtin PyMCU does not provide |
+| `adafruit_bus_device` | `enumerate()` in `busio.py` over a named module constant | enumerate() list/tuple elements must be compile-time integer constants (only literal ints fold; PyMCU#431 fixed `bytes([...])`/`bytes(N)` as a call argument, one gap short) |
 | `adafruit_character_lcd` | a union of two real types | a union type annotation is not supported |
 | `adafruit_debouncer` | a union of two real types on `Debouncer.__init__` | a union type annotation is not supported |
-| `adafruit_dht` | `import array` | `array` is a Python standard module; use a bytearray |
+| `adafruit_dht` | `from os import uname` | `os` is a Python standard module; there is no operating system or filesystem on the target (PyMCU#433 fixed `import array` / `array.array(typecode)`, one gap short) |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_74hc595` | `-> digitalio.Direction.OUTPUT` on a property | unknown type in the annotation |
 | `adafruit_hcsr04` | **builds unmodified, 4 160 bytes** | |
