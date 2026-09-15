@@ -1,6 +1,5 @@
 # expect: match
 # doc: docs/language/roadmap.md:28
-# tracked: #430
 class Base:
     def __init__(self, value):
         self.value = value
