@@ -4438,8 +4438,12 @@ public partial class IRGenerator
                             + "is printed, so there is no value to test. Test the values that go "
                             + "into it instead.", ArgAt(expr, 0));
 
+        // `bool(obj)` asks the object the same question `if obj:` does. It lowered straight to
+        // `obj != 0`, which compares whatever the instance collapsed to, so bool() answered 0
+        // for an object whose __len__ says 3 -- for a NAME as well as for a field (#385).
         return VisitExpression(
-            new BinaryExpr(expr.Args[0], Frontend.BinaryOp.NotEqual, new IntegerLiteral(0))
+            new BinaryExpr(LowerInstanceTruthiness(expr.Args[0]),
+                           Frontend.BinaryOp.NotEqual, new IntegerLiteral(0))
                 { Line = expr.Line });
     }
 
