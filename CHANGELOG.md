@@ -1,12 +1,12 @@
 # Changelog — pymcu-compiler / pymcu-stdlib
 
-## 0.1.0b1 — Unreleased (prepared 2026-09-15)
+## 0.1.0b1 (Unreleased, prepared 2026-09-15)
 
 Beta 1 covers the frontend (parser, IR, diagnostics) and the AVR backend as a
 matched pair: everything below was found or fixed compiling and running real
 programs against AVR silicon or the AVR emulator, and it ships with a
 regression test. The ARM/RP2040/RP2350, PIC, and RISC-V backends stay alpha
-on purpose — see their own CHANGELOG entries — but every frontend fix here
+on purpose (see their own CHANGELOG entries), but every frontend fix here
 applies to them too, since the frontend is shared across all backends.
 `pymcu-avr` and `pymcu-circuitpython` move to `0.1.0b1` alongside this
 package; `pymcu-sdk` moves in lockstep because the release gate requires the

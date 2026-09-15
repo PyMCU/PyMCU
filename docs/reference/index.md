@@ -6,4 +6,5 @@
 driver-cli
 contributing
 changelog
+../release/beta1-checklist
 ```

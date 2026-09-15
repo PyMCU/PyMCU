@@ -3,7 +3,7 @@
 Beta 1 (`0.1.0b1`) covers three packages: the compiler frontend and stdlib
 (this repo), the AVR backend (`pymcu-avr`), and the CircuitPython
 compatibility layer (`pymcu-circuitpython`). ARM/RP2040/RP2350, PIC, and
-RISC-V stay alpha on purpose — see [Supported targets](../../README.md#supported-targets)
+RISC-V stay alpha on purpose. See [Supported targets](https://github.com/PyMCU/PyMCU#supported-targets)
 for the per-backend maturity labels and why.
 
 This page collects the numbers from the five suites that back that claim,
@@ -25,7 +25,7 @@ reproduce it.
 - **Beta** means: the language surface is implemented and test-covered on
   the AVR backend, and it is validated on real silicon (Arduino Uno, logic
   analyzer differential harness). It does **not** mean every API symbol
-  above is implemented — the parity suites above exist precisely to make
+  above is implemented: the parity suites above exist precisely to make
   the gap explicit and trackable, row by row, rather than asserted.
 - Every allowlisted deviation and every `tracked:#N` / `xfail` entry in
   these suites names a GitHub issue. None of them are silent.
@@ -35,7 +35,7 @@ reproduce it.
 - The integer-width inference RFC (RFC 0002, tracked as
   [PyMCU#364](https://github.com/PyMCU/PyMCU/issues/364)) ships only behind
   its feature flag if it lands before release, off by default, and
-  documented as experimental — it is not part of the beta-1 surface claim
+  documented as experimental. It is not part of the beta-1 surface claim
   above.
 
 See also: [Language Limitations](limitations.md) for what stops each
