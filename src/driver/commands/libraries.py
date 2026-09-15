@@ -27,6 +27,7 @@ project's .venv might as well not exist.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -45,6 +46,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..core import libraries as core_libraries
 from ..core.boards import extension_board_chips, resolve_chip_for_board
 from ..core.libraries import (
     LANGUAGE_LEVEL,
@@ -69,8 +71,11 @@ DEFAULT_INDEX_URL = "https://libraries.pymcu.org/index.json"
 MIRROR_INDEX_URL = (
     "https://raw.githubusercontent.com/PyMCU/pymcu-libraries/main/index.json"
 )
-CACHE_DIR = Path.home() / ".pymcu"
-CACHE_FILE = CACHE_DIR / "libraries-index.json"
+# Same file the build reads from (core.libraries.library_index_cache_file):
+# an upstream library only reaches the compiler's include path once this
+# command has fetched the index it is listed in.
+CACHE_DIR = core_libraries.LIBRARY_INDEX_CACHE_DIR
+CACHE_FILE = core_libraries.LIBRARY_INDEX_CACHE_FILE
 DISTRIBUTION_PREFIX = "pymcu-lib-"
 
 
@@ -98,12 +103,14 @@ def _cache_file() -> Path:
     index -- a local file while testing, a fork, a staging copy -- kept serving
     whatever the default index had cached, with no way to tell from the output.
     The default source keeps the plain name so existing caches still count.
+    Reads the module-level CACHE_FILE/CACHE_DIR, not core.libraries directly,
+    so tests can isolate this from the real home directory by monkeypatching
+    them; both default to the exact same path the build reads at
+    core.libraries.library_index_cache_file().
     """
     override = os.environ.get("PYMCU_LIBRARY_INDEX")
     if not override:
         return CACHE_FILE
-
-    import hashlib
 
     digest = hashlib.sha256(override.encode("utf-8")).hexdigest()[:12]
     return CACHE_FILE.with_name(f"libraries-index-{digest}.json")

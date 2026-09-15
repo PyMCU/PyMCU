@@ -33,8 +33,10 @@ may use compiler-only constructs).
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
 import tomllib
@@ -51,6 +53,37 @@ from pathlib import Path
 
 ENTRY_POINT_GROUP = "pymcu.libraries"
 MANIFEST_NAME = "pymcu.toml"
+
+# Where `pymcu install` / `pymcu search` cache the fetched library index, and
+# the only thing a build is allowed to read: build time never touches the
+# network, so an upstream library (core/upstream_libraries.py) only shows up
+# on the include path once something has fetched the index at least once.
+LIBRARY_INDEX_CACHE_DIR = Path.home() / ".pymcu"
+LIBRARY_INDEX_CACHE_FILE = LIBRARY_INDEX_CACHE_DIR / "libraries-index.json"
+
+
+def library_index_cache_file() -> Path:
+    """
+    Path of the cached library index, honouring PYMCU_LIBRARY_INDEX.
+
+    One file for everything meant that pointing PYMCU_LIBRARY_INDEX at another
+    index -- a local file while testing, a fork, a staging copy -- kept serving
+    whatever the default index had cached. The override gets its own cache
+    file, named after its own hash, so the two can never be confused.
+    """
+    override = os.environ.get("PYMCU_LIBRARY_INDEX")
+    if not override:
+        return LIBRARY_INDEX_CACHE_FILE
+    digest = hashlib.sha256(override.encode("utf-8")).hexdigest()[:12]
+    return LIBRARY_INDEX_CACHE_FILE.with_name(f"libraries-index-{digest}.json")
+
+
+def read_cached_library_index() -> dict:
+    """The last library index `pymcu install`/`search` fetched, or {}."""
+    try:
+        return json.loads(library_index_cache_file().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 # Subdirectory of the package holding the sources the compiler reads.  The
 # package itself is an ordinary Python package -- importable, with an
