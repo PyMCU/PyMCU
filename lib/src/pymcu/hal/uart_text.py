@@ -92,8 +92,20 @@ def uart_write_decimal_i16(value: int16):
 
 
 def uart_write_decimal_u32(value: uint32):
+    # The divisor walks down by ten instead of coming from a literal list. A
+    # `for` over a list of constants is a compile-time sequence, so the body was
+    # emitted once per divisor: nine copies of the same 56-byte digit loop, and
+    # the routine came to 1014 bytes on an ATmega328P -- 24% of a program whose
+    # only job was to print one distance (PyMCU/pymcu-avr#24). Written as a real
+    # loop it is emitted once, for the price of one 32-bit division per digit.
+    #
+    # Still repeated subtraction rather than divmod per digit: dividing `value`
+    # as well would need the quotient AND the remainder of the same division at
+    # every step, which no backend here fuses into one pass yet, so it costs two
+    # library calls a digit instead of one.
+    d: uint32 = 1000000000
     started: uint8 = 0
-    for d in [1000000000, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10]:
+    while d >= 10:
         c: uint8 = 48
         while value >= d:
             value -= d
@@ -101,6 +113,7 @@ def uart_write_decimal_u32(value: uint32):
         if c != 48 or started == 1:
             uart_write(c)
             started = 1
+        d = d // 10
     uart_write(uint8(value) + 48)
 
 
