@@ -30,6 +30,7 @@ class Expectation:
     doc: str
     divergence_doc: str | None = None
     tracked: str | None = None
+    frontend: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ def parse_expectation(src: str) -> Expectation:
     expect = None
     doc = None
     tracked = None
+    frontend = None
     for line in src.splitlines()[:8]:
         if line.startswith("# expect: "):
             expect = line.removeprefix("# expect: ").strip()
@@ -63,13 +65,18 @@ def parse_expectation(src: str) -> Expectation:
             doc = line.removeprefix("# doc: ").strip()
         if line.startswith("# tracked: "):
             tracked = line.removeprefix("# tracked: ").strip()
+        if line.startswith("# frontend: "):
+            frontend = line.removeprefix("# frontend: ").strip()
     if expect is None or doc is None:
         raise AssertionError("probe is missing # expect or # doc header")
+    if frontend not in (None, "default", "py-parser"):
+        raise AssertionError(f"unknown oracle frontend restriction: {frontend}")
     if expect == "match":
-        return Expectation("match", None, doc, tracked=tracked)
+        return Expectation("match", None, doc, tracked=tracked, frontend=frontend)
     if expect.startswith("refuse "):
         return Expectation(
-            "refuse", expect.removeprefix("refuse ").strip(), doc, tracked=tracked
+            "refuse", expect.removeprefix("refuse ").strip(), doc,
+            tracked=tracked, frontend=frontend,
         )
     if expect.startswith("divergence "):
         return Expectation(
@@ -78,6 +85,7 @@ def parse_expectation(src: str) -> Expectation:
             doc,
             divergence_doc=expect.removeprefix("divergence ").strip(),
             tracked=tracked,
+            frontend=frontend,
         )
     raise AssertionError(f"unknown oracle expectation: {expect}")
 
@@ -407,6 +415,21 @@ def test_probe_matches_cpython_or_refuses_as_documented(
     pymcu = pymcu_bin()
     avr8sharp = import_avr8sharp()
     expectation = parse_expectation(probe.read_text())
+    if expectation.frontend is not None:
+        # The two front ends are supposed to accept the same language subset, but a probe
+        # marked `# frontend: default` / `# frontend: py-parser` documents a real, filed gap
+        # where they do not (e.g. a construct one front end refuses and the other accepts,
+        # possibly with different runtime behaviour). Such a probe cannot carry a single
+        # `# expect:` that is honest under both engines, so it runs -- and is asserted --
+        # only under the front end it names; the other run skips it rather than treating an
+        # inherently one-sided assertion as a false pass or a false failure.
+        running_py_parser = bool(os.environ.get("PYMCU_PY_PARSER"))
+        wants_py_parser = expectation.frontend == "py-parser"
+        if running_py_parser != wants_py_parser:
+            pytest.skip(
+                f"probe is restricted to the {expectation.frontend} front end "
+                "(the two front ends disagree here; see the probe's # doc: issue)"
+            )
     if expectation.tracked:
         # A `# tracked: #N` probe is a known compiler bug: xfail(strict) so the suite stays
         # green while it is open, and an XPASS -- the bug got fixed and nobody untracked the
