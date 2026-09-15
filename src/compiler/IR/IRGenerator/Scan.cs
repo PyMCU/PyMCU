@@ -2586,6 +2586,114 @@ public partial class IRGenerator
             layout.Add((field, type, srcParam));
         }
 
+        // Every OTHER method of the class (property setters, and plain helper methods called
+        // from __init__) can also introduce a field: the layout used to come from __init__
+        // alone, so a field first written from a setter (adafruit_tcs34725's
+        // `integration_time.setter` sets `self._integration_time`, PyMCU#397) or from a helper
+        // method __init__ calls (adafruit_motor.servo's `set_pulse_width_range` sets
+        // `self._min_duty`, same issue) was invisible to the layout, and every read or write of
+        // it OUTSIDE __init__ was refused as "not a field". Measured against CPython,
+        // MicroPython and CircuitPython (issue #397): a plain method assigning `self.x = ...`
+        // makes `x` exactly as real a field as one set in __init__.
+        //
+        // Scoped to TOP-LEVEL statements of each method, the same way __init__ itself is scoped
+        // above: a nested assignment (inside `if`/`for`/`while`) is the sibling gap #170 already
+        // has for __init__, and is left alone here -- walking nested blocks is a separate, larger
+        // change with its own risk.
+        var fieldKind = new Dictionary<string, string>();
+        foreach (var f0 in layout) fieldKind[f0.Item1] = ClassifyFieldKind(f0.Item2);
+
+        foreach (var s in classBody.Statements)
+        {
+            if (s is not FunctionDef m || m.Name == "__init__") continue;
+
+            // A method may INTRODUCE a field only when it is a property setter (the shape
+            // adafruit_tcs34725's `integration_time.setter` uses for `self._integration_time`)
+            // or is called directly, at the top level, from __init__ (the shape
+            // adafruit_motor.servo's `__init__` uses, calling `set_pulse_width_range` which sets
+            // `self._min_duty`). Both are the constructor's own initialization logic, just
+            // factored out of its body.
+            //
+            // A method reachable only from OUTSIDE the constructor (called from user code after
+            // construction, e.g. `update()`) does NOT get this privilege: `seen.Contains` below
+            // still lets it WRITE an already-declared field, but a name novel to this method is
+            // left for the existing write-path check in Assign.cs to refuse, exactly as before
+            // this change (FieldWrite_UndeclaredOutsideInit_NamesTheClassAndTheField) -- a typo
+            // there (`self.tempreature = raw` for a field the class calls `temperature`) has to
+            // stay a compile error, not a silently-created shadow field, and real interpreters
+            // give no signal here to tell the two apart (Phase 1 measurement: they simply allow
+            // both). Restricting to the constructor's own call graph is what keeps that
+            // typo-safety net for the code it always protected, without also blocking the two
+            // real, measured shapes it was never meant to catch.
+            bool mayIntroduceFields = m.IsPropertySetter || IsCalledDirectlyFromInit(init, m.Name);
+
+            var mParamTypes = new Dictionary<string, string>();
+            foreach (var p in m.Params) mParamTypes[p.Name] = p.Type;
+            var mLocalTypes = new Dictionary<string, string>();
+            foreach (var ls in m.Body.Statements)
+                switch (ls)
+                {
+                    case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): mLocalTypes[vd.Name] = vd.VarType; break;
+                    case AnnAssign an when !string.IsNullOrEmpty(an.Annotation): mLocalTypes[an.Target] = an.Annotation; break;
+                }
+
+            foreach (var ms in m.Body.Statements)
+            {
+                if (ms is not AssignStmt masg || masg.Target is not MemberAccessExpr mma
+                    || mma.Object is not VariableExpr msv || msv.Name != "self") continue;
+
+                var field = mma.Member;
+                var rhs = masg.Value;
+                var annotatedType = masg.AnnotatedType;
+
+                // Same array-field exemption as the __init__ scan above: a field whose value is
+                // a literal list of compile-time constants is an array field, handled by its own
+                // lowering, not a scalar the layout should claim.
+                if (rhs is ListExpr fieldList && fieldList.Elements.Count > 0
+                    && fieldList.Elements.All(e => { try { EvaluateConstantExpr(e); return true; } catch { return false; } }))
+                    continue;
+
+                string writeKind = ClassifyWriteKind(rhs, annotatedType, mParamTypes, mLocalTypes);
+
+                if (seen.Contains(field))
+                {
+                    // A later write is only flagged when BOTH sides carry enough evidence to
+                    // judge a categorical mismatch (numeric vs. str vs. anything else); scalar
+                    // widening (uint8 -> uint16, say) is the SAME kind and always allowed, exactly
+                    // as the widening pass above already allows it within __init__ itself.
+                    if (writeKind != "unknown" && fieldKind.TryGetValue(field, out var establishedKind)
+                        && establishedKind != "unknown" && establishedKind != writeKind)
+                        throw UserError(
+                            $"field '{field}' is first typed as {establishedKind} and is later given a "
+                            + $"{writeKind} value in '{m.Name}' -- PyMCU lays each field out at a single "
+                            + "fixed type and width, so the two writes cannot share one field. Give the "
+                            + "two roles different names, or keep the assigned type consistent",
+                            masg);
+                    continue;
+                }
+
+                if (!mayIntroduceFields) continue;
+
+                seen.Add(field);
+                string mType = "uint8";
+                string mSrcParam = "";
+                if (annotatedType != null)
+                {
+                    mType = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
+                        ? annotatedType.Substring(6, annotatedType.Length - 7)
+                        : annotatedType;
+                }
+                else
+                {
+                    string? w = InferAssignedFieldType(rhs, mParamTypes, mLocalTypes);
+                    if (w != null) mType = w;
+                }
+
+                layout.Add((field, mType, mSrcParam));
+                fieldKind[field] = ClassifyFieldKind(mType);
+            }
+        }
+
         return layout;
     }
 
@@ -2601,6 +2709,56 @@ public partial class IRGenerator
         "float" => 4,
         _ => 0,
     };
+
+    // True when __init__ calls `self.<methodName>(...)` as a bare, top-level statement of its
+    // own body -- the shape of a constructor factoring its own setup into a helper method.
+    // Deliberately narrow (top level only, direct call only, no transitive chasing): a helper
+    // that only ANOTHER helper calls is one hop further from evidence that it is really part of
+    // construction, and nothing measured needed that reach.
+    private static bool IsCalledDirectlyFromInit(FunctionDef init, string methodName)
+    {
+        foreach (var s in init.Body.Statements)
+            if (s is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr { Member: var callee } ma } }
+                && callee == methodName && ma.Object is VariableExpr { Name: "self" })
+                return true;
+        return false;
+    }
+
+    // Coarse type "kind" used ONLY to catch a field whose declared/inferred type changes
+    // categorically across write sites (numeric <-> str <-> anything else) -- NOT to reject
+    // normal scalar widening (uint8 -> uint16 stays "numeric" and is always allowed, matching
+    // the widening DeriveFieldLayout already does across multiple writes within __init__).
+    private static string ClassifyFieldKind(string type) =>
+        ScalarWidthRank(type) > 0 ? "numeric" : type is "str" or "const[str]" ? "str" : "other";
+
+    // The kind an assignment's right-hand side settles a field to, or "unknown" when nothing
+    // here has enough evidence to say (a call, a field/index read, an unrecognized expression,
+    // ...). Deliberately conservative: "unknown" never triggers the incompatible-type
+    // diagnostic in DeriveFieldLayout, so this only fires on a REAL, evidenced mismatch (e.g.
+    // Phase 1 probe C: a field first assigned an int literal, later assigned a string literal).
+    private string ClassifyWriteKind(Expression? rhs, string? annotatedType,
+        Dictionary<string, string> paramTypes, Dictionary<string, string> localTypes)
+    {
+        if (annotatedType != null)
+        {
+            var t = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
+                ? annotatedType.Substring(6, annotatedType.Length - 7) : annotatedType;
+            return ClassifyFieldKind(t);
+        }
+        if (rhs is StringLiteral) return "str";
+        if (rhs is VariableExpr ve)
+        {
+            string? d = paramTypes.TryGetValue(ve.Name, out var pv) ? pv
+                      : localTypes.TryGetValue(ve.Name, out var lv) ? lv : null;
+            if (!string.IsNullOrEmpty(d))
+            {
+                if (d.StartsWith("const[") && d.EndsWith("]")) d = d.Substring(6, d.Length - 7);
+                return ClassifyFieldKind(d);
+            }
+        }
+        var inferred = InferAssignedFieldType(rhs, paramTypes, localTypes);
+        return inferred != null ? ClassifyFieldKind(inferred) : "unknown";
+    }
 
     /// <summary>
     /// The width an expression stored into an unannotated field needs, or null when nothing
