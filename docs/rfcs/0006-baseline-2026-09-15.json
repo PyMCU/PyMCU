@@ -1,0 +1,1735 @@
+{
+  "compiler_commit": "b61279e0d2454bea343b91268729b43059258be6",
+  "pymcu_avr_commit": "26b58ba94e9aa4f6652f62298c91354eeb804dbb",
+  "date": "2026-09-15",
+  "target": "atmega328p",
+  "toolchain": "pymcu-avr-toolchain-wasi 15.2.0.post1",
+  "measured_with": "pymcu build (real driver, no mocks); hex byte count = sum of Intel HEX data-record byte counts",
+  "worktrees": {
+    "compiler": "/Users/begeistert/Repos/PyMCU-rfc6 (branch rfc-0006)",
+    "pymcu_avr": "/Users/begeistert/Repos/pymcu-avr-rfc6 (branch rfc-0006)"
+  },
+  "total_projects": 412,
+  "fixtures_count": 353,
+  "examples_count": 59,
+  "fixtures": {
+    "adafruit-example-shape": {
+      "kind": "fixture",
+      "hex_bytes": 1934,
+      "via_board": true
+    },
+    "adc-two-pins": {
+      "kind": "fixture",
+      "hex_bytes": 472
+    },
+    "array-ops": {
+      "kind": "fixture",
+      "hex_bytes": 582
+    },
+    "array-past-256": {
+      "kind": "fixture",
+      "hex_bytes": 4836
+    },
+    "array-runtime-init": {
+      "kind": "fixture",
+      "hex_bytes": 396
+    },
+    "asm-constraints": {
+      "kind": "fixture",
+      "hex_bytes": 176
+    },
+    "asm-fstring": {
+      "kind": "fixture",
+      "hex_bytes": 132
+    },
+    "asm-triple-quote": {
+      "kind": "fixture",
+      "hex_bytes": 136
+    },
+    "async-create-task": {
+      "kind": "fixture",
+      "hex_bytes": 3406
+    },
+    "async-gather-direct": {
+      "kind": "fixture",
+      "hex_bytes": 4120
+    },
+    "async-gather-shadowed-names": {
+      "kind": "fixture",
+      "hex_bytes": 3004
+    },
+    "async-global-then-await": {
+      "kind": "fixture",
+      "hex_bytes": 1180
+    },
+    "async-loop-local": {
+      "kind": "fixture",
+      "hex_bytes": 1502
+    },
+    "async-sleep-float": {
+      "kind": "fixture",
+      "hex_bytes": 1944
+    },
+    "async-task-local-object": {
+      "kind": "fixture",
+      "hex_bytes": 2220
+    },
+    "async-timebase": {
+      "kind": "fixture",
+      "hex_bytes": 3004
+    },
+    "augmented-sreg": {
+      "kind": "fixture",
+      "hex_bytes": 186
+    },
+    "base-call-returns-class": {
+      "kind": "fixture",
+      "hex_bytes": 686
+    },
+    "bitcast": {
+      "kind": "fixture",
+      "hex_bytes": 676
+    },
+    "bitwise-ops": {
+      "kind": "fixture",
+      "hex_bytes": 292
+    },
+    "board-pin-number": {
+      "kind": "fixture",
+      "hex_bytes": 196
+    },
+    "bool-protocol": {
+      "kind": "fixture",
+      "hex_bytes": 658
+    },
+    "break-edges": {
+      "kind": "fixture",
+      "hex_bytes": 176
+    },
+    "buffer-extend-loop-flash-bound": {
+      "kind": "fixture",
+      "hex_bytes": 194
+    },
+    "buffer-grown-by-extend": {
+      "kind": "fixture",
+      "hex_bytes": 718
+    },
+    "buffer-param": {
+      "kind": "fixture",
+      "hex_bytes": 426
+    },
+    "builtin-bool": {
+      "kind": "fixture",
+      "hex_bytes": 322
+    },
+    "builtin-ops": {
+      "kind": "fixture",
+      "hex_bytes": 664
+    },
+    "byte-concat-16bit": {
+      "kind": "fixture",
+      "hex_bytes": 590
+    },
+    "bytearray-call-arg": {
+      "kind": "fixture",
+      "hex_bytes": 416
+    },
+    "bytearray-field-init": {
+      "kind": "fixture",
+      "hex_bytes": 620
+    },
+    "bytearray-param": {
+      "kind": "fixture",
+      "hex_bytes": 260
+    },
+    "bytes-literal": {
+      "kind": "fixture",
+      "hex_bytes": 156
+    },
+    "bytes-literal-arg": {
+      "kind": "fixture",
+      "hex_bytes": 856
+    },
+    "bytes-ops": {
+      "kind": "fixture",
+      "hex_bytes": 504
+    },
+    "bytes-param": {
+      "kind": "fixture",
+      "hex_bytes": 616
+    },
+    "callable-array": {
+      "kind": "fixture",
+      "hex_bytes": 222
+    },
+    "callbacks": {
+      "kind": "fixture",
+      "hex_bytes": 398
+    },
+    "class-object-call": {
+      "kind": "fixture",
+      "hex_bytes": 438
+    },
+    "class-param-function": {
+      "kind": "fixture",
+      "hex_bytes": 168
+    },
+    "compat-cp-alarm": {
+      "kind": "fixture",
+      "hex_bytes": 954,
+      "via_board": true
+    },
+    "compat-cp-analogio-full-scale": {
+      "kind": "fixture",
+      "hex_bytes": 356,
+      "via_board": true
+    },
+    "compat-cp-bitbangio-i2c": {
+      "kind": "fixture",
+      "hex_bytes": 272,
+      "via_board": true
+    },
+    "compat-cp-board-buses": {
+      "kind": "fixture",
+      "hex_bytes": 212,
+      "via_board": true
+    },
+    "compat-cp-busio-parameters": {
+      "kind": "fixture",
+      "hex_bytes": 212,
+      "via_board": true
+    },
+    "compat-cp-busio-uart-buffer": {
+      "kind": "fixture",
+      "hex_bytes": 1084,
+      "via_board": true
+    },
+    "compat-cp-countio": {
+      "kind": "fixture",
+      "hex_bytes": 376,
+      "via_board": true
+    },
+    "compat-cp-digitalio-direction": {
+      "kind": "fixture",
+      "hex_bytes": 194,
+      "via_board": true
+    },
+    "compat-cp-gpio": {
+      "kind": "fixture",
+      "hex_bytes": 138,
+      "via_board": true
+    },
+    "compat-cp-keypad": {
+      "kind": "fixture",
+      "hex_bytes": 3114,
+      "via_board": true
+    },
+    "compat-cp-microcontroller": {
+      "kind": "fixture",
+      "hex_bytes": 508,
+      "via_board": true
+    },
+    "compat-cp-neopixel-write": {
+      "kind": "fixture",
+      "hex_bytes": 242,
+      "via_board": true
+    },
+    "compat-cp-pull-none": {
+      "kind": "fixture",
+      "hex_bytes": 434,
+      "via_board": true
+    },
+    "compat-cp-pulseio-capture": {
+      "kind": "fixture",
+      "hex_bytes": 728,
+      "via_board": true
+    },
+    "compat-cp-pulseio-carrier": {
+      "kind": "fixture",
+      "hex_bytes": 494,
+      "via_board": true
+    },
+    "compat-cp-pulseio-ir-nec": {
+      "kind": "fixture",
+      "hex_bytes": 792,
+      "via_board": true
+    },
+    "compat-cp-pulseio-maxlen-sram": {
+      "kind": "fixture",
+      "hex_bytes": 470,
+      "via_board": true
+    },
+    "compat-cp-pulseio-maxlen-sram-max": {
+      "kind": "fixture",
+      "hex_bytes": 614,
+      "via_board": true
+    },
+    "compat-cp-pwmio": {
+      "kind": "fixture",
+      "hex_bytes": 334,
+      "via_board": true
+    },
+    "compat-cp-pwmio-deinit": {
+      "kind": "fixture",
+      "hex_bytes": 184,
+      "via_board": true
+    },
+    "compat-cp-pwmio-exact-duty": {
+      "kind": "fixture",
+      "hex_bytes": 336,
+      "via_board": true
+    },
+    "compat-cp-pwmio-frequency": {
+      "kind": "fixture",
+      "hex_bytes": 156,
+      "via_board": true
+    },
+    "compat-cp-pwmio-timebase": {
+      "kind": "fixture",
+      "hex_bytes": 958,
+      "via_board": true
+    },
+    "compat-cp-rainbowio": {
+      "kind": "fixture",
+      "hex_bytes": 206,
+      "via_board": true
+    },
+    "compat-cp-rotaryio": {
+      "kind": "fixture",
+      "hex_bytes": 870,
+      "via_board": true
+    },
+    "compat-cp-servo-angle": {
+      "kind": "fixture",
+      "hex_bytes": 968,
+      "via_board": true
+    },
+    "compat-cp-supervisor": {
+      "kind": "fixture",
+      "hex_bytes": 636,
+      "via_board": true
+    },
+    "compat-cp-time": {
+      "kind": "fixture",
+      "hex_bytes": 358,
+      "via_board": true
+    },
+    "compat-cp-time-and-watchdog": {
+      "kind": "fixture",
+      "hex_bytes": 1160,
+      "via_board": true
+    },
+    "compat-cp-time-sleep-folds": {
+      "kind": "fixture",
+      "hex_bytes": 294,
+      "via_board": true
+    },
+    "compat-cp-value-toggle": {
+      "kind": "fixture",
+      "hex_bytes": 540,
+      "via_board": true
+    },
+    "compat-cp-with-as-method": {
+      "kind": "fixture",
+      "hex_bytes": 440,
+      "via_board": true
+    },
+    "compat-mp-i2c-rw": {
+      "kind": "fixture",
+      "hex_bytes": 808,
+      "via_board": true
+    },
+    "compat-mp-i2c-scan": {
+      "kind": "fixture",
+      "hex_bytes": 586,
+      "via_board": true
+    },
+    "compat-mp-kwargs-forwarding": {
+      "kind": "fixture",
+      "hex_bytes": 500,
+      "via_board": true
+    },
+    "compat-mp-pin": {
+      "kind": "fixture",
+      "hex_bytes": 150,
+      "via_board": true
+    },
+    "compat-mp-pin-pull": {
+      "kind": "fixture",
+      "hex_bytes": 300,
+      "via_board": true
+    },
+    "compat-mp-pwm": {
+      "kind": "fixture",
+      "hex_bytes": 216,
+      "via_board": true
+    },
+    "compat-mp-pwm-freq": {
+      "kind": "fixture",
+      "hex_bytes": 220,
+      "via_board": true
+    },
+    "compat-mp-pwm-surface": {
+      "kind": "fixture",
+      "hex_bytes": 824,
+      "via_board": true
+    },
+    "compat-mp-spi-rw": {
+      "kind": "fixture",
+      "hex_bytes": 522,
+      "via_board": true
+    },
+    "compat-mp-timer": {
+      "kind": "fixture",
+      "hex_bytes": 306,
+      "via_board": true
+    },
+    "compat-mp-timer-freq": {
+      "kind": "fixture",
+      "hex_bytes": 270,
+      "via_board": true
+    },
+    "compat-mp-uart-readline": {
+      "kind": "fixture",
+      "hex_bytes": 472,
+      "via_board": true
+    },
+    "compat-mp-utime": {
+      "kind": "fixture",
+      "hex_bytes": 194,
+      "via_board": true
+    },
+    "cond-import-gpio": {
+      "kind": "fixture",
+      "hex_bytes": 126
+    },
+    "const-fold-min-div": {
+      "kind": "fixture",
+      "hex_bytes": 2336
+    },
+    "const-or-branch": {
+      "kind": "fixture",
+      "hex_bytes": 144
+    },
+    "constant-retired-by-a-load": {
+      "kind": "fixture",
+      "hex_bytes": 522
+    },
+    "counter-in-loop": {
+      "kind": "fixture",
+      "hex_bytes": 574
+    },
+    "cross-module-inheritance": {
+      "kind": "fixture",
+      "hex_bytes": 398
+    },
+    "ctor-calls-own-method": {
+      "kind": "fixture",
+      "hex_bytes": 424
+    },
+    "ctrl-flow-stress": {
+      "kind": "fixture",
+      "hex_bytes": 306
+    },
+    "cycle-timing": {
+      "kind": "fixture",
+      "hex_bytes": 142
+    },
+    "deep-calls": {
+      "kind": "fixture",
+      "hex_bytes": 166
+    },
+    "default-constructor": {
+      "kind": "fixture",
+      "hex_bytes": 486
+    },
+    "delay-outline": {
+      "kind": "fixture",
+      "hex_bytes": 150
+    },
+    "delay-test": {
+      "kind": "fixture",
+      "hex_bytes": 236
+    },
+    "delay-through-locals": {
+      "kind": "fixture",
+      "hex_bytes": 160,
+      "via_board": true
+    },
+    "descriptor-class-attribute": {
+      "kind": "fixture",
+      "hex_bytes": 758
+    },
+    "dht-sensor-dht22": {
+      "kind": "fixture",
+      "hex_bytes": 2814,
+      "via_board": true
+    },
+    "dht-sensor-mp": {
+      "kind": "fixture",
+      "hex_bytes": 1090,
+      "via_board": true
+    },
+    "dict-iteration": {
+      "kind": "fixture",
+      "hex_bytes": 528
+    },
+    "dict-literal-get": {
+      "kind": "fixture",
+      "hex_bytes": 412
+    },
+    "dict-one-char-key": {
+      "kind": "fixture",
+      "hex_bytes": 134
+    },
+    "dict-one-char-key-index": {
+      "kind": "fixture",
+      "hex_bytes": 126
+    },
+    "dict-set-literal": {
+      "kind": "fixture",
+      "hex_bytes": 582
+    },
+    "div16-correctness": {
+      "kind": "fixture",
+      "hex_bytes": 146
+    },
+    "div32-correctness": {
+      "kind": "fixture",
+      "hex_bytes": 146
+    },
+    "divmod-same-operands": {
+      "kind": "fixture",
+      "hex_bytes": 488
+    },
+    "divmod16": {
+      "kind": "fixture",
+      "hex_bytes": 498
+    },
+    "dsp-stress": {
+      "kind": "fixture",
+      "hex_bytes": 1586
+    },
+    "dunder-methods": {
+      "kind": "fixture",
+      "hex_bytes": 564
+    },
+    "dunder-ops": {
+      "kind": "fixture",
+      "hex_bytes": 438
+    },
+    "edge-cases": {
+      "kind": "fixture",
+      "hex_bytes": 426
+    },
+    "entry-main-explicit-call": {
+      "kind": "fixture",
+      "hex_bytes": 404
+    },
+    "enum-member-annotation": {
+      "kind": "fixture",
+      "hex_bytes": 404
+    },
+    "exception-edges": {
+      "kind": "fixture",
+      "hex_bytes": 1362
+    },
+    "exception-object": {
+      "kind": "fixture",
+      "hex_bytes": 1030
+    },
+    "exceptions-basic": {
+      "kind": "fixture",
+      "hex_bytes": 434
+    },
+    "exceptions-finally": {
+      "kind": "fixture",
+      "hex_bytes": 510
+    },
+    "factory-field-read": {
+      "kind": "fixture",
+      "hex_bytes": 394
+    },
+    "factory-returns-class": {
+      "kind": "fixture",
+      "hex_bytes": 130
+    },
+    "ffi-wide-args": {
+      "kind": "fixture",
+      "hex_bytes": 1618
+    },
+    "field-truthiness-operators": {
+      "kind": "fixture",
+      "hex_bytes": 1206
+    },
+    "fixeddict": {
+      "kind": "fixture",
+      "hex_bytes": 3606
+    },
+    "flash-table-past-256": {
+      "kind": "fixture",
+      "hex_bytes": 1648
+    },
+    "flash-table-wide": {
+      "kind": "fixture",
+      "hex_bytes": 1722
+    },
+    "float-arg-no-shuffle": {
+      "kind": "fixture",
+      "hex_bytes": 2410
+    },
+    "float-compare": {
+      "kind": "fixture",
+      "hex_bytes": 1628
+    },
+    "float-compare-sole-use": {
+      "kind": "fixture",
+      "hex_bytes": 2704
+    },
+    "float-div-zero": {
+      "kind": "fixture",
+      "hex_bytes": 2814
+    },
+    "float-field-slot": {
+      "kind": "fixture",
+      "hex_bytes": 2866
+    },
+    "float-from-int32": {
+      "kind": "fixture",
+      "hex_bytes": 2172
+    },
+    "float-local-not-truncated": {
+      "kind": "fixture",
+      "hex_bytes": 2134
+    },
+    "float-local-overload": {
+      "kind": "fixture",
+      "hex_bytes": 926
+    },
+    "float-module-global": {
+      "kind": "fixture",
+      "hex_bytes": 2614
+    },
+    "float-modulo": {
+      "kind": "fixture",
+      "hex_bytes": 4042
+    },
+    "float-not-shifted": {
+      "kind": "fixture",
+      "hex_bytes": 4326
+    },
+    "float-param-uses": {
+      "kind": "fixture",
+      "hex_bytes": 2102
+    },
+    "float-print-large": {
+      "kind": "fixture",
+      "hex_bytes": 2768
+    },
+    "float-to-uint-cast": {
+      "kind": "fixture",
+      "hex_bytes": 1648
+    },
+    "folded-condition": {
+      "kind": "fixture",
+      "hex_bytes": 346
+    },
+    "folded-const-type": {
+      "kind": "fixture",
+      "hex_bytes": 554
+    },
+    "fp-mul-debug": {
+      "kind": "fixture",
+      "hex_bytes": 788
+    },
+    "fstring-bool": {
+      "kind": "fixture",
+      "hex_bytes": 1092
+    },
+    "fstring-debug": {
+      "kind": "fixture",
+      "hex_bytes": 1362
+    },
+    "fstring-value": {
+      "kind": "fixture",
+      "hex_bytes": 3998
+    },
+    "funcptr": {
+      "kind": "fixture",
+      "hex_bytes": 326
+    },
+    "function-name-binding": {
+      "kind": "fixture",
+      "hex_bytes": 138
+    },
+    "gc-basic": {
+      "kind": "fixture",
+      "hex_bytes": 902
+    },
+    "gc-list": {
+      "kind": "fixture",
+      "hex_bytes": 1736
+    },
+    "generators": {
+      "kind": "fixture",
+      "hex_bytes": 1906
+    },
+    "global-accumulator-width": {
+      "kind": "fixture",
+      "hex_bytes": 248
+    },
+    "global-init": {
+      "kind": "fixture",
+      "hex_bytes": 516
+    },
+    "global-rebind-uppercase": {
+      "kind": "fixture",
+      "hex_bytes": 464
+    },
+    "global-zero-init": {
+      "kind": "fixture",
+      "hex_bytes": 610
+    },
+    "gpio-input-after-output": {
+      "kind": "fixture",
+      "hex_bytes": 196
+    },
+    "gpio-overhead": {
+      "kind": "fixture",
+      "hex_bytes": 188
+    },
+    "held-instance-field": {
+      "kind": "fixture",
+      "hex_bytes": 620
+    },
+    "held-read-folds": {
+      "kind": "fixture",
+      "hex_bytes": 134
+    },
+    "held-write-anon": {
+      "kind": "fixture",
+      "hex_bytes": 180
+    },
+    "held-write-named": {
+      "kind": "fixture",
+      "hex_bytes": 180
+    },
+    "i2c-readfrom-mem": {
+      "kind": "fixture",
+      "hex_bytes": 800
+    },
+    "i2c-rw": {
+      "kind": "fixture",
+      "hex_bytes": 522
+    },
+    "implicit-int": {
+      "kind": "fixture",
+      "hex_bytes": 328
+    },
+    "import-alias": {
+      "kind": "fixture",
+      "hex_bytes": 402
+    },
+    "import-global-split": {
+      "kind": "fixture",
+      "hex_bytes": 408
+    },
+    "imported-class": {
+      "kind": "fixture",
+      "hex_bytes": 578
+    },
+    "imported-module-init": {
+      "kind": "fixture",
+      "hex_bytes": 600
+    },
+    "imported-module-pin": {
+      "kind": "fixture",
+      "hex_bytes": 276
+    },
+    "in-over-named-list": {
+      "kind": "fixture",
+      "hex_bytes": 460
+    },
+    "in-pullup": {
+      "kind": "fixture",
+      "hex_bytes": 140
+    },
+    "infer-types": {
+      "kind": "fixture",
+      "hex_bytes": 1202
+    },
+    "inline-multi-return": {
+      "kind": "fixture",
+      "hex_bytes": 650
+    },
+    "inline-multisite": {
+      "kind": "fixture",
+      "hex_bytes": 572
+    },
+    "inline-register-arg": {
+      "kind": "fixture",
+      "hex_bytes": 448
+    },
+    "inline-returned-result": {
+      "kind": "fixture",
+      "hex_bytes": 440
+    },
+    "instance-array": {
+      "kind": "fixture",
+      "hex_bytes": 434
+    },
+    "instance-array-index": {
+      "kind": "fixture",
+      "hex_bytes": 192
+    },
+    "instance-field-truthiness": {
+      "kind": "fixture",
+      "hex_bytes": 748
+    },
+    "instance-list-loop": {
+      "kind": "fixture",
+      "hex_bytes": 396
+    },
+    "int32-floor": {
+      "kind": "fixture",
+      "hex_bytes": 1056
+    },
+    "isr-global-survives-return": {
+      "kind": "fixture",
+      "hex_bytes": 320,
+      "via_board": true
+    },
+    "isr-home-reg-clobber": {
+      "kind": "fixture",
+      "hex_bytes": 652
+    },
+    "isr-reg-preservation": {
+      "kind": "fixture",
+      "hex_bytes": 194
+    },
+    "isr-sp-preservation": {
+      "kind": "fixture",
+      "hex_bytes": 170
+    },
+    "join-bytes-to-str": {
+      "kind": "fixture",
+      "hex_bytes": 360
+    },
+    "join-field-receiver": {
+      "kind": "fixture",
+      "hex_bytes": 360
+    },
+    "kwargs-forwarding": {
+      "kind": "fixture",
+      "hex_bytes": 626
+    },
+    "lambda-ops": {
+      "kind": "fixture",
+      "hex_bytes": 400
+    },
+    "layer-singleton-local": {
+      "kind": "fixture",
+      "hex_bytes": 642,
+      "via_board": true
+    },
+    "list-comp": {
+      "kind": "fixture",
+      "hex_bytes": 398
+    },
+    "list-field": {
+      "kind": "fixture",
+      "hex_bytes": 282
+    },
+    "list-iter-bound": {
+      "kind": "fixture",
+      "hex_bytes": 1536
+    },
+    "list-param-dict-char-keys": {
+      "kind": "fixture",
+      "hex_bytes": 3070,
+      "via_board": true
+    },
+    "list-param-mp-sevenseg-upstream": {
+      "kind": "fixture",
+      "hex_bytes": 1706,
+      "via_board": true
+    },
+    "list-param-pins": {
+      "kind": "fixture",
+      "hex_bytes": 840
+    },
+    "list-param-seven-segment": {
+      "kind": "fixture",
+      "hex_bytes": 656,
+      "via_board": true
+    },
+    "list-param-values": {
+      "kind": "fixture",
+      "hex_bytes": 648
+    },
+    "listcomp-over-names": {
+      "kind": "fixture",
+      "hex_bytes": 454
+    },
+    "literal-width": {
+      "kind": "fixture",
+      "hex_bytes": 890
+    },
+    "literal-width-module": {
+      "kind": "fixture",
+      "hex_bytes": 934
+    },
+    "lm35-sensor-mp": {
+      "kind": "fixture",
+      "hex_bytes": 1868,
+      "via_board": true
+    },
+    "loop-else": {
+      "kind": "fixture",
+      "hex_bytes": 768
+    },
+    "map-range": {
+      "kind": "fixture",
+      "hex_bytes": 700
+    },
+    "match-advanced": {
+      "kind": "fixture",
+      "hex_bytes": 442
+    },
+    "math-rounding": {
+      "kind": "fixture",
+      "hex_bytes": 1412
+    },
+    "matrix-math": {
+      "kind": "fixture",
+      "hex_bytes": 412
+    },
+    "max7219-cs": {
+      "kind": "fixture",
+      "hex_bytes": 366
+    },
+    "max7219-cs-default": {
+      "kind": "fixture",
+      "hex_bytes": 356
+    },
+    "memory-layout": {
+      "kind": "fixture",
+      "hex_bytes": 170
+    },
+    "method-factory-returns-class": {
+      "kind": "fixture",
+      "hex_bytes": 426
+    },
+    "method-instance-param": {
+      "kind": "fixture",
+      "hex_bytes": 378
+    },
+    "millis-micros": {
+      "kind": "fixture",
+      "hex_bytes": 488
+    },
+    "minmax-key": {
+      "kind": "fixture",
+      "hex_bytes": 1264
+    },
+    "mmio-spy": {
+      "kind": "fixture",
+      "hex_bytes": 142
+    },
+    "module-alias": {
+      "kind": "fixture",
+      "hex_bytes": 242,
+      "via_board": true
+    },
+    "module-array-name-collision": {
+      "kind": "fixture",
+      "hex_bytes": 1630
+    },
+    "module-array-survives": {
+      "kind": "fixture",
+      "hex_bytes": 768
+    },
+    "module-global-name-collision": {
+      "kind": "fixture",
+      "hex_bytes": 1200,
+      "via_board": true
+    },
+    "module-instance-field": {
+      "kind": "fixture",
+      "hex_bytes": 412
+    },
+    "module-instance-nonmain": {
+      "kind": "fixture",
+      "hex_bytes": 152
+    },
+    "module-instance-read": {
+      "kind": "fixture",
+      "hex_bytes": 420
+    },
+    "mul16-correctness": {
+      "kind": "fixture",
+      "hex_bytes": 348
+    },
+    "mul16-signed": {
+      "kind": "fixture",
+      "hex_bytes": 368
+    },
+    "multi-isr": {
+      "kind": "fixture",
+      "hex_bytes": 420
+    },
+    "name-guard": {
+      "kind": "fixture",
+      "hex_bytes": 132
+    },
+    "name-main-guard": {
+      "kind": "fixture",
+      "hex_bytes": 128
+    },
+    "named-sequence-loop": {
+      "kind": "fixture",
+      "hex_bytes": 156,
+      "via_board": true
+    },
+    "named-tuple-loop": {
+      "kind": "fixture",
+      "hex_bytes": 2268
+    },
+    "neg16-correctness": {
+      "kind": "fixture",
+      "hex_bytes": 148
+    },
+    "neg32-correctness": {
+      "kind": "fixture",
+      "hex_bytes": 152
+    },
+    "nested-calls": {
+      "kind": "fixture",
+      "hex_bytes": 366
+    },
+    "nested-listcomp": {
+      "kind": "fixture",
+      "hex_bytes": 426
+    },
+    "nested-zca-value": {
+      "kind": "fixture",
+      "hex_bytes": 454
+    },
+    "new-builtins": {
+      "kind": "fixture",
+      "hex_bytes": 492
+    },
+    "no-entrypoint": {
+      "kind": "fixture",
+      "hex_bytes": 330
+    },
+    "none-then-value-width": {
+      "kind": "fixture",
+      "hex_bytes": 2114
+    },
+    "nonlocal": {
+      "kind": "fixture",
+      "hex_bytes": 400
+    },
+    "nvm-slice-repr": {
+      "kind": "fixture",
+      "hex_bytes": 700,
+      "via_board": true
+    },
+    "onechar-string-equality": {
+      "kind": "fixture",
+      "hex_bytes": 376
+    },
+    "outline-branchy": {
+      "kind": "fixture",
+      "hex_bytes": 310
+    },
+    "outline-dunders": {
+      "kind": "fixture",
+      "hex_bytes": 504
+    },
+    "outline-mutating-getter": {
+      "kind": "fixture",
+      "hex_bytes": 440
+    },
+    "outline-on-init": {
+      "kind": "fixture",
+      "hex_bytes": 376
+    },
+    "outline-through-field": {
+      "kind": "fixture",
+      "hex_bytes": 388
+    },
+    "outlined-default": {
+      "kind": "fixture",
+      "hex_bytes": 156
+    },
+    "outlined-self-call-override": {
+      "kind": "fixture",
+      "hex_bytes": 432
+    },
+    "overflow-behavior": {
+      "kind": "fixture",
+      "hex_bytes": 148
+    },
+    "overload-const-str": {
+      "kind": "fixture",
+      "hex_bytes": 402
+    },
+    "overload-facade": {
+      "kind": "fixture",
+      "hex_bytes": 370
+    },
+    "pin-irq-triggers": {
+      "kind": "fixture",
+      "hex_bytes": 246
+    },
+    "pin-value-runtime": {
+      "kind": "fixture",
+      "hex_bytes": 150
+    },
+    "print-integers": {
+      "kind": "fixture",
+      "hex_bytes": 910
+    },
+    "print-order-effects": {
+      "kind": "fixture",
+      "hex_bytes": 490
+    },
+    "print-strings": {
+      "kind": "fixture",
+      "hex_bytes": 328
+    },
+    "progmem-lookup": {
+      "kind": "fixture",
+      "hex_bytes": 188
+    },
+    "ptr-offset": {
+      "kind": "fixture",
+      "hex_bytes": 126
+    },
+    "ptr-runtime": {
+      "kind": "fixture",
+      "hex_bytes": 276
+    },
+    "ptr-runtime-width": {
+      "kind": "fixture",
+      "hex_bytes": 552
+    },
+    "ptr-rw-roundtrip": {
+      "kind": "fixture",
+      "hex_bytes": 166
+    },
+    "ptr-uint32-deref": {
+      "kind": "fixture",
+      "hex_bytes": 346
+    },
+    "pwm-dual-channel": {
+      "kind": "fixture",
+      "hex_bytes": 458
+    },
+    "pwm-duty-zero": {
+      "kind": "fixture",
+      "hex_bytes": 220
+    },
+    "pwm-freq-nearest": {
+      "kind": "fixture",
+      "hex_bytes": 210
+    },
+    "pwm-invert": {
+      "kind": "fixture",
+      "hex_bytes": 210
+    },
+    "pwm-ocr-high-byte": {
+      "kind": "fixture",
+      "hex_bytes": 198
+    },
+    "pwm-stop-keeps-timer": {
+      "kind": "fixture",
+      "hex_bytes": 440
+    },
+    "pwm-timer0-timebase": {
+      "kind": "fixture",
+      "hex_bytes": 1082
+    },
+    "raise-after-a-plain-call": {
+      "kind": "fixture",
+      "hex_bytes": 1934,
+      "via_board": true
+    },
+    "raise-in-main": {
+      "kind": "fixture",
+      "hex_bytes": 324,
+      "via_board": true
+    },
+    "raise-in-try": {
+      "kind": "fixture",
+      "hex_bytes": 458
+    },
+    "raise-no-print": {
+      "kind": "fixture",
+      "hex_bytes": 226,
+      "via_board": true
+    },
+    "random-prng": {
+      "kind": "fixture",
+      "hex_bytes": 1574
+    },
+    "range-bound-to-a-name": {
+      "kind": "fixture",
+      "hex_bytes": 448
+    },
+    "range-counter-width": {
+      "kind": "fixture",
+      "hex_bytes": 1798
+    },
+    "range-loop-var-after": {
+      "kind": "fixture",
+      "hex_bytes": 626
+    },
+    "range-pwm-fade": {
+      "kind": "fixture",
+      "hex_bytes": 1990,
+      "via_board": true
+    },
+    "range-runtime-step": {
+      "kind": "fixture",
+      "hex_bytes": 778
+    },
+    "range-surface": {
+      "kind": "fixture",
+      "hex_bytes": 1354
+    },
+    "range-unroll": {
+      "kind": "fixture",
+      "hex_bytes": 312
+    },
+    "read-blocking": {
+      "kind": "fixture",
+      "hex_bytes": 260
+    },
+    "reg-pressure": {
+      "kind": "fixture",
+      "hex_bytes": 290
+    },
+    "register-width-widening": {
+      "kind": "fixture",
+      "hex_bytes": 214
+    },
+    "reversed-named-array": {
+      "kind": "fixture",
+      "hex_bytes": 132
+    },
+    "runtime-slice-iter": {
+      "kind": "fixture",
+      "hex_bytes": 620
+    },
+    "servo-angle-map": {
+      "kind": "fixture",
+      "hex_bytes": 326
+    },
+    "signed-compare": {
+      "kind": "fixture",
+      "hex_bytes": 132
+    },
+    "signed-extend": {
+      "kind": "fixture",
+      "hex_bytes": 172
+    },
+    "signed-mixed-width": {
+      "kind": "fixture",
+      "hex_bytes": 814
+    },
+    "signed-rshift": {
+      "kind": "fixture",
+      "hex_bytes": 174
+    },
+    "signed-wraparound": {
+      "kind": "fixture",
+      "hex_bytes": 1176
+    },
+    "sleep-seconds": {
+      "kind": "fixture",
+      "hex_bytes": 150
+    },
+    "slice-assign": {
+      "kind": "fixture",
+      "hex_bytes": 636
+    },
+    "slice-ops": {
+      "kind": "fixture",
+      "hex_bytes": 450
+    },
+    "slot-field-read-outside": {
+      "kind": "fixture",
+      "hex_bytes": 2718
+    },
+    "sreg-flags": {
+      "kind": "fixture",
+      "hex_bytes": 176
+    },
+    "state-machine-branch-constant": {
+      "kind": "fixture",
+      "hex_bytes": 766
+    },
+    "static-method": {
+      "kind": "fixture",
+      "hex_bytes": 138
+    },
+    "stdlib-bare-imports": {
+      "kind": "fixture",
+      "hex_bytes": 746
+    },
+    "str-class-field": {
+      "kind": "fixture",
+      "hex_bytes": 276
+    },
+    "str-format": {
+      "kind": "fixture",
+      "hex_bytes": 1198
+    },
+    "str-runtime-branch": {
+      "kind": "fixture",
+      "hex_bytes": 564
+    },
+    "str-runtime-module": {
+      "kind": "fixture",
+      "hex_bytes": 350
+    },
+    "stress-math": {
+      "kind": "fixture",
+      "hex_bytes": 614
+    },
+    "string-copied-to-a-name": {
+      "kind": "fixture",
+      "hex_bytes": 306
+    },
+    "string-runtime-index": {
+      "kind": "fixture",
+      "hex_bytes": 276
+    },
+    "style-bitreg-new": {
+      "kind": "fixture",
+      "hex_bytes": 144
+    },
+    "style-bitreg-old": {
+      "kind": "fixture",
+      "hex_bytes": 144
+    },
+    "style-dispatch-ifelif": {
+      "kind": "fixture",
+      "hex_bytes": 214
+    },
+    "style-dispatch-match": {
+      "kind": "fixture",
+      "hex_bytes": 214
+    },
+    "submodule-alias-member": {
+      "kind": "fixture",
+      "hex_bytes": 410
+    },
+    "super-outlined": {
+      "kind": "fixture",
+      "hex_bytes": 224
+    },
+    "t-flag-errors": {
+      "kind": "fixture",
+      "hex_bytes": 886
+    },
+    "timer2-interrupt": {
+      "kind": "fixture",
+      "hex_bytes": 330
+    },
+    "tone-freq-map": {
+      "kind": "fixture",
+      "hex_bytes": 282
+    },
+    "tuple-args": {
+      "kind": "fixture",
+      "hex_bytes": 282
+    },
+    "tuple-ops": {
+      "kind": "fixture",
+      "hex_bytes": 520
+    },
+    "tuple-return-annotation": {
+      "kind": "fixture",
+      "hex_bytes": 720
+    },
+    "tuple-unpack": {
+      "kind": "fixture",
+      "hex_bytes": 406
+    },
+    "two-index-unannotated-return": {
+      "kind": "fixture",
+      "hex_bytes": 506
+    },
+    "type-inference": {
+      "kind": "fixture",
+      "hex_bytes": 360
+    },
+    "uart-115200-u2x": {
+      "kind": "fixture",
+      "hex_bytes": 168
+    },
+    "uart-baud-8mhz": {
+      "kind": "fixture",
+      "hex_bytes": 156
+    },
+    "uart-baud-computed": {
+      "kind": "fixture",
+      "hex_bytes": 184
+    },
+    "uart-write-hex": {
+      "kind": "fixture",
+      "hex_bytes": 340
+    },
+    "uint16-math": {
+      "kind": "fixture",
+      "hex_bytes": 360
+    },
+    "uint16-param-passthrough": {
+      "kind": "fixture",
+      "hex_bytes": 244
+    },
+    "uint32-compare-max": {
+      "kind": "fixture",
+      "hex_bytes": 404
+    },
+    "uint32-from-float": {
+      "kind": "fixture",
+      "hex_bytes": 2358
+    },
+    "uint32-roundtrip": {
+      "kind": "fixture",
+      "hex_bytes": 306
+    },
+    "volatile-flag": {
+      "kind": "fixture",
+      "hex_bytes": 346
+    },
+    "warning-decorator": {
+      "kind": "fixture",
+      "hex_bytes": 372
+    },
+    "while-condition-call": {
+      "kind": "fixture",
+      "hex_bytes": 414
+    },
+    "wide-compare": {
+      "kind": "fixture",
+      "hex_bytes": 2568
+    },
+    "wide-const-div": {
+      "kind": "fixture",
+      "hex_bytes": 700
+    },
+    "with-bound-name-field-read": {
+      "kind": "fixture",
+      "hex_bytes": 454
+    },
+    "with-context-manager": {
+      "kind": "fixture",
+      "hex_bytes": 376
+    },
+    "yield-and-splat": {
+      "kind": "fixture",
+      "hex_bytes": 462
+    },
+    "yield-from": {
+      "kind": "fixture",
+      "hex_bytes": 2316
+    },
+    "zca-array": {
+      "kind": "fixture",
+      "hex_bytes": 388
+    },
+    "zca-factory": {
+      "kind": "fixture",
+      "hex_bytes": 412,
+      "via_board": true
+    },
+    "zca-factory-b": {
+      "kind": "fixture",
+      "hex_bytes": 302
+    },
+    "zca-factory-slot": {
+      "kind": "fixture",
+      "hex_bytes": 406
+    },
+    "zca-field-method-call": {
+      "kind": "fixture",
+      "hex_bytes": 434
+    },
+    "zca-instance-array": {
+      "kind": "fixture",
+      "hex_bytes": 276
+    },
+    "zca-method-calls-mutator": {
+      "kind": "fixture",
+      "hex_bytes": 510
+    },
+    "zca-method-loop-return": {
+      "kind": "fixture",
+      "hex_bytes": 858
+    },
+    "zca-outline": {
+      "kind": "fixture",
+      "hex_bytes": 292
+    },
+    "zca-outline-dht": {
+      "kind": "fixture",
+      "hex_bytes": 1342
+    },
+    "zca-outline-selfcall": {
+      "kind": "fixture",
+      "hex_bytes": 330
+    },
+    "zca-slot": {
+      "kind": "fixture",
+      "hex_bytes": 370
+    }
+  },
+  "examples": {
+    "adc-interrupt": {
+      "kind": "example",
+      "hex_bytes": 376
+    },
+    "adc-read": {
+      "kind": "example",
+      "hex_bytes": 330
+    },
+    "analog-inout": {
+      "kind": "example",
+      "hex_bytes": 298
+    },
+    "analog-inout-mp": {
+      "kind": "example",
+      "hex_bytes": 412,
+      "via_board": true
+    },
+    "blink": {
+      "kind": "example",
+      "hex_bytes": 150
+    },
+    "bmp280": {
+      "kind": "example",
+      "hex_bytes": 848
+    },
+    "button-debounce": {
+      "kind": "example",
+      "hex_bytes": 318
+    },
+    "checksum": {
+      "kind": "example",
+      "hex_bytes": 308
+    },
+    "clamp-filter": {
+      "kind": "example",
+      "hex_bytes": 382
+    },
+    "dht-sensor": {
+      "kind": "example",
+      "hex_bytes": 914
+    },
+    "eeprom": {
+      "kind": "example",
+      "hex_bytes": 454
+    },
+    "enum-state": {
+      "kind": "example",
+      "hex_bytes": 190
+    },
+    "error-handling": {
+      "kind": "example",
+      "hex_bytes": 884
+    },
+    "extern-call": {
+      "kind": "example",
+      "hex_bytes": 444
+    },
+    "ffi-abi": {
+      "kind": "example",
+      "hex_bytes": 502
+    },
+    "ffi-arduino": {
+      "kind": "example",
+      "hex_bytes": 698
+    },
+    "ffi-crc8": {
+      "kind": "example",
+      "hex_bytes": 504
+    },
+    "ffi-dsp": {
+      "kind": "example",
+      "hex_bytes": 628
+    },
+    "i2c-irq": {
+      "kind": "example",
+      "hex_bytes": 472
+    },
+    "i2c-scanner": {
+      "kind": "example",
+      "hex_bytes": 614
+    },
+    "inheritance-zca": {
+      "kind": "example",
+      "hex_bytes": 430
+    },
+    "interrupt-counter": {
+      "kind": "example",
+      "hex_bytes": 338
+    },
+    "lcd": {
+      "kind": "example",
+      "hex_bytes": 860
+    },
+    "max7219": {
+      "kind": "example",
+      "hex_bytes": 506
+    },
+    "multi-pin": {
+      "kind": "example",
+      "hex_bytes": 350
+    },
+    "neopixel": {
+      "kind": "example",
+      "hex_bytes": 2504
+    },
+    "pcint-counter": {
+      "kind": "example",
+      "hex_bytes": 522
+    },
+    "pin-irq": {
+      "kind": "example",
+      "hex_bytes": 328
+    },
+    "pin-irq-mp": {
+      "kind": "example",
+      "hex_bytes": 360,
+      "via_board": true
+    },
+    "pwm-fade": {
+      "kind": "example",
+      "hex_bytes": 258
+    },
+    "pwm-multi": {
+      "kind": "example",
+      "hex_bytes": 574
+    },
+    "random-led": {
+      "kind": "example",
+      "hex_bytes": 964
+    },
+    "rtos-multitask": {
+      "kind": "example",
+      "hex_bytes": 1356
+    },
+    "sensor-dashboard": {
+      "kind": "example",
+      "hex_bytes": 764
+    },
+    "servo": {
+      "kind": "example",
+      "hex_bytes": 548
+    },
+    "shift-register": {
+      "kind": "example",
+      "hex_bytes": 278
+    },
+    "sleep-wakeup": {
+      "kind": "example",
+      "hex_bytes": 382
+    },
+    "smoothing": {
+      "kind": "example",
+      "hex_bytes": 802
+    },
+    "soft-pwm": {
+      "kind": "example",
+      "hex_bytes": 472
+    },
+    "softspi": {
+      "kind": "example",
+      "hex_bytes": 446
+    },
+    "softspi-peripheral": {
+      "kind": "example",
+      "hex_bytes": 538
+    },
+    "spi-cs": {
+      "kind": "example",
+      "hex_bytes": 334
+    },
+    "spi-irq": {
+      "kind": "example",
+      "hex_bytes": 402
+    },
+    "spi-shift-register": {
+      "kind": "example",
+      "hex_bytes": 464
+    },
+    "ssd1306": {
+      "kind": "example",
+      "hex_bytes": 628
+    },
+    "state-machine": {
+      "kind": "example",
+      "hex_bytes": 472
+    },
+    "stopwatch": {
+      "kind": "example",
+      "hex_bytes": 562
+    },
+    "t-flag-demo": {
+      "kind": "example",
+      "hex_bytes": 470
+    },
+    "timer-ctc": {
+      "kind": "example",
+      "hex_bytes": 364
+    },
+    "timer-interrupt": {
+      "kind": "example",
+      "hex_bytes": 346
+    },
+    "timer-poll": {
+      "kind": "example",
+      "hex_bytes": 228
+    },
+    "tone-buzzer": {
+      "kind": "example",
+      "hex_bytes": 1790
+    },
+    "uart-command": {
+      "kind": "example",
+      "hex_bytes": 616
+    },
+    "uart-echo": {
+      "kind": "example",
+      "hex_bytes": 262
+    },
+    "uart-echo-cp": {
+      "kind": "example",
+      "hex_bytes": 878,
+      "via_board": true
+    },
+    "uart-echo-mp": {
+      "kind": "example",
+      "hex_bytes": 268,
+      "via_board": true
+    },
+    "uart-rx-interrupt": {
+      "kind": "example",
+      "hex_bytes": 524
+    },
+    "uart-str": {
+      "kind": "example",
+      "hex_bytes": 334
+    },
+    "watchdog": {
+      "kind": "example",
+      "hex_bytes": 324
+    }
+  }
+}
