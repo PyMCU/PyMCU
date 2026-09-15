@@ -273,7 +273,10 @@ def _message(src: Path, py_parser: bool) -> str:
     "    x: uint8 = 0xFFFFFFFFFF\n",                 # quoted as WRITTEN, not as a decimal
     "    x: uint8 = 99999999999\n",
     "    x: uint8 = 1\n    del x\n",                 # the written refusal, not a stub
-    "    r = range(4)\n",                           # range() as a value (PyMCU#288)
+    # range() as a value (PyMCU#288). Since #363 the BINDING is accepted -- a name whose every
+    # use is a for or a reversed() is a compile-time sequence -- and the refusal is at the first
+    # use that needs a value, which is what this pins on both front ends.
+    "    r = range(4)\n    x: uint8 = r\n",
     "    x: uint8 = 5\n    if x in range(0, 10, x):\n        pass\n",   # a runtime step
 ])
 def test_both_front_ends_say_the_same_sentence(tmp_path, body):
