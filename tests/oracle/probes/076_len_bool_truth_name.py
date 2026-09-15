@@ -1,6 +1,5 @@
 # expect: match
 # doc: docs/language/roadmap.md:61
-# tracked: #396
 class Bag:
     def __init__(self, n):
         self.n = n
