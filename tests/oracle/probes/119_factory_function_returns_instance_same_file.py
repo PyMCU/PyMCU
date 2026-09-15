@@ -1,6 +1,5 @@
 # expect: match
 # doc: docs/language/roadmap.md:24
-# tracked: #429
 class Sensor:
     def __init__(self, base):
         self.base = base
