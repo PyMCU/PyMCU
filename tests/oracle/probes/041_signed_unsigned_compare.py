@@ -1,4 +1,4 @@
-# expect: match
+# expect: divergence docs/language/type-system.md:20
 # doc: docs/language/roadmap.md:34
 from pymcu.types import int8, uint8
 a: int8 = -1

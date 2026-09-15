@@ -28,6 +28,7 @@ class Expectation:
     kind: str
     diagnostic: str | None
     doc: str
+    divergence_doc: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,38 @@ def parse_expectation(src: str) -> Expectation:
         return Expectation("match", None, doc)
     if expect.startswith("refuse "):
         return Expectation("refuse", expect.removeprefix("refuse ").strip(), doc)
+    if expect.startswith("divergence "):
+        return Expectation(
+            "divergence",
+            None,
+            doc,
+            divergence_doc=expect.removeprefix("divergence ").strip(),
+        )
     raise AssertionError(f"unknown oracle expectation: {expect}")
+
+
+# Known, documented CPython/emulator divergences: each maps the doc citation named in a
+# probe's `# expect: divergence <citation>` header to the transform that turns CPython's
+# raw output into the form the docs say the emulator prints instead. A probe whose citation
+# is not one of these keys is a broken header, not a silent pass.
+DIVERGENCE_TRANSFORMS: dict[str, "callable[[str], str]"] = {
+    # `bool` is an alias of uint8 that folds True/False to 1/0 (type-system.md:20); any/all,
+    # `in`/`not in`, `is`/`is not`, and dict/set membership all return a bool.
+    "docs/language/type-system.md:20": lambda text: "\n".join(
+        "1" if line == "True" else "0" if line == "False" else line
+        for line in text.split("\n")
+    ),
+    # A triple-quoted string's leading newline, right after the opening quote, is stripped
+    # (roadmap.md:64).
+    "docs/language/roadmap.md:64": lambda text: text[1:] if text.startswith("\n") else text,
+}
+
+
+def apply_divergence(citation: str, expected: str) -> str:
+    transform = DIVERGENCE_TRANSFORMS.get(citation)
+    if transform is None:
+        raise AssertionError(f"unregistered oracle divergence citation: {citation}")
+    return transform(expected)
 
 
 def pymcu_bin() -> Path:
@@ -290,11 +322,12 @@ def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, avr8sharp) -> Oracl
     expectation = parse_expectation(src)
     compile_result = compile_probe(tmp_path, probe.stem, src, pymcu)
     feature = probe.stem.removeprefix("p").replace("_", " ")
-    expect_label = (
-        "match"
-        if expectation.kind == "match"
-        else f"refuse {expectation.diagnostic}"
-    )
+    if expectation.kind == "match":
+        expect_label = "match"
+    elif expectation.kind == "divergence":
+        expect_label = f"divergence {expectation.divergence_doc}"
+    else:
+        expect_label = f"refuse {expectation.diagnostic}"
 
     if expectation.kind == "refuse":
         if compile_result.returncode != 0:
@@ -334,6 +367,8 @@ def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, avr8sharp) -> Oracl
         )
 
     expected = run_cpython(src, probe.stem)
+    if expectation.kind == "divergence":
+        expected = apply_divergence(expectation.divergence_doc, expected)
     actual = run_emulator(compile_result.hex_text, avr8sharp)
     if expected == actual:
         return OracleOutcome(probe.name, feature, expect_label, "match", "")

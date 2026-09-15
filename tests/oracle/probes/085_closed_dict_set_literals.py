@@ -1,4 +1,4 @@
-# expect: match
+# expect: divergence docs/language/type-system.md:20
 # doc: docs/language/roadmap.md:66
 d = {0: 10, "mid": 2}
 print(d[0])
