@@ -232,6 +232,13 @@ public partial class IRGenerator
         return freed;
     }
 
+    /// Whether a module-level binding holds a FLOAT: the annotation says so, or the
+    /// initializer is a float literal (with or without a leading minus).
+    private static bool IsFloatModuleBinding(string? annotation, Expression? initializer)
+        => annotation == "float"
+           || initializer is FloatLiteral
+           || initializer is UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate, Operand: FloatLiteral };
+
     /// A value a straight-line top-level write can be answered with.
     private static bool IsPlainConstant(Expression? e) =>
         e is IntegerLiteral or BooleanLiteral or StringLiteral or FloatLiteral
@@ -636,6 +643,25 @@ public partial class IRGenerator
                 if (initializer is SetExpr setInit)
                 {
                     setLiteralBindings[currentModulePrefix + name] = setInit;
+                    continue;
+                }
+
+                // A module-level FLOAT is storage of its own width, and it is registered here
+                // before anything tries to fold it. EvaluateConstantExpr answers for a float
+                // literal by TRUNCATING it -- 0.1 gives 0 and 1.5 gives 1 -- so the name was
+                // typed an integer from that answer, the module-level store folded to the same
+                // integer, and every read came back as a small int: `timeout = 0.1` then
+                // `timeout * 1000000.0` printed 0.0, with nothing said. An int global one line
+                // above keeps its value and a float literal in a function body is typed
+                // correctly, which is what said the gap was this scan (#379).
+                //
+                // Both spellings go the same way, including the ALL-CAPS one: that convention
+                // gives a name no storage and folds every read from a SymbolInfo, which carries
+                // an int and has no float to carry.
+                if (IsFloatModuleBinding(type, initializer))
+                {
+                    mutableGlobals[currentModulePrefix + name] = DataType.FLOAT;
+                    if (scope != null) scope.MutableGlobals[name] = DataType.FLOAT;
                     continue;
                 }
 

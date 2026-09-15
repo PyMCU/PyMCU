@@ -962,6 +962,11 @@ public partial class IRGenerator
                             {
                                 Temporary wt => wt.Type,
                                 Variable wv => wv.Type,
+                                // A compile-time float. Without this case the switch answered
+                                // with the global's own (1-byte) type, the store folded the
+                                // float to an integer, and the name read back as a small int
+                                // (#379).
+                                FloatConstant => DataType.FLOAT,
                                 Constant when stmt.Value is CallExpr && lastInlineReturnType != DataType.UNKNOWN
                                     => lastInlineReturnType,
                                 _ => mutableGlobals[moduleGlobalName]
@@ -4189,6 +4194,11 @@ public partial class IRGenerator
         else if (stmt.Annotation.Contains("uint16")) type = DataType.UINT16;
         else if (stmt.Annotation.Contains("uint32")) type = DataType.UINT32;
         else if (stmt.Annotation == "Callable") type = DataType.FUNCREF;
+        // `x: float = 0.25` at module level. The chain above has no float arm, so the name kept
+        // the uint8 default, the store folded the literal to an integer and the read came back
+        // 0.0 (#379). The unannotated spelling is answered by the scanned width below; the
+        // annotated one names its width here and was the one nothing read.
+        else if (stmt.Annotation is "float" or "const[float]") type = DataType.FLOAT;
 
         // A bare `const` (no explicit width) infers its width from the value's
         // magnitude, so a 16/32-bit compile-time constant (e.g. a PWM TOP =
