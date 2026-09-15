@@ -25,6 +25,16 @@ public partial class IRGenerator
     {
         if (expr is IntegerLiteral num) return num.Value;
 
+        // `True` and `False` are 1 and 0 (#372). A bool IS an integer on this target -- the
+        // roadmap says `bool` aliases `uint8` -- and every other reader of a boolean literal
+        // here already says so. This one did not, so it threw "Not a constant expression", and
+        // a module-level `FLAG = True` fell out of the ALL-CAPS constant path into the mutable
+        // one. `if FLAG:` was then a run-time branch and BOTH sides were lowered, which is how
+        // adafruit_hcsr04 compiled `self._echo.clear()` against the DigitalInOut it does not
+        // use. The same program with `FLAG = 1` folded, which is what said the limit was the
+        // reader and not the model.
+        if (expr is BooleanLiteral boolLit) return boolLit.Value ? 1 : 0;
+
         if (expr is StringLiteral str)
         {
             if (!stringLiteralIds.ContainsKey(str.Value))

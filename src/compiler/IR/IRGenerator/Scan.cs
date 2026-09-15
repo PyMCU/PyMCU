@@ -87,6 +87,31 @@ public partial class IRGenerator
         var result = new HashSet<string>(
             counts.Where(kv => kv.Value > 1).Select(kv => kv.Key));
 
+        // A name written ONLY by straight-line top-level statements is the LAST of them (#372).
+        //
+        // The module's top level runs once, in order, so nothing can observe the intermediate
+        // value of a name written twice in a row. Two counts made such a name mutable, which is
+        // the right answer for what this was written for -- a state machine whose `state` is
+        // written from inside functions -- and the wrong one for the optional-import flag every
+        // CircuitPython driver opens with:
+        //
+        //     _USE_PULSEIO = False
+        //     try:
+        //         from pulseio import PulseIn
+        //         _USE_PULSEIO = True
+        //     except ImportError:
+        //         pass
+        //
+        // Once #351 folds that try, the two writes ARE straight-line top-level statements. With
+        // the flag mutable, `if _USE_PULSEIO:` became a run-time branch, both sides of
+        // adafruit_hcsr04's constructor were lowered, `self._echo` took two types and
+        // `self._echo.clear()` was compiled against the one that has no `clear`.
+        //
+        // The name is only released when NO top-level statement between the first and the last
+        // write READS it: a read before the last write sees a different value than a read
+        // after it, and one constant cannot answer for both.
+        foreach (var name in TopLevelOnlyLastWriteWins(ast, counts)) result.Remove(name);
+
         // `global x` inside a function marks x as mutated from function scope.
         void WalkGlobals(Statement? s)
         {
@@ -113,6 +138,104 @@ public partial class IRGenerator
 
         return result;
     }
+
+    /// <summary>
+    /// The names whose every write is a straight-line top-level assignment, with no top-level
+    /// read before the last of them (#372). Such a name is the constant of its last write.
+    /// </summary>
+    private static List<string> TopLevelOnlyLastWriteWins(
+        ProgramNode ast, Dictionary<string, int> counts)
+    {
+        var topWrites = new Dictionary<string, List<int>>();
+        var allWrites = new Dictionary<string, int>();
+        var firstRead = new Dictionary<string, int>();
+
+        void CountWritesAnywhere(Statement? s)
+        {
+            switch (s)
+            {
+                case null: return;
+                case AssignStmt { Target: VariableExpr v }: allWrites[v.Name] = allWrites.GetValueOrDefault(v.Name) + 1; return;
+                case AnnAssign aa: allWrites[aa.Target] = allWrites.GetValueOrDefault(aa.Target) + 1; return;
+                case VarDecl vd: allWrites[vd.Name] = allWrites.GetValueOrDefault(vd.Name) + 1; return;
+                case AugAssignStmt { Target: VariableExpr av }: allWrites[av.Name] = allWrites.GetValueOrDefault(av.Name) + 2; return;
+                case Block b: foreach (var st in b.Statements) CountWritesAnywhere(st); return;
+                case IfStmt f:
+                    CountWritesAnywhere(f.ThenBranch);
+                    CountWritesAnywhere(f.ElseBranch);
+                    foreach (var e in f.ElifBranches) CountWritesAnywhere(e.Item2);
+                    return;
+                case WhileStmt w: CountWritesAnywhere(w.Body); return;
+                case ForStmt fo: CountWritesAnywhere(fo.Body); return;
+                case MatchStmt m: foreach (var br in m.Branches) CountWritesAnywhere(br.Body); return;
+                case TryStmt t:
+                    foreach (var st in t.Body) CountWritesAnywhere(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) CountWritesAnywhere(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) CountWritesAnywhere(st);
+                    if (t.ElseBody != null) foreach (var st in t.ElseBody) CountWritesAnywhere(st);
+                    return;
+            }
+        }
+
+        void Reads(Expression? e, int idx)
+        {
+            switch (e)
+            {
+                case null: return;
+                case VariableExpr v:
+                    if (!firstRead.ContainsKey(v.Name)) firstRead[v.Name] = idx;
+                    return;
+                case BinaryExpr b: Reads(b.Left, idx); Reads(b.Right, idx); return;
+                case UnaryExpr u: Reads(u.Operand, idx); return;
+                case CallExpr c:
+                    Reads(c.Callee, idx);
+                    foreach (var a in c.Args) Reads(a, idx);
+                    return;
+                case IndexExpr ix: Reads(ix.Target, idx); Reads(ix.Index, idx); return;
+                case MemberAccessExpr m: Reads(m.Object, idx); return;
+                case ListExpr le: foreach (var x in le.Elements) Reads(x, idx); return;
+                case TupleExpr te: foreach (var x in te.Elements) Reads(x, idx); return;
+            }
+        }
+
+        for (int i = 0; i < ast.GlobalStatements.Count; ++i)
+        {
+            var st = ast.GlobalStatements[i];
+            CountWritesAnywhere(st);
+            switch (st)
+            {
+                // A CONSTANT straight-line top-level write. Anything else -- a call, a name, an
+                // expression -- is not a value this can answer with, so the name keeps whatever
+                // the counter said.
+                case AssignStmt { Target: VariableExpr tv, Value: var val } when IsPlainConstant(val):
+                    topWrites.TryAdd(tv.Name, new List<int>());
+                    topWrites[tv.Name].Add(i);
+                    break;
+                case AssignStmt a2: Reads(a2.Value, i); break;
+                case AnnAssign an: Reads(an.Value, i); break;
+                case VarDecl vd2: Reads(vd2.Init, i); break;
+                case ExprStmt ex: Reads(ex.Expr, i); break;
+            }
+        }
+
+        var freed = new List<string>();
+        foreach (var (name, writes) in topWrites)
+        {
+            if (writes.Count < 2) continue;
+            // Every write the program makes has to be one of these: a nested one, or one from a
+            // function, means the name really is mutable.
+            if (allWrites.GetValueOrDefault(name) != writes.Count) continue;
+            if (counts.GetValueOrDefault(name) != writes.Count) continue;
+            if (firstRead.TryGetValue(name, out int r) && r < writes[^1]) continue;
+            freed.Add(name);
+        }
+        return freed;
+    }
+
+    /// A value a straight-line top-level write can be answered with.
+    private static bool IsPlainConstant(Expression? e) =>
+        e is IntegerLiteral or BooleanLiteral or StringLiteral or FloatLiteral
+        || (e is UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate, Operand: IntegerLiteral or FloatLiteral });
 
     /// <summary>
     /// Record every `Cls.ATTR` this statement uses as an assignment target, recursing into
