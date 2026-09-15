@@ -52,7 +52,25 @@ key, `ValueError` when inserting into a full dict, `k in d`, `len(d)`, `get(k, d
 `pop(k)`, `clear()`. The capacity is a compile-time constant.
 Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index access.
 
-**Rule of thumb:** if the size is not known at compile time, it cannot be compiled.
+**`bytearray(n)` with a runtime `n`** allocates from a static arena instead of being
+refused, where the compiler can prove the statement runs **at most once**: a module-level
+statement not inside a loop, or an `@inline __init__` reached only through inlining from
+one (the RFC below explains why that reduces to the same check). Anywhere else -- inside a
+loop, inside a function called from a loop or from two or more sites, inside an ISR -- it
+is refused, naming the reason and the two ways out: a compile-time size, or moving the
+allocation to a module-level statement. There is **no `free()`**: the arena is reserved
+once at start-up and never shrinks, which is why the once rule exists at all -- Python
+would free the buffer when it goes out of scope, and there is nothing here that can. The
+allocator itself is Python (`lib/src/pymcu/arena.py`), not a compiler intrinsic; `pymcu
+build` reports its reservation (`Arena: reserved <N> B ...`) and reserves zero bytes,
+linking none of it in, for a program that never uses it. `x[i]`, `x[i] = v`, `len(x)` and
+passing `x` to a function declared to take `bytearray` all work; slicing / `memoryview` on
+a runtime-sized buffer, and allocating inside a non-inlined, non-`__init__` function
+(however many times it is actually called), do not yet. **AVR only**, like `list[T]`. See
+`docs/rfcs/0004-arena-allocator.md`.
+
+**Rule of thumb:** if the size is not known at compile time, it cannot be compiled --
+except a `bytearray(n)` that the compiler can prove allocates at most once, above.
 
 ---
 
@@ -836,7 +854,10 @@ alone.
   Use `@inline` for leaf helpers.
 - **Soft float:** `float` variables and arithmetic are supported via a pure-assembly
   soft-float library. No FPU required. ~200-400 cycles per operation.
-- **No heap:** every variable must have a size known at compile time.
+- **No heap:** every variable must have a size known at compile time, except a
+  runtime-sized `bytearray(n)` the compiler can prove allocates at most once (see
+  "Dynamic memory and containers" above) -- and even that is a static arena with no
+  `free()`, not a heap: nothing it hands out is ever reclaimed.
 - **String literals are in flash:** read-only; sent to UART via flash string pool. Cannot be
   compared, indexed, or modified at runtime.
 - **C/C++ interop:** supported via `@extern` and `[tool.pymcu.ffi]` in `pyproject.toml`.

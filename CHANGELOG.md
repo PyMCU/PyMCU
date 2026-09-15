@@ -66,6 +66,14 @@ purpose, as opposed to bugs like these three that were silent until found.
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- `bytearray(n)` with a runtime `n` allocates from a static arena (no `free()`, AVR only)
+  instead of being refused, wherever the compiler can prove the statement runs at most
+  once: a module-level statement not in a loop, or an `@inline __init__` reached only
+  through inlining from one. Anywhere else it is refused, naming the reason. `x[i]`,
+  `x[i] = v`, `len(x)` and passing `x` to a `bytearray` parameter all work; a new
+  `MemoryError` (raised by the allocator on overflow, catchable like any other builtin
+  exception) and a new `pymcu build` line (`Arena: reserved <N> B ...`) report the
+  reservation. See `docs/rfcs/0004-arena-allocator.md`.
 - Rebinding an imported module name to an instance shadows the alias for every
   access kind, matching CPython. `from adafruit_motor import servo` then
   `servo = servo.Servo(pwm)` then `print(servo.fraction)` used to refuse the
