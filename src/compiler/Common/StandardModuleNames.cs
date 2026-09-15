@@ -82,7 +82,6 @@ public static class StandardModuleNames
         ["uerrno"]      = (Origin.MicroPython, NotImplemented),
         ["ctypes"]      = (Origin.Python, NotImplemented),
         ["uctypes"]     = (Origin.MicroPython, NotImplemented),
-        ["array"]       = (Origin.Python, "Use a bytearray, or a fixed-size list annotated with its element type."),
         ["gc"]          = (Origin.MicroPython, "There is no garbage collector to drive; PyMCU allocates statically."),
 
         // The u-spellings of modules that DO exist under their plain names, which is a
