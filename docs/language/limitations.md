@@ -826,34 +826,34 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
 Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's file
 **byte-identical to its repository** and a `main()` written after the library's own example
 that constructs the object and calls its methods. Re-measured the same day after #352, #356,
-#357 and the `Optional` decision.
+#357, #367 and the `Optional` decision.
 
-None of the twenty builds unmodified. Every one stops at a construct the compiler names at the
-line it is written on, which is the thing to check when one of these messages changes: a
-refusal that names a bracket instead of a construct is a defect, not a limitation.
+None of the twenty builds unmodified. What changed in this pass is WHERE they stop: nothing
+stops on an annotation any more except two names that are genuinely unknown, and the rest have
+moved into the libraries' own code, which is where the next round of work is.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
-| `adafruit_bmp280` | `Type[BaseException]` in `__exit__` | unknown type in the annotation |
-| `adafruit_bus_device` | `Type[BaseException]` in `__exit__` | unknown type in the annotation |
-| `adafruit_character_lcd` | `Sequence[...]` on a parameter | unknown type in the annotation |
+| `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available |
+| `adafruit_bus_device` | `bytes()` in the example's own `main` | `bytes()` is a Python builtin PyMCU does not provide |
+| `adafruit_character_lcd` | a union of two real types | a union type annotation is not supported |
 | `adafruit_debouncer` | `**kwargs` | it collects arguments into a run-time dictionary |
 | `adafruit_dht` | `import array` | `array` is a Python standard module; use a bytearray |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_74hc595` | `**kwargs` | it collects arguments into a run-time dictionary |
-| `adafruit_hcsr04` | `Type[BaseException]` in `__exit__` | unknown type in the annotation |
-| `adafruit_ht16k33` (matrix) | a PIL `Image` annotation | unknown type in the annotation |
+| `adafruit_hcsr04` | `DigitalInOut.clear()` | call to an undefined function |
+| `adafruit_ht16k33` (matrix) | a PIL `Image` annotation on a READ parameter | unknown type in the annotation |
 | `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
-| `adafruit_ina219` | `Type[BaseException]`, through `bus_device` | unknown type in the annotation |
+| `adafruit_ina219` | `I2CDeviceDriver`, through `adafruit_register` | unknown type in the annotation |
 | `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |
-| `adafruit_mcp3xxx` | `Type[BaseException]`, through `bus_device` | unknown type in the annotation |
+| `adafruit_mcp3xxx` | the `MCP3008` constructor | call to an undefined function |
 | `neopixel` | `import adafruit_pixelbuf` | module not found |
 | `adafruit_pcf8574` | `**kwargs` | it collects arguments into a run-time dictionary |
 | `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
-| `adafruit_motor` (servo) | `Type[BaseException]` in `__exit__` | unknown type in the annotation |
+| `adafruit_motor` (servo) | `self._min_duty` assigned outside `__init__` | the class has no such field |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
-| `adafruit_tcs34725` | `Type[BaseException]`, through `bus_device` | unknown type in the annotation |
-| `adafruit_veml7700` | `Type[BaseException]`, through `bus_device` | unknown type in the annotation |
+| `adafruit_tcs34725` | `self._read_u8()` | `self` is an integer: the method is not available |
+| `adafruit_veml7700` | `I2CDeviceDriver`, through `adafruit_register` | unknown type in the annotation |
 
 ### Which of these are limits and which are gaps
 
