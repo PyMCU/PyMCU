@@ -61,6 +61,10 @@ public static class BuiltinExceptionNames
         // no subclass matching -- so `except ArithmeticError` does not catch a raised
         // ZeroDivisionError the way CPython would.
         ["ArithmeticError"]      = 11,
+
+        // Raised by the arena allocator (lib/src/pymcu/arena.py) when a runtime-sized
+        // bytearray() would overflow the static arena. See docs/rfcs/0004-arena-allocator.md.
+        ["MemoryError"]          = 12,
     };
 
     /// <summary>
