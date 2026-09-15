@@ -53,21 +53,32 @@ def _pulse_ticks_per_us() -> uint8:
     return uint8(__FREQ__ // 8 // 1000000)
 
 
-# The capture ring. Its size is fixed at compile time because a global array is, so a
-# PulseCapture asking for more than this is refused rather than quietly given less.
-# 128 entries is 256 bytes of SRAM, and it costs nothing in a program that captures no
-# pulses: nothing references the array and it is eliminated. It covers the two shapes
-# that matter -- a DHT frame is 81 pulses and an NEC frame is 67.
+# The capture ring. It starts at one entry and is grown, in pulse_capture_set_maxlen below,
+# to the LARGEST maxlen any PulseCapture in the program asks for -- one PulseIn(pin, maxlen=1)
+# gets a one-entry ring, not the 128-entry, 256-byte one every program paid for before
+# (PyMCU#406). 128 stays the hard ceiling: a global array's size is fixed at compile time, so
+# asking for more is refused rather than quietly given less.
+#
+# The ring is sized by len(_pulse_buf) ONLY inside pulse_capture_set_maxlen, right next to the
+# .extend() that grows it -- the one place the growth just made is visible, because that
+# function is @inline and re-expands whole at every construction site. Everywhere else
+# (pulse_isr, popleft, get) compares against _pulse_maxlen, the plain runtime variable set two
+# lines below: a NON-inline function that read len(_pulse_buf) instead would bake in whatever
+# size the ring had grown to by the time THAT function was first generated, not the size it
+# ends the program at -- measured here (compile_isr, called from the first construction,
+# baked in 1 even after a second construction later in the same program grew the ring to 16).
+# _pulse_maxlen carries no such risk: it is a real store re-executed at every construction, and
+# it can only ever hold a value this same function already grew the ring to fit.
 PULSE_CAPACITY = 128
 
-_pulse_buf:   uint16[128] = [0] * 128
+_pulse_buf:   uint16[1] = [0]
 _pulse_head:  uint8  = 0
 _pulse_tail:  uint8  = 0
 _pulse_len:   uint8  = 0
 _pulse_last:  uint16 = 0
 _pulse_armed: uint8  = 0
 _pulse_paused: uint8 = 0
-_pulse_maxlen: uint8 = 128
+_pulse_maxlen: uint8 = 1
 
 
 # The pin-change ISR. NOT @inline: the vector jumps here, so it needs an address.
@@ -100,7 +111,9 @@ def pulse_isr():
             _pulse_buf[_pulse_head] = delta >> 1
         else:
             _pulse_buf[_pulse_head] = delta
-        _pulse_head = (_pulse_head + 1) & 0x7F
+        _pulse_head = _pulse_head + 1
+        if _pulse_head >= _pulse_maxlen:
+            _pulse_head = 0
         _pulse_len = _pulse_len + 1
 
 
@@ -151,7 +164,7 @@ def pulse_capture_attach(pin: const):
 
 @inline
 def pulse_capture_set_maxlen(maxlen: const[uint16]):
-    global _pulse_maxlen
+    global _pulse_maxlen, _pulse_buf
     if maxlen > 128:
         raise CompileError(
             "this pulse capture can hold 128 pulses and cannot be sized per program: the "
@@ -163,6 +176,11 @@ def pulse_capture_set_maxlen(maxlen: const[uint16]):
             "a pulse capture with room for no pulses would record nothing. Ask for at least "
             "one, or 2 for a single high-low pair, which is what CircuitPython's PulseIn "
             "defaults to.")
+    # Grows the ring to this maxlen if it is not already at least that big. Several
+    # PulseCapture in one program each ask here, in whatever order they are constructed, and
+    # the ring ends the program at the LARGEST of them -- a later, smaller ask adds nothing.
+    if len(_pulse_buf) < maxlen:
+        _pulse_buf.extend(bytes(maxlen - len(_pulse_buf)))
     _pulse_maxlen = uint8(maxlen)
 
 
@@ -197,12 +215,14 @@ def pulse_capture_capacity() -> uint16:
 # The oldest pulse, removed from the buffer. 0 when there is none, which is also what a
 # zero-length pulse would read as; a caller that cares checks the count first.
 def pulse_capture_popleft() -> uint16:
-    global _pulse_buf, _pulse_tail, _pulse_len
+    global _pulse_buf, _pulse_tail, _pulse_len, _pulse_maxlen
     if _pulse_len == 0:
         return 0
     asm_cli()
     v: uint16 = _pulse_buf[_pulse_tail]
-    _pulse_tail = (_pulse_tail + 1) & 0x7F
+    _pulse_tail = _pulse_tail + 1
+    if _pulse_tail >= _pulse_maxlen:
+        _pulse_tail = 0
     _pulse_len = _pulse_len - 1
     asm_sei()
     return v
@@ -210,10 +230,13 @@ def pulse_capture_popleft() -> uint16:
 
 # The i-th oldest pulse, left in the buffer. Out of range reads as 0.
 def pulse_capture_get(i: uint16) -> uint16:
-    global _pulse_buf, _pulse_tail, _pulse_len
+    global _pulse_buf, _pulse_tail, _pulse_len, _pulse_maxlen
     if i >= _pulse_len:
         return 0
-    return _pulse_buf[(_pulse_tail + uint8(i)) & 0x7F]
+    idx: uint8 = _pulse_tail + uint8(i)
+    if idx >= _pulse_maxlen:
+        idx = idx - _pulse_maxlen
+    return _pulse_buf[idx]
 
 
 @inline
