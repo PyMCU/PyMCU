@@ -3991,6 +3991,22 @@ public partial class IRGenerator
         if (ResolveCallee(annotation) is { } resolved
             && (classNames.Contains(resolved) || classFieldLayout.ContainsKey(resolved))) return;
 
+        // #376: an annotation naming an ENUM MEMBER, not the enum type -- `digitalio.Direction
+        // .OUTPUT` or the bare `Direction.OUTPUT`. CircuitPython's digitalio exposes
+        // Direction.OUTPUT and Pull.UP as the values a property can take, and a driver
+        // annotates the property with the value it actually returns, which is unusual Python
+        // and legal. `Direction` and `Pull` are compile-time constants in the layer already
+        // (ALL-CAPS class attributes, folded exactly like a module-level constant), so a member
+        // of one is a value whose type is known: the annotation is read as that value's own
+        // type, which is what CheckAnnotationNames answers "" (this target's default numeric
+        // width) for everywhere else a folded constant is used without one of its own.
+        //
+        // Judged on the class the annotation names, not on whether the LAST segment is really
+        // one of its members: the busio.I2C block above accepts a dotted class name the same
+        // loose way, by the class alone, and a member spelled wrong is still inside a class the
+        // compiler knows -- refusing it here would report the class as unknown, which is false.
+        if (lastDot > 0 && IsKnownClassPath(annotation[..lastDot])) return;
+
         // NEVER the name being rejected. The suggestion pool and the known set are different
         // sets, so a name can be in the pool and out of the known set -- `list`, `tuple` and
         // `PIORegister` are, since they are legal only as the HEAD of a bracketed form -- and
@@ -4024,6 +4040,36 @@ public partial class IRGenerator
         throw UserError($"unknown type '{annotation}' in the annotation" + hint
             + ". An unrecognized annotation used to be read as uint8, which changed the "
             + "arithmetic without saying so.", at);
+    }
+
+    /// Whether <paramref name="path"/> -- the text of an annotation up to (not including) its
+    /// last dot -- names a class this compiler knows, in either spelling CheckAnnotationNames
+    /// already accepts for a class annotation: module-qualified (`busio.I2C`) or bare
+    /// (`I2C`). Used by #376 to accept `Module.Class.MEMBER` and `Class.MEMBER` annotations
+    /// once the class half is confirmed real, independent of whether the class was reached
+    /// through one dot or several (a nested class, `alarm.time.TimeAlarm`, has two).
+    private bool IsKnownClassPath(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+
+        int dot = path.IndexOf('.');
+        if (dot < 0)
+            return classNames.Contains(path) || classFieldLayout.ContainsKey(path)
+                || classNames.Any(c => c.EndsWith("." + path, StringComparison.Ordinal)
+                                       || c.EndsWith("_" + path, StringComparison.Ordinal))
+                || (ResolveCallee(path) is { } resolved
+                    && (classNames.Contains(resolved) || classFieldLayout.ContainsKey(resolved)));
+
+        string head = path[..dot];
+        if (!modules.ContainsKey(head) && !IsImportedAlias(head) && !aliasToOriginal.ContainsKey(head))
+            return false;
+
+        string tail = path[(path.LastIndexOf('.') + 1)..];
+        return classNames.Contains(tail) || classFieldLayout.ContainsKey(tail)
+            || classNames.Any(c => c.EndsWith("." + tail, StringComparison.Ordinal)
+                                   || c.EndsWith("_" + tail, StringComparison.Ordinal))
+            || (ResolveCallee(tail) is { } dotted
+                && (classNames.Contains(dotted) || classFieldLayout.ContainsKey(dotted)));
     }
 
     /// The `typing` spellings a library writes whether or not it imports them. Kept alongside
