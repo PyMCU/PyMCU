@@ -1247,6 +1247,36 @@ public partial class IRGenerator
                     string mangled = realMod.Replace('.', '_');
                     resolvedClass = mangled + "_" + calleeMem.Member;
                 }
+                else if (string.IsNullOrEmpty(resolvedClass)
+                         && TryResolveInstanceMethodAst(objVar.Name, calleeMem.Member) is { } factoryMethod
+                         && factoryMethod.Body?.Statements != null)
+                {
+                    // `led = pcf.get_pin(7)`: an ordinary METHOD -- not a constructor -- whose
+                    // body constructs and returns a class instance. adafruit_pcf8574.py's
+                    // `get_pin` is exactly this shape: it validates the pin number and hands
+                    // back `DigitalInOut(pin, self)`. Nothing tagged the assignment target
+                    // with a class before, so the first method called on it (`led
+                    // .switch_to_output(...)`) mangled to the undefined `led_switch_to_output`
+                    // -- the free-function factory case just above resolves the same shape
+                    // for a bare function name; a method call had no equivalent.
+                    //
+                    // Read statically, the same way the free-function factory case does:
+                    // find a `return ClassName(...)` in the method's own body. The call
+                    // itself still runs normally (the method is force-inlined at its call
+                    // site like any other instance method, and validation code such as the
+                    // assert above executes); this only tells the ASSIGNMENT TARGET what
+                    // class the value it receives is.
+                    foreach (var fbs in factoryMethod.Body.Statements)
+                        if (fbs is ReturnStmt fr && fr.Value is CallExpr frcall
+                            && frcall.Callee is VariableExpr frcv)
+                        {
+                            string frc = ResolveCallee(frcv.Name);
+                            if (inlineFunctions.ContainsKey(frc + "___init__")
+                                || overloadedFunctions.Contains(frc + "___init__")
+                                || classFieldLayout.ContainsKey(frc))
+                                resolvedClass = frc;
+                        }
+                }
             }
 
             // `mod.singleton.Nested(...)` -- a nested class reached through a module-level
@@ -1329,11 +1359,17 @@ public partial class IRGenerator
                 // @outline) passes that scalar as the field arg. Crucially we do NOT set
                 // pendingConstructorTarget or add to virtualInstances -- the assignment
                 // proceeds normally so `x` actually receives the returned handle.
-                string qn = !string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix + varExprCtor.Name
-                    : (!string.IsNullOrEmpty(currentFunction)
-                        ? currentFunction + "." + varExprCtor.Name
-                        : varExprCtor.Name);
+                //
+                // SlotInstanceKey, not a bare currentFunction/currentInlinePrefix
+                // qualification: a module-level `led = get_pin(7)` runs inside the
+                // synthesized/explicit main as module init, and every LATER reference to
+                // `led` resolves it as a module global under its bare name -- the same
+                // reason SlotInstanceKey exists for a direct constructor target a few
+                // lines up. Tracking the handle under the function-qualified "main.led"
+                // pointed the class tag at a name the call site never looked up, so
+                // `led.value(1)` found no class and mangled to the undefined `led_value`
+                // (adafruit_pcf8574's `pcf.get_pin(7)` is exactly this shape).
+                string qn = SlotInstanceKey(varExprCtor.Name);
                 instanceClasses[qn] = facRt;
                 factoryHandleInstances.Add(qn);
             }
