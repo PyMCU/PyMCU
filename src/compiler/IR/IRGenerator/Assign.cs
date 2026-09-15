@@ -914,6 +914,37 @@ public partial class IRGenerator
             return;
         }
 
+        // A name whose only binding so far is None has no WIDTH, because None is not a value:
+        // `x = None` emits no store at all, and the byte the empty binding left behind is a
+        // placeholder rather than a measurement. The store that finally gives the name a value
+        // is the one that decides how wide it is. Without this, `pulselen = None` ahead of
+        // `pulselen = self._echo[0]` -- how every CircuitPython driver declares an optional
+        // result -- kept a byte, and a 570 us echo was read back as 58 (#385). Recorded before
+        // the target is resolved, so every scope reads the same width: a local, a name inside
+        // an @inline expansion, and a module global all resolve through variableTypes here.
+        if (stmt.Value is not NoneLiteral && string.IsNullOrEmpty(stmt.AnnotatedType))
+        {
+            string noneKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + varExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + varExpr.Name
+                    : varExpr.Name);
+            if (noneValuedNames.Contains(noneKey))
+            {
+                DataType noneWidth = value switch
+                {
+                    Temporary vt => vt.Type,
+                    Variable vv => vv.Type,
+                    FloatConstant => DataType.FLOAT,
+                    _ => DataType.UNKNOWN,
+                };
+                if (noneWidth != DataType.UNKNOWN
+                    && (!variableTypes.TryGetValue(noneKey, out var hadWidth)
+                        || noneWidth.SizeOf() > hadWidth.SizeOf()))
+                    variableTypes[noneKey] = noneWidth;
+            }
+        }
+
         Val target;
         if (!string.IsNullOrEmpty(currentFunction))
         {
@@ -948,7 +979,10 @@ public partial class IRGenerator
                         // could not type: adopt the RHS's real width. As uint8, a uint16
                         // getter result wrapped at the store (pwm.freq() printed 232 for
                         // 1000 on a real Uno).
-                        if (widenableGlobals.Remove(moduleGlobalName))
+                        // `x = None` is not that first store: None has no width, so spending the
+                        // one chance to widen on it left the name a byte and the assignment
+                        // that DID carry a value truncated into it (#385).
+                        if (stmt.Value is not NoneLiteral && widenableGlobals.Remove(moduleGlobalName))
                         {
                             DataType rhsT = value switch
                             {
