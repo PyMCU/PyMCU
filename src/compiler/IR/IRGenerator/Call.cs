@@ -6846,11 +6846,44 @@ public partial class IRGenerator
         {
             arraySizes[bufKey] = grown;
             var elem = arrayElemTypes.TryGetValue(bufKey, out var et) ? et : DataType.UINT8;
-            for (int i = current; i < grown; i++)
-                Emit(new ArrayStore(bufKey, new Constant(i), new Constant(0), elem, grown));
+            // Below the threshold, an unrolled store per slot is smaller: the loop's own code
+            // (a compare, a branch, an index increment, a jump back) is a fixed cost that N
+            // small unrolled stores can undercut, and unrolling keeps every existing small
+            // extend() byte-identical (PyMCU#411). Above it, N ArrayStores grow with N while the
+            // loop's fixed cost does not -- 69 of them, one .extend() from 1 to 70 uint16
+            // entries, cost 432 bytes on an otherwise-754-byte program. Measured on AVR with a
+            // uint16 element (PulseCapture's ring): unrolled and looped cross between 13 and 14
+            // added slots (522 B vs. 524 B fixed); BufferExtendLoopThreshold is 13 so the
+            // crossover itself still unrolls, and a bytearray's one-byte element crosses at
+            // roughly double that, so 13 stays on the unrolled side there too.
+            if (grown - current > BufferExtendLoopThreshold)
+            {
+                Temporary idx = MakeTemp(DataType.UINT16);
+                string loop = MakeLabel(), done = MakeLabel();
+                Emit(new Copy(new Constant(current), idx));
+                Emit(new Label(loop));
+                Emit(new JumpIfGreaterOrEqual(idx, new Constant(grown), done));
+                Emit(new ArrayStore(bufKey, idx, new Constant(0), elem, grown));
+                Emit(new AugAssign(BinaryOp.Add, idx, new Constant(1)));
+                Emit(new Jump(loop));
+                Emit(new Label(done));
+            }
+            else
+            {
+                for (int i = current; i < grown; i++)
+                    Emit(new ArrayStore(bufKey, new Constant(i), new Constant(0), elem, grown));
+            }
         }
         return new NoneVal();
     }
+
+    /// <summary>
+    /// The unrolled zero-store form and the counted loop form cross over here: below this many
+    /// new slots the unrolled form is smaller, above it the loop is. Measured on AVR with the
+    /// two-word (uint16) element this HAL's pulse ring uses -- 522 bytes unrolled against 524
+    /// looped at 13 added slots, 526 against 524 at 14; see PyMCU#411.
+    /// </summary>
+    private const int BufferExtendLoopThreshold = 13;
 
     /// <summary>
     /// The arraySizes key a source-level buffer name stands for here, tried in the same order

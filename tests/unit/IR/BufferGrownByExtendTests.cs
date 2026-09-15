@@ -124,4 +124,66 @@ public class BufferGrownByExtendTests
         Assert.Contains("_BUFFER", ex.Message);
         Assert.DoesNotContain("untyped", ex.Message);
     }
+
+    private static int ArrayStoreCount(ProgramIR ir, string name) =>
+        ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Count(s => s.ArrayName.EndsWith(name));
+
+    /// <summary>
+    /// PyMCU#411. A .extend() that grows a buffer by a large, compile-time-constant amount used
+    /// to unroll into one ArrayStore per new slot regardless of how many: growing PulseCapture's
+    /// ring from 1 to 70 entries cost 432 bytes of flash over a 754-byte program, on stores that
+    /// zero SRAM the generic BSS-clear loop already zeros at boot.
+    ///
+    /// Below BufferExtendLoopThreshold the unrolled form is still smaller (measured on AVR: a
+    /// two-word element crosses over between 13 and 14 added slots), so it must stay unrolled --
+    /// every snapshot of a small extend() (#362's own shape) has to stay byte-identical.
+    /// </summary>
+    [Fact]
+    public void AtTheThreshold_StaysUnrolled()
+    {
+        var ir = Gen("_BUFFER = bytearray(1)\n_BUFFER.extend(bytes(13))\n");
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+
+        // The declaration's own zero byte is one ArrayStore, the 13-slot extend is 13 more
+        // (this is the unrolled form: no loop construct anywhere in the program).
+        Assert.Equal(14, ArrayStoreCount(ir, "_BUFFER"));
+        Assert.DoesNotContain(body, i => i is JumpIfGreaterOrEqual);
+    }
+
+    /// <summary>
+    /// One slot past the threshold, growth is a counted loop instead: one ArrayStore whose
+    /// index is the loop variable (not a compile-time constant), reached through a label a
+    /// backward jump returns to -- the IR shape a `while` loop over a run-time bound already
+    /// uses elsewhere in this compiler (ConstTables.cs's row-search loop). The declaration's own
+    /// zero byte is still a separate, constant-indexed store -- only the GROWTH becomes a loop.
+    /// </summary>
+    [Fact]
+    public void PastTheThreshold_UsesACountedLoop_NotOneStorePerSlot()
+    {
+        var ir = Gen("_BUFFER = bytearray(1)\n_BUFFER.extend(bytes(14))\n");
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        var bufferStores = body.OfType<ArrayStore>().Where(s => s.ArrayName.EndsWith("_BUFFER")).ToList();
+
+        Assert.Equal(2, bufferStores.Count);   // the declaration's store, and the loop's
+        Assert.Contains(body, i => i is JumpIfGreaterOrEqual);
+        Assert.Contains(body, i => i is Jump);
+        var loopStore = Assert.Single(bufferStores, s => s.Index is not Constant);
+        Assert.IsNotType<Constant>(loopStore.Index);
+    }
+
+    // The buffer still ends up the right size and reads back zero either side of the threshold
+    // -- the loop form must zero exactly the new slots, not more and not fewer.
+    [Fact]
+    public void PastTheThreshold_TheBufferIsStillSizedAndZeroedCorrectly()
+    {
+        var ir = Gen(
+            "_BUFFER = bytearray(1)\n" +
+            "out = bytearray([0])\n" +
+            "_BUFFER.extend(bytes(14))\n" +
+            "out[0] = len(_BUFFER)\n");
+
+        Assert.Equal(15, SizeOfGlobalArray(ir, "_BUFFER"));
+        Assert.Equal(new Constant(15), LastStored(ir, "out"));
+    }
 }
