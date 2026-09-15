@@ -48,6 +48,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
 | `bytearray` | Mutable SRAM buffer |
 | `bytes([...])` / `bytes(N)` as a call argument | Written inline at a call site: unrolls into an `@inline` callee's unannotated buffer parameter the same way a list literal does, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function. `bytes(n)` with a run-time `n` is refused (`bytearray(n)` takes one) |
+| `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type AT THAT CALL SITE, which must be one of the members -- the same way an `@inline` overload dispatches. A field assigned from it takes the site's type. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal; `Callable[...]` matches a function reference. A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART init preamble |
 | `int.from_bytes(b, 'little'/'big')` | Compile-time fold or runtime |
 | Raw strings `r"\n"` | No escape processing |

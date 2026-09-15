@@ -429,8 +429,21 @@ byte-identical across the change.
 **Where the knowledge runs out is a `return`.** The caller asked for a number and the path
 answers `None`, which has no width, so that return is refused in one sentence at the line it
 is written on. A `return None` on a path the caller cannot reach is not refused, because the
-guard that excludes it folds first. A `Union` of two REAL types keeps its refusal: there both
-members need storage and disagree about how much.
+guard that excludes it folds first.
+
+**A `Union` of two REAL types on a PARAMETER** of an `@inline`-expanded function or method
+(a constructor included -- every ZCA instance is built at its own call site) reads the same
+way `Optional[X]` does, one step further: not "the width both members share" -- there is
+none -- but "the type of the argument at THIS call site, which must be one of the members",
+exactly how an `@inline` overload already dispatches on an argument's type. A field assigned
+from such a parameter takes the site's type the same way any unannotated field does. A
+`List[X]`/`Tuple[X, ...]` member matches a fixed array/list literal argument (there is no
+run-time `List`/`Tuple` object here); a `Callable[...]` member matches a plain function
+reference. A call whose argument matches none of the members is refused, naming them. A
+`Union` on a REAL SUBROUTINE's parameter, or on anything that is not a parameter (a field, a
+local, a return type), keeps its refusal: there both members need storage and disagree about
+how much, and a real subroutine has one ABI for every caller with no call site to resolve it
+at.
 
 **Note on `float`:** Soft-float (IEEE 754 single-precision) is supported on AVR via a
 pure-assembly helper library. Expect ~200-400 cycles per operation. Subnormals are treated as
@@ -870,13 +883,13 @@ their own code, which is where the next round of work is.
 |---|---|---|
 | `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available (#373) |
 | `adafruit_bus_device` | `enumerate()` in `busio.py` over a named module constant | enumerate() list/tuple elements must be compile-time integer constants (only literal ints fold; PyMCU#431 fixed `bytes([...])`/`bytes(N)` as a call argument, one gap short) |
-| `adafruit_character_lcd` | a union of two real types | a union type annotation is not supported |
-| `adafruit_debouncer` | a union of two real types on `Debouncer.__init__` | a union type annotation is not supported |
+| `adafruit_character_lcd` | `for pin in (reset_dio, ..., d7_dio):` | for-in list/tuple iterable elements must be compile-time constants (PyMCU#442 fixed the `Union[pwmio.PWMOut, digitalio.DigitalInOut]` one line above, one gap short) |
+| `adafruit_debouncer` | `raise OverflowError(...)` in `adafruit_ticks.py`, imported before `Debouncer` itself | `OverflowError` is not a recognised exception name (PyMCU#442 fixed `Union[ROValueIO, Callable[[], bool]]` on `Debouncer.__init__`, one gap short) |
 | `adafruit_dht` | `from os import uname` | `os` is a Python standard module; there is no operating system or filesystem on the target (PyMCU#433 fixed `import array` / `array.array(typecode)`, one gap short) |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_74hc595` | `-> digitalio.Direction.OUTPUT` on a property | unknown type in the annotation |
 | `adafruit_hcsr04` | **builds unmodified, 4 160 bytes** | |
-| `adafruit_ht16k33` (matrix) | a PIL `Image` annotation on a READ parameter | unknown type in the annotation |
+| `adafruit_ht16k33` (matrix) | `self._buffer[i + 1] = value` in the shared `ht16k33.py` base | a run-time bit index is only supported on a chip register, not through a runtime pointer (PyMCU#442 fixed `Union[int, List[int], Tuple[int, ...]]` on the matrix constructor, one gap short) |
 | `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
 | `adafruit_ina219` | `I2CDeviceDriver`, through `adafruit_register` | unknown type in the annotation |
 | `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |

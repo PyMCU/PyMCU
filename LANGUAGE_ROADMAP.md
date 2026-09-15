@@ -210,6 +210,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
 | `bytes([...])` / `bytes(N)` as a call argument | The same constructor `bytearray` already has, one call spelling later (#431): `f(bytes([1, 2, 3]))` unrolls into an `@inline` callee's unannotated buffer parameter, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function; `bytes(n)` with a run-time `n` is refused, naming `bytearray(n)` |
+| `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type at that call site (#442), which must be one of the members -- the same way an `@inline` overload already dispatches on an argument's type. A field assigned from it takes the site's type, as any unannotated field does. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal argument; `Callable[...]` matches a plain function reference. A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal -- one ABI, no call site to resolve it at |
 
 ---
 
