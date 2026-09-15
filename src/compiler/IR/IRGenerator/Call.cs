@@ -1599,6 +1599,26 @@ public partial class IRGenerator
         string savedPrefix = currentInlinePrefix;
         currentInlinePrefix = newPrefix;
 
+        // A nested @inline function with no `self` parameter of its own (`def bump():` inside
+        // a method) that reads or writes `self.<field>` is closing over the enclosing method's
+        // receiver -- valid Python needing no `nonlocal self` declaration, because only the
+        // ATTRIBUTE is mutated, `self` itself is never rebound. Nothing else forwards `self`
+        // into a callee with no receiver argument, so it fell through to an ordinary unbound
+        // local of this new frame (`inline2.bump.self`) and every write to it was invisible
+        // outside the nested call: `self.value = self.value + 1` silently did nothing (#427).
+        // Mirror the enclosing frame's own self binding, the same way a method call mirrors
+        // the RECEIVER's (a few lines below, for a real `self` parameter).
+        if (func != null && (func.Params.Count == 0 || func.Params[0].Name != "self")
+            && !string.IsNullOrEmpty(savedPrefix))
+        {
+            string outerSelf = savedPrefix + "self";
+            string newSelf = newPrefix + "self";
+            if (variableAliases.TryGetValue(outerSelf, out var outerSelfTarget))
+                variableAliases[newSelf] = outerSelfTarget;
+            if (instanceClasses.TryGetValue(outerSelf, out var outerSelfCls) && outerSelfCls != null)
+                instanceClasses[newSelf] = outerSelfCls;
+        }
+
         // Register the callee's runtime-indexed local arrays so they are allocated as SRAM (not
         // register element-vars). An inlined fixed array is qualified with the enclosing function
         // (currentFunction), same as the load site, so scan under that prefix. The per-function
