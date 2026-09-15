@@ -2113,6 +2113,111 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// PyMCU#373. An outlined method (RFC 0001 Model A/B: compiled ONCE as a shared body,
+    /// `self` bound to the DECLARING class, not any particular instance) that calls a sibling
+    /// via `self.&lt;method&gt;()` can only forward that call statically, to whatever
+    /// <see cref="ResolveMROMethod"/> resolves from the DECLARING class -- see
+    /// <see cref="TryEmitSelfOutlinedMethodCall"/>. That forwarding is sound only when the
+    /// target is ALSO a shared body (itself outlined): forwarding to one that is not means the
+    /// generic sibling-dispatch path is reached instead, which has no instance to resolve
+    /// `self` against and reported the receiver as a numeric value it is not.
+    ///
+    /// Neither half of that condition -- whether the sibling ends up outline-safe, whether it
+    /// is overridden by a subclass discovered later in the file or in another module -- is
+    /// known while the containing method is itself being scanned; both are settled only once
+    /// scanning is complete. So this runs once, after <see cref="CheckBaseClassNames"/>, over
+    /// the STABLE final registry: every outlined method whose self-call cannot be forwarded
+    /// this way is demoted to force-inline (the same as an ordinary unsafe-to-outline method),
+    /// which resolves the receiver from the concrete instance at each call site instead and is
+    /// what a plain, undecorated `self._reset()` written directly in `__init__` already does
+    /// correctly. A fixed-point loop, because demoting one method can turn a sibling that
+    /// forwarded to IT from safe to unsafe in turn.
+    /// </summary>
+    private void DemoteUnsafeOutlinedSelfCalls()
+    {
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var fullName in outlinedMethods.ToList())
+            {
+                if (!methodAstByName.TryGetValue(fullName, out var func) || func == null) continue;
+                if (!methodInstanceTypes.TryGetValue(fullName, out var classKey)) continue;
+
+                var selfCallTargets = new List<string>();
+                CollectSelfCallMembers(func.Body, selfCallTargets);
+                if (selfCallTargets.Count == 0) continue;
+
+                bool unsafeSibling = selfCallTargets.Any(member =>
+                {
+                    string target = ResolveMROMethod(classKey, member) + "_" + member;
+                    return !outlinedMethods.Contains(target) || IsVirtualDispatch(classKey, member);
+                });
+                if (!unsafeSibling) continue;
+
+                outlinedMethods.Remove(fullName);
+                slotMethods.Remove(fullName);
+                instanceMethodDefs[fullName] = func;
+                // The synthesized shared body has no other caller once this is demoted (a
+                // demoted method is never again used as a TryEmitSelfOutlinedMethodCall
+                // forwarding target), so compiling it would only risk the very same error on
+                // dead code -- Base's own `_write_register_byte() -> raise NotImplementedError()`
+                // is never called at run time, and must not be why the build fails.
+                functionsToCompile.RemoveAll(fe => (fe.Prefix ?? "") + fe.Func.Name == fullName);
+                changed = true;
+            }
+        }
+    }
+
+    // Every `self.<name>(...)` call reachable inside an outline-safe body (so the grammar is
+    // exactly the one IsOutlineSafe already restricted it to), collecting <name>. Used only to
+    // decide whether the forwarding in TryEmitSelfOutlinedMethodCall will hold; conservative in
+    // the collecting direction, not the restricting one -- an unrecognized node is simply not
+    // descended into, since IsOutlineSafe already refused anything outside this grammar.
+    private void CollectSelfCallMembers(Statement? s, List<string> into)
+    {
+        void E(Expression? e)
+        {
+            switch (e)
+            {
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } m } call:
+                    into.Add(m.Member);
+                    foreach (var a in call.Args) E(a);
+                    return;
+                case MemberAccessExpr ma: E(ma.Object); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+                default: return;
+            }
+        }
+
+        switch (s)
+        {
+            case null: return;
+            case Block bl: foreach (var cs in bl.Statements) CollectSelfCallMembers(cs, into); return;
+            case VarDecl vd: E(vd.Init); return;
+            case AnnAssign a: E(a.Value); return;
+            case AssignStmt asg: E(asg.Target); E(asg.Value); return;
+            case AugAssignStmt aug: E(aug.Target); E(aug.Value); return;
+            case ReturnStmt r: E(r.Value); return;
+            case ExprStmt ex: E(ex.Expr); return;
+            case IfStmt iff:
+                E(iff.Condition); CollectSelfCallMembers(iff.ThenBranch, into);
+                foreach (var br in iff.ElifBranches) { E(br.Condition); CollectSelfCallMembers(br.Body, into); }
+                CollectSelfCallMembers(iff.ElseBranch, into);
+                return;
+            case WhileStmt wh: E(wh.Condition); CollectSelfCallMembers(wh.Body, into); return;
+            default: return;
+        }
+    }
+
     // RFC 0001 Model A: derives the ordered runtime-field layout of a ZCA class
     // from its __init__ body. Each `self.<field> = <expr>` becomes a (field, type)
     // entry; the type is taken from the matching __init__ parameter when the RHS is

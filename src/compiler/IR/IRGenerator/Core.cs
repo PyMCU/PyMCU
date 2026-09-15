@@ -694,6 +694,12 @@ public partial class IRGenerator
         // its subclass, or in a module scanned later, so this cannot run inside ScanFunctions (#279).
         CheckBaseClassNames();
 
+        // Also after every module is scanned, for the same reason: whether an outlined
+        // method's self.<sibling>() call can be forwarded statically depends on the sibling's
+        // final outline-safety and on every override in the class tree, neither of which is
+        // settled while the containing method is itself being scanned (#373).
+        DemoteUnsafeOutlinedSelfCalls();
+
         // Synthesize a `main` function from top-level executable statements when the
         // user has not written an explicit `def main():`.  This allows MicroPython-
         // and CircuitPython-style scripts that have no entry-point wrapper.
