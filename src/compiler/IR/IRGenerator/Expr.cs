@@ -26,6 +26,9 @@ public partial class IRGenerator
 {
     private Val VisitExpression(Expression expr)
     {
+        // An operand the print lowering already ran, so its side effects happen once and in
+        // CPython's order rather than in the middle of the line it is part of (#371).
+        if (expr is PreEvaluatedExpr pre) return pre.Value;
         if (expr is BinaryExpr bin) return VisitBinary(bin);
         if (expr is TernaryExpr tern) return VisitTernary(tern);
         if (expr is UnaryExpr un) return VisitUnary(un);

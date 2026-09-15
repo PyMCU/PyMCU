@@ -5754,8 +5754,190 @@ public partial class IRGenerator
     // Lower an f-string to direct stream writes: literal text and constant-string interpolations
     // coalesce into one write_str; a runtime value is emitted via its width-typed formatter. This
     // is the bare-metal equivalent of building the string — no buffer, only the itoa printing pays.
+    // An operand of a printed line that the IR generator has already evaluated (#371).
+    //
+    // Never parsed: the print lowering substitutes one for an operand it ran ahead of the text,
+    // so the rest of the lowering reads the value instead of evaluating the expression a second
+    // time -- which would run its side effects twice.
+    private sealed class PreEvaluatedExpr : Expression
+    {
+        internal PreEvaluatedExpr(Val value, DataType? declared) { Value = value; Declared = declared; }
+        internal Val Value { get; }
+        internal DataType? Declared { get; }
+    }
+
+    // Run every operand of a printed line before any of its text is written (#371).
+    //
+    // CPython builds the whole line and writes it in one piece, so every side effect of every
+    // operand happens before the first character appears. This lowering streams as it goes, so
+    // a call inside a printed operand wrote its own output in the MIDDLE of the line:
+    // `print(f"a={side()}")` gave `a=SIDE\n7` where CPython gives `SIDE\na=7`. The same order
+    // decides what a raise leaves behind: `print((sonar.distance,))`, whose element raises on a
+    // timeout, had already put the opening `(` on the wire, so the handler's own line started
+    // mid-line as `(Retrying!`.
+    //
+    // Only an operand that can HAVE an effect is touched -- one that contains a call or a
+    // property read -- and only where the lowering would evaluate it as a number. Everything
+    // else is text the lowering already holds, or a shape that writes its own bytes; leaving
+    // those alone is what keeps every program without a call inside a print byte-identical.
+    // <paramref name="written"/> says whether anything of this line has reached the sink yet.
+    // An operand that is the very first thing written needs no pre-evaluation -- its effects
+    // already happen before any character of the line -- and leaving those alone is what keeps
+    // `print(side())` and `print(f"{side()}")` byte-identical. It is set as the walk passes each
+    // piece that writes.
+    private Expression PreEvaluatePrintOperand(Expression arg, ref bool written)
+    {
+        if (arg is PreEvaluatedExpr) { written = true; return arg; }
+
+        if (arg is TupleExpr tup)
+        {
+            var elems = new List<Expression>(tup.Elements.Count);
+            bool tupChanged = false;
+            written = true;                       // the opening `(` goes out before any element
+            foreach (var el in tup.Elements)
+            {
+                var rewritten = PreEvaluatePrintOperand(el, ref written);
+                tupChanged |= !ReferenceEquals(rewritten, el);
+                elems.Add(rewritten);
+            }
+            return tupChanged ? new TupleExpr(elems) { Line = tup.Line } : tup;
+        }
+
+        if (arg is FStringExpr fstr)
+        {
+            var parts = new List<FStringPart>(fstr.Parts.Count);
+            bool fsChanged = false;
+            foreach (var part in fstr.Parts)
+            {
+                if (!part.IsExpr || part.Expr == null)
+                {
+                    if (!string.IsNullOrEmpty(part.Text)) written = true;
+                    parts.Add(part);
+                    continue;
+                }
+                var rewritten = PreEvaluateInterpolation(part, ref written);
+                fsChanged |= !ReferenceEquals(rewritten, part.Expr);
+                parts.Add(ReferenceEquals(rewritten, part.Expr)
+                    ? part
+                    : new FStringPart
+                    {
+                        IsExpr = true, Text = part.Text,
+                        Expr = rewritten, FormatSpec = part.FormatSpec,
+                    });
+            }
+            return fsChanged ? new FStringExpr(parts) { Line = fstr.Line } : fstr;
+        }
+
+        bool needed = written;
+        written = true;
+        if (!needed || !PrintOperandIsRunAsANumber(arg) || !OperandYieldsARealValue(arg)) return arg;
+        RejectInstanceInterpolation(arg);
+        return new PreEvaluatedExpr(VisitExpression(arg), DeclaredWidthOfName(arg)) { Line = arg.Line };
+    }
+
+    // One interpolation of an f-string. A nested f-string recurses; a part with a format spec
+    // always reaches the numeric formatter, so only the effect test applies to it.
+    private Expression PreEvaluateInterpolation(FStringPart part, ref bool written)
+    {
+        Expression e = part.Expr!;
+        if (e is FStringExpr) return PreEvaluatePrintOperand(e, ref written);
+        bool needed = written;
+        written = true;
+        if (!needed || !OperandCanHaveAnEffect(e) || !OperandYieldsARealValue(e)) return e;
+        if (string.IsNullOrEmpty(part.FormatSpec))
+        {
+            if (StaticStringOf(e) != null) return e;
+            if (e is BooleanLiteral || IsBoolExpr(e)) return e;
+        }
+        RejectInstanceInterpolation(e);
+        return new PreEvaluatedExpr(VisitExpression(e), null) { Line = e.Line };
+    }
+
+    // Whether the print lowering would send this operand to the number/float writer, which is
+    // the one path that evaluates it as a value. Every earlier branch of EmitPrintArg either
+    // already holds the text or writes its own bytes, and is left alone.
+    private bool PrintOperandIsRunAsANumber(Expression a)
+    {
+        if (!OperandCanHaveAnEffect(a)) return false;
+        if (a is StringLiteral or BooleanLiteral or NoneLiteral or VariableExpr) return false;
+        // `print(e)`, `print(str(e))`, `print(e.args[0])`: the message of a bound exception.
+        if (a is CallExpr { Callee: VariableExpr { Name: "str" }, Args: [VariableExpr sv] }
+            && TryGetExceptionBinding(sv.Name, out _)) return false;
+        if (a is IndexExpr
+            {
+                Target: MemberAccessExpr { Object: VariableExpr av, Member: "args" },
+            } && TryGetExceptionBinding(av.Name, out _)) return false;
+        if (a is CallExpr { Callee: VariableExpr { Name: "chr" } }) return false;
+        if (a is IndexExpr { Index: SliceExpr }) return false;                       // bytearray repr
+        if (a is IndexExpr { Index: not SliceExpr } ix && StringBehindSubscript(ix) != null) return false;
+        if (a is MemberAccessExpr && TryGetCompileTimeText(a) != null) return false;
+        if (StaticStringOf(a) != null) return false;
+        if (IsBoolExpr(a)) return false;
+        return true;
+    }
+
+    // Whether evaluating this operand HANDS BACK its value, or leaves it in the return register
+    // for the instruction that follows to pick up.
+    //
+    // A method or function with no declared result type yields a NoneVal here and the value
+    // rides in the return register (the unannotated-method seam of PyMCU#292). Moving such an
+    // operand ahead of the line's text puts a write_str call between the two, and the printed
+    // number became whatever that call left behind: `print("A", a.plain())` gave `A 0`. Those
+    // are left where they are, so nothing moves across a call it cannot survive.
+    private bool OperandYieldsARealValue(Expression e) => e switch
+    {
+        CallExpr { Callee: VariableExpr fv } => CalleeDeclaresAResult(ResolveCallee(fv.Name)),
+        CallExpr { Callee: MemberAccessExpr mm } => MemberCalleeDeclaresAResult(mm),
+        MemberAccessExpr mem when IsPropertyGetterRead(mem) => MemberCalleeDeclaresAResult(mem),
+        // Arithmetic, indexing and the rest build their own temporary, so the value is theirs.
+        _ => true,
+    };
+
+    private bool CalleeDeclaresAResult(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return false;
+        if (functionReturnTypes.TryGetValue(key, out string? rt)
+            && !string.IsNullOrEmpty(rt) && rt != "void" && rt != "None"
+            && DataTypeExtensions.StringToDataType(rt) != DataType.UNKNOWN) return true;
+        return DeclaresARealResult(key);
+    }
+
+    private bool MemberCalleeDeclaresAResult(MemberAccessExpr m)
+    {
+        if (m.Object is not VariableExpr recv) return false;
+        string? cls = InstanceClassOfName(recv.Name) ?? ReceiverClassThroughAliases(recv.Name);
+        if (string.IsNullOrEmpty(cls)) return false;
+        return CalleeDeclaresAResult(cls + "_" + m.Member);
+    }
+
+    // Whether evaluating this expression can do anything observable: a call, or a property
+    // read, which is a call written as an attribute. A plain name, a field, a literal and
+    // arithmetic over them cannot, so moving them earlier would only churn the output.
+    private bool OperandCanHaveAnEffect(Expression? e)
+    {
+        switch (e)
+        {
+            case null: return false;
+            case CallExpr: return true;
+            case MemberAccessExpr mem:
+                return IsPropertyGetterRead(mem) || OperandCanHaveAnEffect(mem.Object);
+            case BinaryExpr b: return OperandCanHaveAnEffect(b.Left) || OperandCanHaveAnEffect(b.Right);
+            case UnaryExpr u: return OperandCanHaveAnEffect(u.Operand);
+            case TernaryExpr t:
+                return OperandCanHaveAnEffect(t.Condition)
+                    || OperandCanHaveAnEffect(t.TrueVal) || OperandCanHaveAnEffect(t.FalseVal);
+            case IndexExpr ie: return OperandCanHaveAnEffect(ie.Target) || OperandCanHaveAnEffect(ie.Index);
+            default: return false;
+        }
+    }
+
     private void EmitStreamFString(string writeStrFn, string floatFn, FStringExpr fs)
     {
+        // Every interpolation that has literal text in front of it runs before that text is
+        // written (#371). Reached from print() and from uart.write_str/println, which share
+        // this lowering.
+        bool fsWritten = false;
+        if (PreEvaluatePrintOperand(fs, ref fsWritten) is FStringExpr prepared) fs = prepared;
         string pending = "";
         void Flush() { if (pending.Length > 0) { EmitStreamStr(writeStrFn, pending); pending = ""; } }
         foreach (var part in fs.Parts)
@@ -6061,6 +6243,12 @@ public partial class IRGenerator
                 return;
             }
 
+            if (arg is PreEvaluatedExpr pre)
+            {
+                EmitStreamVal(floatWriteFn, pre.Value, pre.Declared);
+                return;
+            }
+
             RejectInstanceInterpolation(arg);
             // The declared width of a NAME travels with its value, because a folded constant no
             // longer carries one (#331): `lo: int32 = -2147483648` printed its low byte.
@@ -6072,6 +6260,12 @@ public partial class IRGenerator
             EmitStreamStr(writeStrFn, endStr);
             return new NoneVal();
         }
+
+        // Every operand that has text in front of it runs before that text is written, which is
+        // the order CPython's one-piece write gives (#371). See PreEvaluatePrintOperand.
+        bool written = false;
+        for (int i = 0; i < posArgs.Count; ++i)
+            posArgs[i] = PreEvaluatePrintOperand(posArgs[i], ref written);
 
         for (int i = 0; i < posArgs.Count; ++i)
         {
