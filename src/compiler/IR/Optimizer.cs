@@ -1928,6 +1928,12 @@ private static Function CloneFunction(Function f)
         ArrayLoadFlash alf => alf.Dst,
         FlashLoadPtr flp => flp.Dst,
         BytearrayLoad bld => bld.Dst,
+        // Both of these define a value and were missing here, which is the same shape as
+        // #359 one level up: this switch IS the exhaustive set the other passes delegate to,
+        // so a kind absent from it is absent from every one of them at once. `GcAlloc` is
+        // the one that was measurably wrong -- see RegisterUses below.
+        IndirectCall ic => ic.Dst,
+        GcAlloc ga => ga.Dst,
         _ => null,
     };
 
@@ -2006,6 +2012,8 @@ private static Function CloneFunction(Function f)
         ArrayLoadFlash alf => alf with { Dst = newDst },
         FlashLoadPtr flp => flp with { Dst = newDst },
         BytearrayLoad bld => bld with { Dst = newDst },
+        IndirectCall ic => ic with { Dst = newDst },
+        GcAlloc ga => ga with { Dst = newDst },
         _ => instr,
     };
 
@@ -2092,6 +2100,21 @@ private static Function CloneFunction(Function f)
             case SignalError se:
                 register(se.Code);   // a bare-raise's saved code var must count as read, not be DCE'd
                 break;
+            // A GC allocation READS its size, and this case was missing, so a name whose only
+            // reader was an allocation counted as dead. Measured on atmega328p:
+            //
+            //     n: uint16 = 7
+            //     sz: uint16 = n * 4 + 2
+            //     p: gc_ref = gc_alloc(sz)
+            //
+            // optimised down to a bare `galloc size=main.sz`, with every instruction that
+            // computes `main.sz` deleted -- so the allocation asked for whatever the frame
+            // held, and the build said [BUILD_OK]. `PYMCU_NO_OPT=1` computes 30. A list that
+            // outgrows its capacity reaches the same allocation with a size that two Binary
+            // instructions produce, which is the form a program hits without asking for it.
+            case GcAlloc ga:
+                register(ga.Size);
+                break;
         }
     }
 
@@ -2104,6 +2127,23 @@ private static Function CloneFunction(Function f)
         >= -32768 and <= 32767 => 2,
         _ => 4,
     };
+
+    /// <summary>
+    /// One argument of a call or allocation, after substitution.
+    ///
+    /// Arguments marshal by each Val's own width in the backends, and a Constant's width is its
+    /// MAGNITUDE (65535 -> 2 bytes). Folding a wider variable into a narrower-looking constant
+    /// under-marshals it: a uint32 parameter given `const 65535` read only two valid bytes and
+    /// took register garbage for the rest. So the variable is kept when the constant would
+    /// narrow it.
+    /// </summary>
+    private static Val ReplaceArg(Val arg, Func<Val, Val> replace)
+    {
+        var r = replace(arg);
+        if (arg is Variable av && r is Constant rc && NaturalWidth(rc.Value) < av.Type.SizeOf())
+            return arg;
+        return r;
+    }
 
     private static Instruction ReplaceUses(Instruction instr, Func<Val, Val> replace)
     {
@@ -2121,17 +2161,17 @@ private static Function CloneFunction(Function f)
             // narrower-looking constant argument under-marshals it -- the callee's high
             // bytes arrive as register garbage (a uint32 param receiving const 65535 read
             // only 2 valid bytes). Keep the variable when the constant would narrow it.
-            Call cl => cl with
+            Call cl => cl with { Args = cl.Args.Select(a => ReplaceArg(a, replace)).ToList() },
+            // Same marshalling, so the same guard, and by the same helper rather than by a
+            // second copy of the rule. Neither was replaced here at all before: conservative
+            // rather than wrong, but it left two instruction kinds out of every substitution
+            // the optimizer makes.
+            IndirectCall ic => ic with
             {
-                Args = cl.Args.Select(a =>
-                {
-                    var r = replace(a);
-                    if (a is Variable av && r is Constant rc
-                        && NaturalWidth(rc.Value) < av.Type.SizeOf())
-                        return a;
-                    return r;
-                }).ToList()
+                FuncAddr = replace(ic.FuncAddr),
+                Args = ic.Args.Select(a => ReplaceArg(a, replace)).ToList(),
             },
+            GcAlloc ga => ga with { Size = ReplaceArg(ga.Size, replace) },
             BitCheck bc => bc with { Source = replace(bc.Source) },
             BitWrite bw => bw with { Target = replace(bw.Target), Src = replace(bw.Src) },
             BitSet bs => bs with { Target = replace(bs.Target) },
