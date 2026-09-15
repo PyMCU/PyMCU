@@ -590,19 +590,19 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void ConstructClassWithoutInit_RaisesClearError()
+    public void ConstructClassWithoutInit_SynthesizesADefaultConstructor()
     {
-        // Constructing a class that has no __init__ is reported specifically (PyMCU does not
-        // synthesize a default constructor), not as a generic 'undefined function'.
+        // PyMCU#391: CPython synthesizes a trivial no-op constructor for a class that
+        // declares no __init__, and PyMCU now does too, instead of refusing every
+        // construction of such a class as if it had a missing symbol.
         const string src =
             "class Math:\n" +
             "    def double(self, x: uint8) -> uint8:\n" +
             "        return x * 2\n" +
             "def main():\n" +
             "    m = Math()\n";
-        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
-            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
-        Assert.Contains("__init__", ex.Message);
+        var prog = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        Assert.Contains(prog.Functions, f => f.Name == "main");
     }
 
     [Fact]

@@ -1999,6 +1999,35 @@ public partial class IRGenerator
                         }
                     }
 
+                    // #391: CPython synthesizes a trivial no-op constructor for a class that
+                    // declares no __init__ of its own. Checked here, after every base's
+                    // methods (including an inherited __init__) have been copied in above, so
+                    // this only fires when NEITHER this class NOR any base in its chain gives
+                    // it one -- a class that inherits a real __init__ keeps using it. A class
+                    // reaching this point has no field layout: nothing could have assigned
+                    // self.<field> anywhere in its chain without an __init__ to do it in, so
+                    // the synthesized constructor is unconditionally a true no-op (no params
+                    // beyond self, no body). Registered the same way a hand-written `__init__`
+                    // that calls no super and sets no field would be: force-inlined, so
+                    // construction expands it away at the call site instead of compiling it as
+                    // a standalone subroutine that would treat `self` as numeric.
+                    string implicitInit = classPrefix + "__init__";
+                    if (!inlineFunctions.ContainsKey(implicitInit))
+                    {
+                        var selfParam = new Param("self", "");
+                        var syntheticInit = new FunctionDef(
+                            "__init__", new List<Param> { selfParam }, "void", new Block(), isInline: true);
+                        inlineFunctions[implicitInit] = syntheticInit;
+                        functionParams[implicitInit] = new List<string> { "self" };
+                        functionParamTypes[implicitInit] =
+                            new List<DataType> { DataTypeExtensions.StringToDataType("") };
+                        functionParamDefaults[implicitInit] = new List<Expression?> { null };
+                        functionReturnTypes[implicitInit] = "void";
+                        methodInstanceTypes[implicitInit] = classKey;
+                        methodAstByName[implicitInit] = syntheticInit;
+                        classDirectMethods[classKey].Add("__init__");
+                    }
+
                     currentModulePrefix = oldPrefix;
                 }
             }
