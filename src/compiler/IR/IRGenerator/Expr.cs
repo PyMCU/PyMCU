@@ -348,8 +348,9 @@ public partial class IRGenerator
         currentInlinePrefix = newPrefix;
         currentModulePrefix = className + "_";
         inlineDepth = newDepth;
-        inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = result, CalleeName = funcKey,
-            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath });
+        var dunderCtx = new InlineContext { ExitLabel = exitLabel, ResultTemp = result, CalleeName = funcKey,
+            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath };
+        inlineStack.Add(dunderCtx);
 
         VisitBlock(func.Body);
         Emit(new Label(exitLabel));
@@ -358,6 +359,17 @@ public partial class IRGenerator
         inlineDepth = savedDepth;
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedMod;
+
+        // An unannotated dunder (`def __getitem__(self, key): return ...`, no `-> T`) makes
+        // `func.ReturnType` "void", so `result` above is null and no result slot exists yet
+        // when the body is visited. The `return` statement's own handler (VisitStatement,
+        // ReturnStmt) covers exactly that case for a plain @inline call: when it finds
+        // `ctx.ResultTemp` null it allocates one on the fly, sized from the returned value,
+        // and stores it back on the (shared, mutable) InlineContext. This call site never
+        // read that back -- it kept returning its own `result` local, still null from before
+        // the body ran -- so every two-index dunder subscript with an unannotated return type
+        // answered the hardcoded Constant(0) below instead of what the method computed.
+        if (result == null) result = dunderCtx.ResultTemp;
 
         if (result != null) return result;
         return new Constant(0);

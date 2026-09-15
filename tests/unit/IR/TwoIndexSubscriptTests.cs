@@ -176,4 +176,50 @@ public class TwoIndexSubscriptTests
         Assert.NotNull(Gen("def main():\n    b = bytearray(4)\n    b[0] = 1\n    c = b[1:3]\n"));
         Assert.NotNull(Gen("def main():\n    xs = [1, 2, 3]\n    y = xs[1]\n"));
     }
+
+    // ── PyMCU#397: a write and a read of a DIFFERENT key both answered 0 ─────────────────
+
+    /// The upstream shape exactly (no `-> T` on either dunder, matching adafruit_ht16k33's
+    /// own style): `__setitem__`/`__getitem__` both take the pair as one key, and neither
+    /// declares a return type. `def` with no `-> T` is "void" to the parser, and return-type
+    /// inference does not run for class methods, so `EmitDunderCall`'s own `result` local
+    /// stayed null -- the fallback that allocates a result slot on the fly lives in the
+    /// `return` statement's own handler (Statements.cs), which stores the slot it creates back
+    /// onto the (shared) InlineContext. EmitDunderCall never read that back: it kept
+    /// returning its OWN stale `result`, still null from before the body ran, so it fell
+    /// through to a hardcoded `Constant(0)` regardless of what `x * 10 + y + self.value`
+    /// actually computed.
+    private const string Matrix =
+        "class Matrix:\n" +
+        "    def __init__(self):\n" +
+        "        self.value = 0\n" +
+        "    def __setitem__(self, key, value):\n" +
+        "        x, y = key\n" +
+        "        self.value = x * 10 + y + value\n" +
+        "    def __getitem__(self, key):\n" +
+        "        x, y = key\n" +
+        "        return x * 10 + y + self.value\n";
+
+    [Fact]
+    public void ATwoIndexRoundTrip_WithNoReturnAnnotation_CarriesTheWrittenFieldIntoTheRead()
+    {
+        // CPython: `m[2, 3] = 4` sets self.value to 2*10+3+4 = 27; `m[1, 2]` then reads
+        // 1*10+2+27 = 39. Before the fix, `EmitDunderCall` discarded whatever
+        // `__getitem__`'s body actually computed and answered the hardcoded Constant(0) it
+        // falls back to when the callee's (unannotated) return type gave it no result slot
+        // up front -- so `y` was assigned that sentinel zero regardless of the class's own
+        // arithmetic. Checked on the RAW (unoptimized) IR, because it is EmitDunderCall's
+        // own return value -- not a later constant-folding pass -- that this asks about.
+        var ir = Gen(Matrix +
+            "m = Matrix()\n" +
+            "def main():\n" +
+            "    m[2, 3] = 4\n" +
+            "    y: uint8 = m[1, 2]\n" +
+            "    while True:\n        pass\n");
+
+        var yCopies = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.EndsWith(".y")).ToList();
+        Assert.NotEmpty(yCopies);
+        Assert.DoesNotContain(yCopies, c => c.Src is Constant k && k.Value == 0);
+    }
 }
