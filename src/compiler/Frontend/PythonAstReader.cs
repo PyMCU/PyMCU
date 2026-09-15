@@ -338,12 +338,18 @@ public static class PythonAstReader
             case "Try":
             {
                 var handlers = new List<(string, List<Statement>)>();
+                var handlerNames = new List<string?>();
                 foreach (var h in e.GetProperty("handlers").EnumerateArray())
+                {
                     handlers.Add((Str(h, "exnType"), ReadStatementList(h.GetProperty("body"))));
-                return Located(new TryStmt(
+                    handlerNames.Add(Has(h, "name") ? Str(h, "name") : null);
+                }
+                var tryStmt = new TryStmt(
                     ReadStatementList(e.GetProperty("body")), handlers,
                     Has(e, "finally") ? ReadStatementList(e.GetProperty("finally")) : null,
-                    Has(e, "else") ? ReadStatementList(e.GetProperty("else")) : null), e);
+                    Has(e, "else") ? ReadStatementList(e.GetProperty("else")) : null);
+                tryStmt.HandlerNames.AddRange(handlerNames);
+                return Located(tryStmt, e);
             }
             case "Raise":
                 return Located(new RaiseStmt(Str(e, "errorType"), Str(e, "message"),

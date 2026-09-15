@@ -981,12 +981,10 @@ def s_try(node):
             exn = ",".join(el.id for el in h.type.elts)
         elif h.type is not None:
             exn = ast.unparse(h.type)
-        if h.name is not None:
-            raise Unsupported(
-                f"'except {exn} as ...' is not supported. A raise carries only which "
-                "exception was raised, not an exception object, so there is nothing to "
-                f"bind. Write 'except {exn}:' and report what you know at the raise site", h)
-        handlers.append({"exnType": exn, "body": [s for s in block(h.body)["statements"]]})
+        # `except X as e` binds a bounded exception object (#369): the type code the
+        # dispatcher already compares, and the static id of a string-literal message.
+        handlers.append({"exnType": exn, "name": h.name,
+                         "body": [s for s in block(h.body)["statements"]]})
     return {
         "k": "Try",
         "body": block(node.body)["statements"],

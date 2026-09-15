@@ -4,31 +4,26 @@ using Xunit;
 namespace PyMCU.UnitTests;
 
 /// <summary>
-/// The two commonest `except` spellings after the bare one, and the messages that used to
-/// describe the program as missing what it has (issue #196):
+/// The `except` spellings after the bare one, and the messages that used to describe the
+/// program as missing what it has (issue #196):
 ///
-///     except E as e     ->  Expected ':' after exception type       (the colon is there)
 ///     except (A, B)     ->  Expected exception type after 'except'  (there are two)
+///     except* E         ->  Expected exception type after 'except'  (it is right there)
 ///
 /// The tuple is no longer refused at all: #346 made the compiler follow its own advice and
 /// catch either type. What these tests hold for it now is that both front ends take it.
-///     except* E         ->  Expected exception type after 'except'  (it is right there)
 ///
-/// The third is not in the issue. It is the same defect three tokens away in the same clause,
-/// from the same code, so leaving it would have meant reading the identical wrong message from
-/// a line that had just been changed.
+/// `except E as e` was the third, and it has since stopped being a refusal at all: the raise
+/// records its message and the handler binds a bounded object over it (#369). Its tests moved
+/// to ExceptBindingFormTests rather than being deleted, so the form is still covered from
+/// both front ends; what is left here is the neighbourhood it lived in.
 ///
-/// What makes that costly is the neighbourhood. `except ValueError:`, a user-defined exception
-/// class, a bare `raise` re-raising, propagation from a callee, `else`/`finally`, and `return`
-/// inside `try` with a `finally` all work, so the reader has a handler that compiles one line
-/// above and no hint why `as e` broke it.
+/// Both front ends, separately, because the CPython one did not inherit the refusal: it
+/// unparsed a tuple into `(ValueError, TypeError)` as if it were a type name. So the same
+/// program built through one front end and was refused by the other, which is a divergence of
+/// the AST contract the two share.
 ///
-/// Both front ends, separately, because the CPython one did not inherit the refusal: it read
-/// `as e` and dropped the binding, and unparsed a tuple into `(ValueError, TypeError)` as if it
-/// were a type name. So the same program built through one front end and was refused by the
-/// other, which is a divergence of the AST contract the two share.
-///
-/// WHAT DISCRIMINATES: every assertion about the new sentences, and the two `Translator` cases,
+/// WHAT DISCRIMINATES: every assertion about the new sentences, and the `Translator` case,
 /// which BUILT before this change rather than reporting anything.
 ///
 /// WHAT IS INVARIANT: the `except` forms that do work, and `as` in the two other places the
@@ -70,48 +65,12 @@ public class ExceptFormDiagnosticTests
         "        pass\n";
 
     // ── `except E as e` ──────────────────────────────────────────────────────
-
-    [Fact]
-    public void BindingTheExceptionToAName_IsRefusedByName()
-    {
-        var msg = Refusal(AsHandler);
-
-        Assert.Contains("'except ValueError as ...' is not supported", msg);
-        Assert.DoesNotContain("Expected ':' after exception type", msg);
-    }
-
-    [Fact]
-    public void TheRefusalSaysWhyThereIsNothingToBind()
-    {
-        // The reason is the reusable half. A raise lowers to one exception code and no object,
-        // so a reader who learns it here stops looking for the exception object anywhere else.
-        var msg = Refusal(AsHandler);
-
-        Assert.Contains("carries only which exception was raised", msg);
-        Assert.Contains("not an exception object", msg);
-    }
-
-    [Fact]
-    public void TheRefusalOffersTheSpellingThatWorks()
-    {
-        var msg = Refusal(AsHandler);
-
-        Assert.Contains("'except ValueError:'", msg);
-    }
-
-    [Fact]
-    public void TheRefusalNamesTheTypeTheProgramWrote()
-    {
-        var msg = Refusal(
-            "def main():\n" +
-            "    try:\n" +
-            "        raise OSError\n" +
-            "    except OSError as err:\n" +
-            "        pass\n");
-
-        Assert.Contains("'except OSError as ...' is not supported", msg);
-        Assert.Contains("'except OSError:'", msg);
-    }
+    //
+    // The form was refused here on the grounds that a raise carries only which exception
+    // was raised. It carries the message too now, as the flash address of its literal, and
+    // the handler binds a bounded object over that plus the type code the dispatcher
+    // already holds. What `e` supports, and the sentence that refuses every other use of
+    // it, live in ExceptBindingFormTests (#369).
 
     // ── `except (A, B)` ──────────────────────────────────────────────────────
 
@@ -190,13 +149,6 @@ public class ExceptFormDiagnosticTests
 
     // ── the CPython front end, which accepted both ───────────────────────────
 
-    [Fact]
-    public void TheTranslatorRefusesTheNameBinding_WithTheSameSentence()
-    {
-        // It used to BUILD, silently dropping the binding, so this is where the two front ends
-        // disagreed about what the language is.
-        Assert.Equal(Refusal(AsHandler), TranslatorRefusal(AsHandler));
-    }
 
     // ── invariants: the forms that work ──────────────────────────────────────
 

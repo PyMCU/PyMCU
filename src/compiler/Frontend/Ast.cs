@@ -619,6 +619,19 @@ public class TryStmt : Statement
     public List<(string ExnType, List<Statement> Handler)> Handlers { get; }
     public List<Statement>? Finally { get; }
 
+    /// The name each handler binds with `as`, parallel to Handlers and null where a handler
+    /// binds nothing (#369).
+    ///
+    /// It rides alongside rather than inside the tuple because that tuple is destructured as a
+    /// pair in fifteen places across the front end, the async transform and the IR generator,
+    /// none of which care about the name. Read it through BoundName, which answers null for a
+    /// handler the list does not reach, so the two can never fall out of step in a way that
+    /// throws.
+    public List<string?> HandlerNames { get; } = new();
+
+    public string? BoundName(int handlerIndex) =>
+        handlerIndex >= 0 && handlerIndex < HandlerNames.Count ? HandlerNames[handlerIndex] : null;
+
     // `else` block: runs only if the try body completed without an exception. Its own exceptions
     // are NOT caught by this try's handlers (they propagate), matching Python.
     public List<Statement>? ElseBody { get; }

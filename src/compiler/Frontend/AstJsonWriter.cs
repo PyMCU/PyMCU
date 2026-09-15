@@ -325,10 +325,12 @@ public static class AstJsonWriter
                 w.WritePropertyName("body");
                 WriteStatementList(w, t.Body);
                 w.WriteStartArray("handlers");
-                foreach (var (exn, hbody) in t.Handlers)
+                for (int hi = 0; hi < t.Handlers.Count; hi++)
                 {
+                    var (exn, hbody) = t.Handlers[hi];
                     w.WriteStartObject();
                     w.WriteString("exnType", exn);
+                    if (t.BoundName(hi) is { } bound) w.WriteString("name", bound);
                     w.WritePropertyName("body");
                     WriteStatementList(w, hbody);
                     w.WriteEndObject();

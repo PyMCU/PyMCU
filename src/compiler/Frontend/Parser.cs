@@ -1361,6 +1361,7 @@ public class Parser
         var body = tryBlock.Statements;
 
         var handlers = new List<(string, List<Statement>)>();
+        var handlerNames = new List<string?>();
         while (Check(TokenType.Except))
         {
             Consume(TokenType.Except, "Expected 'except'");
@@ -1405,18 +1406,18 @@ public class Parser
                     : Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
             }
 
-            // A raise carries the exception's identity and nothing else, so there is no object
-            // to bind. Saying so is what stops the reader from looking for the exception object
-            // elsewhere, here and in every other construct that would want one.
-            if (Check(TokenType.As))
-                Error($"'except {exnType} as ...' is not supported. A raise carries only which "
-                      + "exception was raised, not an exception object, so there is nothing to "
-                      + $"bind. Write 'except {exnType}:' and report what you know at the raise "
-                      + "site");
+            // `except X as e` binds a bounded exception object: the type code the dispatcher
+            // already compares, and the static id of a string-literal message. One exception is
+            // live at a time in this model, so neither needs a heap (#369).
+            string? boundName = null;
+            if (Match(TokenType.As))
+                boundName = Consume(TokenType.Identifier,
+                    "Expected a name after 'as' in an except clause").Value;
 
             Consume(TokenType.Colon, "Expected ':' after exception type");
             var handlerBlock = ParseSuiteAfterStatementEnd();
             handlers.Add((exnType, handlerBlock.Statements));
+            handlerNames.Add(boundName);
         }
 
         // Optional `else`: runs when the try body raised no exception (Python order: except* else? finally?).
@@ -1436,7 +1437,9 @@ public class Parser
             finallyBody = ParseSuiteAfterStatementEnd().Statements;
         }
 
-        return new TryStmt(body, handlers, finallyBody, elseBody) { Line = line };
+        var tryStmt = new TryStmt(body, handlers, finallyBody, elseBody) { Line = line };
+        tryStmt.HandlerNames.AddRange(handlerNames);
+        return tryStmt;
     }
 
     private Statement ParseWithStatement()
