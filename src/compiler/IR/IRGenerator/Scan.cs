@@ -1397,6 +1397,7 @@ public partial class IRGenerator
             }
             else if (func.IsInline)
             {
+                RefuseExpansionOnlyUnderUsed(func, "it is marked @inline");
                 RegisterInlineFunction(func, fullName, scope);
             }
             else
@@ -1444,6 +1445,22 @@ public partial class IRGenerator
                 // which is synthesized separately from the AST when the handler is registered.
                 if (hasZcaFirstParam)
                     zcaHandlerAstNodes[fullName] = (func, currentModulePrefix ?? "");
+
+                if (hasZcaParam || hasZcaFirstParam)
+                {
+                    var zcaParam = func.Params.FirstOrDefault(p => IsZcaInstanceParamType(p.Type));
+                    RefuseExpansionOnlyUnderUsed(func,
+                        zcaParam != null
+                            ? $"its parameter '{zcaParam.Name}: {zcaParam.Type}' is read as a "
+                              + "class instance, whose fields live in the caller's frame"
+                            : hasVariadicParam
+                                ? "it takes '*args' or '**kwargs', which only the call site fills in"
+                                : growsAnOuterBuffer
+                                    ? "it grows a buffer from an enclosing scope, whose size only "
+                                      + "the call site fixes"
+                                    : $"its first parameter '{func.Params[0].Name}: "
+                                      + $"{func.Params[0].Type}' is read as a class instance");
+                }
 
                 if (hasZcaParam)
                 {
@@ -3144,6 +3161,30 @@ public partial class IRGenerator
     /// </summary>
     private static bool IsZcaInstanceParamType(string type)
         => !string.IsNullOrEmpty(type) && IsZcaHandlerParamType(type);
+
+    /// <summary>
+    /// Refuses `@used` (and `@export_c`) on a function that has no subroutine to point at.
+    ///
+    /// The two decorators mean "emit this with external linkage even though no Python code
+    /// calls it": that is the whole reason to write one. A function registered for call-site
+    /// EXPANSION has no call site here, so it was expanded nowhere and emitted nowhere, and
+    /// the compiler said `[BUILD_OK]` and exited 0 with the function simply absent from the
+    /// IR. Every reason a function gets registered for expansion reached this, `@inline`
+    /// included: the loss was in the registration, not in any one of the reasons.
+    ///
+    /// It surfaces as someone else's words much later -- as `undefined symbol` out of the
+    /// linker that was told the symbol would be there (#365). Refused here instead, at the
+    /// definition, naming which of the two facts about the function has to give.
+    /// </summary>
+    private void RefuseExpansionOnlyUnderUsed(FunctionDef func, string reason)
+    {
+        if (!func.IsExportC) return;
+        throw UserError(
+            $"function '{func.Name}' is marked @used, which asks for a symbol with external "
+            + $"linkage, but {reason}, so it can only be compiled where it is called and there "
+            + "is no subroutine to export. Drop @used, or give the function a form that "
+            + "compiles on its own (scalar, 'bytearray' or 'ptr' parameters only)", func);
+    }
 
     /// <summary>
     /// Registers a function for call-site expansion (what `@inline` means). Shared by the
