@@ -10,6 +10,21 @@ from src.driver.core import library_index as idx
 from src.driver.core import upstream_index as uidx
 
 
+class TestRepresentativeBoard:
+    def test_circuitpython_avr_gets_arduino_uno(self):
+        assert uidx._representative_board("circuitpython", "atmega328p") == "arduino_uno"
+
+    def test_circuitpython_arm_gets_raspberry_pi_pico(self):
+        assert uidx._representative_board("circuitpython", "rp2040") == "raspberry_pi_pico"
+
+    def test_native_layer_has_no_board(self):
+        assert uidx._representative_board("native", "atmega328p") is None
+
+    def test_a_layer_arch_combination_with_no_board_falls_back_to_none(self):
+        # There is no CircuitPython board for PIC in this project today.
+        assert uidx._representative_board("circuitpython", "pic16f877a") is None
+
+
 class TestParseLibrariesFile:
     def test_a_bare_name_is_a_manifest_distribution(self, tmp_path):
         f = tmp_path / "libraries.txt"
@@ -134,14 +149,42 @@ class TestMeasureUpstreamExample:
         assert result.build == idx.BUILD_FAILED
         assert "something went wrong" in result.detail
 
+    def test_a_missing_backend_is_unmeasured_not_failed(self, tmp_path, monkeypatch):
+        """
+        The measuring machine not having a backend installed says nothing
+        about the library -- it must not be published as `failed`, which is
+        the same distinction measure_example() already draws for manifest
+        libraries.
+        """
+        example = tmp_path / "example.py"
+        example.write_text("import adafruit_hcsr04\n")
+
+        def fake_run(cmd, cwd, capture_output, text, env):
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "error: backend \"pymcu-compiler[arm]\" is not installed"
+            return R()
+
+        monkeypatch.setattr(uidx.subprocess, "run", fake_run)
+        result = uidx.measure_upstream_example(
+            _submission(), "rp2040", pymcu=Path("/fake/pymcu"), example_source=example,
+        )
+        assert result.build == idx.BUILD_UNMEASURED
+        assert "backend for rp2040 not installed" in result.detail
+
     def test_a_successful_build_reports_ok_and_flash(self, tmp_path, monkeypatch):
         example = tmp_path / "hcsr04_simpletest.py"
         example.write_text("import adafruit_hcsr04\n")
 
         def fake_run(cmd, cwd, capture_output, text, env):
-            # The synthetic project must declare the submission's layer.
+            # The synthetic project must declare the submission's layer, and
+            # a NAMED board rather than a bare chip: a CircuitPython example
+            # imports `board`, which is only generated for a named one.
             pyproject = (Path(cwd) / "pyproject.toml").read_text()
             assert 'stdlib = ["circuitpython"]' in pyproject
+            assert 'board = "arduino_uno"' in pyproject
+            assert "target" not in pyproject
             class R:
                 returncode = 0
                 stdout = "Flash: 4264 bytes\n"
@@ -154,6 +197,26 @@ class TestMeasureUpstreamExample:
         )
         assert result.build == idx.BUILD_OK
         assert result.flash == 4264
+
+    def test_a_native_layer_submission_still_uses_a_bare_target(self, tmp_path, monkeypatch):
+        example = tmp_path / "example.py"
+        example.write_text("VALUE = 1\n")
+
+        def fake_run(cmd, cwd, capture_output, text, env):
+            pyproject = (Path(cwd) / "pyproject.toml").read_text()
+            assert 'target = "atmega328p"' in pyproject
+            assert "board" not in pyproject
+            class R:
+                returncode = 0
+                stdout = "Flash: 200 bytes\n"
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(uidx.subprocess, "run", fake_run)
+        uidx.measure_upstream_example(
+            _submission(layer="native"), "atmega328p",
+            pymcu=Path("/fake/pymcu"), example_source=example,
+        )
 
     def test_the_measurement_subprocess_can_discover_the_submission_itself(
             self, tmp_path, monkeypatch):

@@ -36,9 +36,11 @@ from pathlib import Path
 
 import tomlkit
 
+from .libraries import chip_arch
 from .library_index import (
     BUILD_FAILED,
     BUILD_OK,
+    BUILD_UNMEASURED,
     BUILD_UNSUPPORTED,
     REPRESENTATIVE_CHIPS,
     TargetResult,
@@ -47,6 +49,27 @@ from .library_index import (
     _parse_flash,
 )
 from .upstream_libraries import find_distribution
+
+# What the driver prints when the backend for a chip is not installed.
+# Duplicated from library_index.py's own _MISSING_BACKEND rather than
+# imported: a stray reference to a truly private (leading-underscore) name
+# from another module is worth avoiding twice, not once.
+_MISSING_BACKEND = "pymcu-compiler["
+
+# A layer whose idiomatic example imports the top-level `board` module needs
+# an actual board, not a bare chip: `board.py` is generated from a *named*
+# board (arduino_uno, raspberry_pi_pico, ...), never from a chip on its own.
+# REPRESENTATIVE_CHIPS exists to pick one chip per architecture without a
+# manifest's `supports.chips` to read; this is the same idea one layer up,
+# for the one board per architecture that layer actually ships.
+REPRESENTATIVE_BOARDS: dict[str, dict[str, str]] = {
+    "circuitpython": {"avr": "arduino_uno", "arm": "raspberry_pi_pico"},
+    "micropython": {"avr": "arduino_uno"},
+}
+
+
+def _representative_board(layer: str, chip: str) -> str | None:
+    return REPRESENTATIVE_BOARDS.get(layer, {}).get(chip_arch(chip))
 
 
 def chips_to_measure_upstream() -> list[str]:
@@ -158,7 +181,11 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
         doc["project"] = project_table
 
         pymcu_cfg = tomlkit.table()
-        pymcu_cfg["target"] = chip
+        board = _representative_board(submission.layer, chip)
+        if board:
+            pymcu_cfg["board"] = board
+        else:
+            pymcu_cfg["target"] = chip
         pymcu_cfg["sources"] = "src"
         pymcu_cfg["entry"] = "main.py"
         if submission.layer != "native":
@@ -195,6 +222,12 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
                                 capture_output=True, text=True, env=env)
         if result.returncode != 0:
             output = result.stderr or result.stdout or ""
+            if _MISSING_BACKEND in output:
+                # Our environment, not the distribution's fault: publishing
+                # this as `failed` would put a claim about someone else's
+                # code on a machine that simply never installed a backend.
+                return TargetResult(chip, BUILD_UNMEASURED,
+                                    detail=f"backend for {chip} not installed")
             return TargetResult(chip, BUILD_FAILED, detail=_failure_reason(output))
 
         flash, ram = _parse_flash(result.stdout)
