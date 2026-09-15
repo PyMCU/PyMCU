@@ -146,6 +146,18 @@ public partial class IRGenerator
 
     private Val VisitCall(CallExpr expr)
     {
+        // `f(*xs)` and `f(**d)`: splice the elements of the compile-time sequence and the
+        // entries of the compile-time mapping into the argument list before ANY path looks at
+        // it, so every one of them sees an ordinary call.
+        //
+        // This used to sit below `TryEmitSuperMethodCall`, which meant the one call shape that
+        // most needs it -- `super().__init__(pin, **kwargs)`, the whole point of #368 -- went
+        // down the super path with the unspliced node and bound `**kwargs` as an opaque
+        // positional argument. Splicing is a rewrite of the argument list and belongs before
+        // the callee is chosen, not after.
+        if (expr.Args.Any(a => a is StarArgExpr or DoubleStarArgExpr))
+            expr = new CallExpr(expr.Callee, SpliceVariadicArgs(expr.Args)) { Line = expr.Line };
+
         if (TryEmitPioStateMachine(expr) is { } pioResult) return pioResult;
         if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
         if (TryEmitUnboundClassMethodCall(expr) is { } unboundResult) return unboundResult;
@@ -157,11 +169,6 @@ public partial class IRGenerator
         if (TryEmitLcdMethodFString(expr) is { } lcdResult) return lcdResult;
         if (TryEmitDictMethod(expr) is { } dictResult) return dictResult;
         if (TryEmitSetMethod(expr) is { } setResult) return setResult;
-
-        // `f(*xs)`: splice the elements of the compile-time sequence into the argument list
-        // before anything else looks at it, so every path below sees an ordinary call.
-        if (expr.Args.Any(a => a is StarArgExpr))
-            expr = new CallExpr(expr.Callee, SpliceStarArgs(expr.Args)) { Line = expr.Line };
 
         string callee = "";
         if (expr.Callee is VariableExpr varE)
@@ -1608,8 +1615,23 @@ public partial class IRGenerator
         // error on a call that is correct (`time.monotonic()` reported "expects -1 arguments").
         bool offsetMatchesSelf = paramOffset == 0
             || (func.Params.Count > 0 && func.Params[0].Name == "self");
-        int declaredArgs = func.Params.Count - paramOffset;
-        if (offsetMatchesSelf && declaredArgs >= 0 && argValues.Count > declaredArgs)
+
+        // `*args` and `**kwargs` stand for what the call site wrote BEYOND the declaration.
+        // They take no part in the arity count, they are never bound by name, and they are
+        // never "missing": an empty call gives them an empty sequence and an empty mapping
+        // (#368). Python puts them in this order and both front ends preserve it, so the
+        // ordinary positional parameters are the ones before the first of the two.
+        int varArgIdx = func.Params.FindIndex(p => p.IsVarArg);
+        int kwArgIdx = func.Params.FindIndex(p => p.IsKwArg);
+        int firstVariadic = func.Params.Count;
+        if (varArgIdx >= 0) firstVariadic = Math.Min(firstVariadic, varArgIdx);
+        if (kwArgIdx >= 0) firstVariadic = Math.Min(firstVariadic, kwArgIdx);
+        var extraPositional = new List<Expression>();
+        var extraKeywords = new List<(string Key, Expression Value)>();
+
+        int variadicCount = (varArgIdx >= 0 ? 1 : 0) + (kwArgIdx >= 0 ? 1 : 0);
+        int declaredArgs = func.Params.Count - paramOffset - variadicCount;
+        if (offsetMatchesSelf && varArgIdx < 0 && declaredArgs >= 0 && argValues.Count > declaredArgs)
         {
             bool isCtorX = callee.Contains("___init__", StringComparison.Ordinal);
             string whatX = isCtorX
@@ -1623,7 +1645,14 @@ public partial class IRGenerator
         for (int i = 0; i < argValues.Count; ++i)
         {
             int paramIdx = i + paramOffset;
-            if (paramIdx >= func.Params.Count) break;
+            if (paramIdx >= firstVariadic)
+            {
+                // Past the declared parameters. With a `*args` these are its elements; without
+                // one the arity check above has already refused the call.
+                if (varArgIdx >= 0)
+                    extraPositional.Add(CarriedArgExpr(rawArgExprs[i], argValues[i]));
+                continue;
+            }
             string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
             boundParams.Add(paramIdx);
 
@@ -2029,6 +2058,9 @@ public partial class IRGenerator
             bool found = false;
             for (int pi = paramOffset; pi < func.Params.Count; ++pi)
             {
+                // `*args` and `**kwargs` are not names a caller may pass by keyword: `f(kwargs=1)`
+                // is a keyword argument called "kwargs", not the mapping itself.
+                if (func.Params[pi].IsVarArg || func.Params[pi].IsKwArg) continue;
                 if (func.Params[pi].Name == kvp.Key)
                 {
                     string paramName = currentInlinePrefix + func.Params[pi].Name;
@@ -2143,6 +2175,15 @@ public partial class IRGenerator
             // an __init__, so this borrows both rather than inventing a third convention.
             if (!found)
             {
+                // A callee with `**kwargs` accepts it: that is what the mapping IS, the
+                // keyword arguments the call site wrote and this function does not declare.
+                if (kwArgIdx >= 0)
+                {
+                    extraKeywords.Add((kvp.Key,
+                        CarriedArgExpr(rawKwArgExprs.GetValueOrDefault(kvp.Key), kvp.Value)));
+                    continue;
+                }
+
                 bool isCtorKw = callee.Contains("___init__", StringComparison.Ordinal);
                 string whatKw = isCtorKw
                     ? $"constructor of '{SourceCalleeName()}'"
@@ -2151,9 +2192,14 @@ public partial class IRGenerator
             }
         }
 
+        BindVariadicParams(func, varArgIdx, kwArgIdx, extraPositional, extraKeywords);
+
         for (int i = paramOffset; i < func.Params.Count; ++i)
         {
             if (boundParams.Contains(i)) continue;
+            // Bound just above, to a sequence or a mapping that may legitimately be empty.
+            // Falling through would report them as missing required arguments.
+            if (func.Params[i].IsVarArg || func.Params[i].IsKwArg) continue;
             if (func.Params[i].DefaultValue != null)
             {
                 string paramName = currentInlinePrefix + func.Params[i].Name;
@@ -2819,16 +2865,30 @@ public partial class IRGenerator
     {
         var parameters = fn.Params.Where(p => !IsReceiverParamName(p.Name)).ToList();
 
+        // A `*args` or a `**kwargs` on the base is bound from what is left over, so the
+        // declared parameters end where the first of the two begins (#368). The extras ride
+        // back on the end of the returned list and EmitUnboundMethodBody sorts them by shape.
+        int varIdx = parameters.FindIndex(p => p.IsVarArg);
+        int kwIdx = parameters.FindIndex(p => p.IsKwArg);
+        int firstVariadic = parameters.Count;
+        if (varIdx >= 0) firstVariadic = Math.Min(firstVariadic, varIdx);
+        if (kwIdx >= 0) firstVariadic = Math.Min(firstVariadic, kwIdx);
+
         // Nothing to bind and nothing to fill in: the argument list already covers every
         // parameter, so it is handed back exactly as it arrived and the firmware is unchanged.
-        if (!args.Any(a => a is KeywordArgExpr) && args.Count >= parameters.Count) return args;
+        if (varIdx < 0 && kwIdx < 0
+            && !args.Any(a => a is KeywordArgExpr) && args.Count >= parameters.Count) return args;
         var positional = new List<Expression>();
         var byName = new Dictionary<string, Expression>();
+        var leftoverKeywords = new List<Expression>();
         foreach (var a in args)
         {
             if (a is not KeywordArgExpr kw) { positional.Add(a); continue; }
-            if (!parameters.Any(p => p.Name == kw.Key))
+            if (!parameters.Any(p => p.Name == kw.Key && !p.IsVarArg && !p.IsKwArg))
+            {
+                if (kwIdx >= 0) { leftoverKeywords.Add(kw); continue; }
                 throw UserError($"unknown keyword argument '{kw.Key}' in call to '{spelling}'", kw);
+            }
             if (!byName.TryAdd(kw.Key, kw.Value))
                 throw UserError($"keyword argument '{kw.Key}' repeated in call to '{spelling}'", kw);
         }
@@ -2842,7 +2902,7 @@ public partial class IRGenerator
         // be left unbound and the base body then read it, which answered "name 'b' is not
         // defined -- never assigned, imported, or received as a parameter" about a parameter,
         // one line under its own declaration.
-        int lastIdx = parameters.Count - 1;
+        int lastIdx = firstVariadic - 1;
 
         var ordered = new List<Expression>();
         for (int i = 0; i <= lastIdx; i++)
@@ -2861,6 +2921,12 @@ public partial class IRGenerator
                 throw UserError(
                     $"missing argument '{parameters[i].Name}' in call to '{spelling}'", fn);
         }
+
+        // Positions past the declared parameters are the `*args` elements; keywords the base
+        // does not declare are the `**kwargs` entries. Both keep their node shape so the
+        // binding loop can tell them apart without a second list to keep in step.
+        for (int i = firstVariadic; i < positional.Count; i++) ordered.Add(positional[i]);
+        ordered.AddRange(leftoverKeywords);
         return ordered;
     }
 
@@ -2874,8 +2940,12 @@ public partial class IRGenerator
         // silently dropped the extras: `super().__init__(offset, 99)` built clean and the 99
         // vanished, and so did the same mistake written `Base.__init__(self, offset, 99)`.
         // Phrasing borrowed from the check on the ordinary path so the two read alike.
+        int superVarArgIdx = funcSuper.Params.FindIndex(p => p.IsVarArg);
+        int superKwArgIdx = funcSuper.Params.FindIndex(p => p.IsKwArg);
+        bool superIsVariadic = superVarArgIdx >= 0 || superKwArgIdx >= 0;
+
         int declaredArgs = funcSuper.Params.Count(p => !IsReceiverParamName(p.Name));
-        if (args.Count > declaredArgs)
+        if (!superIsVariadic && args.Count > declaredArgs)
         {
             string what = funcSuper.Name == "__init__"
                 ? $"constructor of '{spelling}'"
@@ -2935,6 +3005,8 @@ public partial class IRGenerator
             // right over the copy that had just put the real offset there, and the callee's own
             // `raw` parameter was then never bound at all. The body computed raw + raw.
             if (IsReceiverParamName(p.Name)) continue;
+            // Bound below, from whatever the declared parameters did not take.
+            if (p.IsVarArg || p.IsKwArg) continue;
             if (paramIdx >= args.Count) continue;
             var argVal = VisitExpression(args[paramIdx]);
             var paramKey = newPrefix + p.Name;
@@ -2958,6 +3030,24 @@ public partial class IRGenerator
             }
 
             paramIdx++;
+        }
+
+        if (superIsVariadic)
+        {
+            // Still in the CALLER's frame here, which is where these expressions were written,
+            // so they are evaluated and pinned before the prefix switches to the base's.
+            var superExtraPositional = new List<Expression>();
+            var superExtraKeywords = new List<(string Key, Expression Value)>();
+            for (int i = paramIdx; i < args.Count; i++)
+            {
+                if (args[i] is KeywordArgExpr leftover)
+                    superExtraKeywords.Add((leftover.Key,
+                        CarriedArgExpr(leftover.Value, VisitExpression(leftover.Value))));
+                else
+                    superExtraPositional.Add(CarriedArgExpr(args[i], VisitExpression(args[i])));
+            }
+            BindVariadicParams(funcSuper, superVarArgIdx, superKwArgIdx,
+                               superExtraPositional, superExtraKeywords, newPrefix);
         }
 
         // A value-returning super method needs a result temp; the base body's `return`
@@ -2998,15 +3088,37 @@ public partial class IRGenerator
     /// "do the same to all of them", not "act on the i-th".
     /// </summary>
     /// <summary>
-    /// Replaces every `*seq` argument with the elements of the sequence it names. There is no
-    /// run-time argument list on this target, so the sequence has to be known now: a literal
-    /// written at the call, or a name bound to a short constant one.
+    /// Replaces every `*seq` argument with the elements of the sequence it names, and every
+    /// `**map` argument with the entries of the mapping it names. There is no run-time
+    /// argument list and no run-time keyword dictionary on this target, so both have to be
+    /// known now: written at the call, or a name bound to one the compiler can see.
+    ///
+    /// This is the whole of the forwarding pattern. `super().__init__(pin, **kwargs)` inside a
+    /// callee whose own `**kwargs` parameter is bound to a mapping expands here into the
+    /// keyword arguments the base declares, which is the call the program would have written
+    /// by hand -- and therefore compiles to the same firmware (#368).
     /// </summary>
-    private List<Expression> SpliceStarArgs(List<Expression> args)
+    private List<Expression> SpliceVariadicArgs(List<Expression> args)
     {
         var spliced = new List<Expression>();
         foreach (var a in args)
         {
+            if (a is DoubleStarArgExpr dstar)
+            {
+                var entries = ResolveKwargMapping(dstar.Value);
+                if (entries == null)
+                    throw UserError(
+                        "f(**kwargs) needs a mapping the compiler can see: a dict literal "
+                        + "written at the call, a name bound to one, or a '**' parameter of "
+                        + "the enclosing function. There is no run-time keyword dictionary on "
+                        + "this target, so the entries are spliced in at compile time.",
+                        dstar.Value);
+
+                foreach (var (key, value) in entries)
+                    spliced.Add(new KeywordArgExpr(key, value) { Line = dstar.Line });
+                continue;
+            }
+
             if (a is not StarArgExpr star) { spliced.Add(a); continue; }
 
             List<Expression>? elements = star.Value switch
@@ -3029,6 +3141,92 @@ public partial class IRGenerator
         }
 
         return spliced;
+    }
+
+    /// The expression that stands for an argument once it has been carried into a `*args` or a
+    /// `**kwargs` binding.
+    ///
+    /// The argument was written and evaluated in the CALLER's frame, and the sequence or
+    /// mapping it lands in is read from inside the callee, under a different prefix. A literal
+    /// means the same thing in both, and keeping it as written also keeps its source position
+    /// for any diagnostic raised against it. Anything else is pinned to the value already
+    /// computed, under a globally unique name that the bare-name fallback in ResolveNameKey
+    /// finds from any prefix. Without the pin the same spelling would resolve to a different
+    /// variable on the two sides of the hop, and do it in silence (#368).
+    private Expression CarriedArgExpr(Expression? source, Val value)
+    {
+        if (source is IntegerLiteral or FloatLiteral or BooleanLiteral or StringLiteral or NoneLiteral)
+            return source;
+        if (value is Constant { Text: null } c) return new IntegerLiteral(c.Value);
+
+        string pinned = "__variadic" + (tempCounter++);
+        DataType type = value switch
+        {
+            Variable v => v.Type,
+            Temporary tv => tv.Type,
+            _ => DataType.UINT8,
+        };
+        variableTypes[pinned] = type;
+        Emit(new Copy(value, new Variable(pinned, type)));
+        return new VariableExpr(pinned);
+    }
+
+    /// The elements of a `*args` and the entries of a `**kwargs`, bound to their parameters.
+    ///
+    /// Both are cleared first, unconditionally. The expansion prefix is keyed by DEPTH and not
+    /// by call site, so two calls to the same function at the same depth reuse the same names:
+    /// a binding left by the previous call would be inherited by a call that passed nothing,
+    /// which is how #194 and #324 each became a silent wrong answer.
+    private void BindVariadicParams(FunctionDef func, int varArgIdx, int kwArgIdx,
+                                    List<Expression> extraPositional,
+                                    List<(string Key, Expression Value)> extraKeywords,
+                                    string? prefix = null)
+    {
+        prefix ??= currentInlinePrefix;
+        if (varArgIdx >= 0)
+        {
+            string name = prefix + func.Params[varArgIdx].Name;
+            constSequenceBindings.Remove(name);
+            listLiteralParams.Remove(name);
+            constSequenceBindings[name] = extraPositional;
+        }
+
+        if (kwArgIdx >= 0)
+        {
+            string name = prefix + func.Params[kwArgIdx].Name;
+            dictLiteralBindings.Remove(name);
+            dictLiteralBindings[name] = new Frontend.DictExpr(
+                extraKeywords.Select(e => ((Expression)new StringLiteral(e.Key), e.Value)).ToList());
+        }
+    }
+
+    /// The key/value pairs behind a `**` argument, or null when the compiler cannot see them.
+    ///
+    /// The keys have to be names, because they become keyword arguments: a key that is not a
+    /// string literal is refused by name rather than dropped, since dropping it would be a
+    /// keyword argument that silently never arrives.
+    private List<(string Key, Expression Value)>? ResolveKwargMapping(Expression e)
+    {
+        Frontend.DictExpr? dict = e switch
+        {
+            Frontend.DictExpr literal => literal,
+            VariableExpr ve when TryGetDictBinding(ve.Name, out var bound) => bound,
+            _ => null,
+        };
+        if (dict == null && e is MemberAccessExpr && TryGetDictFor(e, out var fieldDict)) dict = fieldDict;
+        if (dict == null) return null;
+
+        var entries = new List<(string, Expression)>();
+        foreach (var (key, value) in dict.Entries)
+        {
+            if (key is not StringLiteral sk)
+                throw UserError(
+                    "a '**' argument needs string-literal keys: each one becomes a keyword "
+                    + "argument, and this key is not a name the compiler can read.",
+                    key);
+            entries.Add((sk.Value, value));
+        }
+        return entries;
     }
 
     /// <summary>

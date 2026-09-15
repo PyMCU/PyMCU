@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
+using PyMCU.IR.IRGenerator;
 using Xunit;
 
 namespace PyMCU.UnitTests;
@@ -44,6 +47,17 @@ public class StaticKwargsFormTests
     private static string TranslatorRefusal(string src) =>
         Assert.ThrowsAny<Exception>(() => Translate(src)).Message;
 
+    /// Splicing is decided in the IR generator, not in the parser, so the refusals about a
+    /// mapping the compiler cannot see are only observable with the generator run.
+    private static string Lowered(ProgramNode prog) =>
+        Assert.ThrowsAny<Exception>(() => new IRGenerator().Generate(
+            prog, new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" })).Message;
+
+    private static string LoweringRefusal(string src) => Lowered(Parse(src));
+
+    private static string TranslatorLoweringRefusal(string src) => Lowered(Translate(src));
+
     private const string KwargsDef =
         "def show(a: uint8, **kwargs) -> uint8:\n" +
         "    return a\n";
@@ -51,6 +65,14 @@ public class StaticKwargsFormTests
     private const string ArgsDef =
         "def total(*args) -> uint8:\n" +
         "    return 0\n";
+
+    private const string RunTimeMapping =
+        "def f(interval_ms: uint8 = 10) -> uint8:\n" +
+        "    return interval_ms\n" +
+        "\n" +
+        "def main():\n" +
+        "    d = 7\n" +
+        "    f(**d)\n";
 
     private const string ForwardingCtor =
         "class Base:\n" +
@@ -177,12 +199,12 @@ public class StaticKwargsFormTests
         Assert.Equal(BinaryOp.Pow, bin.Op);
     }
 
-    [Fact(Skip = "#368: the splice is the next commit; this fact is about the IR, not the parse.")]
+    [Fact]
     public void AKeyNoCalleeAcceptsIsRefusedByName()
     {
         // The whole value of splicing at compile time is that a misspelled keyword is a build
         // error rather than an argument silently dropped. The key must appear in the sentence.
-        var msg = Refusal(
+        var msg = LoweringRefusal(
             "def f(interval_ms: uint8 = 10) -> uint8:\n" +
             "    return interval_ms\n" +
             "\n" +
@@ -193,31 +215,20 @@ public class StaticKwargsFormTests
         Assert.Contains("intrval_ms", msg);
     }
 
-    [Fact(Skip = "#368: the splice is the next commit; this fact is about the IR, not the parse.")]
-    public void ADoubleStarOverARunTimeMappingIsRefused()
+    [Fact]
+    public void ADoubleStarOverSomethingThatIsNotAMappingIsRefused()
     {
-        // FixedDict is the run-time container. Splicing needs the keys at compile time, and
-        // this one does not have them, so the refusal must say that rather than emit nothing.
-        var msg = Refusal(
-            "from pymcu.collections import FixedDict\n" +
-            "\n" +
-            "def main():\n" +
-            "    d = FixedDict(4)\n" +
-            "    f(**d)\n");
+        // Splicing needs the keys now. A name the compiler cannot read a mapping out of has
+        // none, so the refusal has to say that rather than emit a call with nothing in it.
+        var msg = LoweringRefusal(RunTimeMapping);
 
         Assert.Contains("compile time", msg);
+        Assert.Contains("**", msg);
     }
 
-    [Fact(Skip = "#368: the splice is the next commit; this fact is about the IR, not the parse.")]
-    public void BothFrontEndsRefuseARunTimeMappingWithTheSameSentence()
+    [Fact]
+    public void BothFrontEndsRefuseANonMappingWithTheSameSentence()
     {
-        const string src =
-            "from pymcu.collections import FixedDict\n" +
-            "\n" +
-            "def main():\n" +
-            "    d = FixedDict(4)\n" +
-            "    f(**d)\n";
-
-        Assert.Equal(Refusal(src), TranslatorRefusal(src));
+        Assert.Equal(LoweringRefusal(RunTimeMapping), TranslatorLoweringRefusal(RunTimeMapping));
     }
 }

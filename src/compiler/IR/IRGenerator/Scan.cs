@@ -1365,7 +1365,12 @@ public partial class IRGenerator
                 // lowered as an ordinary function whose field reads were never bound, so it
                 // silently computed on whatever the RAM held.
                 bool hasZcaFirstParam = func.Params.Count > 0 && IsZcaHandlerParamType(func.Params[0].Type);
-                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type));
+                // `*args` and `**kwargs` have no subroutine ABI either, and for the same
+                // reason: what they stand for is only known at the call site, where the extra
+                // arguments were written. A subroutine would have nothing to bind them to, so
+                // the body only has meaning expanded where it is called (#368).
+                bool hasVariadicParam = func.Params.Any(p => p.IsVarArg || p.IsKwArg);
+                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type)) || hasVariadicParam;
 
                 // The first-position form is also the ISR handler shape (`def on_irq(pin: Pin)`),
                 // which is synthesized separately from the AST when the handler is registered.
@@ -2710,6 +2715,11 @@ public partial class IRGenerator
         HashSet<string>? compileTimeFields = null)
     {
         if (layout.Count == 0) return false;
+
+        // `*args` and `**kwargs` stand for what the CALL SITE wrote beyond the declaration,
+        // so a body compiled once and shared between call sites has nothing to bind them to.
+        // The method has to be expanded where it is called (#368).
+        if (method.Params.Any(p => p.IsVarArg || p.IsKwArg)) return false;
 
         // A field whose type is not a scalar is another ZCA instance (e.g. a Pin
         // stored as `self.pin`). An outlined body shares one copy across instances
