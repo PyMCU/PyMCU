@@ -139,7 +139,11 @@ def uart_write_float(value: float):
     # Only the fraction is scaled, and it is below 1.0 by construction.
     if value < 0.0:
         uart_write(45)
-        value = 0.0 - value
+        # `-value`, not `0.0 - value`: negation is the sign bit, while the
+        # subtraction is a call into the soft-float library on the parts that
+        # have no FPU. Both give the same answer for every value that reaches
+        # here, which is every value strictly below zero.
+        value = -value
     int_part: uint32 = uint32(value)
     frac: uint8 = uint8((value - float(int_part)) * 100.0 + 0.5)
     if frac >= 100:
@@ -148,11 +152,17 @@ def uart_write_float(value: float):
         int_part += 1
     uart_write_decimal_u32(int_part)
     uart_write(46)
-    d1: uint8 = frac // 10
-    d2: uint8 = frac % 10
-    uart_write(d1 + 48)
-    if d2 != 0:
-        uart_write(d2 + 48)
+    # frac is below 100 by construction, so the tens digit is at most nine
+    # subtractions away. Asking for `//` and `%` instead pulled the whole 8-bit
+    # division runtime into the image: 102 bytes on an ATmega328P, for one pair
+    # of digits that never leaves two figures.
+    tens: uint8 = 48
+    while frac >= 10:
+        frac -= 10
+        tens += 1
+    uart_write(tens)
+    if frac != 0:
+        uart_write(frac + 48)
 
 
 def uart_write_float_compact(value: float):
@@ -169,7 +179,7 @@ def uart_write_float_compact(value: float):
     # rename.
     if value < 0.0:
         uart_write(45)
-        value = 0.0 - value
+        value = -value
     int_part: uint16 = uint16(value)
     uart_write_decimal_u16(int_part)
     uart_write(46)
