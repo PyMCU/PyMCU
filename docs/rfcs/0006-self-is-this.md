@@ -364,11 +364,15 @@ copy.
    `0006-baseline-2026-09-15.json` as the pre-image. No change to `IsOutlineSafe` yet, so
    Section 1's six programs are estimated **unchanged (+/-0 bytes each)**: none of them
    constructs multiple instances of the same class with distinct constant fields today.
-   This phase also lands `zca-mixed-fold-and-share` (Section 13.2) as a corpus fixture --
-   two `SoftUart` instances sharing one outlined body today at **602 bytes**, with `baud`
-   passed as a redundant runtime parameter despite being `9600` in both -- so the per-field
-   fold's effect (baud disappearing from the parameter list, and `1000000 // self.baud`
-   folding to the constant `104` and dropping its `__div32` call entirely) is measured
+   This phase also lands `zca-mixed-fold-and-share` (Section 13.2) as a corpus fixture, now
+   committed in `pymcu-avr` with its NUnit coverage -- two `SoftUart` instances sharing one
+   outlined body today at **1032 bytes** (602 B was the same program before it printed
+   anything; the fixture prints the five values a shared, unfolded body actually produces,
+   verified to match CPython running the identical class, so a wrong fold shows up as a wrong
+   number, not only a byte-count change), with `baud` passed as a redundant runtime parameter
+   despite being `9600` in both -- so the per-field fold's effect (baud disappearing from the
+   parameter list, and `1000000 // self.baud` folding to the constant `104` and dropping its
+   `__div32` call entirely) is measured
    against this number in Phase 3, not reasoned about after the fact.
 2. **`Pin` representation (Section 3.1) and runtime-pin primitives (Section 7/8).** Estimated
    **~0 bytes** on the six programs specifically, because `prog4` (NEC) and `prog6`
@@ -387,7 +391,7 @@ copy.
    These six numbers are estimates derived at 80-90% of the measured duplicate bytes from
    Section 1, nothing more; Phase 3 replaces every one of them with a real measurement off
    the rebuilt `pymcuc`, and that measurement -- not this estimate -- is what the Phase 5
-   fixture bounds are written from. `zca-mixed-fold-and-share`'s per-field fold (602 B
+   fixture bounds are written from. `zca-mixed-fold-and-share`'s per-field fold (1032 B
    today) is measured the same way, in the same phase.
 4. **Retire `IsOutlineSafe`'s force-inline fallback for every case Section 5 now covers**,
    leaving `@inline` as the only forced-expansion path (Section 6). Estimated **+/-0** on the
@@ -413,20 +417,21 @@ Two blink programs are pinned by name in that set, so "the blink gate" stops bei
 - `compat-mp-blink-toggle` (MicroPython layer, `machine.Pin(13, Pin.OUT)`, `.toggle()`,
   `time.sleep_ms(500)`): **142 bytes**. This is the website's own canonical blink -- the
   exact source in `~/Repos/website-copy/src/components/widgets/Playground.astro` (also
-  quoted in `FirmwareSizes.astro`'s "Why 142 bytes?" copy) -- added as a named fixture in the
-  `pymcu-avr-rfc6` worktree specifically so this RFC's earlier, unmeasured "142 B" reference
-  resolves to a real corpus entry instead of a number that appeared in a design note with no
-  fixture behind it. Verified by building it through the real driver: `Flash: 142 / 32768,
-  40 bytes of your code + 102 bytes of interrupt vector table`.
+  quoted in `FirmwareSizes.astro`'s "Why 142 bytes?" copy) -- landed as a fixture in
+  `pymcu-avr` (`CompatMpBlinkToggleTests`: flash size plus PORTB5 toggling every 500 ms in
+  avr8sharp) specifically so this RFC's earlier, unmeasured "142 B" reference resolves to a
+  real, tested corpus entry instead of a number that appeared in a design note with no
+  fixture behind it.
 
 Both numbers are single-instance, single-`Pin` programs, so both belong to the byte-identical
 set above; neither is a target the implementation is free to change.
 
-Full corpus: 414 projects (355 fixtures + 59 examples) in `pymcu-avr @ 26b58ba9` (352 built
-2026-09-15 through the real `pymcu build` CLI against `pymcuc @ b61279e0`, plus
-`compat-mp-blink-toggle` and `zca-mixed-fold-and-share` added the same day after review, same
-commits) built clean, hex byte count read as the sum of Intel HEX data-record byte counts. See
-`0006-baseline-2026-09-15.json` for the full per-program table.
+Full corpus: 414 projects (355 fixtures + 59 examples) in `pymcu-avr` (352 built 2026-09-15
+through the real `pymcu build` CLI against `pymcuc @ b61279e0`, at `pymcu-avr @ 26b58ba9`;
+`compat-mp-blink-toggle` and `zca-mixed-fold-and-share` added and committed the same day after
+review, with NUnit coverage, at `pymcu-avr @ 970e8c8`) built clean, hex byte count read as the
+sum of Intel HEX data-record byte counts. See `0006-baseline-2026-09-15.json` for the full
+per-program table.
 
 ## 13. Open questions
 
@@ -436,9 +441,11 @@ commits) built clean, hex byte count read as the sum of Intel HEX data-record by
    `zca-mixed-fold-and-share` fixture (Section 11, Phase 1) is exactly this: two `SoftUart`
    instances, `pin` different (2 and 5), `baud` the same (`9600`) in both. Built today it
    already outlines to one shared body (RFC 0001's existing scalar-only rule already permits
-   it, since both fields are scalars) at **602 bytes**, with `baud` carried as a redundant
-   runtime parameter and `1000000 // self.baud` compiled as a genuine runtime `__div32` call
-   despite the divisor never varying. What is still open is the slot-layout question this
+   it, since both fields are scalars) at **1032 bytes** (verified in `pymcu-avr`'s
+   `ZcaMixedFoldAndShareTests`, printing the same five values CPython prints for the
+   identical class), with `baud` carried as a redundant runtime parameter and
+   `1000000 // self.baud` compiled as a genuine runtime `__div32` call despite the divisor
+   never varying. What is still open is the slot-layout question this
    number cannot answer by itself: once `baud` folds out of the parameter list per Section 5,
    does a Model B version of the same class (one that escapes) still reserve a byte for
    `baud` in its slot, or is the slot narrower than the class's full field list because a

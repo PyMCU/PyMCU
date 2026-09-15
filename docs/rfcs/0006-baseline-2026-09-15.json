@@ -1479,7 +1479,7 @@
     },
     "zca-mixed-fold-and-share": {
       "kind": "fixture",
-      "hex_bytes": 602
+      "hex_bytes": 1032
     },
     "zca-outline": {
       "kind": "fixture",
@@ -1740,5 +1740,5 @@
       "hex_bytes": 324
     }
   },
-  "note_added_2026-09-15b": "compat-mp-blink-toggle and zca-mixed-fold-and-share were added to the pymcu-avr-rfc6 worktree (not yet merged upstream in pymcu-avr) after team-lead review, to pin the website's 142 B blink by name and to give the per-field fold question (RFC 0006 Section 13.2) a concrete corpus entry. Built the same way, same commits, same day."
+  "note_added_2026-09-15c": "compat-mp-blink-toggle (142 B) and zca-mixed-fold-and-share are now committed in pymcu-avr proper (main @ 970e8c8a65c3779d49a365007c84a8f838b0fbdb), each with an NUnit test class (CompatMpBlinkToggleTests, ZcaMixedFoldAndShareTests) asserting both the exact byte count and the runtime behaviour (PORTB5 toggling in avr8sharp; serial output matching CPython for the identical class). zca-mixed-fold-and-share's byte count changed from 602 to 1032 between the RFC's first draft and this commit: 602 B was the program before it printed anything, which made it buildable but not behaviour-checkable; printing the five values needed for the CPython-equality assertion pulled in UART init and decimal formatting. The RFC text (Section 11 Phase 1, Section 13.2) reflects 1032 B."
 }
