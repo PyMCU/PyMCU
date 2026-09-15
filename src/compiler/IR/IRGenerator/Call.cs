@@ -706,6 +706,44 @@ public partial class IRGenerator
             return isinstResult;
         }
 
+        // `isinstance(x, T)` (and `isinstance(x, (T1, T2, ...))`) on a ZCA instance is not a
+        // decision, it is a FOLD: every instance has a class fixed when the program is
+        // compiled -- that is the whole premise this compiler is built on -- so the answer is
+        // knowable right here, true when x's class IS T or a SUBCLASS of one of the T's, false
+        // otherwise. adafruit_mcp3xxx's own AnalogIn.__init__ guards its constructor with
+        // exactly this: `if not isinstance(mcp, MCP3xxx): raise ValueError(...)`.
+        //
+        // Answered only when BOTH sides resolve: the receiver to a known instance class (a
+        // name the ordinary receiver-resolution chain already tracks), and every candidate to
+        // a class this compiler built a layout for. Anything else -- a scalar receiver, an
+        // unresolved candidate -- falls through unchanged to the refusal below, which is still
+        // right about a receiver that is not a class instance.
+        if (callee == "isinstance" && expr.Args.Count == 2
+            && expr.Args[0] is VariableExpr isinstZcaRecv
+            && InstanceClassOfName(isinstZcaRecv.Name) is { } isinstRecvCls)
+        {
+            var isinstCandidates = expr.Args[1] is TupleExpr isinstTuple
+                ? isinstTuple.Elements
+                : new List<Expression> { expr.Args[1] };
+
+            var isinstResolved = new List<string>();
+            bool isinstAllResolved = isinstCandidates.Count > 0;
+            foreach (var cand in isinstCandidates)
+            {
+                if (cand is VariableExpr candVe
+                    && ResolveCallee(candVe.Name) is { } candCls
+                    && (classNames.Contains(candCls) || classFieldLayout.ContainsKey(candCls)))
+                    isinstResolved.Add(candCls);
+                else { isinstAllResolved = false; break; }
+            }
+
+            if (isinstAllResolved)
+            {
+                bool isinstMatches = isinstResolved.Any(t => IsClassOrSubclassOf(isinstRecvCls, t));
+                return new Constant(isinstMatches ? 1 : 0);
+            }
+        }
+
         if (callee == "print") return EmitPrintBuiltin(expr);
 
         if (callee == "ptr" && intrinsicNames.Contains("ptr"))
@@ -7128,6 +7166,27 @@ public partial class IRGenerator
     // -------------------------------------------------------------------------
     // Class hierarchy helpers — MRO resolution and virtual-dispatch gate
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether <paramref name="cls"/> IS <paramref name="target"/> or inherits from it,
+    /// walking the same base-class chain <see cref="ResolveMROMethod"/> does. Used to fold
+    /// `isinstance(x, T)`: with a class fixed at compile time, this is the whole answer.
+    /// Bounded the same way MRO resolution is, against a base cycle this compiler should
+    /// already refuse elsewhere.
+    /// </summary>
+    private bool IsClassOrSubclassOf(string cls, string target)
+    {
+        string? current = cls;
+        for (int depth = 0; current != null && depth < 32; depth++)
+        {
+            if (current == target) return true;
+            if (!classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                || string.IsNullOrEmpty(parentPrefix))
+                break;
+            current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Walk the MRO chain starting at <paramref name="cls"/> (no trailing underscore)
