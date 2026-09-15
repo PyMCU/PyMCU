@@ -253,6 +253,94 @@ public partial class IRGenerator
     /// The elements of a name bound to a short all-constant list/tuple, following aliases the
     /// way the parameter lookup does. Null when the name is not such a binding.
     /// </summary>
+    /// <summary>
+    /// The elements a `range(...)` or a `reversed(...)` stands for, when every bound folds and
+    /// the receiver is a sequence the compiler can already see (PyMCU#363). Null when it is
+    /// neither, or when a bound is only known at run time.
+    ///
+    /// This is what lets a range be given a NAME. `range()` is not a value on this target and
+    /// stays refused as one; a name whose every use is `for x in name` or `reversed(name)` is
+    /// not a value either, it is a compile-time sequence, which the compiler already has a
+    /// representation for.
+    /// </summary>
+    private List<Expression>? ConstSequenceFromRange(Expression value)
+    {
+        if (value is not CallExpr call || call.Callee is not VariableExpr callee) return null;
+
+        if (callee.Name == "reversed" && call.Args.Count == 1)
+        {
+            var inner = call.Args[0] switch
+            {
+                VariableExpr ve => ResolveConstSequence(ve.Name),
+                ListExpr le => le.Elements,
+                var other => ConstSequenceFromRange(other),
+            };
+            if (inner == null) return null;
+            var flipped = new List<Expression>(inner);
+            flipped.Reverse();
+            return flipped;
+        }
+
+        if (callee.Name != "range" || call.Args.Count is < 1 or > 3) return null;
+
+        var bounds = new List<int>();
+        foreach (var a in call.Args)
+        {
+            if (!TryRangeBound(a, out int b)) return null;
+            bounds.Add(b);
+        }
+        int start = call.Args.Count == 1 ? 0 : bounds[0];
+        int stop = call.Args.Count == 1 ? bounds[0] : bounds[1];
+        int step = call.Args.Count == 3 ? bounds[2] : 1;
+        if (step == 0) return null;
+
+        var elems = new List<Expression>();
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step)
+        {
+            elems.Add(new IntegerLiteral(i) { Line = value.Line });
+            // A range whose element count runs away is not a sequence anyone meant to unroll;
+            // the caller's limit rejects it, and this keeps the expansion bounded meanwhile.
+            if (elems.Count > ConstSequenceUnrollLimit) break;
+        }
+        return elems;
+    }
+
+    /// <summary>
+    /// One bound of a range that is being given a name, as a compile-time number.
+    ///
+    /// The cheap evaluator answers for a literal and for a name it is already tracking. A bound
+    /// that is a FIELD is the case the register drivers write -- `range(self.register_width, 0,
+    /// -1)` -- and it only becomes a number once the instance is folded, which is what lowering
+    /// the expression does. Lowering a bound that turns out not to fold can leave a load behind,
+    /// which is harmless: the caller then declines the binding and the assignment is refused, so
+    /// nothing reaches a backend.
+    /// </summary>
+    private bool TryRangeBound(Expression e, out int value)
+    {
+        if (TryEvalConstElement(e, out value)) return true;
+        if (VisitExpression(e) is Constant c) { value = c.Value; return true; }
+        value = 0;
+        return false;
+    }
+
+    /// <summary>
+    /// The key a name is registered under when it was bound from a `range(...)`, or null. Same
+    /// candidate order as ResolveConstSequence, so the two answer about the same binding.
+    /// </summary>
+    private string? RangeBoundKeyOf(string name)
+    {
+        string?[] candidates =
+        {
+            !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+            !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+            !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
+            name,
+        };
+        foreach (var candidate in candidates)
+            if (candidate != null && rangeBoundSequences.Contains(candidate)) return name;
+        return null;
+    }
+
     private List<Expression>? ResolveConstSequence(string name)
     {
         string?[] candidates =
@@ -1449,6 +1537,25 @@ public partial class IRGenerator
                     if (inner is CallExpr { Callee: VariableExpr { Name: "range" } } rrange)
                     {
                         VisitFor(ReversedRangeFor(stmt, rrange));
+                        return;
+                    }
+
+                    // `reversed(order)` where the name is bound to a compile-time sequence, which
+                    // is what `order = range(...)` binds it to (#363). Without this the message
+                    // offered reversed() as a supported form and refused the name it was given.
+                    if (inner is VariableExpr rve && ResolveConstSequence(rve.Name) is { } rseq)
+                    {
+                        for (int k = rseq.Count - 1; k >= 0; --k)
+                        {
+                            if (!TryEvalConstElement(rseq[k], out int rv))
+                                throw UserError(
+                                    $"reversed({rve.Name}): element {k} is not a compile-time constant.",
+                                    rseq[k]);
+                            constantVariables[valKey] = rv;
+                            VisitStatement(stmt.Body);
+                        }
+
+                        constantVariables.Remove(valKey);
                         return;
                     }
 

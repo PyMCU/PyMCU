@@ -150,8 +150,20 @@ public class RangeExpressionFormsTests
     [Fact]
     public void RangeAsAValue_NamesTheSupportedSpellings()
     {
-        var ex = Assert.Throws<CompilerError>(() => Gen("r = range(4)\n"));
+        var ex = Assert.Throws<CompilerError>(() => Gen("r = range(4)\nprint(r)\n"));
         Assert.Contains("not a value", ex.Message);
-        Assert.Contains("reversed(range(...))", ex.Message);
+    }
+
+    // #363 changed where this is refused, not whether it is. Binding a range to a name is now
+    // a compile-time sequence -- the shape `order = range(w, 0, -1)` then `for i in order` is
+    // written in every register driver -- so the refusal moved from the assignment to the first
+    // use of the name in a position that needs a value. A name only ever iterated is accepted.
+    [Fact]
+    public void ARangeBoundToAName_IsAcceptedAndIterable()
+    {
+        var ir = Gen("acc = 0\nr = range(4)\nfor i in r:\n    acc = acc + i\n");
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
+            c => c.Dst is Variable v && v.Name.EndsWith("acc"));
     }
 }

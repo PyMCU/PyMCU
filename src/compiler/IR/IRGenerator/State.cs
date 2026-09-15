@@ -845,6 +845,12 @@ public partial class IRGenerator
     // `for` over the NAME unrolls the way the same literal written inline already does.
     private Dictionary<string, List<Frontend.Expression>> constSequenceBindings = new();
 
+    // The subset of constSequenceBindings whose name was bound from a `range(...)` (#363). A
+    // range is not a value on this target, and giving it a name does not make it one: the name
+    // is iterable and nothing else. Reading it in a value position is refused by this set,
+    // because the binding alone would let it through in silence.
+    private HashSet<string> rangeBoundSequences = new();
+
     // The names currently bound to a TUPLE rather than to a list (#299). A tuple and a list of
     // the same elements share their storage here, so nothing downstream can tell them apart and
     // `T[0] = 5` was accepted where CPython raises TypeError. Immutability is a property of the

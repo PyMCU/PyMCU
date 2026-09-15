@@ -511,6 +511,16 @@ public partial class IRGenerator
         if (multiStrHandleReads == 0 && TryGetMultiStr(expr.Name, out _, out var vals, out _))
             throw MultiStrUseError(expr.Name, vals, expr);
 
+        // A name bound to a `range(...)` is iterable and is not a value (#363). The `for` and
+        // `reversed()` lowerings read the binding without coming through here, so reaching this
+        // at all IS the value position: refuse it rather than hand back whatever the binding
+        // happens to lower to, which would let `f(order)` through in silence.
+        if (RangeBoundKeyOf(expr.Name) is { } rangeName)
+            throw UserError(
+                $"'{rangeName}' is bound to a range(), which is not a value on this target. Use "
+                + $"it as the iterable of a for loop or of reversed(), which is what it is for; "
+                + "to pass the numbers around, write them as a list.", expr);
+
         return ResolveBinding(expr.Name, expr);
     }
 

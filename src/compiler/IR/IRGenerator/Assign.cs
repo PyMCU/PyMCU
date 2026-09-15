@@ -243,6 +243,28 @@ public partial class IRGenerator
             }
         }
 
+        // `order = range(2, 0, -1)` and `order = reversed(order)`: a compile-time sequence under
+        // a name (#363). A range has no run-time value, so the binding IS the whole meaning of
+        // the statement -- the same shape as the tuple literal above, and the reason both emit
+        // nothing. Refused before this, the two lines were reported as "range() is not a value"
+        // on a program whose only use of the name is the `for` the message asks for.
+        if (stmt.Target is VariableExpr rngTgt && ConstSequenceFromRange(stmt.Value) is { } rngElems)
+        {
+            string rngKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + rngTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + rngTgt.Name : rngTgt.Name);
+
+            // Past the unroll limit the elements would become that many loop iterations, which
+            // is the reason the limit exists. Such a name falls through and keeps the refusal.
+            if (rngElems.Count > 0 && rngElems.Count <= ConstSequenceUnrollLimit)
+            {
+                NoteSequenceMutability(rngKey, rngTgt.Name, isTuple: false);
+                constSequenceBindings[rngKey] = rngElems;
+                rangeBoundSequences.Add(rngKey);
+                return;
+            }
+        }
+
         // `d = {...}` binds a compile-time lookup table (dict) or membership set: register
         // the literal AST against the name; nothing runs at runtime.
         if (stmt.Target is VariableExpr dsTgt && stmt.Value is DictExpr or SetExpr)
