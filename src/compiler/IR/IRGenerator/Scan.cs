@@ -1406,14 +1406,22 @@ public partial class IRGenerator
                 // handler (e.g. def on_irq(pin: Pin)). Store for on-demand synthesis; do NOT
                 // add to functionsToCompile because the body references ZCA fields that are
                 // only known at the call site.
-                var listParam = func.Params.FirstOrDefault(p => p.Type.StartsWith("list["));
-                if (listParam != null)
-                    throw UserError(
-                        $"function '{func.Name}': parameter '{listParam.Name}: {listParam.Type}' -- " +
-                        "list parameters are not supported (the function would be silently " +
-                        "dropped and fail at link time). Use 'bytearray' for byte buffers, or " +
-                        "mark the function @inline so the list resolves at the call site",
-                        listParam);
+                //
+                // A `list[T]` parameter used to be refused outright here ("list parameters are
+                // not supported ... mark the function @inline"), on the claim that leaving it
+                // alone dropped the function silently. It does not: `list[T]` has no width
+                // `StringToDataType` recognises either, so `hasZcaParam` below already classes
+                // it exactly like a class-typed parameter and registers it for call-site
+                // expansion -- which resolves `buf[i]`/`buf.append()`/`len(buf)` through
+                // whichever list the caller actually passed, the same way a ZCA field does.
+                // Measured (adafruit_dht's array.array-typed parameters, PyMCU#433): a
+                // `list[uint16]` parameter on a plain (non-@inline) method, one call site,
+                // reads and sums the caller's list correctly once this refusal is out of the
+                // way. `array.array` on a parameter needed no extra handling at all: it is
+                // ALSO an unrecognised name, so it reaches the identical path -- the concrete
+                // element width comes from the argument bound at the call site, not from the
+                // parameter's own (typecode-less) annotation.
+                //
                 // A parameter annotated with a class type carries a ZCA instance, which has no
                 // subroutine ABI: the fields live in the caller's frame, so the body only has
                 // meaning expanded at the call site. That is what @inline already does for the
