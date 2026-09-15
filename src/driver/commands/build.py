@@ -13,6 +13,7 @@
 # -----------------------------------------------------------------------------
 
 from pathlib import Path
+import ast
 import json
 import re
 import tomlkit
@@ -242,6 +243,135 @@ def _detect_fstring_value_usage(sources_dir: Path) -> bool:
         except OSError:
             pass
     return False
+
+
+# docs/rfcs/0004-arena-allocator.md: the arena's default reservation when a program uses
+# runtime-sized bytearray(n) but its size cannot be folded exactly and no `arena_size` was
+# set in [tool.pymcu]. Only atmega328p is supported in phase 1 (see the RFC, "Targets").
+_ARENA_BOARD_DEFAULT_BYTES = 256
+
+_BYTEARRAY_CALL_RE = re.compile(r'bytearray\(\s*([^)]*?)\s*\)')
+
+
+def _fold_int_expr(expr: str) -> int | None:
+    """Fold a bytearray() size argument that is an int literal, or +/* of such literals.
+
+    Anything else (a name, a call, subtraction, division) returns None -- not because it
+    could not be a compile-time constant (the compiler's own folding is far more capable,
+    e.g. a named module constant), but because this heuristic only has to be SAFE, never
+    complete: undercounting here only widens the fallback to the board default or an
+    explicit arena_size (see _detect_and_size_arena_usage), which is still a safe
+    reservation, never a program the compiler's own once-rule accepts sized too small.
+    """
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return None
+
+    def fold(node: ast.AST) -> int | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int) \
+                and not isinstance(node.value, bool):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mult)):
+            left, right = fold(node.left), fold(node.right)
+            if left is None or right is None:
+                return None
+            return left + right if isinstance(node.op, ast.Add) else left * right
+        return None
+
+    return fold(tree.body)
+
+
+def _detect_and_size_arena_usage(sources_dir: Path, arena_size_override: int | None) -> tuple[bool, int, bool]:
+    """Scan .py files for bytearray(n) where n is not a plain integer literal.
+
+    Returns (used, reserved_bytes, exact):
+      used           -- True if any such call was found anywhere in sources_dir.
+      reserved_bytes -- what ARENA_SIZE should be: arena_size_override if given, else the
+                         exact sum of every runtime bytearray(...) call's size argument if
+                         EVERY one of them folds (see _fold_int_expr), else the board default.
+      exact          -- True only when reserved_bytes is the exact fold sum (no override,
+                         no fallback) -- the "zero waste" case docs/rfcs/0004-arena-allocator.md
+                         describes, used only for the build-line message, not for sizing.
+
+    Over-inclusive on purpose, the same way _detect_fstring_value_usage is: a compile-time-
+    constant bytearray(N) also matches this regex and folds cleanly (contributing N to the
+    sum rather than tripping the "not exact" fallback), so a false positive here costs
+    nothing -- the compiler's own once-rule and constant-folding are what actually decide
+    whether a given call is arena-eligible; this heuristic only sizes the reservation.
+    """
+    used = False
+    total = 0
+    exact = True
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+        except OSError:
+            continue
+        for m in _BYTEARRAY_CALL_RE.finditer(code):
+            arg = m.group(1).strip()
+            if not arg:
+                continue
+            used = True
+            n = _fold_int_expr(arg)
+            if n is None:
+                exact = False
+            else:
+                total += n
+
+    if not used:
+        return False, 0, True
+    if arena_size_override is not None:
+        return True, arena_size_override, False
+    if exact:
+        return True, total, True
+    return True, _ARENA_BOARD_DEFAULT_BYTES, False
+
+
+def _inject_arena_shim(generated_dir: Path, arena_size: int) -> None:
+    """Write dist/_generated/pymcu/arena.py with ARENA_SIZE set to the real reservation.
+
+    A whole-file replacement of the shipped module (like board.py's board_shim above), not
+    a separate imported config module: a cross-module imported constant did not fold as a
+    bytearray() size argument when that was tried (see docs/rfcs/0004-arena-allocator.md,
+    "The allocator is Python") even though the same name folds fine in an ordinary
+    expression in the same file -- a same-file literal sidesteps that gap entirely.
+    """
+    spec = importlib.util.find_spec("pymcu.arena")
+    if spec is None or spec.origin is None:
+        raise FileNotFoundError(
+            "pymcu.arena (the shipped arena allocator module) was not found on the search "
+            "path -- this should be unreachable, please report this as a PyMCU bug.")
+    src = Path(spec.origin).read_text(encoding="utf-8")
+    replaced, n = re.subn(
+        r"^ARENA_SIZE: uint16 = \d+$", f"ARENA_SIZE: uint16 = {arena_size}",
+        src, count=1, flags=re.MULTILINE)
+    if n != 1:
+        raise RuntimeError(
+            "pymcu.arena: the 'ARENA_SIZE: uint16 = <N>' line was not found to replace -- "
+            "this should be unreachable, please report this as a PyMCU bug.")
+    pkg_dir = generated_dir / "pymcu"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "arena.py").write_text(
+        "# Auto-generated by pymcu build -- do not edit\n" + replaced, encoding="utf-8")
+
+
+def _inject_arena_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Inject the pymcu.arena import that runtime-sized bytearray(n) lowering resolves.
+
+    `x = bytearray(n)` with a non-constant n expands (in the IR generator) to a call into
+    pymcu.arena.alloc(), resolved by import alias exactly like pymcu.strfmt -- the module
+    must be loaded for that synthetic call to resolve. See
+    docs/rfcs/0004-arena-allocator.md.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: the arena allocator for bytearray(n)\n",
+        import_line="import pymcu.arena as _pymcu_arena\n",
+        call_line="pass",
+    )
 
 
 def _inject_strfmt_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
@@ -1171,6 +1301,36 @@ def build(
                 extra_includes.insert(0, str(generated_dir))
             _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
                       verbose=is_verbose)
+
+        # Auto-inject the arena allocator when a runtime-sized bytearray(n) is used
+        # (docs/rfcs/0004-arena-allocator.md). ARENA_SIZE defaults to 0 (arena unused, zero
+        # bytes reserved, arena.py never linked) in the shipped module, so this whole block
+        # is a no-op -- no shim written, no import injected -- for the overwhelming majority
+        # of programs that never call it.
+        _arena_size_override = pymcu_config.get("arena_size", None)
+        _arena_used, _arena_reserved, _arena_exact = _detect_and_size_arena_usage(
+            sources_dir, _arena_size_override)
+        if _arena_used:
+            _inject_arena_shim(generated_dir, _arena_reserved)
+            entry_point, _n = _inject_arena_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("runtime-sized bytearray(n) detected — injecting pymcu.arena import "
+                      f"(reserving {_arena_reserved} B)", verbose=is_verbose)
+            if _arena_exact:
+                console.print(
+                    f"Arena: reserved {_arena_reserved} B (every allocation size folds at "
+                    "compile time)")
+            elif _arena_size_override is not None:
+                console.print(
+                    f"Arena: reserved {_arena_reserved} B (arena_size override in "
+                    "\\[tool.pymcu]); at least one allocation is runtime-sized")
+            else:
+                console.print(
+                    f"Arena: reserved {_arena_reserved} B (board default; at least one "
+                    "allocation is runtime-sized and could not be sized exactly -- set "
+                    "arena_size in \\[tool.pymcu] to reserve a precise amount)")
 
         # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
         # ATmega program uses async/await (asyncio.ticks() is the same Timer0
