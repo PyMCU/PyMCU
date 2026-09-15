@@ -9,8 +9,8 @@
     "compiler": "/Users/begeistert/Repos/PyMCU-rfc6 (branch rfc-0006)",
     "pymcu_avr": "/Users/begeistert/Repos/pymcu-avr-rfc6 (branch rfc-0006)"
   },
-  "total_projects": 412,
-  "fixtures_count": 353,
+  "total_projects": 414,
+  "fixtures_count": 355,
   "examples_count": 59,
   "fixtures": {
     "adafruit-example-shape": {
@@ -333,6 +333,10 @@
       "kind": "fixture",
       "hex_bytes": 440,
       "via_board": true
+    },
+    "compat-mp-blink-toggle": {
+      "kind": "fixture",
+      "hex_bytes": 142
     },
     "compat-mp-i2c-rw": {
       "kind": "fixture",
@@ -1473,6 +1477,10 @@
       "kind": "fixture",
       "hex_bytes": 858
     },
+    "zca-mixed-fold-and-share": {
+      "kind": "fixture",
+      "hex_bytes": 602
+    },
     "zca-outline": {
       "kind": "fixture",
       "hex_bytes": 292
@@ -1731,5 +1739,6 @@
       "kind": "example",
       "hex_bytes": 324
     }
-  }
+  },
+  "note_added_2026-09-15b": "compat-mp-blink-toggle and zca-mixed-fold-and-share were added to the pymcu-avr-rfc6 worktree (not yet merged upstream in pymcu-avr) after team-lead review, to pin the website's 142 B blink by name and to give the per-field fold question (RFC 0006 Section 13.2) a concrete corpus entry. Built the same way, same commits, same day."
 }

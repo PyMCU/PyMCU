@@ -210,7 +210,7 @@ for each class C:
      OR every field F used by the method being compiled has the SAME compile-time constant
         value in every instance of C
         (a field-by-field property: a class can have one folded field and one shared field --
-         see 9.2, open question)
+         see Section 13.2, measured by the `zca-mixed-fold-and-share` fixture)
 
 for each call site `inst.method(args)` where method is NOT @inline:
   if is_folded(C) for the fields `method` touches:
@@ -364,6 +364,12 @@ copy.
    `0006-baseline-2026-09-15.json` as the pre-image. No change to `IsOutlineSafe` yet, so
    Section 1's six programs are estimated **unchanged (+/-0 bytes each)**: none of them
    constructs multiple instances of the same class with distinct constant fields today.
+   This phase also lands `zca-mixed-fold-and-share` (Section 13.2) as a corpus fixture --
+   two `SoftUart` instances sharing one outlined body today at **602 bytes**, with `baud`
+   passed as a redundant runtime parameter despite being `9600` in both -- so the per-field
+   fold's effect (baud disappearing from the parameter list, and `1000000 // self.baud`
+   folding to the constant `104` and dropping its `__div32` call entirely) is measured
+   against this number in Phase 3, not reasoned about after the fact.
 2. **`Pin` representation (Section 3.1) and runtime-pin primitives (Section 7/8).** Estimated
    **~0 bytes** on the six programs specifically, because `prog4` (NEC) and `prog6`
    (NeoPixel) already avoid a `Pin`-typed field (a bare pin string/scalar is folded upstream
@@ -378,6 +384,11 @@ copy.
    - `adafruit_pcf8574`: 888 -> ~610 B (-280)
    - `dht.py` (MicroPython): 986 -> ~610 B (-375)
    - the other three: unchanged (already at or near zero duplication).
+   These six numbers are estimates derived at 80-90% of the measured duplicate bytes from
+   Section 1, nothing more; Phase 3 replaces every one of them with a real measurement off
+   the rebuilt `pymcuc`, and that measurement -- not this estimate -- is what the Phase 5
+   fixture bounds are written from. `zca-mixed-fold-and-share`'s per-field fold (602 B
+   today) is measured the same way, in the same phase.
 4. **Retire `IsOutlineSafe`'s force-inline fallback for every case Section 5 now covers**,
    leaving `@inline` as the only forced-expansion path (Section 6). Estimated **+/-0** on the
    six programs (phase 3 already produced their steady-state code); this phase is cleanup and
@@ -388,44 +399,52 @@ copy.
 
 ## 12. The gate
 
-Every program in `0006-baseline-2026-09-15.json` that constructs **at most one instance per
-class** must be **byte-identical**, hex-for-hex, before and after every phase -- Section 5's
-fold rule explicitly preserves today's single-instance behavior, so any diff on such a program
-is a regression, not an improvement, and must block the phase.
+**The gate is `0006-baseline-2026-09-15.json` itself.** Every project in it whose classes have
+a single instance must be **byte-identical**, hex-for-hex, before and after every phase --
+Section 5's fold rule explicitly preserves today's single-instance behavior, so any diff on
+such a program is a regression, not an improvement, and must block the phase. This is not
+narrowed to a hand-picked subset: it is every single-instance-per-class entry in the baseline
+file, checked mechanically against the rebuilt `pymcuc`'s output.
 
-`examples/blink` (the canonical single-`Pin`, single-instance program) is
-**150 bytes** in this baseline (`Flash: 150 / 32768`, measured 2026-09-15, `pymcu-avr @
-26b58ba9`), unchanged by the fold rule and therefore part of the byte-identical set above.
+Two blink programs are pinned by name in that set, so "the blink gate" stops being ambiguous:
 
-One number needs a flag rather than a quiet restatement: the design note that preceded this RFC
-(`inline-bloat-self-as-this-2026-09-15`, this session's own earlier artifact) named **142
-bytes** as blink's gate value. That number traces to a *different*, leaner "blink toggle"
-program (bit-toggle only, no `delay_ms`) recorded in release-smoke history
-(`release-a10-train`, `playground-deploy-2026-08`), not to `examples/blink` in the `pymcu-avr`
-corpus measured here -- no fixture or example in this baseline measures 142 bytes for anything
-called "blink" (two unrelated fixtures, `cycle-timing` and `mmio-spy`, happen to also measure
-142 B). Recommendation: either add the leaner toggle-only blink as a named fixture in Phase 5
-so "142 B" becomes a checkable gate on a real corpus entry, or restate the gate as "150 B,
-byte-identical" for `examples/blink` as it exists today. This RFC does not resolve that
-ambiguity on its own authority; it is Section 13's first open question.
+- `examples/blink` (HAL-native, `Pin("PB5")`, `delay_ms`): **150 bytes**
+  (`Flash: 150 / 32768`, measured 2026-09-15, `pymcu-avr @ 26b58ba9`).
+- `compat-mp-blink-toggle` (MicroPython layer, `machine.Pin(13, Pin.OUT)`, `.toggle()`,
+  `time.sleep_ms(500)`): **142 bytes**. This is the website's own canonical blink -- the
+  exact source in `~/Repos/website-copy/src/components/widgets/Playground.astro` (also
+  quoted in `FirmwareSizes.astro`'s "Why 142 bytes?" copy) -- added as a named fixture in the
+  `pymcu-avr-rfc6` worktree specifically so this RFC's earlier, unmeasured "142 B" reference
+  resolves to a real corpus entry instead of a number that appeared in a design note with no
+  fixture behind it. Verified by building it through the real driver: `Flash: 142 / 32768,
+  40 bytes of your code + 102 bytes of interrupt vector table`.
 
-Full corpus: 412 projects (353 fixtures + 59 examples) in `pymcu-avr @ 26b58ba9` built through
-the real `pymcu build` CLI (no mocks) against `pymcuc @ b61279e0`, hex byte count read as the
-sum of Intel HEX data-record byte counts. See `0006-baseline-2026-09-15.json` for the full
-per-program table.
+Both numbers are single-instance, single-`Pin` programs, so both belong to the byte-identical
+set above; neither is a target the implementation is free to change.
+
+Full corpus: 414 projects (355 fixtures + 59 examples) in `pymcu-avr @ 26b58ba9` (352 built
+2026-09-15 through the real `pymcu build` CLI against `pymcuc @ b61279e0`, plus
+`compat-mp-blink-toggle` and `zca-mixed-fold-and-share` added the same day after review, same
+commits) built clean, hex byte count read as the sum of Intel HEX data-record byte counts. See
+`0006-baseline-2026-09-15.json` for the full per-program table.
 
 ## 13. Open questions
 
-1. **Which "blink" is the gate?** See Section 12. Needs a decision before Phase 5 writes the
-   fixture bounds.
-2. **Mixed folded/shared fields on one class.** Section 5's rule allows a class to have one
-   field folded (constant in every instance) and another shared (varies) -- e.g. a `UART`
-   whose baud rate is always `115200` but whose TX pin varies per board revision. The rule as
-   stated handles this per-field, but no fixture in the current corpus exercises it; Phase 3
-   should add one deliberately, since it is the shape most likely to expose an
-   under-specified interaction between folding and slot layout (does the folded field still
-   consume a byte in the slot, or is the slot narrower than `sizeof` the full class?).
-3. **`_timeout: float` in `HCSR04` (Section 3.3).** Whether a `float` field that is read but
+1. **Mixed folded/shared fields on one class -- now measured, not just described.** Section
+   5's rule allows a class to have one field folded (constant in every instance) and another
+   shared (varies) -- e.g. a UART whose baud rate never changes but whose pin does. The
+   `zca-mixed-fold-and-share` fixture (Section 11, Phase 1) is exactly this: two `SoftUart`
+   instances, `pin` different (2 and 5), `baud` the same (`9600`) in both. Built today it
+   already outlines to one shared body (RFC 0001's existing scalar-only rule already permits
+   it, since both fields are scalars) at **602 bytes**, with `baud` carried as a redundant
+   runtime parameter and `1000000 // self.baud` compiled as a genuine runtime `__div32` call
+   despite the divisor never varying. What is still open is the slot-layout question this
+   number cannot answer by itself: once `baud` folds out of the parameter list per Section 5,
+   does a Model B version of the same class (one that escapes) still reserve a byte for
+   `baud` in its slot, or is the slot narrower than the class's full field list because a
+   folded field never needed storage in the first place? Phase 3 must answer this with the
+   rebuilt compiler's actual slot layout, not by further reasoning about it here.
+2. **`_timeout: float` in `HCSR04` (Section 3.3).** Whether a `float` field that is read but
    never fractionally meaningful across the program's actual constant call sites should be
    representable as a scaled fixed-point byte in the slot, or must always cost the full 4
    bytes, is left open; the RFC's byte estimates in Section 11 assume the conservative 4-byte
