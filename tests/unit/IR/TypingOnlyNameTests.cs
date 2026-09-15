@@ -53,8 +53,8 @@ public class TypingOnlyNameTests
 
     [Theory]
     [InlineData("Type[type]")]
-    [InlineData("Sequence[uint8]")]
-    [InlineData("Iterable[uint8]")]
+    [InlineData("Sequence")]
+    [InlineData("Iterable")]
     [InlineData("Any")]
     [InlineData("TracebackType")]
     [InlineData("BaseException")]
@@ -85,6 +85,36 @@ public class TypingOnlyNameTests
         Assert.Contains("unknown type 'Bogus'", Refusal(Hdr +
             "@inline\ndef take(v: Bogus) -> uint8:\n    return 1\n\n" +
             "def main():\n    GPIOR0.value = take(0)\n"));
+    }
+
+    [Theory]
+    [InlineData("Sequence[uint8]")]
+    [InlineData("Iterable[uint8]")]
+    [InlineData("List[uint8]")]
+    public void ASubscriptedSequenceNameIsTheCompileTimeListForm(string ann)
+    {
+        // These say what their elements are, so they are the list parameter this compiler
+        // already has: the elements bind against the name and `xs[0]`, `for v in xs` and
+        // `len(xs)` answer inside the callee as they do outside it. Reading one is NOT
+        // refused, which is the difference from a bare `Sequence`.
+        var ir = Gen(Hdr +
+            $"@inline\ndef total(xs: {ann}) -> uint8:\n" +
+            "    n: uint8 = 0\n" +
+            "    for v in xs:\n" +
+            "        n = n + v\n" +
+            "    return n\n\n" +
+            "def main():\n    GPIOR0.value = total([1, 2, 3])\n");
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
+            c => c.Src is Constant k && k.Value == 6);
+    }
+
+    [Fact]
+    public void ASubscriptedSequenceIsReadAsTheListSpelling()
+    {
+        string t = new Parser(new Lexer("def take(xs: Sequence[uint8]):\n    pass\n").Tokenize())
+            .ParseProgram().Functions[0].Params[0].Type ?? "";
+        Assert.Equal("list[uint8]", t);
     }
 
     [Fact]

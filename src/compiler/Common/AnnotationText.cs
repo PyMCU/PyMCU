@@ -70,6 +70,22 @@ public static class AnnotationText
         // `Tuple[...]` IS `tuple[...]` (#357). The capitalised spelling is what a library
         // annotated for `typing` writes, and the compiler answered it with "did you mean
         // 'tuple'?" -- a hint that is correct, and a refusal that has nothing behind it.
+        // `Sequence[X]`, `Iterable[X]` and `List[X]` on a parameter the body READS are the
+        // compile-time sequence this compiler already has for a list parameter (#366): the
+        // elements are bound against the name, so `xs[0]`, `for v in xs` and `len(xs)` answer
+        // inside the callee as they do outside it. Rewritten to that spelling rather than
+        // given a reading of their own, so there is one set of refusals and not two.
+        //
+        // Only the SUBSCRIPTED form. A bare `Sequence` says nothing about its elements and
+        // stays a typing-only name, accepted where nothing reads it and refused at a read.
+        if (bare is "Sequence" or "Iterable" or "List" or "MutableSequence" or "Collection")
+        {
+            var seqMembers = SplitTopLevel(annotation[(lb + 1)..^1])
+                .Select(m => m.Trim()).Where(m => m.Length > 0).ToList();
+            if (seqMembers.Count == 1) return "list[" + Normalize(seqMembers[0]) + "]";
+            return annotation;
+        }
+
         if (bare is "Tuple" or "tuple")
         {
             var read = new List<string>();

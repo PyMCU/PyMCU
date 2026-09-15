@@ -265,18 +265,23 @@ public class UnknownAnnotationTests
     }
 
     // The head is reported, not the whole form, and the near-miss points at the spelling that
-    // works: PyMCU has `list[...]`, so `List[...]` is one capital letter away from compiling.
+    // works. `List[...]` is no longer one of these: since #366 it IS `list[...]`, along with
+    // `Sequence[...]` and `Iterable[...]`, because a subscripted sequence name says what its
+    // elements are and that is the compile-time list this compiler already has. `Dict[...]`
+    // still has no reading, so it carries the case.
     [Fact]
     public void ATypingSpelling_IsRefusedAndTheWorkingSpellingSuggested()
     {
         var ex = Fails(
-            "def take(v: List[uint8]) -> uint8:\n" +
+            "def take(v: Dict[uint8, uint8]) -> uint8:\n" +
             "    return 1\n" +
             "def main() -> uint8:\n" +
             "    return take(1)\n");
 
-        Assert.Contains("unknown type 'List'", ex.Message);
-        Assert.Contains("did you mean 'list'", ex.Message);
+        Assert.Contains("unknown type 'Dict'", ex.Message);
+        // A near-miss IS offered; which name it picks is the suggestion pool's business and
+        // not this test's, so only its presence is pinned.
+        Assert.Contains("did you mean", ex.Message);
     }
 
     // ONE IDEA, ONE ANSWER for the unions that REMAIN. `Union[a, b]` IS `a | b`, so both get
