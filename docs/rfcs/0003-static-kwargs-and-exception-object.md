@@ -1,6 +1,10 @@
 # RFC 0003: static `**kwargs` and a bounded exception object
 
-- Status: **PROPOSED.** Not implemented.
+- Status: **IMPLEMENTED**, except Part 2 (c), the field on a user-defined exception.
+  What the implementation found that this note did not predict is recorded in the two
+  issues: Part 2 needed no IR record change and no backend change at all, because the
+  message is one module word written by an ordinary Copy and read by the subroutine that
+  already walks a flash string from a pointer.
 - Issues: [#368](https://github.com/PyMCU/PyMCU/issues/368) (`**kwargs` / `*args`),
   [#369](https://github.com/PyMCU/PyMCU/issues/369) (`except X as e`)
 - Date: 2026-09-14
