@@ -245,6 +245,11 @@ def install_cpython_shims() -> dict[str, types.ModuleType | None]:
     pymcu.delay_us = lambda *_args, **_kwargs: None
     pymcu.__FREQ__ = 16000000
     pymcu.__CHIP__ = chip_mod.__CHIP__
+    # Real firmware imports `__CHIP__` off the chips package itself
+    # (`from pymcu.chips import __CHIP__`, as lib/src/pymcu/time.py and asyncio.py do),
+    # not only off the per-chip submodule or the top-level package.
+    chips_pkg.__CHIP__ = chip_mod.__CHIP__
+    chips_pkg.__FREQ__ = pymcu.__FREQ__
 
     sys.modules.update(
         {
