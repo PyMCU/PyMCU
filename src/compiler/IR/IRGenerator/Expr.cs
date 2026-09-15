@@ -2921,9 +2921,18 @@ public partial class IRGenerator
         {
             // Resolve a module alias (import machine as m) to the real module name so
             // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
+            //
+            // `.Replace('.', '_')`: a SUBMODULE import (`import adafruit_mcp3xxx.mcp3008 as
+            // MCP`) resolves realModName to the full dotted path, and every OTHER module-name
+            // mangling in the compiler (the class-construction factory case, VisitCall's own
+            // module-member lookup) converts its dots to underscores before appending the
+            // member -- this one did not, so `MCP.P0` (a plain module-level int constant in
+            // mcp3008.py) mangled to the literal "adafruit_mcp3xxx.mcp3008_P0", a name that
+            // still has a dot in it and matches nothing `globals` was ever keyed under
+            // (registered as "adafruit_mcp3xxx_mcp3008_P0", the module's own scan prefix).
             string moduleBase = modules.ContainsKey(varExpr.Name)
                 && TryImportedAlias(varExpr.Name, out var realModName) && realModName != null
-                ? realModName : varExpr.Name;
+                ? realModName.Replace('.', '_') : varExpr.Name;
             string mangledName = moduleBase + "_" + expr.Member;
 
             if (globals.TryGetValue(mangledName, out var sym))
