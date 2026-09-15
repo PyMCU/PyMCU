@@ -70,7 +70,7 @@ purpose, as opposed to bugs like these three that were silent until found.
   instead of being refused, wherever the compiler can prove the statement runs at most
   once: a module-level statement not in a loop, or an `@inline __init__` reached only
   through inlining from one. Anywhere else it is refused, naming the reason. `x[i]`,
-  `x[i] = v`, `len(x)` and passing `x` to a `bytearray` parameter all work; a new
+  `x[i] = v` and `len(x)` work. A new
   `MemoryError` (raised by the allocator on overflow, catchable like any other builtin
   exception) and a new `pymcu build` line (`Arena: reserved <N> B ...`) report the
   reservation. See `docs/rfcs/0004-arena-allocator.md`.
