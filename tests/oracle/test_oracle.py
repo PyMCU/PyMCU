@@ -101,6 +101,13 @@ DIVERGENCE_TRANSFORMS: dict[str, "callable[[str], str]"] = {
     # AttributeError; PyMCU lays the field out statically and cannot see that the write comes
     # later in THIS run, so it reads the zero-initialized default instead (limitations.md:372).
     "docs/language/limitations.md:372": lambda text: text.replace("AttributeError", "0", 1),
+    # `int` is 16-bit and a `uint8`-annotated parameter is a fixed 8-bit storage width, not
+    # CPython's arbitrary-precision int (type-system.md:242): a value that does not fit wraps
+    # silently at the width instead of being carried in full.
+    "docs/language/type-system.md:242": lambda text: "\n".join(
+        str(int(line) & 0xFF) if line.lstrip("-").isdigit() else line
+        for line in text.split("\n")
+    ),
 }
 
 
