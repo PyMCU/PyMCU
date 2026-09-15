@@ -3282,10 +3282,12 @@ public partial class IRGenerator
                 throw UserError(
                     recvCls == null
                         ? $"object has no attribute '{expr.Member}' (typo, or a field never assigned)"
-                        : $"'{recvCls}' has no attribute '{expr.Member}' -- it is read here but nothing in "
-                          + $"'{recvCls}' or its bases ever assigns it, and PyMCU lays instances out at "
-                          + "compile time, so it cannot appear at run time. Assign it in __init__ to make "
-                          + $"it a field, or correct the spelling. Assigned members: {recvMembers}",
+                        : $"'{recvCls}' object has no attribute '{expr.Member}' -- the same AttributeError "
+                          + "CPython, MicroPython and CircuitPython would raise here at run time, since "
+                          + $"nothing in '{recvCls}' or its bases ever assigns it; PyMCU lays instances "
+                          + "out at compile time, so it catches this before the program ever runs instead "
+                          + "of after. Assign it in some method to make it a field, or correct the "
+                          + $"spelling. Assigned members: {recvMembers}",
                     expr);
 
             // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries

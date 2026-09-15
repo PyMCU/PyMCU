@@ -1805,7 +1805,7 @@ public partial class IRGenerator
                 throw UserError(
                     $"'{fieldCls}' has no field '{memExpr2.Member}' -- assigning it here creates a "
                     + "name of its own rather than reaching the object, because PyMCU lays instances "
-                    + "out at compile time. Assign it in __init__ to make it a field, or correct the "
+                    + "out at compile time. Assign it in some method to make it a field, or correct the "
                     + $"spelling. Declared fields: {string.Join(", ", fieldLay.Select(f => f.Field))}",
                     memExpr2);
 
