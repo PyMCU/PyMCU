@@ -1,0 +1,495 @@
+# Each [[deviation]] is one HAL parity symbol or compatibility-layer file/line
+# pattern the parity suite does not require to be clean yet.
+#
+# `status` follows the compatibility parity allowlist schema:
+#   - "documented": intentional behavior described in docs.
+#   - "tracked:#N": a real gap filed in the repository that owns it.
+
+# -- native HAL API parity ---------------------------------------------------
+
+[[deviation]]
+symbol = "adc.AnalogPin.__init__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "adc.AnalogPin.busy"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "adc.AnalogPin.irq"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "adc.AnalogPin.measure_supply_millivolts"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "adc.AnalogPin.read_result"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "adc.AnalogPin.start"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "adc.AnalogPin.start_conversion"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.__init__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.drive"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.init"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.irq"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.mode"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.pull"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "gpio.Pin.pulse_in"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.__enter__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.__exit__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.__init__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.acknowledge"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.end"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.frequency"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.irq"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.nack"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.ping"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.read"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.read_ack"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.read_from"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.read_n"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.read_nack"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.readfrom_mem"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.ready"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.start"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.status"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.stop"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.write"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.write_bytes"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.writebyte"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.writeto_mem"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "pwm.PWM.__init__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "pwm.PWM.deinit"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "pwm.PWM.frequency"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "pwm.PWM.set_freq"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "pwm.PWM.start"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.__enter__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.__exit__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.__init__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.configure"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.frequency"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.irq"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.readinto_n"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.ready"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.receive"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.send"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.write_bytes"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "spi.SPI.write_readinto_n"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "timer.Timer.clear_overflow"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.__init__"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.any"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.enable_rx_interrupt"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.irq"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.print_int16"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.print_int32"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.print_uint32"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.read_blocking"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.read_byte_isr"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.read_line"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.read_nb"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.read_ready"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.read_timeout"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.rx_available"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.rx_buffer_size"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.rx_count"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.rx_isr"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.rx_read"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.rx_read_timeout"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.start_buffered_rx"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.write_hex"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+# -- compatibility universality ---------------------------------------------
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/boards/*"
+status = "tracked:#38"
+reason = "CircuitPython board modules expose chip port names directly."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/adafruit_minimqtt/adafruit_minimqtt.py:2"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not import pymcu.chips."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/adafruit_minimqtt/adafruit_minimqtt.py:20"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not branch on __CHIP__."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/busio.py:45"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not import pymcu.chips."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/busio.py:49"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not branch on __CHIP__."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:13"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not import pymcu.chips."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:16"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not branch on __CHIP__."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:111"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not read chip registers directly."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:112"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not read chip registers directly."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:114"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not read chip registers directly."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:116"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not read chip registers directly."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:118"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not read chip registers directly."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/pwmio.py:16"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not import pymcu.chips."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/pwmio.py:19"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not branch on __CHIP__."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/socketpool.py:2"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not import pymcu.chips."
+
+[[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/socketpool.py:20"
+status = "tracked:#37"
+reason = "CircuitPython adapters should not branch on __CHIP__."
+
+[[deviation]]
+symbol = "compat.micropython.pymcu_micropython/boards/*"
+status = "tracked:#9"
+reason = "MicroPython board modules expose chip port names directly."
+
+[[deviation]]
+symbol = "compat.micropython.pymcu_micropython/machine.py:*"
+status = "tracked:#10"
+reason = "MicroPython machine.py contains chip conditionals, port names and register access."
