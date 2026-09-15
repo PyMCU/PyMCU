@@ -15,18 +15,11 @@ public class AsyncTimebaseGuardTests
 {
     private static readonly string AsyncioSource = File.ReadAllText(FindAsyncioPy());
 
-    private static string FindAsyncioPy()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            var candidate = Path.Combine(dir.FullName, "lib", "src", "pymcu", "asyncio.py");
-            if (File.Exists(candidate)) return candidate;
-            dir = dir.Parent;
-        }
-
-        throw new FileNotFoundException("lib/src/pymcu/asyncio.py not found above " + AppContext.BaseDirectory);
-    }
+    /// The stdlib module that ships, found through the shared repository-root walk so that a
+    /// binary running outside the tree is answered by one sentence naming the cause rather than
+    /// by an exception about a missing file (PyMCU#412).
+    private static string FindAsyncioPy() =>
+        RepositoryFile.Under("lib", "src", "pymcu", "asyncio.py");
 
     // Parses the stdlib asyncio module and folds it for one target, returning the
     // surviving body of ticks().

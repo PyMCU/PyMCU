@@ -49,20 +49,9 @@ public class PlaceholderColumnTests
         "ValueError", "TypeError", "RecursionError", "NameError", "IndexError",
     };
 
-    /// Walks up from the test binary to the repository root, identified by the compiler
-    /// project sitting where it always does.
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "src", "compiler", "PyMCU.csproj")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-        throw new DirectoryNotFoundException(
-            $"repository root not found above {AppContext.BaseDirectory}");
-    }
+    /// The repository root. Shared with the other fixture that reads the real tree, so the
+    /// sentence explaining a binary outside it is written once (PyMCU#412).
+    private static string RepoRoot() => RepositoryFile.Root();
 
     /// The top-level arguments of the call whose '(' is at <paramref name="open"/>.
     private static List<string>? Arguments(string text, int open)
