@@ -1835,6 +1835,14 @@ public partial class IRGenerator
             if (origin != null && origin.Column > 0) argumentOrigin[paramName] = origin;
             else argumentOrigin.Remove(paramName);
 
+            // A Union[A, B, ...] parameter reads as "the type of the argument at THIS call
+            // site, which must be one of the members" (#442): refuse here, at the site whose
+            // argument is wrong, rather than let it bind as whichever member the rest of the
+            // pipeline happens to treat an unmatched shape as (an instance field silently
+            // typed from a scalar, or the reverse).
+            CheckUnionArgumentMatchesAMember(
+                func, paramIdx, i < rawArgExprs.Count ? rawArgExprs[i] : null, argValues[i]);
+
             // A register alias bound at an EARLIER call site to the same @inline function
             // survives in constantAddressVariables unless it is cleared here. The parameter key
             // is the inline prefix plus the name, and that key is reused across call sites at
@@ -6890,6 +6898,83 @@ public partial class IRGenerator
     /// </summary>
     private static bool IsListLikeReturnType(string? returnType)
         => returnType != null && (returnType.StartsWith("list[") || returnType == "array.array");
+
+    /// <summary>
+    /// A `Union[A, B, ...]` parameter is resolved at its call site (CheckAnnotationNames'
+    /// `allowUnion`): the argument's type there is known, and has to be one of the members.
+    /// Refuses when it is none of them, naming the members, rather than let an unmatched shape
+    /// bind as whichever the rest of the pipeline happens to treat it as. `Optional[X]` is
+    /// already read as X and never reaches here as a union.
+    /// </summary>
+    private void CheckUnionArgumentMatchesAMember(FunctionDef func, int paramIdx, Expression? rawArg, Val argVal)
+    {
+        string ptype = func.Params[paramIdx].Type ?? "";
+        if (!ptype.StartsWith("Union[") || !ptype.EndsWith("]") || rawArg == null) return;
+
+        var members = PyMCU.Common.AnnotationText.SplitTopLevel(ptype[6..^1])
+            .Select(m => m.Trim()).Where(m => m.Length > 0).ToList();
+        if (members.Count == 0) return;
+
+        static string Bare(string m) => m.Contains('.') ? m[(m.LastIndexOf('.') + 1)..] : m;
+
+        void Refuse() => throw UserError(
+            $"'{func.Params[paramIdx].Name}' is declared 'Union[{string.Join(", ", members)}]', " +
+            "and this argument's type matches none of those members", rawArg);
+
+        string? argClass = argVal switch
+        {
+            Variable v => instanceClasses.GetValueOrDefault(v.Name),
+            Temporary t => instanceClasses.GetValueOrDefault(t.Name),
+            _ => null,
+        };
+        if (argClass == null && rawArg is CallExpr { Callee: VariableExpr ctorVe }
+            && classNames.Contains(ResolveCallee(ctorVe.Name)))
+            argClass = ResolveCallee(ctorVe.Name);
+
+        if (argClass != null)
+        {
+            if (members.Any(m => Bare(m) == argClass || argClass!.EndsWith("_" + Bare(m), StringComparison.Ordinal)))
+                return;
+            Refuse();
+            return;
+        }
+
+        // A fixed array/tuple literal, or a name bound to one (#352-style compile-time
+        // sequence): `List[int]`/`Tuple[int, ...]` is not a representable run-time type here,
+        // and the array it names is exactly what such an argument already is.
+        bool isSeq = rawArg is ListExpr or TupleExpr
+            || (rawArg is VariableExpr seqVe && ResolveConstSequence(seqVe.Name) != null);
+        if (isSeq)
+        {
+            if (members.Any(m => Bare(m).StartsWith("List[") || Bare(m).StartsWith("Tuple[")
+                                || Bare(m) is "list" or "tuple"))
+                return;
+            Refuse();
+            return;
+        }
+
+        // A name bound to a function (a plain function reference, the way `Callable[[], bool]`
+        // is passed).
+        bool isCallable = rawArg is VariableExpr fnVe
+            && (functionParams.ContainsKey(ResolveCallee(fnVe.Name))
+                || inlineFunctions.ContainsKey(ResolveCallee(fnVe.Name))
+                || loopFunctionAliases.ContainsKey(fnVe.Name));
+        if (isCallable)
+        {
+            if (members.Any(m => Bare(m).StartsWith("Callable")))
+                return;
+            Refuse();
+            return;
+        }
+
+        // A scalar: matches whichever member is not itself a class, an array or a Callable --
+        // this compiler already promotes freely between numeric widths, so the members are not
+        // pinned to one exact width the way a class name is pinned to one exact class.
+        bool anyScalarMember = members.Any(m =>
+            !classNames.Contains(Bare(m)) && !Bare(m).StartsWith("List[")
+            && !Bare(m).StartsWith("Tuple[") && !Bare(m).StartsWith("Callable"));
+        if (!anyScalarMember) Refuse();
+    }
 
     private string ResolveListVarQualified(string name)
     {

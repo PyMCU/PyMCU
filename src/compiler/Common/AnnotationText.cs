@@ -181,7 +181,7 @@ public static class AnnotationText
     }
 
     /// <summary>The comma-separated parts of a bracketed list, ignoring commas inside brackets.</summary>
-    private static List<string> SplitTopLevel(string inner)
+    public static List<string> SplitTopLevel(string inner)
     {
         var parts = new List<string>();
         int depth = 0, start = 0;
