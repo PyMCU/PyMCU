@@ -283,6 +283,18 @@ public partial class IRGenerator
             return;
         }
 
+        // Unannotated `name = array.array(typecode[, initializer])`: the same MicroPython
+        // shape as the bytearray case above, mapped onto the heap-bounded list[T] the
+        // compiler already has, with T decided by the typecode.
+        if (stmt.Target is VariableExpr arrTgt
+            && stmt.Value is CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "array" }, Member: "array" } } arrCall)
+        {
+            string elemTypeName = ArrayTypecodeToTypeName(arrCall);
+            Expression ctorArg = arrCall.Args.Count > 1 ? arrCall.Args[1] : new CallExpr(new VariableExpr("list"), new List<Expression>());
+            VisitAnnAssign(new AnnAssign(arrTgt.Name, $"list[{elemTypeName}]", ctorArg) { Line = stmt.Line });
+            return;
+        }
+
         // Mutating a dict-literal binding (`d[k] = v`) has no runtime structure to write to.
         if (stmt.Target is IndexExpr { Target: VariableExpr mutVe }
             && TryGetDictBinding(mutVe.Name, out _))
@@ -4798,6 +4810,44 @@ public partial class IRGenerator
             + "compiling, and there is no allocator to size one at run time. bytearray(n) "
             + "takes the same run-time n and grows it through the arena allocator.",
             a0);
+    }
+
+    /// <summary>
+    /// array.array's typecode argument, read as the pymcu.types name of the list[T] element
+    /// it decides -- B/b, H/h and I/L/i/l are the widths this compiler already has a storage
+    /// class for; f (float), d (double) and q/Q (64-bit) are not, and are refused by name
+    /// rather than silently narrowed to something the typecode did not ask for.
+    /// </summary>
+    private string ArrayTypecodeToTypeName(CallExpr call)
+    {
+        if (call.Args.Count == 0 || call.Args[0] is not StringLiteral tc)
+            throw UserError(
+                "array.array(typecode, ...): the typecode must be a string literal ('B', 'H', "
+                + "'I', 'b', 'h' or 'i'), decided while compiling -- there is no way to size the "
+                + "list's elements from one that is only known at run time.",
+                call.Args.Count > 0 ? call.Args[0] : call);
+        string typeName = tc.Value switch
+        {
+            "B" => "uint8",
+            "b" => "int8",
+            "H" => "uint16",
+            "h" => "int16",
+            "I" or "L" => "uint32",
+            "i" or "l" => "int32",
+            "f" or "d" or "q" or "Q" =>
+                throw UserError(
+                    $"array.array(\"{tc.Value}\", ...): PyMCU has no {(tc.Value is "f" or "d" ? "float" : "64-bit integer")} "
+                    + "list element -- list[T] stores uint8/int8/uint16/int16/uint32/int32. "
+                    + (tc.Value is "f" or "d"
+                        ? "Scale the samples into a fixed-point integer width instead."
+                        : "Split the value across two uint32 elements instead."),
+                    tc),
+            _ => throw UserError(
+                $"array.array(\"{tc.Value}\", ...): not a typecode array.array understands "
+                + "(B, b, H, h, I, L, i or l)",
+                tc),
+        };
+        return typeName;
     }
 
     private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
