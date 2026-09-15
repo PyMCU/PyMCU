@@ -642,13 +642,26 @@ public partial class IRGenerator
         // the bytearray-recognizing path at all. Only a compile-time-sized buffer is handled
         // here; a runtime-sized `bytearray(n)` is a different (arena-allocated) shape.
         if (stmt.Target is MemberAccessExpr baFieldTgt
-            && stmt.Value is CallExpr { Callee: VariableExpr { Name: "bytearray" } } baFieldCall)
+            && stmt.Value is CallExpr { Callee: VariableExpr { Name: "bytearray" or "bytes" } } baFieldCall)
         {
             Expression? baFieldSizeSource = null;
             var baFieldInit = new List<int>();
             int baFieldCount = 0;
 
-            if (baFieldCall.Args.Count > 0)
+            if (((VariableExpr)baFieldCall.Callee).Name == "bytes")
+            {
+                // Same immutable spelling as the local-variable case above: refuses a
+                // run-time size itself, naming bytearray.
+                var bytesElems = TryBytesLiteralElements(baFieldCall);
+                if (bytesElems != null)
+                {
+                    baFieldSizeSource = baFieldCall.Args.Count > 0 ? baFieldCall.Args[0] : baFieldCall;
+                    baFieldCount = bytesElems.Count;
+                    foreach (var e in bytesElems)
+                        baFieldInit.Add(TryEvalElemConst(e, out int ev) ? ev : 0);
+                }
+            }
+            else if (baFieldCall.Args.Count > 0)
             {
                 var baArg0 = baFieldCall.Args[0];
                 baFieldSizeSource = baArg0;
@@ -3447,6 +3460,17 @@ public partial class IRGenerator
                             initVals.AddRange(Enumerable.Repeat(0, count));
                         }
                     }
+                    // `bytes([...])` / `bytes(N)`: the immutable spelling of the same
+                    // constructor (#365 already reads a `bytes` PARAMETER as this same
+                    // buffer). `TryBytesLiteralElements` refuses a run-time N itself, naming
+                    // bytearray as the type that takes one.
+                    else if (callee.Name == "bytes" && TryBytesLiteralElements(call) is { } bytesElems)
+                    {
+                        sizeSource = call.Args.Count > 0 ? call.Args[0] : call;
+                        count = bytesElems.Count;
+                        foreach (var e in bytesElems)
+                            initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
+                    }
                     else if (callee.Name == "input")
                     {
                         isInput = true;
@@ -4494,6 +4518,15 @@ public partial class IRGenerator
                     initVals.AddRange(Enumerable.Repeat(0, count));
                 }
             }
+            // `x: bytes = bytes([...])` / `bytes(N)`: the annotation already normalizes to
+            // "bytearray" (AnnotationText), so this is the same shape one call spelling later.
+            else if (stmt.Value is CallExpr bCall && bCall.Callee is VariableExpr bCallee &&
+                bCallee.Name == "bytes" && TryBytesLiteralElements(bCall) is { } bElems)
+            {
+                annSizeSource = bCall.Args.Count > 0 ? bCall.Args[0] : bCall;
+                count = bElems.Count;
+                foreach (var e in bElems) initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
+            }
 
             if (count <= 0)
                 throw UserError("bytearray: could not determine buffer size from initializer.",
@@ -4734,6 +4767,37 @@ public partial class IRGenerator
     {
         try { value = EvaluateConstantExpr(e); return true; }
         catch { value = 0; return false; }
+    }
+
+    /// <summary>
+    /// `bytes([a, b, ...])` and `bytes(N)` with a compile-time N as a fixed sequence of byte
+    /// values -- the same shape `bytearray(...)` already produces, since a `bytes` PARAMETER
+    /// is already read as that same buffer (AnnotationText, #365, #431). Returns null for anything
+    /// that is not a one-argument `bytes(...)` call, or is `bytes(other_buffer)` copying an
+    /// existing buffer (out of scope here; left untouched for whatever the callee does with a
+    /// call it does not itself recognise).
+    ///
+    /// A `bytes(n)` with a run-time `n` is refused HERE rather than returned as null: every
+    /// caller of this method has already committed to treating the argument as a fixed-size
+    /// buffer, so the one useful answer is which type DOES take a run-time size.
+    /// </summary>
+    private List<Expression>? TryBytesLiteralElements(Expression arg)
+    {
+        if (arg is not CallExpr { Callee: VariableExpr { Name: "bytes" } } call || call.Args.Count != 1)
+            return null;
+        Expression a0 = call.Args[0];
+        if (a0 is ListExpr le) return le.Elements;
+        if (a0 is VariableExpr copyVe && ResolveBufferKey(copyVe) != null) return null;
+        if (TryEvalElemConst(a0, out int n))
+        {
+            if (n < 0) throw UserError("bytes(n): n must not be negative", a0);
+            return Enumerable.Repeat((Expression)new IntegerLiteral(0), n).ToList();
+        }
+        throw UserError(
+            "bytes(n) needs a compile-time size for n: a buffer's size is fixed while "
+            + "compiling, and there is no allocator to size one at run time. bytearray(n) "
+            + "takes the same run-time n and grows it through the arena allocator.",
+            a0);
     }
 
     private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
