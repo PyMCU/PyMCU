@@ -382,23 +382,27 @@ public partial class IRGenerator
     // relies on that) -- but once the instance has a slot the writes go there, and every read
     // through the scalar saw the constructor's value: `self.value = self.value + 1` in a
     // method never added up, and a Fader that summed 0..9 answered 3.
-    // Was IsSlotInstanceField: required a live runtime slot, which a receiver whose
-    // constructor arguments folded entirely to compile-time constants never gets (RFC 0001's
-    // "fast construction path" materializes a slot only when something needs one at run
-    // time). A field named "value" on such a receiver then fell through to the register-
+    // Was IsSlotInstanceField, which required a live runtime slot -- a receiver whose
+    // constructor arguments folded entirely to compile-time constants never gets one (RFC
+    // 0001's "fast construction path" materializes a slot only when something needs one at
+    // run time). A field named "value" on such a receiver then fell through to the register-
     // pointer read below, which chased no alias of its own and answered with the raw,
-    // never-written inline-frame variable -- not the field's folded constant (#430). Knowing
-    // the field by NAME, on the receiver's resolved class, does not depend on how that
-    // instance happens to be stored, so drop the slotInstances requirement: a class-field
-    // read routes to the field logic below regardless of whether it materialized a slot, is
-    // still a flattened Model-A name, or folded away entirely into constantVariables.
+    // never-written inline-frame variable -- not the field's folded constant (#430).
     //
-    // `layout.Count > 1` on purpose: a SINGLE-field class collapses onto the instance's own
-    // name (self IS the value, RFC 0001 Model B), which is exactly what the `.value` register
-    // path below already does for it -- routing a single-field class here instead sent it to
-    // the multi-field/flattened-name logic, which expects a field distinct from the instance
-    // and wrote/read the wrong storage (`c_value` instead of `c`) for the everyday single-
-    // field case (regressed a nested-@inline-closure fixture from #427 while fixing #430).
+    // Two shapes now qualify, kept apart on purpose:
+    //  - A live slot (the original check): covers both a genuinely multi-field instance AND a
+    //    single-field one PROMOTED to a real slot because a mutating method's control flow
+    //    (if/while/for) needs persistent storage across calls (PyMCU#292's ZcaMethodLoopReturn
+    //    shape) -- field count alone does not predict this, so it has to be asked directly.
+    //  - A class with MORE THAN ONE field and no live slot yet (Sub in #430): such an instance
+    //    never collapses onto its own bare name for ANY of its fields (that collapse is a
+    //    single-field-only shorthand), so a member named "value" here is unambiguously a real
+    //    field even before construction has stored anything.
+    // A single-field class with NO live slot is deliberately excluded: `self` there IS the
+    // field's value (RFC 0001 Model B collapse), which is exactly what the `.value` register
+    // path below already does for it -- routing it through the field logic instead wrote/read
+    // a flattened `c_value` disjoint from the collapsed `c` (regressed a nested-@inline-closure
+    // fixture from #427 while first fixing #430).
     private bool IsKnownInstanceField(Expression obj, string field)
     {
         if (obj is not VariableExpr ve) return false;
@@ -414,7 +418,8 @@ public partial class IRGenerator
             for (int depth = 0; depth < 20 && key != null; depth++)
             {
                 if (instanceClasses.TryGetValue(key, out var cls) && cls != null
-                    && classFieldLayout.TryGetValue(cls, out var layout) && layout.Count > 1
+                    && classFieldLayout.TryGetValue(cls, out var layout)
+                    && (slotInstances.ContainsKey(key) || layout.Count > 1)
                     && layout.Any(f => f.Field == field))
                     return true;
                 if (!variableAliases.TryGetValue(key, out key)) break;
