@@ -1566,6 +1566,25 @@ public partial class IRGenerator
                                     clsLayout = bl2;
                                     break;
                                 }
+
+                                // A base named through an explicit import (`from base_mod
+                                // import Base`) is registered under its DEFINING module's
+                                // prefix, neither of the two tried above -- the same gap
+                                // ResolveBase() (a few hundred lines down, for method
+                                // inheritance) has, here for FIELD layout. Without it a
+                                // subclass across a module boundary kept an empty layout, so
+                                // construction found no fields to fill and #391 read it as a
+                                // class taking no arguments (#391 again: MCP3008(SPI, cs), a
+                                // subclass of MCP3xxx in a different file, declares no
+                                // __init__ of its own).
+                                string bkImported = ResolveCallee(baseName);
+                                if (bkImported != baseName
+                                    && classFieldLayout.TryGetValue(bkImported, out var bl3) && bl3.Count > 0
+                                    && IsDataClass(bkImported))
+                                {
+                                    clsLayout = bl3;
+                                    break;
+                                }
                             }
 
                         // A subclass __init__ that calls super().__init__() also owns the base's
@@ -1585,6 +1604,15 @@ public partial class IRGenerator
                                     baseLayout = blm;
                                 else if (classFieldLayout.TryGetValue(baseName, out var blm2) && blm2.Count > 0)
                                     baseLayout = blm2;
+                                else
+                                {
+                                    // Same cross-module gap as above: a base named through an
+                                    // explicit import lives under its defining module's prefix.
+                                    string blmImported = ResolveCallee(baseName);
+                                    if (blmImported != baseName
+                                        && classFieldLayout.TryGetValue(blmImported, out var blm3) && blm3.Count > 0)
+                                        baseLayout = blm3;
+                                }
                                 if (baseLayout == null) continue;
 
                                 var ownFields = new HashSet<string>(clsLayout.Select(f => f.Field));
@@ -1955,6 +1983,27 @@ public partial class IRGenerator
                             foreach (var k in inlineFunctions.Keys)
                             {
                                 if (k.StartsWith(bare)) return bare;
+                            }
+
+                            // A base named through an explicit import (`from base_mod import
+                            // Base`) lives under its DEFINING module's prefix, not the
+                            // subclass's own -- ResolveCallee already walks TryImportedAlias to
+                            // answer exactly this question everywhere else a class name is
+                            // resolved. Without it, a base reached this way fell back to
+                            // `basePrefix` (the subclass's own module + the bare base name), a
+                            // prefix nothing is registered under, so the copy loop below found
+                            // no methods to inherit -- including __init__, so `MCP3008(spi,
+                            // cs)`, whose class declares no __init__ of its own and inherits a
+                            // real one from `MCP3xxx` in another file, was refused as taking no
+                            // arguments (#391 synthesized a no-op it was never meant to get).
+                            string imported = ResolveCallee(baseName);
+                            if (imported != baseName)
+                            {
+                                string importedPrefix = imported + "_";
+                                foreach (var k in inlineFunctions.Keys)
+                                {
+                                    if (k.StartsWith(importedPrefix)) return importedPrefix;
+                                }
                             }
 
                             return basePrefix;

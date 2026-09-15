@@ -324,6 +324,45 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// The keys of <paramref name="importedModules"/>, ordered so every module comes after
+    /// every OTHER module it directly imports (that is itself in the map). Insertion order in
+    /// the map is BFS-by-discovery, not dependency order, and scanning a module before a base
+    /// class it inherits from is scanned leaves that base's field layout and methods
+    /// unregistered -- see the call site.
+    ///
+    /// A depth-first post-order walk: a module is appended only after every import it names
+    /// has been visited, so each of its own dependencies is already in the output by the time
+    /// it is. An import cycle cannot make this loop (`visiting` catches it and the edge is
+    /// just not waited on), and a module absent from the map (the standard library, a package
+    /// not part of THIS scan) is not a node here, so its imports are silently skipped rather
+    /// than resolved.
+    /// </summary>
+    private static List<string> TopologicallySortModules(Dictionary<string, ProgramNode> importedModules)
+    {
+        var order = new List<string>(importedModules.Count);
+        var visited = new HashSet<string>();
+        var visiting = new HashSet<string>();
+
+        void Visit(string modName)
+        {
+            if (visited.Contains(modName) || !importedModules.TryGetValue(modName, out var ast)) return;
+            if (!visiting.Add(modName)) return; // cycle: this module is already on the stack
+            foreach (var imp in ast.Imports)
+                Visit(imp.ModuleName);
+            visiting.Remove(modName);
+            visited.Add(modName);
+            order.Add(modName);
+        }
+
+        // Original map order as the outer loop, so two modules with no dependency relation
+        // to each other keep their prior relative order (stable, not just topological).
+        foreach (var modName in importedModules.Keys)
+            Visit(modName);
+
+        return order;
+    }
+
     private ProgramIR GenerateCore(
         ProgramNode mainAst,
         Dictionary<string, ProgramNode> importedModules,
@@ -560,8 +599,23 @@ public partial class IRGenerator
         // canonical scan rather than running ScanFunctions a second time.
         var astToCanonicalPrefix = new Dictionary<ProgramNode, string>(ReferenceEqualityComparer.Instance);
 
-        foreach (var kvp in importedModules)
+        // Scan every module's OWN imports before the module itself, so a class's base --
+        // when the base lives in a module this one imports, rather than the module the base
+        // is used FROM -- is already fully scanned (its field layout and its methods
+        // registered) by the time the subclass's class body is processed. Insertion order in
+        // `importedModules` is BFS-by-discovery, not dependency order: an entry file that
+        // imports `sub_mod`, whose own body then imports `base_mod`, adds `sub_mod` to the
+        // map first and `base_mod` second -- and without this, `sub_mod` scanned first,
+        // found nothing yet registered under `base_mod`'s prefix for `class Sub(Base): pass`
+        // to inherit, and treated `Sub` as a class with an empty field layout, exactly as if
+        // it truly took none of Base's constructor arguments (#391 again, from a different
+        // cause: `MCP3008(spi, cs)`, whose class is defined in a different file from `MCP3xxx`,
+        // the base it declares no `__init__` of its own and inherits from).
+        var moduleScanOrder = TopologicallySortModules(importedModules);
+
+        foreach (var modKey in moduleScanOrder)
         {
+            var kvp = new KeyValuePair<string, ProgramNode>(modKey, importedModules[modKey]);
             var modName = kvp.Key;
             var modAst = kvp.Value;
             string modPrefix = modName.Replace('.', '_') + "_";
