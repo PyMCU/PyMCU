@@ -639,14 +639,6 @@ public partial class IRGenerator
                 + "indexable at run time.", listMem);
         }
 
-        // The descriptor protocol on the write side (#360): `inst.attr = v`, where `attr` is a
-        // class attribute whose class defines `__set__`, IS `type(inst).attr.__set__(inst, v)`.
-        // Asked before the right-hand side is evaluated, because the rewrite passes it as an
-        // expression and a value visited twice is emitted twice.
-        if (stmt.Target is MemberAccessExpr descTarget
-            && TryDescriptorWrite(descTarget, stmt.Value))
-            return;
-
         Val value = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
@@ -1525,6 +1517,13 @@ public partial class IRGenerator
             // rejected the stdlib outright. Skipping __init__ entirely puts every such assignment
             // out of scope, so the gap in the map cannot be reached from here. The gap itself is
             // still real and is recorded in #170.
+            // A class attribute whose class defines __set__ is a DESCRIPTOR, and writing it is
+            // calling that method rather than creating a field (#360). Asked here, where the
+            // receiver's name is resolved and both it and the value are already lowered, so the
+            // rewrite can hand them over without emitting either a second time.
+            if (TryDescriptorWrite(baseName, objVal, memExpr2, value))
+                return;
+
             if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
                 && !IsInsideInit()
                 && baseName != null

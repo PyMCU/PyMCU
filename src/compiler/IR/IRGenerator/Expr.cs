@@ -2627,9 +2627,18 @@ public partial class IRGenerator
         string? cur = cls;
         for (int depth = 0; cur != null && depth < 20; depth++)
         {
-            if (classModuleMap.TryGetValue(cur, out var modPfx))
+            // Two spellings, because a class reaches here two ways. A class in the file being
+            // compiled is named simply and `classModuleMap` carries its module's prefix; a class
+            // from an imported module arrives already mangled, prefix included, and is not in
+            // that map at all. Asking only the first found every class attribute in a test and
+            // none in a library.
+            foreach (var key in new[]
             {
-                string key = modPfx + cur + "_" + member;
+                classModuleMap.TryGetValue(cur, out var modPfx) ? modPfx + cur + "_" + member : null,
+                cur + "_" + member,
+            })
+            {
+                if (key == null) continue;
                 if (globals.ContainsKey(key) || mutableGlobals.ContainsKey(key)
                     || instanceClasses.ContainsKey(key)
                     || globals.Keys.Any(k => k.StartsWith(key + "_", StringComparison.Ordinal)))
@@ -2642,6 +2651,28 @@ public partial class IRGenerator
             cur = BaseClassOf(cur);
         }
         return false;
+    }
+
+    /// <summary>
+    /// The name a source-level receiver is keyed under, tried under the inline expansion's
+    /// prefix, under the current function, and bare -- the first spelling that resolves to a
+    /// class. `self` inside a method is never the bare name, so a descriptor written as
+    /// `self.attr = v` in the driver's own constructor was missed by a bare lookup while
+    /// `dev.attr = v` in main was found.
+    /// </summary>
+    private string? ReceiverNameForLookup(VariableExpr recv)
+    {
+        foreach (var cand in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + recv.Name,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + recv.Name,
+            recv.Name,
+        })
+        {
+            if (cand != null && ReceiverClassThroughAliases(cand) is { } c && !string.IsNullOrEmpty(c))
+                return cand;
+        }
+        return null;
     }
 
     /// <summary>The class a class inherits from, or null. The prefix carries a trailing '_'.</summary>
@@ -2662,10 +2693,9 @@ public partial class IRGenerator
     /// A class attribute whose class defines no `__get__` is not a descriptor and keeps its
     /// #268 meaning: it is the object, and a method call on it reaches that object's method.
     /// </summary>
-    private Val? TryDescriptorRead(MemberAccessExpr expr)
+    private Val? TryDescriptorRead(string? baseName, Val receiver, MemberAccessExpr expr)
     {
-        if (expr.Object is not VariableExpr recv) return null;
-        if (!TryFindClassAttribute(recv.Name, expr.Member, out var owner, out var fullName))
+        if (!TryFindClassAttribute(baseName, expr.Member, out var owner, out var fullName))
             return null;
         if (!instanceClasses.TryGetValue(fullName, out var attrCls)
             || !ClassDefinesMethod(attrCls, "__get__"))
@@ -2675,7 +2705,13 @@ public partial class IRGenerator
             { Line = expr.Line };
         return VisitCall(new CallExpr(
             new MemberAccessExpr(attr, "__get__") { Line = expr.Line },
-            new List<Expression> { expr.Object, new VariableExpr(owner) { Line = expr.Line } })
+            new List<Expression>
+            {
+                // The receiver has already been lowered on the way here; handing the expression
+                // over again would emit it a second time.
+                new PreEvaluatedExpr(receiver, null) { Line = expr.Line },
+                new VariableExpr(owner) { Line = expr.Line },
+            })
             { Line = expr.Line });
     }
 
@@ -2684,10 +2720,9 @@ public partial class IRGenerator
     /// class attribute whose class defines `__set__`, IS `type(inst).attr.__set__(inst, v)`.
     /// True when the assignment was rewritten and lowered, so the caller must not lower it again.
     /// </summary>
-    private bool TryDescriptorWrite(MemberAccessExpr target, Expression valueExpr)
+    private bool TryDescriptorWrite(string? baseName, Val receiver, MemberAccessExpr target, Val value)
     {
-        if (target.Object is not VariableExpr recv) return false;
-        if (!TryFindClassAttribute(recv.Name, target.Member, out var owner, out var fullName))
+        if (!TryFindClassAttribute(baseName, target.Member, out var owner, out var fullName))
             return false;
         if (!instanceClasses.TryGetValue(fullName, out var attrCls)
             || !ClassDefinesMethod(attrCls, "__set__"))
@@ -2697,7 +2732,13 @@ public partial class IRGenerator
             { Line = target.Line };
         VisitCall(new CallExpr(
             new MemberAccessExpr(attr, "__set__") { Line = target.Line },
-            new List<Expression> { target.Object, valueExpr }) { Line = target.Line });
+            new List<Expression>
+            {
+                // Both the receiver and the value are already lowered by the time the assignment
+                // reaches here; handing either expression over again would emit it twice.
+                new PreEvaluatedExpr(receiver, null) { Line = target.Line },
+                new PreEvaluatedExpr(value, null) { Line = target.Line },
+            }) { Line = target.Line });
         return true;
     }
 
@@ -2727,10 +2768,6 @@ public partial class IRGenerator
         // prefix, so the whole dotted path IS the name (#319). It is how CircuitPython spells
         // the UART parity: `busio.UART.Parity.ODD`, which adds a module hop in front.
         if (TryDottedClassConstant(expr) is { } dottedConst) return dottedConst;
-
-        // The descriptor protocol (#360). Asked here, before the receiver is evaluated, because
-        // the rewrite evaluates it itself and a receiver visited twice is emitted twice.
-        if (TryDescriptorRead(expr) is { } descriptorVal) return descriptorVal;
 
         // A single-field instance handed back by a factory IS its one field: the call returns
         // the field's value in a register and the name is bound to that (RFC 0001 Model B
@@ -3120,6 +3157,12 @@ public partial class IRGenerator
             // whose subject nothing writes, and degrade the refusal in its default arm to a
             // warning -- so a pin with no channel behind it read channel 0 instead of being
             // refused.
+            // A class attribute whose class defines __get__ is a DESCRIPTOR, and reading it is
+            // calling that method rather than taking the attribute's value (#360). Asked first,
+            // so a descriptor is never handed back as the object it is stored as.
+            if (TryDescriptorRead(baseName, objVal, expr) is { } descriptorVal)
+                return descriptorVal;
+
             // A CLASS-level attribute is a name the instance has and the flattened key does not
             // carry, so it is asked for before the read is called undefined (#268). `Cls.ATTR`
             // already answered; this is the same answer through an instance of Cls.
