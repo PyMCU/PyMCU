@@ -288,6 +288,32 @@ public partial class IRGenerator
         return "";
     }
 
+    /// The name that actually carries <paramref name="v"/>'s class in `instanceClasses`, or
+    /// null when it carries none -- the same alias chain <see cref="GetValClass"/> walks, but
+    /// returning the NAME the chain ends at rather than the class found there.
+    ///
+    /// A `@property` returning a single-field ZCA instance (`return self._q`, #445) hands
+    /// back a bare Temporary that ALIASES the field's own flattened storage
+    /// (`variableAliases["tmp_N"] == "owner__q"`); the temp itself is never a key of
+    /// `instanceClasses` directly. Two call sites used to check `instanceClasses.ContainsKey`
+    /// on the Temporary's OWN name -- one hop short of what this walks -- so `owner.q.bump()`
+    /// found no class to dispatch on at all, and once that was fixed here, still found no
+    /// receiver to bind `self` to: `Val objVal = VisitExpression(mem2.Object)` there
+    /// RE-EVALUATES the property getter, producing a SECOND, DIFFERENT temp with the exact
+    /// same one-hop-short problem. One helper closes both, and any future call site with the
+    /// same shape.
+    private string? ResolveClassCarryingName(Val v)
+    {
+        string? name = v switch { Variable vv => vv.Name, Temporary tt => tt.Name, _ => null };
+        for (int depth = 0; depth < 20 && name != null; ++depth)
+        {
+            if (instanceClasses.ContainsKey(name)) return name;
+            if (!variableAliases.TryGetValue(name, out var next)) return null;
+            name = next;
+        }
+        return null;
+    }
+
     // seqArgs (optional) binds an extra-arg index to a bytes/list/tuple literal
     // so the dunder body can consume that parameter via constant subscript or a
     // for-in unroll -- e.g. pixels[i] = (r, g, b) passes the tuple to __setitem__.

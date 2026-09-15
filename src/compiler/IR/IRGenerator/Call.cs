@@ -264,8 +264,14 @@ public partial class IRGenerator
                 // class -- a ZCA field re-tagged with its nested class, like the DHT's
                 // machine.Pin._pin -- dispatch the method on it exactly like a named instance by
                 // treating the temp as a Variable. Without a class it falls through unchanged.
-                if (objVal is Temporary tObj && instanceClasses.ContainsKey(tObj.Name))
-                    objVal = new Variable(tObj.Name, tObj.Type);
+                //
+                // `owner.q.bump()` where `q` is a @property returning a single-field ZCA
+                // instance (#445): the getter's result ALIASES the field's own flattened
+                // storage (`variableAliases["tmp_N"] == "owner__q"`) rather than carrying a
+                // class directly -- ResolveClassCarryingName walks that chain; a direct
+                // instanceClasses check on the temp's own name, one hop short, does not.
+                if (objVal is Temporary tObj && ResolveClassCarryingName(tObj) is { } tObjClassName)
+                    objVal = new Variable(tObjClassName, tObj.Type);
                 if (objVal is Variable vObj)
                 {
                     // `buf.extend(...)` on a fixed-size buffer grows it while compiling (#362).
@@ -1409,8 +1415,15 @@ public partial class IRGenerator
                 // re-tagged with its class (machine.Pin._pin). Bind self off either, so a method
                 // call on such a value still gets self (otherwise the @inline expansion reports
                 // "missing required argument 'self'").
+                //
+                // A Temporary's name is resolved through ResolveClassCarryingName, not read
+                // bare (#445): a @property returning a single-field ZCA instance hands back a
+                // temp that ALIASES the field's own flattened storage rather than carrying a
+                // class under its own name, and this re-evaluates mem2.Object independently of
+                // the dispatch-decision code above -- a SECOND, different temp with the exact
+                // same one-hop-short gap a direct instanceClasses.ContainsKey(recvName) missed.
                 string? recvName = objVal is Variable v2 ? v2.Name
-                                 : (objVal is Temporary t2 ? t2.Name : null);
+                                 : (objVal is Temporary t2 ? ResolveClassCarryingName(t2) : null);
                 if (recvName != null && instanceClasses.ContainsKey(recvName))
                 {
                     string selfName = newPrefix + "self";
