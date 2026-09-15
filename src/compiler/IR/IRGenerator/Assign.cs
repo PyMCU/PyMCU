@@ -4044,7 +4044,7 @@ public partial class IRGenerator
     /// `at` is the node to point at. Without one the error lands on whatever `lastLine` held,
     /// which reported a seven-line file at line 206.
     /// </summary>
-    private void CheckAnnotationNames(string annotation, ASTNode? at = null)
+    private void CheckAnnotationNames(string annotation, ASTNode? at = null, bool allowUnion = false)
     {
         if (string.IsNullOrEmpty(annotation)) return;
 
@@ -4073,7 +4073,10 @@ public partial class IRGenerator
         // without the rule, and a rule kept in two files by a comment is the divergence this
         // one site exists to close.
         if (annotation.Contains('|'))
+        {
+            if (allowUnion) return;
             throw UserError(UnionAnnotationRefusal, at);
+        }
 
         int lb = annotation.IndexOf('[');
         if (lb >= 0)
@@ -4082,7 +4085,20 @@ public partial class IRGenerator
             // `Optional[X]` IS `Union[X, None]`, and `Union[a, b]` IS `a | b`. One idea, so one
             // answer: the sentence the `|` spelling already gets, rather than a true and
             // useless "unknown type 'Union'".
-            if (head is "Union" or "Optional" or "typing.Union" or "typing.Optional")
+            //
+            // `allowUnion`: a parameter of an @inline-expanded function or method (an ordinary
+            // constructor included -- every ZCA instance is built at its call site) reads a
+            // union as "the type of the argument AT THIS SITE, which must be one of the
+            // members" -- exactly how an @inline overload already dispatches on an argument's
+            // type, just without a second FunctionDef to pick between. `Optional[X]` was
+            // already `X`, by the time this runs, everywhere; only a union of two REAL types
+            // reaches here, and only on a parameter is a call site available to resolve it.
+            if (head is "Union" or "typing.Union")
+            {
+                if (allowUnion) return;
+                throw UserError(UnionAnnotationRefusal, at);
+            }
+            if (head is "Optional" or "typing.Optional")
                 throw UserError(UnionAnnotationRefusal, at);
             // The 64-bit names before the known-head return, and inside the brackets as well
             // as at the head: `const[uint64]` and `uint64[4]` both put a width this compiler
@@ -4309,7 +4325,13 @@ public partial class IRGenerator
 
             try
             {
-                foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f);
+                // A union on a PARAMETER is resolvable at the call site -- the argument's
+                // actual type is known there -- only for a function or method that IS expanded
+                // at its call site: an @inline decorator, or __init__, which every ZCA instance
+                // already builds that way. A real subroutine has one ABI for every caller, and
+                // a union parameter there keeps its refusal.
+                bool paramUnionAllowed = f.IsInline || f.Name == "__init__";
+                foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f, paramUnionAllowed);
                 CheckAnnotationNames(f.ReturnType ?? "", f);
 
                 // A RETURN annotation is the one position where a tuple's LENGTH is what the
