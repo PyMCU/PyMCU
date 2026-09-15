@@ -99,6 +99,10 @@ public partial class IRGenerator
     // is the qualified name of the uint16 global len() reads.
     private readonly HashSet<string> arenaBufferNames = new();
     private readonly Dictionary<string, string> arenaBufferLenVar = new();
+    // Counter for the hidden local `self.buf = bytearray(n)` rewrites into (Assign.cs,
+    // EmitMemberAssign's #392 bytearray-field block) -- unique per site so two such
+    // fields in the same expansion depth do not collide.
+    private int arenaFieldTempId = 0;
     private int inlineDepth = 0;
     private int ctorAnonId = 0; // Counter for synthetic ZCA constructor-as-arg targets
     private string currentInlinePrefix = "";

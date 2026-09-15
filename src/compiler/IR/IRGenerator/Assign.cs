@@ -780,6 +780,28 @@ public partial class IRGenerator
                 }
             }
 
+            // docs/rfcs/0004-arena-allocator.md: `self.buf = bytearray(n)` with a runtime n,
+            // once #392 (above) made the field-assignment form reach this bytearray-aware
+            // code at all. Rewritten as a hidden local (which the once-rule-checked,
+            // arena-allocating VarDecl path above already handles end to end) followed by an
+            // ordinary field write of that local's value -- reusing the ENTIRE existing
+            // scalar-field-assignment machinery instead of teaching this block its own
+            // field-storage resolution. `self.buf` then holds the arena offset exactly the
+            // way `self.off = buf` already did in the fixture this generalizes.
+            if (baFieldCount <= 0 && baFieldSizeSource is not (null or ListExpr)
+                && !TryEvalElemConst(baFieldSizeSource, out _))
+            {
+                string hiddenLocal = $"__arena_field_{arenaFieldTempId++}";
+                VisitStatement(new VarDecl(hiddenLocal, "bytearray", baFieldCall) { Line = stmt.Line });
+                // AnnotatedType = "uint16": the field holds an arena OFFSET (up to the
+                // arena's size, which can exceed 255 on a part with more than 255 bytes of
+                // SRAM), not a byte value -- without this the ZCA field-layout pass defaults
+                // an unannotated field to uint8 from the assigned value's width.
+                VisitStatement(new AssignStmt(baFieldTgt, new VariableExpr(hiddenLocal))
+                    { Line = stmt.Line, AnnotatedType = "uint16" });
+                return;
+            }
+
             if (baFieldCount <= 0)
                 throw UserError(
                     "bytearray: could not determine buffer size from initializer.",
