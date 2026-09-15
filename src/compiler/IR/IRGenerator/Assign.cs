@@ -1215,6 +1215,26 @@ public partial class IRGenerator
 
         if (!(value is NoneVal)) Emit(new Copy(value, target));
 
+        // RFC 0001 Model B (register handle): `x = make()` where make is a non-@inline
+        // factory returning a single-field ZCA (VisitReturn already lowers the callee's
+        // body to hand back the field as a scalar; see Statements.cs). `x` IS that scalar,
+        // tracked as a factory-handle instance so a call site that finds the method already
+        // outlined passes `x` itself as the field (Call.cs). But a method call site that
+        // reaches this same instance through the ordinary force-inline/virtual-construction
+        // path instead resolves `self.<field>` to the flattened `<inst>_<field>` convention
+        // every DIRECTLY-constructed instance uses -- a name this assignment never wrote, so
+        // it read as zero. Mirror the handle into that name too, so either dispatch finds the
+        // right value (#429).
+        if (target is Variable handleTgt && factoryHandleInstances.Contains(handleTgt.Name)
+            && instanceClasses.TryGetValue(handleTgt.Name, out var handleCls) && handleCls != null
+            && classFieldLayout.TryGetValue(handleCls, out var handleLayout) && handleLayout.Count == 1
+            && !(value is NoneVal))
+        {
+            var (hField, hType, _) = handleLayout[0];
+            Emit(new Copy(value, new Variable(handleTgt.Name + "_" + hField,
+                DataTypeExtensions.StringToDataType(hType))));
+        }
+
         // `x = None` on an UNANNOTATED local, and its mirror.
         //
         // None-ness is a compile-time property here: a parameter defaulting to None, a field
