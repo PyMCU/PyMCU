@@ -21,22 +21,34 @@ Each probe carries headers:
   *that* to the emulator, so the probe passes for the documented reason and starts
   failing again the moment the divergence disappears (`DIVERGENCE_TRANSFORMS` in
   `test_oracle.py`; an unregistered citation is a hard error, not a silent pass).
-- `# doc: <file>:<line>` -- the roadmap or limitations entry the probe exercises.
+- `# doc: <file>:<line>` -- the roadmap or limitations entry the probe exercises. A probe
+  pinned to a filed-but-not-yet-documented gap may instead cite the GitHub issue URL.
 - `# tracked: #<N>` -- optional; marks the probe as a known, filed compiler bug. The
   runner turns these into `xfail(strict=True)`: the suite stays green while the issue
   is open, and the moment someone fixes the underlying bug the probe XPASSes, which
   pytest reports as a hard failure -- a nudge to remove the `# tracked:` line and let
   the probe start asserting again.
+- `# frontend: default` / `# frontend: py-parser` -- optional; restricts the probe to
+  one compiler front end (the C# parser, or `PYMCU_PY_PARSER=1`'s Python-`ast` one) and
+  skips it under the other. The two front ends are meant to accept the same language
+  subset, so this exists only for a genuine, filed disagreement between them (one
+  refuses a construct the other accepts, sometimes with different runtime behaviour) --
+  a shape no single `# expect:` can assert honestly for both engines at once. Such a
+  gap is always covered by a *pair* of probes, one per front end, both citing the same
+  issue, so the disagreement itself stays visible in the suite rather than being
+  silently narrowed to whichever engine happens to run.
 
 Run it with:
 
 ```sh
 PYMCU_BIN=/path/to/pymcu python3 -m pytest tests/oracle/test_oracle.py -q
+PYMCU_BIN=/path/to/pymcu PYMCU_PY_PARSER=1 python3 -m pytest tests/oracle/test_oracle.py -q
 ```
 
 `PYMCU_BIN` defaults to `~/PycharmProjects/cp-hcsr04/.venv/bin/pymcu` (a frozen dev
 build); `avr8sharp` is imported from
-`~/Repos/PyMCU/.venv/lib/python3.14/site-packages`.
+`~/Repos/PyMCU/.venv/lib/python3.14/site-packages`. Every probe is meant to be run, and
+kept green, under **both** front ends.
 
 **A probe is never edited to make a genuine mismatch go away.** A probe IS edited when
 the probe itself is wrong -- a stale import path, a header that cites a limitation the
@@ -47,11 +59,26 @@ evidence about the compiler: it is filed as a GitHub issue, the probe is left ex
 it stands, and `# tracked: #<N>` is added so the suite reports it honestly instead of
 quietly skipping it.
 
-## Result of the last full run (2026-09-15)
+## Result of the last full run (2026-09-15, after the language-surface sweep)
 
-109 probes: **78 match** (including the 7 documented divergences), **11 correctly
-refused**, **20 known compiler bugs**, each filed as its own GitHub issue and running as
-`xfail(strict)` so the suite is green.
+**178 probes** (120 before this sweep, +58: probes `121`-`178`, one per bullet of a
+Python-language-reference pass over builtins, integer semantics, strings, control flow,
+the data model, collections, exceptions, functions, modules and async -- skipping only
+what an existing probe already covered). Two of those 58 come as `# frontend:`-scoped
+pairs (`163`/`164`, `168`/`169`, `170`/`171` -- six probes covering three front-end
+disagreements as three pairs) rather than single probes, because the two front ends
+give genuinely different answers.
+
+Per front end:
+
+| Front end | match | divergence (documented) | refused (documented) | tracked (known bug) | frontend-scoped, N/A here |
+|---|---|---|---|---|---|
+| default (C#) | 108 | 11 | 31 | 25 (18 distinct issues) | 3 |
+| `PYMCU_PY_PARSER=1` | 108 | 11 | 30 | 26 (19 distinct issues) | 3 |
+
+Both runs are green: every non-tracked probe matches or refuses exactly as documented,
+and every tracked probe's failure is the one named issue, `xfail(strict)` so a fix shows
+up as a hard XPASS rather than a silent pass.
 
 ### Compiler bugs, by cause
 
@@ -63,13 +90,18 @@ refused**, **20 known compiler bugs**, each filed as its own GitHub issue and ru
 | `self.field = bytearray(...)` inside `__init__` is refused, though the identical call to a local compiles | [#392](https://github.com/PyMCU/PyMCU/issues/392) | `049` |
 | `hex()`/`bin()`/`str()` folding prints the folded string's flash address instead of its text | [#393](https://github.com/PyMCU/PyMCU/issues/393) | `056` |
 | List comprehensions beyond one clause: nested `for`s compute all zeros, a compile-time-foldable filter is refused unconditionally, one used directly as a `for` loop's iterable is refused | [#394](https://github.com/PyMCU/PyMCU/issues/394) | `063`, `064`, `065` |
-| `__add__`/`__lt__` on a ZCA class both return wrong results | [#395](https://github.com/PyMCU/PyMCU/issues/395) | `075` |
+| Operator dunders on a ZCA class (`__add__`, `__lt__`, and -- widened by this sweep -- `__eq__`, `__le__`, `__sub__`, `__mul__`) all return wrong results | [#395](https://github.com/PyMCU/PyMCU/issues/395) | `075`, `146` |
 | An explicit `len(instance)` call returns 0, though the same `__len__` dispatches correctly for implicit truthiness | [#396](https://github.com/PyMCU/PyMCU/issues/396) | `076` |
 | A two-index `__setitem__`/`__getitem__` round trip returns 0, though both calls compile | [#397](https://github.com/PyMCU/PyMCU/issues/397) | `078` |
-| `list[T].append()` on a heap-allocated list does not store the element | [#398](https://github.com/PyMCU/PyMCU/issues/398) | `084` |
+| `list[T].append()` on a heap-allocated list does not store the element | [#398](https://github.com/PyMCU/PyMCU/issues/398) | `084`, `153` |
 | Indexing a one-character result out of a runtime string returns the character code, not a one-character string | [#399](https://github.com/PyMCU/PyMCU/issues/399) | `087` |
 | Reading an Enum member (`Mode.ON`, or chained `.value`) outside a plain assignment RHS says the enum class is not defined | [#400](https://github.com/PyMCU/PyMCU/issues/400) | `027` |
 | `match`/`case` sequence pattern on a real array reads phantom flattened variables instead of the array's actual storage | [#401](https://github.com/PyMCU/PyMCU/issues/401) | `018` |
+| `chr(n)` loses its char-ness across a function `return`: printed as the code point, not the character, though the same `chr()` works at the print() call site or on a plain module-level variable | [#436](https://github.com/PyMCU/PyMCU/issues/436) (filed by this sweep) | `127` |
+| `+` and `==` on strings longer than one character fall through to the interned pool id (a small integer) instead of the text/content -- the same shape as the closed #211, but past the one-character collision #211 actually fixed | [#438](https://github.com/PyMCU/PyMCU/issues/438) (filed by this sweep) | `134`, `135` |
+| `match` on a tuple pattern: the default front end correctly refuses it (tuples are not a runtime value); `PYMCU_PY_PARSER=1` compiles it and silently takes the wildcard arm instead of the matching one | [#439](https://github.com/PyMCU/PyMCU/issues/439) (filed by this sweep) | `168`/`169` (frontend-scoped pair) |
+| `match` on a class pattern (`case Point(x=0):`): works under the default front end (undocumented, since roadmap.md:22 does not list class patterns at all), `SyntaxError` under `PYMCU_PY_PARSER=1` -- a front-end parity gap rather than a single wrong answer, so neither probe is `tracked` | [#440](https://github.com/PyMCU/PyMCU/issues/440) (filed by this sweep) | `170`/`171` (frontend-scoped pair) |
+| A type reached through a module alias (`import pymcu.types as t; x: t.uint8 = ...`) wraps on arithmetic instead of promoting, unlike the identical bare-imported name | [#449](https://github.com/PyMCU/PyMCU/issues/449) (filed by this sweep) | `172` |
 
 | Probe | Feature | Doc | Expectation | Outcome | First differing line / diagnostic |
 |---|---|---|---|---|---|
@@ -182,6 +214,64 @@ refused**, **20 known compiler bugs**, each filed as its own GitHub issue and ru
 | `107_yield_expression_refused.py` | yield expression refused | `LANGUAGE_ROADMAP.md:375` | refuse yield | refused |  |
 | `108_multiple_inheritance_refused.py` | multiple inheritance refused | `docs/language/limitations.md:323` | refuse inheritance | refused |  |
 | `109_recursion_refused.py` | recursion refused | `docs/language/limitations.md:274` | refuse recursive | refused |  |
+| `121_builtin_abs_min_max.py` | builtin abs min max | `docs/language/limitations.md:749` | match | match |  |
+| `122_builtin_round_refused.py` | builtin round refused | `src/compiler/IR/IRGenerator/Call.cs:4511` | refuse `round() is a Python builtin that PyMCU does not provide` | refused |  |
+| `123_builtin_int_float_bool_cast.py` | builtin int float bool cast | `LANGUAGE_ROADMAP.md:79` | divergence `docs/language/type-system.md:20` | match |  |
+| `124_builtin_chr_ord_hex_bin.py` | builtin chr ord hex bin | `docs/language/limitations.md:760` | match | match |  |
+| `125_builtin_oct_refused.py` | builtin oct refused | `LANGUAGE_ROADMAP.md:44` | refuse `oct() is a Python builtin that PyMCU does not provide` | refused |  |
+| `126_len_array_and_string.py` | len array and string | `docs/language/limitations.md:748` | match | match |  |
+| `127_chr_across_function_return_refused.py` | chr across function return refused | `docs/language/limitations.md:760` | match | tracked [#436](https://github.com/PyMCU/PyMCU/issues/436) | line 1: CPython='B', emulator='66' |
+| `128_shift_variable_amount.py` | shift variable amount | `docs/language/roadmap.md:34` | match | match |  |
+| `129_bitwise_on_signed.py` | bitwise on signed | `docs/language/type-system.md:156` | match | match |  |
+| `130_comparison_chain.py` | comparison chain | `docs/language/type-system.md:20` | divergence `docs/language/type-system.md:20` | match |  |
+| `131_augmented_assignment_all_operators.py` | augmented assignment all operators | `docs/language/roadmap.md:34` | match | match |  |
+| `132_annotated_width_wraps_vs_cpython_bigint.py` | annotated width wraps vs cpython bigint | `docs/language/type-system.md:242` | divergence `docs/language/type-system.md:242` | match |  |
+| `133_folded_overflow_refused.py` | folded overflow refused | `docs/language/type-system.md:189` | refuse `is out of range for uint8` | refused |  |
+| `134_string_concatenation_literals.py` | string concatenation literals | `docs/language/limitations.md:777` | match | tracked [#438](https://github.com/PyMCU/PyMCU/issues/438) | line 1: CPython='helloworld', emulator='257' |
+| `135_string_equality_comparison.py` | string equality comparison | `docs/language/limitations.md:777` | match | tracked [#438](https://github.com/PyMCU/PyMCU/issues/438) | line 1: CPython='yes', emulator='no' |
+| `136_fstring_alignment_specs_refused.py` | fstring alignment specs refused | `docs/language/roadmap.md:36` | refuse `unsupported f-string format spec` | refused |  |
+| `137_str_upper_lower_refused.py` | str upper lower refused | `docs/language/limitations.md:54` | refuse `undefined function` | refused |  |
+| `138_str_strip_startswith_find_refused.py` | str strip startswith find refused | `docs/language/limitations.md:54` | refuse `undefined function` | refused |  |
+| `139_in_on_string_refused.py` | in on string refused | `LANGUAGE_ROADMAP.md:40` | refuse `requires a list, tuple, set or dict literal` | refused |  |
+| `140_string_slice_refused.py` | string slice refused | `docs/language/roadmap.md:60` | refuse `Slice indexing is only supported on named fixed-size arrays` | refused |  |
+| `141_nested_loop_break_continue.py` | nested loop break continue | `docs/language/roadmap.md:14` | match | match |  |
+| `142_ternary_expression.py` | ternary expression | `docs/language/roadmap.md:23` | match | match |  |
+| `143_walrus_operator.py` | walrus operator | `docs/language/roadmap.md:23` | match | match |  |
+| `144_pass_statement.py` | pass statement | `docs/language/roadmap.md:23` | match | match |  |
+| `145_nested_function_without_inline_refused.py` | nested function without inline refused | `docs/language/roadmap.md:85` | refuse `Nested function` | refused |  |
+| `146_dunder_eq_le_sub_mul.py` | dunder eq le sub mul | `docs/language/roadmap.md:61` | match | tracked [#395](https://github.com/PyMCU/PyMCU/issues/395) | line 1: CPython='True', emulator='1' |
+| `147_dunder_str_refused.py` | dunder str refused | `docs/language/limitations.md:749` | refuse `has no runtime __str__` | refused |  |
+| `148_dunder_contains_refused.py` | dunder contains refused | `LANGUAGE_ROADMAP.md:40` | refuse `requires a list, tuple, set or dict literal` | refused |  |
+| `149_dunder_call.py` | dunder call | `docs/language/roadmap.md:61` | match | match |  |
+| `150_dunder_iter_next_protocol_refused.py` | dunder iter next protocol refused | `docs/language/roadmap.md:19` | refuse `does not run the iterator protocol` | refused |  |
+| `151_class_attribute_write.py` | class attribute write | `docs/language/roadmap.md:26` | match | match |  |
+| `152_isinstance_refused.py` | isinstance refused | `docs/language/limitations.md (Built-ins summary); enhancement requested in #423/#424` | refuse `isinstance() is a Python builtin that PyMCU does not provide` | refused |  |
+| `153_list_for_over_heap_list.py` | list for over heap list | `docs/language/roadmap.md:65` | match | tracked [#398](https://github.com/PyMCU/PyMCU/issues/398) | line 1: CPython='9', emulator='0' |
+| `154_list_index_method_refused.py` | list index method refused | `docs/language/roadmap.md:65` | refuse `method not supported` | refused |  |
+| `155_tuple_indexing.py` | tuple indexing | `docs/language/roadmap.md:17` | match | match |  |
+| `156_dict_membership_in.py` | dict membership in | `docs/language/roadmap.md:67` | divergence `docs/language/type-system.md:20` | match |  |
+| `157_nested_try_except.py` | nested try except | `docs/language/roadmap.md:33` | match | match |  |
+| `158_bare_reraise.py` | bare reraise | `docs/language/roadmap.md:33` | match | match |  |
+| `159_user_exception_class.py` | user exception class | `docs/language/roadmap.md:33` | match | match |  |
+| `160_exception_crosses_inline_boundary.py` | exception crosses inline boundary | `docs/language/roadmap.md:33` | match | match |  |
+| `161_args_star_compile_time.py` | args star compile time | `docs/language/roadmap.md:23` | match | match |  |
+| `162_kwargs_double_star_key_access.py` | kwargs double star key access | `docs/language/roadmap.md:23` | match | match |  |
+| `163_positional_only_refused_default_frontend.py` | positional only refused default frontend (frontend: default) | `https://github.com/PyMCU/PyMCU/issues/389` | refuse `Expected parameter name` | refused |  |
+| `164_positional_only_unenforced_py_parser.py` | positional only unenforced py parser (frontend: py-parser) | `https://github.com/PyMCU/PyMCU/issues/389` | match | match |  |
+| `165_default_arg_from_global.py` | default arg from global | `docs/language/roadmap.md:23` | match | match |  |
+| `166_type_annotation_ignored_at_runtime.py` | type annotation ignored at runtime | `LANGUAGE_ROADMAP.md:79` | match | match |  |
+| `167_inline_vs_plain_function.py` | inline vs plain function | `docs/language/roadmap.md:85` | match | match |  |
+| `168_match_tuple_pattern_refused_default_frontend.py` | match tuple pattern refused default frontend (frontend: default) | `https://github.com/PyMCU/PyMCU/issues/439` | refuse `tuples are not supported as runtime values` | refused |  |
+| `169_match_tuple_pattern_wrongcode_py_parser.py` | match tuple pattern wrongcode py parser (frontend: py-parser) | `https://github.com/PyMCU/PyMCU/issues/439` | match | tracked [#439](https://github.com/PyMCU/PyMCU/issues/439) | line 1: CPython='5', emulator='0' |
+| `170_match_class_pattern_default_frontend.py` | match class pattern default frontend (frontend: default) | `https://github.com/PyMCU/PyMCU/issues/440` | match | match |  |
+| `171_match_class_pattern_refused_py_parser.py` | match class pattern refused py parser (frontend: py-parser) | `https://github.com/PyMCU/PyMCU/issues/440` | refuse `match pattern MatchClass` | refused |  |
+| `172_import_as_module_alias.py` | import as module alias | `docs/language/roadmap.md:34` | match | tracked [#449](https://github.com/PyMCU/PyMCU/issues/449) | line 1: CPython='300', emulator='44' |
+| `173_import_star.py` | import star | `docs/language/roadmap.md:78` | match | match |  |
+| `174_name_main_idiom.py` | name main idiom | `docs/language/roadmap.md:64` | match | match |  |
+| `175_chip_conditional.py` | chip conditional | `docs/language/roadmap.md:88` | match | match |  |
+| `176_sys_implementation_refused.py` | sys implementation refused | `docs/language/limitations.md (no interpreter to introspect)` | refuse `Module not found: sys` | refused |  |
+| `177_asyncio_sleep_loop.py` | asyncio sleep loop | `docs/language/roadmap.md:70` | match | match |  |
+| `178_asyncio_gather_await_refused.py` | asyncio gather await refused | `docs/language/roadmap.md:70` | refuse "only await asyncio.sleep(n)" | refused |  |
 
 ## Probe defects fixed in this pass
 
@@ -219,3 +309,9 @@ and doc citation actually claim:
   `avr8sharp`; none of the other backends the roadmap documents are exercised here.
 - **HAL and driver modules** (`pymcu.hal.*`, `pymcu.drivers.*`): out of scope for a
   language-feature oracle; they need real or emulated peripherals, not just UART.
+- **Mutable globals across separate module files**: every probe is one top-level file
+  (`compile_probe()` always writes a single `src/main.py`); a genuine cross-module
+  probe needs multi-file project support the harness does not have yet.
+- **`MemoryError` from the bounded bump allocator**: exercising it needs the arena to
+  actually fill, which needs `list[T].append()` to actually store elements -- currently
+  broken (#398, probes `084`/`153`). Revisit once that is fixed.
