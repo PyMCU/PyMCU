@@ -29,6 +29,7 @@ class Expectation:
     diagnostic: str | None
     doc: str
     divergence_doc: str | None = None
+    tracked: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,23 +55,29 @@ def _probe_files() -> list[Path]:
 def parse_expectation(src: str) -> Expectation:
     expect = None
     doc = None
+    tracked = None
     for line in src.splitlines()[:8]:
         if line.startswith("# expect: "):
             expect = line.removeprefix("# expect: ").strip()
         if line.startswith("# doc: "):
             doc = line.removeprefix("# doc: ").strip()
+        if line.startswith("# tracked: "):
+            tracked = line.removeprefix("# tracked: ").strip()
     if expect is None or doc is None:
         raise AssertionError("probe is missing # expect or # doc header")
     if expect == "match":
-        return Expectation("match", None, doc)
+        return Expectation("match", None, doc, tracked=tracked)
     if expect.startswith("refuse "):
-        return Expectation("refuse", expect.removeprefix("refuse ").strip(), doc)
+        return Expectation(
+            "refuse", expect.removeprefix("refuse ").strip(), doc, tracked=tracked
+        )
     if expect.startswith("divergence "):
         return Expectation(
             "divergence",
             None,
             doc,
             divergence_doc=expect.removeprefix("divergence ").strip(),
+            tracked=tracked,
         )
     raise AssertionError(f"unknown oracle expectation: {expect}")
 
@@ -382,9 +389,22 @@ def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, avr8sharp) -> Oracl
 
 
 @pytest.mark.parametrize("probe", _probe_files(), ids=lambda path: path.stem)
-def test_probe_matches_cpython_or_refuses_as_documented(probe: Path, tmp_path: Path):
+def test_probe_matches_cpython_or_refuses_as_documented(
+    probe: Path, tmp_path: Path, request: pytest.FixtureRequest
+):
     pymcu = pymcu_bin()
     avr8sharp = import_avr8sharp()
+    expectation = parse_expectation(probe.read_text())
+    if expectation.tracked:
+        # A `# tracked: #N` probe is a known compiler bug: xfail(strict) so the suite stays
+        # green while it is open, and an XPASS -- the bug got fixed and nobody untracked the
+        # probe -- turns back into a hard failure instead of a silent pass.
+        request.node.add_marker(
+            pytest.mark.xfail(
+                reason=f"tracked at {expectation.tracked}; untrack this probe once it is fixed",
+                strict=True,
+            )
+        )
     outcome = evaluate_probe(probe, tmp_path, pymcu, avr8sharp)
     assert outcome.outcome in {"match", "refused"}, (
         f"{outcome.probe}: {outcome.outcome}\n{outcome.first_difference}"

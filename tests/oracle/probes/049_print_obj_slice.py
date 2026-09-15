@@ -1,5 +1,6 @@
 # expect: match
 # doc: docs/language/roadmap.md:37
+# tracked: #392
 class Buf:
     def __init__(self):
         self.data = bytearray(b"abcd")
