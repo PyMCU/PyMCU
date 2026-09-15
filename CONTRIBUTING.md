@@ -43,6 +43,14 @@ in a table, or importing the build backend — passes here and fails on all four
 That has happened three times, so if you write a test that depends on what is installed,
 supply the environment yourself with fakes rather than asking the machine.
 
+### HAL parity and the oracle suite also run in CI
+
+`stdlib-parity` runs `tests/stdlib/test_hal_parity.py` (ast-only, no compiler needed) on every
+push and PR. `oracle` builds `pymcuc` from the current commit and runs `tests/oracle/` against
+the AVR8Sharp emulator when its Python bindings (`avr8sharp`) can be installed from PyPI; that
+package is not published there today (it ships through a private, license-gated feed), so the
+job currently skips the suite and says so in the run summary rather than failing the build.
+
 ### Building on Windows
 
 Step 3 needs three things that are easy to get subtly wrong. All of them were hit

@@ -76,3 +76,115 @@ jobs:
 
       - name: Run driver tests
         run: pytest tests/driver/ -v --tb=short
+
+  stdlib-parity:
+    name: HAL Parity (ast-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest
+
+      # Pure ast/tomllib over lib/src/pymcu, no compiler and no stdlib install
+      # needed. hal_parity.py also cross-checks the circuitpython/micropython
+      # compat layers, but only when those sibling repos are checked out at
+      # the maintainer's local absolute paths (LAYERS in hal_parity.py); on a
+      # CI runner those paths never exist, so that half of the check is
+      # skipped here and this job only covers the in-tree HAL surface.
+      - name: Run HAL parity tests
+        run: pytest tests/stdlib/test_hal_parity.py -v --tb=short
+
+  oracle:
+    name: Oracle Suite (AVR8Sharp)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build pymcuc compiler (this commit)
+        run: dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create venv with the compiler driver + AVR toolchain
+        run: |
+          uv venv .venv
+          uv pip install --python .venv pytest
+          uv pip install --python .venv pymcu-avr-toolchain-wasi
+          uv pip install --python .venv -e lib
+          uv pip install --python .venv -e extensions/pymcu-sdk
+          uv pip install --python .venv -e .
+          uv pip install --python .venv questionary
+
+      # avr8sharp (the AVR8Sharp .NET emulator's Python bindings) is not
+      # published to PyPI: it ships through a private, license-gated NuGet
+      # feed (see ~/Repos/avr8sharp), which CI has no credentials for. Rather
+      # than fail every PR on a dependency this job cannot obtain, probe for
+      # it and skip the suite cleanly, saying so in the job summary. If the
+      # package is ever published to PyPI, this step starts succeeding and
+      # the suite starts running with no further changes needed here.
+      - name: Check whether avr8sharp is installable from PyPI
+        id: avr8sharp
+        run: |
+          if uv pip install --python .venv avr8sharp 2>avr8sharp-install.log; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Oracle suite skipped"
+              echo
+              echo "\`avr8sharp\` is not available on PyPI in this run (it is a"
+              echo "license-gated package distributed via a private feed, not"
+              echo "the public index). The 109-probe oracle suite needs it and"
+              echo "is skipped rather than failing the build."
+              echo
+              echo '<details><summary>pip output</summary>'
+              echo
+              echo '```'
+              tail -n 20 avr8sharp-install.log
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Install pymcu-avr backend (PyPI)
+        if: steps.avr8sharp.outputs.available == 'true'
+        run: uv pip install --python .venv pymcu-avr
+
+      - name: Configure environment
+        if: steps.avr8sharp.outputs.available == 'true'
+        run: |
+          echo "$GITHUB_WORKSPACE/build/bin" >> "$GITHUB_PATH"
+          echo "PYMCU_BIN=$GITHUB_WORKSPACE/.venv/bin/pymcu" >> "$GITHUB_ENV"
+
+      - name: Run oracle suite
+        if: steps.avr8sharp.outputs.available == 'true'
+        run: .venv/bin/python -m pytest tests/oracle -v --tb=short
