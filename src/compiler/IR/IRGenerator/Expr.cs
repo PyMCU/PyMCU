@@ -2572,6 +2572,132 @@ public partial class IRGenerator
         return answer;
     }
 
+    /// <summary>
+    /// The value of a CLASS-level attribute, reached through an instance of the class rather
+    /// than through the class name (PyMCU#268).
+    ///
+    /// `Cls.ATTR` has always worked and `inst.ATTR` never did, on a program CPython runs. The
+    /// instance read builds the flattened name `inst_ATTR`, which nothing registers, and the
+    /// class's own namespace was never consulted -- so a class attribute was reachable by one
+    /// spelling and reported as "has no attribute" by the other.
+    ///
+    /// This is the class-name lookup, asked once per class along the MRO, so the answer is the
+    /// same value by either spelling: the folded constant for an attribute the scan could
+    /// evaluate, the slot for one it could not, and the qualified name for one holding an
+    /// instance (whose fields live under `&lt;name&gt;_&lt;field&gt;`, which is what the
+    /// sub-prefix scan recognises).
+    ///
+    /// Bases are walked because class attributes do not inherit on their own: inheritance
+    /// copies methods and leaves `globals` and `mutableGlobals` keyed under the base's own
+    /// prefix, so `Sub.LIMIT` declared on `Base` is only ever found by asking `Base`.
+    /// </summary>
+    private Val? ClassAttributeThroughReceiver(string? baseName, string member)
+    {
+        if (!TryFindClassAttribute(baseName, member, out _, out var fullName)) return null;
+
+        if (globals.TryGetValue(fullName, out var sym))
+            return sym.IsMemoryAddress
+                ? new MemoryAddress(sym.Value, sym.Type)
+                : new Constant(sym.Value);
+        if (mutableGlobals.TryGetValue(fullName, out var t))
+            return new Variable(fullName, t);
+        // An attribute holding an instance has no value of its own: its fields were constructed
+        // flattened under `<fullName>_<field>`, and the qualified name is what the method
+        // dispatch and the field reads both key on.
+        return new Variable(fullName, DataType.UINT8);
+    }
+
+    /// <summary>
+    /// The class that declares a class-level attribute called <paramref name="member"/>, found
+    /// by walking the receiver's class and its bases, and the key its value, slot or flattened
+    /// fields are registered under.
+    /// </summary>
+    private bool TryFindClassAttribute(
+        string? baseName, string member, out string declaringClass, out string fullName)
+    {
+        declaringClass = "";
+        fullName = "";
+        if (baseName == null || ReceiverClassThroughAliases(baseName) is not { } cls
+            || string.IsNullOrEmpty(cls))
+            return false;
+
+        string? cur = cls;
+        for (int depth = 0; cur != null && depth < 20; depth++)
+        {
+            if (classModuleMap.TryGetValue(cur, out var modPfx))
+            {
+                string key = modPfx + cur + "_" + member;
+                if (globals.ContainsKey(key) || mutableGlobals.ContainsKey(key)
+                    || instanceClasses.ContainsKey(key)
+                    || globals.Keys.Any(k => k.StartsWith(key + "_", StringComparison.Ordinal)))
+                {
+                    declaringClass = cur;
+                    fullName = key;
+                    return true;
+                }
+            }
+            cur = BaseClassOf(cur);
+        }
+        return false;
+    }
+
+    /// <summary>The class a class inherits from, or null. The prefix carries a trailing '_'.</summary>
+    private string? BaseClassOf(string cls)
+        => classBasePrefixes.TryGetValue(cls, out var bp) && !string.IsNullOrEmpty(bp)
+            ? (bp.EndsWith("_", StringComparison.Ordinal) ? bp[..^1] : bp)
+            : null;
+
+    /// <summary>
+    /// The descriptor protocol (PyMCU#360): `inst.attr`, where `attr` is a class attribute whose
+    /// class defines `__get__`, IS `type(inst).attr.__get__(inst, type(inst))`.
+    ///
+    /// The rewrite produces that spelling and lowers it, rather than reimplementing the call:
+    /// the explicit form already compiles, so the implicit one cannot diverge from it. That is
+    /// also why this is asked before the receiver is evaluated -- the rewrite evaluates the
+    /// receiver itself, and one visited twice is emitted twice.
+    ///
+    /// A class attribute whose class defines no `__get__` is not a descriptor and keeps its
+    /// #268 meaning: it is the object, and a method call on it reaches that object's method.
+    /// </summary>
+    private Val? TryDescriptorRead(MemberAccessExpr expr)
+    {
+        if (expr.Object is not VariableExpr recv) return null;
+        if (!TryFindClassAttribute(recv.Name, expr.Member, out var owner, out var fullName))
+            return null;
+        if (!instanceClasses.TryGetValue(fullName, out var attrCls)
+            || !ClassDefinesMethod(attrCls, "__get__"))
+            return null;
+
+        var attr = new MemberAccessExpr(new VariableExpr(owner) { Line = expr.Line }, expr.Member)
+            { Line = expr.Line };
+        return VisitCall(new CallExpr(
+            new MemberAccessExpr(attr, "__get__") { Line = expr.Line },
+            new List<Expression> { expr.Object, new VariableExpr(owner) { Line = expr.Line } })
+            { Line = expr.Line });
+    }
+
+    /// <summary>
+    /// The write half of the descriptor protocol (PyMCU#360): `inst.attr = v`, where `attr` is a
+    /// class attribute whose class defines `__set__`, IS `type(inst).attr.__set__(inst, v)`.
+    /// True when the assignment was rewritten and lowered, so the caller must not lower it again.
+    /// </summary>
+    private bool TryDescriptorWrite(MemberAccessExpr target, Expression valueExpr)
+    {
+        if (target.Object is not VariableExpr recv) return false;
+        if (!TryFindClassAttribute(recv.Name, target.Member, out var owner, out var fullName))
+            return false;
+        if (!instanceClasses.TryGetValue(fullName, out var attrCls)
+            || !ClassDefinesMethod(attrCls, "__set__"))
+            return false;
+
+        var attr = new MemberAccessExpr(new VariableExpr(owner) { Line = target.Line }, target.Member)
+            { Line = target.Line };
+        VisitCall(new CallExpr(
+            new MemberAccessExpr(attr, "__set__") { Line = target.Line },
+            new List<Expression> { target.Object, valueExpr }) { Line = target.Line });
+        return true;
+    }
+
     // True when this reads a @property getter on a known instance: the receiver is a plain
     // name bound to a class that registers <member> as a getter.
     private bool IsPropertyGetterRead(MemberAccessExpr expr)
@@ -2598,6 +2724,10 @@ public partial class IRGenerator
         // prefix, so the whole dotted path IS the name (#319). It is how CircuitPython spells
         // the UART parity: `busio.UART.Parity.ODD`, which adds a module hop in front.
         if (TryDottedClassConstant(expr) is { } dottedConst) return dottedConst;
+
+        // The descriptor protocol (#360). Asked here, before the receiver is evaluated, because
+        // the rewrite evaluates it itself and a receiver visited twice is emitted twice.
+        if (TryDescriptorRead(expr) is { } descriptorVal) return descriptorVal;
 
         // A single-field instance handed back by a factory IS its one field: the call returns
         // the field's value in a register and the name is bound to that (RFC 0001 Model B
@@ -2987,6 +3117,12 @@ public partial class IRGenerator
             // whose subject nothing writes, and degrade the refusal in its default arm to a
             // warning -- so a pin with no channel behind it read channel 0 instead of being
             // refused.
+            // A CLASS-level attribute is a name the instance has and the flattened key does not
+            // carry, so it is asked for before the read is called undefined (#268). `Cls.ATTR`
+            // already answered; this is the same answer through an instance of Cls.
+            if (ClassAttributeThroughReceiver(baseName, expr.Member) is { } classAttr)
+                return classAttr;
+
             if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
                 && !IsKnownMethodName(expr.Member)
                 && !MemberReachableFromReceiver(baseName, expr.Member, out var recvCls, out var recvMembers))

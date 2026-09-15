@@ -639,6 +639,14 @@ public partial class IRGenerator
                 + "indexable at run time.", listMem);
         }
 
+        // The descriptor protocol on the write side (#360): `inst.attr = v`, where `attr` is a
+        // class attribute whose class defines `__set__`, IS `type(inst).attr.__set__(inst, v)`.
+        // Asked before the right-hand side is evaluated, because the rewrite passes it as an
+        // expression and a value visited twice is emitted twice.
+        if (stmt.Target is MemberAccessExpr descTarget
+            && TryDescriptorWrite(descTarget, stmt.Value))
+            return;
+
         Val value = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
