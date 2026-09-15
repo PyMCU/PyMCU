@@ -45,7 +45,9 @@ from rich.console import Console
 
 from ..core.library_index import (
     BUILD_OK,
+    UpstreamSubmission,
     build_index,
+    read_libraries_file,
     write_index,
 )
 
@@ -92,14 +94,9 @@ def _today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _read_list(path: Path) -> list[str]:
-    """One distribution per line; blank lines and # comments ignored."""
-    names: list[str] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            names.append(line)
-    return names
+def _report_libraries_file_problems(problems: list[str]) -> None:
+    for problem in problems:
+        console.print(f"[red]{problem}[/red]")
 
 
 def _prepare_venv(distributions: list[str], venv: Path, *, pre: bool) -> bool:
@@ -161,13 +158,22 @@ def index_build(
         console.print("[red]The pymcu executable is not on PATH.[/red]")
         raise typer.Exit(code=1)
 
+    upstream_submissions: list[UpstreamSubmission] = []
+    repo_root: Path | None = None
     if libraries_file is not None:
         if not libraries_file.exists():
             console.print(f"[red]{libraries_file} not found.[/red]")
             raise typer.Exit(code=1)
-        distributions = _read_list(libraries_file)
-        console.print(f"[bold]Preparing[/bold] {len(distributions)} libraries in {venv} ...")
-        _prepare_venv(distributions, venv, pre=pre)
+        distributions, upstream_submissions, problems = read_libraries_file(libraries_file)
+        _report_libraries_file_problems(problems)
+        repo_root = libraries_file.parent
+
+        total = len(distributions) + len(upstream_submissions)
+        console.print(f"[bold]Preparing[/bold] {total} libraries in {venv} ...")
+        _prepare_venv(
+            [*distributions, *(sub.distribution for sub in upstream_submissions)],
+            venv, pre=pre,
+        )
 
     if not venv.exists():
         console.print(f"[red]{venv} does not exist. Pass --from to create it.[/red]")
@@ -187,7 +193,8 @@ def index_build(
 
     console.print("[bold]Measuring[/bold] (compiling each example per architecture) ...")
     index, problems = build_index(
-        venv, pymcu=pymcu, compiler_version=_compiler_version(venv), generated=_today()
+        venv, pymcu=pymcu, compiler_version=_compiler_version(venv), generated=_today(),
+        upstream=upstream_submissions, repo_root=repo_root,
     )
 
     for problem in problems:
@@ -216,6 +223,11 @@ def index_build(
 @index_app.command("verify")
 def index_verify(
     venv: Path = typer.Option(Path(".venv"), "--venv", help="Environment to measure."),
+    libraries_file: Optional[Path] = typer.Option(
+        None, "--from",
+        help="File listing one distribution per line. Only needed to also verify the "
+             "upstream entries installed in --venv: a manifest library declares its own "
+             "provides/layer, but an upstream distribution does not."),
     as_json: bool = typer.Option(False, "--json", help="Emit the measurement as JSON."),
 ):
     """Measure the installed libraries without writing an index. Fails on any warning."""
@@ -224,8 +236,19 @@ def index_verify(
         console.print("[red]The pymcu executable is not on PATH.[/red]")
         raise typer.Exit(code=1)
 
+    upstream_submissions: list[UpstreamSubmission] = []
+    repo_root: Path | None = None
+    if libraries_file is not None:
+        if not libraries_file.exists():
+            console.print(f"[red]{libraries_file} not found.[/red]")
+            raise typer.Exit(code=1)
+        _, upstream_submissions, problems = read_libraries_file(libraries_file)
+        _report_libraries_file_problems(problems)
+        repo_root = libraries_file.parent
+
     index, problems = build_index(
-        venv, pymcu=pymcu, compiler_version=_compiler_version(venv), generated=_today()
+        venv, pymcu=pymcu, compiler_version=_compiler_version(venv), generated=_today(),
+        upstream=upstream_submissions, repo_root=repo_root,
     )
 
     if as_json:
