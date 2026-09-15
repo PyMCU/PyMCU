@@ -672,6 +672,28 @@ public partial class IRGenerator
         if (callee == "gc_alloc") return EmitGcAllocBuiltin(expr);
         if (callee == "asm") return EmitAsmBuiltin(expr);
 
+        // `isinstance(e, X)` on a name bound by `except ... as` has an answer: the dispatcher
+        // already holds the code of the live exception, so the test is the comparison it
+        // performs, against a different constant (#369). Ahead of the builtin refusal table,
+        // which is right about every OTHER receiver -- a value's type is fixed at compile time
+        // and there is nothing left to ask.
+        if (callee == "isinstance" && expr.Args.Count == 2
+            && expr.Args[0] is VariableExpr isinstRecv
+            && TryGetExceptionBinding(isinstRecv.Name, out var isinstBinding))
+        {
+            if (expr.Args[1] is not VariableExpr wantedType)
+                throw UserError(
+                    $"isinstance({isinstRecv.Name}, ...) needs an exception type written as a "
+                    + "name, because the test is a comparison against that type's code.",
+                    expr.Args[1]);
+
+            var isinstResult = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal,
+                            new Variable(isinstBinding.CodeVar, DataType.UINT8),
+                            ResolveBinding(wantedType.Name, wantedType), isinstResult));
+            return isinstResult;
+        }
+
         if (callee == "print") return EmitPrintBuiltin(expr);
 
         if (callee == "ptr" && intrinsicNames.Contains("ptr"))
@@ -5269,6 +5291,24 @@ public partial class IRGenerator
         return writeStrFn;
     }
 
+    /// The writer that walks a flash string from a pointer held at RUN TIME.
+    ///
+    /// Not the same answer as ResolveWriteStrFn, and the difference is the whole reason this
+    /// exists: that one prefers `print_str`, which is `@inline` and binds its `const[str]`
+    /// parameter to a literal at compile time, so it has no symbol and no pointer. The
+    /// exception message is an address decided by whichever raise ran, so it needs the shared
+    /// subroutine `uart_write_str`, which already reads flash through a register pair (#369).
+    private string ResolveRuntimeWriteStrFn()
+    {
+        string fn = ResolveCallee("uart_write_str");
+        if (fn != "uart_write_str") return fn;
+        foreach (var name in functionParams.Keys)
+            if (name.EndsWith("uart_write_str", StringComparison.Ordinal)) return name;
+        foreach (var name in functionReturnTypes.Keys)
+            if (name.EndsWith("uart_write_str", StringComparison.Ordinal)) return name;
+        return fn;
+    }
+
     private string ResolveFloatWriteFn()
     {
         string floatWriteFn = ResolveCallee("uart_write_float");
@@ -5879,6 +5919,17 @@ public partial class IRGenerator
 
         void EmitPrintArg(Expression arg)
         {
+            // The message of an exception bound by `except ... as`, in any of its three
+            // spellings. The address is a run-time word rather than a literal, and the shared
+            // write_str subroutine already walks flash from a pointer in registers, so this is
+            // the same call print makes for every other string with a different operand (#369).
+            RefuseBadArgsIndex(arg);
+            if (TryExceptionMessage(arg, out var exnMsgPtr))
+            {
+                Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
+                return;
+            }
+
             // `print(chr(n))` is a character, not the number n. chr() yields the byte itself
             // (a char IS its byte on this target), which is right internally and wrong here:
             // the value went to the decimal writer, so print(chr(65)) sent "65" instead of "A".

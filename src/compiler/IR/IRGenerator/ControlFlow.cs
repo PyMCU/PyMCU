@@ -1960,6 +1960,21 @@ public partial class IRGenerator
                 ? new Variable(handlerCodeStack[^1], DataType.UINT8)
                 : new Constant(0);
 
+        // The message, alongside the code. One store of one word: the flash address of the
+        // literal, which the same subroutine that prints every other string already walks. It
+        // is emitted only when some handler in the program binds a name, so a program without
+        // `as e` is unchanged to the byte (#369).
+        //
+        // A bare re-raise writes nothing: the word still holds the message of the exception
+        // being handled, which is the one being re-raised.
+        if (programBindsExceptionObject && !string.IsNullOrEmpty(stmt.ErrorType)
+            && !string.IsNullOrEmpty(resolvedMessage))
+        {
+            DeclareExceptionMessageVar();
+            Emit(new Copy(new FlashStrAddr(InternStringAsFlash(resolvedMessage!)),
+                          new Variable(ExceptionMessageVar, DataType.UINT16)));
+        }
+
         // Inside a try body in the same function -> deliver to the local catch
         // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
         string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
@@ -2110,8 +2125,25 @@ public partial class IRGenerator
             // the right exception. Both are popped before the explicit finally on the normal exit.
             if (pushedFinally) finallyStack.Add(stmt.Finally!);
             handlerCodeStack.Add(exnCodeVar);
+
+            // `except X as e`: the name is in scope for this handler body and nowhere else, so
+            // a read of it afterwards is an ordinary undefined name rather than a stale object
+            // (#369). A nested try binds its own name over this one and restores it on the way
+            // out, which is what lets two bindings be live at once.
+            string? bound = stmt.BoundName(i);
+            string boundKey = bound == null ? "" : QualifyExceptionBinding(bound);
+            bool hadOuter = bound != null && exceptionBindings.TryGetValue(boundKey, out var outerBinding);
+            var savedOuter = hadOuter ? exceptionBindings[boundKey] : default;
+            if (bound != null) exceptionBindings[boundKey] = (exnCodeVar, exnType);
+
             foreach (var s in handlerBody)
                 VisitStatement(s);
+
+            if (bound != null)
+            {
+                if (hadOuter) exceptionBindings[boundKey] = savedOuter;
+                else exceptionBindings.Remove(boundKey);
+            }
             handlerCodeStack.RemoveAt(handlerCodeStack.Count - 1);
             if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
 
@@ -2138,6 +2170,86 @@ public partial class IRGenerator
             Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
 
         Emit(new Label(afterLabel));
+    }
+
+
+    /// The key an `except ... as` name is held under, qualified the way every other local is,
+    /// so a name bound in one @inline expansion is not the name bound in another.
+    private string QualifyExceptionBinding(string name) =>
+        !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
+        : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
+        : name;
+
+    /// The binding an `except ... as` name is currently in scope under, if any. The lookup
+    /// walks the same qualifications ResolveNameKey does, because the name may be read from
+    /// inside an expansion nested under the handler that bound it.
+    private bool TryGetExceptionBinding(string name, out (string CodeVar, string ExnType) binding)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && exceptionBindings.TryGetValue(currentInlinePrefix + name, out binding)) return true;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && exceptionBindings.TryGetValue(currentFunction + "." + name, out binding)) return true;
+        return exceptionBindings.TryGetValue(name, out binding);
+    }
+
+
+    /// Whether an expression reads the MESSAGE of an exception bound by `except ... as`, and
+    /// the word holding its flash address if so.
+    ///
+    /// Three spellings, one answer: the bound name itself (`print(e)`), `str(e)`, and
+    /// `e.args[0]`, which is the one adafruit_dht's simpletest writes. They read the same word
+    /// because there is one message and one live exception; `args` is a one-element sequence
+    /// by construction, so any index but 0 is refused rather than folded to the same thing.
+    internal bool TryExceptionMessage(Expression e, out Val pointer)
+    {
+        pointer = new Constant(0);
+        string? name = e switch
+        {
+            VariableExpr v => v.Name,
+            CallExpr { Callee: VariableExpr { Name: "str" }, Args: [VariableExpr sv] } => sv.Name,
+            IndexExpr
+            {
+                Target: MemberAccessExpr { Object: VariableExpr av, Member: "args" },
+                Index: IntegerLiteral { Value: 0 },
+            } => av.Name,
+            _ => null,
+        };
+        if (name == null || !TryGetExceptionBinding(name, out _)) return false;
+
+        DeclareExceptionMessageVar();
+        pointer = new Variable(ExceptionMessageVar, DataType.UINT16);
+        return true;
+    }
+
+    /// `e.args[<not 0>]`, which would otherwise read the one message under another index.
+    internal void RefuseBadArgsIndex(Expression e)
+    {
+        if (e is not IndexExpr
+            {
+                Target: MemberAccessExpr { Object: VariableExpr av, Member: "args" },
+                Index: var idx,
+            }) return;
+        if (!TryGetExceptionBinding(av.Name, out _)) return;
+        if (idx is IntegerLiteral { Value: 0 }) return;
+
+        throw UserError(
+            $"'{av.Name}.args' holds one item, the message written at the raise, so "
+            + $"'{av.Name}.args[0]' is the only index it has.", e);
+    }
+
+
+    /// The message word is a MODULE-LEVEL global, and saying so is what keeps it alive.
+    ///
+    /// The store happens in the function that raises and the read in the function that
+    /// handles, which are never the same function. A word the optimizer does not know is
+    /// global is one whose store is dead in the only function that performs it, so the
+    /// address was written and then deleted, and `print(e)` printed whatever the word held --
+    /// nothing. The strings stayed in flash, unreferenced, which is what the firmware looked
+    /// like: correct apart from the one instruction that mattered.
+    private void DeclareExceptionMessageVar()
+    {
+        variableTypes[ExceptionMessageVar] = DataType.UINT16;
+        mutableGlobals[ExceptionMessageVar] = DataType.UINT16;
     }
 
     private void EmitFinallyBody(TryStmt stmt)

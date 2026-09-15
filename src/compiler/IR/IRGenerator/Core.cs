@@ -416,6 +416,12 @@ public partial class IRGenerator
         // Always bound, so a HAL can read it without the time base in the program.
         constantVariables["__TIMEBASE__"] = config.Timebase ? 1 : 0;
 
+        // Does ANY handler in the program bind a name with `as`? A raise records the address
+        // of its message only when one does, so a program without the form compiles to the
+        // bytes it always did. The answer is whole-program and has to be settled before the
+        // first raise is lowered, which is why it is taken here and not at each raise (#369).
+        programBindsExceptionObject = ProgramBindsExceptionObject(mainAst, importedModules.Values);
+
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes.
         PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst);
@@ -1697,6 +1703,25 @@ public partial class IRGenerator
             // this sits AFTER the module-guard check above, which throws for everyone.
             if (probe) return null;
 
+            // A name bound by `except ... as` IS defined, by the handler it is read inside, so
+            // the sentence below would be false about it and would send the reader looking for
+            // a missing assignment. What is missing is not the binding, it is a meaning for
+            // this use of it: the object is bounded, and naming the four things it supports is
+            // what ends the search (#369).
+            if (TryGetExceptionBinding(name, out var exnBinding))
+            {
+                // `except (A, B) as e` and a bare `except: as`-less clause leave no single type
+                // to name, so the example is written with the one the handler declared only
+                // when there is exactly one.
+                string oneType = exnBinding.ExnType.Contains(',') || exnBinding.ExnType.Length == 0
+                    ? "" : $", and isinstance({name}, {exnBinding.ExnType})";
+                throw UserError(
+                    $"'{name}' is the exception this handler caught, and the only things it "
+                    + $"carries are its message and its type: print({name}), str({name}), "
+                    + $"{name}.args[0]{oneType}. There is no exception object to store, "
+                    + "pass on, or keep past the handler.", at);
+            }
+
             throw UserError(
                 $"name '{name}' is not defined -- it is read here but never assigned, " +
                 "imported, or received as a parameter" + StarImportHint(name), at);
@@ -2048,6 +2073,56 @@ public partial class IRGenerator
     }
 
     /// <summary>The interned id a string literal is lowered to (see VisitExpression).</summary>
+
+    /// Whether any `except ... as` appears anywhere in the program, the entry module and every
+    /// import alike. A handler in a library the program never calls still counts: the decision
+    /// is taken before dead code is eliminated, so it errs towards emitting the store rather
+    /// than towards a read of a word nothing ever wrote.
+    private static bool ProgramBindsExceptionObject(
+        PyMCU.Frontend.ProgramNode main,
+        IEnumerable<PyMCU.Frontend.ProgramNode> imported)
+    {
+        bool found = false;
+
+        void Walk(PyMCU.Frontend.Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case PyMCU.Frontend.TryStmt t:
+                    if (t.HandlerNames.Any(n => n != null)) { found = true; return; }
+                    foreach (var st in t.Body) Walk(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
+                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
+                    return;
+                case PyMCU.Frontend.Block b: foreach (var st in b.Statements) Walk(st); return;
+                case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); return;
+                case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); return;
+                case PyMCU.Frontend.IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var br in i.ElifBranches) Walk(br.Item2);
+                    Walk(i.ElseBranch);
+                    return;
+                case PyMCU.Frontend.WhileStmt w: Walk(w.Body); return;
+                case PyMCU.Frontend.ForStmt fo: Walk(fo.Body); return;
+                case PyMCU.Frontend.MatchStmt m:
+                    foreach (var br in m.Branches) Walk(br.Body);
+                    return;
+            }
+        }
+
+        void WalkProgram(PyMCU.Frontend.ProgramNode p)
+        {
+            foreach (var st in p.GlobalStatements) Walk(st);
+            foreach (var fn in p.Functions) Walk(fn.Body);
+        }
+
+        WalkProgram(main);
+        foreach (var m in imported) WalkProgram(m);
+        return found;
+    }
+
     private int StringIdOf(string text)
     {
         if (text.Length == 1) return text[0];

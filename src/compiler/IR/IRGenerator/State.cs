@@ -462,6 +462,27 @@ public partial class IRGenerator
     private List<string> handlerCodeStack = new();
     private int exnCodeId = 0;
 
+    // ── the bounded exception object (#369) ──────────────────────────────────
+    //
+    // One exception is live at a time in this model, which is what lets `except X as e` bind
+    // an object without allocating one. The object is two static facts: the type code the
+    // dispatcher already holds, and the flash address of a string-literal message.
+
+    /// Whether ANY handler in the program binds a name. The message store at each raise is
+    /// emitted only when it does, so a program with no `as e` compiles to the bytes it always
+    /// did -- the whole zero-cost claim rests on this being a whole-program answer, decided
+    /// before the first raise is lowered rather than at each one.
+    private bool programBindsExceptionObject;
+
+    /// The module-level word holding the flash address of the live exception's message.
+    /// One word, because one exception is live at a time.
+    internal const string ExceptionMessageVar = "__exn_msg";
+
+    /// Names bound by an enclosing `except ... as`, to the per-try variable holding the code
+    /// and to the handler's declared type. A name is in scope only while its handler body is
+    /// being lowered, so a read of it after the handler is an ordinary undefined name.
+    private Dictionary<string, (string CodeVar, string ExnType)> exceptionBindings = new();
+
     // Derived, not copied. BuiltinExceptionNames' own docstring says a second copy of this
     // list would eventually disagree with it, and this WAS that second copy: same six names,
     // written out again, in a different form, in a file nobody reading that warning opens.
