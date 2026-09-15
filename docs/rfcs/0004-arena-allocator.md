@@ -3,11 +3,14 @@
 - Status: **PHASE 1 IMPLEMENTED and measured** (module-level and `__init__`-once
   allocation, the once rule, `MemoryError`, observability, AVR only -- section 7). Not
   implemented: zero-copy slice/`memoryview` views over a runtime-sized buffer, passing
-  one to a function's `bytearray` parameter, a general call-site-count proof for
-  allocation inside a non-inlined function or method, and indexing an arena buffer two
-  `@inline` levels deep. All named as follow-up work in section 6, alongside two
-  pre-existing gaps this work found but does not fix (constructing a `bytearray` as a
-  per-instance field; reading a plain module global as `module.name`).
+  one to a function's `bytearray` parameter (PyMCU#414), a general call-site-count proof
+  for allocation inside a non-inlined function or method, and indexing an arena buffer
+  two `@inline` levels deep (PyMCU#415). All named as follow-up work in section 6,
+  alongside pre-existing gaps this work found but does not fix: constructing a
+  `bytearray` as a per-instance field; reading a plain module global as `module.name`;
+  `ptr(some_array)` silently reading the array's first byte instead of computing its
+  address or refusing (PyMCU#413, filed as wrongcode); and `__TIMEBASE__` never being
+  bound to anything but its shipped `0` (PyMCU#416).
 - Date: 2026-09-15
 - Affects: `lib/src/pymcu/arena.py` (new),
   `extensions/pymcu-sdk/csharp/Common/BuiltinExceptionNames.cs`,
@@ -248,7 +251,10 @@ architecture on any other target (`arch != "avr" && arch != ""`), pointing at
   are real new IR surface, not a small addition, and left for a follow-up RFC increment;
   the diagnostics and tests below do not claim either works. What DOES work today is
   forwarding through `@inline` expansion, since that is pure textual substitution with no
-  pointer involved -- the parameter becomes an alias for the same offset variable.
+  pointer involved -- the parameter becomes an alias for the same offset variable. Filed
+  as PyMCU#414, and PyMCU#413 for the `ptr(some_array)` silent-wrongcode bug this found
+  along the way (it must refuse or compute the address; reading the array's first byte
+  silently is neither).
 - **Indexing an arena buffer two levels of `@inline` deep does not resolve.**
   `buf[i]` / `buf[i] = v` rewrites to a call into `read8()`/`write8()`, themselves
   `@inline`, so indexing from inside an already-inlined context nests a SECOND `@inline`
@@ -265,14 +271,18 @@ architecture on any other target (`arch != "avr" && arch != ""`), pointing at
   `__init__` -- it allocates and stores the offset in a plain field, which is enough to
   exercise the once rule this RFC is actually about, and is a real, if narrower,
   demonstration of "allocate inside `__init__`, use the buffer afterward through the
-  stored offset."
+  stored offset." Filed as PyMCU#415.
 - **No general call-site-count proof.** A `bytearray(n)` inside a plain (non-`@inline`,
   non-`__init__`) function is refused unconditionally today, even when the author can see
   by hand that the function has exactly one call site. Proving that in general needs a
   call-graph pass this phase does not add (see section 2).
 - **`__TIMEBASE__`'s binding gap**, found while researching how a board constant is
   supposed to reach the stdlib, is unrelated to the arena and out of scope here; noted so
-  it is not mistaken for something this RFC relied on and quietly fixed.
+  it is not mistaken for something this RFC relied on and quietly fixed. Confirmed with a
+  grep over BOTH `src/compiler` and `lib/src/pymcu` (the only stdlib reference is the one
+  reader in the PWM HAL; nothing anywhere sets `__TIMEBASE__` away from its shipped `0`
+  literal, so the PWM/Timer0 refusal the HAL comment documents can never fire). Filed as
+  PyMCU#416.
 - **Constructing a `bytearray` as a per-instance field does not compile at all yet**,
   found while testing the `__init__` case this RFC's once rule is built around --
   `self.buf: bytearray = bytearray(4)` and the unannotated `self.buf = bytearray(4)` both
