@@ -1046,7 +1046,17 @@ public partial class IRGenerator
         if (value is Variable vv2 && target is Variable tv2)
         {
             variableAliases[tv2.Name] = vv2.Name;
-            valueTrackingAliases.Add(tv2.Name);
+            // An alias to an INSTANCE is structural, not value-tracking: WHICH OBJECT the name
+            // stands for does not depend on which path ran, so it has to survive a label. Filed
+            // as value-tracking, it was dropped by the first label a loop emits, and
+            // `wd = microcontroller.watchdog` followed by `wd.feed()` inside a `while` became a
+            // method call on an integer -- while the same two lines with no loop between them
+            // compiled (#259). That binding is how every compat-layer namespace is spelled:
+            // `alarm.pin`, `alarm.time`, `microcontroller.cpu`, `microcontroller.watchdog`.
+            //
+            // A write to either name still clears it, through InvalidateAliasesForWrite.
+            if (ReceiverClassThroughAliases(vv2.Name) is null)
+                valueTrackingAliases.Add(tv2.Name);
         }
         else if (value is Temporary tSrc && target is Variable tDst)
         {
