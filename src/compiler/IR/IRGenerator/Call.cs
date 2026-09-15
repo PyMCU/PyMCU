@@ -1638,6 +1638,19 @@ public partial class IRGenerator
         bool offsetMatchesSelf = paramOffset == 0
             || (func.Params.Count > 0 && func.Params[0].Name == "self");
 
+        // And CORRECTED, not only reported. A module function reached through a dotted name can
+        // be handed the receiver offset without having a `self` to receive it, and then the
+        // first argument was bound to the SECOND parameter: `alarm.sleep_until_alarms(ta)` left
+        // `alarm0` bound to nothing, and the body's first read of it was reported as a name that
+        // is not defined -- naming a parameter written in the signature two lines above, in a
+        // library file the user never opened (#381).
+        //
+        // It took a name collision to reach: the module is a receiver here only because
+        // something filed `alarm` as an instance, which a user's own `import time` against the
+        // layer's module-level `time = _TimeAlarmModule()` is enough to do. The offset is wrong
+        // whatever put it there, and a callee with no `self` is the one fact that settles it.
+        if (!offsetMatchesSelf) paramOffset = 0;
+
         // `*args` and `**kwargs` stand for what the call site wrote BEYOND the declaration.
         // They take no part in the arity count, they are never bound by name, and they are
         // never "missing": an empty call gives them an empty sequence and an empty mapping
