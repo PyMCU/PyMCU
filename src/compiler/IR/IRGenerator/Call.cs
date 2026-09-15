@@ -2263,10 +2263,35 @@ public partial class IRGenerator
                 }
 
                 if (defaultVal is Constant cdf2) constantVariables[paramName] = cdf2.Value;
+                else if (defaultVal is FloatConstant fdf)
+                {
+                    // A FLOAT default binds the way a float ARGUMENT does (#374). The branch
+                    // below emits a Copy and registers nothing, and the definedness check reads
+                    // the tables rather than the instructions, so `timeout: float = 0.1` on a
+                    // constructor the call omits was reported as a name that is "read here but
+                    // never assigned, imported, or received as a parameter" -- inside the very
+                    // function that declares it. The same parameter with an INT default bound,
+                    // and so did the same float default passed explicitly, which is what said
+                    // the gap was this one path and not floats or defaults.
+                    // Recorded the way a float KEYWORD argument is: as a compile-time float and
+                    // nothing else. Giving it a variableTypes entry as well would make the read
+                    // resolve to a run-time slot nothing writes, which is how the field came out
+                    // 0.0 rather than 0.1.
+                    floatConstantVariables[paramName] = fdf.Value;
+                    // The same four clears the explicit float ARGUMENT does, and for the
+                    // documented reason: the key is the inline prefix plus the name, reused by
+                    // every expansion at the same depth, so anything an earlier call site left
+                    // under it answers for this one.
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    noneValuedNames.Remove(paramName);
+                }
                 else
                 {
                     DataType paramType = DataTypeExtensions.StringToDataType(func.Params[i].Type);
                     Emit(new Copy(defaultVal, new Variable(paramName, paramType)));
+                    variableTypes[paramName] = paramType;
                 }
             }
             else
@@ -6014,6 +6039,27 @@ public partial class IRGenerator
             // (microcontroller.nvm[0:4]): CPython-style bytearray(b'...') repr. As a
             // scalar the array VARIABLE streamed through decimal_u8 and printed garbage.
             if (TryEmitByteArrayReprArg(writeStrFn, arg)) return;
+
+            // `print((a, b))` is the tuple CPython prints, not a tuple the program builds
+            // (#375). Adafruit's examples pass one on purpose, because the Mu plotter reads a
+            // printed tuple, and `hcsr04_simpletest.py` prints `(sonar.distance,)`.
+            //
+            // It never has to exist at run time: the text is `(`, the elements with `, `
+            // between them, and `)` -- with the ONE-ELEMENT form keeping the trailing comma,
+            // which is how CPython tells `(12.5,)` from `(12.5)`. The advice the old refusal
+            // gave, a fixed list, does not print the same text either.
+            if (arg is TupleExpr printTup)
+            {
+                EmitStreamStr(writeStrFn, "(");
+                for (int ti = 0; ti < printTup.Elements.Count; ++ti)
+                {
+                    if (ti > 0) EmitStreamStr(writeStrFn, ", ");
+                    EmitPrintArg(printTup.Elements[ti]);
+                }
+                if (printTup.Elements.Count == 1) EmitStreamStr(writeStrFn, ",");
+                EmitStreamStr(writeStrFn, ")");
+                return;
+            }
 
             RejectInstanceInterpolation(arg);
             // The declared width of a NAME travels with its value, because a folded constant no

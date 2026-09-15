@@ -1525,6 +1525,14 @@ public partial class IRGenerator
             ? currentInlinePrefix + name
             : currentFunction + "." + name;
 
+        // A name bound to a compile-time FLOAT answers with the float, the way a name bound to
+        // a compile-time integer answers with the integer one line below (#374). It did not, so
+        // the read fell through to a run-time slot nothing writes and `self._timeout = timeout`
+        // stored 0.0 for a parameter whose default says 0.1. Asked BEFORE the integer map,
+        // which never holds a float.
+        if (floatConstantVariables.TryGetValue(finalLocalName, out double finFloat))
+            return new FloatConstant(finFloat);
+
         if (constantVariables.TryGetValue(finalLocalName, out int finVal))
         {
             // A name bound to a one-character string is in BOTH maps: the numeric one holds its
@@ -1769,6 +1777,10 @@ public partial class IRGenerator
             if (constantVariables.ContainsKey(key)) return true;
             if (constantAddressVariables.ContainsKey(key)) return true;
             if (strConstantVariables.ContainsKey(key)) return true;
+            // A name bound ONLY as a float constant is bound (#374). Every other binding table
+            // is asked here and this one was not, so a parameter whose float default the call
+            // omitted was reported as never received -- inside the function that declares it.
+            if (floatConstantVariables.ContainsKey(key)) return true;
             if (mutableGlobals.ContainsKey(key)) return true;
             if (globals.ContainsKey(key)) return true;
             if (variableAliases.ContainsKey(key)) return true;
