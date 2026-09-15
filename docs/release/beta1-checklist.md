@@ -65,7 +65,26 @@ with `skip-existing: true` ([[release-a3-packaging-gotchas]] gotcha 2).
 Confirm on PyPI: `pymcu-compiler`, `pymcu-stdlib`, `pymcu-sdk` all show
 `0.1.0b1`.
 
-## 2. Publish `pymcu-avr`
+## 2. Push `pymcu-libraries` main
+
+Do this immediately after step 1 confirms on PyPI, not after the whole
+train. The library index build measures compatibility by actually compiling
+against the **published PyPI compiler**, so it needs `0.1.0b1` live first,
+and every other step below (the smoke test's `pymcu install
+adafruit-circuitpython-hcsr04`, the post-release index check) depends on
+this push having already regenerated `index.json`.
+
+```bash
+cd ~/Repos/pymcu-libraries
+git status --short   # confirm clean; local main already has the upstream
+                      # adafruit_hcsr04 entry (commit ac81c44) unpushed
+git push origin main   # USER ACTION
+```
+Confirm the deploy workflow regenerates and serves the new index:
+`curl https://libraries.pymcu.org/index.json` should show `"compiler":
+"0.1.0b1"` and an `adafruit_hcsr04` / `adafruit-circuitpython-hcsr04` entry.
+
+## 3. Publish `pymcu-avr`
 
 ```bash
 cd ~/Repos/pymcu-avr
@@ -77,7 +96,7 @@ GitHub Releases → new release, tag `v0.1.0b1`, **Pre-release**, publish.
 Confirm `pymcu-avr==0.1.0b1` resolves `pymcu-sdk>=0.1.0b1` cleanly (it will
 now that step 1 is live).
 
-## 3. Publish `pymcu-circuitpython`
+## 4. Publish `pymcu-circuitpython`
 
 ```bash
 cd ~/Repos/pymcu-circuitpython
@@ -87,7 +106,29 @@ git push origin main --tags   # USER ACTION
 ```
 GitHub Releases → new release, tag `v0.1.0b1`, **Pre-release**, publish.
 
-## 4. Smoke test from a clean Mac, PyPI only
+## 5. Flip the website copy from alpha to beta
+
+Branch `copy-tone-and-figures` in `~/Repos/website-copy` (9 commits on top
+of `bc471f0`, not pushed) already carries the tone and figures rewrite.
+Six "alpha" strings in that branch still need to change to "beta" on
+release day itself, since they describe the *project's* maturity, not a
+backend's (ARM/PIC/RISC-V stay "alpha" in every one of these; only the
+project-wide framing changes):
+
+- `src/pages/index.astro:30` tagline `"Public alpha, out now on PyPI"`
+- `src/pages/index.astro:104` `"as alpha backends"` (ARM/PIC/RISC-V: only the surrounding context changes, they stay alpha)
+- `src/pages/index.astro:240` FAQ `"PyMCU is in public alpha"` and `"(alpha backends)"`
+- `src/pages/index.astro:260` FAQ `"are alpha"` (ARM/PIC stay alpha)
+- `src/pages/about.astro:62` `"but are alpha"` (idem)
+- `src/pages/about.astro:83` heading `"Alpha, and honest about it"` and body `"Version 0.1.0a10"`
+
+Do this as one pass, after step 4, once all three beta packages actually
+show `0.1.0b1` on PyPI. Do not touch the `pymcu-alpha-5.md` post,
+`HeritageCredits`, `RoadmapArchitectures`, or `Countdown`: those are out of
+scope for this flip. Push `copy-tone-and-figures` (or merge it) only after
+this pass; it is still unpushed as of this writing.
+
+## 6. Smoke test from a clean Mac, PyPI only
 
 Do this on a machine (or a throwaway venv) with **no editable installs and
 no local wheel cache**: see [[release-a3-packaging-gotchas]] gotcha 1. An
@@ -117,16 +158,11 @@ pymcu flash          # only with an Uno attached; on a virgin Mac this is
                       # hardware and a clean Mac are available.
 ```
 
-**Blocker found while writing this checklist, 2026-09-15**: `curl
-https://libraries.pymcu.org/index.json` today lists **only 2 libraries**
-(`dht`, `neopixel`) generated `2026-09-14` against compiler `0.1.0a10`.
-There is **no `adafruit-circuitpython-hcsr04` (or any upstream-mirrored)
-entry**, so the `pymcu install adafruit-circuitpython-hcsr04` step above
-will fail with "not found" until the index carries it. This needs the
-upstream-mirroring work to land and the index to regenerate before the
-smoke test above can pass as written. Flag this to the user before release.
+This step needs step 2 (the `pymcu-libraries` push) done first, or `pymcu
+install adafruit-circuitpython-hcsr04` fails with "not found": the index it
+queries does not carry that entry until the push and regenerate land.
 
-## 5. Rollback plan
+## 7. Rollback plan
 
 If a published wheel is bad:
 1. **Do not delete the PyPI release** (PyPI does not allow re-uploading the
@@ -137,25 +173,27 @@ If a published wheel is bad:
    and recreate the GitHub Release at the same tag. **Moving the tag alone
    does not retrigger the workflow**, and `workflow_dispatch` on an old tag
    reruns the old workflow file ([[release-environment-name]]).
-4. If a dependent package (step 2 or 3) publishes against a broken step-1
+4. If a dependent package (step 3 or 4) publishes against a broken step-1
    artifact: it is safe to leave step 1 as `0.1.0b1` and ship the fix as
    `0.1.0b2` for just the broken package, since all the pins here are
    lower-bounds only (`>=`), never upper-bounds. A later `bN` release of
    one package does not require bumping the others.
 5. Communication: if beta 1 was already announced publicly (Microchip and
    Adafruit are watching per [[beta1-microchip-adafruit]]), a rollback
-   needs a visible note, not a silent republish.
+   needs a visible note, not a silent republish. If the website copy (step
+   5) already flipped to "beta", revert that too.
 
-## 6. Post-release checks
+## 8. Post-release checks
 
 - [ ] `pip index versions pymcu-compiler` (or the PyPI project page) shows
       `0.1.0b1` for all five packages.
-- [ ] Re-run the clean-venv smoke test in step 4 against the now-published
+- [ ] Re-run the clean-venv smoke test in step 6 against the now-published
       PyPI packages (not local wheels).
-- [ ] Regenerate and verify the library index (`curl
+- [ ] Verify the library index (`curl
       https://libraries.pymcu.org/index.json`; check `"compiler"` now reads
-      `0.1.0b1` and `"generated"` is today's date) once the upstream-entry
-      blocker in step 4 is resolved.
+      `0.1.0b1` and `"generated"` is today's date, and the
+      `adafruit_hcsr04` entry is present) if step 2 was not already
+      confirmed.
 - [ ] Trigger a playground rebuild (dispatched automatically on PyPI
       publish per the CI job added after the a10 train; confirm the run
       went green) and smoke-check it manually in the browser
@@ -166,6 +204,8 @@ If a published wheel is bad:
       reflected on the deployed site (source of truth is the separate
       `PyMCU/pymcu-docs` Starlight repo, out of scope for this checklist,
       needs its own pass).
+- [ ] Website (pymcu.org): confirm the step 5 alpha-to-beta flip deployed
+      and reads correctly on all six strings.
 - [ ] Update `CHANGELOG.md` headers from "Unreleased (prepared DATE)" to
       the actual publish date in all five repos, in a follow-up commit on
       `main` (not on `release-b1`, which will already be merged).
