@@ -20,11 +20,6 @@ PROBES = Path(__file__).resolve().parent / "probes"
 # project's venv is never a test dependency: its wheels are whatever was built for that
 # project on that day, and a probe measured through it reports that wheel, not this tree.
 DEFAULT_PYMCU_BIN = ROOT / ".venv" / "bin" / "pymcu"
-AVR8SHARP_SITE = next(
-    iter(sorted((ROOT / ".venv" / "lib").glob("python3.*/site-packages"))),
-    ROOT / ".venv" / "lib" / "python3.14" / "site-packages",
-)
-END = "END\n"
 
 
 @dataclass(frozen=True)
@@ -132,15 +127,24 @@ def apply_divergence(citation: str, expected: str) -> str:
 
 def pymcu_bin() -> Path:
     path = Path(os.environ.get("PYMCU_BIN", DEFAULT_PYMCU_BIN))
-    if not path.is_file():
-        pytest.skip(f"PYMCU_BIN is unavailable: {path}")
+    assert path.is_file(), f"PYMCU_BIN is unavailable: {path}"
     return path
 
 
-def import_avr8sharp():
-    if str(AVR8SHARP_SITE) not in sys.path:
-        sys.path.insert(0, str(AVR8SHARP_SITE))
-    return pytest.importorskip("avr8sharp", reason="avr8sharp is unavailable")
+@pytest.fixture(scope="session")
+def avr_runner() -> Path:
+    configured = os.environ.get("PYMCU_ORACLE_RUNNER")
+    if configured:
+        runner = Path(configured)
+        assert runner.is_file(), f"PYMCU_ORACLE_RUNNER is unavailable: {runner}"
+        return runner
+    output = ROOT / "build" / "oracle"
+    subprocess.run(
+        ["dotnet", "build", str(ROOT / "tests/oracle/runner/PyMCU.OracleRunner.csproj"),
+         "-c", "Release", "-o", str(output), "--nologo"],
+        check=True,
+    )
+    return output / "PyMCU.OracleRunner.dll"
 
 
 class _Type:
@@ -331,15 +335,13 @@ def compile_probe(tmp_path: Path, name: str, src: str, pymcu: Path) -> CompileRe
     return CompileResult(result.returncode, hex_text, result.stdout + result.stderr)
 
 
-def run_emulator(hex_text: str, avr8sharp, max_ms: float = 4000) -> str:
-    sim = avr8sharp.ArduinoUno()
-    sim.with_hex(hex_text)
-    try:
-        sim.run_until_serial(sim.serial, END, max_ms=max_ms)
-    except Exception:
-        if not sim.serial.text:
-            raise
-    return sim.serial.text.replace("\r\n", "\n")
+def run_emulator(hex_text: str, runner: Path, max_ms: float = 4000) -> str:
+    result = subprocess.run(
+        ["dotnet", str(runner), str(max_ms)],
+        input=hex_text, capture_output=True, text=True, timeout=90,
+    )
+    assert result.returncode == 0, f"AVR oracle runner failed:\n{result.stderr}"
+    return result.stdout.replace("\r\n", "\n")
 
 
 def first_difference(expected: str, actual: str) -> str:
@@ -353,7 +355,7 @@ def first_difference(expected: str, actual: str) -> str:
     return ""
 
 
-def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, avr8sharp) -> OracleOutcome:
+def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, runner: Path) -> OracleOutcome:
     src = probe.read_text()
     expectation = parse_expectation(src)
     compile_result = compile_probe(tmp_path, probe.stem, src, pymcu)
@@ -405,7 +407,7 @@ def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, avr8sharp) -> Oracl
     expected = run_cpython(src, probe.stem)
     if expectation.kind == "divergence":
         expected = apply_divergence(expectation.divergence_doc, expected)
-    actual = run_emulator(compile_result.hex_text, avr8sharp)
+    actual = run_emulator(compile_result.hex_text, runner)
     if expected == actual:
         return OracleOutcome(probe.name, feature, expect_label, "match", "")
     return OracleOutcome(
@@ -419,10 +421,9 @@ def evaluate_probe(probe: Path, tmp_path: Path, pymcu: Path, avr8sharp) -> Oracl
 
 @pytest.mark.parametrize("probe", _probe_files(), ids=lambda path: path.stem)
 def test_probe_matches_cpython_or_refuses_as_documented(
-    probe: Path, tmp_path: Path, request: pytest.FixtureRequest
+    probe: Path, tmp_path: Path, request: pytest.FixtureRequest, avr_runner: Path
 ):
     pymcu = pymcu_bin()
-    avr8sharp = import_avr8sharp()
     expectation = parse_expectation(probe.read_text())
     if expectation.frontend is not None:
         # The two front ends are supposed to accept the same language subset, but a probe
@@ -449,7 +450,7 @@ def test_probe_matches_cpython_or_refuses_as_documented(
                 strict=True,
             )
         )
-    outcome = evaluate_probe(probe, tmp_path, pymcu, avr8sharp)
+    outcome = evaluate_probe(probe, tmp_path, pymcu, avr_runner)
     assert outcome.outcome in {"match", "refused"}, (
         f"{outcome.probe}: {outcome.outcome}\n{outcome.first_difference}"
     )
