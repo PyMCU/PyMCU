@@ -9,6 +9,7 @@
 # only a subset of the protocol, so no real pymcuc-<family> binary is needed.
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,21 +25,37 @@ Options:
 """
 
 
-def fake_backend(tmp_path: Path, name: str, help_text: str, argv_log: Path) -> Path:
+def fake_backend(tmp_path: Path, name: str, help_text: str | None, argv_log: Path) -> Path:
     """A stand-in for a pymcuc-<family> binary: answers --help with *help_text*
     and otherwise records its argv to *argv_log* and exits 0."""
-    script = tmp_path / name
-    script.write_text(f"""#!/bin/sh
+    help_status = 1 if help_text is None else 0
+    if sys.platform == "win32":
+        script = tmp_path / f"{name}.cmd"
+        help_lines = "\n".join(
+            "echo " + line.replace("<", "^<").replace(">", "^>")
+            for line in (help_text or "").splitlines()
+        )
+        script.write_text(f"""@echo off
+if "%~1" == "--help" goto help
+echo %* > "{argv_log}"
+exit /b 0
+:help
+{help_lines}
+exit /b {help_status}
+""")
+    else:
+        script = tmp_path / name
+        script.write_text(f"""#!/bin/sh
 if [ "$1" = "--help" ]; then
   cat <<'EOF_HELP'
-{help_text}
+{help_text or ""}
 EOF_HELP
-  exit 0
+  exit {help_status}
 fi
 echo "$@" > "{argv_log}"
 exit 0
 """)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return script
 
 
@@ -68,9 +85,7 @@ def test_a_rebuilt_binary_at_the_same_path_is_reprobed(tmp_path):
     binary = fake_backend(tmp_path, "pymcuc-fake", BASE_HELP, tmp_path / "argv")
     assert "--uart-owned" not in get_backend_capabilities(binary)
 
-    head, _, tail = binary.read_text().rpartition("EOF_HELP")
-    binary.write_text(head + "  --uart-owned\nEOF_HELP" + tail)
-    binary.chmod(binary.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    fake_backend(tmp_path, "pymcuc-fake", BASE_HELP + "  --uart-owned\n", tmp_path / "argv")
     assert "--uart-owned" in get_backend_capabilities(binary)
 
 
@@ -153,15 +168,7 @@ def test_a_binary_missing_a_base_flag_refuses_by_name(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_a_failed_help_probe_falls_back_to_the_old_unconditional_behaviour(tmp_path):
-    script = tmp_path / "pymcuc-no-help"
-    script.write_text("""#!/bin/sh
-if [ "$1" = "--help" ]; then
-  exit 1
-fi
-echo "$@" > "%s"
-exit 0
-""" % (tmp_path / "argv"))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    script = fake_backend(tmp_path, "pymcuc-no-help", None, tmp_path / "argv")
 
     invoke(script, tmp_path, reset_vector=0x100)  # must not raise from the capability gate
 
