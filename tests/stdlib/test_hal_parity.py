@@ -5,6 +5,7 @@ import re
 import pytest
 
 from hal_parity import (
+    LAYERS,
     api_violations,
     allowlist,
     facade_claims,
@@ -57,18 +58,32 @@ def test_compat_layers_do_not_contain_chip_particulars(violation):
     )
 
 
-def test_hal_parity_allowlist_entries_are_used_and_tracked():
+@pytest.mark.parametrize("missing_layers", [
+    (),
+    ("circuitpython",),
+    ("micropython",),
+    ("circuitpython", "micropython"),
+])
+def test_hal_parity_allowlist_entries_are_used_and_tracked(missing_layers, monkeypatch, tmp_path):
+    for layer in missing_layers:
+        monkeypatch.setitem(LAYERS, layer, tmp_path / layer)
     seen = {v.symbol for v in api_violations()}
     seen.update(v.symbol for v in universality_violations())
+    # Only require usage for layers that were scanned; still validate every
+    # entry's tracking metadata, including those for absent sibling repos.
+    missing_prefixes = tuple(
+        f"compat.{layer}." for layer, root in LAYERS.items() if not root.exists()
+    )
     unused = []
     malformed = []
     for symbol, item in allowlist().items():
-        if symbol.endswith("*"):
-            prefix = symbol[:-1]
-            if not any(v.startswith(prefix) for v in seen):
+        if not symbol.startswith(missing_prefixes):
+            if symbol.endswith("*"):
+                prefix = symbol[:-1]
+                if not any(v.startswith(prefix) for v in seen):
+                    unused.append(symbol)
+            elif symbol not in seen:
                 unused.append(symbol)
-        elif symbol not in seen:
-            unused.append(symbol)
         if item.status != "documented" and not re.fullmatch(r"tracked:#\d+", item.status):
             malformed.append(f"{symbol} has status {item.status!r}")
         if item.status == "documented" and not item.quote:

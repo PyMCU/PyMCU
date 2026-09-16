@@ -435,27 +435,27 @@ status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:111"
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:128"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:112"
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:129"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:114"
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:131"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:116"
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:133"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:118"
+symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:135"
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
