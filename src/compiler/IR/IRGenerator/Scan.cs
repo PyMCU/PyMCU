@@ -3617,6 +3617,12 @@ public partial class IRGenerator
         if (!classDirectMethods.ContainsKey(classKey))
             classDirectMethods[classKey] = new HashSet<string>();
 
+        // Nested classes need the same field widths as top-level classes (#443).
+        // Otherwise a computed constructor value can fall back to a byte-sized field.
+        classFieldLayout[classKey] = DeriveFieldLayout(block);
+        if (classFieldLayout[classKey].Count == 1)
+            zcaFactoryClasses[classKey] = classFieldLayout[classKey][0].Type;
+
         foreach (var inner in block.Statements)
         {
             if (inner is FunctionDef func)

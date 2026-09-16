@@ -60,4 +60,27 @@ public class FieldLayoutFromLocalTests
         Assert.NotEmpty(vars);
         Assert.All(vars, v => Assert.Equal(DataType.UINT16, v.Type));
     }
+
+    [Theory]
+    [InlineData("5.0")]
+    [InlineData("monotonic_time=5.0")]
+    public void NestedConstructor_PreservesComputedDeadlineWidth(string argument)
+    {
+        var ir = Gen($$"""
+            from pymcu.types import uint32, inline
+
+            class Module:
+                class Alarm:
+                    @inline
+                    def __init__(self, monotonic_time: float = 0.0):
+                        self._deadline_ms = uint32(monotonic_time * 1000.0)
+
+            alarm = Module.Alarm({{argument}})
+            deadline: uint32 = alarm._deadline_ms
+            """);
+        Optimizer.UnifyVariableWidths(ir);
+        var vars = Field(ir, "_deadline_ms");
+        Assert.NotEmpty(vars);
+        Assert.All(vars, v => Assert.Equal(DataType.UINT32, v.Type));
+    }
 }
