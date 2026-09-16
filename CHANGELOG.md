@@ -12,6 +12,17 @@ applies to them too, since the frontend is shared across all backends.
 package; `pymcu-sdk` moves in lockstep because the release gate requires the
 compiler, stdlib, and SDK to publish at the same version.
 
+**Frozen for release at `83f05312`.** The freeze waited on three silent
+wrong-code bugs found by an orphan-method probe sweep the night before:
+a nested `@inline` function silently lost writes it made to `self`
+(#427), a factory function threaded the wrong value into an unannotated
+field it returned (#429), and `super().method()` miscomputed when a
+subclass field's constructor argument was a constant (#430). All three
+are fixed and covered by a regression fixture; see
+[State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
+for what the differential oracle still knows is wrong and discloses on
+purpose, as opposed to bugs like these three that were silent until found.
+
 ### Zero cost
 - A call argument that HOLDS a compile-time constant binds the parameter as that constant, not
   as a variable containing it. The difference used to be only whether the argument mentioned a
@@ -267,7 +278,7 @@ compiler, stdlib, and SDK to publish at the same version.
 ### Full commit log
 
 <details>
-<summary>All 650 commits since v0.1.0a10, grouped by Conventional Commit type</summary>
+<summary>All 741 commits since v0.1.0a10, grouped by Conventional Commit type</summary>
 
 ### Added
 
@@ -410,6 +421,20 @@ compiler, stdlib, and SDK to publish at the same version.
 - **driver**: pymcu install/libraries accept an upstream index entry
 - **ir**: a class attribute is readable through an instance, and one defining __get__ is a descriptor ([#268](https://github.com/PyMCU/PyMCU/issues/268), [#360](https://github.com/PyMCU/PyMCU/issues/360))
 - **ir**: a bytearray grown by .extend() takes the largest size asked for ([#362](https://github.com/PyMCU/PyMCU/issues/362))
+- **driver**: gate backend flags behind a per-binary capability probe
+- **ir**: a range bound to a name is a compile-time sequence, not a value ([#363](https://github.com/PyMCU/PyMCU/issues/363))
+- **ir**: synthesize a default constructor for a class with no __init__ ([#391](https://github.com/PyMCU/PyMCU/issues/391))
+- **ir**: accept an annotation naming an enum member, not the enum type ([#376](https://github.com/PyMCU/PyMCU/issues/376))
+- **frontend**: fold if TYPE_CHECKING: like a failed optional import
+- **ir**: bytes([...]) and bytes(N) are read as a fixed byte buffer
+- **ir**: bytes([...]) and bytes(N) written as a call argument reach it
+- **stdlib**: add pymcu.array, a stub so import array resolves
+- **ir**: array.array(typecode) is read as the list[T] it names
+- **ir**: derive field layout from setters and __init__-called helpers ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **ir**: Union[A, B] on an @inline/constructor parameter resolves at its call site
+- **ir**: refuse a Union argument matching none of the members, naming them
+- **frontend**: treat typing as a builtin module, resolved by no file
+- **test**: let an oracle probe restrict itself to one front end
 
 ### Fixed
 
@@ -741,6 +766,39 @@ compiler, stdlib, and SDK to publish at the same version.
 - **ir**: bool() asks the object for its truth value ([#385](https://github.com/PyMCU/PyMCU/issues/385))
 - **ir**: a name bound only to None takes its width from the value stored in it ([#385](https://github.com/PyMCU/PyMCU/issues/385))
 - **ir**: a fresh local in an expanded body is as wide as what it holds ([#385](https://github.com/PyMCU/PyMCU/issues/385))
+- **frontend**: a `bytes` parameter is the byte buffer it names, not a class
+- **ir**: `@used` is refused where there is no subroutine to export
+- **ir**: a float field's bytes are reinterpreted, not shifted
+- **ir**: an allocation reads its size, so the size is not dead code
+- **hal**: size the AVR pulse capture ring to the maxlen asked ([PyMCU#406](https://github.com/PyMCU/PyMCU/issues/406))
+- **ir**: a large constant .extend() loops instead of unrolling ([PyMCU#411](https://github.com/PyMCU/PyMCU/issues/411))
+- **ir**: `uint64` and `int64` are refused instead of stored in one byte
+- **ir**: a field of a boxed instance is read from its slot, not from a flattened name
+- **ir**: recognize bytearray() as a field-assignment target inside __init__
+- **ir**: recognize bytearray() written inline as a call argument
+- **ir**: a two-index dunder's own computed result reaches its caller
+- **ir**: demote an outlined method whose self-call cannot dispatch statically ([#373](https://github.com/PyMCU/PyMCU/issues/373))
+- **ir**: check the right parameter's type for a typing-only annotation
+- **ir**: resolve and scan a base class across a module boundary ([#420](https://github.com/PyMCU/PyMCU/issues/420))
+- **ir**: qualify a with-block's bound name like the object it names ([#390](https://github.com/PyMCU/PyMCU/issues/390))
+- **ir**: a method call that returns a class instance tags its target ([#421](https://github.com/PyMCU/PyMCU/issues/421))
+- **ir**: resolve a factory method's return class in its own module ([#421](https://github.com/PyMCU/PyMCU/issues/421))
+- **ir**: mangle a dotted submodule alias's member with underscores ([#422](https://github.com/PyMCU/PyMCU/issues/422))
+- **ir**: a list[T] parameter reaches the call-site expansion list[T] already has
+- **ir**: a list-returning call types its result as a GC pointer, not UNKNOWN
+- **hal**: correct pulse_in's cycles-per-iteration conversion on AVR
+- **ir**: isinstance() on a ZCA instance folds to a compile-time constant ([#424](https://github.com/PyMCU/PyMCU/issues/424))
+- **diagnostics**: word the no-field/no-attribute errors like the interpreter's AttributeError ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **ir**: name a zero-field class in its own no-attribute refusal ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **ir**: revert naming a zero-field class from classDirectMethods ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **ir**: a bare const parameter is an unknown kind, not "other" ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **ir**: thread a factory handle into its flattened field name too
+- **ir**: forward the enclosing self into a nested @inline function
+- **ir**: read back the lazily-created result temp of a super() call
+- **ir**: a class field named value is not always a live slot
+- **ir**: a promoted single-field slot is a live slot too
+- **oracle**: measure with this checkout's own venv, and track the isinstance probe to #386
+- **ir**: a property returning a zca instance keeps it dispatchable
 
 ### Performance
 
@@ -829,6 +887,14 @@ compiler, stdlib, and SDK to publish at the same version.
 - **library**: document upstream index entries
 - **library**: publish generated HAL cross-backend parity report
 - **language**: record the first full oracle run
+- mark bytes([...]) / bytes(N) as a call argument as implemented
+- mark import array / array.array(typecode) as implemented
+- add RFC 0006, self is this, with measured inline-bloat costs
+- **rfc-0006**: pin the 142 B and mixed-fold gates by fixture
+- **rfc-0006**: land the two size-gate fixtures in pymcu-avr
+- **language**: document field layout from setters/helpers and the read-order divergence ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- mark Union[A, B] on an @inline/constructor parameter as implemented
+- **oracle**: document the language-surface sweep (probes 121-178, new bugs, frontend-scoped headers)
 
 ### Tests
 
@@ -931,6 +997,45 @@ compiler, stdlib, and SDK to publish at the same version.
 - **oracle**: fix eight probes that tested the wrong thing
 - **oracle**: treat a documented divergence as its own expectation kind
 - **oracle**: track the 20 remaining mismatches as filed compiler bugs
+- **driver**: capability gate against a fake backend declaring a subset
+- **unit**: a binary outside the tree is answered by the cause, not by a missing file
+- **oracle**: untrack probe 049, its bytearray field write now compiles
+- **oracle**: untrack probe 078, its two-index round trip now matches
+- **driver**: the range-as-a-value parity case uses the name as a value ([#363](https://github.com/PyMCU/PyMCU/issues/363))
+- **unit**: add BytesLiteralArgumentTests -- bytes([...]) / bytes(N) as an argument
+- **oracle**: probe orphan-method shapes that already match CPython
+- **oracle**: track a class method attached after definition ([#426](https://github.com/PyMCU/PyMCU/issues/426))
+- **oracle**: track a function stored in a self field ([#425](https://github.com/PyMCU/PyMCU/issues/425))
+- **oracle**: track a nested @inline closure over self ([#427](https://github.com/PyMCU/PyMCU/issues/427))
+- **oracle**: track a factory function's lost constructor argument ([#429](https://github.com/PyMCU/PyMCU/issues/429))
+- **oracle**: track super().method() miscomputing with constant args ([#430](https://github.com/PyMCU/PyMCU/issues/430))
+- **oracle**: untrack four probes fixed by #390 and #391
+- **oracle**: file front-end diagnostic parity for comprehensions ([#432](https://github.com/PyMCU/PyMCU/issues/432))
+- **oracle**: untrack len()/__len__ dispatch, fixed per #396
+- **unit**: add ArrayArrayAsListTests -- import array / array.array(typecode)
+- **ir**: field layout from setters, __init__-called helpers, and type conflicts ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **driver**: field layout parity across both front ends ([#441](https://github.com/PyMCU/PyMCU/issues/441))
+- **unit**: add UnionParameterAtCallSiteTests -- Union[A, B] resolved per call site
+- **oracle**: sweep numeric builtins (abs/min/max/round/casts/chr/ord/oct/len)
+- **oracle**: sweep integer semantics (shift/bitwise/chained compare/augassign/width wrap)
+- **oracle**: sweep string operations (concat/compare/fstring align/methods/in/slice)
+- **oracle**: sweep control flow (nested break/continue, ternary, walrus, pass, nested def)
+- **oracle**: sweep data model dunders (eq/le/sub/mul, str, contains, call, iter/next, isinstance)
+- **oracle**: sweep collections (list for-loop, list.index, tuple indexing, dict membership)
+- **oracle**: sweep exceptions (nested try, bare reraise, custom class, inline boundary)
+- **oracle**: sweep functions (args/kwargs, posonly, default-from-global, inline vs plain) and pin two match-pattern front-end gaps
+- **oracle**: sweep modules (import as/star, __name__ idiom, __CHIP__, sys refusal)
+- **oracle**: sweep async (sleep in a loop returning a value, gather refusal)
+- **ir**: a single-field factory's unannotated field threads its value ([#429](https://github.com/PyMCU/PyMCU/issues/429))
+- **oracle**: untrack the factory-handle field probe, fixed per #429
+- **ir**: a nested @inline closure writes through to the enclosing self ([#427](https://github.com/PyMCU/PyMCU/issues/427))
+- **oracle**: untrack the nested inline closure probe, fixed per #427
+- **ir**: super() plus a value-named subclass field, constant args ([#430](https://github.com/PyMCU/PyMCU/issues/430))
+- **oracle**: untrack the super()-plus-field-constant-args probe, fixed per #430
+
+### CI
+
+- wire HAL parity and oracle suites into GitHub Actions
 
 ### Chore
 
@@ -947,6 +1052,7 @@ compiler, stdlib, and SDK to publish at the same version.
 - style(ir): the list-field comment sits above the branch it describes
 
 </details>
+
 
 
 ## 0.1.0a10 — 2026-08-18
