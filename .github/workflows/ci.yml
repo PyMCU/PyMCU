@@ -153,17 +153,19 @@ jobs:
           uv venv .venv
           uv pip install --python .venv --no-sources pytest -e lib -e extensions/pymcu-sdk -e . -e ../pymcu-avr
 
-      - name: Run oracle suite
+      - name: Run oracle suites with both frontends
         env:
           PYMCU_BIN: ${{ github.workspace }}/PyMCU/.venv/bin/pymcu
           PYMCU_BACKEND_BINARY: avr=${{ github.workspace }}/pymcu-avr/build/bin/pymcuc-avr
           PYMCU_ORACLE_RUNNER: ${{ github.workspace }}/PyMCU/build/oracle/PyMCU.OracleRunner.dll
-        run: .venv/bin/python -m pytest tests/oracle -v --tb=short --junitxml=oracle-results.xml
+        run: |
+          .venv/bin/python -m pytest tests/oracle -v --tb=short --junitxml=oracle-results.xml
+          PYMCU_PY_PARSER=1 .venv/bin/python -m pytest tests/oracle -v --tb=short --junitxml=oracle-python-results.xml
 
       - name: Upload oracle results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: oracle-test-results
-          path: PyMCU/oracle-results.xml
+          path: PyMCU/oracle*-results.xml
           retention-days: 15
