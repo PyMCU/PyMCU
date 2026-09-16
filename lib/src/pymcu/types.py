@@ -151,7 +151,7 @@ class _Overloads:
             # overload and Pin("PB5") the const[str] one, write(0x44) the uint8 one and
             # write(buf) the bytearray one. Take the first definition whose annotations
             # accept every argument, else the first that merely binds.
-            if all(_annotation_accepts(sig.parameters[name].annotation, value)
+            if all(_annotation_accepts(sig.parameters[name].annotation, value, fn.__globals__)
                    for name, value in bound.arguments.items()):
                 return fn(*args, **kwargs)
         if first_binding is not None:
@@ -159,8 +159,10 @@ class _Overloads:
         raise TypeError(f"no overload of {self.__name__} takes these arguments")
 
 
-def _annotation_accepts(annotation, value) -> bool:
+def _annotation_accepts(annotation, value, namespace) -> bool:
     import inspect
+    if isinstance(annotation, str):
+        annotation = namespace.get(annotation, annotation)
     if annotation is inspect.Parameter.empty or isinstance(annotation, str):
         return True
     origin = getattr(annotation, "__origin__", None)

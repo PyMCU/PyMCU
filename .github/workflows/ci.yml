@@ -104,7 +104,7 @@ jobs:
       # CI runner those paths never exist, so that half of the check is
       # skipped here and this job only covers the in-tree HAL surface.
       - name: Run HAL parity tests
-        run: pytest tests/stdlib/test_hal_parity.py -v --tb=short
+        run: pytest tests/stdlib/test_hal_parity.py tests/stdlib/test_inline_host_overloads.py -v --tb=short
 
   oracle:
     name: Oracle Suite (AVR8Sharp)
