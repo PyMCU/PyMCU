@@ -2361,19 +2361,26 @@ public partial class IRGenerator
 
         if (intrinsicNames.Contains(name)) return name;
 
-        if (TryImportedAlias(name, out var modName))
+        // A name the CURRENT module imported resolves through ITS table first: inside
+        // `I2C.write_to` (defined in the package __init__) `i2c_write_to` is that module's
+        // own `from ...avr import i2c_write_to`, and the prefix walk would otherwise land
+        // on the same function re-registered under the package prefix -- whose
+        // functionModulePrefix is the package, so helpers in the defining module
+        // (`_twi_wait` in avr.py) no longer resolve.
+        if (perModuleImportedAliases.TryGetValue(OwningModulePrefix(), out var ownImports)
+            && ownImports.TryGetValue(name, out var ownMod))
         {
-            var mangledMod = modName?.Replace('.', '_');
-            var original = AliasOriginal(name);
-            // `from pymcu.hal.console import print as p`: the alias renames a builtin, so the
-            // call must reach the builtin. Mangling it to `pymcu_hal_console_print` named a
-            // function that is never emitted, and the error blamed the module rather than
-            // saying the alias had been dropped.
-            if (intrinsicNames.Contains(original)) return original;
-            return mangledMod + "_" + original;
+            var mangledOwn = ownMod?.Replace('.', '_');
+            var ownOriginal = AliasOriginal(name);
+            if (intrinsicNames.Contains(ownOriginal)) return ownOriginal;
+            return mangledOwn + "_" + ownOriginal;
         }
 
-
+        // A name the enclosing module DEFINES (a class or function filed under its prefix)
+        // shadows the flat import-alias table: that table is shared by every module, so a
+        // `from digitalio import DigitalInOut` written in one file leaked into another that
+        // only defines its own `class DigitalInOut` -- the call resolved to the imported
+        // constructor instead of the local one (adafruit_74hc595).
         var prefixTry = currentModulePrefix;
         while (!string.IsNullOrEmpty(prefixTry))
         {
@@ -2393,6 +2400,18 @@ public partial class IRGenerator
             int lastSep = prefixTry.LastIndexOf('_', prefixTry.Length - 2);
             if (lastSep == -1) break;
             prefixTry = prefixTry.Substring(0, lastSep + 1);
+        }
+
+        if (TryImportedAlias(name, out var modName))
+        {
+            var mangledMod = modName?.Replace('.', '_');
+            var original = AliasOriginal(name);
+            // `from pymcu.hal.console import print as p`: the alias renames a builtin, so the
+            // call must reach the builtin. Mangling it to `pymcu_hal_console_print` named a
+            // function that is never emitted, and the error blamed the module rather than
+            // saying the alias had been dropped.
+            if (intrinsicNames.Contains(original)) return original;
+            return mangledMod + "_" + original;
         }
 
         return name;
