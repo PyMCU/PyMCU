@@ -425,7 +425,7 @@ public partial class IRGenerator
                             }
                             foreach (var a in expr.Args)
                             {
-                                Val av = VisitExpression(a);
+                                Val av = TryEvalInlineBufferArg(a) ?? VisitExpression(a);
                                 if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
                                 oArgs.Add(av);
                             }
@@ -1117,39 +1117,11 @@ public partial class IRGenerator
             // happens with a name in between. Give the argument the same hidden binding
             // VisitVarDecl gives a name, under a name this expression alone cannot collide
             // with, and pass its address exactly as a named bytearray argument already is.
-            if (arg is CallExpr { Callee: VariableExpr { Name: "bytearray" } } baArgCall)
+            // `f(bytes([...]))` / `f(bytes(N))` take the same path: a `bytes` parameter
+            // already receives it exactly as `bytearray` does (#365, #431).
+            if (TryEvalInlineBufferArg(arg) is { } bufferArg)
             {
-                string hiddenName = $"__inline_bytearray_arg{tempCounter++}";
-                VisitVarDecl(new VarDecl(hiddenName, "bytearray", baArgCall) { Line = expr.Line });
-                string hiddenQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix
-                    : currentFunction + ".") + hiddenName;
-                if (!arraySizes.ContainsKey(hiddenQualified))
-                {
-                    string altHQ = currentModulePrefix + hiddenName;
-                    if (arraySizes.ContainsKey(altHQ)) hiddenQualified = altHQ;
-                    else if (arraySizes.ContainsKey(hiddenName)) hiddenQualified = hiddenName;
-                }
-                argValuesL.Add(new ArrayBase(hiddenQualified));
-                continue;
-            }
-
-            // `f(bytes([...]))` / `f(bytes(N))`: the same shape one call spelling later, and a
-            // `bytes` parameter already receives it exactly as `bytearray` does (#365, #431).
-            if (arg is CallExpr { Callee: VariableExpr { Name: "bytes" } } bytesArgCall)
-            {
-                string hiddenName = $"__inline_bytes_arg{tempCounter++}";
-                VisitVarDecl(new VarDecl(hiddenName, "bytes", bytesArgCall) { Line = expr.Line });
-                string hiddenQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix
-                    : currentFunction + ".") + hiddenName;
-                if (!arraySizes.ContainsKey(hiddenQualified))
-                {
-                    string altHQ = currentModulePrefix + hiddenName;
-                    if (arraySizes.ContainsKey(altHQ)) hiddenQualified = altHQ;
-                    else if (arraySizes.ContainsKey(hiddenName)) hiddenQualified = hiddenName;
-                }
-                argValuesL.Add(new ArrayBase(hiddenQualified));
+                argValuesL.Add(bufferArg);
                 continue;
             }
 
@@ -1461,7 +1433,9 @@ public partial class IRGenerator
             {
                 string savedOuterPct = pendingConstructorTarget;
                 pendingConstructorTarget = "";
-                kwArgValues[kw.Key] = VisitExpression(kw.Value);
+                kwArgValues[kw.Key] = TryEvalInlineBufferArg(kw.Value) is ArrayBase kwBuf
+                    ? new Variable(kwBuf.ArrayName, DataType.UINT16)
+                    : VisitExpression(kw.Value);
                 if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
                 rawKwArgExprs[kw.Key] = kw.Value;
                 // Always restore: inner ctor targets (anonymous __cN) must not
@@ -1533,7 +1507,14 @@ public partial class IRGenerator
                 {
                     string savedOuterPct = pendingConstructorTarget;
                     pendingConstructorTarget = "";
-                    argValues.Add(VisitExpression(arg));
+                    // `obj.m(bytearray([...]))` on an @inline callee (#459): lay out the
+                    // buffer under a hidden name and hand the parameter its NAME, so it
+                    // binds by alias exactly as a named buffer already does -- the callee
+                    // then reads real storage, mutable and runtime-sized included.
+                    if (TryEvalInlineBufferArg(arg) is ArrayBase inlineBuf)
+                        argValues.Add(new Variable(inlineBuf.ArrayName, DataType.UINT16));
+                    else
+                        argValues.Add(VisitExpression(arg));
                     // Always restore: same reason as kwarg case above.
                     pendingConstructorTarget = savedOuterPct;
                 }
@@ -3649,7 +3630,7 @@ public partial class IRGenerator
         Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr)); // base + i*stride
 
         var iaArgs = new List<Val> { elemAddr };
-        foreach (var a in expr.Args) iaArgs.Add(VisitExpression(a));
+        foreach (var a in expr.Args) iaArgs.Add(TryEvalInlineBufferArg(a) ?? VisitExpression(a));
 
         bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
                       || iaRt == "void" || iaRt == "None";
@@ -3661,6 +3642,29 @@ public partial class IRGenerator
         Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
         Emit(new Call(iaMethod, iaArgs, iaDst));
         return iaDst;
+    }
+
+    // `bytearray(N)` / `bytearray([...])` / `bytes(...)` written INLINE as a call argument
+    // (#380 for plain calls, #459 for the method-call paths): the recognition that lays out
+    // a fixed buffer lives in VisitVarDecl, so give the argument the same hidden binding a
+    // named local gets and pass its address exactly as a named buffer argument already is.
+    // Returns the buffer's base address when the arg is one of those calls; null otherwise.
+    private Val? TryEvalInlineBufferArg(Expression arg)
+    {
+        if (arg is not CallExpr { Callee: VariableExpr { Name: "bytearray" or "bytes" } baName } baCall)
+            return null;
+        string hiddenName = $"__inline_{baName.Name}_arg{tempCounter++}";
+        VisitVarDecl(new VarDecl(hiddenName, baName.Name, baCall) { Line = baCall.Line });
+        string hiddenQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix
+            : currentFunction + ".") + hiddenName;
+        if (!arraySizes.ContainsKey(hiddenQualified))
+        {
+            string altHQ = currentModulePrefix + hiddenName;
+            if (arraySizes.ContainsKey(altHQ)) hiddenQualified = altHQ;
+            else if (arraySizes.ContainsKey(hiddenName)) hiddenQualified = hiddenName;
+        }
+        return new ArrayBase(hiddenQualified);
     }
 
     // `self.method(args)` inside an outlined method: call the sibling outlined method,
@@ -3685,7 +3689,7 @@ public partial class IRGenerator
             foreach (var (fld, ty, _) in outlineFieldLayout[currentFunction])
                 fwdArgs.Add(new Variable(currentFunction + ".self_" + fld,
                     DataTypeExtensions.StringToDataType(ty)));
-        foreach (var a in expr.Args) fwdArgs.Add(VisitExpression(a));
+        foreach (var a in expr.Args) fwdArgs.Add(TryEvalInlineBufferArg(a) ?? VisitExpression(a));
 
         // RFC 0001 (write-back), sibling case: the callee is a mutator that returns its
         // updated field because Model A passes the field BY VALUE. This method's own copy
