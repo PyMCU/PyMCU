@@ -1067,6 +1067,7 @@ public partial class IRGenerator
 
         ForceInlineClassReturningFactories();
         ForceInlineTupleReturningFunctions();
+        ForceInlineBufferReturningFunctions();
 
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
         //
@@ -2657,6 +2658,79 @@ public partial class IRGenerator
             moved.Add(entry);
         }
         foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// The same move for a function that returns a buffer it built locally:
+    /// `return result` on a `bytearray(length)` the body just filled. There is no
+    /// handle to hand back through the ABI, but the @inline expansion path already
+    /// gives the caller an alias onto the callee's element storage -- which is how
+    /// adafruit_bmp280's `_read_register` reaches `for b in self._read_register(n)`
+    /// and `self._read_register(r, 1)[0]` unmodified (PyMCU#464).
+    /// </summary>
+    private void ForceInlineBufferReturningFunctions()
+    {
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            if (!ReturnsLocalBuffer(entry.Func)) continue;
+
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (inlineFunctions.ContainsKey(fullName)) continue;
+            inlineFunctions[fullName] = entry.Func;
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// True when the body builds a fixed buffer under a local name and a return
+    /// statement hands that name back. The buffer names are whatever the body
+    /// assigned from bytearray()/bytes() or declared with a subscripted width
+    /// (`buf: uint8[4]`); a return of anything else -- a parameter, an instance
+    /// field -- already has a home and is not this pass's business.
+    private static bool ReturnsLocalBuffer(FunctionDef func)
+    {
+        var bufferNames = new HashSet<string>();
+        bool returns = false;
+        void Walk(Statement? s)
+        {
+            switch (s)
+            {
+                case null: break;
+                case ReturnStmt { Value: VariableExpr v } when bufferNames.Contains(v.Name):
+                    returns = true;
+                    break;
+                case AssignStmt { Target: VariableExpr an } a
+                    when a.Value is CallExpr { Callee: VariableExpr cn }
+                         && (cn.Name == "bytearray" || cn.Name == "bytes")
+                         || a.AnnotatedType != null && a.AnnotatedType.EndsWith(']'):
+                    bufferNames.Add(an.Name);
+                    break;
+                case Block b:
+                    foreach (var inner in b.Statements) Walk(inner);
+                    break;
+                case IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var (_, eb) in i.ElifBranches) Walk(eb);
+                    Walk(i.ElseBranch);
+                    break;
+                case WhileStmt w: Walk(w.Body); break;
+                case ForStmt f: Walk(f.Body); break;
+                case WithStmt w: Walk(w.Body); break;
+                case MatchStmt m:
+                    foreach (var br in m.Branches) Walk(br.Body);
+                    break;
+                case TryStmt t:
+                    foreach (var inner in t.Body) Walk(inner);
+                    foreach (var (_, handler) in t.Handlers)
+                        foreach (var inner in handler) Walk(inner);
+                    if (t.Finally != null) foreach (var inner in t.Finally) Walk(inner);
+                    if (t.ElseBody != null) foreach (var inner in t.ElseBody) Walk(inner);
+                    break;
+            }
+        }
+        Walk(func.Body);
+        return returns;
     }
 
     /// <summary>

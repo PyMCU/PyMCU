@@ -2039,6 +2039,18 @@ public partial class IRGenerator
                     "Write the loop explicitly (`while <cond>: v = obj.next()`), or iterate a " +
                     "range/fixed array instead. A `yield` generator function IS supported.", itVe);
 
+            // `for b in f(...)`: a call whose result is a fixed-size buffer runs ONCE, then
+            // the loop walks the returned storage exactly like a named array -- the same
+            // spelling with the assignment inlined (adafruit_bmp280's register-read loop).
+            if (iter is CallExpr
+                && VisitExpression(iter) is Variable callRet
+                && TryResolveArrayStorageKey(callRet.Name, out var callBase)
+                && arraySizes.TryGetValue(callBase, out int callSize) && callSize > 0)
+            {
+                EmitSequenceUnroll(stmt, callBase, callSize);
+                return;
+            }
+
             // __getitem__ without a compile-time __len__: the sequence protocol is the right
             // shape, but the trip count is only known at run time and there is no IndexError to
             // stop on, so unrolling is not available. Name that rather than listing the forms
