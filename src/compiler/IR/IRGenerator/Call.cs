@@ -2545,6 +2545,7 @@ public partial class IRGenerator
         bool resultWasNeverProduced =
             !resultDiscarded && func != null && finishedCtx.ResultTemp != null
             && finishedCtx.ResultVars.Count == 0
+            && finishedCtx.ReturnedBuffer == null
             && (!finishedCtx.ResultAssigned || !AlwaysLeaves(func.Body));
 
         inlineStack.RemoveAt(inlineStack.Count - 1);
@@ -2563,6 +2564,13 @@ public partial class IRGenerator
         inlineDepth--;
 
         if (resultWasNeverProduced) throw UnproducedResultError(func!);
+
+        // `return <local array>`: the buffer itself is the expansion's fixed slot, so the
+        // call's value is a Variable naming that storage. `x = f()` aliases `x` to it (the
+        // generic Variable->Variable binding in VisitAssign) and no bytes are copied.
+        if (finishedCtx.ReturnedBuffer is { } retBufKey)
+            return new Variable(retBufKey, arrayElemTypes.TryGetValue(retBufKey, out var retBufEt)
+                ? retBufEt : DataType.UINT8);
 
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);

@@ -2245,6 +2245,16 @@ public partial class IRGenerator
             if (!arraySizes.ContainsKey(qualified))
                 qualified = ModuleScopeArrayName(qualified);
 
+            // `x = f()` where f returned its local buffer binds `x` as an alias of the
+            // callee's slot; follow the alias so the subscript reaches that storage. The
+            // follow is adopted only when the endpoint really is array storage -- a scalar
+            // alias (a list-returning call's result temp, say) must keep the original name,
+            // which is the key its own element-type record is filed under.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && variableAliases.ContainsKey(qualified)
+                && TryResolveArrayStorageKey(FollowAliases(qualified), out var aliasedArr))
+                qualified = aliasedArr;
+
             // Inside an inline expansion, the target may be an aliased bytearray parameter.
             if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
                 && !string.IsNullOrEmpty(currentInlinePrefix))

@@ -1026,13 +1026,33 @@ public partial class IRGenerator
         // Returning a bytes/list object. The literal form crashed with an AST class name; the
         // form through a name compiled and returned the array as a SCALAR, after which the
         // caller's `y[0]` lowered to a bit test on it. Neither is a value the caller can use.
+        //
+        // From an INLINE expansion it can still be honoured without moving a byte: every
+        // local array is a fixed static slot, so the value that travels back is the buffer's
+        // NAME, bound on the context for the caller's receiving variable to alias. The
+        // generic aliasing in `x = f()` then makes `x[i]` and `len(x)` answer the callee's
+        // storage (adafruit_bmp280's `_read_register`). Pending finally blocks -- which is
+        // how a `with` body's __exit__ reaches here -- still run before the exit jump.
         if (stmt.Value != null && IsSequenceObject(stmt.Value))
+        {
+            if (stmt.Value is VariableExpr retArr && inlineStack.Count > 0
+                && inlineStack.Last().ResultVars.Count == 0
+                && ResolveArrayVar(retArr.Name) is { } retArrInfo)
+            {
+                var retCtx = inlineStack.Last();
+                retCtx.ReturnedBuffer = retArrInfo.Name;
+                retCtx.ResultAssigned = true;
+                if (finallyStack.Count > 0) EmitPendingFinally();
+                Emit(new Jump(retCtx.ExitLabel));
+                return;
+            }
             throw UserError(
                 "a bytes or list object cannot be returned. " + SequenceIsStorage
                 + " Give the caller the buffer instead: take it as a parameter and fill it in "
                 + "place, which is what the stdlib's read helpers do, or return one element "
                 + "(`return data[0]`).",
                 stmt.Value);
+        }
 
         // A `return` escaping a try-with-finally must run the pending finally block(s) first
         // (Python semantics). Evaluate the value, materialize it so the finally can't change it,

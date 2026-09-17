@@ -748,6 +748,21 @@ public partial class IRGenerator
 
         Val value = VisitExpression(stmt.Value);
 
+        // `x = f()` where f inlined `return <its local buffer>`: the call's value is a
+        // Variable naming that fixed slot. Bind `x` as another NAME for the same bytes --
+        // a scalar copy of the name would write nothing -- and the alias makes `x[i]`,
+        // `x[i] = v`, `len(x)` and `for` all answer the callee's storage.
+        if (value is Variable retBuf && arraySizes.ContainsKey(retBuf.Name)
+            && stmt.Target is VariableExpr bufTgt)
+        {
+            string bufKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + bufTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + bufTgt.Name : bufTgt.Name);
+            BindSequenceAlias(bufKey, retBuf.Name);
+            return;
+        }
+
         if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
         else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
@@ -1229,7 +1244,12 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentInlinePrefix))
             target = WidenInlineLocalToValue(varExpr, target, value);
 
-        if (!(value is NoneVal)) Emit(new Copy(value, target));
+        // A Variable that names array STORAGE is a returned buffer, not a scalar to copy:
+        // `x = f()` where f inlined `return result` hands back the callee's slot name, and
+        // the alias binding below makes `x` another name for those same bytes.
+        if (!(value is NoneVal)
+            && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name)))
+            Emit(new Copy(value, target));
 
         // RFC 0001 Model B (register handle): `x = make()` where make is a non-@inline
         // factory returning a single-field ZCA (VisitReturn already lowers the callee's
@@ -2818,6 +2838,13 @@ public partial class IRGenerator
             // per-function slot that would swallow the store (PyMCU#460).
             if (!arraySizes.ContainsKey(qualified))
                 qualified = ModuleScopeArrayName(qualified);
+            // `x[i] = v` where `x` was bound to a buffer a callee returned: the alias, not
+            // a per-function slot, is the storage. Adopted only when the endpoint is real
+            // array storage, same as the read path.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && variableAliases.ContainsKey(qualified)
+                && TryResolveArrayStorageKey(FollowAliases(qualified), out var aliasedStore))
+                qualified = aliasedStore;
             // When inside an inline expansion, the target may be a parameter aliased to a
             // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
             // array-store path fires instead of falling through to the bit-subscript path.

@@ -29,6 +29,12 @@ public partial class IRGenerator
     {
         baseKey = "";
         string key = currentInlinePrefix + name;
+        // A name bound outside an expansion -- `x = f()` where f returned its local buffer
+        // -- is aliased under the function-qualified spelling (`main.x`), which the bare
+        // starting key would never find.
+        if (!variableAliases.ContainsKey(key) && !arraySizes.ContainsKey(key)
+            && !string.IsNullOrEmpty(currentFunction))
+            key = currentFunction + "." + name;
         for (int d = 0; d < 20; d++)
         {
             if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;

@@ -29,6 +29,11 @@ public class InlineContext
     public string CalleeName { get; set; } = "";
     public bool ResultAssigned { get; set; } = false;
 
+    // `return <local array>`: the callee's buffer is a fixed static slot, so the value that
+    // travels back is its NAME -- the caller's receiving variable aliases this key and the
+    // elements never move. Null when no buffer was returned.
+    public string? ReturnedBuffer { get; set; } = null;
+
     // The constant this expansion's result has been tracked as, if any. Set by the first
     // `return <constant>` that is actually visited; cleared the moment a second REACHABLE
     // return yields a DIFFERENT constant, because then the value is selected at run time.
