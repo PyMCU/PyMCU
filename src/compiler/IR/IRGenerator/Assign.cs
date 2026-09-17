@@ -897,14 +897,31 @@ public partial class IRGenerator
         var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
         while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
             @base = alias;
-        if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out var cls))
+        // A name bound to a single-field instance evaluates to that FIELD (`lcd_rs__pin`),
+        // not the object -- the evaluated Val is the right scalar but the wrong receiver.
+        // Prefer the name resolution, which follows the alias to the instance key itself;
+        // keep the evaluated base when it is the one carrying a class (call results, member
+        // chains) and the name resolves to nothing with one.
+        if (memTarget.Object is VariableExpr recvVe)
+        {
+            string recvKey = ResolveNameKey(recvVe.Name);
+            if (recvKey != @base
+                && (instanceClasses.ContainsKey(recvKey)
+                    || string.IsNullOrEmpty(@base) || !instanceClasses.ContainsKey(@base)))
+                @base = recvKey;
+        }
+        if (string.IsNullOrEmpty(@base)
+            || !instanceClasses.TryGetValue(@base, out var cls) || cls == null)
             return false;
-        if (!propertySetters.TryGetValue(cls + "." + memTarget.Member, out string? inlineKey))
+        // Walk the MRO: `propertySetters`/`propertyGetters` are keyed by the DEFINING class,
+        // so `lcd.message = s` on a subclass instance must find the base's setter.
+        string? propCls = ResolveMROPropertyClass(cls, memTarget.Member);
+        if (propCls == null || !propertySetters.TryGetValue(propCls + "." + memTarget.Member, out string? inlineKey))
         {
             // No setter. If the member IS a @property getter, the assignment targets a read-only
             // property -- Python raises AttributeError. Reject clearly instead of silently writing
             // a phantom field that then shadows the getter (r.value = 200 used to "stick" as 200).
-            if (propertyGetters.Contains(cls + "." + memTarget.Member))
+            if (propCls != null && propertyGetters.Contains(propCls + "." + memTarget.Member))
                 throw UserError(
                     $"cannot assign to read-only property '{memTarget.Member}': it has a @property " +
                     $"getter but no @{memTarget.Member}.setter", memTarget);
@@ -933,10 +950,22 @@ public partial class IRGenerator
             // the same depth, so a None left by an earlier assignment would answer for this
             // one (#306).
             noneValuedNames.Remove(paramName);
+            // And the same key in the string table -- an earlier expansion of this setter
+            // (same inline depth, same prefix) that received text would otherwise answer
+            // for an argument that carries none.
+            strConstantVariables.Remove(paramName);
             switch (argVal)
             {
                 case Constant c:
                     constantVariables[paramName] = c.Value;
+                    // A string literal lowers to its interned id: hand the parameter the
+                    // text so `for c in s` and `s == "..."` inside the setter fold. A
+                    // ONE-CHARACTER literal never interns -- it is already its own char
+                    // code, so the text is the character itself.
+                    if (stringIdToStr.TryGetValue(c.Value, out var idStr))
+                        strConstantVariables[paramName] = idStr;
+                    else if (setter?.Params[1].Type == "str" && c.Value is >= 0 and <= 0xFFFF)
+                        strConstantVariables[paramName] = ((char)c.Value).ToString();
                     break;
                 case NoneVal:
                     // `obj.prop = None`. None has no runtime representation, so there is
@@ -949,6 +978,10 @@ public partial class IRGenerator
                     break;
                 case Variable vv:
                     variableAliases[paramName] = vv.Name;
+                    // Same as the constant case, for a name that already carries the text
+                    // (`msg = "..."` then `lcd.message = msg`).
+                    if (ResolveStrConstant(vv.Name) is { } varStr)
+                        strConstantVariables[paramName] = varStr;
                     break;
                 case Temporary tt:
                     // Materialize the runtime value into the param's own SRAM slot.
@@ -967,7 +1000,7 @@ public partial class IRGenerator
         var savedSourcePath = currentSourcePath;
         var savedSourceFile = currentSourceFile;
         currentInlinePrefix = newPrefix;
-        currentModulePrefix = cls + "_";
+        currentModulePrefix = propCls + "_";
 
         // The setter's body is text in the file the setter is DEFINED in, and every other
         // expansion says so while it lowers one. This one did not, so a call inside the body
@@ -995,6 +1028,30 @@ public partial class IRGenerator
         currentSourceFile = savedSourceFile;
 
         return true;
+    }
+
+    /// <summary>
+    /// Walk the base-class chain starting at <paramref name="cls"/> and return the first class
+    /// for which a property getter or setter is registered under <paramref name="member"/>.
+    /// The property tables are keyed by the DEFINING class, so a property inherited from a
+    /// base (`lcd.message` on a subclass) only resolves by walking -- same chain
+    /// <see cref="ResolveMROMethod"/> walks for plain methods. Null when no ancestor
+    /// declares the member as a property at all.
+    /// </summary>
+    private string? ResolveMROPropertyClass(string cls, string member)
+    {
+        string? current = cls;
+        for (int depth = 0; current != null && depth < 32; depth++)
+        {
+            if (propertySetters.ContainsKey(current + "." + member)
+                || propertyGetters.Contains(current + "." + member))
+                return current;
+            if (!classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                || string.IsNullOrEmpty(parentPrefix))
+                break;
+            current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+        }
+        return null;
     }
 
     // `x = value` to a plain (scalar) variable target: type/alias resolution, constant

@@ -2915,11 +2915,13 @@ public partial class IRGenerator
     }
 
     // True when this reads a @property getter on a known instance: the receiver is a plain
-    // name bound to a class that registers <member> as a getter.
+    // name bound to a class that registers <member> as a getter. The MRO walk makes a getter
+    // declared on a base class reachable from a subclass instance (`lcd.columns`).
     private bool IsPropertyGetterRead(MemberAccessExpr expr)
         => expr.Object is VariableExpr recv
            && InstanceClassOfName(recv.Name) is { } cls
-           && propertyGetters.Contains(cls + "." + expr.Member);
+           && ResolveMROPropertyClass(cls, expr.Member) is { } propCls
+           && propertyGetters.Contains(propCls + "." + expr.Member);
 
     // The AST of `<instance>.<member>`, resolved through the MRO. Null when the name is not
     // an instance or its class has no such method.
@@ -3222,9 +3224,11 @@ public partial class IRGenerator
         // @property getter: a bare `obj.prop` read where `prop` is a registered getter on the
         // instance's class is desugared into a call to the getter method. Without this it would
         // fall through to a non-existent flattened `<base>_<prop>` data field and read 0.
+        // The MRO walk reaches a getter inherited from a base class.
         if (baseName != null && propertyGetters.Count > 0
-            && instanceClasses.TryGetValue(baseName, out var getterCls)
-            && propertyGetters.Contains(getterCls + "." + expr.Member))
+            && instanceClasses.TryGetValue(baseName, out var getterCls) && getterCls != null
+            && ResolveMROPropertyClass(getterCls, expr.Member) is { } getterPropCls
+            && propertyGetters.Contains(getterPropCls + "." + expr.Member))
         {
             return VisitCall(new CallExpr(expr, new List<Expression>()));
         }
