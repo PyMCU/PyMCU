@@ -122,6 +122,21 @@ public partial class IRGenerator
         return term;
     }
 
+    // The module prefixes (`mod_`) the current compile context belongs to: a bare name
+    // inside `mod`'s code means that module's global, and no other module's. Used to probe
+    // the spellings module-level bindings are filed under -- `mod_<name>` by the scan and
+    // `mod___module_init.<name>` by the init-function lowering.
+    private IEnumerable<string> OwningModulePrefixes()
+    {
+        foreach (var modName in modules.Keys)
+        {
+            string mp = modName.Replace('.', '_') + "_";
+            if ((currentModulePrefix ?? "").StartsWith(mp, StringComparison.Ordinal)
+                || (currentFunction ?? "").StartsWith(mp, StringComparison.Ordinal))
+                yield return mp;
+        }
+    }
+
     // `for c in <const[str]>` unrolls at or below this length (each char a compile-time
     // constant); longer strings emit a runtime loop over a flash table instead so a heavy
     // body is not duplicated per character.
@@ -444,13 +459,21 @@ public partial class IRGenerator
 
     private List<Expression>? ResolveConstSequence(string name)
     {
-        string?[] candidates =
+        var candidates = new List<string?>
         {
             !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
             !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
             !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
             name,
         };
+
+        // A name written bare inside an imported module's function means that module's
+        // global, which the lowering files under the synthesized `__module_init`
+        // (`mod___module_init.MODES`) -- a spelling none of the scope prefixes above
+        // produces. Only the module(s) the current context belongs to are probed: another
+        // module's global of the same name is not visible here.
+        foreach (var mp in OwningModulePrefixes())
+            candidates.Add(mp + "__module_init." + name);
 
         foreach (var candidate in candidates)
         {

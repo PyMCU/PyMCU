@@ -1790,6 +1790,14 @@ public partial class IRGenerator
             && dictLiteralBindings.TryGetValue(currentInlinePrefix + name, out dict!)) return true;
         if (!string.IsNullOrEmpty(currentFunction)
             && dictLiteralBindings.TryGetValue(currentFunction + "." + name, out dict!)) return true;
+        // The scan files a module-level dict as `mod_<name>`; its init-function lowering may
+        // re-register it as `mod___module_init.<name>`. Both are probed for the module(s) the
+        // current context belongs to -- a bare name in `mod`'s code means `mod`'s global.
+        foreach (var mp in OwningModulePrefixes())
+        {
+            if (dictLiteralBindings.TryGetValue(mp + name, out dict!)) return true;
+            if (dictLiteralBindings.TryGetValue(mp + "__module_init." + name, out dict!)) return true;
+        }
         return dictLiteralBindings.TryGetValue(name, out dict!);
     }
 
@@ -1799,6 +1807,11 @@ public partial class IRGenerator
             && setLiteralBindings.TryGetValue(currentInlinePrefix + name, out set!)) return true;
         if (!string.IsNullOrEmpty(currentFunction)
             && setLiteralBindings.TryGetValue(currentFunction + "." + name, out set!)) return true;
+        foreach (var mp in OwningModulePrefixes())
+        {
+            if (setLiteralBindings.TryGetValue(mp + name, out set!)) return true;
+            if (setLiteralBindings.TryGetValue(mp + "__module_init." + name, out set!)) return true;
+        }
         return setLiteralBindings.TryGetValue(name, out set!);
     }
 

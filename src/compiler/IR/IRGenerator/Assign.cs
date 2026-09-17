@@ -6292,13 +6292,20 @@ public partial class IRGenerator
     {
         if (ResolveConstSequence(name) is { } bound) return bound;
 
-        foreach (var key in new[]
-                 {
-                     !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
-                     !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
-                     !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
-                     name,
-                 })
+        var keys = new List<string?>
+        {
+            !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+            !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+            !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
+            name,
+        };
+        // A module-level literal array of an imported module is filed under its
+        // `__module_init` (`mod___module_init.X`), a spelling the scope prefixes above do
+        // not produce. Same module-membership restriction as ResolveConstSequence.
+        foreach (var mp in OwningModulePrefixes())
+            keys.Add(mp + "__module_init." + name);
+
+        foreach (var key in keys)
         {
             if (key != null && arrayLiteralElements.TryGetValue(key, out var elems)) return elems;
         }
