@@ -904,7 +904,7 @@ The other sixteen have moved off their annotations and into their own code.
 | `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
 | `adafruit_motor` (servo) | **builds unmodified, 1 936 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
-| `adafruit_tcs34725` | `r, g, b = self.color_rgb_bytes` at `adafruit_tcs34725.py:170` | tuple unpacking needs a tuple literal or an inline call returning a tuple; unpacking a sequence held by a property/name is not supported -- assign each target from its index (moved off `enumerate(buffer)`, same fix as `adafruit_bmp280`) |
+| `adafruit_tcs34725` | `pow((int((r / clear) * 256) / 255), 2.5)` at `adafruit_tcs34725.py:154` | `pow()` takes compile-time constant integer arguments; the gamma correction raises a run-time float to 2.5, which would need a float `pow` routine (moved off `r, g, b = self.color_rgb_bytes`: a property read now unpacks a tuple through the getter's inline expansion, and a tuple-returning method is never outlined -- it force-inlines so the caller's targets bind) |
 | `adafruit_veml7700` | `obj: I2CDeviceDriver` read at `i2c_bits.py:89` | same as `adafruit_ina219` |
 
 ### Which of these are limits and which are gaps
@@ -930,7 +930,9 @@ buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- 
 aliased class-attribute array resolves to its module-init storage, and a
 `bytes([expr])` argument whose elements are run-time materializes a hidden buffer.
 `adafruit_bmp280` moved on to returning a bytearray (`_read_register`'s `return
-result`), and `adafruit_tcs34725` to unpacking a sequence held by a property.
+result`), and `adafruit_tcs34725` past tuple unpacking (`r, g, b = self.color_rgb_bytes`
+binds through the getter's inline expansion) to a run-time `pow` for gamma
+correction.
 A field whose type is pinned by its first store and then contradicted
 stops `adafruit_74hc595` (`_gpio`) and `adafruit_character_lcd` (`_message`). A `try`-guarded
 `from typing import Tuple` that shares its `try` with a failing sibling import used to lose
