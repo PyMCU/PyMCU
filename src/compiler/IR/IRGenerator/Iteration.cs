@@ -196,15 +196,32 @@ public partial class IRGenerator
             return true;
         }
 
-        if (!TryEvalConstStrElement(elem, out var text)) return false;
+        if (TryEvalConstStrElement(elem, out var text))
+        {
+            strConstantVariables[key] = text;
+            // A one-character string is its own character code in expression position and an
+            // interned id through a name. The unrolled name has to be indistinguishable from the
+            // literal it stands for, which is the state the read path expects.
+            if (text.Length == 1) constantVariables[key] = text[0];
+            else constantVariables.Remove(key);
+            return true;
+        }
 
-        strConstantVariables[key] = text;
-        // A one-character string is its own character code in expression position and an
-        // interned id through a name. The unrolled name has to be indistinguishable from the
-        // literal it stands for, which is the state the read path expects.
-        if (text.Length == 1) constantVariables[key] = text[0];
-        else constantVariables.Remove(key);
-        return true;
+        // `for pin in (reset_dio, enable_dio, ...)`: an element that names an INSTANCE is not
+        // a constant but is still a compile-time answer -- the loop variable is another name
+        // for that object, so alias it (with its class, for method dispatch) rather than
+        // refusing the tuple (adafruit_character_lcd's pin-setup loop).
+        if (elem is VariableExpr instVe)
+        {
+            string instKey = ResolveNameKey(instVe.Name);
+            if (instanceClasses.TryGetValue(instKey, out var instCls) && instCls != null)
+            {
+                variableAliases[key] = instKey;
+                instanceClasses[key] = instCls;
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -946,16 +963,20 @@ public partial class IRGenerator
                             "unpack both.", elem);
                     else throw UserError(
                         "for-in list/tuple iterable elements must be compile-time constants -- a number, "
-                        + "or a string such as a board pin name.", elem);
+                        + "a string such as a board pin name, or a name bound to an instance.", elem);
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
                 constantVariables.Remove(varKey);
                 strConstantVariables.Remove(varKey);
+                variableAliases.Remove(varKey);
+                instanceClasses.Remove(varKey);
                 if (varKey2 != null)
                 {
                     constantVariables.Remove(varKey2);
                     strConstantVariables.Remove(varKey2);
+                    variableAliases.Remove(varKey2);
+                    instanceClasses.Remove(varKey2);
                 }
                 return;
             }
