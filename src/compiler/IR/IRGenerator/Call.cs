@@ -1458,6 +1458,30 @@ public partial class IRGenerator
                     ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null)
                     ?? (TryBytesLiteralElements(arg) is { } bytesLitElems ? new ListExpr(bytesLitElems) : null);
 
+                // Elements fold HERE, in the caller's scope: a carried ListExpr is
+                // re-evaluated under the callee's inline prefix, where a name bound in the
+                // caller (`register` from `_read_register(reg, n)`) no longer resolves --
+                // enumerate() then failed on elements that were constant when written.
+                // Folding each element to its literal keeps the sequence binding exact in
+                // any scope. A `bytes([expr])` / `bytearray([expr])` whose elements are
+                // decided at RUN time has no constant sequence to bind at all; it wants
+                // storage instead, and the buffer path below materializes it
+                // (`i2c.write(bytes([reg & 0xFF]))` in adafruit_bmp280). A plain list/tuple
+                // literal has no storage to offer, so it keeps the sequence binding either
+                // way.
+                if (seqLit != null)
+                {
+                    var foldedElems = new List<Expression>(seqLit.Elements.Count);
+                    bool allElemsConst = true;
+                    foreach (var se in seqLit.Elements)
+                    {
+                        if (TryEvalElemConst(se, out int sv)) foldedElems.Add(new IntegerLiteral(sv) { Line = se.Line });
+                        else { allElemsConst = false; break; }
+                    }
+                    if (allElemsConst) seqLit = new ListExpr(foldedElems) { Line = seqLit.Line };
+                    else if (arg is CallExpr) seqLit = null;
+                }
+
                 // `Bar([Pin("PD5", Pin.OUT), Pin("PD6", Pin.OUT)])`: a list of INSTANCES is not
                 // raw AST to re-evaluate at each subscript -- the elements are built once here
                 // and the parameter is bound to the base key they live under, which is the same
@@ -3866,7 +3890,8 @@ public partial class IRGenerator
             {
                 if (!variableAliases.TryGetValue(lenResolved, out string lenNext)) break;
                 lenResolved = lenNext;
-                if (arraySizes.TryGetValue(lenResolved, out int sAlias)) return new Constant(sAlias);
+                if (TryResolveArrayStorageKey(lenResolved, out var lenStored))
+                    return new Constant(arraySizes[lenStored]);
             }
         }
 

@@ -2245,6 +2245,12 @@ public partial class IRGenerator
                 }
             }
 
+            // An alias can land on a class attribute's canonical name (`Sensor__BUFFER`)
+            // while the storage is filed under the module init (`main.Sensor__BUFFER`).
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && TryResolveArrayStorageKey(qualified, out var storedKey))
+                qualified = storedKey;
+
             // A module-level list written without an annotation is filed under the synthesized
             // main that runs the module's statements, so neither `<fn>.<name>` nor the bare name
             // finds it from an ordinary function, and the subscript fell through to the register

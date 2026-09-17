@@ -2831,6 +2831,13 @@ public partial class IRGenerator
                 }
             }
 
+            // An alias can land on a class attribute's canonical name (`Sensor__BUFFER`)
+            // while the storage is filed under the module init (`main.Sensor__BUFFER`) --
+            // the same normalization the read path in Expr.cs applies.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && TryResolveArrayStorageKey(qualified, out var storeKey))
+                qualified = storeKey;
+
             // Bytearray parameter: indirect store through pointer.
             if (bytearrayParams.Contains(qualified))
             {
@@ -3504,6 +3511,9 @@ public partial class IRGenerator
         {
             int count = 0;
             var initVals = new List<int>();
+            // The element EXPRESSIONS of a list form, kept so a run-time element is stored
+            // by evaluating it rather than as the zero the constant-only initVals carries.
+            List<Expression>? initElems = null;
             bool isInput = false;
             string inputPrompt = "";
             int inputMaxLen = 64;
@@ -3523,6 +3533,7 @@ public partial class IRGenerator
                 {
                     sizeSource = bytesLit;
                     count = bytesLit.Elements.Count;
+                    initElems = bytesLit.Elements;
                     foreach (var e in bytesLit.Elements)
                         initVals.Add(TryEvalElemConst(e, out int bv) ? bv : 0);
                 }
@@ -3535,6 +3546,7 @@ public partial class IRGenerator
                         if (arg0 is ListExpr le)
                         {
                             count = le.Elements.Count;
+                            initElems = le.Elements;
                             foreach (var e in le.Elements)
                                 initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                         }
@@ -3553,6 +3565,7 @@ public partial class IRGenerator
                     {
                         sizeSource = call.Args.Count > 0 ? call.Args[0] : call;
                         count = bytesElems.Count;
+                        if (call.Args.Count > 0 && call.Args[0] is ListExpr) initElems = bytesElems;
                         foreach (var e in bytesElems)
                             initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                     }
@@ -3619,7 +3632,15 @@ public partial class IRGenerator
                 moduleSramArrays.Add(qualified);
 
             for (int k = 0; k < count; ++k)
-                Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), DataType.UINT8, count));
+            {
+                // An element that is not a compile-time constant is evaluated HERE, at
+                // construction, and stored -- `bytearray([reg & 0xFF])` wrote a zero before
+                // (initVals carries 0 for a non-constant), silently sending the wrong byte.
+                Val initVal = initElems != null && !TryEvalElemConst(initElems[k], out _)
+                    ? VisitExpression(initElems[k])
+                    : new Constant(initVals[k]);
+                Emit(new ArrayStore(qualified, new Constant(k), initVal, DataType.UINT8, count));
+            }
 
             if (isInput)
             {
@@ -3780,16 +3801,36 @@ public partial class IRGenerator
         while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
         if (string.IsNullOrEmpty(baseName)) return null;
         string flat = baseName + "_" + mem.Member;
-        if (arraySizes.ContainsKey(flat)) return flat;
+        if (TryResolveArrayStorageKey(flat, out var flatStored)) return flatStored;
 
         // A field that was HANDED an array (`self._data = data`, the shape every buffer-taking
         // driver has) is another NAME for that storage, not a copy of its address into a scalar
         // field. Follow the alias to the array itself so the indexed load and store find it.
+        // The alias can land on the class-canonical name (`Sensor__BUFFER`) while the storage
+        // is filed under the module init (`main.Sensor__BUFFER`), so normalize that endpoint
+        // too -- without it a `self._BUFFER[i]` store fell through to a bit write on the bare
+        // global while enumerate() read the real array.
         string resolved = FollowAliases(flat);
-        if (resolved == flat || !arraySizes.ContainsKey(resolved)) return null;
-        // A compile-time sequence of instances also lives behind such an alias, and it has no
-        // SRAM to index: that shape is answered by the element paths, not by an array load.
-        return instanceClasses.ContainsKey(resolved + "__0") ? null : resolved;
+        if (resolved != flat)
+        {
+            if (TryResolveArrayStorageKey(resolved, out var resStored)) resolved = resStored;
+            if (!arraySizes.ContainsKey(resolved)) return null;
+            // A compile-time sequence of instances also lives behind such an alias, and it has no
+            // SRAM to index: that shape is answered by the element paths, not by an array load.
+            return instanceClasses.ContainsKey(resolved + "__0") ? null : resolved;
+        }
+
+        // A CLASS attribute (`_BUFFER = bytearray(8)` declared on the class, not the
+        // instance) has no per-instance flat name and no field alias -- the attribute is
+        // registered under its class-canonical name (`Sensor__BUFFER`) while its array
+        // storage is filed under the module init (`main.Sensor__BUFFER`). Without this
+        // probe, `self._BUFFER[i]` in a method fell through to a bit op on the bare
+        // global while `enumerate(buffer)` read the real array -- the same program
+        // reading and writing two different objects.
+        if (TryFindClassAttribute(baseName, mem.Member, out _, out var attrName)
+            && TryResolveArrayStorageKey(attrName, out var attrStored))
+            return attrStored;
+        return null;
     }
 
     // Resolves an array-size annotation token to a constant: a literal ("24"),
@@ -4607,6 +4648,9 @@ public partial class IRGenerator
             // The same as the VarDecl path above: the argument that failed to give a size.
             Expression? annSizeSource = null;
             var initVals = new List<int>();
+            // The element EXPRESSIONS of a list form, for the same reason as the VarDecl
+            // path above: a run-time element is stored by evaluating it, not as a zero.
+            List<Expression>? initElems = null;
 
             if (stmt.Value != null && stmt.Value is CallExpr call && call.Callee is VariableExpr callee &&
                 callee.Name == "bytearray" && call.Args.Count > 0)
@@ -4616,6 +4660,7 @@ public partial class IRGenerator
                 if (arg0 is ListExpr le)
                 {
                     count = le.Elements.Count;
+                    initElems = le.Elements;
                     foreach (var e in le.Elements) initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                 }
                 // Integer literal or any compile-time constant (bytearray(WINDOW)).
@@ -4632,6 +4677,7 @@ public partial class IRGenerator
             {
                 annSizeSource = bCall.Args.Count > 0 ? bCall.Args[0] : bCall;
                 count = bElems.Count;
+                if (bCall.Args.Count > 0 && bCall.Args[0] is ListExpr) initElems = bElems;
                 foreach (var e in bElems) initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
             }
 
@@ -4666,7 +4712,12 @@ public partial class IRGenerator
             arraysWithVariableIndex.Add(qualified);
 
             for (int k = 0; k < count; ++k)
-                Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), DataType.UINT8, count));
+            {
+                Val initVal = initElems != null && !TryEvalElemConst(initElems[k], out _)
+                    ? VisitExpression(initElems[k])
+                    : new Constant(initVals[k]);
+                Emit(new ArrayStore(qualified, new Constant(k), initVal, DataType.UINT8, count));
+            }
             return;
         }
 

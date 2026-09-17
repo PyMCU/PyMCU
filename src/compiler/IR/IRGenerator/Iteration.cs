@@ -33,9 +33,35 @@ public partial class IRGenerator
         {
             if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
             else break;
-            if (arraySizes.TryGetValue(key, out int s)) { baseKey = key; return s; }
+            if (TryResolveArrayStorageKey(key, out var stored)) { baseKey = stored; return arraySizes[stored]; }
         }
         return -1;
+    }
+
+    // A resolved alias endpoint can name a CLASS attribute or module-level array by its
+    // class-canonical spelling (`Sensor__BUFFER`, `mod_TCS34725__BUFFER`) while the storage
+    // was registered under the init function that ran the class body -- `main.<attr>` for
+    // the entry module, `<mod>__module_init.<attr>` for an imported one. Without this
+    // normalization an `enumerate(buffer)` over a `_BUFFER = bytearray(8)` class attribute
+    // passed through `i2c.write(self._BUFFER)` missed every size lookup (PyMCU#454 follow-up:
+    // adafruit_tcs34725's writeto). A key already carrying a `.` is function-qualified and
+    // needs no second home.
+    private bool TryResolveArrayStorageKey(string key, out string storageKey)
+    {
+        if (arraySizes.ContainsKey(key)) { storageKey = key; return true; }
+        if (key.IndexOf('.') < 0)
+        {
+            if (arraySizes.ContainsKey("main." + key)) { storageKey = "main." + key; return true; }
+            foreach (var modName in modules.Keys)
+            {
+                string mp = modName.Replace('.', '_') + "_";
+                if (!key.StartsWith(mp, StringComparison.Ordinal)) continue;
+                string initKey = mp + "__module_init." + key.Substring(mp.Length);
+                if (arraySizes.ContainsKey(initKey)) { storageKey = initKey; return true; }
+            }
+        }
+        storageKey = key;
+        return false;
     }
 
     // `for c in <const[str]>` unrolls at or below this length (each char a compile-time
@@ -1126,7 +1152,11 @@ public partial class IRGenerator
                     {
                         foreach (var elem in seqElems)
                         {
-                            if (TryEvalConstElement(elem, out int ev))
+                            // TryEvalElemConst, not the literal-only TryEvalConstElement:
+                            // `bytes([register & 0xFF])` with `register` a folded parameter
+                            // IS a compile-time element -- the general evaluator folds what
+                            // the literal switch cannot see.
+                            if (TryEvalElemConst(elem, out int ev))
                             {
                                 constantVariables[idxKey] = idx++;
                                 constantVariables[valKey] = ev;
