@@ -358,6 +358,37 @@ public class ConditionalCompilatorTests
     }
 
     [Fact]
+    public void MixedOptionalImports_ResolvedOneKeepsItsBinding_WhenASiblingFails()
+    {
+        // `from typing import Tuple` resolves (typing is a builtin module) while
+        // `from circuitpython_typing.device_drivers import I2CDeviceDriver` does not --
+        // the shape every Adafruit driver opens with. CPython binds the resolved names
+        // before the failing line raises, so the fold must keep them: dropped entirely,
+        // `-> Tuple:` in adafruit_register/i2c_struct.py read as an unknown type.
+        var resolvedImport = new ImportStmt("typing", new List<string> { "Tuple" })
+        {
+            IsOptional = true,
+            OptionalLoadFailed = false,
+        };
+        var failedImport = new ImportStmt(
+            "circuitpython_typing.device_drivers", new List<string> { "I2CDeviceDriver" })
+        {
+            IsOptional = true,
+            OptionalLoadFailed = true,
+        };
+        var tryStmt = new TryStmt(
+            new List<Statement> { resolvedImport, failedImport },
+            new List<(string, List<Statement>)> { ("ImportError", new List<Statement>()) });
+        var prog = EmptyProgram();
+        prog.GlobalStatements.Add(tryStmt);
+
+        new ConditionalCompilator(AvrConfig()).Process(prog);
+
+        prog.Imports.Should().ContainSingle(i => i.ModuleName == "typing");
+        prog.TypingOnlyNames.Should().Contain("I2CDeviceDriver");
+    }
+
+    [Fact]
     public void IfTypeChecking_RecordsItsImportsSymbolsAsTypingOnly_AndDropsTheBlock()
     {
         // The other spelling of the same guard: `if TYPE_CHECKING:` around the import, no

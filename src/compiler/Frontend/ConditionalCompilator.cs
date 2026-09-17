@@ -156,6 +156,13 @@ public class ConditionalCompilator(DeviceConfig config)
         var chosen = new List<Statement>();
         if (optional.Any(i => i.OptionalLoadFailed))
         {
+            // A sibling import failed, so the handler runs -- but an optional import that
+            // RESOLVED already bound its names, and CPython keeps them bound: `from typing
+            // import Tuple` then `from circuitpython_typing import X` leaves Tuple usable
+            // even as the except takes over. Folding the whole body to the handler dropped
+            // those names entirely -- not imported, not typing-only -- and `-> Tuple:` then
+            // read as an unknown type. Keep the resolved imports ahead of the handler.
+            chosen.AddRange(optional.Where(i => !i.OptionalLoadFailed));
             if (tryStmt.Handlers.Count > 0) chosen.AddRange(tryStmt.Handlers[0].Handler);
         }
         else

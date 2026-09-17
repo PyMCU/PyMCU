@@ -896,7 +896,7 @@ The other sixteen have moved off their annotations and into their own code.
 | `adafruit_hcsr04` | **builds unmodified, 3 432 bytes** | |
 | `adafruit_ht16k33` (matrix) | `isinstance()` at `matrix.py:52` | a run-time type test has no question left to answer; branch on a value or write one function per type (moved off the runtime bit index, #352 landed) |
 | `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
-| `adafruit_ina219` | `-> Tuple:` in `adafruit_register/i2c_struct.py` | `Tuple[...]` is read (#357); a bare `Tuple` annotation is not |
+| `adafruit_ina219` | `obj: I2CDeviceDriver` read at `i2c_bits.py:89` | a typing-only name is accepted where nothing reads it, refused at the first read (#367); the parameter is used (moved off bare `Tuple`, which a `try`-guarded `from typing import` now keeps) |
 | `adafruit_irremote` | `raise IRDecodeException from err` at `adafruit_irremote.py:270` | `raise ... from ...` is not supported (moved off the `except` binding; the example also needs parseable exception syntax) |
 | `adafruit_mcp3xxx` | `spi.write_readinto` inside `with self._spi_device as spi:` | the `with ... as` name does not pick up `__enter__`'s `-> SPI` return type, so the call reads as an undefined function |
 | `neopixel` | `import adafruit_pixelbuf` | module not found |
@@ -905,7 +905,7 @@ The other sixteen have moved off their annotations and into their own code.
 | `adafruit_motor` (servo) | **builds unmodified, 1 936 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
 | `adafruit_tcs34725` | `enumerate(buffer)` in the layer's `busio.I2C.writeto` | same as `adafruit_bmp280` (moved off #373) |
-| `adafruit_veml7700` | `-> Tuple:` in `adafruit_register/i2c_struct.py` | same as `adafruit_ina219` |
+| `adafruit_veml7700` | `obj: I2CDeviceDriver` read at `i2c_bits.py:89` | same as `adafruit_ina219` |
 
 ### Which of these are limits and which are gaps
 
@@ -928,9 +928,11 @@ report the missing module by name.
 **The remaining refusals are scattered, one construct each.** The opaque-driver-buffer
 `enumerate()` inside the layer's `busio.I2C.writeto` stops `adafruit_bmp280` and
 `adafruit_tcs34725`. A field whose type is pinned by its first store and then contradicted
-stops `adafruit_74hc595` (`_gpio`) and `adafruit_character_lcd` (`_message`). A bare `Tuple`
-annotation — `Tuple[...]` is read, `Tuple` alone is not — stops `adafruit_ina219` and
-`adafruit_veml7700` inside `adafruit_register`. `raise ... from ...` stops
+stops `adafruit_74hc595` (`_gpio`) and `adafruit_character_lcd` (`_message`). A `try`-guarded
+`from typing import Tuple` that shares its `try` with a failing sibling import used to lose
+the resolved names entirely; with the fold fixed, `adafruit_ina219` and `adafruit_veml7700`
+move inside `adafruit_register` to the `I2CDeviceDriver` typing-only parameter their bodies
+read. `raise ... from ...` stops
 `adafruit_irremote`, `isinstance()` stops the `adafruit_ht16k33` matrix, a `with ... as`
 name that does not inherit `__enter__`'s return type stops `adafruit_mcp3xxx`, a `Union`
 argument that matches no member stops `adafruit_debouncer`, and `import os` stops
