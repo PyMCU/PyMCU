@@ -874,34 +874,38 @@ Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's 
 **byte-identical to its repository** and a `main()` written after the library's own example
 that constructs the object and calls its methods. Re-measured the same day after #352, #356,
 #357, #367 and the `Optional` decision. Re-run 2026-09-15 for the beta 1 release prep
-(same harness, pinned to the 0.1.0a10/a9 wheels): every first blocker below is unchanged.
+(same harness, pinned to the 0.1.0a10/a9 wheels). Re-measured 2026-09-16 on the 0.1.0b1
+source: four of the twenty now build, and most of the rest stop somewhere later than the
+line they used to.
 
-**One of the twenty builds unmodified**: `adafruit_hcsr04`, at 4 160 bytes, since the
-optional-import flag folds (#372). The other nineteen have moved off their annotations and into
-their own code, which is where the next round of work is.
+**Four of the twenty build unmodified**: `adafruit_hcsr04` (3 432 bytes),
+`adafruit_motor`'s servo (1 936 bytes), `adafruit_pcf8574` (1 140 bytes) and
+`adafruit_bus_device` (820 bytes; its own example uses a `bytearray([...])` inline
+argument and a generator expression in `join`, which need the supported spellings).
+The other sixteen have moved off their annotations and into their own code.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
-| `adafruit_bmp280` | `self._write_register_byte()` | `self` is an integer: the method is not available (#373) |
-| `adafruit_bus_device` | `enumerate()` in `busio.py` over a named module constant | enumerate() list/tuple elements must be compile-time integer constants (only literal ints fold; PyMCU#431 fixed `bytes([...])`/`bytes(N)` as a call argument, one gap short) |
-| `adafruit_character_lcd` | `for pin in (reset_dio, ..., d7_dio):` | for-in list/tuple iterable elements must be compile-time constants (PyMCU#442 fixed the `Union[pwmio.PWMOut, digitalio.DigitalInOut]` one line above, one gap short) |
-| `adafruit_debouncer` | `raise OverflowError(...)` in `adafruit_ticks.py`, imported before `Debouncer` itself | `OverflowError` is not a recognised exception name (PyMCU#442 fixed `Union[ROValueIO, Callable[[], bool]]` on `Debouncer.__init__`, one gap short) |
-| `adafruit_dht` | `from os import uname` | `os` is a Python standard module; there is no operating system or filesystem on the target (PyMCU#433 fixed `import array` / `array.array(typecode)`, one gap short) |
+| `adafruit_bmp280` | `enumerate(buffer)` in the layer's `busio.I2C.writeto` | enumerate's argument must be a constant list literal, `range(N)`, or a fixed-size array; the opaque driver buffer is none of those (moved off #373's `self` misdiagnosis) |
+| `adafruit_bus_device` | **builds unmodified, 820 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
+| `adafruit_character_lcd` | `self._message` field | inferred numeric at its first store, assigned a string later |
+| `adafruit_debouncer` | `Debouncer(pin)` | a `DigitalInOut` matches no member of `Union[ROValueIO, Callable[[], bool]]` (moved off `OverflowError` in `adafruit_ticks`) |
+| `adafruit_dht` | `from os import uname` | `os` is a Python standard module; there is no operating system or filesystem on the target (moved off `array`, #433) |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
-| `adafruit_74hc595` | `-> digitalio.Direction.OUTPUT` on a property | unknown type in the annotation |
-| `adafruit_hcsr04` | **builds unmodified, 4 160 bytes** | |
-| `adafruit_ht16k33` (matrix) | `self._buffer[i + 1] = value` in the shared `ht16k33.py` base | a run-time bit index is only supported on a chip register, not through a runtime pointer (PyMCU#442 fixed `Union[int, List[int], Tuple[int, ...]]` on the matrix constructor, one gap short) |
+| `adafruit_74hc595` | `self._gpio` field | inferred numeric at its first store, assigned another type later (moved off `-> Direction.OUTPUT`) |
+| `adafruit_hcsr04` | **builds unmodified, 3 432 bytes** | |
+| `adafruit_ht16k33` (matrix) | `isinstance()` at `matrix.py:52` | a run-time type test has no question left to answer; branch on a value or write one function per type (moved off the runtime bit index, #352 landed) |
 | `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
-| `adafruit_ina219` | `I2CDeviceDriver`, through `adafruit_register` | unknown type in the annotation |
-| `adafruit_irremote` | `except FailedToDecode as err` | a raise carries only which exception was raised |
-| `adafruit_mcp3xxx` | the `MCP3008` constructor | call to an undefined function |
+| `adafruit_ina219` | `-> Tuple:` in `adafruit_register/i2c_struct.py` | `Tuple[...]` is read (#357); a bare `Tuple` annotation is not |
+| `adafruit_irremote` | `raise IRDecodeException from err` at `adafruit_irremote.py:270` | `raise ... from ...` is not supported (moved off the `except` binding; the example also needs parseable exception syntax) |
+| `adafruit_mcp3xxx` | `spi.write_readinto` inside `with self._spi_device as spi:` | the `with ... as` name does not pick up `__enter__`'s `-> SPI` return type, so the call reads as an undefined function |
 | `neopixel` | `import adafruit_pixelbuf` | module not found |
-| `adafruit_pcf8574` | `-> digitalio.Pull.UP` on a property | unknown type in the annotation |
+| `adafruit_pcf8574` | **builds unmodified, 1 140 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
-| `adafruit_motor` (servo) | `self._min_duty` assigned outside `__init__` | the class has no such field |
+| `adafruit_motor` (servo) | **builds unmodified, 1 936 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
-| `adafruit_tcs34725` | `self._read_u8()` | `self` is an integer: the method is not available |
-| `adafruit_veml7700` | `I2CDeviceDriver`, through `adafruit_register` | unknown type in the annotation |
+| `adafruit_tcs34725` | `enumerate(buffer)` in the layer's `busio.I2C.writeto` | same as `adafruit_bmp280` (moved off #373) |
+| `adafruit_veml7700` | `-> Tuple:` in `adafruit_register/i2c_struct.py` | same as `adafruit_ina219` |
 
 ### Which of these are limits and which are gaps
 
@@ -917,16 +921,20 @@ which one live exception at a time makes static rather than allocated (#369). Bo
 restrictions of the lowering, not of the model, and all three libraries that stopped on
 `**kwargs` now stop somewhere else entirely.
 
-**An annotation naming something with no representation here is now the largest single
-blocker**, stopping ten of the twenty. Eight of those are the same line: the three parameters
-of a context manager's `__exit__`, annotated `Type[BaseException]` and friends and never used
-as values in the body. `Type[X]` names a class OBJECT and there are none here, so there is
-nothing to read it as. Whether a signature the compiler cannot read should refuse a program
-that never uses the value is a decision, tracked in #366.
-
 **Three need a module that does not exist yet**: `adafruit_pixelbuf` for `neopixel`,
 `adafruit_framebuf` for `adafruit_ssd1306`, and `onewireio` for `adafruit_ds18x20`. All three
 report the missing module by name.
+
+**The remaining refusals are scattered, one construct each.** The opaque-driver-buffer
+`enumerate()` inside the layer's `busio.I2C.writeto` stops `adafruit_bmp280` and
+`adafruit_tcs34725`. A field whose type is pinned by its first store and then contradicted
+stops `adafruit_74hc595` (`_gpio`) and `adafruit_character_lcd` (`_message`). A bare `Tuple`
+annotation — `Tuple[...]` is read, `Tuple` alone is not — stops `adafruit_ina219` and
+`adafruit_veml7700` inside `adafruit_register`. `raise ... from ...` stops
+`adafruit_irremote`, `isinstance()` stops the `adafruit_ht16k33` matrix, a `with ... as`
+name that does not inherit `__enter__`'s return type stops `adafruit_mcp3xxx`, a `Union`
+argument that matches no member stops `adafruit_debouncer`, and `import os` stops
+`adafruit_dht`.
 
 **A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
 `X | None` and `Union[X, None]` are read as `X`: see "None is a compile-time value" above.
