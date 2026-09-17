@@ -537,6 +537,12 @@ public partial class IRGenerator
         // already what a short tuple's binding does one screen up.
         if (stmt.Target is VariableExpr listTarget)
         {
+            // `coeff = list(struct.unpack(fmt, bytes(buf)))`, `t = struct.unpack(fmt, buf)`
+            // and `xs = list(arr)`: a compile-time sequence of reads stored into element
+            // slots, each keeping its field width and sign (#361).
+            if (TryStructUnpackSeq(stmt.Value, out var unpackElems, out var unpackTypes)
+                && TryVisitCtListAssign(listTarget, unpackElems, unpackTypes)) return;
+
             List<Expression>? elemExprs = stmt.Value switch
             {
                 ListExpr le => le.Elements,
@@ -664,6 +670,26 @@ public partial class IRGenerator
                 constSequenceBindings[seqFieldKey] = seqConstElems;
                 variableAliases.Remove(seqFieldKey);
                 return;
+            }
+
+            // `self._xs = arr[a:b]`: the read path already materialises a slice into a fixed
+            // `__slice_N` array (a real copy, which is what a Python slice is), and the field
+            // keeps it as a compile-time sequence of its element slots, so `self._xs[k]`
+            // folds to one of them without an indexed load on unrolled storage (#361).
+            if (stmt.Value is IndexExpr { Index: SliceExpr } fieldSlice)
+            {
+                Val sliceVal = VisitExpression(fieldSlice);
+                if (sliceVal is Variable sliceArr
+                    && arraySizes.TryGetValue(sliceArr.Name, out int sliceN))
+                {
+                    constSequenceBindings[seqFieldKey] =
+                        FixedArrayElementExprs(new VariableExpr(sliceArr.Name), sliceN);
+                    variableAliases.Remove(seqFieldKey);
+                    return;
+                }
+                throw UserError(
+                    "a slice assigned to a field needs a named fixed-size array as its source",
+                    fieldSlice);
             }
         }
 
@@ -5542,7 +5568,8 @@ public partial class IRGenerator
     /// constructed directly into their slot so instanceClasses[slot] is registered and
     /// for-in / enumerate over the array resolve the element type. Always handles the list.
     /// </summary>
-    private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs)
+    private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs,
+                                      List<DataType>? elemTypes = null)
     {
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + target.Name
@@ -5550,7 +5577,7 @@ public partial class IRGenerator
         if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(target.Name)) qualified = target.Name;
 
         int count = elemExprs.Count;
-        DataType elemDt = DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
+        DataType elemDt = elemTypes is { Count: > 0 } ? elemTypes[0] : DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
 
         // An all-constant literal carries its own element width, and the widest element is what
         // the whole table has to hold. The type was read from element 0 alone, and a constant
@@ -5558,24 +5585,36 @@ public partial class IRGenerator
         // table was stored on its low byte: `DUTIES = [256, 383, 512, ...]` printed 0, 127, 0
         // with no diagnostic, and a PWM duty cycle is a 16-bit number on any part that has one.
         var constElems = new List<int>(count);
-        bool allConst = count > 0 && elemExprs.All(e => TryEvalElemConst(e, out _));
+        bool allConst = count > 0 && elemTypes == null && elemExprs.All(e => TryEvalElemConst(e, out _));
         if (allConst)
         {
             foreach (var e in elemExprs) { TryEvalElemConst(e, out int cv); constElems.Add(cv); }
             elemDt = WidestElemType(constElems);
         }
 
+        // Visit every element BEFORE any slot is retyped: `xs = [f(x) for x in xs]` rebinds
+        // xs, and each element still reads the OLD slots while the new value is computed.
+        var visited = new Val?[count];
+        var ctorClasses = new string?[count];
+        for (int k = 0; k < count; ++k)
+        {
+            ctorClasses[k] = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
+            if (ctorClasses[k] == null) visited[k] = VisitExpression(elemExprs[k]);
+        }
+        if (!allConst && elemTypes == null && visited[0] is { } firstVal)
+            elemDt = firstVal switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
+
         for (int k = 0; k < count; ++k)
         {
             string elemName = qualified + "__" + k;
-            variableTypes[elemName] = elemDt;
+            DataType slotDt = elemTypes?[k] ?? elemDt;
+            variableTypes[elemName] = slotDt;
 
             // ZCA constructor element: build the instance directly into the slot (like a plain
             // `x = Cls(...)` assignment) so instanceClasses[slot] is registered. Constructing via
             // a temporary loses the class -- an `__init__` whose ReturnType is "" still allocates a
             // result temp, so VisitExpression would return that temp, not the instance.
-            string? ctorClass = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
-            if (ctorClass != null)
+            if (ctorClasses[k] is { } ctorClass)
             {
                 instanceClasses[elemName] = ctorClass;
                 virtualInstances.Add(elemName);
@@ -5584,17 +5623,22 @@ public partial class IRGenerator
                 continue;
             }
 
-            Val v = VisitExpression(elemExprs[k]);
-            if (!allConst && k == 0)
-                elemDt = v switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
-            variableTypes[elemName] = elemDt;
-            Emit(new Copy(v, new Variable(elemName, elemDt)));
-            if (v is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
+            Emit(new Copy(visited[k]!, new Variable(elemName, slotDt)));
+            if (visited[k] is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
         }
 
         arraySizes[qualified] = count;
-        arrayElemTypes[qualified] = elemDt;
+        arrayElemTypes[qualified] = elemTypes?[0] ?? elemDt;
         variableTypes[qualified] = elemDt;
+        // The name is rebound from here on: an alias or a compile-time sequence it held
+        // (`coeff` naming a returned buffer, then `coeff = list(struct.unpack(...))`) must
+        // not outlive the binding that replaced it. An all-constant literal re-binds to its
+        // own elements, so `for v in x`, `x in SEQ` and `[e for e in x]` keep resolving it.
+        variableAliases.Remove(qualified);
+        constSequenceBindings.Remove(qualified);
+        if (allConst)
+            constSequenceBindings[qualified] =
+                constElems.Select(v => (Expression)new IntegerLiteral(v)).ToList();
         // Keep the values: a run-time subscript reaching this array later can turn them into a
         // flash table, which is the storage a lookup table written as a plain list wants.
         // A name rebound to another list denotes the new values from here on, so any layout
@@ -5669,6 +5713,16 @@ public partial class IRGenerator
             // rejected for having a filter it does not have.
             case VariableExpr seqName when ResolveConstSequence(seqName.Name) is { } bound:
                 items = bound;
+                break;
+            // `[f(x) for x in arr]` over a fixed-size array: the elements are its slots,
+            // so the comprehension folds to f(arr[0]), f(arr[1]), ... -- the same shape the
+            // literal iterable above produces. `[float(i) for i in coeff]` over the fields
+            // of a struct.unpack result is the form driver libraries write (#361).
+            case VariableExpr arrName
+                when ResolveNameKey(arrName.Name) is { } arrKey
+                     && arraySizes.TryGetValue(arrKey, out int arrCount) && arrCount > 0
+                     && !instanceClasses.ContainsKey(arrKey + "__0"):
+                items = FixedArrayElementExprs(arrName, arrCount);
                 break;
             case CallExpr { Callee: VariableExpr { Name: "range" } } rangeCall:
                 int start = 0, stop, step = 1;

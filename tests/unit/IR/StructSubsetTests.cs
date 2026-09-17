@@ -157,13 +157,15 @@ public class StructSubsetTests
 
     // ---- the refusals. Each names which shape was out of scope, and none is a fallback. ----
 
+    // `t = struct.unpack_from(fmt, buf, 0)` materialises every field into a
+    // slot at bind time: field 0 is bytes 1,2 little-endian, field 1 is 3,4 --
+    // and indexing the name later reads the slot, not the buffer (#361).
     [Fact]
-    public void AResultThatIsNotIndexedOnTheSpot_IsRefused()
+    public void AResultBoundToAName_ReadsTheSameBytes()
     {
-        var ex = Fails(Head + "    t = struct.unpack_from(\"<H\", buf, 0)\n    return buf[0]\n");
+        var ir = Gen(Head + "    t = struct.unpack_from(\"<HH\", buf, 1)\n    return t[1] & 0xFF\n");
 
-        Assert.Contains("returns a tuple", ex.Message);
-        Assert.Contains("Index it on the spot", ex.Message);
+        Assert.Equal(new[] { 2, 1, 4, 3 }, BytesRead(ir));
     }
 
     [Fact]

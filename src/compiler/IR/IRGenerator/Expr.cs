@@ -1999,12 +1999,13 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
-        // `struct.unpack_from(fmt, buf, off)[k]`. This is the ONLY place the subscript and the
-        // call are visible together, and the pair is the whole supported shape: indexed on the
-        // spot, so the tuple that CPython would build never exists. A bare unpack_from() is
-        // refused in VisitCall, which cannot see whether it was indexed.
+        // `struct.unpack(fmt, buf)[k]` / `struct.unpack_from(fmt, buf, off)[k]`. This is
+        // the ONLY place the subscript and the call are visible together, and the pair is
+        // the whole supported shape: indexed on the spot, so the tuple that CPython would
+        // build never exists. A bare unpack() is refused in VisitCall, which cannot see
+        // whether it was indexed.
         if (expr.Target is CallExpr unpackCall
-            && IsStructCall(unpackCall, "unpack_from"))
+            && (IsStructCall(unpackCall, "unpack_from") || IsStructCall(unpackCall, "unpack")))
             return EmitStructUnpackFromIndexed(unpackCall, expr.Index);
 
         // d[k] on a dict-literal binding: a compile-time CLOSED lookup table. A constant
@@ -2075,7 +2076,10 @@ public partial class IRGenerator
         {
             if (expr.Target is VariableExpr srcVe)
             {
-                string srcQ = string.IsNullOrEmpty(currentFunction) ? srcVe.Name : currentFunction + "." + srcVe.Name;
+                // ResolveNameKey walks the same scopes every other lookup does -- an array
+                // built inside an @inline expansion lives under the inline prefix, which a
+                // currentFunction-only probe misses (PyMCU#361).
+                string srcQ = ResolveNameKey(srcVe.Name);
                 if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
                 if (arraySizes.TryGetValue(srcQ, out int srcSize))
                 {
@@ -2261,7 +2265,13 @@ public partial class IRGenerator
                 }
             }
 
-            string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
+            // A name already carrying its full storage key -- a buffer returned through
+            // nested inline expansions (`inline3._read.inline4._read_register.result`,
+            // which is what a struct.unpack field expression holds) -- is used verbatim:
+            // prefixing it again produces a name nothing registered.
+            string qualified = arraySizes.ContainsKey(ve.Name) || bytearrayParams.Contains(ve.Name)
+                ? ve.Name
+                : (string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name);
             // Same module-scope rule as the store path: the module array's canonical
             // spelling is the bare name ScanGlobals filed (PyMCU#460).
             if (!arraySizes.ContainsKey(qualified))
@@ -2416,7 +2426,12 @@ public partial class IRGenerator
                             $"array index {elemIdx} out of range for size {sz}",
                             expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                     string elemName = qualified + "__" + elemIdx;
-                    return new Variable(elemName, arrayElemTypes[qualified]);
+                    // The slot's own type wins over the array's uniform element type: a
+                    // struct.unpack sequence stores int8/int16 fields next to unsigned ones,
+                    // and the uniform type would read a signed field's bits as unsigned.
+                    return new Variable(elemName,
+                        variableTypes.TryGetValue(elemName, out var elemVarDt)
+                            ? elemVarDt : arrayElemTypes[qualified]);
                 }
             }
         }

@@ -673,6 +673,7 @@ public partial class IRGenerator
         if (callee == "len") return EmitLenBuiltin(expr);
         if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
         if (callee == "struct_calcsize") return EmitStructCalcsize(expr);
+        if (callee == "struct_unpack") return EmitStructUnpackFrom(expr, "struct.unpack()");
         if (callee == "struct_unpack_from") return EmitStructUnpackFrom(expr);
         if (callee == "struct_pack_into") return EmitStructPackInto(expr);
         if (callee == "abs") return EmitAbsBuiltin(expr);
@@ -4184,21 +4185,21 @@ public partial class IRGenerator
     /// A bare `struct.unpack_from(...)`. Always refused: the value it would produce is a tuple,
     /// and the supported shape is the one that never lets one exist.
     /// </summary>
-    private Val EmitStructUnpackFrom(CallExpr expr)
+    private Val EmitStructUnpackFrom(CallExpr expr, string who = "struct.unpack_from()")
     {
-        const string who = "struct.unpack_from()";
         // Parse first, so a program that is wrong about BOTH hears about the format it wrote
         // rather than about a shape it can then fix and be refused again.
         ParseStructFormat(StructFormatArg(expr, who), who, expr.Callee);
         throw UserError(
-            $"{who} returns a tuple, and there is no heap to hold one. Index it on the spot and "
-            + "PyMCU expands the whole thing into a load: `unpack_from(fmt, buf, off)[0]`. To "
-            + "read several fields, index it once per field.", expr.Callee);
+            $"{who} returns a tuple, which has no value in this position. Bind it to a name "
+            + "(`t = unpack_from(fmt, buf, off)`) and index, slice or iterate that, or index "
+            + "the call on the spot (`unpack_from(fmt, buf, off)[0]`).", expr.Callee);
     }
 
     /// <summary>
-    /// `struct.unpack_from(fmt, buf, off)[k]` -- the whole expression, expanded into a read of
-    /// field k. Called from VisitIndex, which is the only place the `[k]` is visible.
+    /// `struct.unpack(fmt, buf)[k]` / `struct.unpack_from(fmt, buf, off)[k]` -- the whole
+    /// expression, expanded into a read of field k. Called from VisitIndex, which is the
+    /// only place the `[k]` is visible.
     ///
     /// Built as AST and handed to the ordinary expression lowering rather than emitting
     /// ArrayLoad here: a fixed-size array indexed by a constant is UNROLLED into per-element
@@ -4207,11 +4208,15 @@ public partial class IRGenerator
     /// </summary>
     private Val EmitStructUnpackFromIndexed(CallExpr call, Expression indexExpr)
     {
-        const string who = "struct.unpack_from()";
+        bool isUnpackFrom = IsStructCall(call, "unpack_from");
+        string who = isUnpackFrom ? "struct.unpack_from()" : "struct.unpack()";
         var fields = ParseStructFormat(StructFormatArg(call, who), who, call.Callee);
 
-        if (call.Args.Count is < 2 or > 3)
-            throw UserError($"{who} expects (format, buffer) or (format, buffer, offset)", call.Callee);
+        int maxArgs = isUnpackFrom ? 3 : 2;
+        if (call.Args.Count < 2 || call.Args.Count > maxArgs)
+            throw UserError(
+                $"{who} expects (format, buffer)"
+                + (isUnpackFrom ? " or (format, buffer, offset)" : ""), call.Callee);
 
         int k;
         try { k = EvaluateConstantExpr(indexExpr); }
@@ -4229,7 +4234,7 @@ public partial class IRGenerator
 
         var f = fields[k];
         int at = StructOffsetArg(call, 2, who) + f.Offset;
-        Expression buf = call.Args[1];
+        Expression buf = NormalizeUnpackBuffer(call.Args[1], ref at);
 
         Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
 
@@ -4262,6 +4267,108 @@ public partial class IRGenerator
         Temporary typed = MakeTemp(want);
         Emit(new Copy(v, typed));
         return typed;
+    }
+
+    /// <summary>
+    /// `struct.unpack(fmt, buf)` / `struct.unpack_from(fmt, buf[, off])` bound to a name --
+    /// possibly through `list(...)`/`tuple(...)`: the result is a compile-time sequence of
+    /// per-field reads, one expression each, carrying the field's width and sign in a cast so
+    /// the slots it is stored into keep them. The buffer argument is pinned to its storage
+    /// key, so the reads still land on the same bytes after the target name is rebound
+    /// (`coeff = list(unpack(fmt, bytes(coeff)))` assigns `coeff` again). `list(seq)` /
+    /// `tuple(seq)` of a compile-time sequence or a fixed array produces its elements as a
+    /// copy, which is what those calls mean. Returns false for anything else, leaving the
+    /// call for the paths that report it.
+    /// </summary>
+    private bool TryStructUnpackSeq(Expression e, out List<Expression> elems, out List<DataType>? types)
+    {
+        elems = null!;
+        types = null;
+
+        Expression inner = e;
+        bool wrapped = false;
+        if (inner is CallExpr { Callee: VariableExpr { Name: "list" or "tuple" } } wrap
+            && wrap.Args.Count == 1)
+        {
+            inner = wrap.Args[0];
+            wrapped = true;
+        }
+
+        if (inner is CallExpr call
+            && (IsStructCall(call, "unpack") || IsStructCall(call, "unpack_from")))
+        {
+            bool isUnpackFrom = IsStructCall(call, "unpack_from");
+            string who = isUnpackFrom ? "struct.unpack_from()" : "struct.unpack()";
+            var fields = ParseStructFormat(StructFormatArg(call, who), who, call.Callee);
+            int maxArgs = isUnpackFrom ? 3 : 2;
+            if (call.Args.Count < 2 || call.Args.Count > maxArgs)
+                throw UserError(
+                    $"{who} expects (format, buffer)"
+                    + (isUnpackFrom ? " or (format, buffer, offset)" : ""), call.Callee);
+            int baseOff = isUnpackFrom ? StructOffsetArg(call, 2, who) : 0;
+
+            Expression buf = NormalizeUnpackBuffer(call.Args[1], ref baseOff);
+            if (buf is VariableExpr bufVar && ResolveBufferKey(bufVar) is { } bufKey)
+                buf = new VariableExpr(bufKey);
+
+            elems = new List<Expression>(fields.Count);
+            types = new List<DataType>(fields.Count);
+            foreach (var f in fields)
+            {
+                int at = baseOff + f.Offset;
+                Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
+                Expression assembled = f.Width == 1
+                    ? Byte(0)
+                    : new BinaryExpr(
+                        new BinaryExpr(Byte(f.LittleEndian ? 1 : 0),
+                                       PyMCU.Frontend.BinaryOp.LShift, new IntegerLiteral(8)),
+                        PyMCU.Frontend.BinaryOp.BitOr, Byte(f.LittleEndian ? 0 : 1));
+                (DataType dt, string? cast) = (f.Width, f.Signed) switch
+                {
+                    (1, false) => (DataType.UINT8, (string?)null),
+                    (1, true) => (DataType.INT8, "int8"),
+                    (2, false) => (DataType.UINT16, "uint16"),
+                    _ => (DataType.INT16, "int16"),
+                };
+                if (cast != null)
+                    assembled = new CallExpr(new VariableExpr(cast), new List<Expression> { assembled });
+                elems.Add(assembled);
+                types.Add(dt);
+            }
+            return true;
+        }
+
+        if (wrapped)
+        {
+            if (ResolveConstSequenceExpr(inner) is { } seqElems)
+            {
+                elems = new List<Expression>(seqElems);
+                return true;
+            }
+            if (SequenceKeyOf(inner) is { } skey
+                && arraySizes.TryGetValue(skey, out int sn) && sn > 0
+                && !instanceClasses.ContainsKey(skey + "__0"))
+            {
+                elems = FixedArrayElementExprs(inner, sn);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The elements of a fixed-size array as subscript-read expressions of the source
+    /// expression itself. Constant indices fold to the element slot on an unrolled array
+    /// (keeping each slot's own type) and to an ArrayLoad on a flat SRAM one; letting the
+    /// index path resolve the name is also what keeps an @inline-prefixed binding from
+    /// being qualified twice.
+    /// </summary>
+    private List<Expression> FixedArrayElementExprs(Expression target, int count)
+    {
+        var result = new List<Expression>(count);
+        for (int k = 0; k < count; k++)
+            result.Add(new IndexExpr(target, new IntegerLiteral(k)));
+        return result;
     }
 
     /// <summary>
@@ -4899,6 +5006,50 @@ public partial class IRGenerator
         }
 
         throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
+    }
+
+    /// `memoryview(buf)`, `buf[a:]` and `memoryview(buf)[a:]` wrapped around an
+    /// unpack's buffer argument are compile-time views of the same storage:
+    /// each wrapper peels to the inner expression, and a slice's start is just a
+    /// bigger read offset (PyMCU#361 -- i2c_struct writes
+    /// `unpack_from(fmt, memoryview(self._buf)[1:])`). A `bytes()`/`bytearray()`
+    /// wrapper reads the same bytes too; the call form itself is refused
+    /// elsewhere, so it is peeled here.
+    private Expression NormalizeUnpackBuffer(Expression buf, ref int baseOff)
+    {
+        while (true)
+        {
+            if (buf is CallExpr { Callee: VariableExpr { Name: "memoryview" or "bytes" or "bytearray" } } wrap
+                && wrap.Args.Count == 1)
+            {
+                buf = wrap.Args[0];
+                continue;
+            }
+            if (buf is IndexExpr { Index: SliceExpr sl } sliced)
+            {
+                if (sl.Step != null)
+                    throw UserError(
+                        "a strided view of the buffer is not supported; use a plain "
+                        + "`buf[off:]` slice", sl.Step);
+                if (sl.Start != null)
+                {
+                    int start;
+                    try { start = EvaluateConstantExpr(sl.Start); }
+                    catch
+                    {
+                        throw UserError(
+                            "the view's start offset must be a compile-time constant, "
+                            + "because it decides which bytes are read", sl.Start);
+                    }
+                    if (start < 0)
+                        throw UserError("a negative view offset is not supported", sl.Start);
+                    baseOff += start;
+                }
+                buf = sliced.Target;
+                continue;
+            }
+            return buf;
+        }
     }
 
     private bool TryFoldInt(Expression e, out int value)
