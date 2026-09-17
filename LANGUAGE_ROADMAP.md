@@ -26,7 +26,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
-| `return` | With/without value; tuple multi-return from `@inline` functions, optionally annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]` (the element types set the result widths). A `...` in a return annotation is refused: the count is what the caller unpacks |
+| `return` | With/without value; tuple multi-return, optionally annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]` (the element types set the result widths). A tuple-returning function force-inlines so the caller's targets bind; the bound name indexes (`t[k]`), measures (`len(t)`), iterates (`for x in t`) and prints as `(a, b)`. A `...` in a return annotation is refused: the count is what the caller unpacks |
 | `pass` / `raise` | `raise ExnType` signals an error via the T flag and returns; caught at the call site by an enclosing `try` (SET/BRTS, no `longjmp`); `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required |
 | `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` / `from ... import *` | Relative imports (`from .util import half`, `from . import util`), multi-level; a star binds the names the module defines at top level, or exactly its `__all__` |
@@ -147,7 +147,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Named sequence | `pins = [11, 12, 13]` and `pins = (11, 12, 13)` iterate the same way at any length: at most 8 constant elements unroll against the literal, past that the name gets a fixed array the loop walks. Unannotated, the element width is the widest element's, so a 16-bit table stays 16-bit |
 | `reversed(iterable)` | `for x in reversed([1,2,3]):` — compile-time reverse unroll; `reversed(range(a, b, s))` is the same range walked down (runtime bounds with a unit step) |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant; compile-time `n` only |
-| `pow(x, n)` / `x ** n` | Compile-time constant fold; `BinaryOp::Pow` |
+| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | Compile-time constant fold; a run-time float `pow` calls `__pymcu_powf`, a shared software routine lowered only when a program calls it |
 
 ### HAL
 

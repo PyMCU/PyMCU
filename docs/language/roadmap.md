@@ -20,7 +20,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `for x, y in zip(a, b)` | Compile-time unroll over paired lists |
 | `reversed(iterable)` | Compile-time reverse unroll; `reversed(range(...))` is the descending range |
 | `match / case` | Literal, wildcard, OR (`\|`), guard `if cond`, sequence, capture, dotted-name patterns; DCE on `__CHIP__` |
-| `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (`@inline` only, annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]`). Buffer parameters may be annotated `bytearray`, `WriteableBuffer` or `ReadableBuffer` |
+| `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (a tuple-returning function force-inlines; annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]`). Buffer parameters may be annotated `bytearray`, `WriteableBuffer` or `ReadableBuffer` |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level statements |
 | Module-level `main()` (bare, or under `if __name__ == "__main__":`) | Says where the entry point's body runs: what is written after the call runs after the body. A second call, and an early `return` with module-level code after the call, are refused |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
@@ -44,7 +44,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `hex(n)` / `bin(n)` | Compile-time: `hex(255)` → `"0xff"` |
 | `sum(iterable)` / `any(iterable)` / `all(iterable)` | Compile-time fold or unrolled chain |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant |
-| `pow(x, n)` / `x ** n` | Compile-time constant fold |
+| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | Compile-time constant fold; a run-time float `pow` calls the shared `__pymcu_powf` software routine |
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
 | `bytearray` | Mutable SRAM buffer |
 | `bytes([...])` / `bytes(N)` as a call argument | Written inline at a call site: unrolls into an `@inline` callee's unannotated buffer parameter the same way a list literal does, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function. `bytes(n)` with a run-time `n` is refused (`bytearray(n)` takes one) |
