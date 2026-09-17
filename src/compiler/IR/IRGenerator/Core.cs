@@ -1300,6 +1300,39 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Whether <paramref name="name"/> is bound in the scope being lowered right now -- the
+    /// @inline expansion's prefix, or the current function's `name.` key -- in ANY binding
+    /// table. A local binding shadows a module-level global of the same name for every
+    /// name-keyed lookup: without this a `data = bytearray(2)` at module level answered the
+    /// "is this a sequence" question asked about `data` inside `uart_rx_read`, whose own
+    /// `data` is a uint8 local (#458).
+    ///
+    /// `global`/`nonlocal` declarations deliberately do not count: they record the bare name
+    /// in <c>currentFunctionGlobals</c>, which is the opposite of a local binding.
+    /// </summary>
+    private bool LocalScopeBinds(string name)
+    {
+        foreach (var k in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+        })
+        {
+            if (k == null) continue;
+            if (variableTypes.ContainsKey(k) || constantVariables.ContainsKey(k)
+                || constantAddressVariables.ContainsKey(k) || strConstantVariables.ContainsKey(k)
+                || floatConstantVariables.ContainsKey(k) || variableAliases.ContainsKey(k)
+                || listLiteralParams.ContainsKey(k) || dictLiteralBindings.ContainsKey(k)
+                || setLiteralBindings.ContainsKey(k) || runtimeStrVars.ContainsKey(k)
+                || funcrefReturnTypes.ContainsKey(k) || loopFunctionAliases.ContainsKey(k)
+                || noneValuedNames.Contains(k) || bytearrayParams.Contains(k)
+                || boundNames.Contains(k))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// A module-level `main()` with no arguments: the call the runtime already makes. Written
     /// by hand or left by the `if __name__ == "__main__":` guard, it means the same thing.
     /// </summary>

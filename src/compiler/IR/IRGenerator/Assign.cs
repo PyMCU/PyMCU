@@ -2603,9 +2603,16 @@ public partial class IRGenerator
         {
             string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
             string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
-            name,
         })
             if (k != null && arraySizes.TryGetValue(k, out int sz)) return (k, sz);
+
+        // The bare name is the MODULE-level slot. A local binding of the same name shadows
+        // it for every question this lookup answers: `return data` inside a function whose
+        // `data` is a scalar local must not see the user's `data = bytearray(2)` (#458), and
+        // `data[i] = v` must not write the global's storage through the local's name either.
+        if (LocalScopeBinds(name)) return null;
+
+        if (arraySizes.TryGetValue(name, out int bareSz)) return (name, bareSz);
         return null;
     }
 
