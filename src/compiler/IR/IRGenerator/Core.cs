@@ -744,6 +744,11 @@ public partial class IRGenerator
         ScanFunctions(mainAst);
         RefuseCodegenDecoratorsOnExpandedFunctions(mainAst);
 
+        // The embedded runtime helpers are registered like scanned functions, so
+        // they must wait until every module has been scanned -- a helper call
+        // from any module's function resolves the same way.
+        RegisterRuntimeHelpers();
+
         // AFTER the entry file's scan, which is the last one: a base class may be defined below
         // its subclass, or in a module scanned later, so this cannot run inside ScanFunctions (#279).
         CheckBaseClassNames();
@@ -1118,6 +1123,8 @@ public partial class IRGenerator
         foreach (var fn in lowered)
             if (fn != null)
                 irProgram.Functions.Add(fn);
+
+        LowerCalledRuntimeHelpers(irProgram);
 
         // Inject FlashData instructions (global const[uint8[N]] arrays) into the
         // main function body so the backend emits .byte tables in flash.

@@ -1746,6 +1746,15 @@ public partial class IRGenerator
             }
         }
 
+        if (operand is FloatConstant fco)
+        {
+            switch (expr.Op)
+            {
+                case AstUnOp.Negate: return new FloatConstant(-fco.Value);
+                case AstUnOp.Not: return new Constant(fco.Value == 0.0 ? 1 : 0);
+            }
+        }
+
         if (expr.Op == AstUnOp.Deref)
         {
             DataType derefElem = RuntimePtrElem(operand);

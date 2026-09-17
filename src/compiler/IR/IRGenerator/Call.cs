@@ -200,23 +200,31 @@ public partial class IRGenerator
             {
                 if (modules.ContainsKey(ve.Name))
                 {
-                    // A builtin reached through its module (`import pymcu.hal.console as c`
-                    // then `c.print(1)`) is still the builtin this compiler lowers itself;
-                    // mangling it named `pymcu_hal_console_print`, which nothing emits.
-                    if (intrinsicNames.Contains(memC.Member))
+                    // Mangle with the real module name, not the alias: `import time as t`
+                    // registers modules["t"] but compiles functions as time_sleep_ms.
+                    string realMod = TryImportedAlias(ve.Name, out var rm) && rm != null ? rm : ve.Name;
+                    string mangledMod = realMod.Replace('.', '_');
+                    string modFn = mangledMod + "_" + memC.Member;
+
+                    // The module's own definition wins over the builtin fallback:
+                    // `math.pow` must reach `math`'s software-float pow, not the
+                    // constant-integer builtin, once the module defines it. A builtin the
+                    // module does NOT define (`c.print` on pymcu.hal.console) still
+                    // flattens to the intrinsic the compiler lowers itself.
+                    if (inlineFunctions.ContainsKey(modFn) || overloadedFunctions.Contains(modFn)
+                        || methodAstByName.ContainsKey(modFn) || functionReturnTypes.ContainsKey(modFn))
+                    {
+                        callee = modFn;
+                    }
+                    else if (intrinsicNames.Contains(memC.Member))
                     {
                         callee = memC.Member;
-                        resolvedAsModule = true;
                     }
                     else
                     {
-                        // Mangle with the real module name, not the alias: `import time as t`
-                        // registers modules["t"] but compiles functions as time_sleep_ms.
-                        string realMod = TryImportedAlias(ve.Name, out var rm) && rm != null ? rm : ve.Name;
-                        string mangledMod = realMod.Replace('.', '_');
-                        callee = mangledMod + "_" + memC.Member;
-                        resolvedAsModule = true;
+                        callee = modFn;
                     }
+                    resolvedAsModule = true;
                 }
                 // A name bound to an instance is that instance, even when a class shares the
                 // name: the binding shadows the class, as it does in Python. Reading it as the
@@ -4861,20 +4869,42 @@ public partial class IRGenerator
         return new Constant(stringLiteralIds[decstr]);
     }
 
-    // pow(base, exp): compile-time integer exponentiation (both args must be constant).
+    // pow(base, exp): folds compile-time integer operands in place; anything
+    // else is real floating-point exponentiation, which the embedded runtime
+    // helper lowers -- the same implementation `math.pow` expands to.
     private Val EmitPowBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 2) throw UserError("pow() expects exactly two arguments", expr.Callee);
-        Val bv = VisitExpression(expr.Args[0]);
-        Val ev = VisitExpression(expr.Args[1]);
-        if (!(bv is Constant cb) || !(ev is Constant ce))
-            throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
-        int @base = cb.Value;
-        int exp = ce.Value;
-        if (exp < 0) throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
-        int res = 1;
-        for (int k = 0; k < exp; ++k) res *= @base;
-        return new Constant(res);
+
+        // The evaluator emits nothing, so asking it first leaves the run-time
+        // path to visit each argument exactly once.
+        if (TryFoldInt(expr.Args[0], out int @base) && TryFoldInt(expr.Args[1], out int exp))
+        {
+            if (exp < 0) throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
+            int res = 1;
+            for (int k = 0; k < exp; ++k) res *= @base;
+            return new Constant(res);
+        }
+
+        // Runtime operands lower to a CALL on the __pymcu_powf subroutine -- one
+        // shared software-float implementation, the same one `math.pow` delegates to.
+        if (functionParams.ContainsKey("__pymcu_powf"))
+        {
+            var fwd = new CallExpr(new VariableExpr("__pymcu_powf"), expr.Args)
+            {
+                Line = expr.Line,
+                Column = expr.Column,
+            };
+            return VisitCall(fwd);
+        }
+
+        throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
+    }
+
+    private bool TryFoldInt(Expression e, out int value)
+    {
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
     }
 
     // Numeric-cast builtins: uint8/uint16/uint32/int8/int16/int32/int.
