@@ -2207,15 +2207,31 @@ public partial class IRGenerator
                                       && MethodReturnsBareSelf(enterDef));
                 if (!entersSelf)
                 {
-                    variableAliases.Remove(qualified);
-                    DataType et = entered switch
+                    // `__enter__` handed back another OBJECT (`return self.spi`, the
+                    // bus_device.SPIDevice shape): the bound name must take the returned
+                    // instance's storage and class, not a scalar copy of a field that
+                    // carries none -- without it `spi.write_readinto(...)` resolves to a
+                    // free function nothing emits (#454).
+                    string? enteredInst = ResolveClassCarryingName(entered);
+                    if (enteredInst != null
+                        && instanceClasses.TryGetValue(enteredInst, out var enteredCls)
+                        && enteredCls != null)
                     {
-                        Variable v3 => v3.Type,
-                        Temporary t3 => t3.Type,
-                        _ => DataType.UINT8,
-                    };
-                    variableTypes[qualified] = et;
-                    Emit(new Copy(entered, new Variable(qualified, et)));
+                        variableAliases[qualified] = enteredInst;
+                        instanceClasses[qualified] = enteredCls;
+                    }
+                    else
+                    {
+                        variableAliases.Remove(qualified);
+                        DataType et = entered switch
+                        {
+                            Variable v3 => v3.Type,
+                            Temporary t3 => t3.Type,
+                            _ => DataType.UINT8,
+                        };
+                        variableTypes[qualified] = et;
+                        Emit(new Copy(entered, new Variable(qualified, et)));
+                    }
                 }
             }
 
