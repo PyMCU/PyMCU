@@ -875,14 +875,15 @@ Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. Re-measured the same day after #352, #356,
 #357, #367 and the `Optional` decision. Re-run 2026-09-15 for the beta 1 release prep
 (same harness, pinned to the 0.1.0a10/a9 wheels). Re-measured 2026-09-16 on the 0.1.0b1
-source: four of the twenty now build, and most of the rest stop somewhere later than the
+source: five of the twenty now build, and most of the rest stop somewhere later than the
 line they used to.
 
-**Four of the twenty build unmodified**: `adafruit_hcsr04` (3 432 bytes),
-`adafruit_motor`'s servo (1 936 bytes), `adafruit_pcf8574` (1 140 bytes) and
+**Five of the twenty build unmodified**: `adafruit_hcsr04` (3 432 bytes),
+`adafruit_motor`'s servo (1 936 bytes), `adafruit_pcf8574` (1 140 bytes),
 `adafruit_bus_device` (820 bytes; its own example uses a `bytearray([...])` inline
-argument and a generator expression in `join`, which need the supported spellings).
-The other sixteen have moved off their annotations and into their own code.
+argument and a generator expression in `join`, which need the supported spellings)
+and `adafruit_mcp3xxx` (3 062 bytes).
+The other fifteen have moved off their annotations and into their own code.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
