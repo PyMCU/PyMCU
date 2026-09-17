@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using PyMCU.Common;
 using PyMCU.Frontend;
 
 namespace PyMCU.IR.IRGenerator;
@@ -3179,6 +3180,14 @@ public partial class IRGenerator
         // The method has to be expanded where it is called (#368).
         if (method.Params.Any(p => p.IsVarArg || p.IsKwArg)) return false;
 
+        // A method returning a tuple has nothing to return THROUGH: the outlined body is a
+        // real subroutine and a tuple is a compile-time sequence with no ABI slot. Refusing
+        // the outline keeps the force-inline path, which is the only one that can bind the
+        // caller's unpack targets (`c, r, g, b = self._read_4u16(reg)` in adafruit_tcs34725).
+        // Without this the shared body was emitted anyway and its `return (a, b)` was refused
+        // at the `def`, far from the call that needed the values.
+        if (TupleType.ElementTypes(method.ReturnType).Count > 0) return false;
+
         // A field whose type is not a scalar is another ZCA instance (e.g. a Pin
         // stored as `self.pin`). An outlined body shares one copy across instances
         // by passing each field as a runtime parameter, but a ZCA field is
@@ -3285,6 +3294,9 @@ public partial class IRGenerator
                 case AnnAssign a: E(a.Value); return;
                 case AssignStmt asg: E(asg.Target); E(asg.Value); return;
                 case AugAssignStmt aug: E(aug.Target); E(aug.Value); return;
+                // `return a, b` is a tuple the shared subroutine cannot carry back -- the
+                // declared-return check above says the same for the annotated spelling.
+                case ReturnStmt r when r.Value is TupleExpr: safe = false; return;
                 case ReturnStmt r: E(r.Value); return;
                 case ExprStmt ex: E(ex.Expr); return;
                 case IfStmt iff:

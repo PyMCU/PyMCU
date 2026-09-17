@@ -6087,14 +6087,20 @@ public partial class IRGenerator
                 }
             }
         }
-        else if (stmt.Value is CallExpr call)
+        else if (stmt.Value is CallExpr or MemberAccessExpr)
         {
+            // A call (`a, b = f()`) or a property read (`a, b = self.color_raw` -- a
+            // MemberAccessExpr whose getter is expanded inline) both deliver their tuple
+            // through lastTupleResults; the expansion binds one result slot per element.
             pendingTupleCount = stmt.Targets.Count;
             if (stmt.StarredIndex >= 0)
                 throw UserError("Starred expressions not supported with inline multi-return.",
-                    call.Callee);
+                    stmt.Value is CallExpr ce ? ce.Callee : stmt.Value);
 
-            Val ignored = VisitExpression(call);
+            // A RHS that never expands a tuple return must not see the list a previous
+            // unpack left behind -- its count could coincidentally match the targets.
+            lastTupleResults = new List<string>();
+            Val ignored = VisitExpression(stmt.Value);
             pendingTupleCount = 0;
 
             if (lastTupleResults.Count != stmt.Targets.Count)
