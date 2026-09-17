@@ -887,7 +887,7 @@ The other fifteen have moved off their annotations and into their own code.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
-| `adafruit_bmp280` | `return result` in `_read_register`, `adafruit_bmp280.py:467` | a bytes or list object cannot be returned -- a buffer is element storage under a name, with no handle and no length travelling with it; take the buffer as a parameter and fill it in place (moved off `enumerate(buffer)`, which now resolves the aliased class-attribute array and materializes `bytes([expr])` arguments) |
+| `adafruit_bmp280` | `list(struct.unpack("<HhhHhhhhhhhh", bytes(coeff)))` at `adafruit_bmp280.py:377` | `list()` of an unpack result needs a growable list; the shape also wants `struct.unpack` (only `unpack_from` exists) and a buffer-to-`bytes` view (moved off `_read_register`'s `return result`: a function that returns its local buffer binds the caller's receiving name to that fixed slot, so `data[i]`, `len(data)` and `for` answer it) |
 | `adafruit_bus_device` | **builds unmodified, 820 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
 | `adafruit_character_lcd` | `self._message` field | inferred numeric at its first store, assigned a string later |
 | `adafruit_debouncer` | `Debouncer(pin)` | a `DigitalInOut` matches no member of `Union[ROValueIO, Callable[[], bool]]` (moved off `OverflowError` in `adafruit_ticks`) |
@@ -930,8 +930,10 @@ report the missing module by name.
 buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- the
 aliased class-attribute array resolves to its module-init storage, and a
 `bytes([expr])` argument whose elements are run-time materializes a hidden buffer.
-`adafruit_bmp280` moved on to returning a bytearray (`_read_register`'s `return
-result`), and `adafruit_tcs34725` past tuple unpacking (`r, g, b = self.color_rgb_bytes`
+`adafruit_bmp280` moved past returning a bytearray (`_read_register`'s `return
+result` binds the caller's name to the callee's fixed slot) to the
+`list(struct.unpack(fmt, bytes(buf)))` coefficient chain, and
+`adafruit_tcs34725` past tuple unpacking (`r, g, b = self.color_rgb_bytes`
 binds through the getter's inline expansion) to a run-time `pow` for gamma
 correction.
 A field whose type is pinned by its first store and then contradicted
