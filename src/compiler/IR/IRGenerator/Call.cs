@@ -3245,6 +3245,18 @@ public partial class IRGenerator
             {
                 constantVariables[paramKey] = cArg.Value;
             }
+            else if (argVal is Variable instArg
+                     && instanceClasses.TryGetValue(FollowAliases(instArg.Name), out var instArgCls)
+                     && instArgCls != null)
+            {
+                // An INSTANCE argument is an object, not a value a Copy can carry:
+                // `super().__init__(reset_dio, ...)` forwarded the pin's flattened scalar and
+                // the base body's `pin.direction = ...` wrote a dead name. Alias the param to
+                // the instance so field and method reads resolve through it
+                // (adafruit_character_lcd's pin-setup loop).
+                variableAliases[paramKey] = FollowAliases(instArg.Name);
+                instanceClasses[paramKey] = instArgCls;
+            }
             else
             {
                 // Materialize the value into the param's own var (do NOT merely alias a
