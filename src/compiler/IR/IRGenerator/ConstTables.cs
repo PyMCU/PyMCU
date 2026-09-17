@@ -48,6 +48,14 @@ public partial class IRGenerator
     // and two classes may each define a field of the same name.
     private readonly Dictionary<string, int> nameWriteCounts = new();
 
+    // Stores INTO a name's storage -- `t[i] = v`, `t[i] += v` -- counted apart from
+    // nameWriteCounts, which also counts handing the name to a call. A table passed read-only
+    // to a helper (`pulse.send(signal, n)` sending a sequence that lives nowhere but this
+    // scan) is "written" by the broad count and not by this one, and a run-time subscript's
+    // flash read needs the narrow answer: the sequence has no SRAM slot to keep fresh, so only
+    // a real element store could contradict the table (PyMCU#258).
+    private readonly Dictionary<string, int> nameStoreCounts = new();
+
     // Flash tables already materialised, keyed by the array they came from.
     private readonly Dictionary<string, string> materialisedConstTables = new();
 
@@ -70,6 +78,7 @@ public partial class IRGenerator
     private void ScanNameWrites(ProgramNode mainAst, IEnumerable<ProgramNode> importedModules)
     {
         nameWriteCounts.Clear();
+        nameStoreCounts.Clear();
         materialisedConstTables.Clear();
         ctArrayConstElements.Clear();
         moduleConstLists.Clear();
@@ -81,17 +90,23 @@ public partial class IRGenerator
             nameWriteCounts[name!] = nameWriteCounts.GetValueOrDefault(name!) + 1;
         }
 
+        void NoteStore(string? name)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            nameStoreCounts[name!] = nameStoreCounts.GetValueOrDefault(name!) + 1;
+        }
+
         void NoteTarget(Expression? target)
         {
             switch (target)
             {
                 case VariableExpr ve: Note(ve.Name); break;
-                case IndexExpr { Target: VariableExpr iv }: Note(iv.Name); break;
+                case IndexExpr { Target: VariableExpr iv }: Note(iv.Name); NoteStore(iv.Name); break;
                 // A field is counted under its MEMBER name, which is what the field-held table
                 // is checked against: `self._levels = levels` is the one binding that creates it
                 // and `self._levels[i] = v` is the write that rules flash out.
                 case MemberAccessExpr me: Note(me.Member); break;
-                case IndexExpr { Target: MemberAccessExpr im }: Note(im.Member); break;
+                case IndexExpr { Target: MemberAccessExpr im }: Note(im.Member); NoteStore(im.Member); break;
                 case TupleExpr te: foreach (var el in te.Elements) NoteTarget(el); break;
             }
         }
@@ -170,11 +185,16 @@ public partial class IRGenerator
     /// written, such as the key row of a table whose own name is.
     /// </summary>
     private string? TryMaterialiseConstTableFromValues(string cacheKey, string writtenName,
-                                                       List<int> values, int bindings = 0)
+                                                       List<int> values, int bindings = 0,
+                                                       bool storeOnly = false)
     {
         if (materialisedConstTables.TryGetValue(cacheKey, out var already)) return already;
         if (values.Count == 0) return null;
-        if (nameWriteCounts.GetValueOrDefault(writtenName) > bindings) return null;
+        // storeOnly counts only stores INTO the name's storage: a name handed to a call reads
+        // as written under the broad count, which would veto every `helper(table)` program
+        // whose helper only subscripts (PyMCU#258).
+        var counts = storeOnly ? nameStoreCounts : nameWriteCounts;
+        if (counts.GetValueOrDefault(writtenName) > bindings) return null;
 
         DataType elemDt = WidestElemType(values);
         int elemSize = elemDt.SizeOf();

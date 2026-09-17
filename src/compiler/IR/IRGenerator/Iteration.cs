@@ -49,7 +49,8 @@ public partial class IRGenerator
     private bool TryResolveArrayStorageKey(string key, out string storageKey)
     {
         if (arraySizes.ContainsKey(key)) { storageKey = key; return true; }
-        if (key.IndexOf('.') < 0)
+        int dot = key.LastIndexOf('.');
+        if (dot < 0)
         {
             if (arraySizes.ContainsKey("main." + key)) { storageKey = "main." + key; return true; }
             foreach (var modName in modules.Keys)
@@ -60,8 +61,34 @@ public partial class IRGenerator
                 if (arraySizes.ContainsKey(initKey)) { storageKey = initKey; return true; }
             }
         }
+        else
+        {
+            // The mirror image of the prefixing above: a module-level array declared with a
+            // subscripted annotation (`buf: uint8[2]`) is registered BARE by ScanGlobals and
+            // every instruction that touches it spells it bare too, but a name resolved inside
+            // a function or an inline expansion arrives function-qualified (`main.buf`). The
+            // unannotated `bytearray(N)` spelling registers BOTH `main.cfg` and `cfg`, so it
+            // already hit the exact match above. (PyMCU#258)
+            string bareSuffix = key[(dot + 1)..];
+            if (arraySizes.ContainsKey(bareSuffix)) { storageKey = bareSuffix; return true; }
+        }
         storageKey = key;
         return false;
+    }
+
+    // The name at the end of `name`'s alias chain, spelled as the current scope would write
+    // it. A parameter handed through stacked @inline expansions aliases another parameter
+    // (`pulses` -> `inline1.send.pulses` -> `main.signal`), so the terminal -- not the
+    // parameter's local spelling -- is where the value lives and the name write counts and
+    // flash-table keys are filed under (PyMCU#258).
+    private string TerminalAliasOf(string name)
+    {
+        string term = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(term, out var nxt); ++d)
+            term = nxt;
+        return term;
     }
 
     // `for c in <const[str]>` unrolls at or below this length (each char a compile-time

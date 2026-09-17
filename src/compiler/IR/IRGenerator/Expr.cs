@@ -2200,18 +2200,43 @@ public partial class IRGenerator
             // `const` -- `Pin(pins[0], Pin.OUT)` was refused while `for p in pins: Pin(p, ...)`
             // compiled, on the same list and the same parameter. Gated like the flash table of
             // PyMCU#317: a name the program writes keeps reading its storage.
-            if (ResolveConstSequence(ve.Name) is { } nameSeq
-                && nameWriteCounts.GetValueOrDefault(ve.Name) == 0
-                && (expr.Index is IntegerLiteral || VisitExpression(expr.Index) is Constant))
+            if (ResolveConstSequence(ve.Name) is { } nameSeq)
             {
-                int ni = expr.Index is IntegerLiteral nlit
-                    ? nlit.Value : ((Constant)VisitExpression(expr.Index)).Value;
-                if (ni < 0) ni += nameSeq.Count;
-                if (ni < 0 || ni >= nameSeq.Count)
-                    throw new IndexError(
-                        $"array index {ni} out of range for size {nameSeq.Count}",
-                        expr.Line > 0 ? expr.Line : lastLine, expr.Column);
-                return VisitExpression(nameSeq[ni]);
+                Val seqIdxVal = expr.Index is IntegerLiteral nlit0
+                    ? new Constant(nlit0.Value)
+                    : VisitExpression(expr.Index);
+                if (seqIdxVal is Constant seqIdxConst
+                    && nameWriteCounts.GetValueOrDefault(ve.Name) == 0)
+                {
+                    int ni = seqIdxConst.Value;
+                    if (ni < 0) ni += nameSeq.Count;
+                    if (ni < 0 || ni >= nameSeq.Count)
+                        throw new IndexError(
+                            $"array index {ni} out of range for size {nameSeq.Count}",
+                            expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                    return VisitExpression(nameSeq[ni]);
+                }
+
+                // A run-time index into a compile-time sequence reached by name or through a
+                // parameter -- `pulses[i]` in pulseio's send loop, where `pulses` is the
+                // caller's `signal = [...]` bound through stacked @inline hops (#258). The
+                // values are constants with no storage of their own, so the read goes to a
+                // materialised flash table, exactly like the literal-parameter path above
+                // and the module-list path below. The gate asks about real STORES into the
+                // source of the sequence (the terminal of the alias chain): `signal` being
+                // handed to send() counts as a write under the broad count, and only a
+                // `signal[i] = v` can contradict a flash table that has no SRAM slot.
+                if (seqIdxVal is not Constant && nameStoreCounts.GetValueOrDefault(ve.Name) == 0)
+                {
+                    string seqWritten = TerminalAliasOf(ve.Name);
+                    int seqDot = seqWritten.LastIndexOf('.');
+                    if (seqDot >= 0) seqWritten = seqWritten[(seqDot + 1)..];
+                    if (ConstValuesOf(nameSeq) is { } seqValues
+                        && TryMaterialiseConstTableFromValues("seq:" + seqWritten, seqWritten,
+                                                              seqValues, storeOnly: true)
+                            is { } seqTable)
+                        return EmitFlashArrayRead(seqTable, seqIdxVal, seqValues.Count);
+                }
             }
 
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
