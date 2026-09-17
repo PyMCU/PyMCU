@@ -345,10 +345,10 @@ high and inside any receiver's band-pass. The gaps are timed against a running c
 than counted out in delay calls: measured, 560 µs holds the carrier for 561.5 µs and 1690 µs
 for 1692 µs.
 
-`send()` takes the number of durations as a second argument, where CircuitPython takes it
-from the array. A module-level array loses its length and its iterability when it crosses a
-parameter (PyMCU#258), so neither `len(pulses)` nor `for p in pulses` can work inside the
-method. When that lands the count becomes optional.
+`send()` takes the sequence and derives the count from it, the CircuitPython spelling. A
+module-level constant list keeps its length and its elements across the parameter chain
+(PyMCU#258): `len(pulses)` answers the element count and a run-time `pulses[i]` reads a
+materialised flash table.
 
 Both halves claim their timer, so a PWM or a servo that would reprogram it out from under
 them is refused where it is written rather than silently changing every measurement.
