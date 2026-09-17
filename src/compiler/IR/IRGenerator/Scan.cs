@@ -1534,7 +1534,7 @@ public partial class IRGenerator
                         // RFC 0001: derive the field layout once per class. A class with a
                         // single primitive field is eligible to be returned by value from a
                         // non-@inline factory (Model B register-packed handle).
-                        var clsLayout = DeriveFieldLayout(block);
+                        var clsLayout = DeriveFieldLayout(block, classKey);
                         // Fields holding a COMPILE-TIME table: a list of constructions, a
                         // comprehension of them, a dict or a set. The layout types such a
                         // field as a scalar, so the outline check saw nothing wrong and
@@ -2490,7 +2490,8 @@ public partial class IRGenerator
         return ScalarTypeNames.Contains(ty);
     }
 
-    private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)
+    private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody,
+        string classKey = "")
     {
         var layout = new List<(string, string, string)>();
         var seen = new HashSet<string>();
@@ -2541,6 +2542,21 @@ public partial class IRGenerator
                 && fieldList.Elements.All(e => { try { EvaluateConstantExpr(e); return true; } catch { return false; } }))
                 continue;
 
+            // `self._gpio = bytearray(n)` declares a BUFFER field -- EmitMemberAssign lays it
+            // out as a fixed SRAM array (or the write refuses on its own for a runtime size).
+            // Filed as a scalar here it took the uint8 default, and the property setter's
+            // `self._gpio = val` (val: ReadableBuffer) then collided with a numeric field
+            // (adafruit_74hc595). The field stays in `seen` -- so no later write re-introduces
+            // it -- and out of `layout`, so no scalar kind exists to conflict with.
+            if (rhs is CallExpr { Callee: VariableExpr bufCtor }
+                && bufCtor.Name is "bytearray" or "bytes")
+            {
+                if (!classBufferFields.TryGetValue(classKey, out var bufSet))
+                    classBufferFields[classKey] = bufSet = new HashSet<string>();
+                bufSet.Add(field);
+                continue;
+            }
+
             // SourceParam: the __init__ param that directly initializes the field
             // (RHS is a bare parameter), else "" -- needed for factory return lowering.
             string type = "uint8";
@@ -2567,6 +2583,11 @@ public partial class IRGenerator
             {
                 type = lt.StartsWith("const[") && lt.EndsWith("]") ? lt.Substring(6, lt.Length - 7) : lt;
             }
+            // `self._message = ""` is a STR field -- the uint8 default filed it numeric, and
+            // the setter's `self._message = message` (message: str) then read as a kind
+            // conflict (adafruit_character_lcd). Same type the `self.x: str = ...` spelling
+            // already lands on.
+            else if (rhs is StringLiteral) type = "str";
 
             // A field whose value is an EXPRESSION took uint8 and truncated silently: the
             // width came from the field, not from what was stored in it, so
@@ -3631,7 +3652,7 @@ public partial class IRGenerator
 
         // Nested classes need the same field widths as top-level classes (#443).
         // Otherwise a computed constructor value can fall back to a byte-sized field.
-        classFieldLayout[classKey] = DeriveFieldLayout(block);
+        classFieldLayout[classKey] = DeriveFieldLayout(block, classKey);
         if (classFieldLayout[classKey].Count == 1)
             zcaFactoryClasses[classKey] = classFieldLayout[classKey][0].Type;
 

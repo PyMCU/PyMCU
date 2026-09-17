@@ -705,6 +705,17 @@ public partial class IRGenerator
                     baFieldCount = baConstN;
                     baFieldInit.AddRange(Enumerable.Repeat(0, baFieldCount));
                 }
+                // `bytearray(self._n)` where _n is a field whose constant was recorded when
+                // `self._n = <literal>` ran -- a constructor arg that folded at the call site
+                // (adafruit_74hc595's `bytearray(self._number_of_shift_registers)`). The size
+                // is every bit as compile-time as the literal spelling.
+                else if (baArg0 is MemberAccessExpr baMc && baMc.Object is VariableExpr baMv
+                    && constantVariables.TryGetValue(
+                        ResolveNameKey(baMv.Name) + "_" + baMc.Member, out int baFieldN))
+                {
+                    baFieldCount = baFieldN;
+                    baFieldInit.AddRange(Enumerable.Repeat(0, baFieldCount));
+                }
             }
 
             if (baFieldCount <= 0)
@@ -1866,6 +1877,8 @@ public partial class IRGenerator
                 && classFieldLayout.TryGetValue(fieldCls, out var fieldLay)
                 && fieldLay.Count > 0
                 && !fieldLay.Any(f => f.Field == memExpr2.Member)
+                && !(classBufferFields.TryGetValue(fieldCls, out var bufFlds)
+                     && bufFlds.Contains(memExpr2.Member))
                 && !IsKnownMethodName(memExpr2.Member))
                 throw UserError(
                     $"'{fieldCls}' has no field '{memExpr2.Member}' -- assigning it here creates a "

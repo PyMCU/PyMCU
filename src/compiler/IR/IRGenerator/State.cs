@@ -178,6 +178,13 @@ public partial class IRGenerator
     // out. Keys match classFieldLayout's convention: currentModulePrefix + class name.
     private Dictionary<string, HashSet<string>> assignedMemberNamesByClass = new();
 
+    // Fields `__init__` fills with a buffer (`self._gpio = bytearray(n)`): real fields, but
+    // element storage rather than a scalar slot, so classFieldLayout never lists them. The
+    // undeclared-field write check would otherwise refuse the property setter that rebinds
+    // one (adafruit_74hc595's `gpio.setter` storing `val` into `_gpio`). Keys match
+    // classFieldLayout's convention: module prefix + class name.
+    private Dictionary<string, HashSet<string>> classBufferFields = new();
+
     // Class-body attributes that the ALL-CAPS convention does NOT turn into compile-time
     // constants (Scan.cs) get run-time storage instead -- and nothing ever ran their
     // initializer, so `class Dev: limit = 7` gave every read of `Dev.limit` a fabricated
