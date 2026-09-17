@@ -796,7 +796,7 @@ alone.
 | `abs(x)` | ✅ Supported | Intrinsic |
 | `min(a, b)` / `max(a, b)` | ✅ Supported | Intrinsic. Also over a fixed-size array, and with `key=f`: the key is called once per operand and the winner is the original value, not its key |
 | `sum(iterable)` | ✅ Supported | Compile-time fold or unrolled additions |
-| `enumerate(iterable)` | ✅ Supported | Compile-time index counter |
+| `enumerate(iterable)` | ✅ Supported | Compile-time index counter over constant sequences, `range()`, and fixed-size arrays -- including a buffer reached through inline parameter bindings or a `bytes([expr])` argument whose elements are run-time |
 | `zip(a, b)` | ✅ Supported | Compile-time unroll over constant lists |
 | `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
 | `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold |
@@ -886,7 +886,7 @@ The other sixteen have moved off their annotations and into their own code.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
-| `adafruit_bmp280` | `enumerate(buffer)` in the layer's `busio.I2C.writeto` | enumerate's argument must be a constant list literal, `range(N)`, or a fixed-size array; the opaque driver buffer is none of those (moved off #373's `self` misdiagnosis) |
+| `adafruit_bmp280` | `return result` in `_read_register`, `adafruit_bmp280.py:467` | a bytes or list object cannot be returned -- a buffer is element storage under a name, with no handle and no length travelling with it; take the buffer as a parameter and fill it in place (moved off `enumerate(buffer)`, which now resolves the aliased class-attribute array and materializes `bytes([expr])` arguments) |
 | `adafruit_bus_device` | **builds unmodified, 820 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
 | `adafruit_character_lcd` | `self._message` field | inferred numeric at its first store, assigned a string later |
 | `adafruit_debouncer` | `Debouncer(pin)` | a `DigitalInOut` matches no member of `Union[ROValueIO, Callable[[], bool]]` (moved off `OverflowError` in `adafruit_ticks`) |
@@ -904,7 +904,7 @@ The other sixteen have moved off their annotations and into their own code.
 | `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
 | `adafruit_motor` (servo) | **builds unmodified, 1 936 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 | `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
-| `adafruit_tcs34725` | `enumerate(buffer)` in the layer's `busio.I2C.writeto` | same as `adafruit_bmp280` (moved off #373) |
+| `adafruit_tcs34725` | `r, g, b = self.color_rgb_bytes` at `adafruit_tcs34725.py:170` | tuple unpacking needs a tuple literal or an inline call returning a tuple; unpacking a sequence held by a property/name is not supported -- assign each target from its index (moved off `enumerate(buffer)`, same fix as `adafruit_bmp280`) |
 | `adafruit_veml7700` | `obj: I2CDeviceDriver` read at `i2c_bits.py:89` | same as `adafruit_ina219` |
 
 ### Which of these are limits and which are gaps
@@ -925,9 +925,13 @@ restrictions of the lowering, not of the model, and all three libraries that sto
 `adafruit_framebuf` for `adafruit_ssd1306`, and `onewireio` for `adafruit_ds18x20`. All three
 report the missing module by name.
 
-**The remaining refusals are scattered, one construct each.** The opaque-driver-buffer
-`enumerate()` inside the layer's `busio.I2C.writeto` stops `adafruit_bmp280` and
-`adafruit_tcs34725`. A field whose type is pinned by its first store and then contradicted
+**The remaining refusals are scattered, one construct each.** `enumerate()` over a
+buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- the
+aliased class-attribute array resolves to its module-init storage, and a
+`bytes([expr])` argument whose elements are run-time materializes a hidden buffer.
+`adafruit_bmp280` moved on to returning a bytearray (`_read_register`'s `return
+result`), and `adafruit_tcs34725` to unpacking a sequence held by a property.
+A field whose type is pinned by its first store and then contradicted
 stops `adafruit_74hc595` (`_gpio`) and `adafruit_character_lcd` (`_message`). A `try`-guarded
 `from typing import Tuple` that shares its `try` with a failing sibling import used to lose
 the resolved names entirely; with the fold fixed, `adafruit_ina219` and `adafruit_veml7700`
