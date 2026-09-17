@@ -76,6 +76,31 @@ public partial class IRGenerator
         return false;
     }
 
+    // A subscripted name the current function does not claim resolves at MODULE scope -- in
+    // Python `cfg[i] = v` mutates the module global with no `global` statement needed, the
+    // declaration only rebinds the name itself. Module arrays canonicalize to the BARE name
+    // (`cfg`), which is where ScanGlobals files them and where the replayed declaration now
+    // lands (PyMCU#460); an imported module may instead file its storage under the init
+    // function (`<mod>___module_init.cfg`), so that spelling is probed first when the caller
+    // belongs to that module. `main.<suffix>` is last: after #460 it can only be a local of
+    // `main` itself, never module storage -- kept only as a fallback for shapes not yet
+    // canonicalized.
+    private string ModuleScopeArrayName(string fnQualified)
+    {
+        int dot = fnQualified.LastIndexOf('.');
+        string suffix = dot >= 0 ? fnQualified[(dot + 1)..] : fnQualified;
+        foreach (var modName in modules.Keys)
+        {
+            string mp = modName.Replace('.', '_') + "_";
+            if (!fnQualified.StartsWith(mp, StringComparison.Ordinal)) continue;
+            string initKey = mp + "__module_init." + suffix;
+            if (arraySizes.ContainsKey(initKey)) return initKey;
+        }
+        if (arraySizes.ContainsKey(suffix)) return suffix;
+        if (arraySizes.ContainsKey("main." + suffix)) return "main." + suffix;
+        return fnQualified;
+    }
+
     // The name at the end of `name`'s alias chain, spelled as the current scope would write
     // it. A parameter handed through stacked @inline expansions aliases another parameter
     // (`pulses` -> `inline1.send.pulses` -> `main.signal`), so the terminal -- not the

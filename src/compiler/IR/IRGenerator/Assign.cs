@@ -623,6 +623,22 @@ public partial class IRGenerator
             if (stmt.Value is VariableExpr seqArrVe)
             {
                 string seqArrSrc = ResolveNameKey(seqArrVe.Name);
+                // The alias chain can end on a stale qualified name (`main.buf`) while the
+                // scanner filed the storage under the bare module name (`buf`) -- the same
+                // split #460 fixed at the declaration site. Only the qualified -> bare
+                // direction is safe: the reverse (bare `levels` -> `main.levels`) can land on
+                // a const-sequence size record that has no SRAM behind it, and binding the
+                // field to that makes every subscript read zeros.
+                if (!arraySizes.ContainsKey(seqArrSrc) && !bytearrayParams.Contains(seqArrSrc))
+                {
+                    int d = seqArrSrc.LastIndexOf('.');
+                    if (d >= 0)
+                    {
+                        string seqArrBare = seqArrSrc[(d + 1)..];
+                        if (arraySizes.ContainsKey(seqArrBare) || bytearrayParams.Contains(seqArrBare))
+                            seqArrSrc = seqArrBare;
+                    }
+                }
                 if (seqArrSrc != seqFieldKey
                     && (arraySizes.ContainsKey(seqArrSrc) || bytearrayParams.Contains(seqArrSrc))
                     && !instanceClasses.ContainsKey(seqArrSrc + "__0"))
@@ -2797,9 +2813,11 @@ public partial class IRGenerator
         if (indexExpr.Target is VariableExpr ve)
         {
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
-                qualified = ve.Name;
-
+            // A name no function scope claims is module scope: `poke.cfg` resolves to the
+            // module array's canonical spelling (the bare `cfg` ScanGlobals filed), not a
+            // per-function slot that would swallow the store (PyMCU#460).
+            if (!arraySizes.ContainsKey(qualified))
+                qualified = ModuleScopeArrayName(qualified);
             // When inside an inline expansion, the target may be a parameter aliased to a
             // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
             // array-store path fires instead of falling through to the bit-subscript path.
@@ -3623,12 +3641,26 @@ public partial class IRGenerator
                 ? currentInlinePrefix + stmt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
 
+            // Module scope replayed inside the synthesized init: the scan already filed the
+            // array under the BARE name, so `main.cfg` is the same storage spelled another
+            // way -- and registering it again split the array in two, with writes through a
+            // `global` landing on whichever spelling was not the one that was initialised
+            // (PyMCU#460). The annotated spelling (`cfg: bytearray = ...`) already falls
+            // back this way; the unannotated `cfg = bytearray(N)` arrives here.
+            bool replayingModuleLevel = string.IsNullOrEmpty(currentInlinePrefix)
+                && (currentFunction == "main"
+                    || currentFunction.EndsWith("___module_init", StringComparison.Ordinal));
+            if (replayingModuleLevel
+                && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Name))
+                qualified = stmt.Name;
+
             arraySizes[qualified] = count;
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
             arraysWithVariableIndex.Add(qualified);
 
-            if (string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+            if ((string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                || replayingModuleLevel)
                 moduleSramArrays.Add(qualified);
 
             for (int k = 0; k < count; ++k)
@@ -5714,7 +5746,8 @@ public partial class IRGenerator
             if (ie.Target is VariableExpr ve2)
             {
                 string qualified = string.IsNullOrEmpty(currentFunction) ? ve2.Name : currentFunction + "." + ve2.Name;
-                if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve2.Name)) qualified = ve2.Name;
+                if (!arraySizes.ContainsKey(qualified))
+                    qualified = ModuleScopeArrayName(qualified);
                 if (arraySizes.ContainsKey(qualified))
                 {
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))

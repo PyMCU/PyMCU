@@ -2240,7 +2240,10 @@ public partial class IRGenerator
             }
 
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
+            // Same module-scope rule as the store path: the module array's canonical
+            // spelling is the bare name ScanGlobals filed (PyMCU#460).
+            if (!arraySizes.ContainsKey(qualified))
+                qualified = ModuleScopeArrayName(qualified);
 
             // Inside an inline expansion, the target may be an aliased bytearray parameter.
             if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
