@@ -1100,8 +1100,15 @@ public partial class IRGenerator
                     DataType dt = variableTypes.TryGetValue(ctx.ResultVars[k], out var slotDt)
                         ? slotDt : DataType.UINT8;
                     Emit(new Copy(elemVal, new Variable(ctx.ResultVars[k], dt)));
-                    if (elemVal is Constant c)
-                        constantVariables[ctx.ResultVars[k]] = c.Value;
+                    // The iret_ slots are scratch shared by every expansion at this
+                    // depth: a slot a previous call filled with a constant keeps that
+                    // entry unless it is cleared here, and a later `x = t__k` read
+                    // would fold to the OTHER call's value.
+                    if (elemVal is Constant c) constantVariables[ctx.ResultVars[k]] = c.Value;
+                    else constantVariables.Remove(ctx.ResultVars[k]);
+                    if (elemVal is FloatConstant fc) floatConstantVariables[ctx.ResultVars[k]] = fc.Value;
+                    else floatConstantVariables.Remove(ctx.ResultVars[k]);
+                    strConstantVariables.Remove(ctx.ResultVars[k]);
                 }
 
                 Emit(new Jump(ctx.ExitLabel));

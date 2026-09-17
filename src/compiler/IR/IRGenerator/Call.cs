@@ -1918,6 +1918,7 @@ public partial class IRGenerator
                 listLiteralParams[paramName] = rawListArgs[i]!;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
                 continue;
             }
@@ -2070,6 +2071,7 @@ public partial class IRGenerator
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
                 variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
                 continue;
             }
@@ -2228,6 +2230,7 @@ public partial class IRGenerator
                 {
                     constantVariables.Remove(paramName);
                     strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);
                     variableTypes[paramName] = DataTypeExtensions.StringToDataType(mPType);
                     Emit(new Copy(argValues[i], new Variable(paramName, variableTypes[paramName])));
@@ -2243,6 +2246,7 @@ public partial class IRGenerator
 
             constantVariables.Remove(paramName);
             strConstantVariables.Remove(paramName);
+            floatConstantVariables.Remove(paramName);
             variableAliases.Remove(paramName);
             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
             variableTypes[paramName] = paramType;
@@ -2341,11 +2345,15 @@ public partial class IRGenerator
                     else if (kvp.Value is Constant ckw2)
                     {
                         constantVariables[paramName] = ckw2.Value;
+                        strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
                     }
                     else
                     {
                         constantVariables.Remove(paramName);
                         strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
                         DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
                         variableTypes[paramName] = paramType;
                         if (kvp.Value is Variable)
@@ -2436,7 +2444,13 @@ public partial class IRGenerator
                     continue;
                 }
 
-                if (defaultVal is Constant cdf2) constantVariables[paramName] = cdf2.Value;
+                if (defaultVal is Constant cdf2)
+                {
+                    constantVariables[paramName] = cdf2.Value;
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                }
                 else if (defaultVal is FloatConstant fdf)
                 {
                     // A FLOAT default binds the way a float ARGUMENT does (#374). The branch
@@ -2466,6 +2480,10 @@ public partial class IRGenerator
                     DataType paramType = DataTypeExtensions.StringToDataType(func.Params[i].Type);
                     Emit(new Copy(defaultVal, new Variable(paramName, paramType)));
                     variableTypes[paramName] = paramType;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
                 }
             }
             else

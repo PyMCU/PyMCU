@@ -401,6 +401,7 @@ public partial class IRGenerator
         variableAliases[targetKey] = baseKey;
         constantVariables.Remove(targetKey);
         strConstantVariables.Remove(targetKey);
+        floatConstantVariables.Remove(targetKey);
         listLiteralParams.Remove(targetKey);
         constSequenceBindings.Remove(targetKey);
     }
