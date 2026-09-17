@@ -192,6 +192,20 @@ public partial class IRGenerator
         }
     }
 
+    // An element the literal-only check above misses but the general constant evaluator
+    // still folds: a name bound to a compile-time constant (`MODE_SLEEP = const(0)`, then
+    // `(MODE_SLEEP, MODE_FORCE)` -- adafruit_bmp280's mode table). The caller stores the
+    // folded literal, so every consumer downstream sees a number, not the name.
+    private bool TryFoldConstElement(Expression e, out int value)
+    {
+        if (TryEvalConstElement(e, out value)) return true;
+        bool savedFold = foldLocalConstants;
+        foldLocalConstants = true;
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
+        finally { foldLocalConstants = savedFold; }
+    }
+
     /// <summary>
     /// Binds one unrolled element to the loop variable, and says whether it could. A number
     /// binds as it always has; a STRING binds as a string constant, which is what a `const`

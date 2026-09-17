@@ -227,9 +227,16 @@ public partial class IRGenerator
             NoteSequenceMutability(seqKey, seqTgt.Name, isTuple: stmt.Value is TupleExpr);
 
             if (seqElements.Count is > 0 and <= ConstSequenceUnrollLimit
-                && seqElements.All(e => TryEvalConstElement(e, out _)))
+                && seqElements.All(e => TryFoldConstElement(e, out _)))
             {
-                constSequenceBindings[seqKey] = seqElements;
+                // Names bound to constants fold to their literal so every consumer of the
+                // sequence (membership, unrolled for, indexing) sees a number and not a
+                // spelling that only resolves in the module that wrote it.
+                constSequenceBindings[seqKey] = seqElements
+                    .Select(e => TryFoldConstElement(e, out int v)
+                        ? (Expression)new IntegerLiteral(v) { Line = e.Line }
+                        : e)
+                    .ToList();
 
                 // A tuple has no run-time value on this target, so evaluating the right-hand
                 // side would reject the program ("tuples are not supported as runtime
