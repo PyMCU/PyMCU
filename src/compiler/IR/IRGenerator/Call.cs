@@ -692,6 +692,7 @@ public partial class IRGenerator
         if (callee == "bin") return EmitBinBuiltin(expr);
         if (callee == "str") return EmitStrBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
+        if (callee == "memoryview") return EmitMemoryviewBuiltin(expr);
 
         if (callee == "divmod") return EmitDivmodBuiltin(expr);
         if (CastTypes.ContainsKey(callee)) return EmitNumericCastBuiltin(expr, callee);
@@ -4851,7 +4852,7 @@ public partial class IRGenerator
         ["super"] = "base-class calls are resolved at compile time; name the base class "
                     + "explicitly (`Base.method(self, ...)`)",
         ["complex"] = "complex numbers are not supported",
-        ["memoryview"] = "there is no run-time buffer protocol. Pass the array itself",
+
         ["slice"] = "slice objects need a heap. Index the sequence directly",
         ["exit"] = "there is nothing to exit to; the program is the whole system. Loop forever, "
                    + "or reset the chip",
@@ -5018,6 +5019,26 @@ public partial class IRGenerator
         }
 
         throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
+    }
+
+    // memoryview(buf): there is no buffer protocol to build an object with, but
+    // the buffer already has fixed element storage, so the view is a compile-time
+    // ALIAS of it -- the same Val the name alone would lower to. `mv =
+    // memoryview(buf)` then binds through the ordinary name-alias machinery, and
+    // `memoryview(buf)[k:]`/`[k]` unwraps in VisitIndex (PyMCU#361 --
+    // adafruit_register.i2c_struct writes the memoryview spelling).
+    private Val EmitMemoryviewBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1)
+            throw UserError("memoryview() expects exactly one argument", expr.Callee);
+        Val inner = VisitExpression(expr.Args[0]);
+        if (inner is Variable v
+            && (arraySizes.ContainsKey(v.Name) || bytearrayParams.Contains(v.Name)
+                || TryResolveArrayStorageKey(v.Name, out _)))
+            return inner;
+        throw UserError(
+            "memoryview() wraps a fixed-size buffer (a bytearray or a fixed array); " +
+            "there is no run-time buffer protocol to view anything else through", ArgAt(expr, 0));
     }
 
     /// `memoryview(buf)`, `buf[a:]` and `memoryview(buf)[a:]` wrapped around an

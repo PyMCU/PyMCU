@@ -1999,6 +1999,14 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // `memoryview(buf)[k]`/`[a:b]`: the view is a compile-time alias of the
+        // buffer it wraps, so the subscript is the argument's own subscript.
+        // (PyMCU#361 -- `unpack_from(fmt, memoryview(self._buf)[1:])`.)
+        if (expr.Target is CallExpr { Callee: VariableExpr { Name: "memoryview" } } mvCall
+            && mvCall.Args.Count == 1)
+            return VisitIndex(new IndexExpr(mvCall.Args[0], expr.Index)
+                { Line = expr.Line, Column = expr.Column });
+
         // `struct.unpack(fmt, buf)[k]` / `struct.unpack_from(fmt, buf, off)[k]`. This is
         // the ONLY place the subscript and the call are visible together, and the pair is
         // the whole supported shape: indexed on the spot, so the tuple that CPython would
