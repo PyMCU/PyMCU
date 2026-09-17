@@ -1328,9 +1328,13 @@ public partial class IRGenerator
         }
 
         // Read and cleared here, before the arguments are visited: a call nested in an argument
-        // is read by THIS call, whatever this call's own result becomes (#302).
+        // is read by THIS call, whatever this call's own result becomes (#302). The tuple
+        // request gets the same treatment: it belongs to this call alone, and a call nested
+        // in an argument must not inherit its slot count.
         bool resultDiscarded = callResultIsDiscarded;
         callResultIsDiscarded = false;
+        int wantTupleCount = pendingTupleCount;
+        pendingTupleCount = 0;
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
@@ -1343,23 +1347,31 @@ public partial class IRGenerator
         // that unpacks a different number of targets is a mismatch worth naming here -- the
         // generic "Expected N tuple results, got M" fires far from the declaration.
         var declaredTupleElems = TupleType.ElementTypes(func?.ReturnType);
+
+        // `f()[k]` / `x = f()`: the call site wants the tuple's SLOTS, not unpack
+        // targets it wrote. The sentinel asks for them; the arity comes from the
+        // declaration, or for an unannotated callee from its tuple returns.
+        if (wantTupleCount < 0)
+            wantTupleCount = declaredTupleElems.Count > 0
+                ? declaredTupleElems.Count
+                : TupleReturnArity(func);
         if (declaredTupleElems.Count > 0)
         {
             string declared = TupleType.Describe(func!.ReturnType);
-            if (pendingTupleCount == 0)
+            if (wantTupleCount == 0)
                 throw UserError(
                     $"'{func.Name}' returns {declaredTupleElems.Count} values {declared}; " +
                     $"unpack them into {declaredTupleElems.Count} targets", expr.Callee);
-            if (pendingTupleCount != declaredTupleElems.Count)
+            if (wantTupleCount != declaredTupleElems.Count)
                 throw UserError(
                     $"'{func.Name}' is declared to return {declaredTupleElems.Count} values " +
-                    $"{declared}, but {pendingTupleCount} unpack target(s) were given", expr.Callee);
+                    $"{declared}, but {wantTupleCount} unpack target(s) were given", expr.Callee);
         }
 
-        if (pendingTupleCount > 0)
+        if (wantTupleCount > 0)
         {
             string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-            for (int k = 0; k < pendingTupleCount; ++k)
+            for (int k = 0; k < wantTupleCount; ++k)
             {
                 string slot = $"{bBase}.iret_{newDepth}_{k}";
                 tupleResultNames.Add(slot);
@@ -6383,6 +6395,22 @@ public partial class IRGenerator
             if (sv != null) { pending += sv; continue; }
             if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
             if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
+            // `f"{t}"` where t names a tuple return (`t = f()`): the tuple text
+            // CPython would write -- `(a, b, c)` -- without the tuple existing.
+            if (part.Expr is VariableExpr fTupName
+                && NamedTupleElemsOf(fTupName.Name) is { } fTupElems)
+            {
+                Flush();
+                EmitStreamStr(writeStrFn, "(");
+                for (int ti = 0; ti < fTupElems.Count; ++ti)
+                {
+                    if (ti > 0) EmitStreamStr(writeStrFn, ", ");
+                    EmitStreamVal(floatFn, VisitExpression(fTupElems[ti]));
+                }
+                if (fTupElems.Count == 1) EmitStreamStr(writeStrFn, ",");
+                EmitStreamStr(writeStrFn, ")");
+                continue;
+            }
             RejectInstanceInterpolation(part.Expr!);
             Flush();
             EmitStreamVal(floatFn, VisitExpression(part.Expr!));
@@ -6649,6 +6677,13 @@ public partial class IRGenerator
 
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
+
+            // `print(t)` where t names a tuple return (`t = f()`): the tuple CPython
+            // would have printed, not the `bytearray(b'...')` repr the fixed slots
+            // it lives in would otherwise take. Rewrite to the literal form so the
+            // branch below writes the same text.
+            if (arg is VariableExpr tupName && NamedTupleElemsOf(tupName.Name) is { } tupElems)
+                arg = new TupleExpr(tupElems) { Line = arg.Line };
 
             // A whole bytearray, an array slice, or a slice of a __getitem__ object
             // (microcontroller.nvm[0:4]): CPython-style bytearray(b'...') repr. As a

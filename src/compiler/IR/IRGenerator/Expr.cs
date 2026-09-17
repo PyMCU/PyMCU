@@ -2008,6 +2008,87 @@ public partial class IRGenerator
             && (IsStructCall(unpackCall, "unpack_from") || IsStructCall(unpackCall, "unpack")))
             return EmitStructUnpackFromIndexed(unpackCall, expr.Index);
 
+        // `f()[k]`: the subscript and the call are only visible together here.
+        // The sentinel tells the expansion this site wants the tuple's slots, so
+        // a multi-value return lands in them and the subscript picks element k --
+        // `self._temperature_and_lux_dn40()[0]` in adafruit_tcs34725. A call
+        // whose result is a buffer, an instance or a scalar keeps its old meaning.
+        if (expr.Target is CallExpr tupleCall)
+        {
+            lastTupleResults.Clear();
+            pendingTupleCount = -1;
+            Val callResult = VisitExpression(tupleCall);
+            pendingTupleCount = 0;
+
+            if (lastTupleResults.Count > 0)
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                if (idxVal is not Constant tc)
+                    throw UserError("the index into a tuple return must be a compile-time "
+                                    + "constant -- each element is its own slot", expr.Index);
+                if (tc.Value < 0 || tc.Value >= lastTupleResults.Count)
+                    throw new IndexError($"tuple index {tc.Value} out of range for "
+                                         + $"{lastTupleResults.Count} elements",
+                                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                string elem = lastTupleResults[tc.Value];
+                return new Variable(elem, variableTypes.TryGetValue(elem, out var et)
+                    ? et : DataType.UINT8);
+            }
+
+            // A returned buffer names the callee's fixed slot array, so the
+            // subscript reads it the way a named array's is read.
+            if (callResult is Variable retVar
+                && TryResolveArrayStorageKey(retVar.Name, out var retKey)
+                && arraySizes.TryGetValue(retKey, out int retSize))
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                DataType retElemDt = arrayElemTypes.TryGetValue(retKey, out var redt)
+                    ? redt : DataType.UINT8;
+                if (arraysWithVariableIndex.Contains(retKey)
+                    || moduleSramArrays.Contains(retKey))
+                {
+                    Temporary retTmp = MakeTemp(retElemDt);
+                    Emit(new ArrayLoad(retKey, idxVal, retTmp, retElemDt, retSize));
+                    return retTmp;
+                }
+                if (idxVal is not Constant ci)
+                    throw UnrolledArrayIndexError(retKey, expr.Target);
+                if (ci.Value < 0 || ci.Value >= retSize)
+                    throw new IndexError($"array index {ci.Value} out of range for size {retSize}",
+                                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                string elemSlot = retKey + "__" + ci.Value;
+                return new Variable(elemSlot, variableTypes.TryGetValue(elemSlot, out var esd)
+                    ? esd : retElemDt);
+            }
+
+            // An instance result is subscripted through its __getitem__, the same
+            // path `v[1]` takes when v names the instance.
+            if (callResult is Variable or Temporary
+                && GetValClass(callResult) is { Length: > 0 } callCls
+                && inlineFunctions.ContainsKey(callCls + "___getitem__"))
+            {
+                string callSelf = callResult is Variable cv ? cv.Name : ((Temporary)callResult).Name;
+                if (expr.Index is TupleExpr keyTup)
+                    return EmitDunderCall(callSelf, callCls, callCls + "___getitem__",
+                        new List<Val> { new NoneVal() },
+                        new Dictionary<int, ListExpr> { { 0, new ListExpr(keyTup.Elements) } });
+                Val getIdx = VisitExpression(expr.Index);
+                return EmitDunderCall(callSelf, callCls, callCls + "___getitem__",
+                    new List<Val> { getIdx });
+            }
+
+            // A scalar result indexed was a bit test of the call's value -- the
+            // meaning it had when the subscript fell through to the bit path.
+            if (callResult is NoneVal)
+                throw UserError("this call does not produce an indexable value", expr);
+            Val bitIdx = VisitExpression(expr.Index);
+            if (bitIdx is not Constant bc)
+                throw UserError("Bit index must be constant for reading", expr.Index);
+            Temporary bitDst = MakeTemp();
+            Emit(new BitCheck(callResult, bc.Value, bitDst));
+            return bitDst;
+        }
+
         // d[k] on a dict-literal binding: a compile-time CLOSED lookup table. A constant
         // key folds to its value; a runtime key lowers to a compare chain that raises
         // KeyError when nothing matches. Must run before the string-subscript rejection

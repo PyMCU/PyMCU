@@ -790,7 +790,27 @@ public partial class IRGenerator
                 + "indexable at run time.", listMem);
         }
 
-        Val value = VisitExpression(stmt.Value);
+        // `t = f()` / `t = obj.prop` where the value is a multi-return call: ask
+        // the expansion for the tuple's slots (the same sentinel `f()[k]` uses)
+        // and, when they arrive, bind the name to materialised copies so it
+        // indexes, measures and prints like the tuple CPython would have built.
+        // A value that is not a tuple return simply leaves lastTupleResults
+        // empty and takes the ordinary path below.
+        Val value;
+        if (stmt.Target is VariableExpr tupBindTgt
+            && stmt.Value is CallExpr or MemberAccessExpr)
+        {
+            lastTupleResults = new List<string>();
+            pendingTupleCount = -1;
+            value = VisitExpression(stmt.Value);
+            pendingTupleCount = 0;
+            if (lastTupleResults.Count > 0)
+            {
+                BindNamedTuple(tupBindTgt.Name);
+                return;
+            }
+        }
+        else value = VisitExpression(stmt.Value);
 
         // `x = f()` where f inlined `return <its local buffer>`: the call's value is a
         // Variable naming that fixed slot. Bind `x` as another NAME for the same bytes --

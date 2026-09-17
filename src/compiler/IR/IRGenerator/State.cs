@@ -341,6 +341,14 @@ public partial class IRGenerator
     private int pendingTupleCount = 0;
     private List<string> lastTupleResults = new();
 
+    // `t = f()` where f returns several values: the name is bound to materialised
+    // slots `t__0..N-1` (the values are COPIED -- the iret_ slots are shared
+    // scratch between call sites at the same depth, so aliasing them would let a
+    // later tuple call rewrite what t reads). The map lists those slot names so
+    // print(t) / f"{t}" can write CPython's `(a, b, c)` text; arraySizes[key]
+    // gives t[k], len(t) and `for x in t` the fixed-array shapes they know.
+    private Dictionary<string, List<string>> namedTupleElements = new();
+
     // Zero-Cost Abstraction: Virtual Instance Registry
     private HashSet<string> virtualInstances = new();
 

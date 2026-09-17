@@ -1066,6 +1066,7 @@ public partial class IRGenerator
         currentModulePrefix = "";
 
         ForceInlineClassReturningFactories();
+        ForceInlineTupleReturningFunctions();
 
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
         //
@@ -2623,6 +2624,32 @@ public partial class IRGenerator
             string? classKey = ResolveClassKey(rt, entry.Prefix ?? "");
             if (classKey == null) continue;
             if (slotClasses.Contains(classKey) || zcaFactoryClasses.ContainsKey(classKey)) continue;
+
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (inlineFunctions.ContainsKey(fullName)) continue;
+            inlineFunctions[fullName] = entry.Func;
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// A function that returns several values has no subroutine lowering: the AVR ABI hands
+    /// back one register, so `return (a, b)` can only reach the caller through the @inline
+    /// expansion path, where the unpack targets (or a `f()[k]` site's sentinel) become the
+    /// result slots. Rather than refuse `def f(): ... return (a, b)` for want of the
+    /// decorator, register it in inlineFunctions and let it expand wherever it is called --
+    /// the same shape ForceInlineClassReturningFactories takes. This is what
+    /// adafruit_tcs34725's `color_rgb_bytes` property needs: it is an ordinary method with
+    /// `return (red, green, blue)`.
+    /// </summary>
+    private void ForceInlineTupleReturningFunctions()
+    {
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            if (!TupleType.IsTupleType(entry.Func.ReturnType)
+                && TupleReturnArity(entry.Func) == 0) continue;
 
             string fullName = (entry.Prefix ?? "") + entry.Func.Name;
             if (inlineFunctions.ContainsKey(fullName)) continue;

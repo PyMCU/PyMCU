@@ -868,17 +868,17 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void TupleReturnFromRegularFunction_RaisesClearError()
+    public void TupleReturnFromRegularFunction_Compiles()
     {
-        // Returning multiple values from a non-@inline subroutine is unsupported; it must be
-        // a clear error, not the cryptic "Unknown Expression type: TupleExpr".
+        // A tuple-returning function without @inline is force-inlined at its call
+        // sites (the caller's unpack targets become the result slots), so a plain
+        // `return a, b` compiles rather than erroring.
         const string src =
             "def minmax(a: uint8, b: uint8):\n" +
             "    return a, b\n" +
             "def main():\n" +
             "    x: uint8 = 0\n";
-        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
-        Assert.Contains("multiple values", ex.Message);
+        GenerateIR(src);
     }
 
     [Fact]
@@ -1709,20 +1709,20 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void TupleReturnAnnotation_OnNonInline_RaisesClearError()
+    public void TupleReturnAnnotation_OnNonInline_ForceInlines()
     {
-        // A real subroutine has one return register, so the annotation cannot be honoured.
-        // The error must land on the definition, not on some later return statement.
+        // A real subroutine has one return register, so the annotation cannot be
+        // honoured by a CALL -- the compiler force-inlines the callee instead and
+        // the unpack targets receive the element slots directly.
         const string src =
             "def divmod8(a: uint8, b: uint8) -> (uint8, uint8):\n" +
             "    return (a, b)\n" +
             "def main():\n" +
             "    q, r = divmod8(10, 3)\n";
 
-        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
-            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
-        Assert.Contains("@inline", ex.Message);
-        Assert.Equal(1, ex.Line);
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+        Assert.DoesNotContain(ir.Functions, f => f.Name == "divmod8");
     }
 
     [Fact]

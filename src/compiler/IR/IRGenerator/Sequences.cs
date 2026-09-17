@@ -405,4 +405,61 @@ public partial class IRGenerator
         listLiteralParams.Remove(targetKey);
         constSequenceBindings.Remove(targetKey);
     }
+
+    /// <summary>
+    /// `t = f()` where f's expansion just delivered a tuple through
+    /// <c>lastTupleResults</c>: materialise one fixed slot per element --
+    /// `t__0`, `t__1`, ... -- and register the name as a tuple-valued variable.
+    /// The values are COPIED out of the call's `iret_` slots, which are shared
+    /// scratch reused by the next call at the same depth; aliasing them would
+    /// let a later `g()` overwrite what `t` still names.
+    /// </summary>
+    private void BindNamedTuple(string name)
+    {
+        string key = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction)
+                ? currentFunction + "." + name : name);
+
+        variableAliases.Remove(key);
+        constantVariables.Remove(key);
+        strConstantVariables.Remove(key);
+        floatConstantVariables.Remove(key);
+        listLiteralParams.Remove(key);
+        constSequenceBindings.Remove(key);
+
+        var elems = new List<string>();
+        DataType widest = DataType.UINT8;
+        for (int k = 0; k < lastTupleResults.Count; ++k)
+        {
+            string src = lastTupleResults[k];
+            string dst = key + "__" + k;
+            DataType dt = variableTypes.TryGetValue(src, out var sdt)
+                ? sdt : DataType.UINT8;
+            Emit(new Copy(new Variable(src, dt), new Variable(dst, dt)));
+            variableTypes[dst] = dt;
+            if (constantVariables.TryGetValue(src, out int cv)) constantVariables[dst] = cv;
+            else constantVariables.Remove(dst);
+            if (dt == DataType.UINT16 || dt == DataType.INT16) widest = DataType.UINT16;
+            else if (dt == DataType.UINT32 || dt == DataType.INT32) widest = DataType.UINT32;
+            else if (dt == DataType.FLOAT) widest = DataType.FLOAT;
+            elems.Add(dst);
+        }
+        namedTupleElements[key] = elems;
+        arraySizes[key] = elems.Count;
+        arrayElemTypes[key] = widest;
+    }
+
+    /// <summary>
+    /// The element expressions of a name bound to a tuple return (`t = f()`), or null for
+    /// any other name. Each element is spelled `t__k` -- the LOCAL spelling, not the slot's
+    /// qualified key: a VariableExpr re-resolves through the current prefix chain, and an
+    /// already-qualified name would double-prefix (`main.main.t__0`).
+    /// </summary>
+    private List<Expression>? NamedTupleElemsOf(string name)
+    {
+        string key = ResolveNameKey(name);
+        if (!namedTupleElements.TryGetValue(key, out var slots)) return null;
+        return slots.Select((_, k) => (Expression)new VariableExpr(name + "__" + k)).ToList();
+    }
 }
