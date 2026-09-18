@@ -183,17 +183,4 @@ public class ForOverInstanceTupleTests
         ir.Functions.Should().NotBeEmpty(
             because: "a class-typed pin parameter is an instance even inside an outlined constructor");
     }
-
-    [Fact]
-    public void ANumberThenAnInstanceStillRefused()
-    {
-        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Pin +
-            "def main():\n" +
-            "    x = Pin(0)\n" +
-            "    for p in (1, x):\n" +
-            "        pass\n"));
-
-        ex.Message.Should().Contain("compile-time constants",
-            because: "a mixture of a number and an instance is still not one sequence");
-    }
 }

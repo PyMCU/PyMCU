@@ -29,6 +29,12 @@ public partial class IRGenerator
     {
         baseKey = "";
         string key = currentInlinePrefix + name;
+        // A name bound outside an expansion -- `x = f()` where f returned its local buffer
+        // -- is aliased under the function-qualified spelling (`main.x`), which the bare
+        // starting key would never find.
+        if (!variableAliases.ContainsKey(key) && !arraySizes.ContainsKey(key)
+            && !string.IsNullOrEmpty(currentFunction))
+            key = currentFunction + "." + name;
         for (int d = 0; d < 20; d++)
         {
             if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
@@ -76,6 +82,31 @@ public partial class IRGenerator
         return false;
     }
 
+    // A subscripted name the current function does not claim resolves at MODULE scope -- in
+    // Python `cfg[i] = v` mutates the module global with no `global` statement needed, the
+    // declaration only rebinds the name itself. Module arrays canonicalize to the BARE name
+    // (`cfg`), which is where ScanGlobals files them and where the replayed declaration now
+    // lands (PyMCU#460); an imported module may instead file its storage under the init
+    // function (`<mod>___module_init.cfg`), so that spelling is probed first when the caller
+    // belongs to that module. `main.<suffix>` is last: after #460 it can only be a local of
+    // `main` itself, never module storage -- kept only as a fallback for shapes not yet
+    // canonicalized.
+    private string ModuleScopeArrayName(string fnQualified)
+    {
+        int dot = fnQualified.LastIndexOf('.');
+        string suffix = dot >= 0 ? fnQualified[(dot + 1)..] : fnQualified;
+        foreach (var modName in modules.Keys)
+        {
+            string mp = modName.Replace('.', '_') + "_";
+            if (!fnQualified.StartsWith(mp, StringComparison.Ordinal)) continue;
+            string initKey = mp + "__module_init." + suffix;
+            if (arraySizes.ContainsKey(initKey)) return initKey;
+        }
+        if (arraySizes.ContainsKey(suffix)) return suffix;
+        if (arraySizes.ContainsKey("main." + suffix)) return "main." + suffix;
+        return fnQualified;
+    }
+
     // The name at the end of `name`'s alias chain, spelled as the current scope would write
     // it. A parameter handed through stacked @inline expansions aliases another parameter
     // (`pulses` -> `inline1.send.pulses` -> `main.signal`), so the terminal -- not the
@@ -89,6 +120,21 @@ public partial class IRGenerator
         for (int d = 0; d < 20 && variableAliases.TryGetValue(term, out var nxt); ++d)
             term = nxt;
         return term;
+    }
+
+    // The module prefixes (`mod_`) the current compile context belongs to: a bare name
+    // inside `mod`'s code means that module's global, and no other module's. Used to probe
+    // the spellings module-level bindings are filed under -- `mod_<name>` by the scan and
+    // `mod___module_init.<name>` by the init-function lowering.
+    private IEnumerable<string> OwningModulePrefixes()
+    {
+        foreach (var modName in modules.Keys)
+        {
+            string mp = modName.Replace('.', '_') + "_";
+            if ((currentModulePrefix ?? "").StartsWith(mp, StringComparison.Ordinal)
+                || (currentFunction ?? "").StartsWith(mp, StringComparison.Ordinal))
+                yield return mp;
+        }
     }
 
     // `for c in <const[str]>` unrolls at or below this length (each char a compile-time
@@ -146,6 +192,20 @@ public partial class IRGenerator
         }
     }
 
+    // An element the literal-only check above misses but the general constant evaluator
+    // still folds: a name bound to a compile-time constant (`MODE_SLEEP = const(0)`, then
+    // `(MODE_SLEEP, MODE_FORCE)` -- adafruit_bmp280's mode table). The caller stores the
+    // folded literal, so every consumer downstream sees a number, not the name.
+    private bool TryFoldConstElement(Expression e, out int value)
+    {
+        if (TryEvalConstElement(e, out value)) return true;
+        bool savedFold = foldLocalConstants;
+        foldLocalConstants = true;
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
+        finally { foldLocalConstants = savedFold; }
+    }
+
     /// <summary>
     /// Binds one unrolled element to the loop variable, and says whether it could. A number
     /// binds as it always has; a STRING binds as a string constant, which is what a `const`
@@ -165,15 +225,32 @@ public partial class IRGenerator
             return true;
         }
 
-        if (!TryEvalConstStrElement(elem, out var text)) return false;
+        if (TryEvalConstStrElement(elem, out var text))
+        {
+            strConstantVariables[key] = text;
+            // A one-character string is its own character code in expression position and an
+            // interned id through a name. The unrolled name has to be indistinguishable from the
+            // literal it stands for, which is the state the read path expects.
+            if (text.Length == 1) constantVariables[key] = text[0];
+            else constantVariables.Remove(key);
+            return true;
+        }
 
-        strConstantVariables[key] = text;
-        // A one-character string is its own character code in expression position and an
-        // interned id through a name. The unrolled name has to be indistinguishable from the
-        // literal it stands for, which is the state the read path expects.
-        if (text.Length == 1) constantVariables[key] = text[0];
-        else constantVariables.Remove(key);
-        return true;
+        // `for pin in (reset_dio, enable_dio, ...)`: an element that names an INSTANCE is not
+        // a constant but is still a compile-time answer -- the loop variable is another name
+        // for that object, so alias it (with its class, for method dispatch) rather than
+        // refusing the tuple (adafruit_character_lcd's pin-setup loop).
+        if (elem is VariableExpr instVe)
+        {
+            string instKey = ResolveNameKey(instVe.Name);
+            if (instanceClasses.TryGetValue(instKey, out var instCls) && instCls != null)
+            {
+                variableAliases[key] = instKey;
+                instanceClasses[key] = instCls;
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -396,13 +473,21 @@ public partial class IRGenerator
 
     private List<Expression>? ResolveConstSequence(string name)
     {
-        string?[] candidates =
+        var candidates = new List<string?>
         {
             !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
             !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
             !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
             name,
         };
+
+        // A name written bare inside an imported module's function means that module's
+        // global, which the lowering files under the synthesized `__module_init`
+        // (`mod___module_init.MODES`) -- a spelling none of the scope prefixes above
+        // produces. Only the module(s) the current context belongs to are probed: another
+        // module's global of the same name is not visible here.
+        foreach (var mp in OwningModulePrefixes())
+            candidates.Add(mp + "__module_init." + name);
 
         foreach (var candidate in candidates)
         {
@@ -930,16 +1015,20 @@ public partial class IRGenerator
                             "unpack both.", elem);
                     else throw UserError(
                         "for-in list/tuple iterable elements must be compile-time constants -- a number, "
-                        + "or a string such as a board pin name.", elem);
+                        + "a string such as a board pin name, or a name bound to an instance.", elem);
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
                 constantVariables.Remove(varKey);
                 strConstantVariables.Remove(varKey);
+                variableAliases.Remove(varKey);
+                instanceClasses.Remove(varKey);
                 if (varKey2 != null)
                 {
                     constantVariables.Remove(varKey2);
                     strConstantVariables.Remove(varKey2);
+                    variableAliases.Remove(varKey2);
+                    instanceClasses.Remove(varKey2);
                 }
                 return;
             }
@@ -1964,6 +2053,18 @@ public partial class IRGenerator
                     "protocol: there is no exception to stop on, so the loop could never end. " +
                     "Write the loop explicitly (`while <cond>: v = obj.next()`), or iterate a " +
                     "range/fixed array instead. A `yield` generator function IS supported.", itVe);
+
+            // `for b in f(...)`: a call whose result is a fixed-size buffer runs ONCE, then
+            // the loop walks the returned storage exactly like a named array -- the same
+            // spelling with the assignment inlined (adafruit_bmp280's register-read loop).
+            if (iter is CallExpr
+                && VisitExpression(iter) is Variable callRet
+                && TryResolveArrayStorageKey(callRet.Name, out var callBase)
+                && arraySizes.TryGetValue(callBase, out int callSize) && callSize > 0)
+            {
+                EmitSequenceUnroll(stmt, callBase, callSize);
+                return;
+            }
 
             // __getitem__ without a compile-time __len__: the sequence protocol is the right
             // shape, but the trip count is only known at run time and there is no IndexError to

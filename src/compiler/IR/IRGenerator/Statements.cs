@@ -1054,19 +1054,25 @@ public partial class IRGenerator
         // Returning a bytes/list object. The literal form crashed with an AST class name; the
         // form through a name compiled and returned the array as a SCALAR, after which the
         // caller's `y[0]` lowered to a bit test on it. Neither is a value the caller can use.
-        // An @inline (or force-inlined) callee is different: the buffer lives in the caller's
-        // frame, and the assignment aliases it (#464).
+        // From an INLINE expansion it can still be honoured without moving a byte: every
+        // local array is a fixed static slot, so the value that travels back is the buffer's
+        // NAME, bound on the context for the caller's receiving variable to alias. The
+        // generic aliasing in `x = f()` then makes `x[i]` and `len(x)` answer the callee's
+        // storage (adafruit_bmp280's `_read_register`). Pending finally blocks -- which is
+        // how a `with` body's __exit__ reaches here -- still run before the exit jump.
         if (stmt.Value != null && IsSequenceObject(stmt.Value))
         {
-            if (inlineStack.Count > 0 && stmt.Value is VariableExpr retBuf
-                && ResolveArrayVar(retBuf.Name) is { } arr)
+            if (stmt.Value is VariableExpr retArr && inlineStack.Count > 0
+                && inlineStack.Last().ResultVars.Count == 0
+                && ResolveArrayVar(retArr.Name) is { } retArrInfo)
             {
-                var bufCtx = inlineStack.Last();
-                bufCtx.ReturnedArray = arr.Name;
-                bufCtx.ResultAssigned = true;
-                if (_runtimeBranchDepth <= bufCtx.EntryBranchDepth)
-                    bufCtx.ResultReturnedUnconditionally = true;
-                Emit(new Jump(bufCtx.ExitLabel));
+                var retCtx = inlineStack.Last();
+                retCtx.ReturnedBuffer = retArrInfo.Name;
+                retCtx.ResultAssigned = true;
+                if (_runtimeBranchDepth <= retCtx.EntryBranchDepth)
+                    retCtx.ResultReturnedUnconditionally = true;
+                if (finallyStack.Count > 0) EmitPendingFinally();
+                Emit(new Jump(retCtx.ExitLabel));
                 return;
             }
             throw UserError(
@@ -1123,8 +1129,15 @@ public partial class IRGenerator
                     DataType dt = variableTypes.TryGetValue(ctx.ResultVars[k], out var slotDt)
                         ? slotDt : DataType.UINT8;
                     Emit(new Copy(elemVal, new Variable(ctx.ResultVars[k], dt)));
-                    if (elemVal is Constant c)
-                        constantVariables[ctx.ResultVars[k]] = c.Value;
+                    // The iret_ slots are scratch shared by every expansion at this
+                    // depth: a slot a previous call filled with a constant keeps that
+                    // entry unless it is cleared here, and a later `x = t__k` read
+                    // would fold to the OTHER call's value.
+                    if (elemVal is Constant c) constantVariables[ctx.ResultVars[k]] = c.Value;
+                    else constantVariables.Remove(ctx.ResultVars[k]);
+                    if (elemVal is FloatConstant fc) floatConstantVariables[ctx.ResultVars[k]] = fc.Value;
+                    else floatConstantVariables.Remove(ctx.ResultVars[k]);
+                    strConstantVariables.Remove(ctx.ResultVars[k]);
                 }
 
                 Emit(new Jump(ctx.ExitLabel));

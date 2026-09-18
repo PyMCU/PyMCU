@@ -1815,6 +1815,15 @@ public partial class IRGenerator
             }
         }
 
+        if (operand is FloatConstant fco)
+        {
+            switch (expr.Op)
+            {
+                case AstUnOp.Negate: return new FloatConstant(-fco.Value);
+                case AstUnOp.Not: return new Constant(fco.Value == 0.0 ? 1 : 0);
+            }
+        }
+
         if (expr.Op == AstUnOp.Deref)
         {
             DataType derefElem = RuntimePtrElem(operand);
@@ -1859,6 +1868,14 @@ public partial class IRGenerator
             && dictLiteralBindings.TryGetValue(currentInlinePrefix + name, out dict!)) return true;
         if (!string.IsNullOrEmpty(currentFunction)
             && dictLiteralBindings.TryGetValue(currentFunction + "." + name, out dict!)) return true;
+        // The scan files a module-level dict as `mod_<name>`; its init-function lowering may
+        // re-register it as `mod___module_init.<name>`. Both are probed for the module(s) the
+        // current context belongs to -- a bare name in `mod`'s code means `mod`'s global.
+        foreach (var mp in OwningModulePrefixes())
+        {
+            if (dictLiteralBindings.TryGetValue(mp + name, out dict!)) return true;
+            if (dictLiteralBindings.TryGetValue(mp + "__module_init." + name, out dict!)) return true;
+        }
         return dictLiteralBindings.TryGetValue(name, out dict!);
     }
 
@@ -1868,6 +1885,11 @@ public partial class IRGenerator
             && setLiteralBindings.TryGetValue(currentInlinePrefix + name, out set!)) return true;
         if (!string.IsNullOrEmpty(currentFunction)
             && setLiteralBindings.TryGetValue(currentFunction + "." + name, out set!)) return true;
+        foreach (var mp in OwningModulePrefixes())
+        {
+            if (setLiteralBindings.TryGetValue(mp + name, out set!)) return true;
+            if (setLiteralBindings.TryGetValue(mp + "__module_init." + name, out set!)) return true;
+        }
         return setLiteralBindings.TryGetValue(name, out set!);
     }
 
@@ -2046,13 +2068,103 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
-        // `struct.unpack_from(fmt, buf, off)[k]`. This is the ONLY place the subscript and the
-        // call are visible together, and the pair is the whole supported shape: indexed on the
-        // spot, so the tuple that CPython would build never exists. A bare unpack_from() is
-        // refused in VisitCall, which cannot see whether it was indexed.
+        // `memoryview(buf)[k]`/`[a:b]`: the view is a compile-time alias of the
+        // buffer it wraps, so the subscript is the argument's own subscript.
+        // (PyMCU#361 -- `unpack_from(fmt, memoryview(self._buf)[1:])`.)
+        if (expr.Target is CallExpr { Callee: VariableExpr { Name: "memoryview" } } mvCall
+            && mvCall.Args.Count == 1)
+            return VisitIndex(new IndexExpr(mvCall.Args[0], expr.Index)
+                { Line = expr.Line, Column = expr.Column });
+
+        // `struct.unpack(fmt, buf)[k]` / `struct.unpack_from(fmt, buf, off)[k]`. This is
+        // the ONLY place the subscript and the call are visible together, and the pair is
+        // the whole supported shape: indexed on the spot, so the tuple that CPython would
+        // build never exists. A bare unpack() is refused in VisitCall, which cannot see
+        // whether it was indexed.
         if (expr.Target is CallExpr unpackCall
-            && IsStructCall(unpackCall, "unpack_from"))
+            && (IsStructCall(unpackCall, "unpack_from") || IsStructCall(unpackCall, "unpack")))
             return EmitStructUnpackFromIndexed(unpackCall, expr.Index);
+
+        // `f()[k]`: the subscript and the call are only visible together here.
+        // The sentinel tells the expansion this site wants the tuple's slots, so
+        // a multi-value return lands in them and the subscript picks element k --
+        // `self._temperature_and_lux_dn40()[0]` in adafruit_tcs34725. A call
+        // whose result is a buffer, an instance or a scalar keeps its old meaning.
+        if (expr.Target is CallExpr tupleCall)
+        {
+            lastTupleResults.Clear();
+            pendingTupleCount = -1;
+            Val callResult = VisitExpression(tupleCall);
+            pendingTupleCount = 0;
+
+            if (lastTupleResults.Count > 0)
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                if (idxVal is not Constant tc)
+                    throw UserError("the index into a tuple return must be a compile-time "
+                                    + "constant -- each element is its own slot", expr.Index);
+                if (tc.Value < 0 || tc.Value >= lastTupleResults.Count)
+                    throw new IndexError($"tuple index {tc.Value} out of range for "
+                                         + $"{lastTupleResults.Count} elements",
+                                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                string elem = lastTupleResults[tc.Value];
+                return new Variable(elem, variableTypes.TryGetValue(elem, out var et)
+                    ? et : DataType.UINT8);
+            }
+
+            // A returned buffer names the callee's fixed slot array, so the
+            // subscript reads it the way a named array's is read.
+            if (callResult is Variable retVar
+                && TryResolveArrayStorageKey(retVar.Name, out var retKey)
+                && arraySizes.TryGetValue(retKey, out int retSize))
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                DataType retElemDt = arrayElemTypes.TryGetValue(retKey, out var redt)
+                    ? redt : DataType.UINT8;
+                if (arraysWithVariableIndex.Contains(retKey)
+                    || moduleSramArrays.Contains(retKey))
+                {
+                    Temporary retTmp = MakeTemp(retElemDt);
+                    Emit(new ArrayLoad(retKey, idxVal, retTmp, retElemDt, retSize));
+                    return retTmp;
+                }
+                if (idxVal is not Constant ci)
+                    throw UnrolledArrayIndexError(retKey, expr.Target);
+                if (ci.Value < 0 || ci.Value >= retSize)
+                    throw new IndexError($"array index {ci.Value} out of range for size {retSize}",
+                                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                string elemSlot = retKey + "__" + ci.Value;
+                return new Variable(elemSlot, variableTypes.TryGetValue(elemSlot, out var esd)
+                    ? esd : retElemDt);
+            }
+
+            // An instance result is subscripted through its __getitem__, the same
+            // path `v[1]` takes when v names the instance.
+            if (callResult is Variable or Temporary
+                && GetValClass(callResult) is { Length: > 0 } callCls
+                && inlineFunctions.ContainsKey(callCls + "___getitem__"))
+            {
+                string callSelf = callResult is Variable cv ? cv.Name : ((Temporary)callResult).Name;
+                if (expr.Index is TupleExpr keyTup)
+                    return EmitDunderCall(callSelf, callCls, callCls + "___getitem__",
+                        new List<Val> { new NoneVal() },
+                        new Dictionary<int, ListExpr> { { 0, new ListExpr(keyTup.Elements) } });
+                Val getIdx = VisitExpression(expr.Index);
+                return EmitDunderCall(callSelf, callCls, callCls + "___getitem__",
+                    new List<Val> { getIdx });
+            }
+
+            // A scalar result indexed was a bit test of the call's value -- the
+            // meaning it had when the subscript fell through to the bit path.
+            if (callResult is NoneVal)
+                throw UserError("this call does not produce an indexable value", expr);
+            Val bitIdx = VisitExpression(expr.Index);
+            if (bitIdx is not Constant bc)
+                throw UserError("Bit index must be constant for reading", expr.Index);
+            Temporary bitDst = MakeTemp();
+            Emit(new BitCheck(callResult, bc.Value, bitDst));
+            return bitDst;
+        }
 
         // d[k] on a dict-literal binding: a compile-time CLOSED lookup table. A constant
         // key folds to its value; a runtime key lowers to a compare chain that raises
@@ -2122,7 +2234,10 @@ public partial class IRGenerator
         {
             if (expr.Target is VariableExpr srcVe)
             {
-                string srcQ = string.IsNullOrEmpty(currentFunction) ? srcVe.Name : currentFunction + "." + srcVe.Name;
+                // ResolveNameKey walks the same scopes every other lookup does -- an array
+                // built inside an @inline expansion lives under the inline prefix, which a
+                // currentFunction-only probe misses (PyMCU#361).
+                string srcQ = ResolveNameKey(srcVe.Name);
                 if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
                 if (arraySizes.TryGetValue(srcQ, out int srcSize))
                 {
@@ -2308,11 +2423,27 @@ public partial class IRGenerator
                 }
             }
 
-            string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
-            string aliasTerm = TerminalAliasOf(ve.Name);
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(aliasTerm))
-                qualified = aliasTerm;
+            // A name already carrying its full storage key -- a buffer returned through
+            // nested inline expansions (`inline3._read.inline4._read_register.result`,
+            // which is what a struct.unpack field expression holds) -- is used verbatim:
+            // prefixing it again produces a name nothing registered.
+            string qualified = arraySizes.ContainsKey(ve.Name) || bytearrayParams.Contains(ve.Name)
+                ? ve.Name
+                : (string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name);
+            // Same module-scope rule as the store path: the module array's canonical
+            // spelling is the bare name ScanGlobals filed (PyMCU#460).
+            if (!arraySizes.ContainsKey(qualified))
+                qualified = ModuleScopeArrayName(qualified);
+
+            // `x = f()` where f returned its local buffer binds `x` as an alias of the
+            // callee's slot; follow the alias so the subscript reaches that storage. The
+            // follow is adopted only when the endpoint really is array storage -- a scalar
+            // alias (a list-returning call's result temp, say) must keep the original name,
+            // which is the key its own element-type record is filed under.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && variableAliases.ContainsKey(qualified)
+                && TryResolveArrayStorageKey(FollowAliases(qualified), out var aliasedArr))
+                qualified = aliasedArr;
 
             // Inside an inline expansion, the target may be an aliased bytearray parameter.
             if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
@@ -2453,7 +2584,12 @@ public partial class IRGenerator
                             $"array index {elemIdx} out of range for size {sz}",
                             expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                     string elemName = qualified + "__" + elemIdx;
-                    return new Variable(elemName, arrayElemTypes[qualified]);
+                    // The slot's own type wins over the array's uniform element type: a
+                    // struct.unpack sequence stores int8/int16 fields next to unsigned ones,
+                    // and the uniform type would read a signed field's bits as unsigned.
+                    return new Variable(elemName,
+                        variableTypes.TryGetValue(elemName, out var elemVarDt)
+                            ? elemVarDt : arrayElemTypes[qualified]);
                 }
             }
         }
@@ -3075,11 +3211,13 @@ public partial class IRGenerator
     }
 
     // True when this reads a @property getter on a known instance: the receiver is a plain
-    // name bound to a class that registers <member> as a getter.
+    // name bound to a class that registers <member> as a getter. The MRO walk makes a getter
+    // declared on a base class reachable from a subclass instance (`lcd.columns`).
     private bool IsPropertyGetterRead(MemberAccessExpr expr)
         => expr.Object is VariableExpr recv
            && InstanceClassOfName(recv.Name) is { } cls
-           && propertyGetters.Contains(cls + "." + expr.Member);
+           && ResolveMROPropertyClass(cls, expr.Member) is { } propCls
+           && propertyGetters.Contains(propCls + "." + expr.Member);
 
     // The AST of `<instance>.<member>`, resolved through the MRO. Null when the name is not
     // an instance or its class has no such method.
@@ -3409,9 +3547,11 @@ public partial class IRGenerator
         // @property getter: a bare `obj.prop` read where `prop` is a registered getter on the
         // instance's class is desugared into a call to the getter method. Without this it would
         // fall through to a non-existent flattened `<base>_<prop>` data field and read 0.
+        // The MRO walk reaches a getter inherited from a base class.
         if (baseName != null && propertyGetters.Count > 0
-            && instanceClasses.TryGetValue(baseName, out var getterCls)
-            && propertyGetters.Contains(getterCls + "." + expr.Member))
+            && instanceClasses.TryGetValue(baseName, out var getterCls) && getterCls != null
+            && ResolveMROPropertyClass(getterCls, expr.Member) is { } getterPropCls
+            && propertyGetters.Contains(getterPropCls + "." + expr.Member))
         {
             return VisitCall(new CallExpr(expr, new List<Expression>()));
         }

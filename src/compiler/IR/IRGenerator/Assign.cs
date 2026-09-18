@@ -227,9 +227,16 @@ public partial class IRGenerator
             NoteSequenceMutability(seqKey, seqTgt.Name, isTuple: stmt.Value is TupleExpr);
 
             if (seqElements.Count is > 0 and <= ConstSequenceUnrollLimit
-                && seqElements.All(e => TryEvalConstElement(e, out _)))
+                && seqElements.All(e => TryFoldConstElement(e, out _)))
             {
-                constSequenceBindings[seqKey] = seqElements;
+                // Names bound to constants fold to their literal so every consumer of the
+                // sequence (membership, unrolled for, indexing) sees a number and not a
+                // spelling that only resolves in the module that wrote it.
+                constSequenceBindings[seqKey] = seqElements
+                    .Select(e => TryFoldConstElement(e, out int v)
+                        ? (Expression)new IntegerLiteral(v) { Line = e.Line }
+                        : e)
+                    .ToList();
 
                 // A tuple has no run-time value on this target, so evaluating the right-hand
                 // side would reject the program ("tuples are not supported as runtime
@@ -530,6 +537,12 @@ public partial class IRGenerator
         // already what a short tuple's binding does one screen up.
         if (stmt.Target is VariableExpr listTarget)
         {
+            // `coeff = list(struct.unpack(fmt, bytes(buf)))`, `t = struct.unpack(fmt, buf)`
+            // and `xs = list(arr)`: a compile-time sequence of reads stored into element
+            // slots, each keeping its field width and sign (#361).
+            if (TryStructUnpackSeq(stmt.Value, out var unpackElems, out var unpackTypes)
+                && TryVisitCtListAssign(listTarget, unpackElems, unpackTypes)) return;
+
             List<Expression>? elemExprs = stmt.Value switch
             {
                 ListExpr le => le.Elements,
@@ -623,6 +636,22 @@ public partial class IRGenerator
             if (stmt.Value is VariableExpr seqArrVe)
             {
                 string seqArrSrc = ResolveNameKey(seqArrVe.Name);
+                // The alias chain can end on a stale qualified name (`main.buf`) while the
+                // scanner filed the storage under the bare module name (`buf`) -- the same
+                // split #460 fixed at the declaration site. Only the qualified -> bare
+                // direction is safe: the reverse (bare `levels` -> `main.levels`) can land on
+                // a const-sequence size record that has no SRAM behind it, and binding the
+                // field to that makes every subscript read zeros.
+                if (!arraySizes.ContainsKey(seqArrSrc) && !bytearrayParams.Contains(seqArrSrc))
+                {
+                    int d = seqArrSrc.LastIndexOf('.');
+                    if (d >= 0)
+                    {
+                        string seqArrBare = seqArrSrc[(d + 1)..];
+                        if (arraySizes.ContainsKey(seqArrBare) || bytearrayParams.Contains(seqArrBare))
+                            seqArrSrc = seqArrBare;
+                    }
+                }
                 if (seqArrSrc != seqFieldKey
                     && (arraySizes.ContainsKey(seqArrSrc) || bytearrayParams.Contains(seqArrSrc))
                     && !instanceClasses.ContainsKey(seqArrSrc + "__0"))
@@ -641,6 +670,26 @@ public partial class IRGenerator
                 constSequenceBindings[seqFieldKey] = seqConstElems;
                 variableAliases.Remove(seqFieldKey);
                 return;
+            }
+
+            // `self._xs = arr[a:b]`: the read path already materialises a slice into a fixed
+            // `__slice_N` array (a real copy, which is what a Python slice is), and the field
+            // keeps it as a compile-time sequence of its element slots, so `self._xs[k]`
+            // folds to one of them without an indexed load on unrolled storage (#361).
+            if (stmt.Value is IndexExpr { Index: SliceExpr } fieldSlice)
+            {
+                Val sliceVal = VisitExpression(fieldSlice);
+                if (sliceVal is Variable sliceArr
+                    && arraySizes.TryGetValue(sliceArr.Name, out int sliceN))
+                {
+                    constSequenceBindings[seqFieldKey] =
+                        FixedArrayElementExprs(new VariableExpr(sliceArr.Name), sliceN);
+                    variableAliases.Remove(seqFieldKey);
+                    return;
+                }
+                throw UserError(
+                    "a slice assigned to a field needs a named fixed-size array as its source",
+                    fieldSlice);
             }
         }
 
@@ -689,6 +738,17 @@ public partial class IRGenerator
                     baFieldCount = baConstN;
                     baFieldInit.AddRange(Enumerable.Repeat(0, baFieldCount));
                 }
+                // `bytearray(self._n)` where _n is a field whose constant was recorded when
+                // `self._n = <literal>` ran -- a constructor arg that folded at the call site
+                // (adafruit_74hc595's `bytearray(self._number_of_shift_registers)`). The size
+                // is every bit as compile-time as the literal spelling.
+                else if (baArg0 is MemberAccessExpr baMc && baMc.Object is VariableExpr baMv
+                    && constantVariables.TryGetValue(
+                        ResolveNameKey(baMv.Name) + "_" + baMc.Member, out int baFieldN))
+                {
+                    baFieldCount = baFieldN;
+                    baFieldInit.AddRange(Enumerable.Repeat(0, baFieldCount));
+                }
             }
 
             if (baFieldCount <= 0)
@@ -730,7 +790,42 @@ public partial class IRGenerator
                 + "indexable at run time.", listMem);
         }
 
-        Val value = VisitExpression(stmt.Value);
+        // `t = f()` / `t = obj.prop` where the value is a multi-return call: ask
+        // the expansion for the tuple's slots (the same sentinel `f()[k]` uses)
+        // and, when they arrive, bind the name to materialised copies so it
+        // indexes, measures and prints like the tuple CPython would have built.
+        // A value that is not a tuple return simply leaves lastTupleResults
+        // empty and takes the ordinary path below.
+        Val value;
+        if (stmt.Target is VariableExpr tupBindTgt
+            && stmt.Value is CallExpr or MemberAccessExpr)
+        {
+            lastTupleResults = new List<string>();
+            pendingTupleCount = -1;
+            value = VisitExpression(stmt.Value);
+            pendingTupleCount = 0;
+            if (lastTupleResults.Count > 0)
+            {
+                BindNamedTuple(tupBindTgt.Name);
+                return;
+            }
+        }
+        else value = VisitExpression(stmt.Value);
+
+        // `x = f()` where f inlined `return <its local buffer>`: the call's value is a
+        // Variable naming that fixed slot. Bind `x` as another NAME for the same bytes --
+        // a scalar copy of the name would write nothing -- and the alias makes `x[i]`,
+        // `x[i] = v`, `len(x)` and `for` all answer the callee's storage.
+        if (value is Variable retBuf && arraySizes.ContainsKey(retBuf.Name)
+            && stmt.Target is VariableExpr bufTgt)
+        {
+            string bufKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + bufTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + bufTgt.Name : bufTgt.Name);
+            BindSequenceAlias(bufKey, retBuf.Name);
+            return;
+        }
 
         if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
         else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
@@ -873,44 +968,35 @@ public partial class IRGenerator
     // plain assignment (`obj.prop = v`) and augmented assignment (`obj.prop OP= v`).
     private bool TryExpandPropertySetter(MemberAccessExpr memTarget, Func<Val> getArg)
     {
-        // A named instance -- including a for-unrolled loop variable -- has to be resolved
-        // the same way RejectAssignmentToAMethod resolves it (ResolveNameKey). Visiting the
-        // object as an expression can return a Temporary that is not itself in
-        // instanceClasses: DigitalInOut is a multi-field ZCA, and adafruit_character_lcd's
-        // `for pin in (reset_dio, ...): pin.direction = OUTPUT` then fell through to
-        // "direction is a method", even though direction is a @property setter.
-        string @base = "";
-        string? cls = null;
-        if (memTarget.Object is VariableExpr ve)
+        var objVal = VisitExpression(memTarget.Object);
+        var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+        while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
+            @base = alias;
+        // A name bound to a single-field instance evaluates to that FIELD (`lcd_rs__pin`),
+        // not the object -- the evaluated Val is the right scalar but the wrong receiver.
+        // Prefer the name resolution, which follows the alias to the instance key itself;
+        // keep the evaluated base when it is the one carrying a class (call results, member
+        // chains) and the name resolves to nothing with one.
+        if (memTarget.Object is VariableExpr recvVe)
         {
-            string owner = ResolveNameKey(ve.Name);
-            if (instanceClasses.TryGetValue(owner, out cls) && !string.IsNullOrEmpty(cls))
-                @base = owner;
-            else if (AliasedInstanceName(owner) is { } aliased
-                     && instanceClasses.TryGetValue(aliased, out cls) && !string.IsNullOrEmpty(cls))
-                @base = aliased;
+            string recvKey = ResolveNameKey(recvVe.Name);
+            if (recvKey != @base
+                && (instanceClasses.ContainsKey(recvKey)
+                    || string.IsNullOrEmpty(@base) || !instanceClasses.ContainsKey(@base)))
+                @base = recvKey;
         }
-
-        if (string.IsNullOrEmpty(@base))
-        {
-            var objVal = VisitExpression(memTarget.Object);
-            @base = ResolveClassCarryingName(objVal) ?? "";
-            if (string.IsNullOrEmpty(@base))
-            {
-                @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
-                while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
-                    @base = alias;
-            }
-            if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out cls))
-                return false;
-        }
-
-        if (!TryLookupPropertySetter(cls!, memTarget.Member, out string? inlineKey))
+        if (string.IsNullOrEmpty(@base)
+            || !instanceClasses.TryGetValue(@base, out var cls) || cls == null)
+            return false;
+        // Walk the MRO: `propertySetters`/`propertyGetters` are keyed by the DEFINING class,
+        // so `lcd.message = s` on a subclass instance must find the base's setter.
+        string? propCls = ResolveMROPropertyClass(cls, memTarget.Member);
+        if (propCls == null || !propertySetters.TryGetValue(propCls + "." + memTarget.Member, out string? inlineKey))
         {
             // No setter. If the member IS a @property getter, the assignment targets a read-only
             // property -- Python raises AttributeError. Reject clearly instead of silently writing
             // a phantom field that then shadows the getter (r.value = 200 used to "stick" as 200).
-            if (propertyGetters.Contains(cls + "." + memTarget.Member))
+            if (propCls != null && propertyGetters.Contains(propCls + "." + memTarget.Member))
                 throw UserError(
                     $"cannot assign to read-only property '{memTarget.Member}': it has a @property " +
                     $"getter but no @{memTarget.Member}.setter", memTarget);
@@ -939,10 +1025,22 @@ public partial class IRGenerator
             // the same depth, so a None left by an earlier assignment would answer for this
             // one (#306).
             noneValuedNames.Remove(paramName);
+            // And the same key in the string table -- an earlier expansion of this setter
+            // (same inline depth, same prefix) that received text would otherwise answer
+            // for an argument that carries none.
+            strConstantVariables.Remove(paramName);
             switch (argVal)
             {
                 case Constant c:
                     constantVariables[paramName] = c.Value;
+                    // A string literal lowers to its interned id: hand the parameter the
+                    // text so `for c in s` and `s == "..."` inside the setter fold. A
+                    // ONE-CHARACTER literal never interns -- it is already its own char
+                    // code, so the text is the character itself.
+                    if (stringIdToStr.TryGetValue(c.Value, out var idStr))
+                        strConstantVariables[paramName] = idStr;
+                    else if (setter?.Params[1].Type == "str" && c.Value is >= 0 and <= 0xFFFF)
+                        strConstantVariables[paramName] = ((char)c.Value).ToString();
                     break;
                 case NoneVal:
                     // `obj.prop = None`. None has no runtime representation, so there is
@@ -955,6 +1053,10 @@ public partial class IRGenerator
                     break;
                 case Variable vv:
                     variableAliases[paramName] = vv.Name;
+                    // Same as the constant case, for a name that already carries the text
+                    // (`msg = "..."` then `lcd.message = msg`).
+                    if (ResolveStrConstant(vv.Name) is { } varStr)
+                        strConstantVariables[paramName] = varStr;
                     break;
                 case Temporary tt:
                     // Materialize the runtime value into the param's own SRAM slot.
@@ -973,7 +1075,7 @@ public partial class IRGenerator
         var savedSourcePath = currentSourcePath;
         var savedSourceFile = currentSourceFile;
         currentInlinePrefix = newPrefix;
-        currentModulePrefix = cls + "_";
+        currentModulePrefix = propCls + "_";
 
         // The setter's body is text in the file the setter is DEFINED in, and every other
         // expansion says so while it lowers one. This one did not, so a call inside the body
@@ -1001,6 +1103,30 @@ public partial class IRGenerator
         currentSourceFile = savedSourceFile;
 
         return true;
+    }
+
+    /// <summary>
+    /// Walk the base-class chain starting at <paramref name="cls"/> and return the first class
+    /// for which a property getter or setter is registered under <paramref name="member"/>.
+    /// The property tables are keyed by the DEFINING class, so a property inherited from a
+    /// base (`lcd.message` on a subclass) only resolves by walking -- same chain
+    /// <see cref="ResolveMROMethod"/> walks for plain methods. Null when no ancestor
+    /// declares the member as a property at all.
+    /// </summary>
+    private string? ResolveMROPropertyClass(string cls, string member)
+    {
+        string? current = cls;
+        for (int depth = 0; current != null && depth < 32; depth++)
+        {
+            if (propertySetters.ContainsKey(current + "." + member)
+                || propertyGetters.Contains(current + "." + member))
+                return current;
+            if (!classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                || string.IsNullOrEmpty(parentPrefix))
+                break;
+            current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+        }
+        return null;
     }
 
     // `x = value` to a plain (scalar) variable target: type/alias resolution, constant
@@ -1263,7 +1389,9 @@ public partial class IRGenerator
 
         if (value is ArrayBase abRet && target is Variable arrTgt)
             CopyArrayIdentity(arrTgt.Name, abRet.ArrayName);
-        else if (!(value is NoneVal)) Emit(new Copy(value, target));
+        else if (!(value is NoneVal)
+            && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name)))
+            Emit(new Copy(value, target));
 
         // RFC 0001 Model B (register handle): `x = make()` where make is a non-@inline
         // factory returning a single-field ZCA (VisitReturn already lowers the callee's
@@ -1880,6 +2008,8 @@ public partial class IRGenerator
                 && classFieldLayout.TryGetValue(fieldCls, out var fieldLay)
                 && fieldLay.Count > 0
                 && !fieldLay.Any(f => f.Field == memExpr2.Member)
+                && !(classBufferFields.TryGetValue(fieldCls, out var bufFlds)
+                     && bufFlds.Contains(memExpr2.Member))
                 && !IsKnownMethodName(memExpr2.Member))
                 throw UserError(
                     $"'{fieldCls}' has no field '{memExpr2.Member}' -- assigning it here creates a "
@@ -2868,9 +2998,18 @@ public partial class IRGenerator
         if (indexExpr.Target is VariableExpr ve)
         {
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
-                qualified = ve.Name;
-
+            // A name no function scope claims is module scope: `poke.cfg` resolves to the
+            // module array's canonical spelling (the bare `cfg` ScanGlobals filed), not a
+            // per-function slot that would swallow the store (PyMCU#460).
+            if (!arraySizes.ContainsKey(qualified))
+                qualified = ModuleScopeArrayName(qualified);
+            // `x[i] = v` where `x` was bound to a buffer a callee returned: the alias, not
+            // a per-function slot, is the storage. Adopted only when the endpoint is real
+            // array storage, same as the read path.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && variableAliases.ContainsKey(qualified)
+                && TryResolveArrayStorageKey(FollowAliases(qualified), out var aliasedStore))
+                qualified = aliasedStore;
             // When inside an inline expansion, the target may be a parameter aliased to a
             // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
             // array-store path fires instead of falling through to the bit-subscript path.
@@ -3694,12 +3833,26 @@ public partial class IRGenerator
                 ? currentInlinePrefix + stmt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
 
+            // Module scope replayed inside the synthesized init: the scan already filed the
+            // array under the BARE name, so `main.cfg` is the same storage spelled another
+            // way -- and registering it again split the array in two, with writes through a
+            // `global` landing on whichever spelling was not the one that was initialised
+            // (PyMCU#460). The annotated spelling (`cfg: bytearray = ...`) already falls
+            // back this way; the unannotated `cfg = bytearray(N)` arrives here.
+            bool replayingModuleLevel = string.IsNullOrEmpty(currentInlinePrefix)
+                && (currentFunction == "main"
+                    || currentFunction.EndsWith("___module_init", StringComparison.Ordinal));
+            if (replayingModuleLevel
+                && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Name))
+                qualified = stmt.Name;
+
             arraySizes[qualified] = count;
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
             arraysWithVariableIndex.Add(qualified);
 
-            if (string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+            if ((string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                || replayingModuleLevel)
                 moduleSramArrays.Add(qualified);
 
             for (int k = 0; k < count; ++k)
@@ -5477,7 +5630,8 @@ public partial class IRGenerator
     /// constructed directly into their slot so instanceClasses[slot] is registered and
     /// for-in / enumerate over the array resolve the element type. Always handles the list.
     /// </summary>
-    private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs)
+    private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs,
+                                      List<DataType>? elemTypes = null)
     {
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + target.Name
@@ -5485,7 +5639,7 @@ public partial class IRGenerator
         if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(target.Name)) qualified = target.Name;
 
         int count = elemExprs.Count;
-        DataType elemDt = DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
+        DataType elemDt = elemTypes is { Count: > 0 } ? elemTypes[0] : DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
 
         // An all-constant literal carries its own element width, and the widest element is what
         // the whole table has to hold. The type was read from element 0 alone, and a constant
@@ -5493,24 +5647,36 @@ public partial class IRGenerator
         // table was stored on its low byte: `DUTIES = [256, 383, 512, ...]` printed 0, 127, 0
         // with no diagnostic, and a PWM duty cycle is a 16-bit number on any part that has one.
         var constElems = new List<int>(count);
-        bool allConst = count > 0 && elemExprs.All(e => TryEvalElemConst(e, out _));
+        bool allConst = count > 0 && elemTypes == null && elemExprs.All(e => TryEvalElemConst(e, out _));
         if (allConst)
         {
             foreach (var e in elemExprs) { TryEvalElemConst(e, out int cv); constElems.Add(cv); }
             elemDt = WidestElemType(constElems);
         }
 
+        // Visit every element BEFORE any slot is retyped: `xs = [f(x) for x in xs]` rebinds
+        // xs, and each element still reads the OLD slots while the new value is computed.
+        var visited = new Val?[count];
+        var ctorClasses = new string?[count];
+        for (int k = 0; k < count; ++k)
+        {
+            ctorClasses[k] = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
+            if (ctorClasses[k] == null) visited[k] = VisitExpression(elemExprs[k]);
+        }
+        if (!allConst && elemTypes == null && visited[0] is { } firstVal)
+            elemDt = firstVal switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
+
         for (int k = 0; k < count; ++k)
         {
             string elemName = qualified + "__" + k;
-            variableTypes[elemName] = elemDt;
+            DataType slotDt = elemTypes?[k] ?? elemDt;
+            variableTypes[elemName] = slotDt;
 
             // ZCA constructor element: build the instance directly into the slot (like a plain
             // `x = Cls(...)` assignment) so instanceClasses[slot] is registered. Constructing via
             // a temporary loses the class -- an `__init__` whose ReturnType is "" still allocates a
             // result temp, so VisitExpression would return that temp, not the instance.
-            string? ctorClass = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
-            if (ctorClass != null)
+            if (ctorClasses[k] is { } ctorClass)
             {
                 instanceClasses[elemName] = ctorClass;
                 virtualInstances.Add(elemName);
@@ -5519,17 +5685,22 @@ public partial class IRGenerator
                 continue;
             }
 
-            Val v = VisitExpression(elemExprs[k]);
-            if (!allConst && k == 0)
-                elemDt = v switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
-            variableTypes[elemName] = elemDt;
-            Emit(new Copy(v, new Variable(elemName, elemDt)));
-            if (v is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
+            Emit(new Copy(visited[k]!, new Variable(elemName, slotDt)));
+            if (visited[k] is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
         }
 
         arraySizes[qualified] = count;
-        arrayElemTypes[qualified] = elemDt;
+        arrayElemTypes[qualified] = elemTypes?[0] ?? elemDt;
         variableTypes[qualified] = elemDt;
+        // The name is rebound from here on: an alias or a compile-time sequence it held
+        // (`coeff` naming a returned buffer, then `coeff = list(struct.unpack(...))`) must
+        // not outlive the binding that replaced it. An all-constant literal re-binds to its
+        // own elements, so `for v in x`, `x in SEQ` and `[e for e in x]` keep resolving it.
+        variableAliases.Remove(qualified);
+        constSequenceBindings.Remove(qualified);
+        if (allConst)
+            constSequenceBindings[qualified] =
+                constElems.Select(v => (Expression)new IntegerLiteral(v)).ToList();
         // Keep the values: a run-time subscript reaching this array later can turn them into a
         // flash table, which is the storage a lookup table written as a plain list wants.
         // A name rebound to another list denotes the new values from here on, so any layout
@@ -5604,6 +5775,16 @@ public partial class IRGenerator
             // rejected for having a filter it does not have.
             case VariableExpr seqName when ResolveConstSequence(seqName.Name) is { } bound:
                 items = bound;
+                break;
+            // `[f(x) for x in arr]` over a fixed-size array: the elements are its slots,
+            // so the comprehension folds to f(arr[0]), f(arr[1]), ... -- the same shape the
+            // literal iterable above produces. `[float(i) for i in coeff]` over the fields
+            // of a struct.unpack result is the form driver libraries write (#361).
+            case VariableExpr arrName
+                when ResolveNameKey(arrName.Name) is { } arrKey
+                     && arraySizes.TryGetValue(arrKey, out int arrCount) && arrCount > 0
+                     && !instanceClasses.ContainsKey(arrKey + "__0"):
+                items = FixedArrayElementExprs(arrName, arrCount);
                 break;
             case CallExpr { Callee: VariableExpr { Name: "range" } } rangeCall:
                 int start = 0, stop, step = 1;
@@ -5785,7 +5966,8 @@ public partial class IRGenerator
             if (ie.Target is VariableExpr ve2)
             {
                 string qualified = string.IsNullOrEmpty(currentFunction) ? ve2.Name : currentFunction + "." + ve2.Name;
-                if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve2.Name)) qualified = ve2.Name;
+                if (!arraySizes.ContainsKey(qualified))
+                    qualified = ModuleScopeArrayName(qualified);
                 if (arraySizes.ContainsKey(qualified))
                 {
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
@@ -6233,13 +6415,20 @@ public partial class IRGenerator
     {
         if (ResolveConstSequence(name) is { } bound) return bound;
 
-        foreach (var key in new[]
-                 {
-                     !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
-                     !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
-                     !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
-                     name,
-                 })
+        var keys = new List<string?>
+        {
+            !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+            !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+            !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
+            name,
+        };
+        // A module-level literal array of an imported module is filed under its
+        // `__module_init` (`mod___module_init.X`), a spelling the scope prefixes above do
+        // not produce. Same module-membership restriction as ResolveConstSequence.
+        foreach (var mp in OwningModulePrefixes())
+            keys.Add(mp + "__module_init." + name);
+
+        foreach (var key in keys)
         {
             if (key != null && arrayLiteralElements.TryGetValue(key, out var elems)) return elems;
         }

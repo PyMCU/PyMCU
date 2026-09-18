@@ -54,6 +54,13 @@ public static class BuiltinExceptionNames
         ["RuntimeError"]         = 8,
         ["OSError"]              = 9,
         ["AttributeError"]       = 10,
+
+        // ArithmeticError is the base CPython puts above OverflowError, ZeroDivisionError
+        // and FloatingPointError; drivers raise it directly for a failed computation
+        // (adafruit_bmp280's calibration check). Exception codes are flat here -- there is
+        // no subclass matching -- so `except ArithmeticError` does not catch a raised
+        // ZeroDivisionError the way CPython would.
+        ["ArithmeticError"]      = 11,
     };
 
     /// <summary>

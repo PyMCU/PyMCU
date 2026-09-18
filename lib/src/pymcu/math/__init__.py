@@ -12,6 +12,7 @@
 #   constrain(x, lo, hi)                        -- clamp a value to [lo, hi]
 #   floor(x) / ceil(x) / trunc(x)               -- a float to the integer below,
 #                                                  above, or toward zero
+#   pow(x, y)                                   -- x raised to y, software float
 
 from pymcu.types import uint8, uint16, int16, int32, inline
 
@@ -110,3 +111,28 @@ def ceil(x: float) -> int32:
         if _as_float(t) != x:
             t = t + 1
     return t
+
+
+# pow(x, y) -- a real exponent on the software float.
+#
+# There is no powf in the runtime, so this is the textbook decomposition
+# x ** y = 2 ** (y * log2(x)) built from the primitives the float library already
+# provides. log2 pulls the exponent out by halving/doubling x into [1, 2), where the
+# atanh series ln(m) = 2*(t + t^3/3 + t^5/5 + ...) with t = (m-1)/(m+1) converges
+# fast because |t| <= 1/3; the fractional power of two is exp(f * ln2) Taylor, which
+# converges fast because |z| <= ln2. The integer part of the exponent is exact
+# doubling/halving, so precision is decided by the two series, not by the scale.
+#
+# Domain follows CPython's math.pow: y == 0 is 1.0 (0**0 included), x == 0 with a
+# positive y is 0.0, x == 0 with negative y and x < 0 raise ValueError.
+#
+# Cost note: only programs that CALL it pay for it. The series keep the software
+# float routines in the image, which a float program has already paid for.
+#
+# The implementation itself lives in the compiler's embedded runtime helpers
+# (__pymcu_powf) so the bare builtin `pow(x, y)` -- which a program can call
+# without importing math -- lowers to the same code. One algorithm, one place.
+@inline
+def pow(x: float, y: float) -> float:
+    """x raised to y. Software-float power: 2 ** (y * log2(x))."""
+    return __pymcu_powf(x, y)

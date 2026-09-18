@@ -29,7 +29,9 @@ public class FloatPowTests
         "def main() -> None:\n";
 
     private static bool EmitsPow(ProgramIR ir) =>
-        ir.Functions.SelectMany(f => f.Body).OfType<Binary>().Any(b => b.Op == PyMCU.IR.BinaryOp.Pow);
+        ir.Functions.SelectMany(f => f.Body).OfType<Binary>().Any(b => b.Op == PyMCU.IR.BinaryOp.Pow)
+        || ir.Functions.SelectMany(f => f.Body).OfType<Call>()
+            .Any(c => c.FunctionName.Contains("powf", StringComparison.Ordinal));
 
     [Fact]
     public void IntegerPowStillFolds()

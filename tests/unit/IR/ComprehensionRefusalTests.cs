@@ -29,17 +29,19 @@ public class ComprehensionRefusalTests
         "        self._pin = pin\n" +
         "\n";
 
+    // The comprehension this once refused is now expanded: each element is
+    // constructed straight into its own `leds__k` slot, so `for l in leds`
+    // resolves the class the way a literal of constructions does.
     [Fact]
-    public void AComprehensionOfInstances_SaysSoInsteadOfBlamingAFilter()
+    public void AComprehensionOfInstances_CompilesToSlotInstances()
     {
-        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Prelude +
+        var ir = Gen(Prelude +
             "def main():\n" +
             "    pins = [\"PD2\", \"PD3\", \"PD4\"]\n" +
             "    leds = [Led(p) for p in pins]\n" +
-            "    GPIOR0.value = 1\n"));
+            "    GPIOR0.value = 1\n");
 
-        Assert.Contains("class instances", ex.Message);
-        Assert.DoesNotContain("filter", ex.Message);
+        Assert.NotNull(ir);
     }
 
     [Fact]

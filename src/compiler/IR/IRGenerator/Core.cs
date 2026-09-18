@@ -753,6 +753,11 @@ public partial class IRGenerator
         ScanFunctions(mainAst);
         RefuseCodegenDecoratorsOnExpandedFunctions(mainAst);
 
+        // The embedded runtime helpers are registered like scanned functions, so
+        // they must wait until every module has been scanned -- a helper call
+        // from any module's function resolves the same way.
+        RegisterRuntimeHelpers();
+
         // AFTER the entry file's scan, which is the last one: a base class may be defined below
         // its subclass, or in a module scanned later, so this cannot run inside ScanFunctions (#279).
         CheckBaseClassNames();
@@ -1070,6 +1075,7 @@ public partial class IRGenerator
         currentModulePrefix = "";
 
         ForceInlineClassReturningFactories();
+        ForceInlineTupleReturningFunctions();
         ForceInlineBufferReturningFunctions();
 
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
@@ -1131,6 +1137,7 @@ public partial class IRGenerator
 
         if (programHasDynamicRaiseMessage)
             irProgram.Functions.Add(SynthesizeExceptionMessagePrinter());
+        LowerCalledRuntimeHelpers(irProgram);
 
         // Inject FlashData instructions (global const[uint8[N]] arrays) into the
         // main function body so the backend emits .byte tables in flash.
@@ -1995,7 +2002,7 @@ public partial class IRGenerator
     // resolves there; anything else falls back to the flat table, which is what the rest of
     // the pipeline (star imports, re-export chases, inline-body imports) still populates.
 
-    private string _owningPrefixCacheKey = " ";
+    private string _owningPrefixCacheKey = "";
     private string _owningPrefixCacheValue = "";
 
     /// <summary>
@@ -2060,7 +2067,7 @@ public partial class IRGenerator
         if (!perModuleImportedAliases.TryGetValue(modulePrefix, out var tbl))
             perModuleImportedAliases[modulePrefix] = tbl = new Dictionary<string, string?>();
         tbl[name] = module;
-        _owningPrefixCacheKey = " ";
+        _owningPrefixCacheKey = "";
         if (original == null) return;
         if (!perModuleAliasToOriginal.TryGetValue(modulePrefix, out var otbl))
             perModuleAliasToOriginal[modulePrefix] = otbl = new Dictionary<string, string?>();
@@ -2436,18 +2443,26 @@ public partial class IRGenerator
         if (ResolvePrefixedClass(name) is { } localClass)
             return localClass;
 
-        if (TryImportedAlias(name, out var modName))
+        // A name the CURRENT module imported resolves through ITS table first: inside
+        // `I2C.write_to` (defined in the package __init__) `i2c_write_to` is that module's
+        // own `from ...avr import i2c_write_to`, and the prefix walk would otherwise land
+        // on the same function re-registered under the package prefix -- whose
+        // functionModulePrefix is the package, so helpers in the defining module
+        // (`_twi_wait` in avr.py) no longer resolve.
+        if (perModuleImportedAliases.TryGetValue(OwningModulePrefix(), out var ownImports)
+            && ownImports.TryGetValue(name, out var ownMod))
         {
-            var mangledMod = modName?.Replace('.', '_');
-            var original = AliasOriginal(name);
-            // `from pymcu.hal.console import print as p`: the alias renames a builtin, so the
-            // call must reach the builtin. Mangling it to `pymcu_hal_console_print` named a
-            // function that is never emitted, and the error blamed the module rather than
-            // saying the alias had been dropped.
-            if (intrinsicNames.Contains(original)) return original;
-            return mangledMod + "_" + original;
+            var mangledOwn = ownMod?.Replace('.', '_');
+            var ownOriginal = AliasOriginal(name);
+            if (intrinsicNames.Contains(ownOriginal)) return ownOriginal;
+            return mangledOwn + "_" + ownOriginal;
         }
 
+        // A name the enclosing module DEFINES (a class or function filed under its prefix)
+        // shadows the flat import-alias table: that table is shared by every module, so a
+        // `from digitalio import DigitalInOut` written in one file leaked into another that
+        // only defines its own `class DigitalInOut` -- the call resolved to the imported
+        // constructor instead of the local one (adafruit_74hc595).
         var prefixTry = currentModulePrefix;
         while (!string.IsNullOrEmpty(prefixTry))
         {
@@ -2467,6 +2482,18 @@ public partial class IRGenerator
             int lastSep = prefixTry.LastIndexOf('_', prefixTry.Length - 2);
             if (lastSep == -1) break;
             prefixTry = prefixTry.Substring(0, lastSep + 1);
+        }
+
+        if (TryImportedAlias(name, out var modName))
+        {
+            var mangledMod = modName?.Replace('.', '_');
+            var original = AliasOriginal(name);
+            // `from pymcu.hal.console import print as p`: the alias renames a builtin, so the
+            // call must reach the builtin. Mangling it to `pymcu_hal_console_print` named a
+            // function that is never emitted, and the error blamed the module rather than
+            // saying the alias had been dropped.
+            if (intrinsicNames.Contains(original)) return original;
+            return mangledMod + "_" + original;
         }
 
         return name;
@@ -2697,10 +2724,38 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// A function that returns a fixed <c>bytearray</c>/<c>bytes</c> has no scalar handle to
-    /// put in a register (#464). Expand it at the call site, the same way a class-returning
-    /// factory is expanded: the callee's buffer is laid out in the caller's frame and the
-    /// assignment aliases it. A real subroutine would return storage that dies with the frame.
+    /// A function that returns several values has no subroutine lowering: the AVR ABI hands
+    /// back one register, so `return (a, b)` can only reach the caller through the @inline
+    /// expansion path, where the unpack targets (or a `f()[k]` site's sentinel) become the
+    /// result slots. Rather than refuse `def f(): ... return (a, b)` for want of the
+    /// decorator, register it in inlineFunctions and let it expand wherever it is called --
+    /// the same shape ForceInlineClassReturningFactories takes. This is what
+    /// adafruit_tcs34725's `color_rgb_bytes` property needs: it is an ordinary method with
+    /// `return (red, green, blue)`.
+    /// </summary>
+    private void ForceInlineTupleReturningFunctions()
+    {
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            if (!TupleType.IsTupleType(entry.Func.ReturnType)
+                && TupleReturnArity(entry.Func) == 0) continue;
+
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (inlineFunctions.ContainsKey(fullName)) continue;
+            inlineFunctions[fullName] = entry.Func;
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// The same move for a function that returns a buffer it built locally:
+    /// `return result` on a `bytearray(length)` the body just filled. There is no
+    /// handle to hand back through the ABI, but the @inline expansion path already
+    /// gives the caller an alias onto the callee's element storage -- which is how
+    /// adafruit_bmp280's `_read_register` reaches `for b in self._read_register(n)`
+    /// and `self._read_register(r, 1)[0]` unmodified (PyMCU#464).
     /// </summary>
     private void ForceInlineBufferReturningFunctions()
     {

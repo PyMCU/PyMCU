@@ -206,23 +206,31 @@ public partial class IRGenerator
                 // to a free function of that name.
                 if (NamesAModuleMember(ve.Name, memC.Member))
                 {
-                    // A builtin reached through its module (`import pymcu.hal.console as c`
-                    // then `c.print(1)`) is still the builtin this compiler lowers itself;
-                    // mangling it named `pymcu_hal_console_print`, which nothing emits.
-                    if (intrinsicNames.Contains(memC.Member))
+                    // Mangle with the real module name, not the alias: `import time as t`
+                    // registers modules["t"] but compiles functions as time_sleep_ms.
+                    string realMod = TryImportedAlias(ve.Name, out var rm) && rm != null ? rm : ve.Name;
+                    string mangledMod = realMod.Replace('.', '_');
+                    string modFn = mangledMod + "_" + memC.Member;
+
+                    // The module's own definition wins over the builtin fallback:
+                    // `math.pow` must reach `math`'s software-float pow, not the
+                    // constant-integer builtin, once the module defines it. A builtin the
+                    // module does NOT define (`c.print` on pymcu.hal.console) still
+                    // flattens to the intrinsic the compiler lowers itself.
+                    if (inlineFunctions.ContainsKey(modFn) || overloadedFunctions.Contains(modFn)
+                        || methodAstByName.ContainsKey(modFn) || functionReturnTypes.ContainsKey(modFn))
+                    {
+                        callee = modFn;
+                    }
+                    else if (intrinsicNames.Contains(memC.Member))
                     {
                         callee = memC.Member;
-                        resolvedAsModule = true;
                     }
                     else
                     {
-                        // Mangle with the real module name, not the alias: `import time as t`
-                        // registers modules["t"] but compiles functions as time_sleep_ms.
-                        string realMod = TryImportedAlias(ve.Name, out var rm) && rm != null ? rm : ve.Name;
-                        string mangledMod = realMod.Replace('.', '_');
-                        callee = mangledMod + "_" + memC.Member;
-                        resolvedAsModule = true;
+                        callee = modFn;
                     }
+                    resolvedAsModule = true;
                 }
                 // A name bound to an instance is that instance, even when a class shares the
                 // name: the binding shadows the class, as it does in Python. Reading it as the
@@ -671,6 +679,7 @@ public partial class IRGenerator
         if (callee == "len") return EmitLenBuiltin(expr);
         if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
         if (callee == "struct_calcsize") return EmitStructCalcsize(expr);
+        if (callee == "struct_unpack") return EmitStructUnpackFrom(expr, "struct.unpack()");
         if (callee == "struct_unpack_from") return EmitStructUnpackFrom(expr);
         if (callee == "struct_pack_into") return EmitStructPackInto(expr);
         if (callee == "abs") return EmitAbsBuiltin(expr);
@@ -689,6 +698,7 @@ public partial class IRGenerator
         if (callee == "bin") return EmitBinBuiltin(expr);
         if (callee == "str") return EmitStrBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
+        if (callee == "memoryview") return EmitMemoryviewBuiltin(expr);
 
         if (callee == "divmod") return EmitDivmodBuiltin(expr);
         if (CastTypes.ContainsKey(callee)) return EmitNumericCastBuiltin(expr, callee);
@@ -1333,9 +1343,13 @@ public partial class IRGenerator
         }
 
         // Read and cleared here, before the arguments are visited: a call nested in an argument
-        // is read by THIS call, whatever this call's own result becomes (#302).
+        // is read by THIS call, whatever this call's own result becomes (#302). The tuple
+        // request gets the same treatment: it belongs to this call alone, and a call nested
+        // in an argument must not inherit its slot count.
         bool resultDiscarded = callResultIsDiscarded;
         callResultIsDiscarded = false;
+        int wantTupleCount = pendingTupleCount;
+        pendingTupleCount = 0;
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
@@ -1348,23 +1362,31 @@ public partial class IRGenerator
         // that unpacks a different number of targets is a mismatch worth naming here -- the
         // generic "Expected N tuple results, got M" fires far from the declaration.
         var declaredTupleElems = TupleType.ElementTypes(func?.ReturnType);
+
+        // `f()[k]` / `x = f()`: the call site wants the tuple's SLOTS, not unpack
+        // targets it wrote. The sentinel asks for them; the arity comes from the
+        // declaration, or for an unannotated callee from its tuple returns.
+        if (wantTupleCount < 0)
+            wantTupleCount = declaredTupleElems.Count > 0
+                ? declaredTupleElems.Count
+                : TupleReturnArity(func);
         if (declaredTupleElems.Count > 0)
         {
             string declared = TupleType.Describe(func!.ReturnType);
-            if (pendingTupleCount == 0)
+            if (wantTupleCount == 0)
                 throw UserError(
                     $"'{func.Name}' returns {declaredTupleElems.Count} values {declared}; " +
                     $"unpack them into {declaredTupleElems.Count} targets", expr.Callee);
-            if (pendingTupleCount != declaredTupleElems.Count)
+            if (wantTupleCount != declaredTupleElems.Count)
                 throw UserError(
                     $"'{func.Name}' is declared to return {declaredTupleElems.Count} values " +
-                    $"{declared}, but {pendingTupleCount} unpack target(s) were given", expr.Callee);
+                    $"{declared}, but {wantTupleCount} unpack target(s) were given", expr.Callee);
         }
 
-        if (pendingTupleCount > 0)
+        if (wantTupleCount > 0)
         {
             string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-            for (int k = 0; k < pendingTupleCount; ++k)
+            for (int k = 0; k < wantTupleCount; ++k)
             {
                 string slot = $"{bBase}.iret_{newDepth}_{k}";
                 tupleResultNames.Add(slot);
@@ -1947,6 +1969,7 @@ public partial class IRGenerator
                 listLiteralParams[paramName] = rawListArgs[i]!;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
                 continue;
             }
@@ -2099,6 +2122,7 @@ public partial class IRGenerator
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
                 variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
                 continue;
             }
@@ -2257,6 +2281,7 @@ public partial class IRGenerator
                 {
                     constantVariables.Remove(paramName);
                     strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);
                     variableTypes[paramName] = DataTypeExtensions.StringToDataType(mPType);
                     Emit(new Copy(argValues[i], new Variable(paramName, variableTypes[paramName])));
@@ -2272,6 +2297,7 @@ public partial class IRGenerator
 
             constantVariables.Remove(paramName);
             strConstantVariables.Remove(paramName);
+            floatConstantVariables.Remove(paramName);
             variableAliases.Remove(paramName);
             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
             variableTypes[paramName] = paramType;
@@ -2370,11 +2396,15 @@ public partial class IRGenerator
                     else if (kvp.Value is Constant ckw2)
                     {
                         constantVariables[paramName] = ckw2.Value;
+                        strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
                     }
                     else
                     {
                         constantVariables.Remove(paramName);
                         strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
                         DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
                         variableTypes[paramName] = paramType;
                         if (kvp.Value is Variable)
@@ -2465,7 +2495,13 @@ public partial class IRGenerator
                     continue;
                 }
 
-                if (defaultVal is Constant cdf2) constantVariables[paramName] = cdf2.Value;
+                if (defaultVal is Constant cdf2)
+                {
+                    constantVariables[paramName] = cdf2.Value;
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                }
                 else if (defaultVal is FloatConstant fdf)
                 {
                     // A FLOAT default binds the way a float ARGUMENT does (#374). The branch
@@ -2495,6 +2531,10 @@ public partial class IRGenerator
                     DataType paramType = DataTypeExtensions.StringToDataType(func.Params[i].Type);
                     Emit(new Copy(defaultVal, new Variable(paramName, paramType)));
                     variableTypes[paramName] = paramType;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
                 }
             }
             else
@@ -2562,7 +2602,7 @@ public partial class IRGenerator
         result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;
 
         var finishedCtx = Enumerable.Last<InlineContext>(inlineStack);
-        string? returnedArr = finishedCtx.ReturnedArray;
+        string? returnedArr = finishedCtx.ReturnedBuffer;
         if (returnedArr != null)
             lastCallReturnTypeText = "bytearray";
         // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
@@ -2573,6 +2613,7 @@ public partial class IRGenerator
             returnedArr == null
             && !resultDiscarded && func != null && finishedCtx.ResultTemp != null
             && finishedCtx.ResultVars.Count == 0
+            && finishedCtx.ReturnedBuffer == null
             && (!finishedCtx.ResultAssigned || !AlwaysLeaves(func.Body));
 
         inlineStack.RemoveAt(inlineStack.Count - 1);
@@ -2592,7 +2633,13 @@ public partial class IRGenerator
 
         if (resultWasNeverProduced) throw UnproducedResultError(func!);
 
-        if (returnedArr != null) return new ArrayBase(returnedArr);
+        // `return <local array>`: the buffer itself is the expansion's fixed slot, so the
+        // call's value is a Variable naming that storage. `x = f()` aliases `x` to it (the
+        // generic Variable->Variable binding in VisitAssign) and no bytes are copied.
+        if (finishedCtx.ReturnedBuffer is { } retBufKey)
+            return new Variable(retBufKey, arrayElemTypes.TryGetValue(retBufKey, out var retBufEt)
+                ? retBufEt : DataType.UINT8);
+
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
         return new NoneVal();
@@ -3265,6 +3312,18 @@ public partial class IRGenerator
             if (argVal is Constant cArg)
             {
                 constantVariables[paramKey] = cArg.Value;
+            }
+            else if (argVal is Variable instArg
+                     && instanceClasses.TryGetValue(FollowAliases(instArg.Name), out var instArgCls)
+                     && instArgCls != null)
+            {
+                // An INSTANCE argument is an object, not a value a Copy can carry:
+                // `super().__init__(reset_dio, ...)` forwarded the pin's flattened scalar and
+                // the base body's `pin.direction = ...` wrote a dead name. Alias the param to
+                // the instance so field and method reads resolve through it
+                // (adafruit_character_lcd's pin-setup loop).
+                variableAliases[paramKey] = FollowAliases(instArg.Name);
+                instanceClasses[paramKey] = instArgCls;
             }
             else
             {
@@ -4167,21 +4226,21 @@ public partial class IRGenerator
     /// A bare `struct.unpack_from(...)`. Always refused: the value it would produce is a tuple,
     /// and the supported shape is the one that never lets one exist.
     /// </summary>
-    private Val EmitStructUnpackFrom(CallExpr expr)
+    private Val EmitStructUnpackFrom(CallExpr expr, string who = "struct.unpack_from()")
     {
-        const string who = "struct.unpack_from()";
         // Parse first, so a program that is wrong about BOTH hears about the format it wrote
         // rather than about a shape it can then fix and be refused again.
         ParseStructFormat(StructFormatArg(expr, who), who, expr.Callee);
         throw UserError(
-            $"{who} returns a tuple, and there is no heap to hold one. Index it on the spot and "
-            + "PyMCU expands the whole thing into a load: `unpack_from(fmt, buf, off)[0]`. To "
-            + "read several fields, index it once per field.", expr.Callee);
+            $"{who} returns a tuple, which has no value in this position. Bind it to a name "
+            + "(`t = unpack_from(fmt, buf, off)`) and index, slice or iterate that, or index "
+            + "the call on the spot (`unpack_from(fmt, buf, off)[0]`).", expr.Callee);
     }
 
     /// <summary>
-    /// `struct.unpack_from(fmt, buf, off)[k]` -- the whole expression, expanded into a read of
-    /// field k. Called from VisitIndex, which is the only place the `[k]` is visible.
+    /// `struct.unpack(fmt, buf)[k]` / `struct.unpack_from(fmt, buf, off)[k]` -- the whole
+    /// expression, expanded into a read of field k. Called from VisitIndex, which is the
+    /// only place the `[k]` is visible.
     ///
     /// Built as AST and handed to the ordinary expression lowering rather than emitting
     /// ArrayLoad here: a fixed-size array indexed by a constant is UNROLLED into per-element
@@ -4190,11 +4249,15 @@ public partial class IRGenerator
     /// </summary>
     private Val EmitStructUnpackFromIndexed(CallExpr call, Expression indexExpr)
     {
-        const string who = "struct.unpack_from()";
+        bool isUnpackFrom = IsStructCall(call, "unpack_from");
+        string who = isUnpackFrom ? "struct.unpack_from()" : "struct.unpack()";
         var fields = ParseStructFormat(StructFormatArg(call, who), who, call.Callee);
 
-        if (call.Args.Count is < 2 or > 3)
-            throw UserError($"{who} expects (format, buffer) or (format, buffer, offset)", call.Callee);
+        int maxArgs = isUnpackFrom ? 3 : 2;
+        if (call.Args.Count < 2 || call.Args.Count > maxArgs)
+            throw UserError(
+                $"{who} expects (format, buffer)"
+                + (isUnpackFrom ? " or (format, buffer, offset)" : ""), call.Callee);
 
         int k;
         try { k = EvaluateConstantExpr(indexExpr); }
@@ -4212,7 +4275,7 @@ public partial class IRGenerator
 
         var f = fields[k];
         int at = StructOffsetArg(call, 2, who) + f.Offset;
-        Expression buf = call.Args[1];
+        Expression buf = NormalizeUnpackBuffer(call.Args[1], ref at);
 
         Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
 
@@ -4245,6 +4308,108 @@ public partial class IRGenerator
         Temporary typed = MakeTemp(want);
         Emit(new Copy(v, typed));
         return typed;
+    }
+
+    /// <summary>
+    /// `struct.unpack(fmt, buf)` / `struct.unpack_from(fmt, buf[, off])` bound to a name --
+    /// possibly through `list(...)`/`tuple(...)`: the result is a compile-time sequence of
+    /// per-field reads, one expression each, carrying the field's width and sign in a cast so
+    /// the slots it is stored into keep them. The buffer argument is pinned to its storage
+    /// key, so the reads still land on the same bytes after the target name is rebound
+    /// (`coeff = list(unpack(fmt, bytes(coeff)))` assigns `coeff` again). `list(seq)` /
+    /// `tuple(seq)` of a compile-time sequence or a fixed array produces its elements as a
+    /// copy, which is what those calls mean. Returns false for anything else, leaving the
+    /// call for the paths that report it.
+    /// </summary>
+    private bool TryStructUnpackSeq(Expression e, out List<Expression> elems, out List<DataType>? types)
+    {
+        elems = null!;
+        types = null;
+
+        Expression inner = e;
+        bool wrapped = false;
+        if (inner is CallExpr { Callee: VariableExpr { Name: "list" or "tuple" } } wrap
+            && wrap.Args.Count == 1)
+        {
+            inner = wrap.Args[0];
+            wrapped = true;
+        }
+
+        if (inner is CallExpr call
+            && (IsStructCall(call, "unpack") || IsStructCall(call, "unpack_from")))
+        {
+            bool isUnpackFrom = IsStructCall(call, "unpack_from");
+            string who = isUnpackFrom ? "struct.unpack_from()" : "struct.unpack()";
+            var fields = ParseStructFormat(StructFormatArg(call, who), who, call.Callee);
+            int maxArgs = isUnpackFrom ? 3 : 2;
+            if (call.Args.Count < 2 || call.Args.Count > maxArgs)
+                throw UserError(
+                    $"{who} expects (format, buffer)"
+                    + (isUnpackFrom ? " or (format, buffer, offset)" : ""), call.Callee);
+            int baseOff = isUnpackFrom ? StructOffsetArg(call, 2, who) : 0;
+
+            Expression buf = NormalizeUnpackBuffer(call.Args[1], ref baseOff);
+            if (buf is VariableExpr bufVar && ResolveBufferKey(bufVar) is { } bufKey)
+                buf = new VariableExpr(bufKey);
+
+            elems = new List<Expression>(fields.Count);
+            types = new List<DataType>(fields.Count);
+            foreach (var f in fields)
+            {
+                int at = baseOff + f.Offset;
+                Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
+                Expression assembled = f.Width == 1
+                    ? Byte(0)
+                    : new BinaryExpr(
+                        new BinaryExpr(Byte(f.LittleEndian ? 1 : 0),
+                                       PyMCU.Frontend.BinaryOp.LShift, new IntegerLiteral(8)),
+                        PyMCU.Frontend.BinaryOp.BitOr, Byte(f.LittleEndian ? 0 : 1));
+                (DataType dt, string? cast) = (f.Width, f.Signed) switch
+                {
+                    (1, false) => (DataType.UINT8, (string?)null),
+                    (1, true) => (DataType.INT8, "int8"),
+                    (2, false) => (DataType.UINT16, "uint16"),
+                    _ => (DataType.INT16, "int16"),
+                };
+                if (cast != null)
+                    assembled = new CallExpr(new VariableExpr(cast), new List<Expression> { assembled });
+                elems.Add(assembled);
+                types.Add(dt);
+            }
+            return true;
+        }
+
+        if (wrapped)
+        {
+            if (ResolveConstSequenceExpr(inner) is { } seqElems)
+            {
+                elems = new List<Expression>(seqElems);
+                return true;
+            }
+            if (SequenceKeyOf(inner) is { } skey
+                && arraySizes.TryGetValue(skey, out int sn) && sn > 0
+                && !instanceClasses.ContainsKey(skey + "__0"))
+            {
+                elems = FixedArrayElementExprs(inner, sn);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The elements of a fixed-size array as subscript-read expressions of the source
+    /// expression itself. Constant indices fold to the element slot on an unrolled array
+    /// (keeping each slot's own type) and to an ArrayLoad on a flat SRAM one; letting the
+    /// index path resolve the name is also what keeps an @inline-prefixed binding from
+    /// being qualified twice.
+    /// </summary>
+    private List<Expression> FixedArrayElementExprs(Expression target, int count)
+    {
+        var result = new List<Expression>(count);
+        for (int k = 0; k < count; k++)
+            result.Add(new IndexExpr(target, new IntegerLiteral(k)));
+        return result;
     }
 
     /// <summary>
@@ -4715,7 +4880,7 @@ public partial class IRGenerator
         ["super"] = "base-class calls are resolved at compile time; name the base class "
                     + "explicitly (`Base.method(self, ...)`)",
         ["complex"] = "complex numbers are not supported",
-        ["memoryview"] = "there is no run-time buffer protocol. Pass the array itself",
+
         ["slice"] = "slice objects need a heap. Index the sequence directly",
         ["exit"] = "there is nothing to exit to; the program is the whole system. Loop forever, "
                    + "or reset the chip",
@@ -4852,12 +5017,106 @@ public partial class IRGenerator
         return new Constant(stringLiteralIds[decstr]);
     }
 
-    // pow(base, exp): integer constant-fold, integer unroll, or float powf (#463).
+    // pow(base, exp): folds compile-time integer operands in place; anything
+    // else is real floating-point exponentiation, which the embedded runtime
+    // helper lowers -- the same implementation `math.pow` expands to.
     private Val EmitPowBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 2) throw UserError("pow() expects exactly two arguments", expr.Callee);
-        return LowerPow(VisitExpression(expr.Args[0]), VisitExpression(expr.Args[1]),
-            ArgAt(expr, 1), "pow()");
+
+        // The evaluator emits nothing, so asking it first leaves the run-time
+        // path to visit each argument exactly once.
+        if (TryFoldInt(expr.Args[0], out int @base) && TryFoldInt(expr.Args[1], out int exp))
+        {
+            if (exp < 0) throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
+            int res = 1;
+            for (int k = 0; k < exp; ++k) res *= @base;
+            return new Constant(res);
+        }
+
+        // Runtime operands lower to a CALL on the __pymcu_powf subroutine -- one
+        // shared software-float implementation, the same one `math.pow` delegates to.
+        if (functionParams.ContainsKey("__pymcu_powf"))
+        {
+            var fwd = new CallExpr(new VariableExpr("__pymcu_powf"), expr.Args)
+            {
+                Line = expr.Line,
+                Column = expr.Column,
+            };
+            return VisitCall(fwd);
+        }
+
+        throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
+    }
+
+    // memoryview(buf): there is no buffer protocol to build an object with, but
+    // the buffer already has fixed element storage, so the view is a compile-time
+    // ALIAS of it -- the same Val the name alone would lower to. `mv =
+    // memoryview(buf)` then binds through the ordinary name-alias machinery, and
+    // `memoryview(buf)[k:]`/`[k]` unwraps in VisitIndex (PyMCU#361 --
+    // adafruit_register.i2c_struct writes the memoryview spelling).
+    private Val EmitMemoryviewBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1)
+            throw UserError("memoryview() expects exactly one argument", expr.Callee);
+        Val inner = VisitExpression(expr.Args[0]);
+        if (inner is Variable v
+            && (arraySizes.ContainsKey(v.Name) || bytearrayParams.Contains(v.Name)
+                || TryResolveArrayStorageKey(v.Name, out _)))
+            return inner;
+        throw UserError(
+            "memoryview() wraps a fixed-size buffer (a bytearray or a fixed array); " +
+            "there is no run-time buffer protocol to view anything else through", ArgAt(expr, 0));
+    }
+
+    /// `memoryview(buf)`, `buf[a:]` and `memoryview(buf)[a:]` wrapped around an
+    /// unpack's buffer argument are compile-time views of the same storage:
+    /// each wrapper peels to the inner expression, and a slice's start is just a
+    /// bigger read offset (PyMCU#361 -- i2c_struct writes
+    /// `unpack_from(fmt, memoryview(self._buf)[1:])`). A `bytes()`/`bytearray()`
+    /// wrapper reads the same bytes too; the call form itself is refused
+    /// elsewhere, so it is peeled here.
+    private Expression NormalizeUnpackBuffer(Expression buf, ref int baseOff)
+    {
+        while (true)
+        {
+            if (buf is CallExpr { Callee: VariableExpr { Name: "memoryview" or "bytes" or "bytearray" } } wrap
+                && wrap.Args.Count == 1)
+            {
+                buf = wrap.Args[0];
+                continue;
+            }
+            if (buf is IndexExpr { Index: SliceExpr sl } sliced)
+            {
+                if (sl.Step != null)
+                    throw UserError(
+                        "a strided view of the buffer is not supported; use a plain "
+                        + "`buf[off:]` slice", sl.Step);
+                if (sl.Start != null)
+                {
+                    int start;
+                    try { start = EvaluateConstantExpr(sl.Start); }
+                    catch
+                    {
+                        throw UserError(
+                            "the view's start offset must be a compile-time constant, "
+                            + "because it decides which bytes are read", sl.Start);
+                    }
+                    if (start < 0)
+                        throw UserError("a negative view offset is not supported", sl.Start);
+                    baseOff += start;
+                }
+                buf = sliced.Target;
+                continue;
+            }
+            return buf;
+        }
+    }
+
+    private bool TryFoldInt(Expression e, out int value)
+    {
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
     }
 
     // Numeric-cast builtins: uint8/uint16/uint32/int8/int16/int32/int.
@@ -6185,6 +6444,22 @@ public partial class IRGenerator
             if (sv != null) { pending += sv; continue; }
             if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
             if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
+            // `f"{t}"` where t names a tuple return (`t = f()`): the tuple text
+            // CPython would write -- `(a, b, c)` -- without the tuple existing.
+            if (part.Expr is VariableExpr fTupName
+                && NamedTupleElemsOf(fTupName.Name) is { } fTupElems)
+            {
+                Flush();
+                EmitStreamStr(writeStrFn, "(");
+                for (int ti = 0; ti < fTupElems.Count; ++ti)
+                {
+                    if (ti > 0) EmitStreamStr(writeStrFn, ", ");
+                    EmitStreamVal(floatFn, VisitExpression(fTupElems[ti]));
+                }
+                if (fTupElems.Count == 1) EmitStreamStr(writeStrFn, ",");
+                EmitStreamStr(writeStrFn, ")");
+                continue;
+            }
             RejectInstanceInterpolation(part.Expr!);
             Flush();
             EmitStreamVal(floatFn, VisitExpression(part.Expr!));
@@ -6454,6 +6729,13 @@ public partial class IRGenerator
 
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
+
+            // `print(t)` where t names a tuple return (`t = f()`): the tuple CPython
+            // would have printed, not the `bytearray(b'...')` repr the fixed slots
+            // it lives in would otherwise take. Rewrite to the literal form so the
+            // branch below writes the same text.
+            if (arg is VariableExpr tupName && NamedTupleElemsOf(tupName.Name) is { } tupElems)
+                arg = new TupleExpr(tupElems) { Line = arg.Line };
 
             // A whole bytearray, an array slice, or a slice of a __getitem__ object
             // (microcontroller.nvm[0:4]): CPython-style bytearray(b'...') repr. As a

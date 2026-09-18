@@ -546,7 +546,7 @@ _loop:
 |---|---|---|
 | List comprehension over a **runtime** iterable | Length not known at compile time | `for` loop with fixed-size array |
 | `if`-filtered comprehension with a **runtime** condition | The result length would vary at runtime | Keep the filter compile-time constant, or `for` loop + explicit index |
-| Runtime tuples as a **value** (returned, passed, stored in a field) | A tuple is a compile-time construct here | Separate variables, or a fixed-size array |
+| A tuple **literal** passed as an argument or stored in a field | A tuple is a compile-time construct here | Separate variables, or a fixed-size array |
 | Dict comprehension | Heap allocation | Not available |
 | Set comprehension | Heap allocation | Not available |
 | Generator expressions | Coroutine frame requires heap | A `yield` generator function (supported — see Async and concurrency) |
@@ -559,7 +559,8 @@ list comprehensions with compile-time constant bounds (`range(start, stop, step)
 the step), nested list comprehensions, `if`-filtered list comprehensions (constant condition),
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays),
-and `for pin in (reset_dio, enable_dio, ...)` over already-constructed instances.
+and `for pin in (reset_dio, enable_dio, ...)` over already-constructed instances,
+and `for x in t` where `t` is a bound tuple-return result.
 
 A `range()` bound is folded before the loop is lowered, whatever shape it is written in: a
 literal, a name, or an expression over either. A count of at most eight unrolls, an empty
@@ -813,11 +814,12 @@ alone.
 | `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
 | `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold |
 | `divmod(a, b)` | ✅ Supported | Compile-time or runtime |
-| `pow(x, n)` / `x ** n` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float via `powf` (#463) |
+| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float via `__pymcu_powf` (#463) |
 | `hex(n)` / `bin(n)` | ✅ Supported | Compile-time only |
 | `str(n)` | ✅ Supported | Compile-time only |
 | `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
 | `int.from_bytes(b, e)` | ✅ Supported | Compile-time fold or runtime |
+| `memoryview(buf)` | ✅ Supported | Compile-time alias of a fixed-size buffer (bytearray or fixed array): `memoryview(buf)[k]` indexes it, and `memoryview(buf)[a:]` inside `struct.unpack`/`unpack_from` adds its start to the read offset. No run-time buffer protocol |
 | `sorted()` | ❌ Not supported | No dynamic allocation |
 | `map()` / `filter()` | ❌ Not supported | Use explicit `for` loops |
 | `input()` | ✅ Supported | `line: bytearray = input("prompt")` — reads until newline from UART; prompt is optional compile-time string; max length is optional integer (default 64); UART preamble auto-injected |
@@ -887,14 +889,15 @@ Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. The harness is 37 libraries (the original
 twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Eleven of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+**Thirteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
 `adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
 argument and a generator expression in `join`, which need the supported spellings),
 `adafruit_mcp3xxx` (3 094 bytes), `adafruit_74hc595` (402 bytes),
 `adafruit_ahtx0` (7 108 bytes), `adafruit_mcp9808` (4 646 bytes),
-`adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes), and
-`adafruit_mlx90614` (3 846 bytes).
+`adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes),
+`adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes) and
+`adafruit_tcs34725` (28 414 bytes).
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
@@ -902,7 +905,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_ads1x15` | generator expression (`next(key for key, value in ...)`) | `Expected ')'` |
 | `adafruit_aw9523` | `self._chip_id` in `__init__` | name `adafruit_aw9523_AW9523` is not defined |
 | `adafruit_bme280` | `_bus_implementation.read_register` | call to undefined function |
-| `adafruit_bmp280` | `list(struct.unpack(...))` | `list()` needs a heap; declare a fixed-size array |
+| `adafruit_bmp280` | **builds unmodified, 25 006 bytes** | (moved off `list(struct.unpack(...))`: an unpack result is a compile-time sequence, and a function returning its local buffer binds the caller's name to that slot) |
 | `adafruit_bus_device` | **builds unmodified, 800 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
@@ -930,7 +933,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht4x` | `@classmethod` | no runtime class object; write a module-level factory |
 | `adafruit_si7021` | `obj: "adafruit_si7021.SI7021"` | string (forward reference) type annotations are not supported |
 | `adafruit_ssd1306` | `fill = (color >> 16) & 255, ...` in `adafruit_framebuf` | Expected newline or end of block (tuple assignment) |
-| `adafruit_tcs34725` | `return r, g, b, c` | returning multiple values is only supported from an `@inline` function |
+| `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
 | `adafruit_veml7700` | `reg \|= value` in `RWBits.__set__` | same as `adafruit_ina219` (#419 moved off `obj`) |
@@ -959,10 +962,11 @@ a generator expression in `adafruit_pixelbuf`.
 buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- the
 aliased class-attribute array resolves to its module-init storage, and a
 `bytes([expr])` argument whose elements are run-time materializes a hidden buffer.
-A filled `bytearray` return is expanded at the call site (#464), so `adafruit_bmp280`
-moved off `_read_register`; its simpletest now stops on `list(struct.unpack(...))`.
-A runtime float `pow(x, 2.5)` lowers to `powf` (#463), so `adafruit_tcs34725` moved
-off that; `color_raw` returning `r, g, b, c` from a non-`@inline` method is next.
+A filled `bytearray` return is expanded at the call site (#464), and
+`struct.unpack` results bind as typed sequences, so `adafruit_bmp280`
+builds unmodified. A runtime float `pow(x, 2.5)` lowers to `__pymcu_powf`
+(#463) and a tuple-returning property binds a compile-time sequence, so
+`adafruit_tcs34725` builds unmodified.
 A `Protocol` member of a constructor `Union` is structural (#465), so
 `adafruit_debouncer` moved off the annotation; this simpletest's `Debouncer(pin)`
 still refuses the `DigitalInOut` as matching none of the members.
@@ -977,7 +981,9 @@ inside that module is the file's own two-argument class even when the
 entry file imported `digitalio.DigitalInOut`, so `adafruit_74hc595`
 builds unmodified. `__init__` is expanded at each construction, so an MCP
 `get_pin()` passed into `Character_LCD.__init__` keeps the expander class
-instead of the `digitalio.DigitalInOut` annotation. A `try`-guarded
+instead of the `digitalio.DigitalInOut` annotation. A rebound import alias
+(`servo = servo.Servo(pwm)`) sees the instance on later reads (#467).
+A `try`-guarded
 `from typing import Tuple` that shares its `try` with a failing sibling import used to lose
 the resolved names entirely; with the fold fixed, `adafruit_ina219` and `adafruit_veml7700`
 move inside `adafruit_register` to `RWBits.__get__`/`__set__`, where `obj` is the owning
