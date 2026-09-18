@@ -120,6 +120,11 @@ purpose, as opposed to bugs like these three that were silent until found.
   `coeffs = [None] * 18` (adafruit_dps310) and a field
   `self._channels = [None] * len(self)` (adafruit_pca9685) are indexable;
   None is a 0 slot, so `if not xs[i]` still reads empty.
+- A `try` whose `except` is not `ImportError` still keeps the imports its
+  body resolved. The inner Adafruit TYPE_CHECKING guard
+  (`except NotImplementedError: from circuitpython_typing.pwmio import PWMOut`)
+  no longer drops `PWMOut` (#480) and no longer loads the stub when pwmio is
+  there (#481).
 - `import os` / `from os import uname` resolve to a stdlib stub. `uname()` is a
   compile-time five-field record of `__CHIP__` (sysname `"PyMCU"`, machine the chip
   name, with an `RP2040`/`RP2350` token on those parts). `"Linux" not in uname()`

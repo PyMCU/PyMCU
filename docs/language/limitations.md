@@ -1007,7 +1007,9 @@ received a compile-time string keeps the text at any length, so
 (`StructArray(0x06, "<HH", 16)`). `[None] * n` is a fixed SRAM array, so
 `coeffs = [None] * 18` and `self._channels = [None] * len(self)` index; None is a
 0 slot. `adafruit_pca9685` moves off that onto storing a `PWMChannel` into the
-integer cache. `raise ... from ...`
+integer cache. The inner Adafruit TYPE_CHECKING guard
+(`except NotImplementedError` around `from pwmio import PWMOut`) keeps the
+resolved name and does not load the stub package (#480, #481). `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
