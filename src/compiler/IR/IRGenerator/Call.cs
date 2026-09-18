@@ -1948,11 +1948,19 @@ public partial class IRGenerator
             // placeholder) but the rewrite passes the owning `INA219`. The annotation was a
             // type-checker promise, not the value's type; substitute the argument's class
             // and do not mark the parameter typing-only.
+            //
+            // The same for `Any`: it means "whatever the caller passed". Adafruit's
+            // `UnaryStruct.__set__(..., value: Any)` then `struct.pack_into(..., value)`
+            // reads that parameter; the written value is an int with a width, so the
+            // annotation is not a reason to refuse the read.
             string? argInstanceClass = InstanceClassOfVal(argValues[i]);
+            string paramAnn = paramIdx < func.Params.Count ? (func.Params[paramIdx].Type ?? "") : "";
+            bool anyWithRepr = IsAnyAnnotation(paramAnn) && ValHasRepresentation(argValues[i]);
             if (paramIdx < func.Params.Count
-                && IsTypingOnlyName(func.Params[paramIdx].Type ?? "")
-                && argInstanceClass == null)
-                typingOnlyValues[paramName] = func.Params[paramIdx].Type!;
+                && IsTypingOnlyName(paramAnn)
+                && argInstanceClass == null
+                && !anyWithRepr)
+                typingOnlyValues[paramName] = paramAnn;
             else
                 typingOnlyValues.Remove(paramName);
             if (argInstanceClass != null)

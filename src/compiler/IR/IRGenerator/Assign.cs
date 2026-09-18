@@ -4565,6 +4565,24 @@ public partial class IRGenerator
                || head is "BaseException" or "Exception";
     }
 
+    /// <summary>
+    /// Bare <c>Any</c> (or <c>typing.Any</c>): the value is whatever the caller passed.
+    /// Distinct from other typing-only names (<c>Type[type]</c>, <c>TracebackType</c>),
+    /// which stay refused at the first read even when the argument happens to have a width.
+    /// </summary>
+    private static bool IsAnyAnnotation(string? annotation)
+    {
+        if (string.IsNullOrEmpty(annotation)) return false;
+        int lb = annotation.IndexOf('[');
+        string head = lb >= 0 ? annotation[..lb] : annotation;
+        head = head[(head.LastIndexOf('.') + 1)..];
+        return head == "Any";
+    }
+
+    /// <summary>True when a lowered argument has a width this compiler stores.</summary>
+    private static bool ValHasRepresentation(Val v) =>
+        v is Constant or FloatConstant or Variable or Temporary or MemoryAddress;
+
     /// <summary>The closest known type name to <paramref name="annotation"/>, as a parenthesised
     /// hint, or "" when nothing is close. NEVER the name itself: the suggestion pool and the
     /// known set are different sets, so a name can be in the pool and out of the known set, and
