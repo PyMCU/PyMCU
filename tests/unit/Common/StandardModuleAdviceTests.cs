@@ -54,9 +54,10 @@ public class StandardModuleAdviceTests : IDisposable
     [InlineData("uctypes")]
     [InlineData("struct")]
     [InlineData("json")]
-    [InlineData("os")]
     [InlineData("sys")]
     [InlineData("typing")]
+    [InlineData("typing_extensions")]
+    [InlineData("__future__")]
     [InlineData("threading")]
     [InlineData("datetime")]
     [InlineData("re")]
@@ -91,6 +92,7 @@ public class StandardModuleAdviceTests : IDisposable
     {
         Assert.Contains("import random", Resolve("urandom"));
         Assert.Contains("import collections", Resolve("ucollections"));
+        Assert.Contains("import os", Resolve("uos"));
     }
 
     // The negative half. Losing this advice would be a regression of its own.
@@ -114,6 +116,7 @@ public class StandardModuleAdviceTests : IDisposable
     [InlineData("random")]
     [InlineData("collections")]
     [InlineData("asyncio")]
+    [InlineData("os")]
     public void AModuleThatPyMCUDoesProvide_IsNotDescribedAsAbsent(string moduleName)
     {
         Assert.False(StandardModuleNames.TryDescribe(moduleName, out _, out _),

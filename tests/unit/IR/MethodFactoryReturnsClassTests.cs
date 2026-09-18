@@ -1,3 +1,4 @@
+using FluentAssertions;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
@@ -205,5 +206,95 @@ public class MethodFactoryReturnsClassTests
             .Where(c => c.Dst is Variable v && v.Name == "s_base")
             .ToList();
         Assert.NotEmpty(flattenedStores);
+    }
+
+    private static ProgramIR GenWithModules(string mainSrc, params (string Name, string Source)[] modules)
+    {
+        var imported = new Dictionary<string, ProgramNode>();
+        foreach (var (name, source) in modules)
+            imported[name] = new Parser(new Lexer(source).Tokenize()).ParseProgram();
+
+        var mainAst = new Parser(new Lexer(mainSrc).Tokenize()).ParseProgram();
+        var ctx = new PyMCU.Common.CompilationContext(new CompilerOptions(
+            FilePath: "main.py", OutputPath: "", Arch: "avr", Target: "atmega328p",
+            Frequency: 16000000, Configs: [], Includes: [], ResetVector: 0, InterruptVector: 0,
+            Verbose: false));
+        foreach (var (name, _) in modules) ctx.ProjectModules.Add(name);
+
+        return new IRGenerator().Generate(mainAst, imported, new DeviceConfig { Arch = "avr" },
+                                          projectModules: ctx.ProjectModules);
+    }
+
+    [Fact]
+    public void AFactoryPinPassedToAnAnnotatedConstructor_KeepsTheFactoryClass()
+    {
+        // adafruit_character_lcd: Character_LCD.__init__(reset_dio: digitalio.DigitalInOut, ...)
+        // receives mcp.get_pin(...) -- an MCP230xx DigitalInOut. Outlining __init__ typed
+        // the parameters from the annotation, so pin.high() became HAL gpio.
+        const string dio =
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import uint8\n" +
+            "class DigitalInOut:\n" +
+            "    def __init__(self, pin: uint8):\n" +
+            "        self.pin = pin\n" +
+            "        self._a = 0\n" +
+            "        self._b = 0\n" +
+            "        self._c = 0\n" +
+            "    def high(self):\n" +
+            "        GPIOR0.value = 99\n";
+
+        const string mcp =
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import uint8\n" +
+            "import digitalio\n" +
+            "class DigitalInOut:\n" +
+            "    def __init__(self, pin: uint8, parent: MCP):\n" +
+            "        self.pin = pin\n" +
+            "        self.parent = parent\n" +
+            "        self._a = 0\n" +
+            "        self._b = 0\n" +
+            "    def high(self):\n" +
+            "        GPIOR0.value = 7\n" +
+            "class MCP:\n" +
+            "    def __init__(self):\n" +
+            "        self.n = 1\n" +
+            "        self._a = 0\n" +
+            "        self._b = 0\n" +
+            "        self._c = 0\n" +
+            "        self._d = 0\n" +
+            "    def get_pin(self, pin: uint8) -> DigitalInOut:\n" +
+            "        return DigitalInOut(pin, self)\n";
+
+        var ir = GenWithModules(
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import uint8\n" +
+            "from digitalio import DigitalInOut\n" +
+            "from mcp import MCP\n" +
+            "class Lcd:\n" +
+            "    def __init__(self, a: DigitalInOut, b: DigitalInOut, columns: uint8, lines: uint8):\n" +
+            "        self.columns = columns\n" +
+            "        self.lines = lines\n" +
+            "        self.reset = a\n" +
+            "        self.enable = b\n" +
+            "        self._n = 0\n" +
+            "        self._m = 0\n" +
+            "        for pin in (a, b):\n" +
+            "            pin.high()\n" +
+            "def main():\n" +
+            "    m = MCP()\n" +
+            "    Lcd(m.get_pin(1), m.get_pin(2), 16, 2)\n",
+            ("digitalio", dio),
+            ("mcp", mcp));
+
+        var main = ir.Functions.Should().ContainSingle(f => f.Name == "main",
+            because: "the program has one entry").Which;
+        var stores = main.Body.OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.EndsWith("GPIOR0", StringComparison.Ordinal))
+            .Select(c => c.Src)
+            .ToList();
+        stores.Should().HaveCount(2,
+            because: "the unrolled constructor writes GPIOR0 once per pin");
+        stores.Should().AllBeEquivalentTo(new Constant(7),
+            because: "mcp.get_pin() through Character_LCD.__init__ is the expander DigitalInOut, not digitalio's");
     }
 }

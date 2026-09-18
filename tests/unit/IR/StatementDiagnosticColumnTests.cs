@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using FluentAssertions;
 using Xunit;
 using PyMCU.Common;
 using PyMCU.Common.Models;
@@ -78,16 +79,19 @@ public class StatementDiagnosticColumnTests
     // Line 3 and not 2 because Fails() prepends the types import.
     [InlineData("def main() -> None:\n    break\n", 3, 5, "Break statement")]
     [InlineData("def main() -> None:\n    continue\n", 3, 5, "Continue statement")]
-    [InlineData("def main() -> None:\n    x: uint8 = 1\n    raise ValueError(x)\n", 4, 5,
+    [InlineData("def main() -> None:\n    x: uint8 = 1\n    raise CompileError(x)\n", 4, 5,
                 "is not a")]
     public void AKeywordStatementPointsAtItsOwnKeyword(string src, int line, int column,
                                                         string fragment)
     {
         var ex = Fails(src);
 
-        Assert.Contains(fragment, ex.Message);
-        Assert.Equal(line, ex.Line);
-        Assert.Equal(column, ex.Column);
+        ex.Message.Should().Contain(fragment,
+            because: "the refusal names the construct so the caret at the keyword matches the text");
+        ex.Line.Should().Be(line,
+            because: "the keyword statement is the node being blamed");
+        ex.Column.Should().Be(column,
+            because: "a keyword statement is its own token");
     }
 
     [Fact]

@@ -77,6 +77,74 @@ public class UnionParameterAtCallSiteTests
     }
 
     [Fact]
+    public void AProtocolMemberAcceptsAStructurallyMatchingClass()
+    {
+        // adafruit_debouncer / PyMCU#465: ROValueIO is a Protocol with a `.value` property.
+        // DigitalInOut is not named ROValueIO, but it has that property, and CPython accepts it.
+        var ir = Gen(
+            "from pymcu.types import used, uint8\n\n" +
+            "class ROValueIO(Protocol):\n" +
+            "    @property\n" +
+            "    def value(self) -> uint8: ...\n\n" +
+            "class Pin:\n" +
+            "    def __init__(self, v: uint8) -> None:\n" +
+            "        self.value: uint8 = v\n\n" +
+            "class Debouncer:\n" +
+            "    def __init__(self, io_or_predicate: Union[ROValueIO, Callable[[], bool]]) -> None:\n" +
+            "        self._io = io_or_predicate\n\n" +
+            "@used\n" +
+            "def main() -> uint8:\n" +
+            "    d = Debouncer(Pin(5))\n" +
+            "    return d._io.value\n");
+        // The discriminator is that it compiles. The field read may not fold through
+        // the constructor the way a same-class field does (#446); Constant 5 is still
+        // the Pin constructor argument.
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
+            c => c.Src is Constant { Value: 5 });
+    }
+
+    [Fact]
+    public void AProtocolMemberStillAcceptsAPlainFunctionReference()
+    {
+        var ir = Gen(
+            "from pymcu.types import used, uint8\n\n" +
+            "class ROValueIO(Protocol):\n" +
+            "    @property\n" +
+            "    def value(self) -> uint8: ...\n\n" +
+            "def my_predicate() -> uint8:\n    return 1\n\n" +
+            "class Debouncer:\n" +
+            "    def __init__(self, io_or_predicate: Union[ROValueIO, Callable[[], bool]]) -> None:\n" +
+            "        self.thing = io_or_predicate\n\n" +
+            "@used\n" +
+            "def main() -> uint8:\n" +
+            "    d = Debouncer(my_predicate)\n" +
+            "    return 1\n");
+        Assert.NotEmpty(ir.Functions.Single(f => f.Name == "main").Body);
+    }
+
+    [Fact]
+    public void AClassMissingTheProtocolMembersIsRefused()
+    {
+        string msg = Refusal(
+            "from pymcu.types import used, uint8\n\n" +
+            "class ROValueIO(Protocol):\n" +
+            "    @property\n" +
+            "    def value(self) -> uint8: ...\n\n" +
+            "class Other:\n" +
+            "    def __init__(self, x: uint8) -> None:\n" +
+            "        self.x: uint8 = x\n\n" +
+            "class Debouncer:\n" +
+            "    def __init__(self, io_or_predicate: Union[ROValueIO, Callable[[], bool]]) -> None:\n" +
+            "        self._io = io_or_predicate\n\n" +
+            "@used\n" +
+            "def main() -> uint8:\n" +
+            "    d = Debouncer(Other(1))\n" +
+            "    return 0\n");
+        Assert.Contains("ROValueIO", msg);
+        Assert.Contains("matches none", msg);
+    }
+
+    [Fact]
     public void AUnionOfAClassAndACallableAcceptsBoth()
     {
         // adafruit_debouncer's exact shape: Union[ROValueIO, Callable[[], bool]].

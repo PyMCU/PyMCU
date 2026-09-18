@@ -1,3 +1,4 @@
+using FluentAssertions;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
@@ -48,14 +49,21 @@ public class BuiltinDiagnosticTests
     }
 
     [Fact]
+    [Trait("Issue", "423")]
     public void Isinstance_SaysTypesAreFixedAtCompileTime()
     {
-        var msg = ErrorFor("    a: uint8 = 1\n    if isinstance(a, int):\n        a = 2\n");
+        // A candidate this compiler does not fold (not a ZCA class, not tuple/list/int)
+        // still names the builtin rather than a typo. isinstance(a, int) now folds (#423).
+        var msg = ErrorFor("    a: uint8 = 1\n    if isinstance(a, object):\n        a = 2\n");
 
-        Assert.Contains("isinstance()", msg);
-        Assert.Contains("compile", msg);
-        Assert.DoesNotContain("typo", msg);
-        Assert.DoesNotContain("missing import", msg);
+        msg.Should().Contain("isinstance()",
+            because: "the spelling is a builtin, so the diagnostic must name it");
+        msg.Should().Contain("compile",
+            because: "the remaining refusal is that types are fixed at compile time");
+        msg.Should().NotContain("typo",
+            because: "isinstance is in scope in every module");
+        msg.Should().NotContain("missing import",
+            because: "there is no import that would make isinstance a runtime test");
     }
 
     [Fact]
