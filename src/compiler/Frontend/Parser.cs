@@ -544,6 +544,7 @@ public class Parser
     private FunctionDef ParseFunction()
     {
         bool isInline = false;
+        bool isClassMethod = false;
         bool isOutline = false;
         bool isInterrupt = false;
         int vector = 0;
@@ -670,7 +671,11 @@ public class Parser
             }
             else if (decorator.Value == "classmethod")
             {
-                ErrorAt(decorator, ClassMethodUnsupported);
+                // Compile-time class-namespace population: cls is the receiver class
+                // (Mode.add_values, setattr(cls, name, value), cls.string[k] = v).
+                // Expanded at each call, like @inline, because there is no runtime class object.
+                isClassMethod = true;
+                isInline = true;
             }
             else if (decorator.Value == "naked")
             {
@@ -747,6 +752,7 @@ public class Parser
 
         var func = new FunctionDef(name, parameters, returnType, body, isInline, isInterrupt, vector)
         {
+            IsClassMethod = isClassMethod,
             IsPropertyGetter = isPropertyGetter,
             IsPropertySetter = isPropertySetter,
             PropertyName = propSetterOf,

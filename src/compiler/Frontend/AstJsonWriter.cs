@@ -94,6 +94,7 @@ public static class AstJsonWriter
         w.WritePropertyName("body");
         WriteStatement(w, fn.Body);
         w.WriteBoolean("isInline", fn.IsInline);
+        w.WriteBoolean("isClassMethod", fn.IsClassMethod);
         w.WriteBoolean("isInterrupt", fn.IsInterrupt);
         w.WriteNumber("vector", fn.InterruptVector);
         w.WriteBoolean("isPropertyGetter", fn.IsPropertyGetter);

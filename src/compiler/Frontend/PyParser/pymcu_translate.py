@@ -1173,7 +1173,7 @@ def function_of(node, is_async=False):
     fn = {
         "k": "Function", "name": node.name, "params": params_of(node.args),
         "returnType": return_type, "body": _body_of(node),
-        "isInline": implicit_inline, "isInterrupt": False, "vector": 0,
+        "isInline": implicit_inline, "isClassMethod": False, "isInterrupt": False, "vector": 0,
         "isPropertyGetter": False, "isPropertySetter": False, "propertyName": "",
         "isNaked": False, "isExtern": False, "externSymbol": "", "isExportC": False,
         "isOutline": False, "warning": "", "isPio": False, "pioParams": {},
@@ -1219,16 +1219,10 @@ def apply_decorator(fn, dec, node):
         elif name == "staticmethod":
             pass
         elif name == "classmethod":
-            # The same sentence the C# front end gives (Frontend/Parser.cs,
-            # ClassMethodUnsupported). This used to be a shorter text of its own, with neither
-            # the reason nor a way forward, so the same program got two different answers
-            # depending on which parser ran. The @staticmethod alternative the other one used
-            # to offer is gone from both: measured, `A.make()` on a @staticmethod answers
-            # "Function 'A_make' expects 1 arguments, but 0 were provided".
-            raise Unsupported(
-                "@classmethod is not supported: there is no runtime class object on bare metal "
-                "for cls to be. Write a module-level factory function instead "
-                "(`def make() -> T:` returning `T(...)`), which compiles.", node)
+            # Compile-time class-namespace population: cls is the receiver class.
+            # Force-inlined, matching the C# front end (Parser.cs).
+            fn["isClassMethod"] = True
+            fn["isInline"] = True
         elif name == "asm_pio":
             fn["isPio"] = True
         elif name == "interrupt":

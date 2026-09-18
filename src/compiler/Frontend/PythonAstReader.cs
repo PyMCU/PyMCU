@@ -214,6 +214,7 @@ public static class PythonAstReader
                 PyMCU.Common.AnnotationText.Normalize(Str(e, "returnType")), body,
             Flag(e, "isInline"), Flag(e, "isInterrupt"), Int(e, "vector"))
         {
+            IsClassMethod = Flag(e, "isClassMethod"),
             IsPropertyGetter = Flag(e, "isPropertyGetter"),
             IsPropertySetter = Flag(e, "isPropertySetter"),
             PropertyName = Str(e, "propertyName"),

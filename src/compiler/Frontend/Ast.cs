@@ -702,6 +702,7 @@ public class FunctionDef : Statement
     public string ReturnType { get; set; }   // settable: TypeInference fills empty returns in
     public Block Body { get; }
     public bool IsInline { get; set; }
+    public bool IsClassMethod { get; set; } = false;
     public bool IsInterrupt { get; }
     public int InterruptVector { get; }
 
