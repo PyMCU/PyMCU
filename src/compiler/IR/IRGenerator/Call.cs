@@ -1339,7 +1339,8 @@ public partial class IRGenerator
     private string? ClassNameOf(Expression e)
     {
         if (e is not VariableExpr ve) return null;
-        if (ClassmethodClsOf(ve.Name) is { } mapped) return mapped;
+        if (ClassmethodClsOf(ve.Name) is { } mapped)
+            return classNames.Contains(mapped) ? mapped : ClassNameForDescriptorRewrite(mapped);
         if (classNames.Contains(ve.Name)) return ve.Name;
         string resolved = ResolveCallee(ve.Name);
         return classNames.Contains(resolved) ? resolved : null;
@@ -1347,8 +1348,18 @@ public partial class IRGenerator
 
     private string ClassAttrKey(string cls, string member)
     {
-        string pfx = classModuleMap.TryGetValue(cls, out var p) && p != null ? p : currentModulePrefix;
-        return pfx + cls + "_" + member;
+        // Bare class names are in classModuleMap (`Mode` -> `adafruit_sht4x_`).
+        // Inherited @classmethod expansions stash the mangled key
+        // (`adafruit_sht4x_Mode`); prefixing that again doubled the module.
+        if (classModuleMap.TryGetValue(cls, out var p) && p != null)
+            return p + cls + "_" + member;
+        foreach (var (bare, pfx) in classModuleMap)
+        {
+            string mangled = (pfx ?? "") + bare;
+            if (string.Equals(mangled, cls, StringComparison.Ordinal))
+                return mangled + "_" + member;
+        }
+        return currentModulePrefix + cls + "_" + member;
     }
 
     /// <summary>
@@ -1536,7 +1547,7 @@ public partial class IRGenerator
                     ?? (classNames.Contains(clsRecvVe.Name) ? clsRecvVe.Name : null)
                     ?? ResolveCallee(clsRecvVe.Name);
                 if (methodInstanceTypes.TryGetValue(callee, out var mt) && !string.IsNullOrEmpty(mt))
-                    owner = mt;
+                    owner = ClassNameForDescriptorRewrite(mt);
                 string clsParam = func.Params.Count > 0 ? func.Params[0].Name : "cls";
                 classmethodClsAlias[newPrefix + clsParam] = owner;
                 paramOffset = 1;
