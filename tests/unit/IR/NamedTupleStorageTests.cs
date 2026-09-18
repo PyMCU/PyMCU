@@ -1,3 +1,4 @@
+using FluentAssertions;
 using PyMCU.Common;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
@@ -111,5 +112,37 @@ public class NamedTupleStorageTests
         var body = Main(Program("(256, 383, 512, 16384, 16639, 32768, 32895, 33024, 49152, 65280)"));
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 256 }, Dst: Variable { Name: "main.T__0" } });
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 65280 }, Dst: Variable { Name: "main.T__9" } });
+    }
+
+    [Fact]
+    public void Integer256_PrintedFromANamedTuple_IsNotTheFirstInternedString()
+    {
+        var ir = Gen(
+            "def uart_write_str(s: const[str]):\n" +
+            "    pass\n" +
+            "def uart_write_decimal_u16(v: uint16):\n" +
+            "    pass\n" +
+            "def uart_write_decimal_u8(v: uint8):\n" +
+            "    pass\n" +
+            "def main():\n" +
+            "    marker = \"first interned string\"\n" +
+            "    wide = (256, 383, 512, 16384, 16639, 32768, 32895, 33024, 49152, 65280)\n" +
+            "    for d in wide:\n" +
+            "        print(d)\n" +
+            "    print(marker)\n" +
+            "main()\n");
+
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        var texts = new Dictionary<string, string>();
+        foreach (var fd in body.OfType<FlashData>())
+            texts[fd.Name] = new string(fd.Bytes.TakeWhile(b => b != 0).Select(b => (char)b).ToArray());
+        var written = body.OfType<Call>()
+            .SelectMany(c => c.Args)
+            .OfType<FlashStrAddr>()
+            .Select(a => texts.TryGetValue(a.Name, out var t) ? t : "")
+            .ToList();
+
+        written.Count(t => t == "first interned string").Should().Be(1,
+            because: "256 is a PWM duty, so print(d) must not stream interned-string id 256");
     }
 }

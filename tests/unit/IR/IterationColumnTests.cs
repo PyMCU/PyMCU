@@ -252,25 +252,18 @@ public class IterationColumnTests
     }
 
     [Fact]
-    public void ATupleElement_PointsAtTheTuple()
+    public void ATupleElement_BindsAsACompileTimeSequence()
     {
-        // Was ATupleElement_StaysUnlocated_UntilTuplesAreStamped, asserting the ceiling with
-        // the instruction that stamping tuples lights this site up with no edit here. Tuples
-        // are stamped now and the site lit up with no edit here, so this is that instruction
-        // being followed: assert the real column rather than restore the silence.
-        //
-        //                    1
-        //          1234567890123456789
-        // line 2: "    for a in [(1, 2), (3, 4)]:"  -- the first tuple starts at column 15
+        // `for a in [(1, 2), (3, 4)]` used to refuse ("nowhere to put the second value")
+        // because a tuple was not a loop element. Adafruit CV.add_values writes
+        // `for value_tuple in tuples: name, value, ... = value_tuple`, so the loop
+        // variable is the nested tuple, bound as a compile-time sequence.
         const string src =
             "def main():\n" +
             "    for a in [(1, 2), (3, 4)]:\n" +
             "        pass\n";
-        var ex = Fails(src);
-        Assert.Contains("nowhere to put the second value", ex.Message);
-        Assert.Equal(2, ex.Line);
-        Assert.Equal(15, ex.Column);
-        Assert.Equal(6, ex.Length);   // `(1, 2)`, the whole tuple
+        var ir = Gen(src);
+        Assert.NotNull(ir);
     }
 
     [Fact]
