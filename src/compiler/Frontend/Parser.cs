@@ -52,6 +52,11 @@ public class Parser
     // the first and queues the rest here for the caller to drain.
     private readonly Queue<ImportStmt> pendingImports = new();
 
+    // Serial for the temps a subscript unpack desugars into (`word[i], crc[i] = ...`
+    // becomes `__isubN_0, __isubN_1 = ...` then two indexed stores). Shared with the
+    // CPython bridge's `_indexed_unpack_serial` so both front ends emit the same names.
+    private int indexedUnpackSerial;
+
     public Parser(IReadOnlyList<Token> tokens)
     {
         this.tokens = tokens;
@@ -1919,6 +1924,13 @@ public class Parser
                 return new TupleUnpackStmt(targets, valueExpr, starredIndex) { Line = line };
             }
 
+            // `word[i*2], crc[i*2], ... = struct.unpack(...)` (adafruit_sht31d). TupleUnpackStmt
+            // only carries names, so an IndexExpr used to fall through and die two tokens later
+            // as "Expected newline or end of block". Bind the RHS to one name (the shape
+            // `t = struct.unpack(...)` already lowers) and store each t[k] into its target.
+            if (expr is IndexExpr)
+                return ParseIndexedUnpack(expr, line);
+
             // `(a, b), c = ...`: a nested target. Every unpack target here is one name, so
             // this dies two tokens later as "Expected newline or end of block", which names
             // nothing. Say what the shape is and how to write it flat.
@@ -2230,6 +2242,47 @@ public class Parser
         node.Column = at.Column;
         node.Length = at.Length;
         return node;
+    }
+
+    /// <summary>
+    /// <c>word[i], crc[i] = rhs</c> is <c>t = rhs</c> then one indexed store
+    /// from <c>t[k]</c> per target. TupleUnpackStmt only carries names, and
+    /// <c>t = struct.unpack(...)</c> is the shape that already lowers.
+    /// WORD FOR WORD the same temp as the CPython bridge (<c>__isubN</c>).
+    /// </summary>
+    private Statement ParseIndexedUnpack(Expression first, int line)
+    {
+        var targets = new List<Expression> { first };
+        while (Match(TokenType.Comma))
+        {
+            if (Check(TokenType.Equal) || Check(TokenType.Newline)
+                || Check(TokenType.Semicolon) || Check(TokenType.EndOfFile)
+                || Check(TokenType.Dedent))
+                break;
+            if (Check(TokenType.Star))
+                Error("starred unpacking into a subscript is not supported; unpack into names first");
+            var t = ParseExpression();
+            if (t is not (IndexExpr or VariableExpr or MemberAccessExpr))
+                Error("an unpacking target must be a name, an attribute of one, or a subscript, "
+                      + "such as `a, b = ...`, `self.a, self.b = ...`, or `word[i], crc[i] = ...`");
+            targets.Add(t);
+        }
+
+        Consume(TokenType.Equal, "Expected '=' in tuple unpack assignment");
+        var rhsStart = Peek();
+        var valueExpr = ParseCommaTupleTail(ParseExpression(), rhsStart);
+        ConsumeStatementEnd();
+
+        int serial = indexedUnpackSerial++;
+        string temp = $"__isub{serial}";
+        var block = new Block { Line = line };
+        block.Statements.Add(new AssignStmt(new VariableExpr(temp), valueExpr) { Line = line });
+        for (int i = 0; i < targets.Count; i++)
+        {
+            var src = new IndexExpr(new VariableExpr(temp), new IntegerLiteral(i));
+            block.Statements.Add(new AssignStmt(targets[i], src) { Line = line });
+        }
+        return block;
     }
 
     /// <summary>

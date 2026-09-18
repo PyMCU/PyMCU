@@ -90,6 +90,9 @@ def s_nonlocal(node):
 # different node would.
 _function_depth = [0]
 _enclosing_functions = []
+# Serial for the temps a subscript unpack desugars into. Shared with Parser.indexedUnpackSerial
+# so both front ends emit `__isubN_k`.
+_indexed_unpack_serial = [0]
 
 
 def line_of(node):
@@ -733,8 +736,43 @@ def s_assign(node):
     return assign_one(node.targets[0], node.value)
 
 
+def _is_subscript_unpack_elt(el):
+    if isinstance(el, ast.Starred):
+        el = el.value
+    return isinstance(el, ast.Subscript)
+
+
+def unpack_into_subscripts(target, value):
+    # WORD FOR WORD the same desugar as Parser.ParseIndexedUnpack: bind the RHS
+    # to `__isubN` (the shape `t = struct.unpack(...)` already lowers) then
+    # store t[k] into each original target. Adafruit sht31d writes
+    # `word[i*2], crc[i*2], word[(i*2)+1], crc[(i*2)+1] = struct.unpack(...)`.
+    serial = _indexed_unpack_serial[0]
+    _indexed_unpack_serial[0] = serial + 1
+    line = line_of(target)
+    temp = f"__isub{serial}"
+    bind = {"k": "Assign", "target": {"k": "Var", "name": temp},
+            "value": expr(value), "annotatedType": None, "line": line}
+    stores = []
+    for i, el in enumerate(target.elts):
+        if isinstance(el, ast.Starred):
+            raise Unsupported(
+                "starred unpacking into a subscript is not supported; unpack into names first",
+                target)
+        stores.append({
+            "k": "Assign",
+            "target": expr(el),
+            "value": {"k": "Index", "target": {"k": "Var", "name": temp},
+                      "index": {"k": "Int", "value": i}},
+            "annotatedType": None, "line": line,
+        })
+    return {"k": "Block", "statements": [bind] + stores, "line": line}
+
+
 def assign_one(target, value):
     if isinstance(target, (ast.Tuple, ast.List)):
+        if any(_is_subscript_unpack_elt(el) for el in target.elts):
+            return unpack_into_subscripts(target, value)
         names, starred = [], -1
         for i, el in enumerate(target.elts):
             if isinstance(el, ast.Starred):
@@ -1276,6 +1314,7 @@ def class_of(node):
 def translate(source, filename):
     global SOURCE
     SOURCE = source
+    _indexed_unpack_serial[0] = 0
     tree = ast.parse(source, filename=filename)
     program = {"imports": [], "functions": [], "globals": []}
     for node in tree.body:
