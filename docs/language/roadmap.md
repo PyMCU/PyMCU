@@ -23,32 +23,33 @@ This page tracks which language and HAL features have been implemented, and what
 | `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (`@inline` only, annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]`). Buffer parameters may be annotated `bytearray`, `WriteableBuffer` or `ReadableBuffer` |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level statements |
 | Module-level `main()` (bare, or under `if __name__ == "__main__":`) | Says where the entry point's body runs: what is written after the call runs after the body. A second call, and an early `return` with module-level code after the call, are refused |
-| `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
+| `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter`; a class attribute whose class defines `__get__`/`__set__` is a descriptor, and `obj` is the owning instance even when annotated with a typing-only name (#360, #419) |
 | Nested `class` | Constructible, and its constants readable through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the declaring module (`busio.UART.Parity.ODD`) |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `global` / `nonlocal` | Cross-function variable access; `nonlocal` in `@inline` |
-| `try / except / else / finally`, `raise`, bare `raise` | AVR + ARM (RP2040/RP2350); zero-cost T-flag propagation (AVR: `SET`/`CLT`/`BRTS`; ARM: an internal flag+code global pair — no `setjmp`/`longjmp` on either); errors propagate across calls to any depth and are caught at the call site; `finally` runs on every exit path (caught, propagated, `return`/`break`/`continue`); unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts; `except E as e` binds a bounded object -- `print(e)`, `str(e)`, `e.args[0]` read the raise's string-literal message and `isinstance(e, X)` compares the code, at the cost of one module word and one store per raise, emitted only when some handler in the program binds a name |
+| `try / except / else / finally`, `raise`, bare `raise` | AVR + ARM (RP2040/RP2350); zero-cost T-flag propagation (AVR: `SET`/`CLT`/`BRTS`; ARM: an internal flag+code global pair — no `setjmp`/`longjmp` on either); errors propagate across calls to any depth and are caught at the call site; `finally` runs on every exit path (caught, propagated, `return`/`break`/`continue`); unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts; `except E as e` binds a bounded object -- `print(e)`, `str(e)`, `e.args[0]` read the raise's message (a string literal, or a deferred print of an f-string / concatenation / call, #435) and `isinstance(e, X)` compares the code, at the cost of one module word and one store per raise, emitted only when some handler in the program binds a name; `raise X(...) from Y` compiles as `raise X(...)` (#434) |
 | Integer arithmetic promotion | `+`/`-`/`*`/`<<` promote to the next wider type (`uint8 255 + 45 == 300`); the annotation is a storage width; `uint8(a + b)` is the fixed-width escape hatch; out-of-range literals / folded constants are `CompileError` |
 | True division `/` vs `//` | `/` yields `float` (soft-float, warns on integer operands); `//` / `%` are integer floor div / mod; runtime divide-by-zero raises `ZeroDivisionError` |
 | f-strings (streamed) | `print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")` with runtime interpolations and format specs (`{x:02x}`, `{x:08b}`, `{x:04d}`, …); lowered to direct writes, no heap. `float` interpolations print two rounded decimals |
 | `print()` of a buffer | `print(bytearray)`, `print(arr[a:b])` and `print(obj[a:b])` (via `__getitem__`/`__len__`) emit the CPython repr — `bytearray(b'\xcc\x10\xca\xfe')`; the length must be compile-time |
 | `print(float)` | Two rounded decimals, trailing zero trimmed but never past the first: `3.25`, `-2.25`, `0.05`, `123.75`, `1234.5` |
 | Functions with > 5 arguments | Overflow arguments passed via a fixed SRAM spill region |
-| `in` / `not in` | Compile-time fold on constant list; runtime equality chain |
+| `in` / `not in` | Compile-time fold on constant list; runtime equality chain. A call that returns an instance with `__contains__` dispatches the dunder (`"Linux" not in uname()`, #466); two compile-time strings are substring membership (`"RP2350" in uname().machine`)
+| `isinstance(x, T)` | Folds at compile time: a ZCA instance against a class or subclass (#424), or a value against the builtins `tuple`/`list`/`int` from its known shape (#423) |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
 | `bitcast(T, v)` | Reinterpret raw bytes as `T`; float↔uint32; compile-time folding |
 | `hex(n)` / `bin(n)` | Compile-time: `hex(255)` → `"0xff"` |
 | `sum(iterable)` / `any(iterable)` / `all(iterable)` | Compile-time fold or unrolled chain |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant |
-| `pow(x, n)` / `x ** n` | Compile-time constant fold |
+| `pow(x, n)` / `x ** n` | Compile-time integer fold; runtime integer unroll; runtime float via `powf` (#463) |
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
-| `bytearray` | Mutable SRAM buffer |
+| `bytearray` | Mutable SRAM buffer. A function that fills one and `return`s it is expanded at the call site so the caller indexes the same storage (#464) |
 | `bytes([...])` / `bytes(N)` as a call argument | Written inline at a call site: unrolls into an `@inline` callee's unannotated buffer parameter the same way a list literal does, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function. `bytes(n)` with a run-time `n` is refused (`bytearray(n)` takes one) |
-| `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type AT THAT CALL SITE, which must be one of the members -- the same way an `@inline` overload dispatches. A field assigned from it takes the site's type. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal; `Callable[...]` matches a function reference. A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal |
+| `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type AT THAT CALL SITE, which must be one of the members -- the same way an `@inline` overload dispatches. A field assigned from it takes the site's type. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal; `Callable[...]` matches a function reference. A `Protocol` member is structural (#465): a class that has the protocol's members matches even when it is not named as the protocol. A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART init preamble |
 | `int.from_bytes(b, 'little'/'big')` | Compile-time fold or runtime |
 | Raw strings `r"\n"` | No escape processing |
@@ -65,7 +66,15 @@ This page tracks which language and HAL features have been implemented, and what
 | `__name__` / `if __name__ == "__main__":` | Compile-time guard; body promoted in main, eliminated in libs |
 | Triple-quoted strings `"""..."""` / `'''...'''` | Multiline string literals; leading newline after opening quote stripped; useful for multiline `asm()` |
 | `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; `append()`, `len()`, `x[i]`, `for v in x:`; bounded bump allocator + GC; suitable for ATmega328P (2 KB SRAM) and larger. A `list[T]` parameter or return also works on a real (non-`@inline`) function, expanded at each call site |
-| `import array` / `array.array(typecode)` | The same `list[T]`, one call spelling later: the typecode decides T (`B`/`b`, `H`/`h`, `I`/`L`/`i`/`l`; `f`/`d`/`q` refused). `array.array` with no typecode, on a parameter or return, takes its element width from the caller's actual list |
+| `import os` / `os.uname()` | Compile-time five-field record of `__CHIP__` (`sysname` `"PyMCU"`, `machine` the chip, with an `RP2040`/`RP2350` token on those parts). `"Linux" not in uname()` and `"RP2350" in uname().machine` fold. `os.name` is `"posix"`, `os.sep` is `"/"`. `listdir` / `getenv` / `stat` are not defined (#466) |
+| Unannotated field first store | A string literal or `bytearray(...)` / `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter and `self._gpio = bytearray(n)` then a buffer setter are the same field; an int then a str is still refused |
+| `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
+| `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (adafruit_74hc595's `self._gpio = bytearray(self._number_of_shift_registers)`) |
+| Local class vs imported name | A class defined in a module shadows an import of the same name from another module. `DigitalInOut(pin, self)` in adafruit_74hc595 is that file's two-argument class, even when main imported `digitalio.DigitalInOut` |
+| Constructor not outlined | `__init__` is expanded at each construction. A class-typed parameter is the argument's class, not the annotation (`Lcd(mcp.get_pin(1), ...)` annotated `digitalio.DigitalInOut` is still the expander pin) |
+| Rebound module alias | `from adafruit_motor import servo` then `servo = servo.Servo(pwm)` rebinds the name; later reads and calls see the instance, not the module (#467) |
+| `time.struct_time` | Stdlib stub with the nine CPython field names, so Adafruit RTC `from time import struct_time` in a typing try does not fail |
+| `collections.namedtuple` | Compile-time class factory: `Name = namedtuple("Name", ("a", "b"))` becomes a ZCA class with those fields, `__len__` and `__match_args__`. The bound name is the class (adafruit_irremote's `IRMessage`) |
 | Closed `dict` / `set` literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables with no storage: `d[const]` folds, `d[runtime]` compare-chains and raises `KeyError`, `x in d` and `len(d)` fold. Read-only |
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict — open addressing over per-instance fixed arrays, no heap and no GC |
 | f-string as a **value** | `s = f"t={t} C"` builds into a compiler-managed fixed `bytearray`; `len(s)`, `s[i]`, `print(s)`, buffer reuse on re-assignment. No float interpolations in this form |

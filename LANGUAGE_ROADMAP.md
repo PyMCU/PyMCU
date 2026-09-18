@@ -27,7 +27,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `return` | With/without value; tuple multi-return from `@inline` functions, optionally annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]` (the element types set the result widths). A `...` in a return annotation is refused: the count is what the caller unpacks |
-| `pass` / `raise` | `raise ExnType` signals an error via the T flag and returns; caught at the call site by an enclosing `try` (SET/BRTS, no `longjmp`); `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required |
+| `pass` / `raise` | `raise ExnType` signals an error via the T flag and returns; caught at the call site by an enclosing `try` (SET/BRTS, no `longjmp`); `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required. `raise X(...) from Y` is accepted and compiled as `raise X(...)` (#434); `e.__cause__` / `e.__context__` are refused. A non-literal raise message is a deferred print (#435) |
 | `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` / `from ... import *` | Relative imports (`from .util import half`, `from . import util`), multi-level; a star binds the names the module defines at top level, or exactly its `__all__` |
 | `global` | Cross-function variable access |
@@ -57,7 +57,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Array indexing `arr[i]` | Constant-index: zero overhead; variable-index: SRAM. Negative constant index `arr[-1]` is the last element (Python); out-of-range constant index is a compile error |
 | List comprehension `[x*2 for x in range(n)]` | Compile-time unroll; constant iterable only |
 | Tuple literal `(a, b)` / unpacking `a, b = f()` / `a, b = b, a` | Stack-allocated; multi-return (`f` must be `@inline` — a real subroutine has one return register); bare-tuple RHS supported, so swap evaluates the RHS before assigning |
-| Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM |
+| Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM. A class attribute whose class defines `__get__`/`__set__` is a descriptor (#360); `obj` in those methods is the owning instance even when annotated with a typing-only placeholder (#419) |
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml`. A `float` prints with two rounded decimals, trailing zero trimmed but never past the first (`3.25`, `-2.25`, `0.05`, `123.75`, `1234.5`). A `bytearray`, an array slice or a `__getitem__`/`__len__` slice prints the CPython repr — `bytearray(b'\xcc\x10\xca\xfe')` — with a compile-time length |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
@@ -97,6 +97,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `sleep_idle / sleep_adc_noise / sleep_power_down / sleep_power_save / sleep_standby / sleep_extended_standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
+| `os` | `uname()`, `name`, `sep` | All | Compile-time facts of `__CHIP__` (#466); no filesystem |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
 | `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
 | `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants (the CLI board key for the 32U4 is `arduino_micro`) |
@@ -121,7 +122,16 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Feature | Notes |
 |---------|-------|
-| `in` / `not in` operator | Compile-time fold on constant list; runtime OR/AND chain |
+| `in` / `not in` operator | Compile-time fold on constant list; runtime OR/AND chain. A call that returns an instance with `__contains__` dispatches the dunder (`"Linux" not in uname()`, #466); two compile-time strings are substring membership (`"RP2350" in uname().machine`) |
+| Unannotated field first store | A string literal or `bytearray(...)` / `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter (adafruit_character_lcd) and `self._gpio = bytearray(n)` then a buffer setter (adafruit_74hc595) are the same field. An int then a str is still refused |
+| `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
+| `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size. `self._gpio = bytearray(self._number_of_shift_registers)` (adafruit_74hc595) |
+| Local class vs imported name | A class defined in a module shadows an import of the same name from another module. `DigitalInOut(pin, self)` in adafruit_74hc595 is that file's class, not `digitalio.DigitalInOut`. Last construct unmodified `adafruit_74hc595` stopped on; the library now builds unmodified |
+| Constructor not outlined | `__init__` is expanded at each construction. A class-typed parameter is the argument's class, not the annotation. `Lcd(mcp.get_pin(1), ...)` annotated `digitalio.DigitalInOut` is still the expander pin |
+| Rebound module alias | `from adafruit_motor import servo` then `servo = servo.Servo(pwm)` rebinds the name; later reads and calls see the instance, not the module (#467) |
+| `time.struct_time` | Stdlib stub with the nine CPython field names, so `from time import struct_time` in a typing try does not fail because `pymcu.time` exists. Construction from a 9-tuple is not this stub |
+| `collections.namedtuple` | Compile-time class factory: `Name = namedtuple("Name", ("a", "b"))` becomes a ZCA class with those fields, `__len__` and `__match_args__`. The bound name is the class. Last construct unmodified `adafruit_irremote` stopped on |
+| `isinstance(x, T)` | Compile-time fold: ZCA instance vs class/subclass (#424); value vs `tuple`/`list`/`int` from known shape (#423) |
 | `is` / `is not` | Maps to `==` / `!=` (identity = equality on bare-metal) |
 | `divmod(a, b)` built-in | Returns `(quotient, remainder)`; compile-time fold or `__div8`/`__mod8` |
 | `bitcast(T, v)` built-in | Reinterpret raw bytes as type `T`; float<->uint32 via register swap; compile-time fold for constant operands |
@@ -147,7 +157,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Named sequence | `pins = [11, 12, 13]` and `pins = (11, 12, 13)` iterate the same way at any length: at most 8 constant elements unroll against the literal, past that the name gets a fixed array the loop walks. Unannotated, the element width is the widest element's, so a 16-bit table stays 16-bit |
 | `reversed(iterable)` | `for x in reversed([1,2,3]):` — compile-time reverse unroll; `reversed(range(a, b, s))` is the same range walked down (runtime bounds with a unit step) |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant; compile-time `n` only |
-| `pow(x, n)` / `x ** n` | Compile-time constant fold; `BinaryOp::Pow` |
+| `pow(x, n)` / `x ** n` | Compile-time integer fold; runtime integer unroll; runtime float via `powf` (#463) |
 
 ### HAL
 
@@ -208,9 +218,9 @@ Everything in this section is shipped and tested in the current alpha build.
 | `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance array from list comp; `enumerate` also supported |
 | A list given to a class (`Bar([Pin(a), Pin(b)])`, `Bar(pins)`) | Compile-time sequence bound to the parameter and to the `self` field: constant subscript, `for`, `len()`, and a run-time subscript that calls a method (up to 8 elements, lowered as a selection) |
 | A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
-| `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
+| `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work. A function that fills one and `return`s it is expanded at the call site so the caller indexes the same storage (#464) |
 | `bytes([...])` / `bytes(N)` as a call argument | The same constructor `bytearray` already has, one call spelling later (#431): `f(bytes([1, 2, 3]))` unrolls into an `@inline` callee's unannotated buffer parameter, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function; `bytes(n)` with a run-time `n` is refused, naming `bytearray(n)` |
-| `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type at that call site (#442), which must be one of the members -- the same way an `@inline` overload already dispatches on an argument's type. A field assigned from it takes the site's type, as any unannotated field does. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal argument; `Callable[...]` matches a plain function reference. A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal -- one ABI, no call site to resolve it at |
+| `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type at that call site (#442), which must be one of the members -- the same way an `@inline` overload already dispatches on an argument's type. A field assigned from it takes the site's type, as any unannotated field does. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal argument; `Callable[...]` matches a plain function reference. A `Protocol` member is structural (#465): a class that has the protocol's members matches even when it is not named as the protocol (adafruit_debouncer's `DigitalInOut` vs `ROValueIO`). A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal -- one ABI, no call site to resolve it at |
 
 ---
 
@@ -373,6 +383,14 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | f-string as a **value** (`s = f"t={t} C"`) | Builds the string into a compiler-managed fixed `bytearray` (no heap): the size is statically bounded per part, formatting lowers to `pymcu.strfmt` calls (auto-injected). Consumers: `print(s)`, `uart.write_str/println(s)`, `len(s)` (formatted length), `s[i]`, re-assignment in a loop (buffer reuse), passing as a `bytearray` param. Not yet: f-string inline in other expression positions, float interpolations in the value form, `s == "lit"` |
 | Closed dict/set literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables (no storage): `d[const]` folds, `d[runtime]` lowers to a compare chain raising `KeyError` (catchable), `x in d` / `x in {...}` membership chains, `len(d)` folds. String keys fold on constant lookups. Read-only — for mutation use `FixedDict` |
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict (open addressing over per-instance fixed arrays — no heap, no GC): `d[k]`/`d[k]=v` (`KeyError` on missing, `ValueError` when full), `k in d`, `len(d)`, `get(k, default)`, `pop(k)` (tombstones), `clear()`. Capacity is a compile-time constant |
+| Unannotated field first store | A string literal or `bytearray(...)` / `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter (adafruit_character_lcd); `self._gpio = bytearray(n)` then a buffer setter (adafruit_74hc595) |
+| `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter |
+| `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (`self._gpio = bytearray(self._number_of_shift_registers)`) |
+| Local class vs imported name | A class defined in a module shadows an import of the same name from another module (`DigitalInOut(pin, self)` in adafruit_74hc595) |
+| Constructor not outlined | `__init__` is expanded at each construction so a class-typed parameter is the argument's class (`Lcd(mcp.get_pin(1), ...)` is the expander pin, not `digitalio.DigitalInOut`) |
+| Rebound module alias | `from adafruit_motor import servo` then `servo = servo.Servo(pwm)` rebinds the name; later reads and calls see the instance (#467) |
+| `time.struct_time` | Stdlib stub with the nine CPython field names; `from time import struct_time` in a typing try does not fail because `pymcu.time` exists |
+| `collections.namedtuple` | Compile-time class factory over the same module: `Name = namedtuple("Name", ("a", "b"))` is a ZCA class, not a heap tuple subclass |
 | Type inference for unannotated `def` params/returns | Outlined functions infer missing param/return annotations from call-site evidence + defaults + return expressions (safe integer-widening join). Fixes the silent uint8-default truncation (`scale(300, 2)` used to print 88). `@inline` functions keep their compile-time polymorphism; overloaded names are untouched |
 | Generators (`yield`) | A top-level function containing `yield` lowers to the same zero-cost state-machine class as `async def` (poll() returns 2 = yielded / 1 = working / 0 = done, value via `._value`); `for x in gen(...)` desugars to a poll loop with Python break/continue semantics. Not inside `@inline`/methods; `yield` as an expression not supported |
 | Module-level statements with explicit `def main()` | Module-scope executable statements (peripheral constructions, calls) run at startup before `main()`'s body, mirroring Python — previously rejected |

@@ -197,7 +197,8 @@ finally:
 | Propagates to any depth | An unmatched exception re-propagates to the **enclosing** `try`, then the caller, and so on — there is no single-nesting-level limit |
 | Caught at call sites | An exception is detected after a **function call** inside the `try`. Raise from a helper and catch it where you call it (rather than `raise`-ing directly in the `try` body) |
 | AVR + ARM (RP2040/RP2350) | PIC and other backends: use return codes or sentinel values instead |
-| Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime; handlers match by integer code |
+| Exception types are integer codes | Builtins (`ValueError` etc.); handlers match by integer code. A string-literal message is one flash word (#369). A non-literal message (f-string, concatenation, call) is a deferred print: runtime pieces are stored at the raise and `print(e)` / `str(e)` / `e.args[0]` replay them (#435) |
+| `raise X(...) from Y` | Accepted; compiled as `raise X(...)`. There is no traceback. `e.__cause__` / `e.__context__` are refused (#434) |
 | Unmatched at top level | An exception with no handler hits `__pymcu_unhandled_exn` — `E:<TypeName>` to UART0 then a halt, never a silent continue. Whether it reached `main` from a callee or was raised in `main`'s own body (or in an `@inline` expansion there) makes no difference |
 
 :::{admonition} Return codes are still often clearer for firmware
@@ -330,9 +331,11 @@ branch is refused, naming the branch.
 |---|---|---|
 | Multiple inheritance / MRO | C3 linearization is a runtime concept | Single-level inheritance only |
 | Runtime polymorphism (vtable dispatch) | Requires vtable + heap class objects | Compile-time `match / case` dispatch |
-| `isinstance()` / `type()` | No type tags at runtime | Not available |
+| `isinstance()` / `type()` | No type tags at runtime | `isinstance(x, T)` on a ZCA instance folds (#424); `isinstance(x, (tuple, list))` folds from the receiver's known shape (#423). `type()` is still refused |
 | `__repr__`, `__str__` | No runtime string formatting | `uart.println()` with explicit fields |
-| `dataclass` / `namedtuple` | Metaclass + runtime heap | Manual `@inline` class |
+| `dataclass` | Metaclass + runtime heap | Manual `@inline` class |
+| `namedtuple` **defaults / rename / module** | Extra factory kwargs | `Name = namedtuple("Name", ("a", "b"))` -- two positional arguments. The assignment is a ZCA class |
+| `namedtuple` index `p[0]` | Not a tuple subclass | Field access `p.x`; `__match_args__` is set so a class pattern binds in field order |
 
 **Supported:** ZCA `@inline` classes (zero SRAM), `@property` / `@name.setter`,
 single-level class inheritance with `super()`, `with obj:` context managers
@@ -555,7 +558,8 @@ _loop:
 list comprehensions with compile-time constant bounds (`range(start, stop, step)` honours
 the step), nested list comprehensions, `if`-filtered list comprehensions (constant condition),
 `for pin in [DigitalInOut(p) for p in (...)]` and
-`for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
+`for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays),
+and `for pin in (reset_dio, enable_dio, ...)` over already-constructed instances.
 
 A `range()` bound is folded before the loop is lowered, whatever shape it is written in: a
 literal, a name, or an expression over either. A count of at most eight unrolls, an empty
@@ -565,7 +569,8 @@ A `for` over a short constant list unrolls, and the loop variable is a compile-t
 in each iteration, so a `const` parameter receiving it resolves as it would from a literal.
 The elements may be numbers or STRINGS, which is what a row of board pins is:
 `for pin in (board.D2, board.D3, board.D4)` works, and so does the pair form
-`for pin, name in [(board.D2, "D2"), (board.D3, "D3")]`.
+`for pin, name in [(board.D2, "D2"), (board.D3, "D3")]`. A tuple or list of
+already-constructed instances unrolls the same way: `for pin in (reset_dio, enable_dio, ...)`.
 
 A comprehension of class INSTANCES is not supported outside the forms above: PyMCU lays an
 instance out at compile time and it has no array slot to live in. Write the list as a
@@ -764,7 +769,9 @@ hardware timer dependency.
 
 `from <package> import <submodule>` binds the submodule under its own name, as CPython does
 when the package's `__init__` has no such attribute: `from adafruit_motor import servo`, then
-`servo.Servo(pwm)`. An alias is kept (`from adafruit_motor import servo as s`).
+`servo.Servo(pwm)`. Rebinding that name to an instance (`servo = servo.Servo(pwm)`) is the
+Adafruit guide spelling: later reads and calls see the instance, not the module (#467).
+An alias is kept (`from adafruit_motor import servo as s`).
 
 An import alias belongs to the file that writes it. Two modules that alias different things
 to the same name each keep their own, the way Python scopes them.
@@ -774,6 +781,11 @@ module-level variables, minus the ones whose name starts with `_`, which are pri
 which a star never binds in CPython either. A module that declares `__all__` gets exactly
 that list instead. A name `foo` re-exports (one it imported itself) resolves through the
 star as well.
+
+`import os` / `from os import uname` resolve to `pymcu/os.py`, the same stdlib-alias
+fallback `import time` already uses. `uname()`, `os.name` and `os.sep` are compile-time
+facts of `__CHIP__`. Names that need a filesystem (`listdir`, `getenv`, `stat`) are not
+defined on that module, and `import uos` points at `import os`.
 
 A module-level object in an imported module is constructed at startup, before the entry
 file's own module-level statements, in the order the modules are imported. This applies to
@@ -801,7 +813,7 @@ alone.
 | `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
 | `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold |
 | `divmod(a, b)` | ✅ Supported | Compile-time or runtime |
-| `pow(x, n)` / `x ** n` | ✅ Supported | Compile-time constant fold |
+| `pow(x, n)` / `x ** n` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float via `powf` (#463) |
 | `hex(n)` / `bin(n)` | ✅ Supported | Compile-time only |
 | `str(n)` | ✅ Supported | Compile-time only |
 | `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
@@ -870,49 +882,65 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
 
 ## What stops each Adafruit CircuitPython library
 
-Measured on 2026-09-14 against an Arduino Uno (atmega328p), with each library's file
+Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's file
 **byte-identical to its repository** and a `main()` written after the library's own example
-that constructs the object and calls its methods. Re-measured the same day after #352, #356,
-#357, #367 and the `Optional` decision. Re-run 2026-09-15 for the beta 1 release prep
-(same harness, pinned to the 0.1.0a10/a9 wheels). Re-measured 2026-09-16 on the 0.1.0b1
-source: five of the twenty now build, and most of the rest stop somewhere later than the
-line they used to.
+that constructs the object and calls its methods. The harness is 37 libraries (the original
+twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Five of the twenty build unmodified**: `adafruit_hcsr04` (3 432 bytes),
-`adafruit_motor`'s servo (1 936 bytes), `adafruit_pcf8574` (1 140 bytes),
-`adafruit_bus_device` (820 bytes; its own example uses a `bytearray([...])` inline
-argument and a generator expression in `join`, which need the supported spellings)
-and `adafruit_mcp3xxx` (3 062 bytes).
-The other fifteen have moved off their annotations and into their own code.
+**Eleven of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+`adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
+`adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
+argument and a generator expression in `join`, which need the supported spellings),
+`adafruit_mcp3xxx` (3 094 bytes), `adafruit_74hc595` (402 bytes),
+`adafruit_ahtx0` (7 108 bytes), `adafruit_mcp9808` (4 646 bytes),
+`adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes), and
+`adafruit_mlx90614` (3 846 bytes).
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
-| `adafruit_bmp280` | `return result` in `_read_register`, `adafruit_bmp280.py:467` | a bytes or list object cannot be returned -- a buffer is element storage under a name, with no handle and no length travelling with it; take the buffer as a parameter and fill it in place (moved off `enumerate(buffer)`, which now resolves the aliased class-attribute array and materializes `bytes([expr])` arguments) |
-| `adafruit_bus_device` | **builds unmodified, 820 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
-| `adafruit_character_lcd` | `self._message` field | inferred numeric at its first store, assigned a string later |
-| `adafruit_debouncer` | `Debouncer(pin)` | a `DigitalInOut` matches no member of `Union[ROValueIO, Callable[[], bool]]` (moved off `OverflowError` in `adafruit_ticks`) |
-| `adafruit_dht` | `from os import uname` | `os` is a Python standard module; there is no operating system or filesystem on the target (moved off `array`, #433) |
+| `adafruit_ahtx0` | **builds unmodified, 7 108 bytes** | |
+| `adafruit_ads1x15` | generator expression (`next(key for key, value in ...)`) | `Expected ')'` |
+| `adafruit_aw9523` | `self._chip_id` in `__init__` | name `adafruit_aw9523_AW9523` is not defined |
+| `adafruit_bme280` | `_bus_implementation.read_register` | call to undefined function |
+| `adafruit_bmp280` | `list(struct.unpack(...))` | `list()` needs a heap; declare a fixed-size array |
+| `adafruit_bus_device` | **builds unmodified, 800 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
+| `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
+| `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
+| `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
+| `adafruit_dps310` | `self._device_id` in `__init__` | name `adafruit_dps310_basic_DPS310` is not defined |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
-| `adafruit_74hc595` | `self._gpio` field | inferred numeric at its first store, assigned another type later (moved off `-> Direction.OUTPUT`) |
-| `adafruit_hcsr04` | **builds unmodified, 3 432 bytes** | |
-| `adafruit_ht16k33` (matrix) | `isinstance()` at `matrix.py:52` | a run-time type test has no question left to answer; branch on a value or write one function per type (moved off the runtime bit index, #352 landed) |
-| `adafruit_ht16k33` (segments) | a call inside a `raise` message | the message is discarded, so the call would never be evaluated |
-| `adafruit_ina219` | `obj: I2CDeviceDriver` read at `i2c_bits.py:89` | a typing-only name is accepted where nothing reads it, refused at the first read (#367); the parameter is used (moved off bare `Tuple`, which a `try`-guarded `from typing import` now keeps) |
-| `adafruit_irremote` | `raise IRDecodeException from err` at `adafruit_irremote.py:270` | `raise ... from ...` is not supported (moved off the `except` binding; the example also needs parseable exception syntax) |
-| `adafruit_mcp3xxx` | **builds unmodified, 3 062 bytes** | (moved off `with ... as`: the bound name now takes `__enter__`'s returned instance class) |
-| `neopixel` | `import adafruit_pixelbuf` | module not found |
-| `adafruit_pcf8574` | **builds unmodified, 1 140 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
-| `adafruit_seesaw` | an f-string in a `raise` message | a raise message must be string literals |
-| `adafruit_motor` (servo) | **builds unmodified, 1 936 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
-| `adafruit_ssd1306` | `import adafruit_framebuf` | module not found |
-| `adafruit_tcs34725` | `pow((int((r / clear) * 256) / 255), 2.5)` at `adafruit_tcs34725.py:154` | `pow()` takes compile-time constant integer arguments; the gamma correction raises a run-time float to 2.5, which would need a float `pow` routine (moved off `r, g, b = self.color_rgb_bytes`: a property read now unpacks a tuple through the getter's inline expansion, and a tuple-returning method is never outlined -- it force-inlines so the caller's targets bind) |
-| `adafruit_veml7700` | `obj: I2CDeviceDriver` read at `i2c_bits.py:89` | same as `adafruit_ina219` |
+| `adafruit_ds3231` | `from time import struct_time` | `pymcu.time` defines the nine-field stub; the CircuitPython overlay's advertised names are still only `monotonic` / `monotonic_ns` / `sleep` |
+| `adafruit_74hc595` | **builds unmodified, 402 bytes** | (moved off `bytearray(self._number_of_shift_registers)` and `DigitalInOut(pin, self)`: a compile-time field is a buffer size, and a class defined in the module shadows the entry file's `from digitalio import DigitalInOut`) |
+| `adafruit_hcsr04` | **builds unmodified, 3 430 bytes** | |
+| `adafruit_ht16k33` (matrix) | `bytearray((self._buffer_size) * len(self.i2c_device))` | could not determine buffer size from initializer |
+| `adafruit_ht16k33` (segments) | `def print(self, value: Union[str, float], ...)` | a union of two REAL types; a call in a raise message is a deferred print (#435) |
+| `adafruit_ina219` | `reg \|= value` in `RWBits.__set__` | name `value` is not defined -- the descriptor rewrite substitutes `obj` (#419) but the setter's `value` is lost after `value <<= self.lowest_bit` |
+| `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
+| `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
+| `adafruit_mcp230xx` | `Pin.high()` runtime bit index | same as `adafruit_character_lcd` |
+| `adafruit_mcp3xxx` | **builds unmodified, 3 094 bytes** | (moved off `with ... as`: the bound name now takes `__enter__`'s returned instance class) |
+| `adafruit_mcp9808` | **builds unmodified, 4 646 bytes** | |
+| `adafruit_mlx90614` | **builds unmodified, 3 846 bytes** | |
+| `neopixel` | `all(... for component in val)` in `adafruit_pixelbuf` | generator expression; `import adafruit_pixelbuf` itself is present |
+| `adafruit_pca9685` | `def _get_buffer(...) -> memoryview` | unknown type `memoryview` |
+| `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
+| `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
+| `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
+| `adafruit_sht31d` | `word[i*2], crc[i*2], ... = struct.unpack(...)` | Expected newline or end of block (multi-target unpack from a call) |
+| `adafruit_sht4x` | `@classmethod` | no runtime class object; write a module-level factory |
+| `adafruit_si7021` | `obj: "adafruit_si7021.SI7021"` | string (forward reference) type annotations are not supported |
+| `adafruit_ssd1306` | `fill = (color >> 16) & 255, ...` in `adafruit_framebuf` | Expected newline or end of block (tuple assignment) |
+| `adafruit_tcs34725` | `return r, g, b, c` | returning multiple values is only supported from an `@inline` function |
+| `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
+| `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
+| `adafruit_veml7700` | `reg \|= value` in `RWBits.__set__` | same as `adafruit_ina219` (#419 moved off `obj`) |
+| `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 
 ### Which of these are limits and which are gaps
 
-**Limits of the no-heap, fixed-width model.** An f-string OR A CALL in a raise message would
-be built and then discarded, because the message never reaches the image. `array` is dynamic
-storage. Each says so in one sentence at the line it is written on.
+**Limits of the no-heap, fixed-width model.** A piece in a raise message whose type has
+no static width is refused by name. `array` is dynamic storage. Each says so in one
+sentence at the line it is written on.
 
 Two entries left this list rather than staying on it. `**kwargs` was read as needing a
 run-time dictionary, which is true of CPython and false here: the callee is specialised per
@@ -922,31 +950,54 @@ which one live exception at a time makes static rather than allocated (#369). Bo
 restrictions of the lowering, not of the model, and all three libraries that stopped on
 `**kwargs` now stop somewhere else entirely.
 
-**Three need a module that does not exist yet**: `adafruit_pixelbuf` for `neopixel`,
-`adafruit_framebuf` for `adafruit_ssd1306`, and `onewireio` for `adafruit_ds18x20`. All three
-report the missing module by name.
+**`adafruit_ssd1306` now reaches `adafruit_framebuf`** (the module is present in the
+harness); it stops on a tuple assignment. `onewireio` is still missing for
+`adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
+a generator expression in `adafruit_pixelbuf`.
 
 **The remaining refusals are scattered, one construct each.** `enumerate()` over a
 buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- the
 aliased class-attribute array resolves to its module-init storage, and a
 `bytes([expr])` argument whose elements are run-time materializes a hidden buffer.
-`adafruit_bmp280` moved on to returning a bytearray (`_read_register`'s `return
-result`), and `adafruit_tcs34725` past tuple unpacking (`r, g, b = self.color_rgb_bytes`
-binds through the getter's inline expansion) to a run-time `pow` for gamma
-correction.
-A field whose type is pinned by its first store and then contradicted
-stops `adafruit_74hc595` (`_gpio`) and `adafruit_character_lcd` (`_message`). A `try`-guarded
+A filled `bytearray` return is expanded at the call site (#464), so `adafruit_bmp280`
+moved off `_read_register`; its simpletest now stops on `list(struct.unpack(...))`.
+A runtime float `pow(x, 2.5)` lowers to `powf` (#463), so `adafruit_tcs34725` moved
+off that; `color_raw` returning `r, g, b, c` from a non-`@inline` method is next.
+A `Protocol` member of a constructor `Union` is structural (#465), so
+`adafruit_debouncer` moved off the annotation; this simpletest's `Debouncer(pin)`
+still refuses the `DigitalInOut` as matching none of the members.
+A field whose first store is a string literal or `bytearray(...)` is that
+kind, so `adafruit_character_lcd` (`_message`) and `adafruit_74hc595` (`_gpio`)
+move off the numeric-vs-str / numeric-vs-buffer contradiction.
+`pin.direction = Direction.OUTPUT` through a for-unrolled instance is the
+`@property` setter, so `adafruit_character_lcd` moves off that assignment.
+`bytearray(self._number_of_shift_registers)` after the field holds a
+compile-time integer is a fixed buffer, and `DigitalInOut(pin, self)`
+inside that module is the file's own two-argument class even when the
+entry file imported `digitalio.DigitalInOut`, so `adafruit_74hc595`
+builds unmodified. `__init__` is expanded at each construction, so an MCP
+`get_pin()` passed into `Character_LCD.__init__` keeps the expander class
+instead of the `digitalio.DigitalInOut` annotation. A `try`-guarded
 `from typing import Tuple` that shares its `try` with a failing sibling import used to lose
 the resolved names entirely; with the fold fixed, `adafruit_ina219` and `adafruit_veml7700`
-move inside `adafruit_register` to the `I2CDeviceDriver` typing-only parameter their bodies
-read. `raise ... from ...` stops
-`adafruit_irremote`, `isinstance()` stops the `adafruit_ht16k33` matrix, a `Union`
-argument that matches no member stops `adafruit_debouncer`, and `import os` stops
-`adafruit_dht`.
+move inside `adafruit_register` to `RWBits.__get__`/`__set__`, where `obj` is the owning
+instance even though it is annotated `I2CDeviceDriver` (#419); `value` after
+`value <<= self.lowest_bit` is the next stop. `raise ... from ...`
+(#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
+`namedtuple` is a compile-time ZCA class factory, so it moves off
+`from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
+folds from the argument's shape (#423), so `adafruit_ht16k33` matrix moves off that onto
+`bytearray((self._buffer_size) * len(self.i2c_device))`. `os.uname()`
+is a compile-time view of `__CHIP__` (#466), so `adafruit_dht` moves off `from os import
+uname` onto `Union[int, float, None]` on `temperature`. `time.struct_time` is a
+nine-field stub, so the RTC drivers move off that import.
+
+**Five more I2C sensors build unmodified** on the expanded list: `adafruit_ahtx0`,
+`adafruit_mcp9808`, `adafruit_lis3dh`, `adafruit_tsl2591`, `adafruit_mlx90614`.
 
 **A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
 `X | None` and `Union[X, None]` are read as `X`: see "None is a compile-time value" above.
-That moved nine of the twenty off the annotation they used to stop on, and cost nothing (the
+That moved nine of the original twenty off the annotation they used to stop on, and cost nothing (the
 321-fixture corpus is byte-identical).
 
 **What moved on 2026-09-14.** `WriteableBuffer` and `ReadableBuffer` are read as the byte
@@ -964,6 +1015,6 @@ a subscript: the pair becomes one tuple before `__getitem__` sees it. Whether th
 should bind that pair at compile time, so the `x, y = key` upstream writes unpacks the way
 `a, b = f()` already does, is open.
 
-Every one of the twenty now names its construct at the line it is written on. None is reported
+Every one of the thirty-seven now names its construct at the line it is written on. None is reported
 as a missing bracket, and none names anything internal to the compiler. That is the property to
 check when one of these messages changes.

@@ -66,6 +66,77 @@ purpose, as opposed to bugs like these three that were silent until found.
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
 
 ### Language surface
+- Rebinding an imported module name to an instance shadows the alias for every
+  access kind, matching CPython. `from adafruit_motor import servo` then
+  `servo = servo.Servo(pwm)` then `print(servo.fraction)` used to refuse the
+  read as `Unknown module member: adafruit_motor_servo_fraction`; writes
+  already saw the instance (#467).
+- An unannotated field whose first store is a string literal or `bytearray(...)` /
+  `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter is
+  the same field (adafruit_character_lcd); `self._gpio = bytearray(n)` then a buffer
+  setter is the same field (adafruit_74hc595). An int store then a str store is still
+  refused.
+- `for p in (a, b)` over already-constructed instances unrolls the same way
+  `for p in self._pins` does. `pin.direction = OUTPUT` through that loop
+  variable is the `@property` setter, not an assignment to a method.
+  Last construct unmodified `adafruit_character_lcd` stopped on.
+- `bytearray(self._n)` after `self._n` holds a compile-time integer is a
+  fixed buffer of that size (`self._gpio = bytearray(self._number_of_shift_registers)`).
+- A constructor is not a shared subroutine. Explicit `@outline` on `__init__`
+  was already ignored; an undecorated large `__init__` used to outline anyway,
+  so a class-typed parameter took its annotation (`digitalio.DigitalInOut`)
+  instead of the argument (`adafruit_mcp230xx.DigitalInOut`). `pin.high()`
+  then became HAL gpio with a runtime bit index. Last construct unmodified
+  `adafruit_character_lcd` (I2C backpack) and `adafruit_mcp230xx` stopped on.
+- `from time import struct_time` resolves to a stdlib stub with the nine
+  CPython field names. Adafruit RTC drivers import it in a try used only for
+  typing; `pymcu.time` exists, so that try does not raise `ImportError`.
+  Construction from a 9-tuple (`struct_time((y, m, d, ...))`) is not this stub.
+
+- `from collections import namedtuple` / `collections.namedtuple(...)` is a compile-time
+  class factory. A module-level `Name = namedtuple("Name", ("a", "b"))` becomes a ZCA
+  class with those fields, `__len__` and `__match_args__`. The bound name
+  is the class, not the typename string -- adafruit_irremote's
+  `UnparseableIRMessage = namedtuple("IRMessage", ...)` constructs `UnparseableIRMessage`.
+  Last construct unmodified `adafruit_irremote` stopped on.
+- Descriptor protocol `__get__`/`__set__` receive `obj` as the owning instance, even
+  when the parameter is annotated with a typing-only placeholder (`I2CDeviceDriver`).
+  The methods are expanded at the call site so the argument's class substitutes (#419).
+  Last construct unmodified `adafruit_register` `RWBits` stopped on, which is what
+  `adafruit_ina219` and `adafruit_veml7700` reach.
+- `import os` / `from os import uname` resolve to a stdlib stub. `uname()` is a
+  compile-time five-field record of `__CHIP__` (sysname `"PyMCU"`, machine the chip
+  name, with an `RP2040`/`RP2350` token on those parts). `"Linux" not in uname()`
+  and `"RP2350" in uname().machine` fold. `listdir` / `getenv` stay undefined --
+  there is still no filesystem (#466). Last construct unmodified `adafruit_dht`
+  stopped on.
+- A non-literal raise message (f-string, concatenation, call) compiles as a deferred
+  print: runtime pieces are stored at the raise, and `print(e)` / `str(e)` / `e.args[0]`
+  replay them (#435). A program that never binds `as e` is unchanged to the byte.
+- `isinstance(x, (tuple, list))` folds from the receiver's known shape: a compile-time
+  sequence is true, a scalar is false (#423). Last construct unmodified
+  `adafruit_ht16k33` matrix stopped on.
+- A function that fills a `bytearray` and returns it is expanded at the call site:
+  the buffer is laid out in the caller's frame and the assignment aliases it (#464).
+  Last construct unmodified `adafruit_bmp280` stopped on.
+- A `Protocol` named in a `Union` on an `@inline`/constructor parameter is structural.
+  `DigitalInOut` is not named `ROValueIO`, but it has the `.value` property the protocol
+  asks for, and CPython accepts the call; the call site now does too (#465). Last
+  construct unmodified `adafruit_debouncer` stopped on.
+- `pow(x, 2.5)` with a runtime float base lowers to IEEE-754 single `powf`. Integer exponents
+  still unroll to multiply. This is the last construct unmodified `adafruit_tcs34725` stopped
+  on (#463).
+- `raise X(...) from Y` is accepted in both front ends and compiled as `raise X(...)`. There
+  is no traceback and no `__cause__` on this target, so the clause is discarded after it is
+  parsed -- the same treatment a non-call raise message already gets. `e.__cause__` and
+  `e.__context__` on a bound exception are refused by name (#434). This is the construct
+  `adafruit_irremote`, `adafruit_pixelbuf` and `adafruit_mcp230xx` stop on.
+- `from typing_extensions import Protocol` is a no-op, the same way `from typing import
+  Protocol` already is (#444). `typing_extensions` is resolved by the type system, never
+  loaded as a file (#462). `circuitpython_typing.device_drivers` opens with that import,
+  unguarded, and three Adafruit libraries stopped there.
+- `from __future__ import annotations` is a no-op (#452). `__future__` is a compiler pragma
+  that enables nothing PyMCU does not already do; it is skipped like `typing`.
 - `m[x, y]` is refused by one sentence naming the construct, at the first index, on both front
   ends. It was `Expected "]"` from one and, from the other, the generic tuple refusal, whose
   advice to build a fixed list for indexable storage is not what a reader indexing a matrix is
