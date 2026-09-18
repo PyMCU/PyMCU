@@ -425,6 +425,30 @@ public partial class IRGenerator
             }
 
             if (string.IsNullOrEmpty(innerName) || innerInit == null) continue;
+
+            // A class-level dict is a compile-time lookup table, the same as a module-level
+            // one. ScanGlobals registers those; the class body went through EvaluateConstantExpr,
+            // which cannot fold a dict, and `self.gain_values[gain]` then fell through to a
+            // register bit index -- "Bit index must be constant for reading" on a program with
+            // no register in it. Adafruit VEML7700's gain_values / integration_time_values
+            // are this shape. Fold class-constant keys here, while currentModulePrefix still
+            // names the class, so ALS_GAIN_2 is in globals.
+            if (innerInit is DictExpr dictInit)
+            {
+                dictLiteralBindings[currentModulePrefix + innerName] =
+                    FoldDictConstEntries(dictInit);
+                mutableGlobals[currentModulePrefix + innerName] =
+                    DataTypeExtensions.StringToDataType(innerType);
+                continue;
+            }
+            if (innerInit is SetExpr setInit)
+            {
+                setLiteralBindings[currentModulePrefix + innerName] = setInit;
+                mutableGlobals[currentModulePrefix + innerName] =
+                    DataTypeExtensions.StringToDataType(innerType);
+                continue;
+            }
+
             try
             {
                 var val = EvaluateConstantExpr(innerInit);
@@ -472,6 +496,33 @@ public partial class IRGenerator
             ScanClassBodyAttributes(ast, className + "_" + deeper.Name, deeperBlock,
                                     deeper.Bases.Contains("Enum") || deeper.Bases.Contains("IntEnum"));
             currentModulePrefix = savedPrefix;
+        }
+    }
+
+    /// <summary>
+    /// Class-constant names in a class-body dict (<c>ALS_GAIN_2: 2</c>) resolve while the
+    /// scan still has that class's prefix. Later, from an inlined method of an imported
+    /// class, the bare name is not in scope.
+    /// </summary>
+    private DictExpr FoldDictConstEntries(DictExpr d)
+    {
+        var folded = new List<(Expression, Expression)>(d.Entries.Count);
+        foreach (var (k, v) in d.Entries)
+            folded.Add((FoldDictEntryExpr(k), FoldDictEntryExpr(v)));
+        return new DictExpr(folded) { Line = d.Line, Column = d.Column, Length = d.Length };
+    }
+
+    private Expression FoldDictEntryExpr(Expression e)
+    {
+        if (e is IntegerLiteral or FloatLiteral or StringLiteral or BooleanLiteral) return e;
+        try
+        {
+            int n = EvaluateConstantExpr(e);
+            return new IntegerLiteral(n) { Line = e.Line, Column = e.Column, Length = e.Length };
+        }
+        catch
+        {
+            return e;
         }
     }
 

@@ -169,8 +169,37 @@ public partial class IRGenerator
     {
         if (e is VariableExpr ve && TryGetDictBinding(ve.Name, out dict!)) return true;
         dict = null!;
-        if (e is not MemberAccessExpr) return false;
-        return SequenceKeyOf(e) is { } key && dictLiteralBindings.TryGetValue(key, out dict!);
+        if (e is not MemberAccessExpr mae) return false;
+        if (SequenceKeyOf(e) is { } key && dictLiteralBindings.TryGetValue(key, out dict!))
+            return true;
+        // A class-level dict (`gain_values = {ALS_GAIN_2: 2, ...}`) is filed under the
+        // class prefix, not the instance-flattened SequenceKeyOf. `self.gain_values[k]`
+        // has to find it the same way a descriptor finds a class attribute.
+        if (mae.Object is VariableExpr ov)
+        {
+            string? baseName = ReceiverNameForLookup(ov) ?? ResolveNameKey(ov.Name);
+            if (TryFindClassAttribute(baseName, mae.Member, out _, out var fullName)
+                && dictLiteralBindings.TryGetValue(fullName, out dict!))
+                return true;
+            if (ReceiverClassThroughAliases(baseName ?? ov.Name) is { } cls)
+            {
+                string? cur = cls;
+                for (int depth = 0; cur != null && depth < 20; depth++)
+                {
+                    foreach (var cand in new[]
+                    {
+                        classModuleMap.TryGetValue(cur, out var pfx) ? pfx + cur + "_" + mae.Member : null,
+                        cur + "_" + mae.Member,
+                    })
+                    {
+                        if (cand != null && dictLiteralBindings.TryGetValue(cand, out dict!))
+                            return true;
+                    }
+                    cur = BaseClassOf(cur);
+                }
+            }
+        }
+        return false;
     }
 
     /// <summary>The set literal an expression denotes, by name or through a field.</summary>

@@ -1902,15 +1902,15 @@ public partial class IRGenerator
     // a runtime one.
     private Val EmitDictLookup(Frontend.DictExpr d, Expression keyExpr, Expression? defaultExpr = null)
     {
-        var entries = new List<(int Key, int Value, bool StrKey, string? Text)>();
+        var entries = new List<(int Key, Val Value, bool StrKey, string? Text)>();
         foreach (var (kE, vE) in d.Entries)
         {
             Val kV = VisitExpression(kE);
             Val vV = VisitExpression(vE);
-            if (kV is not Constant kc || vV is not Constant vc)
+            if (kV is not Constant kc || (vV is not Constant && vV is not FloatConstant))
                 throw UserError("dict literals are compile-time lookup tables: every key and " +
                                 "value must be a compile-time constant", d);
-            entries.Add((kc.Value, vc.Value, kE is StringLiteral, kc.Text));
+            entries.Add((kc.Value, vV, kE is StringLiteral, kc.Text));
         }
 
         Val keyVal = VisitExpression(keyExpr);
@@ -1931,7 +1931,7 @@ public partial class IRGenerator
                 bool hit = e.Text != null && keyC.Text != null
                     ? e.Text == keyC.Text
                     : e.Key == keyC.Value;
-                if (hit) return new Constant(e.Value);
+                if (hit) return e.Value;
             }
 
             if (defaultExpr != null) return VisitExpression(defaultExpr);
@@ -1966,11 +1966,20 @@ public partial class IRGenerator
         if (entries.Count == 0)
             throw UserError("KeyError: lookup on an empty dict literal", d);
 
-        // Result width from the value range.
-        int min = entries.Min(e => e.Value), max = entries.Max(e => e.Value);
-        DataType rt = min < 0
-            ? (min >= short.MinValue && max <= short.MaxValue ? DataType.INT16 : DataType.INT32)
-            : (max <= 0xFF ? DataType.UINT8 : max <= 0xFFFF ? DataType.UINT16 : DataType.UINT32);
+        // Result width from the value range. A float value (VEML7700's 0.25 / 0.125
+        // gains) makes the whole lookup a float; mixed int/float is that too.
+        bool anyFloat = entries.Any(e => e.Value is FloatConstant);
+        DataType rt;
+        if (anyFloat)
+            rt = DataType.FLOAT;
+        else
+        {
+            int min = entries.Min(e => ((Constant)e.Value).Value);
+            int max = entries.Max(e => ((Constant)e.Value).Value);
+            rt = min < 0
+                ? (min >= short.MinValue && max <= short.MaxValue ? DataType.INT16 : DataType.INT32)
+                : (max <= 0xFF ? DataType.UINT8 : max <= 0xFFFF ? DataType.UINT16 : DataType.UINT32);
+        }
 
         Temporary result = MakeTemp(rt);
         string endL = MakeLabel();
@@ -1978,7 +1987,10 @@ public partial class IRGenerator
         {
             string next = MakeLabel();
             Emit(new JumpIfNotEqual(keyVal, new Constant(e.Key), next));
-            Emit(new Copy(new Constant(e.Value), result));
+            Val stored = anyFloat && e.Value is Constant ic
+                ? new FloatConstant(ic.Value)
+                : e.Value;
+            Emit(new Copy(stored, result));
             Emit(new Jump(endL));
             Emit(new Label(next));
         }
@@ -3109,6 +3121,8 @@ public partial class IRGenerator
                 if (key == null) continue;
                 if (globals.ContainsKey(key) || mutableGlobals.ContainsKey(key)
                     || instanceClasses.ContainsKey(key)
+                    || dictLiteralBindings.ContainsKey(key)
+                    || setLiteralBindings.ContainsKey(key)
                     || globals.Keys.Any(k => k.StartsWith(key + "_", StringComparison.Ordinal)))
                 {
                     declaringClass = cur;
