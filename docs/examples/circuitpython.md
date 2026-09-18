@@ -303,3 +303,43 @@ GND        ←→  potentiometer end
 
 **Note:** `pot.value` returns a 16-bit scaled value. `PWMOut` maps this directly
 to the 8-bit hardware compare register — no floating-point math is generated.
+
+---
+
+(cp-ssd1306)=
+## SSD1306 OLED (Adafruit driver)
+
+The unmodified Adafruit CircuitPython simpletest for a 128×64 I2C module.
+Same wiring as the native {ref}`hal-ssd1306` driver; this path uses
+`adafruit_ssd1306` + `adafruit_framebuf` so the firmware you flash is the
+library you would run on a CircuitPython board.
+
+```python
+import board
+import adafruit_ssd1306
+
+i2c = board.I2C()
+# 128x64 is the common 0.96" module. Change height to 32 for the
+# Adafruit FeatherWing / PiOLED. Some boards sit at 0x3D:
+#   display = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c, addr=0x3D)
+display = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
+display.fill(0)
+display.pixel(0, 0, 1)
+display.pixel(127, 63, 1)
+
+def main():
+    display.show()
+```
+
+**Wiring (Arduino Uno):**
+
+```
+SDA  ←→  A4 (PC4)   — 4.7 kΩ pull-up to 3.3V
+SCL  ←→  A5 (PC5)   — 4.7 kΩ pull-up to 3.3V
+VCC  ←→  3.3V        (most SSD1306 modules are 3.3V)
+GND  ←→  GND
+```
+
+Build with `stdlib = ["circuitpython"]` and the Adafruit library files on
+`sys.path` the same way the other CircuitPython examples do. A 128x32 panel
+is the same class: pass `32` as the height.

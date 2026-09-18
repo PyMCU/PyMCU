@@ -50,6 +50,7 @@ firmware that should remain runnable on a real CircuitPython board.
 | {ref}`cp-morse-blinker` | `digitalio`, `time`, `@inline` |
 | {ref}`cp-traffic-light` | `digitalio`, `time`, state machine |
 | {ref}`cp-adc-pwm` | `analogio.AnalogIn`, `pwmio.PWMOut` |
+| {ref}`cp-ssd1306` | `adafruit_ssd1306.SSD1306_I2C`, 128×64 OLED |
 
 ---
 

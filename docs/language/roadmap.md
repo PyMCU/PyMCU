@@ -25,7 +25,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Module-level `main()` (bare, or under `if __name__ == "__main__":`) | Says where the entry point's body runs: what is written after the call runs after the body. A second call, and an early `return` with module-level code after the call, are refused |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter`; a class attribute whose class defines `__get__`/`__set__` is a descriptor, and `obj` is the owning instance even when annotated with a typing-only name (#360, #419); `type(inst)` in that rewrite is the source class name, including for an imported class; `value: Any` on `__set__` is the written value, not a missing width; `value <<= n` keeps `value` so a later read of it is the shifted bits |
 | Nested `class` | Constructible, and its constants readable through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the declaring module (`busio.UART.Parity.ODD`) |
-| Single-level class inheritance | ZCA base + derived; `super()` calls |
+| Single-level class inheritance | ZCA base + derived; `super()` calls. `class C(mod.Base)` after `import pkg as mod` resolves `mod.Base` to the defining module, so `super().__init__` expands the imported constructor (adafruit_ssd1306 / `framebuf.FrameBuffer`) |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
@@ -78,6 +78,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` fill that class; `return cls()` constructs it (adafruit_sht4x / tmp117 `CV.add_values`) |
 | `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
 | `self.buf[a:b]` | A field bytearray slices the same way a named `buf[a:b]` does. `temp_data = self._buffer[0:2]` (adafruit_sht4x) |
+| `class C(mod.Base)` + `super()` | An imported dotted base unwraps the module alias. `import adafruit_framebuf as framebuf` then `class _SSD1306(framebuf.FrameBuffer)` expands `super().__init__` (adafruit_ssd1306) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (adafruit_74hc595's `self._gpio = bytearray(self._number_of_shift_registers)`) |
