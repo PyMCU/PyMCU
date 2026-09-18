@@ -36,31 +36,6 @@ public class Parser
         "a raise message must be one or more adjacent string literals, or the name of a " +
         "module-level string constant";
 
-    /// The refusal for a CALL in the raise-message position (#262).
-    ///
-    /// It says why rather than that it is unsupported, because the code is fine and the
-    /// message is what is not carried: PyMCU discards the raise message (a one-character and
-    /// a forty-four-character message build byte-identical firmware, and only the type name
-    /// reaches the image), so the call would never be evaluated. "Unsupported" sends someone
-    /// hunting for a workaround; this tells them to move the call out or drop it.
-    ///
-    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py, s_raise).
-    /// Change one and change the other, or the parity test in
-    /// tests/driver/test_frontend_diagnostic_parity.py fails, which is what it is for.
-    private const string RaiseMessageCallRefusal =
-        "a call in a raise message is not supported: PyMCU discards the message, so the call " +
-        "would never be evaluated. Move it out of the raise, or drop it";
-
-    /// The refusal for `raise X() from e`.
-    ///
-    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py, s_raise).
-    /// Change one, change both.
-    private const string RaiseCauseRefusal =
-        "'raise ... from ...' is not supported. PyMCU has no traceback for a cause to attach " +
-        "to, and the expression after 'from' would be evaluated and then discarded. Write " +
-        "'raise <Type>(...)' on its own, and report what you know at the raise site";
-
-
     private const string UnionAnnotationRefusal =
         "a union type annotation is not supported. PyMCU needs one concrete type, because the " +
         "storage for a value is decided at compile time and two types do not share a size";
@@ -1215,32 +1190,6 @@ public class Parser
         return new ReturnStmt(value) { Line = line };
     }
 
-    /// Does this expression contain a call anywhere?
-    ///
-    /// Used only for the raise-message position (#262), where a call is refused because the
-    /// message is discarded and the call would therefore never run. It looks THROUGH the
-    /// composite forms an f-string message actually reaches -- interpolations, member access,
-    /// operands, subscripts -- rather than only at the top node, because
-    /// `f"...{list(x.keys())}"` hides its calls one level down and is exactly the shape that
-    /// would otherwise be silently dropped.
-    ///
-    /// Unknown node types answer false: the fallback has to be "accept" so that a form nobody
-    /// listed here is discarded like the rest, not refused by omission.
-    private static bool ContainsCall(Expression? e) => e switch
-    {
-        null => false,
-        CallExpr => true,
-        FStringExpr f => f.Parts.Any(p => ContainsCall(p.Expr)),
-        MemberAccessExpr m => ContainsCall(m.Object),
-        BinaryExpr b => ContainsCall(b.Left) || ContainsCall(b.Right),
-        UnaryExpr u => ContainsCall(u.Operand),
-        TernaryExpr t => ContainsCall(t.Condition) || ContainsCall(t.TrueVal) || ContainsCall(t.FalseVal),
-        IndexExpr i => ContainsCall(i.Target) || ContainsCall(i.Index),
-        TupleExpr tu => tu.Elements.Any(ContainsCall),
-        ListExpr l => l.Elements.Any(ContainsCall),
-        _ => false,
-    };
-
     private Statement ParseRaiseStatement()
     {
         int line = Peek().Line;
@@ -1250,6 +1199,7 @@ public class Parser
         string errorType = "";
         string message = "";
         string? messageName = null;
+        Expression? messageExpr = null;
         if (Check(TokenType.Identifier))
         {
             errorType = Advance().Value;
@@ -1278,78 +1228,40 @@ public class Parser
                     while (Check(TokenType.Newline)) Advance();
                 }
 
-                // Anything else in the message position is ACCEPTED AND DISCARDED (#262).
-                //
-                // The message never reaches the firmware: a one-character message and a
-                // forty-four-character one build byte-identical output, and the text is absent
-                // from the emitted assembly -- only the type name is. So there was nothing to
-                // store and nothing to lay out; the old refusal was a syntactic whitelist, not
-                // a constraint. `"a" + "b"` being refused while `"a" "b"` was accepted is what
-                // gave it away.
-                //
-                // A CALL stays refused, and not for a parsing reason: discarding the argument
-                // means the call would never run, silently, which CPython would have evaluated
-                // when the raise fired. A refusal someone can read beats a divergence nobody
-                // reports.
+                // A non-literal message -- f-string, concatenation, call -- is carried as
+                // MessageExpr and lowered as a deferred print when some handler binds a name
+                // (#435 / RFC 0005). When no handler reads the message, the expression is
+                // still parsed (a syntax error still surfaces) and then dropped, the same
+                // zero-cost gate a program without `as e` already has for a literal (#369).
                 if (!Check(TokenType.RParen))
                 {
                     pos = messageStartPos;
                     message = "";
                     messageName = null;
-                    // Taken BEFORE parsing: ArgumentEndToken scans forward from the cursor to
-                    // the closing `)`, so it only answers while the cursor still sits at the
-                    // start of the argument. Computing it afterwards underlined one character
-                    // too many, which the parity test caught as 9 against the bridge's 8.
-                    Token messageEnd = ArgumentEndToken();
-                    Expression discarded = ParseExpression();
+                    messageExpr = ParseExpression();
                     while (Check(TokenType.Newline)) Advance();
-                    if (ContainsCall(discarded))
-                        ErrorSpanning(messageStart, messageEnd, RaiseMessageCallRefusal);
                 }
 
                 // Blame the ARGUMENT, not the token the parser happened to stop on.
-                //
-                // This used to be a bare Consume, so the column was wherever the cursor sat
-                // when `)` did not appear. Measured over nine spellings, that lands on the `+`
-                // for `"a" + x` -- which reads as deliberate -- and on the `.` of `__CHIP__.name`
-                // and the `(` of `helper()`, which do not. It was never a decision about what to
-                // blame; it was where parsing gave up.
-                //
-                // The whole argument is the honest answer for all nine, and it is also the one
-                // the CPython bridge can reproduce exactly: an argument node carries col_offset
-                // and end_col_offset, while the position of a `+` or a `.` is not in the AST at
-                // all. Matching the old behaviour would have meant four special cases scanning
-                // the source to rediscover punctuation, to reproduce something nobody chose.
                 if (!Check(TokenType.RParen))
                     ErrorSpanning(messageStart, ArgumentEndToken(), RaiseMessageRefusal);
                 Consume(TokenType.RParen, RaiseMessageRefusal);
             }
         }
 
-        // `raise X() from e` (#277). Refused for the SAME reason a call in the message is:
-        // CPython evaluates the cause when the raise fires, and PyMCU has no traceback to
-        // attach it to, so accepting it would discard an evaluation silently. That is the
-        // decision already made one block up for the message argument.
-        //
-        // It used to reach ConsumeStatementEnd, which reported "Expected newline or end of
-        // block" -- the punctuation the parser wanted, not the construct it met. Worse, the
-        // CPython bridge never read `node.cause` at all, so the same program was refused here
-        // and BUILT there, with the expression after `from` never name-resolved: an undefined
-        // name in that slot was swallowed whole.
-        //
-        // The whole cause expression is underlined, not the `from` keyword, because that is
-        // the span the bridge can reproduce: an AST node carries col_offset and
-        // end_col_offset, while the position of a keyword is not in the CPython AST at all.
+        // `raise X() from e` (#434, reversing the refusal half of #277). Parsed and
+        // discarded: there is no traceback and no `__cause__` on this target, so the
+        // clause is indistinguishable from `raise X()` once compiled. A syntax error
+        // inside Y is still caught; the expression is never name-resolved, the same
+        // treatment a non-call raise MESSAGE already gets (#262).
         if (Check(TokenType.From))
         {
             Advance();
-            Token causeStart = Peek();
             ParseExpression();
-            ErrorSpanning(causeStart, tokens[pos - 1], RaiseCauseRefusal);
         }
 
         ConsumeStatementEnd();
-        return Located(new RaiseStmt(errorType, message, messageName) { Line = line }, raiseKeyword);
+        return Located(new RaiseStmt(errorType, message, messageName, messageExpr) { Line = line }, raiseKeyword);
     }
 
     private Statement ParseTryStatement()

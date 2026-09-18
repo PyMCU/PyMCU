@@ -881,71 +881,38 @@ def s_with(node):
 
 
 def s_raise(node):
-    # `raise X() from e` (#277). FIRST, before the early returns below: `raise X from e` and
-    # `raise X() from e` take different branches, and a bare `raise` returns immediately, so
-    # a check placed later would cover only one of the three shapes.
-    #
-    # This front end used to ignore `node.cause` entirely. The clause was not lowered, it was
-    # never even read, so the expression after `from` was never name-resolved and an undefined
-    # name in that slot BUILT CLEAN -- while the hand-written parser refused the same program.
-    # Refused rather than discarded for the reason the message argument already is: CPython
-    # evaluates the cause when the raise fires.
-    #
-    # Text is word for word Parser.cs's RaiseCauseRefusal. Change one, change both. Positioned
-    # on the cause NODE so both front ends underline the same span.
-    if node.cause is not None:
-        raise Unsupported(
-            "'raise ... from ...' is not supported. PyMCU has no traceback for a cause to "
-            "attach to, and the expression after 'from' would be evaluated and then "
-            "discarded. Write 'raise <Type>(...)' on its own, and report what you know at "
-            "the raise site", node.cause)
+    # `raise X() from e` (#434, reversing the refusal half of #277). The cause is parsed
+    # by CPython -- a syntax error in it still surfaces -- and never translated: there is
+    # no traceback to attach it to, so the compiled form is `raise X(...)`. Read here so
+    # the node is not silently dropped unseen; then discarded, matching the C# parser.
+    _ = node.cause
 
-    # PyMCU records the exception NAME and a literal message, not an expression.
+    # PyMCU records the exception NAME and either a literal message or the expression
+    # a deferred print will replay (#435).
     if node.exc is None:
-        return {"k": "Raise", "errorType": "", "message": "", "messageName": None}
+        return {"k": "Raise", "errorType": "", "message": "", "messageName": None,
+                "messageExpr": None}
 
     exc = node.exc
     if isinstance(exc, ast.Name):
-        return {"k": "Raise", "errorType": exc.id, "message": "", "messageName": None}
+        return {"k": "Raise", "errorType": exc.id, "message": "", "messageName": None,
+                "messageExpr": None}
     if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-        message, message_name = "", None
+        message, message_name, message_expr = "", None, None
         if exc.args:
             arg = exc.args[0]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 message = arg.value
             elif isinstance(arg, ast.Name):
                 message_name = arg.id
-            elif not any(isinstance(s, ast.Call) for s in ast.walk(arg)):
-                # ACCEPTED AND DISCARDED (#262). The message never reaches the firmware --
-                # a one-character and a forty-four-character message build byte-identical
-                # output, and the text is absent from the emitted assembly, only the type
-                # name is. There was nothing to store, so the old refusal was a syntactic
-                # whitelist rather than a constraint: `"a" + "b"` was refused while
-                # `"a" "b"` was accepted.
-                pass
             else:
-                # The ARGUMENT, not the Raise statement. Passing `node` here put every one of
-                # these at the `raise` keyword, nine spellings deep, while the hand-written
-                # parser pointed somewhere inside the argument (#236).
-                #
-                # Both now underline the whole argument, which is the one answer that is true
-                # for all nine and the only one both front ends can reach: an argument node
-                # carries col_offset and end_col_offset, whereas the position of the `+` in
-                # `"a" + x` is not in the CPython AST at all.
-                #
-                # A CALL is what is left, and it stays refused for a reason that is not about
-                # parsing: discarding the argument means the call would never run, silently,
-                # where CPython evaluates it when the raise fires. A refusal someone can read
-                # beats a divergence nobody reports.
-                #
-                # Text is word for word Parser.cs's RaiseMessageCallRefusal. Change one,
-                # change both.
-                raise Unsupported(
-                    "a call in a raise message is not supported: PyMCU discards the message, "
-                    "so the call would never be evaluated. Move it out of the raise, or drop "
-                    "it", arg)
+                # Non-literal message: f-string, concatenation, call. Carried and lowered
+                # as a deferred print when some handler binds a name (#435). A program
+                # that never reads the message drops it, the same gate a literal already
+                # has (#369).
+                message_expr = expr(arg)
         return {"k": "Raise", "errorType": exc.func.id, "message": message,
-                "messageName": message_name}
+                "messageName": message_name, "messageExpr": message_expr}
     raise Unsupported("that raise form", node)
 
 

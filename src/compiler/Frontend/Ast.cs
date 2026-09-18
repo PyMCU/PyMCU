@@ -604,12 +604,17 @@ public class RaiseStmt : Statement
     public string ErrorType { get; }
     public string Message { get; }
     public string? MessageName { get; }
+    /// A non-literal message (f-string, concatenation, call) carried for deferred print (#435).
+    /// Null when the message is a string literal, a module-level string name, or absent.
+    public Expression? MessageExpr { get; }
 
-    public RaiseStmt(string errorType, string message, string? messageName = null)
+    public RaiseStmt(string errorType, string message, string? messageName = null,
+                     Expression? messageExpr = null)
     {
         ErrorType = errorType;
         Message = message;
         MessageName = messageName;
+        MessageExpr = messageExpr;
     }
 }
 

@@ -141,16 +141,6 @@ def _program(tmp_path: Path, source: str) -> Path:
     'from pymcu.types import uint8\ndef f(a: uint8 | bool) -> None:\n    pass\ndef main() -> None:\n    f(1)\n',
     'from pymcu.types import uint8\ndef f() -> uint8 | bool:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
     'from pymcu.types import uint8\nclass C:\n    def __init__(self) -> None:\n        self.x: uint8[2] | bool = [1, 2]\ndef main() -> None:\n    c = C()\n',
-    # A CALL in the raise message (#236 for the location, #262 for the refusal). Nine
-    # spellings diverged: the hand-written parser reported wherever its cursor stopped looking
-    # for `)` and the bridge reported the `raise` keyword. Both now mark the whole argument.
-    #
-    # Only the call shapes remain here. Since #262 the other messages -- f-strings, member
-    # access, concatenation -- are ACCEPTED and discarded, so they produce no diagnostic to
-    # locate and moved to test_a_discarded_raise_message_compiles below. A call still refuses,
-    # because discarding it would mean it never runs.
-    'def main() -> None:\n    raise ValueError("a " + "b" + str(1))\n',
-    'def helper() -> str:\n    return "h"\ndef main() -> None:\n    raise ValueError(helper())\n',
     # Unary: the operator, not the operand it applies to.
     "from pymcu.types import uint8\ndef main() -> None:\n    a: uint8 = 2\n    b: uint8 = a ** -1\n",
     # ListComp: the opening bracket, not the comprehension.
@@ -656,16 +646,14 @@ def test_both_front_ends_reach_the_same_verdict(tmp_path, annotation):
 # must compile on both, and the two that stay refused must refuse on both.
 
 @pytest.mark.parametrize("body,accepted", [
-    # #262 -- a raise message that is not a literal. The message is discarded (a one-character
-    # and a forty-four-character message build byte-identical firmware), so there is nothing
-    # to store and these are accepted.
+    # #262 / #435 -- a raise message that is not a literal. An f-string, concatenation, or
+    # call is accepted; when no handler binds a name the pieces are dropped, and when one
+    # does they lower as a deferred print.
     ('    raise ValueError(f"bad {1}")\n', True),
     ('    raise ValueError("a " + "b")\n', True),
     ('    raise ValueError("a "\n                     + "b")\n', True),
-    # A CALL stays refused: discarding the argument would mean it never runs, silently,
-    # where CPython evaluates it when the raise fires.
-    ('    raise ValueError(str(1))\n', False),
-    ('    raise ValueError(f"bad {str(1)}")\n', False),
+    ('    raise ValueError(str(1))\n', True),
+    ('    raise ValueError(f"bad {str(1)}")\n', True),
 ])
 def test_raise_message_verdict_agrees(tmp_path, body, accepted):
     src = _program(tmp_path, "from pymcu.types import uint8\ndef main() -> None:\n" + body)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FluentAssertions;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR.IRGenerator;
@@ -29,10 +30,9 @@ namespace PyMCU.UnitTests;
 ///
 /// WHAT DISCRIMINATES: every `Parses` assertion, and `APayloadOnAUserExceptionIsNotDiscarded`.
 ///
-/// WHAT IS INVARIANT: a message that is not a literal stays refused, in the same words, on
-/// both front ends. There is no run-time string to record, so lifting the binding must not
-/// lift that with it. And `as` in its two other places keeps working: a refusal wired to the
+/// WHAT IS INVARIANT: `as` in its two other places keeps working: a refusal wired to the
 /// `as` token is one edit away from taking `with ... as f` and `import x as y` too.
+/// A non-literal raise message is a deferred print (#435), not a refusal.
 /// </summary>
 public class ExceptBindingFormTests
 {
@@ -191,28 +191,46 @@ public class ExceptBindingFormTests
             "the 3 was parsed and discarded: the raise carries neither a message nor a payload");
     }
 
-    // -- what stays refused --------------------------------------------------
+    // -- a non-literal message is a deferred print (#435) --------------------
 
     [Fact]
-    public void ANonLiteralMessageStaysRefused()
+    [Trait("Issue", "435")]
+    public void ANonLiteralMessageParsesAsAnExpression()
     {
-        // There is no run-time string to record an id for, so this refusal is the boundary of
-        // the whole feature rather than a gap in it.
-        var msg = LoweringRefusal(
+        var prog = Parse(
             "def read(code: uint8) -> uint8:\n" +
             "    raise ValueError(code)\n");
-
-        Assert.Contains("not a string constant known at compile time", msg);
+        var raised = prog.Functions.Single(f => f.Name == "read").Body.Statements
+            .OfType<RaiseStmt>().Single();
+        raised.ErrorType.Should().Be("ValueError",
+            because: "the constructor name is still the exception type");
+        raised.MessageName.Should().Be("code",
+            because: "a bound integer name used to be refused; now it is the message expression");
     }
 
     [Fact]
-    public void BothFrontEndsRefuseANonLiteralMessageWithTheSameSentence()
+    [Trait("Issue", "435")]
+    public void BothFrontEndsAcceptANonLiteralMessage()
     {
         const string src =
             "def read(code: uint8) -> uint8:\n" +
-            "    raise ValueError(code)\n";
+            "    raise ValueError(code)\n" +
+            "def main() -> uint8:\n" +
+            "    return read(1)\n";
 
-        Assert.Equal(LoweringRefusal(src), TranslatorLoweringRefusal(src));
+        var hand = Parse(src);
+        var py = Translate(src);
+        var handName = hand.Functions.SelectMany(f => f.Body.Statements).OfType<RaiseStmt>().Single().MessageName;
+        var pyName = py.Functions.SelectMany(f => f.Body.Statements).OfType<RaiseStmt>().Single().MessageName;
+        handName.Should().Be(pyName,
+            because: "both front ends must carry the same message name or print(e) diverges");
+
+        var actHand = () => new IRGenerator().Generate(hand, new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" });
+        var actPy = () => new IRGenerator().Generate(py, new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" });
+        actHand.Should().NotThrow(because: "raise ValueError(code) is a deferred print, not a refusal");
+        actPy.Should().NotThrow(because: "the CPython front end must accept the same program");
     }
 
     [Fact]

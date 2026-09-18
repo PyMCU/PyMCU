@@ -351,6 +351,9 @@ public static class AstJsonWriter
                 w.WriteString("message", r2.Message);
                 if (r2.MessageName == null) w.WriteNull("messageName");
                 else w.WriteString("messageName", r2.MessageName);
+                w.WritePropertyName("messageExpr");
+                if (r2.MessageExpr == null) w.WriteNullValue();
+                else WriteExpr(w, r2.MessageExpr);
                 w.WriteNumber("line", r2.Line);
                 w.WriteEndObject();
                 return;
