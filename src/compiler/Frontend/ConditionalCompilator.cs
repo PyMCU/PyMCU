@@ -150,6 +150,18 @@ public class ConditionalCompilator(DeviceConfig config)
     /// </summary>
     private static List<Statement>? FoldedBranchOf(TryStmt tryStmt)
     {
+        // `except NotImplementedError:` around an import (the inner Adafruit TYPE_CHECKING
+        // guard) is not the optional-import idiom: an import raises ImportError, which this
+        // handler does not catch, so the handler never runs. Fold to the body so the names
+        // it bound stay in scope (#480) and the handler's stub import is not loaded (#481).
+        if (!ConditionalImportExtractor.CatchesImportError(tryStmt) && IsImportOnlyBody(tryStmt.Body))
+        {
+            var taken = new List<Statement>(tryStmt.Body);
+            if (tryStmt.ElseBody != null) taken.AddRange(tryStmt.ElseBody);
+            if (tryStmt.Finally != null) taken.AddRange(tryStmt.Finally);
+            return taken;
+        }
+
         var optional = tryStmt.Body.OfType<ImportStmt>().Where(i => i.IsOptional).ToList();
         if (optional.Count == 0) return null;
 
@@ -172,6 +184,30 @@ public class ConditionalCompilator(DeviceConfig config)
         }
         if (tryStmt.Finally != null) chosen.AddRange(tryStmt.Finally);
         return chosen;
+    }
+
+    /// <summary>
+    /// True when the try body is only imports (and nested import-only tries / pass).
+    /// The Adafruit inner guard is that shape; a try that also runs runtime code keeps
+    /// its handler.
+    /// </summary>
+    private static bool IsImportOnlyBody(List<Statement> body)
+    {
+        if (body.Count == 0) return false;
+        foreach (var s in body)
+        {
+            switch (s)
+            {
+                case ImportStmt:
+                case PassStmt:
+                    continue;
+                case TryStmt inner when IsImportOnlyBody(inner.Body):
+                    continue;
+                default:
+                    return false;
+            }
+        }
+        return true;
     }
 
     private ImportStmt CloneImport(ImportStmt src) =>

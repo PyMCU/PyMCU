@@ -80,12 +80,20 @@ internal static class ConditionalImportExtractor
             // module that really is absent is skipped rather than failing the build, which is
             // what the `except ImportError` says to do.
             //
-            // Only a handler that catches ImportError counts. A try whose handler catches
-            // something else is not saying the import may be missing, and treating it as if it
-            // were would silence a real failure.
+            // Only a handler that catches ImportError marks the body optional. A try whose
+            // handler catches something else is not saying the import may be missing, and
+            // treating it as if it were would silence a real failure -- but the BODY still
+            // ran. Skipping it dropped `from pwmio import PWMOut` under
+            // `except NotImplementedError` (the inner Adafruit TYPE_CHECKING guard, #480).
             case TryStmt tryStmt:
             {
-                if (!CatchesImportError(tryStmt)) yield break;
+                if (!CatchesImportError(tryStmt))
+                {
+                    foreach (var st in tryStmt.Body)
+                    foreach (var imp in ExtractFromStatement(st, eval))
+                        yield return imp;
+                    break;
+                }
 
                 // The handler's own imports, which are the branch that runs when the module in
                 // the body is absent -- `except ImportError: import adafruit_framebuf` is the
@@ -144,7 +152,7 @@ internal static class ConditionalImportExtractor
     }
 
     /// <summary>Whether any handler of this try would catch an ImportError.</summary>
-    private static bool CatchesImportError(TryStmt tryStmt)
+    internal static bool CatchesImportError(TryStmt tryStmt)
     {
         foreach (var (exnType, _) in tryStmt.Handlers)
         {
