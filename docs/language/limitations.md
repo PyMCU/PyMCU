@@ -932,7 +932,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
-| `adafruit_sht31d` | `word[i*2], crc[i*2], ... = struct.unpack(...)` | Expected newline or end of block (multi-target unpack from a call) |
+| `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | `@classmethod` | no runtime class object; write a module-level factory |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
 | `adafruit_ssd1306` | (moved off `framebuf.buf[i:i+3] = bytes(fill)`) | equal-length slice assign of compile-time length onto a bytearray, including `bytes(named_seq)`; next construct after that is measured after this landing |
@@ -1012,7 +1012,10 @@ integer cache. `x = a, b, c` is a tuple and `buf[i:i+n] = bytes(fill)` copies n
 bytes at a run-time start, so `adafruit_ssd1306` moves off
 `fill = (color >> 16) & 255, ...` and `framebuf.buf[i:i+3] = bytes(fill)` in `adafruit_framebuf`.
 A quoted dotted class (`"adafruit_si7021.SI7021"`) is the same type as unquoted `mod.Cls`,
-so `adafruit_si7021` moves off that annotation. The inner Adafruit TYPE_CHECKING guard
+so `adafruit_si7021` moves off that annotation. An IndexExpr unpack
+(`word[i*2], crc[i*2], ... = struct.unpack(...)`) binds the RHS to a name then
+stores each `t[k]`, and a buffer slice may start at a run-time offset, so
+`adafruit_sht31d` moves off that assignment. The inner Adafruit TYPE_CHECKING guard
 (`except NotImplementedError` around `from pwmio import PWMOut`) keeps the
 resolved name and does not load the stub package (#480, #481). `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
