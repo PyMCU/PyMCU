@@ -4306,10 +4306,10 @@ public partial class IRGenerator
                 indexExpr);
 
         var f = fields[k];
-        int at = StructOffsetArg(call, 2, who) + f.Offset;
+        Expression at = new IntegerLiteral(StructOffsetArg(call, 2, who) + f.Offset);
         Expression buf = NormalizeUnpackBuffer(call.Args[1], ref at);
 
-        Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
+        Expression Byte(int n) => new IndexExpr(buf, AddByteOffset(at, n));
 
         Expression assembled;
         if (f.Width == 1)
@@ -4378,7 +4378,8 @@ public partial class IRGenerator
                 throw UserError(
                     $"{who} expects (format, buffer)"
                     + (isUnpackFrom ? " or (format, buffer, offset)" : ""), call.Callee);
-            int baseOff = isUnpackFrom ? StructOffsetArg(call, 2, who) : 0;
+            int packedOff = isUnpackFrom ? StructOffsetArg(call, 2, who) : 0;
+            Expression baseOff = new IntegerLiteral(packedOff);
 
             Expression buf = NormalizeUnpackBuffer(call.Args[1], ref baseOff);
             if (buf is VariableExpr bufVar && ResolveBufferKey(bufVar) is { } bufKey)
@@ -4388,8 +4389,7 @@ public partial class IRGenerator
             types = new List<DataType>(fields.Count);
             foreach (var f in fields)
             {
-                int at = baseOff + f.Offset;
-                Expression Byte(int n) => new IndexExpr(buf, new IntegerLiteral(at + n));
+                Expression Byte(int n) => new IndexExpr(buf, AddByteOffset(baseOff, f.Offset + n));
                 Expression assembled = f.Width == 1
                     ? Byte(0)
                     : new BinaryExpr(
@@ -5101,14 +5101,14 @@ public partial class IRGenerator
             "there is no run-time buffer protocol to view anything else through", ArgAt(expr, 0));
     }
 
-    /// `memoryview(buf)`, `buf[a:]` and `memoryview(buf)[a:]` wrapped around an
-    /// unpack's buffer argument are compile-time views of the same storage:
-    /// each wrapper peels to the inner expression, and a slice's start is just a
-    /// bigger read offset (PyMCU#361 -- i2c_struct writes
-    /// `unpack_from(fmt, memoryview(self._buf)[1:])`). A `bytes()`/`bytearray()`
-    /// wrapper reads the same bytes too; the call form itself is refused
-    /// elsewhere, so it is peeled here.
-    private Expression NormalizeUnpackBuffer(Expression buf, ref int baseOff)
+    /// <summary>
+    /// Unwrap <c>bytes</c>/<c>memoryview</c> and a slice view, adding the slice start
+    /// to <paramref name="baseOff"/>. A compile-time start folds into the offset
+    /// (i2c_struct's <c>unpack_from(fmt, memoryview(self._buf)[1:])</c>, #361). A
+    /// run-time start (<c>data[i*6:(i*6)+6]</c> in adafruit_sht31d) stays an add of
+    /// that expression, because the format still decides how many bytes are read.
+    /// </summary>
+    private Expression NormalizeUnpackBuffer(Expression buf, ref Expression baseOff)
     {
         while (true)
         {
@@ -5126,23 +5126,38 @@ public partial class IRGenerator
                         + "`buf[off:]` slice", sl.Step);
                 if (sl.Start != null)
                 {
-                    int start;
-                    try { start = EvaluateConstantExpr(sl.Start); }
-                    catch
+                    if (TryFoldInt(sl.Start, out int start))
                     {
-                        throw UserError(
-                            "the view's start offset must be a compile-time constant, "
-                            + "because it decides which bytes are read", sl.Start);
+                        if (start < 0)
+                            throw UserError("a negative view offset is not supported", sl.Start);
+                        baseOff = AddByteOffset(baseOff, start);
                     }
-                    if (start < 0)
-                        throw UserError("a negative view offset is not supported", sl.Start);
-                    baseOff += start;
+                    else
+                    {
+                        baseOff = AddByteOffset(baseOff, sl.Start);
+                    }
                 }
                 buf = sliced.Target;
                 continue;
             }
             return buf;
         }
+    }
+
+    private static Expression AddByteOffset(Expression @base, int extra)
+    {
+        if (extra == 0) return @base;
+        if (@base is IntegerLiteral il) return new IntegerLiteral(il.Value + extra);
+        return new BinaryExpr(@base, PyMCU.Frontend.BinaryOp.Add, new IntegerLiteral(extra));
+    }
+
+    private static Expression AddByteOffset(Expression @base, Expression extra)
+    {
+        if (@base is IntegerLiteral { Value: 0 }) return extra;
+        if (extra is IntegerLiteral { Value: 0 }) return @base;
+        if (@base is IntegerLiteral a && extra is IntegerLiteral b)
+            return new IntegerLiteral(a.Value + b.Value);
+        return new BinaryExpr(@base, PyMCU.Frontend.BinaryOp.Add, extra);
     }
 
     private bool TryFoldInt(Expression e, out int value)
