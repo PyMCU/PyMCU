@@ -891,7 +891,7 @@ Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. The harness is 37 libraries (the original
 twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Sixteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+**Eighteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
 `adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
 argument and a generator expression in `join`, which need the supported spellings),
@@ -900,7 +900,8 @@ argument and a generator expression in `join`, which need the supported spelling
 `adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes),
 `adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes),
 `adafruit_tcs34725` (28 414 bytes), `adafruit_ina219` (7 294 bytes),
-`adafruit_aw9523` (2 294 bytes) and `adafruit_veml7700` (10 614 bytes).
+`adafruit_aw9523` (2 294 bytes), `adafruit_veml7700` (10 614 bytes),
+`adafruit_dps310` (13 162 bytes) and `adafruit_pca9685` (1 852 bytes).
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
@@ -913,7 +914,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
 | `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
-| `adafruit_dps310` | (moved off `coeffs = [None] * 18`) | a repeated list of None is a fixed SRAM array; next construct after that is measured after this landing |
+| `adafruit_dps310` | **builds unmodified, 13 162 bytes** | (moved off `coeffs = [None] * 18`: a repeated list of None is a fixed SRAM array) |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_ds3231` | `from time import struct_time` | `pymcu.time` defines the nine-field stub; the CircuitPython overlay's advertised names are still only `monotonic` / `monotonic_ns` / `sleep` |
 | `adafruit_74hc595` | **builds unmodified, 402 bytes** | (moved off `bytearray(self._number_of_shift_registers)` and `DigitalInOut(pin, self)`: a compile-time field is a buffer size, and a class defined in the module shadows the entry file's `from digitalio import DigitalInOut`) |
@@ -928,16 +929,16 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_mcp9808` | **builds unmodified, 4 646 bytes** | |
 | `adafruit_mlx90614` | **builds unmodified, 3 846 bytes** | |
 | `neopixel` | `all(... for component in val)` in `adafruit_pixelbuf` | generator expression; `import adafruit_pixelbuf` itself is present |
-| `adafruit_pca9685` | `self._channels[index] = PWMChannel(...)` | (moved off `[None] * len(self)`: a repeated list of None is a fixed SRAM array of integer slots.) storing a ZCA instance into that numeric cache is a later gap |
+| `adafruit_pca9685` | **builds unmodified, 1 852 bytes** | (moved off `[None] * len(self)` and storing a `PWMChannel` in that cache) |
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
-| `adafruit_sht4x` | (moved off `@classmethod` `CV.add_values`) | `cls` is the receiver class: `setattr(cls, name, value)` and `cls.string[k] = v` populate that class at compile time; next construct after that is measured after this landing |
+| `adafruit_sht4x` | (moved off imported `Mode.NOHEAT_HIGHPRECISION`) | setattr in an imported subclass uses the same class key as `Mode.ATTR`; next is `return self.measurements[0]` on a 2-tuple property (`'measurements' returns 2 values; unpack them into 2 targets`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
 | `adafruit_ssd1306` | (moved off `framebuf.buf[i:i+3] = bytes(fill)`) | equal-length slice assign of compile-time length onto a bytearray, including `bytes(named_seq)`; next construct after that is measured after this landing |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
-| `adafruit_tmp117` | (moved off `@classmethod` `CV.add_values`) | same as `adafruit_sht4x` |
+| `adafruit_tmp117` | `with obj.i2c_device as i2c` in `adafruit_register.i2c_struct` | `call to undefined function '__with_manager_0___enter__'`; CV.add_values and imported `Mode.ATTR` no longer stop it |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
 | `adafruit_veml7700` | **builds unmodified, 10 614 bytes** | (moved off `self.gain_values[gain]`: a class-body dict is a compile-time lookup table, including mixed int/float values) |
 | `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
@@ -1007,8 +1008,9 @@ received a compile-time string keeps the text at any length, so
 `struct.calcsize(struct_format)` inside an inlined descriptor constructor folds
 (`StructArray(0x06, "<HH", 16)`). `[None] * n` is a fixed SRAM array, so
 `coeffs = [None] * 18` and `self._channels = [None] * len(self)` index; None is a
-0 slot. `adafruit_pca9685` moves off that onto storing a `PWMChannel` into the
-integer cache. `x = a, b, c` is a tuple and `buf[i:i+n] = bytes(fill)` copies n
+0 slot. `adafruit_pca9685` and `adafruit_dps310` build unmodified once that
+cache and `[None] * n` are SRAM arrays of instances or integers.
+`x = a, b, c` is a tuple and `buf[i:i+n] = bytes(fill)` copies n
 bytes at a run-time start, so `adafruit_ssd1306` moves off
 `fill = (color >> 16) & 255, ...` and `framebuf.buf[i:i+3] = bytes(fill)` in `adafruit_framebuf`.
 A quoted dotted class (`"adafruit_si7021.SI7021"`) is the same type as unquoted `mod.Cls`,
@@ -1025,14 +1027,18 @@ folds from the argument's shape (#423), so `adafruit_ht16k33` matrix moves off t
 `bytearray((self._buffer_size) * len(self.i2c_device))`. `os.uname()`
 is a compile-time view of `__CHIP__` (#466), so `adafruit_dht` moves off `from os import
 uname` onto `Union[int, float, None]` on `temperature`. `time.struct_time` is a
-nine-field stub, so the RTC drivers move off that import.
+nine-field stub, so the RTC drivers move off that import. `@classmethod` setattr
+in an imported subclass uses the same class key as `Mode.ATTR` (the mangled
+`adafruit_sht4x_Mode` is not prefixed again), so `adafruit_sht4x` moves off
+`self._mode = Mode.NOHEAT_HIGHPRECISION` onto indexing a 2-tuple property.
 
 **Five more I2C sensors build unmodified** on the expanded list: `adafruit_ahtx0`,
 `adafruit_mcp9808`, `adafruit_lis3dh`, `adafruit_tsl2591`, `adafruit_mlx90614`.
 `adafruit_ina219` (7 294 bytes) and the `adafruit_aw9523` expander (2 294 bytes) join
 them once `type(self)` in a descriptor rewrite is the source class name.
 `adafruit_veml7700` (10 614 bytes) joins once a class-body dict through `self` is a
-lookup table.
+lookup table. `adafruit_dps310` (13 162 bytes) and `adafruit_pca9685` (1 852 bytes)
+join once `[None] * n` is a fixed SRAM array that can hold a later instance.
 
 **A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
 `X | None` and `Union[X, None]` are read as `X`: see "None is a compile-time value" above.
