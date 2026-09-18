@@ -2257,6 +2257,16 @@ public partial class IRGenerator
 
         if (expr.Index is SliceExpr sl)
         {
+            // `self._buffer[0:2]`: a field bytearray is the same named array as `buf[0:2]`.
+            // The slice path only accepted a VariableExpr, so adafruit_sht4x's
+            // `temp_data = self._buffer[0:2]` was refused after measurements[0] compiled.
+            if (expr.Target is MemberAccessExpr fieldSlice
+                && ResolveMemberArrayName(fieldSlice) is string fieldArr)
+                expr = new IndexExpr(
+                    new VariableExpr(fieldArr) { Line = fieldSlice.Line },
+                    expr.Index)
+                { Line = expr.Line, Column = expr.Column, Length = expr.Length };
+
             if (expr.Target is VariableExpr srcVe)
             {
                 // ResolveNameKey walks the same scopes every other lookup does -- an array
