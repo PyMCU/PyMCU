@@ -917,7 +917,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_hcsr04` | **builds unmodified, 3 430 bytes** | |
 | `adafruit_ht16k33` (matrix) | `bytearray((self._buffer_size) * len(self.i2c_device))` | could not determine buffer size from initializer |
 | `adafruit_ht16k33` (segments) | `def print(self, value: Union[str, float], ...)` | a union of two REAL types; a call in a raise message is a deferred print (#435) |
-| `adafruit_ina219` | `reg \|= value` in `RWBits.__set__` | name `value` is not defined -- the descriptor rewrite substitutes `obj` (#419) but the setter's `value` is lost after `value <<= self.lowest_bit` |
+| `adafruit_ina219` | `_BUFFER[i]` in `RWBits.__set__` | `IndexError: array index 1 out of range for size 1` -- `value <<= self.lowest_bit` keeps `value`; the shared `_BUFFER` is one byte and `range(self.register_width, 0, -1)` indexes past it |
 | `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
 | `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
 | `adafruit_mcp230xx` | `Pin.high()` runtime bit index | same as `adafruit_character_lcd` |
@@ -936,7 +936,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
-| `adafruit_veml7700` | `reg \|= value` in `RWBits.__set__` | same as `adafruit_ina219` (#419 moved off `obj`) |
+| `adafruit_veml7700` | `_BUFFER[i]` in `RWBits.__set__` | same as `adafruit_ina219` (`array index 2 out of range for size 1`) |
 | `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 
 ### Which of these are limits and which are gaps
@@ -987,8 +987,8 @@ A `try`-guarded
 `from typing import Tuple` that shares its `try` with a failing sibling import used to lose
 the resolved names entirely; with the fold fixed, `adafruit_ina219` and `adafruit_veml7700`
 move inside `adafruit_register` to `RWBits.__get__`/`__set__`, where `obj` is the owning
-instance even though it is annotated `I2CDeviceDriver` (#419); `value` after
-`value <<= self.lowest_bit` is the next stop. `raise ... from ...`
+instance even though it is annotated `I2CDeviceDriver` (#419); `value <<= self.lowest_bit`
+keeps `value` as a local so `reg |= value` is the shifted bits. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
