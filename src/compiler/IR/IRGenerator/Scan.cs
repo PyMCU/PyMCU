@@ -39,9 +39,23 @@ public partial class IRGenerator
         };
         if (count <= 0) return;
 
-        arraySizes[name] = count;
+        KeepGrownArraySize(name, count);
         arrayElemTypes[name] = DataType.UINT8;
         moduleSramArrays.Add(name);
+    }
+
+    /// <summary>
+    /// A buffer's size is the largest it is ever asked for (#362). Replaying
+    /// <c>name = bytearray(n)</c> in module init must not undo a <c>.extend()</c>
+    /// that already grew it. Class-body constructors run ahead of the module's own
+    /// statements (#270), so adafruit_register's <c>_BUFFER = bytearray(1)</c> was
+    /// rewriting size 3 back to 1 after <c>RWBits.__init__</c> called <c>_fit(2)</c>.
+    /// </summary>
+    private int KeepGrownArraySize(string key, int declared)
+    {
+        int size = arraySizes.TryGetValue(key, out int already) ? Math.Max(already, declared) : declared;
+        arraySizes[key] = size;
+        return size;
     }
 
     // Module-level names that are WRITTEN beyond their initializer: a second top-level

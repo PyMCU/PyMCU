@@ -3846,7 +3846,7 @@ public partial class IRGenerator
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Name))
                 qualified = stmt.Name;
 
-            arraySizes[qualified] = count;
+            int grown = KeepGrownArraySize(qualified, count);
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
             arraysWithVariableIndex.Add(qualified);
@@ -3863,7 +3863,7 @@ public partial class IRGenerator
                 Val initVal = initElems != null && !TryEvalElemConst(initElems[k], out _)
                     ? VisitExpression(initElems[k])
                     : new Constant(initVals[k]);
-                Emit(new ArrayStore(qualified, new Constant(k), initVal, DataType.UINT8, count));
+                Emit(new ArrayStore(qualified, new Constant(k), initVal, DataType.UINT8, grown));
             }
 
             if (isInput)
@@ -4931,7 +4931,7 @@ public partial class IRGenerator
             if (replayingModuleLevel
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;
-            arraySizes[qualified] = count;
+            int grown = KeepGrownArraySize(qualified, count);
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
             arraysWithVariableIndex.Add(qualified);
@@ -4941,7 +4941,7 @@ public partial class IRGenerator
                 Val initVal = initElems != null && !TryEvalElemConst(initElems[k], out _)
                     ? VisitExpression(initElems[k])
                     : new Constant(initVals[k]);
-                Emit(new ArrayStore(qualified, new Constant(k), initVal, DataType.UINT8, count));
+                Emit(new ArrayStore(qualified, new Constant(k), initVal, DataType.UINT8, grown));
             }
             return;
         }
