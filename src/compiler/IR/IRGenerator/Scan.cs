@@ -2578,6 +2578,29 @@ public partial class IRGenerator
         return IsKnownBareTypeName(ty);
     }
 
+    /// <summary>
+    /// A list or tuple of compile-time numbers assigned to a field is an ARRAY field, not a
+    /// scalar. Adafruit DPS310 writes <c>self._oversample_scalefactor = (524288, ...)</c>;
+    /// counted as a uint8 the class became a one-field data class and <c>self.scale[n]</c>
+    /// compiled as a bit index.
+    /// </summary>
+    private bool IsCompileTimeNumberSequence(Expression e)
+    {
+        List<Expression>? elems = e switch
+        {
+            ListExpr le => le.Elements,
+            TupleExpr te => te.Elements,
+            _ => null
+        };
+        if (elems is not { Count: > 0 }) return false;
+        foreach (var x in elems)
+        {
+            try { EvaluateConstantExpr(x); }
+            catch { return false; }
+        }
+        return true;
+    }
+
     private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody,
         string classKey = "")
     {
@@ -2619,15 +2642,15 @@ public partial class IRGenerator
 
             if (field == null || !seen.Add(field)) continue;
 
-            // `self.buf = [0, 0, 0]` declares an ARRAY field, not a scalar one -- the same
-            // thing `self.buf: uint8[3] = [...]` declares, and that spelling is an AnnAssign,
-            // which never reaches this layout at all. Counted as a scalar the class became a
-            // one-field data class, its methods were outlined with the field passed BY VALUE,
-            // and `self.buf[1]` inside one compiled as bit 1 of a byte: a silent wrong answer,
-            // not a diagnostic. Only all-constant literals: `self.pins = [Pin(1), Pin(2)]` is a
-            // list of instances with its own lowering and stays a field here.
-            if (rhs is ListExpr fieldList && fieldList.Elements.Count > 0
-                && fieldList.Elements.All(e => { try { EvaluateConstantExpr(e); return true; } catch { return false; } }))
+            // `self.buf = [0, 0, 0]` / `self.scale = (524288, ...)` declares an ARRAY field,
+            // not a scalar one -- the same thing `self.buf: uint8[3] = [...]` declares, and
+            // that spelling is an AnnAssign, which never reaches this layout at all. Counted
+            // as a scalar the class became a one-field data class, its methods were outlined
+            // with the field passed BY VALUE, and `self.buf[1]` inside one compiled as bit 1
+            // of a byte: a silent wrong answer, not a diagnostic. Only all-constant literals:
+            // `self.pins = [Pin(1), Pin(2)]` is a list of instances with its own lowering and
+            // stays a field here.
+            if (rhs != null && IsCompileTimeNumberSequence(rhs))
                 continue;
 
             // `self._gpio = bytearray(n)` declares a BUFFER field -- EmitMemberAssign lays it
@@ -2763,10 +2786,9 @@ public partial class IRGenerator
                 var annotatedType = masg.AnnotatedType;
 
                 // Same array-field exemption as the __init__ scan above: a field whose value is
-                // a literal list of compile-time constants is an array field, handled by its own
-                // lowering, not a scalar the layout should claim.
-                if (rhs is ListExpr fieldList && fieldList.Elements.Count > 0
-                    && fieldList.Elements.All(e => { try { EvaluateConstantExpr(e); return true; } catch { return false; } }))
+                // a literal list or tuple of compile-time constants is an array field, handled
+                // by its own lowering, not a scalar the layout should claim.
+                if (IsCompileTimeNumberSequence(rhs))
                     continue;
 
                 string writeKind = ClassifyWriteKind(rhs, annotatedType, mParamTypes, mLocalTypes);

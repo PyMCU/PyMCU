@@ -761,33 +761,41 @@ public partial class IRGenerator
             return;
         }
 
-        // `self.buf = [0, 0, 0]`: a list FIELD with no annotation. It reached the generic
-        // expression visitor, which has no lowering for a list literal, and answered "Unknown
-        // Expression type: ListExpr", the name of a compiler class, about a field written
-        // exactly the way a local list is. The literal carries the length, and the widest
-        // element carries the type, so the field is the same fixed array that
-        // `self.buf: list[uint8] = [...]` declares. Only all-constant literals qualify: a list
-        // of instances (`self.pins = [Pin(1), Pin(2)]`) is a different shape with its own path,
-        // and a literal whose size cannot be read still asks for the annotation by name.
-        if (stmt.Target is MemberAccessExpr listMem && stmt.Value is ListExpr fieldList)
+        // `self.buf = [0, 0, 0]` / `self.scale = (524288, ...)`: a list or tuple FIELD with
+        // no annotation. A list reached the generic expression visitor and answered
+        // "Unknown Expression type: ListExpr"; a tuple answered "tuples are not supported
+        // as runtime values" -- true of a tuple used as a value, and not what this
+        // statement does. Adafruit DPS310 writes the oversample table that way. The
+        // literal carries the length, and the widest element carries the type, so the
+        // field is the same fixed array that `self.buf: list[uint8] = [...]` declares.
+        // Only all-constant literals qualify: a list of instances is a different shape
+        // with its own path. A list whose size cannot be read still asks for the
+        // annotation by name; a non-constant tuple falls through to the value refusal.
+        if (stmt.Target is MemberAccessExpr listMem && stmt.Value is ListExpr or TupleExpr)
         {
-            if (fieldList.Elements.Count > 0
-                && fieldList.Elements.All(e => TryEvalElemConst(e, out _))
+            var fieldElems = stmt.Value is ListExpr fieldList
+                ? fieldList.Elements
+                : ((TupleExpr)stmt.Value).Elements;
+            if (fieldElems.Count > 0
+                && fieldElems.All(e => TryEvalElemConst(e, out _))
                 && ResolveMemberArrayName(listMem) is null)
             {
                 var fieldVals = new List<int>();
-                foreach (var e in fieldList.Elements) { TryEvalElemConst(e, out int ev); fieldVals.Add(ev); }
+                foreach (var e in fieldElems) { TryEvalElemConst(e, out int ev); fieldVals.Add(ev); }
                 EmitMemberArrayInit(listMem.Object, listMem.Member,
                     WidestElemType(fieldVals), fieldVals.Count, fieldVals,
                     FormatMemberTarget(listMem));
                 return;
             }
 
-            throw UserError(
-                $"a list literal assigned to '{FormatMemberTarget(listMem)}' needs a declared size. "
-                + $"Write `{FormatMemberTarget(listMem)}: uint8[{fieldList.Elements.Count}] = [...]` "
-                + "(or another element type), which reserves the storage in the instance and is "
-                + "indexable at run time.", listMem);
+            if (stmt.Value is ListExpr refusedList)
+            {
+                throw UserError(
+                    $"a list literal assigned to '{FormatMemberTarget(listMem)}' needs a declared size. "
+                    + $"Write `{FormatMemberTarget(listMem)}: uint8[{refusedList.Elements.Count}] = [...]` "
+                    + "(or another element type), which reserves the storage in the instance and is "
+                    + "indexable at run time.", listMem);
+            }
         }
 
         // `t = f()` / `t = obj.prop` where the value is a multi-return call: ask
@@ -3981,8 +3989,9 @@ public partial class IRGenerator
     }
 
     // Reserves the per-instance SRAM array behind a member (self._buf) and emits its
-    // initialisers. Shared by the three spellings that declare one: `self._buf: uint8[N]`,
-    // `self.buf: list[uint8] = [...]` and the bare `self.buf = [...]`.
+    // initialisers. Shared by the spellings that declare one: `self._buf: uint8[N]`,
+    // `self.buf: list[uint8] = [...]`, the bare `self.buf = [...]`, and
+    // `self.scale = (524288, ...)`.
     private void EmitMemberArrayInit(Expression objExpr, string member, DataType elem,
                                      int count, List<int> init, string targetShown)
     {
