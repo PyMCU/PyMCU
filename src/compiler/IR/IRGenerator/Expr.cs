@@ -350,6 +350,8 @@ public partial class IRGenerator
             if (extraArgs[extraIdx] is Constant c)
             {
                 constantVariables[paramKey] = c.Value;
+                if (c.Text != null)
+                    strConstantVariables[paramKey] = c.Text;
             }
             else if (extraArgs[extraIdx] is Variable v)
             {
@@ -700,7 +702,7 @@ public partial class IRGenerator
         // Only a class or a module, never an instance: a local whose flattened field names
         // happen to join to the same string must keep its own resolution.
         string head = root.Name;
-        bool headIsModule = modules.ContainsKey(head);
+        bool headIsModule = StillNamesAModule(head);
         if (!headIsModule && !classNames.Contains(head) && !IsImportedAlias(head)) return null;
         if (!headIsModule && LooksLikeLocalInstance(head)) return null;
 
@@ -918,45 +920,57 @@ public partial class IRGenerator
 
             Val lhs = VisitExpression(expr.Left);
 
+            // A call that RETURNS an instance with __contains__ (`"Linux" not in uname()`,
+            // the Adafruit DHT spelling) used to skip the dunder path because that path
+            // only asked about a VariableExpr. Evaluate the call once, then dispatch the
+            // same way a name bound to the result already does (#466). A call that
+            // RETURNS a compile-time string is the substring form (`"RP2350" in
+            // uname().machine` is a member access, handled below).
+            if (expr.Right is CallExpr)
+            {
+                Val rhsVal = VisitExpression(expr.Right);
+                if (TryContainsDunder(rhsVal, lhs, negate, out var fromCall))
+                    return fromCall;
+                if (TryStringContainsVal(rhsVal, lhs, negate, out var fromCallStr))
+                    return fromCallStr;
+            }
+
             if (expr.Right is VariableExpr rv)
             {
-                string qname = string.IsNullOrEmpty(currentInlinePrefix)
-                    ? (string.IsNullOrEmpty(currentFunction) ? rv.Name : currentFunction + "." + rv.Name)
-                    : currentInlinePrefix + rv.Name;
-                if (instanceClasses.TryGetValue(qname, out var cls) && !string.IsNullOrEmpty(cls))
+                if (TryContainsDunder(VisitExpression(rv), lhs, negate, out var fromName))
+                    return fromName;
+
+                // Outlined __contains__ (`11 in b` on a real method, outline-dunders):
+                // the dunder is not @inline, so TryContainsDunder declines. Dispatch
+                // through the original VariableExpr -- a PreEvaluated receiver does
+                // not resolve an outlined method AST.
+                if (TryResolveInstanceMethodAst(rv.Name, "__contains__") != null)
                 {
-                    string funcKey = cls + "_" + "__contains__";
-                    if (!inlineFunctions.ContainsKey(funcKey)
-                        && TryResolveInstanceMethodAst(rv.Name, "__contains__") != null)
+                    Val res2 = VisitCall(new CallExpr(
+                        new MemberAccessExpr(rv, "__contains__"),
+                        new List<Expression> { expr.Left }) { Line = expr.Line });
+                    if (negate)
                     {
-                        // Outlined __contains__: dispatch as a method call instead of falling
-                        // through to the container path, which rejects a class instance.
-                        Val res2 = VisitCall(new CallExpr(
-                            new MemberAccessExpr(rv, "__contains__"),
-                            new List<Expression> { expr.Left }) { Line = expr.Line });
-                        if (negate)
-                        {
-                            Temporary neg2 = MakeTemp();
-                            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, res2, new Constant(0), neg2));
-                            return neg2;
-                        }
-
-                        return res2;
+                        Temporary neg2 = MakeTemp();
+                        Emit(new Binary(PyMCU.IR.BinaryOp.Equal, res2, new Constant(0), neg2));
+                        return neg2;
                     }
-
-                    if (inlineFunctions.ContainsKey(funcKey))
-                    {
-                        Val res = EmitDunderCall(qname, cls, funcKey, new List<Val> { lhs });
-                        if (negate)
-                        {
-                            Temporary neg = MakeTemp();
-                            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, res, new Constant(0), neg));
-                            return neg;
-                        }
-
-                        return res;
-                    }
+                    return res2;
                 }
+            }
+
+            // Compile-time substring: `"RP2350" in uname().machine`. Both sides must be
+            // strings the compiler already holds; there is no runtime search (#466).
+            // Prefer the AST text of a field (`u.machine`) -- VisitExpression of a
+            // flattened field is often a Variable whose interned id is not enough.
+            if (expr.Right is MemberAccessExpr or StringLiteral)
+            {
+                string? hay = TryGetCompileTimeText(expr.Right)
+                              ?? StringTextOfVal(VisitExpression(expr.Right));
+                string? ned = StringTextOfVal(lhs) ?? TryGetCompileTimeText(expr.Left);
+                if (hay != null && ned != null)
+                    return new Constant(negate ? (hay.Contains(ned) ? 0 : 1)
+                                               : (hay.Contains(ned) ? 1 : 0));
             }
 
             // The RHS may be a list `[...]`, tuple `(...)`, set `{...}` or dict literal
@@ -1118,53 +1132,8 @@ public partial class IRGenerator
         }
 
         if (expr.Op == AstBinOp.Pow)
-        {
-            Val bv = VisitExpression(expr.Left);
-            Val ev = VisitExpression(expr.Right);
-            if (ev is not Constant ce)
-                throw UserError("** operator: the exponent must be a compile-time constant integer", expr.Right);
-            int exp = ce.Value;
-            if (exp < 0)
-                throw UserError("** operator: negative exponent not supported (Python would return a float)", expr.Right);
-
-            // Both operands constant: fold the whole power at compile time (table sizes, masks...).
-            if (bv is Constant cb)
-            {
-                int res = 1;
-                for (int k = 0; k < exp; ++k) res *= cb.Value;
-                return new Constant(res);
-            }
-
-            // Runtime base with a constant exponent: lower to repeated multiplication so the common
-            // idiom (s ** 2, x ** 3) works. Python-faithful — the base is evaluated exactly once and
-            // each multiply promotes to the next wider type, so the result never silently overflows
-            // the base's width. Large exponents are rejected rather than emitting a huge unrolled
-            // chain (use an explicit loop); the realistic faithful cases are small.
-            if (exp == 0) return new Constant(1);
-            if (exp == 1) return bv;
-            if (exp > 16)
-                throw UserError("** operator: exponent too large to unroll (max 16 for a runtime base); use a loop", expr.Right);
-
-            static DataType BumpTier(DataType t) => t switch
-            {
-                DataType.UINT8 => DataType.UINT16,
-                DataType.INT8 => DataType.INT16,
-                DataType.UINT16 => DataType.UINT32,
-                DataType.INT16 => DataType.INT32,
-                _ => t,
-            };
-
-            Val acc = bv;
-            for (int k = 1; k < exp; ++k)
-            {
-                DataType mt = DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(bv));
-                if (mt is not DataType.FLOAT) mt = BumpTier(mt);
-                Temporary md = MakeTemp(mt);
-                Emit(new Binary(MapBinaryOp(AstBinOp.Mul), acc, bv, md));
-                acc = md;
-            }
-            return acc;
-        }
+            return LowerPow(VisitExpression(expr.Left), VisitExpression(expr.Right),
+                expr.Right, "** operator");
 
         // `s == "running"` where s holds one of several texts: interning gives equal texts the
         // same id, so the comparison IS the id comparison, decided at run time. Reading the id
@@ -1701,6 +1670,106 @@ public partial class IRGenerator
         currentInstructions.Insert(trueTail, new Jump(endLabel));
         currentInstructions.Insert(trueTail, new Copy(trueVal, result));
         return result;
+    }
+
+    // pow() / ** : integer constant-fold, integer unroll, or libm powf (#463).
+    //
+    // A non-negative integer exponent still unrolls to multiply -- including a float
+    // base, so `x ** 2` stays two muls and does not pull powf. A fractional exponent
+    // (adafruit_tcs34725's `pow(x, 2.5)` gamma) cannot unroll; it is IEEE-754 single
+    // powf, the same routine C would call.
+    private Val LowerPow(Val bv, Val ev, ASTNode at, string form)
+    {
+        bool baseFloat = bv is FloatConstant || GetValType(bv) == DataType.FLOAT;
+
+        static bool TryIntExponent(Val v, out int exp)
+        {
+            if (v is Constant c) { exp = c.Value; return true; }
+            if (v is FloatConstant fc
+                && fc.Value >= 0
+                && fc.Value <= int.MaxValue
+                && fc.Value == Math.Truncate(fc.Value))
+            {
+                exp = (int)fc.Value;
+                return true;
+            }
+            exp = 0;
+            return false;
+        }
+
+        if (TryIntExponent(ev, out int exp))
+        {
+            if (exp < 0)
+                throw UserError(
+                    $"{form}: negative exponent not supported (Python would return a float)", at);
+
+            if (!baseFloat && bv is Constant cb)
+            {
+                int res = 1;
+                for (int k = 0; k < exp; ++k) res *= cb.Value;
+                return new Constant(res);
+            }
+
+            if (exp == 0) return baseFloat ? new FloatConstant(1.0) : new Constant(1);
+            if (exp == 1) return bv;
+            if (exp > 16)
+                throw UserError(
+                    $"{form}: exponent too large to unroll (max 16 for a runtime base); use a loop",
+                    at);
+
+            static DataType BumpTier(DataType t) => t switch
+            {
+                DataType.UINT8 => DataType.UINT16,
+                DataType.INT8 => DataType.INT16,
+                DataType.UINT16 => DataType.UINT32,
+                DataType.INT16 => DataType.INT32,
+                _ => t,
+            };
+
+            Val acc = bv;
+            for (int k = 1; k < exp; ++k)
+            {
+                DataType mt = DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(bv));
+                if (mt is not DataType.FLOAT) mt = BumpTier(mt);
+                Temporary md = MakeTemp(mt);
+                Emit(new Binary(MapBinaryOp(AstBinOp.Mul), acc, bv, md));
+                acc = md;
+            }
+            return acc;
+        }
+
+        // A runtime integer exponent on an integer base stays refused: Python would
+        // still be integer exponentiation, and silently routing it through powf would
+        // change the type. A float base, or a non-integer constant exponent, is powf.
+        bool expFloat = ev is FloatConstant || GetValType(ev) == DataType.FLOAT;
+        if (!baseFloat && !expFloat)
+            throw UserError($"{form}: the exponent must be a compile-time constant integer", at);
+
+        double? AsCt(Val v)
+        {
+            if (v is FloatConstant fc) return fc.Value;
+            if (v is Constant cv) return cv.Value;
+            return null;
+        }
+
+        double? fb = AsCt(bv);
+        double? fe = AsCt(ev);
+        if (fb.HasValue && fe.HasValue)
+            return new FloatConstant((float)Math.Pow(fb.Value, fe.Value));
+
+        Val ToFloat(Val x)
+        {
+            if (x is FloatConstant) return x;
+            if (x is Constant ci) return new FloatConstant(ci.Value);
+            if (GetValType(x) == DataType.FLOAT) return x;
+            Temporary ft = MakeTemp(DataType.FLOAT);
+            Emit(new Copy(x, ft));
+            return ft;
+        }
+
+        Temporary dst = MakeTemp(DataType.FLOAT);
+        Emit(new Binary(BinaryOp.Pow, ToFloat(bv), ToFloat(ev), dst));
+        return dst;
     }
 
     private Val VisitUnary(UnaryExpr expr)
@@ -2241,6 +2310,9 @@ public partial class IRGenerator
 
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
+            string aliasTerm = TerminalAliasOf(ve.Name);
+            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(aliasTerm))
+                qualified = aliasTerm;
 
             // Inside an inline expansion, the target may be an aliased bytearray parameter.
             if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
@@ -2582,6 +2654,107 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// True when <paramref name="name"/> still names a module at this point of
+    /// lowering. An assignment that rebinds the name to an instance shadows the
+    /// alias, matching CPython (#467). Member writes already resolved the
+    /// instance; reads and calls consulted the module table first and never
+    /// saw the binding -- <c>from adafruit_motor import servo</c> then
+    /// <c>servo = servo.Servo(pwm)</c> then <c>print(servo.fraction)</c>.
+    /// </summary>
+    private bool StillNamesAModule(string name) =>
+        modules.ContainsKey(name) && InstanceClassOfName(name) == null;
+
+    /// <summary>
+    /// True when a member access on <paramref name="name"/> is still a
+    /// module-level name, including the constructor in
+    /// <c>servo = servo.Servo(pwm)</c>. VisitAssign tags the target as the
+    /// instance before the RHS runs, so <see cref="StillNamesAModule"/> is
+    /// already false there; the member is the class on the module (#467).
+    /// </summary>
+    private bool NamesAModuleMember(string name, string member)
+    {
+        if (!modules.ContainsKey(name)) return false;
+        if (InstanceClassOfName(name) == null) return true;
+        string realMod = TryImportedAlias(name, out var rm) && rm != null ? rm : name;
+        string cls = realMod.Replace('.', '_') + "_" + member;
+        return inlineFunctions.ContainsKey(cls + "___init__")
+            || overloadedFunctions.Contains(cls + "___init__")
+            || classFieldLayout.ContainsKey(cls);
+    }
+
+    /// <summary>
+    /// The class a lowered value is an instance of, or null when it is not one.
+    /// Used by argument binding to substitute a typing-only parameter annotation
+    /// for the argument's real class (#419).
+    /// </summary>
+    private string? InstanceClassOfVal(Val v)
+    {
+        // Walk the same alias chain GetValClass does: a constructor in value
+        // position (`Lcd(mcp.get_pin(1), ...)`) returns a Variable/`__cN` that
+        // aliases the instance, and a one-hop lookup on the Temporary missed it.
+        string cls = GetValClass(v);
+        return string.IsNullOrEmpty(cls) ? null : cls;
+    }
+
+    /// <summary>
+    /// <c>x in container</c> when the container is an instance that defines <c>__contains__</c>.
+    /// Used for a name AND for a call that returns one (<c>"Linux" not in uname()</c>, #466).
+    /// </summary>
+    private bool TryContainsDunder(Val container, Val lhs, bool negate, out Val result)
+    {
+        result = null!;
+        // Walk the alias chain: an @inline factory's result temp aliases the
+        // constructed instance and is not itself a key of instanceClasses (#466).
+        string cls = GetValClass(container);
+        string? key = ResolveClassCarryingName(container);
+        if (string.IsNullOrEmpty(cls) || key == null || !ClassDefinesMethod(cls, "__contains__"))
+            return false;
+        string funcKey = cls + "_" + "__contains__";
+        Val res;
+        if (inlineFunctions.ContainsKey(funcKey))
+            res = EmitDunderCall(key, cls, funcKey, new List<Val> { lhs });
+        else if (TryResolveInstanceMethodAst(key, "__contains__") != null)
+            res = VisitCall(new CallExpr(
+                new MemberAccessExpr(new PreEvaluatedExpr(container, null), "__contains__"),
+                new List<Expression> { new PreEvaluatedExpr(lhs, null) }));
+        else
+            return false;
+        if (negate)
+        {
+            Temporary neg = MakeTemp();
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, res, new Constant(0), neg));
+            result = neg;
+            return true;
+        }
+        result = res;
+        return true;
+    }
+
+    /// <summary>
+    /// <c>needle in haystack</c> when both are compile-time strings: Python substring
+    /// membership, folded to 0/1. Used for <c>"RP2350" in uname().machine</c> (#466).
+    /// </summary>
+    private bool TryStringContainsVal(Val haystack, Val needle, bool negate, out Val result)
+    {
+        result = null!;
+        string? hay = StringTextOfVal(haystack);
+        string? ned = StringTextOfVal(needle);
+        if (hay == null || ned == null) return false;
+        bool hit = hay.Contains(ned);
+        result = new Constant(negate ? (hit ? 0 : 1) : (hit ? 1 : 0));
+        return true;
+    }
+
+    private string? StringTextOfVal(Val v) => v switch
+    {
+        Constant { Text: { } t } => t,
+        Constant sc when stringIdToStr.TryGetValue(sc.Value, out var s) => s,
+        Variable vr => ResolveStrConstant(vr.Name),
+        Temporary tmp => ResolveStrConstant(tmp.Name),
+        _ => null
+    };
+
+    /// <summary>
     /// The name at the end of this name's alias chain, when that name is a known instance.
     ///
     /// `with C(...) as v:` binds v by writing `variableAliases[v] = <manager>` and nothing else:
@@ -2920,6 +3093,15 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // `__CHIP__.name` / `.arch` / `.board` are compile-time strings (DeviceConfig),
+        // the same facts CompileTimeEvaluator already folds in `if` / `match`. Using
+        // them as a VALUE (`uname_result(..., __CHIP__.name)`, #466) used to be
+        // refused as "object has no attribute 'name'" because the IR path treated
+        // `__CHIP__` as an ordinary instance.
+        if (expr.Object is VariableExpr { Name: "__CHIP__" }
+            && ChipFactString(expr.Member) is { } chipFact)
+            return InternedStringConstant(chipFact);
+
         // A constant two class names deep: `Outer.Inner.A`, where one level works. The access
         // was resolved one hop at a time, so `Outer.Inner` was asked for as an attribute of
         // `Outer` and refused with "object has no attribute 'Inner'" -- a sentence about the
@@ -2927,6 +3109,20 @@ public partial class IRGenerator
         // prefix, so the whole dotted path IS the name (#319). It is how CircuitPython spells
         // the UART parity: `busio.UART.Parity.ODD`, which adds a module hop in front.
         if (TryDottedClassConstant(expr) is { } dottedConst) return dottedConst;
+
+        // `e.__cause__` / `e.__context__` (#434). The chain is not recorded, because
+        // `raise X() from Y` compiles as `raise X()` -- there is nothing for either
+        // attribute to point at. Named here, ahead of the generic "not defined"
+        // fallback, so the diagnostic says which attribute and why.
+        if (expr.Object is VariableExpr causeVe
+            && (expr.Member is "__cause__" or "__context__")
+            && TryGetExceptionBinding(causeVe.Name, out _))
+        {
+            throw UserError(
+                $"'{causeVe.Name}.{expr.Member}' is not kept: PyMCU does not record an "
+                + "exception chain, so there is nothing for either attribute to point at",
+                expr);
+        }
 
         // A single-field instance handed back by a factory IS its one field: the call returns
         // the field's value in a register and the name is bound to that (RFC 0001 Model B
@@ -3004,10 +3200,14 @@ public partial class IRGenerator
         {
             // Fall through to the slot read below.
         }
-        else if (expr.Object is VariableExpr varExpr)
+        else if (expr.Object is VariableExpr varExpr && InstanceClassOfName(varExpr.Name) == null)
         {
             // Resolve a module alias (import machine as m) to the real module name so
             // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
+            // Skipped when the name has been rebound to an instance (#467):
+            // `from adafruit_motor import servo` then `servo = servo.Servo(pwm)`
+            // then `print(servo.fraction)` is a field/property read, not a
+            // module member.
             //
             // `.Replace('.', '_')`: a SUBMODULE import (`import adafruit_mcp3xxx.mcp3008 as
             // MCP`) resolves realModName to the full dotted path, and every OTHER module-name
@@ -3397,6 +3597,28 @@ public partial class IRGenerator
         foreach (var methods in classDirectMethods.Values)
             if (methods.Contains(member)) return true;
         return false;
+    }
+
+    private string? ChipFactString(string member) => member switch
+    {
+        "name" or "chip" => string.IsNullOrEmpty(deviceConfig.Chip)
+            ? deviceConfig.TargetChip
+            : deviceConfig.Chip,
+        "arch" => deviceConfig.Arch,
+        "board" => deviceConfig.Board ?? "",
+        _ => null
+    };
+
+    private Constant InternedStringConstant(string text)
+    {
+        if (text.Length == 1) return new Constant((int)text[0], text);
+        if (!stringLiteralIds.ContainsKey(text))
+        {
+            stringLiteralIds[text] = nextStringId;
+            stringIdToStr[nextStringId] = text;
+            nextStringId++;
+        }
+        return new Constant(stringLiteralIds[text], text);
     }
 
     /// <summary>

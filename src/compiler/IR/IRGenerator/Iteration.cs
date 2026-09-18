@@ -854,6 +854,21 @@ public partial class IRGenerator
                 var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
                 string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
 
+                // `for pin in (reset_dio, enable_dio, ...)`: each element is an already-built
+                // ZCA instance (adafruit_character_lcd). The same hoist a list argument already
+                // uses, then the same unroll `for p in self._pins` already uses. A pair unpack
+                // stays on the path below -- those elements are pairs, not instances.
+                if (string.IsNullOrEmpty(stmt.Var2Name))
+                {
+                    var asList = iter as ListExpr ?? new ListExpr(elems) { Line = iter.Line };
+                    if (IsInstanceSequenceLiteral(asList))
+                    {
+                        string seqBase = HoistInstanceSequence(asList);
+                        EmitSequenceUnroll(stmt, seqBase, elems.Count);
+                        return;
+                    }
+                }
+
                 // `for a, b in [(1, 2), (3, 4)]`. The unrolling is the same one the single-target
                 // form does; what the two-name form needs is the second key bound alongside the
                 // first, from the element's second component. Qualified the same way varKey is,

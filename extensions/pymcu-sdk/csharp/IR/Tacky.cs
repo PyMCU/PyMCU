@@ -82,6 +82,7 @@ public enum BinaryOp
     Div,
     FloorDiv,
     Mod,
+    Pow,
     Equal,
     NotEqual,
     LessThan,

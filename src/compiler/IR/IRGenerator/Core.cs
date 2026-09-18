@@ -31,6 +31,7 @@ public partial class IRGenerator
         Frontend.BinaryOp.Div => BinaryOp.Div,
         Frontend.BinaryOp.FloorDiv => BinaryOp.FloorDiv,
         Frontend.BinaryOp.Mod => BinaryOp.Mod,
+        Frontend.BinaryOp.Pow => BinaryOp.Pow,
         Frontend.BinaryOp.Equal => BinaryOp.Equal,
         Frontend.BinaryOp.NotEqual => BinaryOp.NotEqual,
         Frontend.BinaryOp.Less => BinaryOp.LessThan,
@@ -460,12 +461,20 @@ public partial class IRGenerator
         // bytes it always did. The answer is whole-program and has to be settled before the
         // first raise is lowered, which is why it is taken here and not at each raise (#369).
         programBindsExceptionObject = ProgramBindsExceptionObject(mainAst, importedModules.Values);
+        programHasDynamicRaiseMessage = programBindsExceptionObject
+            && ProgramHasDynamicRaiseMessage(mainAst, importedModules.Values);
 
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes.
         PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst);
         foreach (var m in importedModules.Values)
             PyMCU.Frontend.AsyncTransform.TransformProgram(m);
+
+        // `Name = namedtuple("Name", ("a", "b"))` is a ZCA class, not a heap type. Rewrite
+        // every module before TypeInference / scan see the assignment as a call.
+        PyMCU.Frontend.NamedtupleTransform.TransformProgram(mainAst);
+        foreach (var m in importedModules.Values)
+            PyMCU.Frontend.NamedtupleTransform.TransformProgram(m);
 
         // Fill unannotated params/returns of outlined functions from call-site evidence
         // (safe integer-widening join) BEFORE scanning, so an unannotated helper no longer
@@ -1061,6 +1070,7 @@ public partial class IRGenerator
         currentModulePrefix = "";
 
         ForceInlineClassReturningFactories();
+        ForceInlineBufferReturningFunctions();
 
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
         //
@@ -1118,6 +1128,9 @@ public partial class IRGenerator
         foreach (var fn in lowered)
             if (fn != null)
                 irProgram.Functions.Add(fn);
+
+        if (programHasDynamicRaiseMessage)
+            irProgram.Functions.Add(SynthesizeExceptionMessagePrinter());
 
         // Inject FlashData instructions (global const[uint8[N]] arrays) into the
         // main function body so the backend emits .byte tables in flash.
@@ -2228,6 +2241,57 @@ public partial class IRGenerator
         return found;
     }
 
+    /// Whether any raise carries a non-literal message. The printer has to exist before
+    /// the first <c>print(e)</c> is lowered, which may be in a function compiled before
+    /// the raise itself (#435).
+    private static bool ProgramHasDynamicRaiseMessage(
+        PyMCU.Frontend.ProgramNode main,
+        IEnumerable<PyMCU.Frontend.ProgramNode> imported)
+    {
+        bool found = false;
+
+        void Walk(PyMCU.Frontend.Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case PyMCU.Frontend.RaiseStmt r:
+                    if (r.MessageExpr != null || !string.IsNullOrEmpty(r.MessageName))
+                    { found = true; return; }
+                    return;
+                case PyMCU.Frontend.TryStmt t:
+                    foreach (var st in t.Body) Walk(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
+                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
+                    return;
+                case PyMCU.Frontend.Block b: foreach (var st in b.Statements) Walk(st); return;
+                case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); return;
+                case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); return;
+                case PyMCU.Frontend.IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var br in i.ElifBranches) Walk(br.Item2);
+                    Walk(i.ElseBranch);
+                    return;
+                case PyMCU.Frontend.WhileStmt w: Walk(w.Body); return;
+                case PyMCU.Frontend.ForStmt fo: Walk(fo.Body); return;
+                case PyMCU.Frontend.MatchStmt m:
+                    foreach (var br in m.Branches) Walk(br.Body);
+                    return;
+            }
+        }
+
+        void WalkProgram(PyMCU.Frontend.ProgramNode p)
+        {
+            foreach (var st in p.GlobalStatements) Walk(st);
+            foreach (var fn in p.Functions) Walk(fn.Body);
+        }
+
+        WalkProgram(main);
+        foreach (var m in imported) WalkProgram(m);
+        return found;
+    }
+
     private int StringIdOf(string text)
     {
         if (text.Length == 1) return text[0];
@@ -2361,6 +2425,17 @@ public partial class IRGenerator
 
         if (intrinsicNames.Contains(name)) return name;
 
+        // A class defined in the module being lowered shadows an import of the same
+        // name that belongs to a different module. TryImportedAlias falls back to the
+        // entry file's table, so `from digitalio import DigitalInOut` in main made
+        // `return DigitalInOut(pin, self)` inside adafruit_74hc595.get_pin the
+        // 1-argument constructor. Functions stay alias-first: a facade that re-exports
+        // `i2c_write_bytes` still has to resolve `_twi_wait` through the defining
+        // module's import table, and walking prefixes first returned a class key
+        // that is not a function.
+        if (ResolvePrefixedClass(name) is { } localClass)
+            return localClass;
+
         if (TryImportedAlias(name, out var modName))
         {
             var mangledMod = modName?.Replace('.', '_');
@@ -2372,7 +2447,6 @@ public partial class IRGenerator
             if (intrinsicNames.Contains(original)) return original;
             return mangledMod + "_" + original;
         }
-
 
         var prefixTry = currentModulePrefix;
         while (!string.IsNullOrEmpty(prefixTry))
@@ -2396,6 +2470,22 @@ public partial class IRGenerator
         }
 
         return name;
+    }
+
+    private string? ResolvePrefixedClass(string name)
+    {
+        var prefixTry = currentModulePrefix;
+        while (!string.IsNullOrEmpty(prefixTry))
+        {
+            var candidate = prefixTry + name;
+            if (classFieldLayout.ContainsKey(candidate) || classDirectMethods.ContainsKey(candidate))
+                return candidate;
+            if (prefixTry.Length < 2) break;
+            int lastSep = prefixTry.LastIndexOf('_', prefixTry.Length - 2);
+            if (lastSep == -1) break;
+            prefixTry = prefixTry.Substring(0, lastSep + 1);
+        }
+        return null;
     }
 
     // Returns true for top-level statements that are purely declarative and have no
@@ -2604,6 +2694,100 @@ public partial class IRGenerator
             moved.Add(entry);
         }
         foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// A function that returns a fixed <c>bytearray</c>/<c>bytes</c> has no scalar handle to
+    /// put in a register (#464). Expand it at the call site, the same way a class-returning
+    /// factory is expanded: the callee's buffer is laid out in the caller's frame and the
+    /// assignment aliases it. A real subroutine would return storage that dies with the frame.
+    /// </summary>
+    private void ForceInlineBufferReturningFunctions()
+    {
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            if (entry.Func.Name is "main" or "__module_init") continue;
+            if (!FunctionReturnsFixedBuffer(entry.Func)) continue;
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (!inlineFunctions.ContainsKey(fullName))
+                inlineFunctions[fullName] = entry.Func;
+            outlinedMethods.Remove(fullName);
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+
+        foreach (var name in outlinedMethods.ToList())
+        {
+            if (!methodAstByName.TryGetValue(name, out var func)) continue;
+            if (!FunctionReturnsFixedBuffer(func)) continue;
+            inlineFunctions[name] = func;
+            outlinedMethods.Remove(name);
+        }
+    }
+
+    private static bool IsBufferTypeName(string? rt) =>
+        rt is "bytearray" or "bytes" or "WriteableBuffer" or "ReadableBuffer";
+
+    private static bool IsBufferCtor(Expression? e) =>
+        e is CallExpr { Callee: VariableExpr { Name: "bytearray" or "bytes" } };
+
+    private static bool FunctionReturnsFixedBuffer(FunctionDef func)
+    {
+        if (IsBufferTypeName(func.ReturnType)) return true;
+        var bufLocals = new HashSet<string>();
+        return StatementReturnsFixedBuffer(func.Body, bufLocals);
+    }
+
+    private static bool StatementReturnsFixedBuffer(Statement? stmt, HashSet<string> bufLocals)
+    {
+        switch (stmt)
+        {
+            case null: return false;
+            case Block b:
+                foreach (var s in b.Statements)
+                    if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
+                return false;
+            case VarDecl v when IsBufferTypeName(v.VarType) || IsBufferCtor(v.Init):
+                bufLocals.Add(v.Name);
+                return false;
+            case AnnAssign a when IsBufferTypeName(a.Annotation) || IsBufferCtor(a.Value):
+                bufLocals.Add(a.Target);
+                return false;
+            case AssignStmt { Target: VariableExpr t } a when IsBufferCtor(a.Value):
+                bufLocals.Add(t.Name);
+                return false;
+            case ReturnStmt { Value: VariableExpr rv } when bufLocals.Contains(rv.Name):
+                return true;
+            case ReturnStmt { Value: ListExpr }:
+                return true;
+            case IfStmt i:
+                if (StatementReturnsFixedBuffer(i.ThenBranch, bufLocals)) return true;
+                foreach (var elif in i.ElifBranches)
+                    if (StatementReturnsFixedBuffer(elif.Body, bufLocals)) return true;
+                return StatementReturnsFixedBuffer(i.ElseBranch, bufLocals);
+            case WhileStmt w: return StatementReturnsFixedBuffer(w.Body, bufLocals);
+            case ForStmt f: return StatementReturnsFixedBuffer(f.Body, bufLocals);
+            case MatchStmt m:
+                foreach (var c in m.Branches)
+                    if (StatementReturnsFixedBuffer(c.Body, bufLocals)) return true;
+                return false;
+            case TryStmt t:
+                foreach (var s in t.Body)
+                    if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
+                foreach (var h in t.Handlers)
+                    foreach (var s in h.Handler)
+                        if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
+                if (t.Finally != null)
+                    foreach (var s in t.Finally)
+                        if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
+                if (t.ElseBody != null)
+                    foreach (var s in t.ElseBody)
+                        if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
+                return false;
+            case WithStmt w: return StatementReturnsFixedBuffer(w.Body, bufLocals);
+            default: return false;
+        }
     }
 
     /// <summary>

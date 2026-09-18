@@ -1296,6 +1296,7 @@ public partial class IRGenerator
                     if (t.ElseBody != null) foreach (var cs in t.ElseBody) Walk(cs);
                     if (t.Finally != null) foreach (var cs in t.Finally) Walk(cs);
                     return;
+                case RaiseStmt rs: Expr(rs.MessageExpr); return;
             }
         }
 
@@ -1509,7 +1510,8 @@ public partial class IRGenerator
                     // for layout + dispatch). Reject it clearly instead of later failing with an
                     // opaque "undefined function 'C_foo'" when a second base's method is called.
                     var realBases = classDef.Bases
-                        .Where(b => b is not ("Enum" or "IntEnum" or "object")).ToList();
+                        .Where(b => b is not ("Enum" or "IntEnum" or "object" or "ABC")
+                                    && !IsProtocolBaseName(b)).ToList();
                     if (realBases.Count > 1)
                         throw UserError(
                             $"class '{classDef.Name}' uses multiple inheritance " +
@@ -1528,6 +1530,8 @@ public partial class IRGenerator
                     string classKey = classPrefix.Substring(0, classPrefix.Length - 1);
                     if (!classDirectMethods.ContainsKey(classKey))
                         classDirectMethods[classKey] = new HashSet<string>();
+                    if (classDef.Bases.Any(IsProtocolBaseName))
+                        protocolClasses.Add(classKey);
 
                     if (classDef.Body is Block block)
                     {
@@ -1903,6 +1907,17 @@ public partial class IRGenerator
                                         // about this one.
                                         classPlainFunctions.Add(fullName);
                                     }
+                                    else if (func.Name == "__init__")
+                                    {
+                                        // A constructor establishes the instance and cannot be
+                                        // shared. Explicit @outline on __init__ is already ignored
+                                        // above. The undecorated path used to outline a large
+                                        // __init__ anyway, so a class-typed parameter took its
+                                        // annotation class (digitalio.DigitalInOut) instead of the
+                                        // argument (adafruit_mcp230xx.DigitalInOut). pin.high()
+                                        // then became HAL gpio with a runtime bit index.
+                                        instanceMethodDefs[fullName] = func;
+                                    }
                                     else if (IsOutlineSafe(func, defLayout, ctFields,
                                                  InstanceFieldsOf(classKey)))
                                     {
@@ -2091,6 +2106,9 @@ public partial class IRGenerator
             }
         }
     }
+
+    private static bool IsProtocolBaseName(string b) =>
+        b == "Protocol" || b.EndsWith(".Protocol", StringComparison.Ordinal);
 
     /// Every `class C(Base)` seen, with the module prefix it was seen under, checked once all
     /// modules have been scanned. See CheckBaseClassNames.
@@ -2543,6 +2561,10 @@ public partial class IRGenerator
 
             // SourceParam: the __init__ param that directly initializes the field
             // (RHS is a bare parameter), else "" -- needed for factory return lowering.
+            // A string literal or bytearray() is not a uint8: leaving it as the default
+            // made `self._message = ""` numeric and the setter's `str` a contradiction
+            // (adafruit_character_lcd), and `self._gpio = bytearray(n)` the same
+            // (adafruit_74hc595).
             string type = "uint8";
             string srcParam = "";
             // An explicit `self.x: T = ...` annotation wins -- the field gets its
@@ -2575,14 +2597,16 @@ public partial class IRGenerator
             // was asked for (PyMCU#322). An explicit annotation still wins -- that is the
             // reader's declaration -- and everything else takes the widest value assigned.
             if (annotatedType == null)
+            {
+                ApplyInferredFieldType(ref type, InferAssignedFieldType(rhs, paramTypes, localTypes));
                 foreach (var s2 in init.Body.Statements)
                 {
                     if (s2 is not AssignStmt a2 || a2.Target is not MemberAccessExpr m2
                         || m2.Object is not VariableExpr sv2 || sv2.Name != "self"
                         || m2.Member != field) continue;
-                    string? w = InferAssignedFieldType(a2.Value, paramTypes, localTypes);
-                    if (w != null && ScalarWidthRank(w) > ScalarWidthRank(type)) type = w;
+                    ApplyInferredFieldType(ref type, InferAssignedFieldType(a2.Value, paramTypes, localTypes));
                 }
+            }
 
             layout.Add((field, type, srcParam));
         }
@@ -2711,6 +2735,20 @@ public partial class IRGenerator
         _ => 0,
     };
 
+    /// A string or buffer inference replaces the uint8 default; it must not then be
+    /// overwritten by a numeric rank (str ranks 0, uint16 ranks 2).
+    private static void ApplyInferredFieldType(ref string type, string? w)
+    {
+        if (w == null) return;
+        if (w is "str" or "bytearray" or "bytes")
+        {
+            type = w;
+            return;
+        }
+        if (type is "str" or "bytearray" or "bytes") return;
+        if (ScalarWidthRank(w) > ScalarWidthRank(type)) type = w;
+    }
+
     // True when __init__ calls `self.<methodName>(...)` as a bare, top-level statement of its
     // own body -- the shape of a constructor factoring its own setup into a helper method.
     // Deliberately narrow (top level only, direct call only, no transitive chasing): a helper
@@ -2789,6 +2827,15 @@ public partial class IRGenerator
                 return null;
 
             case CallExpr { Callee: VariableExpr cv } when ScalarWidthRank(cv.Name) > 0:
+                return cv.Name;
+
+            // `self._message = ""` is a string field, not a uint8 that a later
+            // `self._message = message` (str) then contradicts. adafruit_character_lcd.
+            case StringLiteral:
+                return "str";
+
+            // `self._gpio = bytearray(n)` is a buffer field. adafruit_74hc595.
+            case CallExpr { Callee: VariableExpr { Name: "bytearray" or "bytes" } cv }:
                 return cv.Name;
 
             case IntegerLiteral il:
@@ -3175,6 +3222,12 @@ public partial class IRGenerator
     {
         if (layout.Count == 0) return false;
 
+        // Descriptor protocol (#419): `__get__`/`__set__` receive `obj` as the owning
+        // instance, whose class is only known at the call site. A body compiled once
+        // would keep the typing-only placeholder (`I2CDeviceDriver`) and refuse a genuine
+        // read of `obj.i2c_device`. Expand at each site so the rewrite can substitute.
+        if (method.Name is "__get__" or "__set__") return false;
+
         // `*args` and `**kwargs` stand for what the CALL SITE wrote beyond the declaration,
         // so a body compiled once and shared between call sites has nothing to bind them to.
         // The method has to be expanded where it is called (#368).
@@ -3198,6 +3251,23 @@ public partial class IRGenerator
             { "uint8", "int8", "uint16", "int16", "uint32", "int32", "float", "bool" };
         if (layout.Any(f => !scalarTypes.Contains(f.Type))) return false;
 
+        // A return that is another instance has no ABI slot in a shared body.
+        // get_pin() -> DigitalInOut must expand at the call site so the result
+        // keeps that class when it is passed straight into Character_LCD.__init__.
+        // ClassKeyFromAnnotation is empty when the returned class has not been
+        // scanned yet (mcp23008.get_pin is visited before digital_inout.py);
+        // a capitalized or dotted name that is not a known scalar is still a class.
+        string rt = (method.ReturnType ?? "").Trim().Trim('"');
+        var returnScalars = new HashSet<string>(scalarTypes)
+            { "int", "str", "bytes", "bytearray", "None", "void", "" };
+        if (!returnScalars.Contains(rt))
+        {
+            int nameStart = rt.LastIndexOf('.') + 1;
+            if (ClassKeyFromAnnotation(rt) != null
+                || (nameStart < rt.Length && char.IsUpper(rt[nameStart])))
+                return false;
+        }
+
         // A PARAMETER that is another instance cannot be passed either, for the same reason a
         // ZCA field cannot: the instance is compile-time per-instance, not a runtime value a
         // shared body can receive. `def read(self, o: C) -> uint8: return self.n + o.n` was
@@ -3208,8 +3278,10 @@ public partial class IRGenerator
         {
             string pt = method.Params[pi].Type;
             if (string.IsNullOrEmpty(pt) || scalarTypes.Contains(pt)) continue;
-            if (classFieldLayout.ContainsKey(pt) || classFieldLayout.ContainsKey(ResolveCallee(pt)))
-                return false;
+            // Dotted annotations (`digitalio.DigitalInOut`) are not keys of
+            // classFieldLayout; ClassKeyFromAnnotation is the same lookup VisitFunction
+            // uses, so Character_LCD.__init__ is not outlined as a shared body.
+            if (ClassKeyFromAnnotation(pt) != null) return false;
         }
 
         var fields = new HashSet<string>(layout.Select(f => f.Field));
@@ -3628,6 +3700,8 @@ public partial class IRGenerator
         string classKey = classPrefix.Substring(0, classPrefix.Length - 1);
         if (!classDirectMethods.ContainsKey(classKey))
             classDirectMethods[classKey] = new HashSet<string>();
+        if (nested.Bases.Any(IsProtocolBaseName))
+            protocolClasses.Add(classKey);
 
         // Nested classes need the same field widths as top-level classes (#443).
         // Otherwise a computed constructor value can fall back to a byte-sized field.

@@ -141,6 +141,26 @@ public partial class IRGenerator
             }
         }
 
+        // `bytearray(self._number_of_shift_registers)` after
+        // `self._number_of_shift_registers = n` with a compile-time n (adafruit_74hc595).
+        // The field store already recorded the constant under the flattened name; this
+        // lookup must not VisitExpression, which would emit IR for a size the program
+        // treats as a compile-time fact.
+        if (expr is MemberAccessExpr mem && mem.Object is VariableExpr mve)
+        {
+            string owner = ResolveNameKey(mve.Name);
+            if (AliasedInstanceName(owner) is { } aliasedInst)
+                owner = aliasedInst;
+            string flat = owner + "_" + mem.Member;
+            if (constantVariables.TryGetValue(flat, out int fcv)) return fcv;
+            if (!string.IsNullOrEmpty(currentInlinePrefix)
+                && constantVariables.TryGetValue(currentInlinePrefix + mve.Name + "_" + mem.Member, out int fcip))
+                return fcip;
+            if (!string.IsNullOrEmpty(currentFunction)
+                && constantVariables.TryGetValue(currentFunction + "." + mve.Name + "_" + mem.Member, out int fcf))
+                return fcf;
+        }
+
         throw UserError("Not a constant expression", expr);
     }
 
@@ -643,6 +663,14 @@ public partial class IRGenerator
 
             variableTypes[qualifiedParam] = paramDt;
 
+            // A parameter annotated with a class is that instance, even when this method is
+            // compiled as a shared subroutine (adafruit_character_lcd's Character_LCD.__init__
+            // takes six DigitalInOut pins and writes `for pin in (reset_dio, ...)`). Without
+            // this the for-in only saw instanceClasses filled at an @inline call site, and an
+            // outlined constructor refused the tuple as "not compile-time constants".
+            if (ClassKeyFromAnnotation(param.Type) is { } paramCls)
+                instanceClasses[qualifiedParam] = paramCls;
+
             // A TYPING-ONLY annotation (#367). The name was accepted, because a parameter the
             // body never reads costs nothing; reading it is refused at the line that does,
             // where the sentence can name the value rather than the signature.
@@ -1026,13 +1054,28 @@ public partial class IRGenerator
         // Returning a bytes/list object. The literal form crashed with an AST class name; the
         // form through a name compiled and returned the array as a SCALAR, after which the
         // caller's `y[0]` lowered to a bit test on it. Neither is a value the caller can use.
+        // An @inline (or force-inlined) callee is different: the buffer lives in the caller's
+        // frame, and the assignment aliases it (#464).
         if (stmt.Value != null && IsSequenceObject(stmt.Value))
+        {
+            if (inlineStack.Count > 0 && stmt.Value is VariableExpr retBuf
+                && ResolveArrayVar(retBuf.Name) is { } arr)
+            {
+                var bufCtx = inlineStack.Last();
+                bufCtx.ReturnedArray = arr.Name;
+                bufCtx.ResultAssigned = true;
+                if (_runtimeBranchDepth <= bufCtx.EntryBranchDepth)
+                    bufCtx.ResultReturnedUnconditionally = true;
+                Emit(new Jump(bufCtx.ExitLabel));
+                return;
+            }
             throw UserError(
                 "a bytes or list object cannot be returned. " + SequenceIsStorage
                 + " Give the caller the buffer instead: take it as a parameter and fill it in "
                 + "place, which is what the stdlib's read helpers do, or return one element "
                 + "(`return data[0]`).",
                 stmt.Value);
+        }
 
         // A `return` escaping a try-with-finally must run the pending finally block(s) first
         // (Python semantics). Evaluate the value, materialize it so the finally can't change it,

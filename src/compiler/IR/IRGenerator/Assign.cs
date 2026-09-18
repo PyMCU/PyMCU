@@ -825,6 +825,28 @@ public partial class IRGenerator
             + $"`{target}(...)` to set and `{target}()` to read.", memTarget);
     }
 
+    /// <summary>
+    /// The setter registered for <paramref name="cls"/>.<paramref name="member"/>, or for the
+    /// concrete / inherited class that actually defines it.
+    /// </summary>
+    private bool TryLookupPropertySetter(string cls, string member, out string? inlineKey)
+    {
+        if (propertySetters.TryGetValue(cls + "." + member, out inlineKey)) return true;
+        string? concrete = ResolveConcreteClass(cls);
+        if (!string.IsNullOrEmpty(concrete) && concrete != cls
+            && propertySetters.TryGetValue(concrete + "." + member, out inlineKey))
+            return true;
+        string? cur = cls;
+        for (int depth = 0; cur != null && depth < 20; depth++)
+        {
+            if (propertySetters.TryGetValue(cur + "." + member, out inlineKey)) return true;
+            if (!classBasePrefixes.TryGetValue(cur, out var bp) || string.IsNullOrEmpty(bp)) break;
+            cur = bp.EndsWith("_") ? bp[..^1] : bp;
+        }
+        inlineKey = null;
+        return false;
+    }
+
     private bool EmitPropertySetterAssign(AssignStmt stmt, MemberAccessExpr memTarget)
     {
         bool isCtor = false;
@@ -851,13 +873,39 @@ public partial class IRGenerator
     // plain assignment (`obj.prop = v`) and augmented assignment (`obj.prop OP= v`).
     private bool TryExpandPropertySetter(MemberAccessExpr memTarget, Func<Val> getArg)
     {
-        var objVal = VisitExpression(memTarget.Object);
-        var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
-        while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
-            @base = alias;
-        if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out var cls))
-            return false;
-        if (!propertySetters.TryGetValue(cls + "." + memTarget.Member, out string? inlineKey))
+        // A named instance -- including a for-unrolled loop variable -- has to be resolved
+        // the same way RejectAssignmentToAMethod resolves it (ResolveNameKey). Visiting the
+        // object as an expression can return a Temporary that is not itself in
+        // instanceClasses: DigitalInOut is a multi-field ZCA, and adafruit_character_lcd's
+        // `for pin in (reset_dio, ...): pin.direction = OUTPUT` then fell through to
+        // "direction is a method", even though direction is a @property setter.
+        string @base = "";
+        string? cls = null;
+        if (memTarget.Object is VariableExpr ve)
+        {
+            string owner = ResolveNameKey(ve.Name);
+            if (instanceClasses.TryGetValue(owner, out cls) && !string.IsNullOrEmpty(cls))
+                @base = owner;
+            else if (AliasedInstanceName(owner) is { } aliased
+                     && instanceClasses.TryGetValue(aliased, out cls) && !string.IsNullOrEmpty(cls))
+                @base = aliased;
+        }
+
+        if (string.IsNullOrEmpty(@base))
+        {
+            var objVal = VisitExpression(memTarget.Object);
+            @base = ResolveClassCarryingName(objVal) ?? "";
+            if (string.IsNullOrEmpty(@base))
+            {
+                @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+                while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
+                    @base = alias;
+            }
+            if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out cls))
+                return false;
+        }
+
+        if (!TryLookupPropertySetter(cls!, memTarget.Member, out string? inlineKey))
         {
             // No setter. If the member IS a @property getter, the assignment targets a read-only
             // property -- Python raises AttributeError. Reject clearly instead of silently writing
@@ -1213,7 +1261,9 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentInlinePrefix))
             target = WidenInlineLocalToValue(varExpr, target, value);
 
-        if (!(value is NoneVal)) Emit(new Copy(value, target));
+        if (value is ArrayBase abRet && target is Variable arrTgt)
+            CopyArrayIdentity(arrTgt.Name, abRet.ArrayName);
+        else if (!(value is NoneVal)) Emit(new Copy(value, target));
 
         // RFC 0001 Model B (register handle): `x = make()` where make is a non-@inline
         // factory returning a single-field ZCA (VisitReturn already lowers the callee's
@@ -2596,9 +2646,30 @@ public partial class IRGenerator
         return idx;
     }
 
+    /// <summary>
+    /// Make <paramref name="dst"/> another name for the same fixed buffer as <paramref name="src"/>
+    /// (#464). The buffer is storage under a name; aliasing is how a returned bytearray
+    /// reaches the caller after the callee is expanded into the call site.
+    /// </summary>
+    private void CopyArrayIdentity(string dst, string src)
+    {
+        string from = src;
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(from, out var nxt); d++)
+            from = nxt;
+        if (!arraySizes.ContainsKey(from) && arraySizes.ContainsKey(src))
+            from = src;
+        if (!arraySizes.ContainsKey(from)) return;
+        // Alias only: a second arraySizes entry would be a SECOND buffer, and the
+        // caller's loads would read zeros while the callee stored into the first.
+        variableAliases[dst] = from;
+    }
+
     // Qualified array name + size for a variable, or null when it is not a known array.
     private (string Name, int Size)? ResolveArrayVar(string name)
     {
+        string term = TerminalAliasOf(name);
+        if (arraySizes.TryGetValue(term, out int aliasedSz)) return (term, aliasedSz);
+
         foreach (var k in new[]
         {
             string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,

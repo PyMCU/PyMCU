@@ -1867,18 +1867,30 @@ public partial class IRGenerator
     private void VisitRaise(RaiseStmt stmt)
     {
         string resolvedMessage = stmt.Message;
+        Expression? dynamicMessage = stmt.MessageExpr;
         if (!string.IsNullOrEmpty(stmt.MessageName))
         {
             string qualified = string.IsNullOrEmpty(currentFunction)
                 ? stmt.MessageName
                 : currentFunction + "." + stmt.MessageName;
-            resolvedMessage = ResolveStrConstant(qualified)
-                ?? ResolveStrConstant(stmt.MessageName)
-                ?? throw UserError(
+            string? named = ResolveStrConstant(qualified) ?? ResolveStrConstant(stmt.MessageName);
+            if (named != null)
+                resolvedMessage = named;
+            else if (stmt.ErrorType == "CompileError")
+                throw UserError(
                     $"raise {stmt.ErrorType}({stmt.MessageName}): '{stmt.MessageName}' is not a " +
                     "string constant known at compile time. The message must be one or more " +
                     "string literals, or the name of a module-level constant declared as " +
                     $"`{stmt.MessageName}: str = \"...\"`", stmt);
+            else
+                dynamicMessage ??= new VariableExpr(stmt.MessageName) { Line = stmt.Line };
+        }
+
+        if (dynamicMessage != null && stmt.ErrorType != "CompileError"
+            && TryFoldRaiseMessageToString(dynamicMessage, out string folded))
+        {
+            resolvedMessage = folded;
+            dynamicMessage = null;
         }
 
         if (stmt.ErrorType == "CompileError")
@@ -1997,15 +2009,29 @@ public partial class IRGenerator
                 ? new Variable(handlerCodeStack[^1], DataType.UINT8)
                 : new Constant(0);
 
-        // The message, alongside the code. One store of one word: the flash address of the
-        // literal, which the same subroutine that prints every other string already walks. It
-        // is emitted only when some handler in the program binds a name, so a program without
-        // `as e` is unchanged to the byte (#369).
+        // The message, alongside the code. A string literal is one store of the flash address
+        // of the interned text (#369). A non-literal (f-string, concatenation, call) stores
+        // each runtime piece into the exception-args record and a raise-site id; print(e)
+        // dispatches on the id and replays that site's print sequence (#435).
         //
         // A bare re-raise writes nothing: the word still holds the message of the exception
         // being handled, which is the one being re-raised.
+        bool dynamicStored = false;
+        if (dynamicMessage != null && programBindsExceptionObject && !string.IsNullOrEmpty(stmt.ErrorType))
+        {
+            EmitDynamicRaiseMessage(dynamicMessage, stmt);
+            dynamicStored = true;
+        }
+        else if (programHasDynamicRaiseMessage && !string.IsNullOrEmpty(stmt.ErrorType))
+        {
+            // A literal raise in a program that also has a deferred-print raise must clear
+            // the site id, or print(e) would replay the previous raise's pieces.
+            DeclareExceptionSiteVar();
+            Emit(new Copy(new Constant(0), new Variable(ExceptionSiteVar, DataType.UINT8)));
+        }
+
         if (programBindsExceptionObject && !string.IsNullOrEmpty(stmt.ErrorType)
-            && !string.IsNullOrEmpty(resolvedMessage))
+            && !string.IsNullOrEmpty(resolvedMessage) && !dynamicStored)
         {
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(resolvedMessage!)),
@@ -2287,6 +2313,275 @@ public partial class IRGenerator
     {
         variableTypes[ExceptionMessageVar] = DataType.UINT16;
         mutableGlobals[ExceptionMessageVar] = DataType.UINT16;
+    }
+
+    private void DeclareExceptionSiteVar()
+    {
+        variableTypes[ExceptionSiteVar] = DataType.UINT8;
+        mutableGlobals[ExceptionSiteVar] = DataType.UINT8;
+    }
+
+    /// <summary>
+    /// Fold a raise message to a compile-time string when every piece is already known.
+    /// <c>f"bad {1}"</c> is "bad 1"; a name whose value is not a string constant fails.
+    /// </summary>
+    private bool TryFoldRaiseMessageToString(Expression e, out string text)
+    {
+        text = "";
+        e = RewriteStringBuilding(e);
+        if (e is CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } sc)
+            e = sc.Args[0];
+
+        if (StaticStringOf(e) is { } s) { text = s; return true; }
+        if (e is IntegerLiteral il) { text = il.Value.ToString(); return true; }
+        if (e is BooleanLiteral bl) { text = bl.Value ? "True" : "False"; return true; }
+        if (e is NoneLiteral) { text = "None"; return true; }
+        if (e is VariableExpr ve)
+        {
+            foreach (string key in RaiseMessageNameKeys(ve.Name))
+                if (constantVariables.TryGetValue(key, out int cv)) { text = cv.ToString(); return true; }
+        }
+
+        if (e is FStringExpr fs)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var p in fs.Parts)
+            {
+                if (!p.IsExpr) { sb.Append(p.Text); continue; }
+                if (!string.IsNullOrEmpty(p.FormatSpec)) return false;
+                if (p.Expr == null || !TryFoldRaiseMessageToString(p.Expr, out var piece)) return false;
+                sb.Append(piece);
+            }
+            text = sb.ToString();
+            return true;
+        }
+
+        if (e is BinaryExpr { Op: Frontend.BinaryOp.Add } add
+            && TryFoldRaiseMessageToString(add.Left, out var left)
+            && TryFoldRaiseMessageToString(add.Right, out var right))
+        {
+            text = left + right;
+            return true;
+        }
+
+        return false;
+    }
+
+    private IEnumerable<string> RaiseMessageNameKeys(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+            yield return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction))
+            yield return currentFunction + "." + name;
+        yield return name;
+    }
+
+    /// <summary>
+    /// Store a non-literal raise message as a site id plus typed slots, so print(e) can
+    /// replay the same sequence the streaming f-string printer would have written (#435).
+    /// </summary>
+    private void EmitDynamicRaiseMessage(Expression message, RaiseStmt at)
+    {
+        Expression prepared = RewriteStringBuilding(message);
+        if (prepared is CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } sc)
+            prepared = sc.Args[0];
+
+        FStringExpr fs;
+        if (prepared is FStringExpr f)
+            fs = f;
+        else
+            fs = new FStringExpr(new List<FStringPart>
+            {
+                new() { IsExpr = true, Expr = prepared },
+            }) { Line = prepared.Line };
+
+        var pieces = new List<FStringPart>();
+        void Flatten(FStringExpr fse)
+        {
+            foreach (var p in fse.Parts)
+            {
+                if (p.IsExpr && p.Expr is FStringExpr nested && string.IsNullOrEmpty(p.FormatSpec))
+                    Flatten(nested);
+                else
+                    pieces.Add(p);
+            }
+        }
+        Flatten(fs);
+
+        var site = new RaiseMessageSite { Id = nextRaiseSiteId++ };
+        int intUsed = 0, floatUsed = 0;
+
+        foreach (var p in pieces)
+        {
+            if (!p.IsExpr)
+            {
+                if (p.Text.Length > 0)
+                    site.Pieces.Add(new RaiseMessagePiece { Literal = p.Text });
+                continue;
+            }
+
+            Expression piece = p.Expr!;
+            if (string.IsNullOrEmpty(p.FormatSpec) && TryFoldRaiseMessageToString(piece, out var foldedPiece))
+            {
+                site.Pieces.Add(new RaiseMessagePiece { Literal = foldedPiece });
+                continue;
+            }
+
+            RejectInstanceInterpolation(piece);
+            Val v = VisitExpression(piece);
+            DataType vt = GetValType(v);
+            var rec = new RaiseMessagePiece { FormatSpec = p.FormatSpec ?? "" };
+
+            if (vt == DataType.FLOAT || v is FloatConstant)
+            {
+                int slot = floatUsed++;
+                string name = ExceptionFloatArgVar(slot);
+                variableTypes[name] = DataType.FLOAT;
+                mutableGlobals[name] = DataType.FLOAT;
+                Emit(new Copy(v, new Variable(name, DataType.FLOAT)));
+                rec.FloatSlot = slot;
+                rec.PrintAs = DataType.FLOAT;
+            }
+            else
+            {
+                int slot = intUsed++;
+                string name = ExceptionArgVar(slot);
+                variableTypes[name] = DataType.INT32;
+                mutableGlobals[name] = DataType.INT32;
+                Temporary widened = MakeTemp(DataType.INT32);
+                Emit(new Copy(v, widened));
+                Emit(new Copy(widened, new Variable(name, DataType.INT32)));
+                rec.IntSlot = slot;
+                rec.PrintAs = IsScalarIntType(vt) ? vt : DataType.INT32;
+                rec.IsBool = IsBoolExpr(piece);
+            }
+
+            site.Pieces.Add(rec);
+        }
+
+        DeclareExceptionSiteVar();
+        Emit(new Copy(new Constant(site.Id), new Variable(ExceptionSiteVar, DataType.UINT8)));
+        raiseMessageSites.Add(site);
+    }
+
+    /// <summary>
+    /// Replay the live exception's message: site 0 is the flash string, any other id is
+    /// the print sequence recorded at that raise.
+    /// </summary>
+    internal void EmitExceptionMessagePrint()
+    {
+        Emit(new Call(ExceptionMessagePrinter, new List<Val>(), new NoneVal()));
+    }
+
+    internal Function SynthesizeExceptionMessagePrinter()
+    {
+        var savedInstructions = currentInstructions;
+        var savedFunction = currentFunction;
+        var savedModulePrefix = currentModulePrefix;
+        var savedInlinePrefix = currentInlinePrefix;
+        int savedInlineDepth = inlineDepth;
+        var savedLoopStack = loopStack;
+        var savedInlineStack = inlineStack;
+        int savedLastLine = lastLine;
+        var savedFunctionGlobals = currentFunctionGlobals;
+
+        currentInstructions = new List<Instruction>();
+        currentFunction = ExceptionMessagePrinter;
+        currentModulePrefix = "";
+        currentInlinePrefix = "";
+        inlineDepth = 0;
+        loopStack = new List<LoopLabels>();
+        inlineStack = new List<InlineContext>();
+        lastLine = -1;
+        currentFunctionGlobals = new HashSet<string>();
+
+        string writeStrFn = ResolveWriteStrFn();
+        string floatFn = ResolveFloatWriteFn();
+        string after = MakeLabel();
+        string litPath = MakeLabel();
+
+        DeclareExceptionSiteVar();
+        DeclareExceptionMessageVar();
+        var siteVar = new Variable(ExceptionSiteVar, DataType.UINT8);
+        Emit(new JumpIfZero(siteVar, litPath));
+
+        foreach (var site in raiseMessageSites)
+        {
+            string next = MakeLabel();
+            Emit(new JumpIfNotEqual(siteVar, new Constant(site.Id), next));
+            foreach (var piece in site.Pieces)
+                EmitRaiseMessagePiece(piece, writeStrFn, floatFn);
+            Emit(new Jump(after));
+            Emit(new Label(next));
+        }
+
+        Emit(new Jump(after));
+        Emit(new Label(litPath));
+        Emit(new Call(ResolveRuntimeWriteStrFn(),
+            new List<Val> { new Variable(ExceptionMessageVar, DataType.UINT16) },
+            new NoneVal()));
+        Emit(new Label(after));
+        Emit(new Return(new NoneVal()));
+
+        var fn = new Function
+        {
+            Name = ExceptionMessagePrinter,
+            ReturnType = DataType.VOID,
+            Body = new List<Instruction>(currentInstructions),
+            CanFail = false,
+        };
+
+        currentInstructions = savedInstructions;
+        currentFunction = savedFunction;
+        currentModulePrefix = savedModulePrefix;
+        currentInlinePrefix = savedInlinePrefix;
+        inlineDepth = savedInlineDepth;
+        loopStack = savedLoopStack;
+        inlineStack = savedInlineStack;
+        lastLine = savedLastLine;
+        currentFunctionGlobals = savedFunctionGlobals;
+        return fn;
+    }
+
+    private void EmitRaiseMessagePiece(RaiseMessagePiece piece, string writeStrFn, string floatFn)
+    {
+        if (piece.Literal != null)
+        {
+            EmitStreamStr(writeStrFn, piece.Literal);
+            return;
+        }
+
+        if (piece.FloatSlot >= 0)
+        {
+            EmitStreamVal(floatFn, new Variable(ExceptionFloatArgVar(piece.FloatSlot), DataType.FLOAT));
+            return;
+        }
+
+        var stored = new Variable(ExceptionArgVar(piece.IntSlot), DataType.INT32);
+        if (piece.IsBool)
+        {
+            EmitStreamBool(writeStrFn, new VariableExpr(ExceptionArgVar(piece.IntSlot)));
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(piece.FormatSpec))
+        {
+            var (width, radix, pad, upper) = ParseFormatSpec(piece.FormatSpec);
+            bool signed = piece.PrintAs is DataType.INT8 or DataType.INT16 or DataType.INT32;
+            int flags = (upper ? 0x01 : 0) | (signed ? 0x02 : 0) | (pad == '0' ? 0x04 : 0);
+            Temporary valArg = MakeTemp(DataType.INT32);
+            Emit(new Copy(stored, valArg));
+            Emit(new Call(ResolveFmtFn(), new List<Val>
+            {
+                valArg,
+                new Constant(radix),
+                new Constant(width),
+                new Constant(flags),
+            }, MakeTemp(DataType.UINT8)));
+            return;
+        }
+
+        EmitStreamVal(floatFn, stored, piece.PrintAs);
     }
 
     private void EmitFinallyBody(TryStmt stmt)

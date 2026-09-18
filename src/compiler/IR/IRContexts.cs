@@ -29,6 +29,10 @@ public class InlineContext
     public string CalleeName { get; set; } = "";
     public bool ResultAssigned { get; set; } = false;
 
+    // A `return buf` of a fixed bytearray/bytes: the callee's storage is the caller's
+    // result. There is no scalar to copy; the assignment aliases the array (#464).
+    public string? ReturnedArray { get; set; }
+
     // The constant this expansion's result has been tracked as, if any. Set by the first
     // `return <constant>` that is actually visited; cleared the moment a second REACHABLE
     // return yields a DIFFERENT constant, because then the value is selected at run time.

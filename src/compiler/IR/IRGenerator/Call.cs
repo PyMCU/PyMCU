@@ -198,7 +198,13 @@ public partial class IRGenerator
 
             if (memC.Object is VariableExpr ve)
             {
-                if (modules.ContainsKey(ve.Name))
+                // A name bound to an instance is that instance, even when a
+                // module alias shares the name: the assignment shadows the
+                // import, as it does in Python (#467). Reading it as the
+                // module mangled `servo.fraction` to
+                // `adafruit_motor_servo_fraction` and `servo.set_pulse_width_range`
+                // to a free function of that name.
+                if (NamesAModuleMember(ve.Name, memC.Member))
                 {
                     // A builtin reached through its module (`import pymcu.hal.console as c`
                     // then `c.print(1)`) is still the builtin this compiler lowers itself;
@@ -749,6 +755,14 @@ public partial class IRGenerator
                 return new Constant(isinstMatches ? 1 : 0);
             }
         }
+
+        // `isinstance(x, (tuple, list))` -- adafruit_ht16k33 / PyMCU#423. The candidates are
+        // builtins, not classes with a layout, so the ZCA fold above does not answer. The
+        // receiver's shape is still known: a compile-time sequence, a buffer, or a scalar.
+        if (callee == "isinstance" && expr.Args.Count == 2
+            && expr.Args[0] is VariableExpr isinstShapeRecv
+            && TryFoldIsinstanceBuiltinTypes(isinstShapeRecv, expr.Args[1]) is { } isinstShape)
+            return isinstShape;
 
         if (callee == "print") return EmitPrintBuiltin(expr);
 
@@ -1905,10 +1919,25 @@ public partial class IRGenerator
             // A TYPING-ONLY annotation on this parameter (#367). Recorded before the binding
             // below, and CLEARED when it is not one, because the key is the inline prefix plus
             // the name and that key is reused by every expansion at the same depth.
-            if (paramIdx < func.Params.Count && IsTypingOnlyName(func.Params[paramIdx].Type ?? ""))
+            //
+            // Exception (#419): when the argument at THIS call site is a real instance, the
+            // parameter IS that instance. Descriptor protocol `__get__`/`__set__` is the
+            // canonical case -- `obj` is annotated `I2CDeviceDriver` (a typing-only
+            // placeholder) but the rewrite passes the owning `INA219`. The annotation was a
+            // type-checker promise, not the value's type; substitute the argument's class
+            // and do not mark the parameter typing-only.
+            string? argInstanceClass = InstanceClassOfVal(argValues[i]);
+            if (paramIdx < func.Params.Count
+                && IsTypingOnlyName(func.Params[paramIdx].Type ?? "")
+                && argInstanceClass == null)
                 typingOnlyValues[paramName] = func.Params[paramIdx].Type!;
             else
                 typingOnlyValues.Remove(paramName);
+            if (argInstanceClass != null)
+                instanceClasses[paramName] = argInstanceClass;
+            else if (paramIdx < func.Params.Count
+                     && ClassKeyFromAnnotation(func.Params[paramIdx].Type ?? "") is { } annCls)
+                instanceClasses[paramName] = annCls;
 
             if (i < rawListArgs.Count && rawListArgs[i] != null)
             {
@@ -2532,18 +2561,17 @@ public partial class IRGenerator
         // parser filed as void) is the call's value too.
         result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;
 
-        // The expansion is over and no `return` ran on the path it took, so the result
-        // temporary this call hands back was never written. Reading it is a miscompile and the
-        // firmware builds clean, so it is refused rather than handed on (#302). A call written
-        // as a statement reads nothing and is left alone. Raised below, after this frame's
-        // saved file and line are back: the refusal is about the CALL.
         var finishedCtx = Enumerable.Last<InlineContext>(inlineStack);
+        string? returnedArr = finishedCtx.ReturnedArray;
+        if (returnedArr != null)
+            lastCallReturnTypeText = "bytearray";
         // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
         // expansion actually walked, which is exact for a body whose branches fold away. A
         // body that returns under a RUN-TIME condition assigns the result on the path taken
         // here and still falls through on the other, so the syntax has to be read as well.
         bool resultWasNeverProduced =
-            !resultDiscarded && func != null && finishedCtx.ResultTemp != null
+            returnedArr == null
+            && !resultDiscarded && func != null && finishedCtx.ResultTemp != null
             && finishedCtx.ResultVars.Count == 0
             && (!finishedCtx.ResultAssigned || !AlwaysLeaves(func.Body));
 
@@ -2564,6 +2592,7 @@ public partial class IRGenerator
 
         if (resultWasNeverProduced) throw UnproducedResultError(func!);
 
+        if (returnedArr != null) return new ArrayBase(returnedArr);
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
         return new NoneVal();
@@ -4823,20 +4852,12 @@ public partial class IRGenerator
         return new Constant(stringLiteralIds[decstr]);
     }
 
-    // pow(base, exp): compile-time integer exponentiation (both args must be constant).
+    // pow(base, exp): integer constant-fold, integer unroll, or float powf (#463).
     private Val EmitPowBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 2) throw UserError("pow() expects exactly two arguments", expr.Callee);
-        Val bv = VisitExpression(expr.Args[0]);
-        Val ev = VisitExpression(expr.Args[1]);
-        if (!(bv is Constant cb) || !(ev is Constant ce))
-            throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
-        int @base = cb.Value;
-        int exp = ce.Value;
-        if (exp < 0) throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
-        int res = 1;
-        for (int k = 0; k < exp; ++k) res *= @base;
-        return new Constant(res);
+        return LowerPow(VisitExpression(expr.Args[0]), VisitExpression(expr.Args[1]),
+            ArgAt(expr, 1), "pow()");
     }
 
     // Numeric-cast builtins: uint8/uint16/uint32/int8/int16/int32/int.
@@ -5604,12 +5625,12 @@ public partial class IRGenerator
         if (ma.Object is not VariableExpr recv) return false;
 
         var candidates = new List<string>();
-        string moduleBase = modules.ContainsKey(recv.Name)
+        string moduleBase = StillNamesAModule(recv.Name)
                             && TryImportedAlias(recv.Name, out var realMod) && realMod != null
             ? realMod : recv.Name;
         candidates.Add(moduleBase + "_" + ma.Member);
 
-        if (!modules.ContainsKey(recv.Name))
+        if (!StillNamesAModule(recv.Name))
         {
             Val objVal = VisitExpression(recv);
             string bse = objVal is Variable ov ? ov.Name : recv.Name;
@@ -6354,7 +6375,10 @@ public partial class IRGenerator
             RefuseBadArgsIndex(arg);
             if (TryExceptionMessage(arg, out var exnMsgPtr))
             {
-                Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
+                if (programHasDynamicRaiseMessage)
+                    EmitExceptionMessagePrint();
+                else
+                    Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
                 return;
             }
 
@@ -7009,6 +7033,10 @@ public partial class IRGenerator
         {
             if (members.Any(m => Bare(m) == argClass || argClass!.EndsWith("_" + Bare(m), StringComparison.Ordinal)))
                 return;
+            // A Protocol member is structural (#465): DigitalInOut is not named ROValueIO,
+            // but it has the `.value` property the protocol asks for, and CPython accepts it.
+            if (members.Any(m => ClassSatisfiesProtocol(argClass!, Bare(m))))
+                return;
             Refuse();
             return;
         }
@@ -7048,6 +7076,52 @@ public partial class IRGenerator
             !classNames.Contains(Bare(m)) && !Bare(m).StartsWith("List[")
             && !Bare(m).StartsWith("Tuple[") && !Bare(m).StartsWith("Callable"));
         if (!anyScalarMember) Refuse();
+    }
+
+    /// <summary>
+    /// A Protocol in a Union is structural (#465). The argument's class matches when it
+    /// has every method/property the protocol body names -- a field of the same name
+    /// counts, which is how <c>DigitalInOut.value</c> satisfies <c>ROValueIO</c>.
+    /// </summary>
+    private bool ClassSatisfiesProtocol(string argClass, string protocolBare)
+    {
+        string? protoKey = FindClassKey(protocolBare);
+        if (protoKey == null || !protocolClasses.Contains(protoKey)) return false;
+
+        var needed = new HashSet<string>(
+            classDirectMethods.GetValueOrDefault(protoKey) ?? []);
+        needed.Remove("__init__");
+
+        string? argKey = FindClassKey(argClass);
+        if (argKey == null) return needed.Count == 0;
+
+        var has = new HashSet<string>(
+            classDirectMethods.GetValueOrDefault(argKey) ?? []);
+        if (assignedMemberNamesByClass.TryGetValue(argKey, out var assigned))
+            has.UnionWith(assigned);
+        if (classFieldLayout.TryGetValue(argKey, out var layout))
+            foreach (var (field, _, _) in layout)
+                has.Add(field);
+        foreach (var g in propertyGetters)
+        {
+            int dot = g.LastIndexOf('.');
+            if (dot > 0 && g.AsSpan(0, dot).SequenceEqual(argKey))
+                has.Add(g[(dot + 1)..]);
+        }
+
+        return needed.All(has.Contains);
+    }
+
+    private string? FindClassKey(string name)
+    {
+        if (classDirectMethods.ContainsKey(name) || protocolClasses.Contains(name)
+            || classFieldLayout.ContainsKey(name))
+            return name;
+        foreach (var k in classDirectMethods.Keys)
+            if (k.EndsWith("_" + name, StringComparison.Ordinal)) return k;
+        foreach (var k in protocolClasses)
+            if (k.EndsWith("_" + name, StringComparison.Ordinal) || k == name) return k;
+        return null;
     }
 
     private string ResolveListVarQualified(string name)
@@ -7320,6 +7394,57 @@ public partial class IRGenerator
         Emit(new StoreIndirect(newLen, listVar));
 
         return new NoneVal();
+    }
+
+    /// <summary>
+    /// Fold <c>isinstance(x, tuple/list/int/...)</c> when the receiver's shape is already
+    /// known (#423, adafruit_ht16k33). Candidates that are not these builtins return null
+    /// so the refusal still names a run-time type test that has no answer.
+    /// </summary>
+    private Constant? TryFoldIsinstanceBuiltinTypes(VariableExpr recv, Expression typesExpr)
+    {
+        var cands = typesExpr is TupleExpr t ? t.Elements : new List<Expression> { typesExpr };
+        if (cands.Count == 0) return null;
+        var names = new List<string>();
+        foreach (var c in cands)
+        {
+            if (c is not VariableExpr ve) return null;
+            if (ve.Name is not ("tuple" or "list" or "int" or "bool"
+                or "bytes" or "bytearray" or "str" or "float"))
+                return null;
+            names.Add(ve.Name);
+        }
+
+        bool isSeq = ResolveArrayVar(recv.Name) != null
+            || ResolveConstSequence(recv.Name) != null
+            || ResolveListLiteralParam(recv.Name) != null;
+        bool isClass = InstanceClassOfName(recv.Name) != null;
+        bool isStr = ResolveStrConstant(recv.Name) != null;
+
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + recv.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + recv.Name : recv.Name);
+        bool isFloat = floatConstantVariables.ContainsKey(q) || floatConstantVariables.ContainsKey(recv.Name)
+            || (variableTypes.TryGetValue(q, out var ft) && ft == DataType.FLOAT);
+
+        static bool IsIntDt(DataType d) => d is DataType.UINT8 or DataType.UINT16 or DataType.UINT32
+            or DataType.INT8 or DataType.INT16 or DataType.INT32;
+        bool isInt = !isSeq && !isClass && !isStr && !isFloat
+            && (constantVariables.ContainsKey(q) || constantVariables.ContainsKey(recv.Name)
+                || (variableTypes.TryGetValue(q, out var it) && IsIntDt(it))
+                || (variableTypes.TryGetValue(recv.Name, out var it2) && IsIntDt(it2)));
+
+        if (!isSeq && !isClass && !isStr && !isFloat && !isInt) return null;
+
+        bool match = false;
+        foreach (var n in names)
+        {
+            if (n is "tuple" or "list" or "bytes" or "bytearray") match |= isSeq;
+            else if (n == "str") match |= isStr;
+            else if (n == "float") match |= isFloat;
+            else if (n is "int" or "bool") match |= isInt;
+        }
+        return new Constant(match ? 1 : 0);
     }
 
     // -------------------------------------------------------------------------

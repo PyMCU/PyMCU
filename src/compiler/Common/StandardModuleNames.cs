@@ -26,8 +26,8 @@ namespace PyMCU.Common;
 /// that could never be published as a package: no `pymcu install ustruct` will ever produce
 /// `ustruct` (issue #189).
 ///
-/// Only names that are NOT resolvable today belong here. `math`, `time`, `random`, `asyncio`
-/// and `collections` are deliberately absent: they resolve to the pymcu stdlib under those
+/// Only names that are NOT resolvable today belong here. `math`, `time`, `random`, `asyncio`,
+/// `collections` and `os` are deliberately absent: they resolve to the pymcu stdlib under those
 /// exact spellings, and saying they are unavailable would be a new wrong answer.
 /// </summary>
 public static class StandardModuleNames
@@ -50,9 +50,9 @@ public static class StandardModuleNames
         ["json"]        = (Origin.Python, "PyMCU has no heap, so there is no parsed object to build."),
         ["ujson"]       = (Origin.MicroPython, "PyMCU has no heap, so there is no parsed object to build."),
 
-        // No operating system underneath.
-        ["os"]          = (Origin.Python, "There is no operating system or filesystem on the target."),
-        ["uos"]         = (Origin.MicroPython, "There is no operating system or filesystem on the target."),
+        // No operating system underneath -- except the compile-time facts `os` does provide
+        // (`uname()`, `name`, `sep`). `listdir` / `getenv` stay undefined on that module.
+        ["uos"]         = (Origin.MicroPython, "PyMCU provides it as `os`; `import os` works."),
         ["sys"]         = (Origin.Python, "There is no interpreter to introspect; the chip and its sizes are available through pymcu.chips."),
         ["socket"]      = (Origin.Python, "There is no general socket layer; networking is exposed per part through the HAL."),
         ["usocket"]     = (Origin.MicroPython, "There is no general socket layer; networking is exposed per part through the HAL."),
@@ -60,6 +60,8 @@ public static class StandardModuleNames
 
         // Compile-time only in this dialect.
         ["typing"]      = (Origin.Python, "PyMCU reads annotations straight from the source, so nothing needs importing; the width names live in pymcu.types."),
+        ["typing_extensions"] = (Origin.Python, "PyMCU reads annotations straight from the source, so nothing needs importing; the width names live in pymcu.types."),
+        ["__future__"]  = (Origin.Python, "PyMCU already reads annotations from the source; this import is a compiler pragma that enables nothing here."),
         ["dataclasses"] = (Origin.Python, "Write a plain class with an __init__; PyMCU flattens it to fields at zero cost."),
 
         ["re"]          = (Origin.Python, NotImplemented),

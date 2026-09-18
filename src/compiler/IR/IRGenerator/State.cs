@@ -156,6 +156,10 @@ public partial class IRGenerator
     //                     (excludes methods inherited via the toInherit copy loop).
     private Dictionary<string, HashSet<string>> classChildren      = new();
     private Dictionary<string, HashSet<string>> classDirectMethods = new();
+    // Classes that list `Protocol` as a base. A Union member that names one of these is a
+    // structural type: an argument matches if it has the protocol's members, not if it is
+    // the protocol class itself (#465, adafruit_debouncer's ROValueIO).
+    private HashSet<string> protocolClasses = new();
     // Every member name that appears anywhere as an assignment target (`obj.X = ...`,
     // `obj.X[i] = ...`, `obj.X: T = ...`, `obj.X += ...`), collected program-wide before IR
     // generation. A real instance field is always assigned somewhere (in __init__ or a
@@ -485,6 +489,40 @@ public partial class IRGenerator
     /// The module-level word holding the flash address of the live exception's message.
     /// One word, because one exception is live at a time.
     internal const string ExceptionMessageVar = "__exn_msg";
+
+    /// Raise-site id for a deferred-print message (#435). 0 means the flash word in
+    /// <see cref="ExceptionMessageVar"/> is the whole message (a string literal).
+    internal const string ExceptionSiteVar = "__exn_site";
+
+    /// Synthetic function that replays the live exception's print sequence.
+    internal const string ExceptionMessagePrinter = "__pymcu_print_exn_msg";
+
+    internal static string ExceptionArgVar(int i) => "__exn_arg" + i;
+    internal static string ExceptionFloatArgVar(int i) => "__exn_farg" + i;
+
+    /// True when some raise in the program has a non-literal message. Decided before the
+    /// first function is lowered, so <c>print(e)</c> in a handler compiled before the raise
+    /// still calls the printer. A program whose every raise is a string literal is unchanged.
+    private bool programHasDynamicRaiseMessage;
+
+    private sealed class RaiseMessagePiece
+    {
+        public string? Literal;
+        public int IntSlot = -1;
+        public int FloatSlot = -1;
+        public bool IsBool;
+        public DataType PrintAs = DataType.INT32;
+        public string FormatSpec = "";
+    }
+
+    private sealed class RaiseMessageSite
+    {
+        public int Id;
+        public List<RaiseMessagePiece> Pieces = new();
+    }
+
+    private readonly List<RaiseMessageSite> raiseMessageSites = new();
+    private int nextRaiseSiteId = 1;
 
     /// Names bound by an enclosing `except ... as`, to the per-try variable holding the code
     /// and to the handler's declared type. A name is in scope only while its handler body is

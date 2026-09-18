@@ -106,6 +106,7 @@ public partial class IRGenerator
             case AugAssignStmt a: yield return a.Target; yield return a.Value; break;
             case TupleUnpackStmt t: yield return t.Value; break;
             case ReturnStmt r: yield return r.Value; break;
+            case RaiseStmt rs: yield return rs.MessageExpr; break;
             case ExprStmt e: yield return e.Expr; break;
             case AssertStmt a: yield return a.Condition; break;
             case IfStmt i:

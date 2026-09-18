@@ -216,6 +216,35 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The class an annotation names, or null when it does not name one. Both spellings
+    /// count: the bare <c>DigitalInOut</c> and the dotted <c>digitalio.DigitalInOut</c>
+    /// a CircuitPython parameter is written with.
+    /// </summary>
+    private string? ClassKeyFromAnnotation(string type)
+    {
+        if (string.IsNullOrEmpty(type) || IsTypingOnlyName(type)) return null;
+        if (classFieldLayout.ContainsKey(type)) return type;
+        int lastDot = type.LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            string head = type[..type.IndexOf('.')];
+            string tail = type[(lastDot + 1)..];
+            string realMod = TryImportedAlias(head, out var rm) && rm != null ? rm : head;
+            string mangled = realMod.Replace('.', '_') + "_" + tail;
+            if (classFieldLayout.ContainsKey(mangled)) return mangled;
+            string bare = ResolveCallee(tail);
+            if (classFieldLayout.ContainsKey(bare)) return bare;
+            foreach (var c in classFieldLayout.Keys)
+                if (c.EndsWith("_" + tail, StringComparison.Ordinal)) return c;
+        }
+        string resolved = ResolveCallee(type);
+        if (classFieldLayout.ContainsKey(resolved)) return resolved;
+        foreach (var c in classFieldLayout.Keys)
+            if (c == type || c.EndsWith("_" + type, StringComparison.Ordinal)) return c;
+        return null;
+    }
+
+    /// <summary>
     /// True when every element of the literal denotes a ZCA instance: a constructor call, or a
     /// name already bound to one. `[Pin("PD5", Pin.OUT), Pin("PD6", Pin.OUT)]` and `[a, b]` both
     /// qualify; `[1, 2, 3]` does not, and neither does a mixture.
@@ -226,8 +255,14 @@ public partial class IRGenerator
         foreach (var element in lit.Elements)
         {
             if (CtorClassOfCall(element) != null) continue;
-            if (element is VariableExpr ve && instanceClasses.ContainsKey(ResolveNameKey(ve.Name)))
-                continue;
+            if (element is VariableExpr ve)
+            {
+                string key = ResolveNameKey(ve.Name);
+                if (instanceClasses.ContainsKey(key)) continue;
+                if (AliasedInstanceName(key) is { } aliased && instanceClasses.ContainsKey(aliased))
+                    continue;
+                return false;
+            }
             return false;
         }
         return true;
