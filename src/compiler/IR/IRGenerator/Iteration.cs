@@ -360,7 +360,17 @@ public partial class IRGenerator
                 Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
             }
             else if (isZca)
-                BindInstanceForIteration(elemKey2, forVarKey);
+            {
+                // A hoisted `(a, b)` aliases `__ctseqN__k` to the NAMED instance, so the
+                // loop variable must name `a` -- copying fields wrote a discarded slot
+                // and `pin.direction = 1` left the original at 0. An array element that
+                // IS the instance (`leds__0` from a list comp) still needs the field
+                // copies: its pin id lives in a run-time slot the setter reads.
+                if (variableAliases.ContainsKey(elemKey2))
+                    BindLoopVarToInstance(elemKey2, forVarKey);
+                else
+                    BindInstanceForIteration(elemKey2, forVarKey);
+            }
             else if (constantVariables.TryGetValue(elemKey2, out int cv2))
                 constantVariables[forVarKey] = cv2;
             else

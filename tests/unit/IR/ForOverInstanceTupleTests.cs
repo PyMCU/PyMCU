@@ -102,6 +102,13 @@ public class ForOverInstanceTupleTests
 
         ir.Functions.Should().NotBeEmpty(
             because: "pin.direction = OUTPUT through a for-unrolled instance is the setter, not a method");
+
+        var dirStores = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.EndsWith("_d", StringComparison.Ordinal)
+                        && c.Src is Constant { Value: 1 })
+            .ToList();
+        dirStores.Should().NotBeEmpty(
+            because: "the setter must write 1 into each pin's _d, not a discarded loop-var copy");
     }
 
     [Fact]

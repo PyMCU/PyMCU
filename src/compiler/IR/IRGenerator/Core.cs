@@ -225,6 +225,28 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Bind the unrolled loop variable to the instance at <paramref name="src"/> so a write
+    /// through the loop name lands on the SAME object the element named. Copying the fields
+    /// into a fresh binding made <c>for pin in (a, b): pin.direction = 1</c> write a copy
+    /// that CleanCtState then discarded, leaving the original pins at 0 (inherited-property).
+    /// Follow aliases: a hoisted <c>(a, b)</c> files <c>__ctseqN__k</c> as an alias of
+    /// <c>a</c>, and the loop variable has to name <c>a</c>, not the hoist slot.
+    /// </summary>
+    private void BindLoopVarToInstance(string src, string dst)
+    {
+        string origin = src;
+        var seen = new HashSet<string> { origin };
+        while (variableAliases.TryGetValue(origin, out var next)
+               && !string.IsNullOrEmpty(next) && seen.Add(next))
+            origin = next;
+        variableAliases[dst] = origin;
+        if (instanceClasses.TryGetValue(origin, out var cls) && cls != null)
+            instanceClasses[dst] = cls;
+        else if (instanceClasses.TryGetValue(src, out cls) && cls != null)
+            instanceClasses[dst] = cls;
+    }
+
+    /// <summary>
     /// Bind <paramref name="dst"/> to the instance at <paramref name="src"/> for one unrolled
     /// iteration: carry the compile-time state across, then COPY the fields that live in a
     /// run-time variable. Those have nothing in the compile-time maps to carry, so without the
