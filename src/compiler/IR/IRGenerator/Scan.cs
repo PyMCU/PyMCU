@@ -2586,6 +2586,7 @@ public partial class IRGenerator
     /// </summary>
     private bool IsCompileTimeNumberSequence(Expression e)
     {
+        if (IsRepeatedConstList(e)) return true;
         List<Expression>? elems = e switch
         {
             ListExpr le => le.Elements,
@@ -2597,6 +2598,24 @@ public partial class IRGenerator
         {
             try { EvaluateConstantExpr(x); }
             catch { return false; }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// <c>[None] * n</c> / <c>[0] * n</c> is an array field, not a scalar. The
+    /// count may be <c>len(self)</c>, which only folds once the instance exists,
+    /// so the shape is enough to keep the field out of the uint8 layout.
+    /// </summary>
+    private static bool IsRepeatedConstList(Expression e)
+    {
+        if (e is not BinaryExpr { Op: Frontend.BinaryOp.Mul } be) return false;
+        ListExpr? lit = be.Left as ListExpr ?? be.Right as ListExpr;
+        if (lit is not { Elements.Count: > 0 }) return false;
+        foreach (var x in lit.Elements)
+        {
+            if (x is NoneLiteral) continue;
+            if (x is not IntegerLiteral and not BooleanLiteral) return false;
         }
         return true;
     }

@@ -550,6 +550,18 @@ public partial class IRGenerator
                 ListCompExpr lc => ExpandCtListComp(lc),
                 _ => null
             };
+            if (elemExprs == null && TryExpandRepeatedList(stmt.Value, out var repeated))
+            {
+                // `[None] * 18` / `[0] * n`: a scratch array filled by a later runtime
+                // index (adafruit_dps310's coeffs, adafruit_pca9685's channel cache).
+                // The repeat is the size; SRAM so a `for i in range(n)` store lands.
+                string repKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + listTarget.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + listTarget.Name : listTarget.Name);
+                arraysWithVariableIndex.Add(repKey);
+                elemExprs = repeated;
+            }
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
         }
 
@@ -796,6 +808,21 @@ public partial class IRGenerator
                     + "(or another element type), which reserves the storage in the instance and is "
                     + "indexable at run time.", listMem);
             }
+        }
+
+        // `self._channels = [None] * len(self)`: the same field array as `self.buf = [0, 0, ...]`,
+        // with the length coming from the repeat rather than from writing the zeros out.
+        if (stmt.Target is MemberAccessExpr repMem && TryExpandRepeatedList(stmt.Value, out var repFieldElems)
+            && repFieldElems.Count > 0
+            && repFieldElems.All(e => TryEvalElemConst(e, out _))
+            && ResolveMemberArrayName(repMem) is null)
+        {
+            var repVals = new List<int>();
+            foreach (var e in repFieldElems) { TryEvalElemConst(e, out int ev); repVals.Add(ev); }
+            EmitMemberArrayInit(repMem.Object, repMem.Member,
+                WidestElemType(repVals), repVals.Count, repVals,
+                FormatMemberTarget(repMem));
+            return;
         }
 
         // `t = f()` / `t = obj.prop` where the value is a multi-return call: ask
@@ -2671,7 +2698,11 @@ public partial class IRGenerator
     {
         if (depth > 1) return null;
         if (string.IsNullOrEmpty(cls)) return null;
-        if (!inlineFunctions.TryGetValue(cls + "_" + method, out var fn)) return null;
+        string key = cls + "_" + method;
+        if (!inlineFunctions.TryGetValue(key, out var fn)
+            && !methodAstByName.TryGetValue(key, out fn)
+            && !instanceMethodDefs.TryGetValue(key, out fn))
+            return null;
         if (fn.Body.Statements is not [ReturnStmt { Value: { } ret }]) return null;
         return ConstValueOfReturn(ret, cls, depth);
     }
@@ -5653,10 +5684,88 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// <c>[x] * N</c> / <c>N * [x]</c> as the list of N copies, when N is known while
+    /// compiling. Adafruit writes <c>coeffs = [None] * 18</c> and
+    /// <c>self._channels = [None] * len(self)</c>: the None is a slot that a later
+    /// store fills, and the repeat is the size. None becomes 0, which is what a
+    /// numeric array holds and what <c>if not xs[i]</c> reads as empty.
+    /// </summary>
+    private bool TryExpandRepeatedList(Expression e, out List<Expression> elems)
+    {
+        elems = new List<Expression>();
+        if (e is not BinaryExpr { Op: Frontend.BinaryOp.Mul } be) return false;
+        ListExpr? lit = be.Left as ListExpr;
+        Expression countExpr = be.Right;
+        if (lit == null)
+        {
+            lit = be.Right as ListExpr;
+            countExpr = be.Left;
+        }
+        if (lit == null || lit.Elements.Count == 0) return false;
+        if (!TryRepeatCount(countExpr, out int n) || n <= 0) return false;
+        if (n > 1024)
+            throw UserError(
+                $"'{n}' copies of a list is larger than a fixed array on this target can be. "
+                + "The size has to be known while compiling and stay small enough to lay out.",
+                countExpr);
+
+        elems.Capacity = n * lit.Elements.Count;
+        for (int i = 0; i < n; i++)
+        {
+            foreach (var el in lit.Elements)
+            {
+                elems.Add(el is NoneLiteral
+                    ? new IntegerLiteral(0) { Line = el.Line, Column = el.Column, Length = el.Length }
+                    : el);
+            }
+        }
+        return true;
+    }
+
+    private bool TryRepeatCount(Expression e, out int n)
+    {
+        try
+        {
+            n = EvaluateConstantExpr(e);
+            return n > 0;
+        }
+        catch
+        {
+            // `len(self)` is a call. EvaluateConstantExpr does not fold it, and
+            // EmitLenBuiltin inlines __len__ into a Temporary even when the body is
+            // `return 16`. Read that constant off the method AST instead of emitting.
+            if (e is CallExpr { Callee: VariableExpr { Name: "len" }, Args.Count: 1 } lenCall
+                && TryFoldLenOf(lenCall.Args[0], out n) && n > 0)
+                return true;
+            n = 0;
+            return false;
+        }
+    }
+
+    private bool TryFoldLenOf(Expression container, out int n)
+    {
+        n = 0;
+        switch (container)
+        {
+            case ListExpr le: n = le.Elements.Count; return n > 0;
+            case TupleExpr te: n = te.Elements.Count; return n > 0;
+            case VariableExpr ve:
+                if (InstanceClassOfName(ve.Name) is not { } cls) return false;
+                if (DunderConstLen(cls) is not { } len || len <= 0) return false;
+                n = len;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Store a compile-time list of element expressions into an unrolled array bound to
     /// <paramref name="target"/> (slots name__0..name__N-1). ZCA-instance elements are
     /// constructed directly into their slot so instanceClasses[slot] is registered and
     /// for-in / enumerate over the array resolve the element type. Always handles the list.
+    /// A name already in <c>arraysWithVariableIndex</c> is SRAM, so a later runtime
+    /// subscript stores into the same slots the initialisers wrote.
     /// </summary>
     private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs,
                                       List<DataType>? elemTypes = null)
@@ -5694,10 +5803,24 @@ public partial class IRGenerator
         if (!allConst && elemTypes == null && visited[0] is { } firstVal)
             elemDt = firstVal switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
 
+        bool useSram = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
+
+        arraySizes[qualified] = count;
+        arrayElemTypes[qualified] = elemTypes?[0] ?? elemDt;
+        variableTypes[qualified] = elemDt;
+
         for (int k = 0; k < count; ++k)
         {
-            string elemName = qualified + "__" + k;
             DataType slotDt = elemTypes?[k] ?? elemDt;
+            if (useSram)
+            {
+                Val src = ctorClasses[k] != null ? VisitExpression(elemExprs[k])
+                    : visited[k] ?? new Constant(0);
+                Emit(new ArrayStore(qualified, new Constant(k), src, slotDt, count));
+                continue;
+            }
+
+            string elemName = qualified + "__" + k;
             variableTypes[elemName] = slotDt;
 
             // ZCA constructor element: build the instance directly into the slot (like a plain
@@ -5717,16 +5840,15 @@ public partial class IRGenerator
             if (visited[k] is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
         }
 
-        arraySizes[qualified] = count;
-        arrayElemTypes[qualified] = elemTypes?[0] ?? elemDt;
-        variableTypes[qualified] = elemDt;
         // The name is rebound from here on: an alias or a compile-time sequence it held
         // (`coeff` naming a returned buffer, then `coeff = list(struct.unpack(...))`) must
         // not outlive the binding that replaced it. An all-constant literal re-binds to its
         // own elements, so `for v in x`, `x in SEQ` and `[e for e in x]` keep resolving it.
+        // A SRAM array that a later runtime index writes (the `[None] * n` scratch) is not
+        // a compile-time sequence: folding the zeros would hide the stores.
         variableAliases.Remove(qualified);
         constSequenceBindings.Remove(qualified);
-        if (allConst)
+        if (allConst && !useSram)
             constSequenceBindings[qualified] =
                 constElems.Select(v => (Expression)new IntegerLiteral(v)).ToList();
         // Keep the values: a run-time subscript reaching this array later can turn them into a
@@ -5736,7 +5858,7 @@ public partial class IRGenerator
         materialisedConstTables.Remove(qualified);
         materialisedConstTables.Remove("dictrows:" + qualified);
         materialisedConstTables.Remove("dictkeys:dictrows:" + qualified);
-        if (allConst) ctArrayConstElements[qualified] = constElems;
+        if (allConst && !useSram) ctArrayConstElements[qualified] = constElems;
         else ctArrayConstElements.Remove(qualified);
         return true;
     }
