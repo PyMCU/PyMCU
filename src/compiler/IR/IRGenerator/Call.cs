@@ -2037,13 +2037,20 @@ public partial class IRGenerator
 
             if (argValues[i] is Variable vArg)
             {
-                if (func.Params[paramIdx].Type == "const[str]")
+                if (func.Params[paramIdx].Type is "const[str]" or "str")
                 {
                     string? strVal = ResolveStrConstant(vArg.Name);
+                    if (strVal == null && TryArgumentConstant(vArg.Name, out int sid)
+                        && stringIdToStr.TryGetValue(sid, out var internedFromVar))
+                        strVal = internedFromVar;
                     if (strVal != null)
                     {
                         strConstantVariables[paramName] = strVal;
-                        constantVariables.Remove(paramName);
+                        if (func.Params[paramIdx].Type == "const[str]")
+                            constantVariables.Remove(paramName);
+                        else if (TryArgumentConstant(vArg.Name, out int n))
+                            constantVariables[paramName] = n;
+                        floatConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
                         continue;
                     }
@@ -2255,19 +2262,24 @@ public partial class IRGenerator
                 // the number 44. So `One(",")` bound a `s: str` parameter to 44 and the field
                 // it was assigned to became 44 as well, and the program printed 44.
                 //
-                // Only the one-character case is restored here, and only where the parameter is
-                // declared `str`. A longer string keeps arriving with its identity dropped,
-                // exactly as before, because the id round-trip already serves it at the use
-                // site -- and because carrying the text on the parameter is what makes a plain
-                // `str` behave like a `const[str]`, which is a language change and not this
-                // one. The declared type is the discriminator that must not be dropped either:
-                // `uart.write('\n')` passes a one-character literal to a `uint8`, where the
-                // character code IS the value wanted, and giving that parameter a text made
-                // the UART HAL refuse itself. The raw argument is the same source of truth the
-                // const[str] binding above already trusts.
-                if (func.Params[paramIdx].Type == "str"
-                    && i < rawStrArgs.Count && rawStrArgs[i] is { Value.Length: 1 } oneChar)
-                    strConstantVariables[paramName] = oneChar.Value;
+                // A `str` parameter that received a compile-time string keeps the text, of
+                // any length. Only a one-character literal used to land in
+                // strConstantVariables (uart.write('A') / `c == 'x'`), so a longer format
+                // such as `"<HH"` arrived as an interned id with the characters dropped.
+                // `struct.calcsize(struct_format)` inside an inlined descriptor constructor
+                // then refused a format the class body passed as a literal
+                // (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685). The declared type
+                // is still the discriminator: `uart.write('\n')` is a `uint8`, and giving
+                // that parameter a text made the UART HAL refuse itself.
+                if (func.Params[paramIdx].Type == "str")
+                {
+                    string? text = i < rawStrArgs.Count ? rawStrArgs[i]?.Value : null;
+                    if (text == null && !string.IsNullOrEmpty(cArg3.Text)) text = cArg3.Text;
+                    if (text == null && stringIdToStr.TryGetValue(cArg3.Value, out var internedArg))
+                        text = internedArg;
+                    if (text != null) strConstantVariables[paramName] = text;
+                    else strConstantVariables.Remove(paramName);
+                }
                 else
                     strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
@@ -2404,7 +2416,17 @@ public partial class IRGenerator
                     else if (kvp.Value is Constant ckw2)
                     {
                         constantVariables[paramName] = ckw2.Value;
-                        strConstantVariables.Remove(paramName);
+                        if (func.Params[pi].Type == "str")
+                        {
+                            string? kwText = rawKwStrArgs.TryGetValue(kvp.Key, out var rawKw) ? rawKw : null;
+                            if (kwText == null && !string.IsNullOrEmpty(ckw2.Text)) kwText = ckw2.Text;
+                            if (kwText == null && stringIdToStr.TryGetValue(ckw2.Value, out var internedKw))
+                                kwText = internedKw;
+                            if (kwText != null) strConstantVariables[paramName] = kwText;
+                            else strConstantVariables.Remove(paramName);
+                        }
+                        else
+                            strConstantVariables.Remove(paramName);
                         floatConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
                     }
@@ -4192,9 +4214,11 @@ public partial class IRGenerator
     /// <summary>
     /// The format argument of a struct call as compile-time text, or a located refusal.
     ///
-    /// StaticStringOf already reaches a literal, a name bound to one, and -- through
-    /// StaticStringOfField -- a string held in a FIELD at any depth, which is what
-    /// `self.format` is after `__init__` stored the literal a descriptor was built with.
+    /// StaticStringOf already reaches a literal, a name bound to one, a `str`
+    /// parameter that received a compile-time string (any length, not only one
+    /// character), and -- through StaticStringOfField -- a string held in a FIELD
+    /// at any depth, which is what `self.format` is after `__init__` stored the
+    /// literal a descriptor was built with.
     /// </summary>
     private string StructFormatArg(CallExpr expr, string who)
     {
