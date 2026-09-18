@@ -42,7 +42,9 @@ width from whatever list the caller actually passes.
 **Closed dict/set literals** (`d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}`) bind compile-time
 lookup tables with no storage: `d[const]` folds to its value, `d[runtime_key]` lowers to a
 compare chain that raises `KeyError` (catchable with `try/except`) on no match, `x in d` /
-`x in {...}` test membership, and `len(d)` folds. They are read-only.
+`x in {...}` test membership, and `len(d)` folds. A class-body dict
+(`gain_values = {ALS_GAIN_2: 2, ALS_GAIN_1_4: 0.25}` read as `self.gain_values[gain]`)
+is the same table; mixed int/float values make the lookup a float. They are read-only.
 **`pymcu.collections.FixedDict(capacity)`** is the mutable counterpart: a fixed-capacity
 integer dict (open addressing over per-instance fixed arrays — no heap, no GC) with Python
 semantics where they fit a fixed footprint: `d[k]` / `d[k] = v`, `KeyError` on a missing
@@ -889,7 +891,7 @@ Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. The harness is 37 libraries (the original
 twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Fifteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+**Sixteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
 `adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
 argument and a generator expression in `join`, which need the supported spellings),
@@ -897,8 +899,8 @@ argument and a generator expression in `join`, which need the supported spelling
 `adafruit_ahtx0` (7 108 bytes), `adafruit_mcp9808` (4 646 bytes),
 `adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes),
 `adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes),
-`adafruit_tcs34725` (28 414 bytes), `adafruit_ina219` (7 294 bytes) and
-`adafruit_aw9523` (2 294 bytes).
+`adafruit_tcs34725` (28 414 bytes), `adafruit_ina219` (7 294 bytes),
+`adafruit_aw9523` (2 294 bytes) and `adafruit_veml7700` (10 614 bytes).
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
@@ -937,7 +939,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
-| `adafruit_veml7700` | `self.gain_values[gain]` in `gain_value` | (moved off name `adafruit_veml7700_VEML7700`: same `type(self)` spelling.) Bit index must be constant for reading |
+| `adafruit_veml7700` | **builds unmodified, 10 614 bytes** | (moved off `self.gain_values[gain]`: a class-body dict is a compile-time lookup table, including mixed int/float values) |
 | `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 
 ### Which of these are limits and which are gaps
@@ -995,7 +997,9 @@ keeps `value` as a local so `reg |= value` is the shifted bits. A class-body
 on a descriptor `__set__` is the written value, not a missing width. `type(inst)` in the
 descriptor rewrite is the source class name, so `self.raw_bus_voltage` inside a method of
 an imported class is not "name 'adafruit_ina219_INA219' is not defined"; `adafruit_ina219`
-and `adafruit_aw9523` build unmodified. `raise ... from ...`
+and `adafruit_aw9523` build unmodified. A class-body dict is the same lookup table as a
+module-level one, so `self.gain_values[gain]` is a fold or a compare chain (mixed
+int/float values are a float); `adafruit_veml7700` builds unmodified. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
@@ -1009,6 +1013,8 @@ nine-field stub, so the RTC drivers move off that import.
 `adafruit_mcp9808`, `adafruit_lis3dh`, `adafruit_tsl2591`, `adafruit_mlx90614`.
 `adafruit_ina219` (7 294 bytes) and the `adafruit_aw9523` expander (2 294 bytes) join
 them once `type(self)` in a descriptor rewrite is the source class name.
+`adafruit_veml7700` (10 614 bytes) joins once a class-body dict through `self` is a
+lookup table.
 
 **A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
 `X | None` and `Union[X, None]` are read as `X`: see "None is a compile-time value" above.

@@ -104,6 +104,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   The methods are expanded at the call site so the argument's class substitutes (#419).
   Last construct unmodified `adafruit_register` `RWBits` stopped on, which is what
   `adafruit_ina219` and `adafruit_veml7700` reach.
+- A class-body dict is a compile-time lookup table, the same as a module-level one.
+  `self.gain_values[gain]` is a fold or a compare chain; mixed int/float values
+  (VEML7700's `0.25` / `0.125`) make the lookup a float. Last construct unmodified
+  `adafruit_veml7700` stopped on.
 - `import os` / `from os import uname` resolve to a stdlib stub. `uname()` is a
   compile-time five-field record of `__CHIP__` (sysname `"PyMCU"`, machine the chip
   name, with an `RP2040`/`RP2350` token on those parts). `"Linux" not in uname()`
