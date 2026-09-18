@@ -889,35 +889,36 @@ Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. The harness is 37 libraries (the original
 twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Thirteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+**Fifteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
 `adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
 argument and a generator expression in `join`, which need the supported spellings),
 `adafruit_mcp3xxx` (3 094 bytes), `adafruit_74hc595` (402 bytes),
 `adafruit_ahtx0` (7 108 bytes), `adafruit_mcp9808` (4 646 bytes),
 `adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes),
-`adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes) and
-`adafruit_tcs34725` (28 414 bytes).
+`adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes),
+`adafruit_tcs34725` (28 414 bytes), `adafruit_ina219` (7 294 bytes) and
+`adafruit_aw9523` (2 294 bytes).
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
 | `adafruit_ahtx0` | **builds unmodified, 7 108 bytes** | |
 | `adafruit_ads1x15` | generator expression (`next(key for key, value in ...)`) | `Expected ')'` |
-| `adafruit_aw9523` | `self._chip_id` in `__init__` | name `adafruit_aw9523_AW9523` is not defined |
+| `adafruit_aw9523` | **builds unmodified, 2 294 bytes** | (moved off name `adafruit_aw9523_AW9523`: `type(inst)` in the descriptor rewrite is the source class name) |
 | `adafruit_bme280` | `_bus_implementation.read_register` | call to undefined function |
 | `adafruit_bmp280` | **builds unmodified, 25 006 bytes** | (moved off `list(struct.unpack(...))`: an unpack result is a compile-time sequence, and a function returning its local buffer binds the caller's name to that slot) |
 | `adafruit_bus_device` | **builds unmodified, 800 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
 | `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
-| `adafruit_dps310` | `self._device_id` in `__init__` | name `adafruit_dps310_basic_DPS310` is not defined |
+| `adafruit_dps310` | `self._oversample_scalefactor = (524288, ...)` | (moved off name `adafruit_dps310_basic_DPS310`: same `type(inst)` spelling.) tuples are not supported as runtime values |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_ds3231` | `from time import struct_time` | `pymcu.time` defines the nine-field stub; the CircuitPython overlay's advertised names are still only `monotonic` / `monotonic_ns` / `sleep` |
 | `adafruit_74hc595` | **builds unmodified, 402 bytes** | (moved off `bytearray(self._number_of_shift_registers)` and `DigitalInOut(pin, self)`: a compile-time field is a buffer size, and a class defined in the module shadows the entry file's `from digitalio import DigitalInOut`) |
 | `adafruit_hcsr04` | **builds unmodified, 3 430 bytes** | |
 | `adafruit_ht16k33` (matrix) | `bytearray((self._buffer_size) * len(self.i2c_device))` | could not determine buffer size from initializer |
 | `adafruit_ht16k33` (segments) | `def print(self, value: Union[str, float], ...)` | a union of two REAL types; a call in a raise message is a deferred print (#435) |
-| `adafruit_ina219` | `self.raw_bus_voltage` in `bus_voltage` | (moved off `value: Any`: the written value has a width.) name `adafruit_ina219_INA219` is not defined -- a descriptor read of `self.raw_bus_voltage` from a method of the imported class |
+| `adafruit_ina219` | **builds unmodified, 7 294 bytes** | (moved off `self.raw_bus_voltage`: `type(self)` in the descriptor rewrite is `INA219`, not the mangled `adafruit_ina219_INA219`) |
 | `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
 | `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
 | `adafruit_mcp230xx` | `Pin.high()` runtime bit index | same as `adafruit_character_lcd` |
@@ -936,7 +937,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
-| `adafruit_veml7700` | `self.light_gain` in `gain_value` | (moved off `_BUFFER[i]`, same `_fit`.) name `adafruit_veml7700_VEML7700` is not defined -- a descriptor read of `self.light_gain` from a method of the imported class |
+| `adafruit_veml7700` | `self.gain_values[gain]` in `gain_value` | (moved off name `adafruit_veml7700_VEML7700`: same `type(self)` spelling.) Bit index must be constant for reading |
 | `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 
 ### Which of these are limits and which are gaps
@@ -991,7 +992,10 @@ instance even though it is annotated `I2CDeviceDriver` (#419); `value <<= self.l
 keeps `value` as a local so `reg |= value` is the shifted bits. A class-body
 `_fit(n)` keeps the grown `_BUFFER` rather than letting the replay of
 `bytearray(1)` shrink it, so `_BUFFER[i]` in `RWBits` is in range. `value: Any`
-on a descriptor `__set__` is the written value, not a missing width. `raise ... from ...`
+on a descriptor `__set__` is the written value, not a missing width. `type(inst)` in the
+descriptor rewrite is the source class name, so `self.raw_bus_voltage` inside a method of
+an imported class is not "name 'adafruit_ina219_INA219' is not defined"; `adafruit_ina219`
+and `adafruit_aw9523` build unmodified. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
@@ -1003,6 +1007,8 @@ nine-field stub, so the RTC drivers move off that import.
 
 **Five more I2C sensors build unmodified** on the expanded list: `adafruit_ahtx0`,
 `adafruit_mcp9808`, `adafruit_lis3dh`, `adafruit_tsl2591`, `adafruit_mlx90614`.
+`adafruit_ina219` (7 294 bytes) and the `adafruit_aw9523` expander (2 294 bytes) join
+them once `type(self)` in a descriptor rewrite is the source class name.
 
 **A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
 `X | None` and `Union[X, None]` are read as `X`: see "None is a compile-time value" above.
