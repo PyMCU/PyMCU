@@ -1169,21 +1169,7 @@ public class Parser
             // A bare comma-separated return is a tuple: `return a, b` is `return (a, b)`.
             // Without this the parser stopped at the first element and choked on the comma,
             // so multi-value return required explicit parentheses.
-            if (Check(TokenType.Comma))
-            {
-                var elems = new List<Expression> { value };
-                while (Match(TokenType.Comma))
-                {
-                    if (Check(TokenType.Newline) || Check(TokenType.Semicolon) || Check(TokenType.EndOfFile))
-                        break; // trailing comma
-                    elems.Add(ParseExpression());
-                }
-                // From the first element's first TOKEN, not from its stamp: an element is
-                // stamped at the part a diagnostic blames, which for a BinaryExpr is the
-                // operator and for a CallExpr is nothing at all. The tuple starts where the
-                // text starts, so the text is what has to be measured.
-                value = Spanning(new TupleExpr(elems), tupleStart, Previous());
-            }
+            value = ParseCommaTupleTail(value, tupleStart);
         }
 
         ConsumeStatementEnd();
@@ -1920,20 +1906,7 @@ public class Parser
 
                 Consume(TokenType.Equal, "Expected '=' in tuple unpack assignment");
                 var rhsStart = Peek();
-                var valueExpr = ParseExpression();
-                // A bare comma-separated RHS is a tuple literal: `a, b = b, a`.
-                // Without this it parsed only the first element and choked on the
-                // comma, so tuple swap / multi-assign never worked.
-                if (Check(TokenType.Comma))
-                {
-                    var elems = new List<Expression> { valueExpr };
-                    while (Match(TokenType.Comma))
-                    {
-                        if (Check(TokenType.Newline) || Check(TokenType.EndOfFile)) break; // trailing comma
-                        elems.Add(ParseExpression());
-                    }
-                    valueExpr = Spanning(new TupleExpr(elems), rhsStart, Previous());
-                }
+                var valueExpr = ParseCommaTupleTail(ParseExpression(), rhsStart);
                 ConsumeStatementEnd();
                 return new TupleUnpackStmt(targets, valueExpr, starredIndex) { Line = line };
             }
@@ -2000,6 +1973,7 @@ public class Parser
 
         if (Match(TokenType.Equal))
         {
+            var rhsStart = Peek();
             var value = ParseExpression();
             if (Check(TokenType.Equal))
             {
@@ -2008,9 +1982,11 @@ public class Parser
                 while (Match(TokenType.Equal))
                 {
                     targets.Add(rhs);
+                    rhsStart = Peek();
                     rhs = ParseExpression();
                 }
 
+                rhs = ParseCommaTupleTail(rhs, rhsStart);
                 ConsumeStatementEnd();
 
                 var block = new Block();
@@ -2030,6 +2006,12 @@ public class Parser
                 return block;
             }
 
+            // `fill = a, b, c` is `fill = (a, b, c)`. The same comma-tuple the
+            // return and unpack paths already wrap. Adafruit framebuf writes
+            // `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255`
+            // without parentheses around the whole RHS, and the parser stopped
+            // at the first comma as "Expected newline or end of block".
+            value = ParseCommaTupleTail(value, rhsStart);
             ConsumeStatementEnd();
             return new AssignStmt(expr, value) { Line = line };
         }
@@ -2240,6 +2222,31 @@ public class Parser
         node.Column = at.Column;
         node.Length = at.Length;
         return node;
+    }
+
+    /// <summary>
+    /// A bare comma after an already-parsed expression is a tuple: <c>x = 1, 2</c>
+    /// is <c>x = (1, 2)</c>, and the same wrapping already existed on
+    /// <c>return a, b</c> and <c>a, b = 1, 2</c>. The first token of the first
+    /// element is the tuple's start, because an unparenthesized tuple has no
+    /// bracket of its own to stamp.
+    /// </summary>
+    private Expression ParseCommaTupleTail(Expression first, Token start)
+    {
+        if (!Check(TokenType.Comma)) return first;
+        var elems = new List<Expression> { first };
+        while (Match(TokenType.Comma))
+        {
+            if (Check(TokenType.Newline) || Check(TokenType.Semicolon)
+                || Check(TokenType.EndOfFile) || Check(TokenType.Dedent))
+                break;
+            elems.Add(ParseExpression());
+        }
+        // From the first element's first TOKEN, not from its stamp: an element is
+        // stamped at the part a diagnostic blames, which for a BinaryExpr is the
+        // operator and for a CallExpr is nothing at all. The tuple starts where the
+        // text starts, so the text is what has to be measured.
+        return Spanning(new TupleExpr(elems), start, Previous());
     }
 
     /// Stamps a node that IS its whole span, from one token to another inclusive.
