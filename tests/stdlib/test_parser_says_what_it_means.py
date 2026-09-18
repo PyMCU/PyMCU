@@ -1,21 +1,15 @@
 """Two parser diagnostics that named the compiler instead of the program, in both front ends.
 
-**A diagnostic wrapped inside another diagnostic.** `@classmethod` raises a message written to
-be read -- it names the construct, says why, and offers a way forward -- and the top-level
-statement loop caught it and re-threw it as "Expected function definition, import, or valid
-statement. Original error: " + that message. The reader met a generic sentence that is also
-wrong (a function definition IS what follows), then the phrase "Original error:", which says
-they are looking at compiler internals. Many stop at the first sentence. The wrapper also lost
-the inner error's position, because Error() re-reads the CURRENT token.
+**A diagnostic wrapped inside another diagnostic.** That wrapper used to bury
+`@classmethod` (now a compile-time class-namespace expansion) and still must
+not wrap other refusals. The ellipsis cases below pin that the inner message
+is the whole diagnostic.
 
 **`...` as a body.** The ordinary Python placeholder answered "Expected expression" in the C#
 front end and "literal of type ellipsis" in the Python one, and `pass` in the same position
 works. It is now accepted as the `pass` it means, in the statement position only.
 
-Every case is run through BOTH front ends. They disagreed on both defects before the fix --
-different text for `@classmethod`, different text for `...` -- which is the divergence #196 is
-about, and a test that ran one parser would have called either of them fixed while the other
-still answered its own way.
+Every case is run through BOTH front ends.
 """
 
 import os
@@ -57,42 +51,25 @@ CLASSMETHOD = (
     "    @classmethod\n"
     "    def make(cls) -> uint8:\n"
     "        return 77\n\n\n"
-    "def main():\n"
-    "    print(A.make())\n"
+    "def main() -> uint8:\n"
+    "    return A.make()\n"
 )
 
 
 @pytest.mark.parametrize("py_parser", FRONTENDS)
-def test_a_specific_diagnostic_is_not_wrapped_in_a_generic_one(tmp_path, py_parser):
-    """The discriminator: the C# front end prefixed this with "Expected function definition,
-    import, or valid statement. Original error:"."""
+def test_classmethod_compiles_on_both_front_ends(tmp_path, py_parser):
+    """@classmethod is compile-time class-namespace population. Adafruit sht4x
+    writes Mode.add_values; A.make() returning a constant is the same construct."""
     ok, out = compile_(tmp_path, CLASSMETHOD, py_parser)
-    assert not ok, out
+    assert ok, out
     assert "Original error:" not in out, out
-    assert "Expected function definition" not in out, out
-    assert "@classmethod is not supported" in out, out
+    assert "@classmethod is not supported" not in out, out
 
 
 @pytest.mark.parametrize("py_parser", FRONTENDS)
-def test_the_reason_and_the_way_forward_survive(tmp_path, py_parser):
-    """The message has to keep doing its job. The Python front end had a shorter text of its
-    own -- "no runtime class object", with neither -- so this is a discriminator there and a
-    guard in the C# one."""
-    ok, out = compile_(tmp_path, CLASSMETHOD, py_parser)
-    assert not ok, out
-    assert "no runtime class object" in out, out
-    assert "factory function" in out, out
-
-
-@pytest.mark.parametrize("py_parser", FRONTENDS)
-def test_the_alternative_the_message_offers_compiles(tmp_path, py_parser):
-    """The rule this file exists to keep: check every position a message sends the reader to.
-
-    The message used to offer a @staticmethod that calls the constructor as well. Measured,
-    that answers "Function 'A_make' expects 1 arguments, but 0 were provided" -- the method
-    still carries self -- so it was sending readers to a program that does not build. It is
-    gone, and what is left is checked here rather than asserted.
-    """
+def test_the_alternative_the_old_message_offered_still_compiles(tmp_path, py_parser):
+    """A module-level factory was the workaround before @classmethod compiled.
+    It still builds, so existing programs that took that advice keep working."""
     ok, out = compile_(
         tmp_path,
         STDOUT
@@ -109,14 +86,6 @@ def test_the_alternative_the_message_offers_compiles(tmp_path, py_parser):
         + "    print(make())\n",
         py_parser)
     assert ok, out
-
-
-@pytest.mark.parametrize("py_parser", FRONTENDS)
-def test_the_alternative_that_does_not_work_is_not_offered(tmp_path, py_parser):
-    """The other half: the @staticmethod shape still fails, so the message must not name it."""
-    ok, out = compile_(tmp_path, CLASSMETHOD, py_parser)
-    assert not ok, out
-    assert "staticmethod" not in out, out
 
 
 # --- 2. `...` is the pass it means, where it means it ----------------------------------------
@@ -176,9 +145,9 @@ def test_ellipsis_in_an_expression_is_named(tmp_path, py_parser):
 
 # --- both front ends have to answer the same ------------------------------------------------
 
-@pytest.mark.parametrize("source,ids", [(CLASSMETHOD, "classmethod"),
+@pytest.mark.parametrize("source,ids", [
                                         ("def main():\n    x = ...\n", "ellipsis-expression")],
-                         ids=["classmethod", "ellipsis-expression"])
+                         ids=["ellipsis-expression"])
 def test_the_two_front_ends_give_the_same_message(tmp_path, source, ids):
     """Both of these had a text per front end, which is the #196 shape: the same program
     answered differently depending on which parser ran, and neither answer was wrong enough to

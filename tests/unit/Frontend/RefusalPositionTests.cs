@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using System.Linq;
 using Xunit;
 using PyMCU.Common;
 using PyMCU.Frontend;
@@ -52,15 +53,14 @@ public class RefusalPositionTests
     }
 
     [Fact]
-    public void ClassmethodPointsAtTheDecoratorName()
+    public void Classmethod_ParsesRatherThanRefusingAtTheDecorator()
     {
-        //          123456
-        // line 2: "    @classmethod"  -- the name at column 6, after the `@`
-        var ex = Fails("class C:\n    @classmethod\n    def f(cls):\n        pass\n");
-
-        Assert.Contains("@classmethod", ex.Message);
-        Assert.Equal(2, ex.Line);
-        Assert.Equal(6, ex.Column);
+        var ast = new Parser(new Lexer(
+            "class C:\n    @classmethod\n    def f(cls):\n        pass\n").Tokenize()).ParseProgram();
+        var cls = Assert.Single(ast.GlobalStatements.OfType<ClassDef>());
+        var fn = Assert.Single(((Block)cls.Body).Statements.OfType<FunctionDef>());
+        Assert.True(fn.IsClassMethod);
+        Assert.True(fn.IsInline);
     }
 
     [Theory]

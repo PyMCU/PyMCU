@@ -1,5 +1,5 @@
-# expect: refuse no runtime class object
-# doc: docs/language/roadmap.md:92
+# expect: match
+# doc: docs/language/roadmap.md:112
 class Util:
     @classmethod
     def make(cls):
