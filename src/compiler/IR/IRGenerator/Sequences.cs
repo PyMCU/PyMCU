@@ -177,6 +177,12 @@ public partial class IRGenerator
         // has to find it the same way a descriptor finds a class attribute.
         if (mae.Object is VariableExpr ov)
         {
+            if (ClassNameOf(ov) is { } clsOwner)
+            {
+                string classDictKey = ClassAttrKey(clsOwner, mae.Member);
+                if (dictLiteralBindings.TryGetValue(classDictKey, out dict!))
+                    return true;
+            }
             string? baseName = ReceiverNameForLookup(ov) ?? ResolveNameKey(ov.Name);
             if (TryFindClassAttribute(baseName, mae.Member, out _, out var fullName)
                 && dictLiteralBindings.TryGetValue(fullName, out dict!))

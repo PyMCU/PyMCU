@@ -396,6 +396,15 @@ public partial class IRGenerator
 
         if (stmt.Target is IndexExpr indexExpr) { EmitIndexAssign(stmt, indexExpr); return; }
 
+        // `cls.string = {}` inside a @classmethod: a dict/set literal is not a value.
+        if (stmt.Target is MemberAccessExpr clsTableMem
+            && stmt.Value is DictExpr or SetExpr
+            && ClassNameOf(clsTableMem.Object) is { })
+        {
+            EmitMemberAssign(stmt, clsTableMem, new NoneVal());
+            return;
+        }
+
         if (stmt.Target is VariableExpr varExprCtor) { EmitConstructorTargetSetup(stmt, varExprCtor); }
 
         if (!string.IsNullOrEmpty(pendingConstructorTarget))
@@ -1818,6 +1827,46 @@ public partial class IRGenerator
     {
         RejectAssignmentToAMethod(memExpr2);
 
+        // Class variable write: `ClassName.attr = value` and `cls.attr = value` inside a
+        // @classmethod. A dict/set literal is a compile-time lookup table (Adafruit CV:
+        // `cls.string = {}`); a scalar is a class global.
+        if (ClassNameOf(memExpr2.Object) is { } clsOwner)
+        {
+            string cvName = ClassAttrKey(clsOwner, memExpr2.Member);
+            if (stmt.Value is DictExpr de)
+            {
+                dictLiteralBindings[cvName] = FoldDictConstEntries(de);
+                return;
+            }
+            if (stmt.Value is SetExpr se)
+            {
+                setLiteralBindings[cvName] = se;
+                return;
+            }
+            if (mutableGlobals.TryGetValue(cvName, out var cvType))
+            {
+                Emit(new Copy(value, new Variable(cvName, cvType)));
+                constantVariables.Remove(cvName);
+                return;
+            }
+            Expression lit = LiteralizeClassAttrValue(stmt.Value);
+            if (lit is IntegerLiteral ilCls)
+            {
+                globals[cvName] = new SymbolInfo { IsMemoryAddress = false, Value = ilCls.Value };
+                return;
+            }
+            if (lit is FloatLiteral flCls)
+            {
+                floatConstantVariables[cvName] = flCls.Value;
+                return;
+            }
+            if (lit is StringLiteral slCls)
+            {
+                strConstantVariables[cvName] = slCls.Value;
+                return;
+            }
+        }
+
         // Class variable write: `ClassName.attr = value`. The read side resolves ClassName.attr
         // to the mutable class global (via classModuleMap); mirror it here with a real store.
         // Without this the write fell through to the ZCA-field path and was constant-folded into
@@ -3165,6 +3214,15 @@ public partial class IRGenerator
         // text as the read path, so the two spellings of one mistake get one answer.
         if (indexExpr.Index is TupleExpr && !SubscriptTakesAPair(indexExpr.Target, "__setitem__"))
             throw UserError(TwoIndexSubscriptRefusal, indexExpr.Index);
+
+        // `cls.string[k] = v` inside a @classmethod: accumulate a compile-time class dict.
+        if (indexExpr.Target is MemberAccessExpr dictMem
+            && ClassNameOf(dictMem.Object) is { } dictCls)
+        {
+            AccumulateClassDictEntry(ClassAttrKey(dictCls, dictMem.Member),
+                indexExpr.Index, stmt.Value);
+            return;
+        }
 
         if (indexExpr.Target is VariableExpr tupTgt && IsTupleBound(tupTgt.Name))
             throw UserError(
@@ -6530,6 +6588,23 @@ public partial class IRGenerator
         return true;
     }
 
+    /// <summary>
+    /// Compile-time text of one tuple-unpack source. A StringLiteral carries it on
+    /// the Constant; a name already bound as a string keeps that binding. An interned
+    /// id is not enough: ids start at 256, which is also a legal integer.
+    /// </summary>
+    private string? UnpackSourceString(Expression elem, Constant c)
+    {
+        if (!string.IsNullOrEmpty(c.Text)) return c.Text;
+        if (elem is StringLiteral sl) return sl.Value;
+        if (elem is VariableExpr ve)
+            return ResolveStrConstant(currentInlinePrefix + ve.Name)
+                ?? (!string.IsNullOrEmpty(currentFunction)
+                    ? ResolveStrConstant(currentFunction + "." + ve.Name) : null)
+                ?? ResolveStrConstant(ve.Name);
+        return null;
+    }
+
     private void VisitTupleUnpack(TupleUnpackStmt stmt)
     {
         // `x, y = key`, where `key` is a NAME standing for a compile-time sequence (#352).
@@ -6616,7 +6691,24 @@ public partial class IRGenerator
                     DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : GetValType(snapshots[k]);
                     variableTypes[qualified] = dt;
                     Emit(new Copy(snapshots[k], new Variable(qualified, dt)));
-                    if (snapshots[k] is Constant c) constantVariables[qualified] = c.Value;
+                    if (snapshots[k] is Constant c)
+                    {
+                        constantVariables[qualified] = c.Value;
+                        // Interned ids start at 256, which is also a legal integer
+                        // (PWM duties, Mode codes). A string unpack is the AST text
+                        // or a name already bound as one -- never stringIdToStr[c.Value].
+                        if (UnpackSourceString(tup.Elements[k], c) is { } text)
+                            strConstantVariables[qualified] = text;
+                        else
+                            strConstantVariables.Remove(qualified);
+                        floatConstantVariables.Remove(qualified);
+                    }
+                    else if (snapshots[k] is FloatConstant fc)
+                    {
+                        floatConstantVariables[qualified] = fc.Value;
+                        constantVariables.Remove(qualified);
+                        strConstantVariables.Remove(qualified);
+                    }
                     else constantVariables.Remove(qualified);
                 }
             }

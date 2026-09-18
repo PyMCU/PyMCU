@@ -108,6 +108,10 @@ public partial class IRGenerator
     private Dictionary<string, ModuleScope> modules = new();
 
     private HashSet<string> classNames = new(); // Tracks known class names for callee resolution
+    // @classmethod expansion: qualified `cls` parameter -> the receiver class name.
+    // Mode.add_values aliases cls to Mode so setattr(cls, name, value) and cls.string
+    // populate that class's namespace. There is no runtime class object.
+    private Dictionary<string, string> classmethodClsAlias = new();
     private HashSet<string> valueClasses = new(); // @value-decorated classes: always use ZCA path, never heap-allocated
 
     // Maps "ClassName.property_name" -> qualified setter inline function key.

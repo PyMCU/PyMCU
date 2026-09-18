@@ -158,6 +158,13 @@ public partial class IRGenerator
         if (expr.Args.Any(a => a is StarArgExpr or DoubleStarArgExpr))
             expr = new CallExpr(expr.Callee, SpliceVariadicArgs(expr.Args)) { Line = expr.Line };
 
+        // `return cls()` inside a @classmethod: cls is the receiver class, not a value.
+        if (expr.Callee is VariableExpr clsCtorVe
+            && ClassmethodClsOf(clsCtorVe.Name) is { } clsCtorMapped)
+            expr = new CallExpr(new VariableExpr(clsCtorMapped), expr.Args)
+                { Line = expr.Line, Column = expr.Column, Length = expr.Length };
+
+        if (TryEmitCompileTimeSetattr(expr) is { } setattrResult) return setattrResult;
         if (TryEmitPioStateMachine(expr) is { } pioResult) return pioResult;
         if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
         if (TryEmitUnboundClassMethodCall(expr) is { } unboundResult) return unboundResult;
@@ -1314,6 +1321,109 @@ public partial class IRGenerator
         return dstC;
     }
 
+    /// <summary>
+    /// The class a @classmethod's <c>cls</c> parameter currently names, or null.
+    /// </summary>
+    private string? ClassmethodClsOf(string name)
+    {
+        string q = currentInlinePrefix + name;
+        if (classmethodClsAlias.TryGetValue(q, out var c)) return c;
+        if (classmethodClsAlias.TryGetValue(name, out c)) return c;
+        return null;
+    }
+
+    /// <summary>
+    /// The class an expression names: a class identifier, or <c>cls</c> inside a
+    /// @classmethod expansion. Null when the expression is an instance or anything else.
+    /// </summary>
+    private string? ClassNameOf(Expression e)
+    {
+        if (e is not VariableExpr ve) return null;
+        if (ClassmethodClsOf(ve.Name) is { } mapped) return mapped;
+        if (classNames.Contains(ve.Name)) return ve.Name;
+        string resolved = ResolveCallee(ve.Name);
+        return classNames.Contains(resolved) ? resolved : null;
+    }
+
+    private string ClassAttrKey(string cls, string member)
+    {
+        string pfx = classModuleMap.TryGetValue(cls, out var p) && p != null ? p : currentModulePrefix;
+        return pfx + cls + "_" + member;
+    }
+
+    /// <summary>
+    /// <c>setattr(cls, "NAME", value)</c> at compile time: bind a class attribute.
+    /// Adafruit CV.add_values writes <c>setattr(cls, name, value)</c> for each tuple.
+    /// </summary>
+    private Val? TryEmitCompileTimeSetattr(CallExpr expr)
+    {
+        if (expr.Callee is not VariableExpr { Name: "setattr" }) return null;
+        if (expr.Args.Count != 3) return null;
+        if (ClassNameOf(expr.Args[0]) is not { } cls) return null;
+        if (StaticStringOf(expr.Args[1]) is not { } attr) return null;
+
+        string key = ClassAttrKey(cls, attr);
+        Expression lit = LiteralizeClassAttrValue(expr.Args[2]);
+        if (lit is IntegerLiteral il)
+        {
+            globals[key] = new SymbolInfo { IsMemoryAddress = false, Value = il.Value };
+            return new NoneVal();
+        }
+        if (lit is StringLiteral sl)
+        {
+            strConstantVariables[key] = sl.Value;
+            if (sl.Value.Length == 1)
+                globals[key] = new SymbolInfo { IsMemoryAddress = false, Value = sl.Value[0] };
+            return new NoneVal();
+        }
+        if (lit is FloatLiteral fl)
+        {
+            floatConstantVariables[key] = fl.Value;
+            return new NoneVal();
+        }
+        if (TryEvalElemConst(expr.Args[2], out int iv))
+        {
+            globals[key] = new SymbolInfo { IsMemoryAddress = false, Value = iv };
+            return new NoneVal();
+        }
+        return null;
+    }
+
+    private Expression LiteralizeClassAttrValue(Expression e)
+    {
+        if (e is IntegerLiteral or FloatLiteral or StringLiteral or BooleanLiteral) return e;
+        if (e is VariableExpr ve)
+        {
+            foreach (var key in Qualifications(ve.Name))
+            {
+                if (floatConstantVariables.TryGetValue(key, out var fv))
+                    return new FloatLiteral(fv) { Line = e.Line };
+                if (strConstantVariables.TryGetValue(key, out var sv))
+                    return new StringLiteral(sv) { Line = e.Line };
+                if (constantVariables.TryGetValue(key, out int iv))
+                    return new IntegerLiteral(iv) { Line = e.Line };
+            }
+        }
+        if (TryEvalConstStrElement(e, out var text))
+            return new StringLiteral(text) { Line = e.Line };
+        if (TryEvalElemConst(e, out int n))
+            return new IntegerLiteral(n) { Line = e.Line };
+        return e;
+    }
+
+    /// <summary>
+    /// <c>cls.string[k] = v</c> / <c>Mode.delay[code] = 0.01</c>: accumulate a compile-time
+    /// class dict entry. Empty <c>cls.string = {}</c> is registered by EmitMemberAssign.
+    /// </summary>
+    private void AccumulateClassDictEntry(string dictKey, Expression keyExpr, Expression valueExpr)
+    {
+        var entries = dictLiteralBindings.TryGetValue(dictKey, out var existing)
+            ? new List<(Expression, Expression)>(existing.Entries)
+            : new List<(Expression, Expression)>();
+        entries.Add((LiteralizeClassAttrValue(keyExpr), LiteralizeClassAttrValue(valueExpr)));
+        dictLiteralBindings[dictKey] = new DictExpr(entries);
+    }
+
     // Expand a known @inline function/ZCA method call in place: bind positional,
     // keyword and defaulted args into a fresh inline frame, alias self for instance
     // methods, run the body, and yield the (possibly tuple) result. The big ZCA
@@ -1416,7 +1526,22 @@ public partial class IRGenerator
 
         if (!isConstructor)
         {
-            if (expr.Callee is MemberAccessExpr mem2)
+            // Class.method(args): cls is the receiver class. Do not visit the class as a
+            // value -- there is no runtime class object -- and skip binding the first
+            // parameter from the argument list (paramOffset = 1).
+            if (func != null && func.IsClassMethod
+                && expr.Callee is MemberAccessExpr { Object: VariableExpr clsRecvVe })
+            {
+                string owner = ClassmethodClsOf(clsRecvVe.Name)
+                    ?? (classNames.Contains(clsRecvVe.Name) ? clsRecvVe.Name : null)
+                    ?? ResolveCallee(clsRecvVe.Name);
+                if (methodInstanceTypes.TryGetValue(callee, out var mt) && !string.IsNullOrEmpty(mt))
+                    owner = mt;
+                string clsParam = func.Params.Count > 0 ? func.Params[0].Name : "cls";
+                classmethodClsAlias[newPrefix + clsParam] = owner;
+                paramOffset = 1;
+            }
+            else if (expr.Callee is MemberAccessExpr mem2)
             {
                 Val objVal = VisitExpression(mem2.Object);
                 // The receiver may be a Temporary, not just a Variable -- e.g. a nested ZCA field
@@ -1825,7 +1950,8 @@ public partial class IRGenerator
         // can be given that offset without having one, and counting against it would invent an
         // error on a call that is correct (`time.monotonic()` reported "expects -1 arguments").
         bool offsetMatchesSelf = paramOffset == 0
-            || (func.Params.Count > 0 && func.Params[0].Name == "self");
+            || (func.Params.Count > 0 && func.Params[0].Name == "self")
+            || (func.IsClassMethod && func.Params.Count > 0);
 
         // And CORRECTED, not only reported. A module function reached through a dotted name can
         // be handed the receiver offset without having a `self` to receive it, and then the
@@ -2648,6 +2774,8 @@ public partial class IRGenerator
 
         inlineStack.RemoveAt(inlineStack.Count - 1);
         activeInlineExpansions.Remove(callee);
+        if (func != null && func.IsClassMethod && func.Params.Count > 0)
+            classmethodClsAlias.Remove(newPrefix + func.Params[0].Name);
         // Nested expansions pop innermost-first, so after the RHS finishes this holds
         // the OUTERMOST call's declared return type — the width the assignment needs
         // when the result folded to a bare Constant.

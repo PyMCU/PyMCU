@@ -963,7 +963,11 @@ public partial class IRGenerator
             // strings the compiler already holds; there is no runtime search (#466).
             // Prefer the AST text of a field (`u.machine`) -- VisitExpression of a
             // flattened field is often a Variable whose interned id is not enough.
-            if (expr.Right is MemberAccessExpr or StringLiteral)
+            // A class/instance dict or set (`value in cls.string`) is membership of
+            // keys, not a substring: skip this path so TryGetDictFor below owns it.
+            if (expr.Right is MemberAccessExpr or StringLiteral
+                && !(expr.Right is MemberAccessExpr
+                     && (TryGetDictFor(expr.Right, out _) || TryGetSetFor(expr.Right, out _))))
             {
                 string? hay = TryGetCompileTimeText(expr.Right)
                               ?? StringTextOfVal(VisitExpression(expr.Right));
@@ -3284,6 +3288,11 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // `cls.string` inside a @classmethod: cls is the receiver class.
+        if (expr.Object is VariableExpr clsVe && ClassmethodClsOf(clsVe.Name) is { } mappedCls)
+            expr = new MemberAccessExpr(new VariableExpr(mappedCls), expr.Member)
+                { Line = expr.Line, Column = expr.Column, Length = expr.Length };
+
         // `__CHIP__.name` / `.arch` / `.board` are compile-time strings (DeviceConfig),
         // the same facts CompileTimeEvaluator already folds in `if` / `match`. Using
         // them as a VALUE (`uname_result(..., __CHIP__.name)`, #466) used to be

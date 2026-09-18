@@ -250,6 +250,20 @@ public partial class IRGenerator
                 return true;
             }
         }
+
+        // A nested tuple/list unrolled as the loop variable: `for value_tuple in tuples`
+        // then `name, value, string, delay = value_tuple` (Adafruit CV.add_values).
+        if (elem is TupleExpr te)
+        {
+            constSequenceBindings[key] = te.Elements;
+            return true;
+        }
+        if (elem is ListExpr le)
+        {
+            constSequenceBindings[key] = le.Elements;
+            return true;
+        }
+
         return false;
     }
 
@@ -890,6 +904,14 @@ public partial class IRGenerator
                     {
                         constantVariables[varKey] = il.Value;
                         EmitUnrolledIteration(stmt.Body, lpBrk);
+                    }
+                    else if (BindUnrolledElement(varKey, elem))
+                    {
+                        EmitUnrolledIteration(stmt.Body, lpBrk);
+                        constSequenceBindings.Remove(varKey);
+                        strConstantVariables.Remove(varKey);
+                        constantVariables.Remove(varKey);
+                        floatConstantVariables.Remove(varKey);
                     }
                     // Deliberately unlocated. `elem` is the CALLER's literal, reached by
                     // resolving the parameter, while this diagnostic is reported against the
