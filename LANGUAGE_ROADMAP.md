@@ -126,6 +126,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Unannotated field first store | A string literal or `bytearray(...)` / `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter (adafruit_character_lcd) and `self._gpio = bytearray(n)` then a buffer setter (adafruit_74hc595) are the same field. An int then a str is still refused |
 | Constant tuple field | `self.scale = (524288, ...)` is the same fixed array as `self.buf = [0, 0, 0]` (adafruit_dps310) |
 | `str` parameter text | A compile-time string of any length bound to a `str` parameter keeps its text, so `struct.calcsize(fmt)` folds (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685) |
+| `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size. `self._gpio = bytearray(self._number_of_shift_registers)` (adafruit_74hc595) |
 | Local class vs imported name | A class defined in a module shadows an import of the same name from another module. `DigitalInOut(pin, self)` in adafruit_74hc595 is that file's class, not `digitalio.DigitalInOut`. Last construct unmodified `adafruit_74hc595` stopped on; the library now builds unmodified |
@@ -388,6 +389,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | Unannotated field first store | A string literal or `bytearray(...)` / `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter (adafruit_character_lcd); `self._gpio = bytearray(n)` then a buffer setter (adafruit_74hc595) |
 | Constant tuple field | `self.scale = (524288, ...)` is the same fixed array as `self.buf = [0, 0, 0]`. Left as a scalar, the class became one-field and `self.scale[n]` compiled as a bit index (adafruit_dps310) |
 | `str` parameter text | A compile-time string of any length bound to a `str` parameter keeps its text, so `struct.calcsize(fmt)` folds (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685) |
+| `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (`self._gpio = bytearray(self._number_of_shift_registers)`) |
 | Local class vs imported name | A class defined in a module shadows an import of the same name from another module (`DigitalInOut(pin, self)` in adafruit_74hc595) |

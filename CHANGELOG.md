@@ -116,6 +116,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   length. Only a one-character literal used to, so `struct.calcsize(struct_format)`
   inside an inlined descriptor constructor refused `"<HH"`. Last construct
   unmodified `adafruit_pca9685` stopped on (`StructArray(0x06, "<HH", 16)`).
+- `[None] * n` / `[0] * n` is a fixed SRAM array of n slots. A local
+  `coeffs = [None] * 18` (adafruit_dps310) and a field
+  `self._channels = [None] * len(self)` (adafruit_pca9685) are indexable;
+  None is a 0 slot, so `if not xs[i]` still reads empty.
 - `import os` / `from os import uname` resolve to a stdlib stub. `uname()` is a
   compile-time five-field record of `__CHIP__` (sysname `"PyMCU"`, machine the chip
   name, with an `RP2040`/`RP2350` token on those parts). `"Linux" not in uname()`

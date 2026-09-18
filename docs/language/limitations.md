@@ -913,7 +913,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
 | `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
-| `adafruit_dps310` | `coeffs = [None] * 18` in `_read_calibration` | (moved off `self._oversample_scalefactor = (524288, ...)`: a constant tuple assigned to a field is a fixed array.) a list literal has no value in this position |
+| `adafruit_dps310` | (moved off `coeffs = [None] * 18`) | a repeated list of None is a fixed SRAM array; next construct after that is measured after this landing |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_ds3231` | `from time import struct_time` | `pymcu.time` defines the nine-field stub; the CircuitPython overlay's advertised names are still only `monotonic` / `monotonic_ns` / `sleep` |
 | `adafruit_74hc595` | **builds unmodified, 402 bytes** | (moved off `bytearray(self._number_of_shift_registers)` and `DigitalInOut(pin, self)`: a compile-time field is a buffer size, and a class defined in the module shadows the entry file's `from digitalio import DigitalInOut`) |
@@ -928,7 +928,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_mcp9808` | **builds unmodified, 4 646 bytes** | |
 | `adafruit_mlx90614` | **builds unmodified, 3 846 bytes** | |
 | `neopixel` | `all(... for component in val)` in `adafruit_pixelbuf` | generator expression; `import adafruit_pixelbuf` itself is present |
-| `adafruit_pca9685` | `self._channels = [None] * len(self)` | (moved off `struct.calcsize(struct_format)`: a `str` parameter that received a compile-time format keeps the text, so calcsize folds.) a list literal has no value in this position
+| `adafruit_pca9685` | `self._channels[index] = PWMChannel(...)` | (moved off `[None] * len(self)`: a repeated list of None is a fixed SRAM array of integer slots.) storing a ZCA instance into that numeric cache is a later gap |
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
@@ -1004,8 +1004,10 @@ assigned to a field is the same array as a list (`self.scale = (524288, ...)`), 
 `adafruit_dps310` moves off that onto `coeffs = [None] * 18`. A `str` parameter that
 received a compile-time string keeps the text at any length, so
 `struct.calcsize(struct_format)` inside an inlined descriptor constructor folds
-(`StructArray(0x06, "<HH", 16)`); `adafruit_pca9685` moves off that onto
-`self._channels = [None] * len(self)`. `raise ... from ...`
+(`StructArray(0x06, "<HH", 16)`). `[None] * n` is a fixed SRAM array, so
+`coeffs = [None] * 18` and `self._channels = [None] * len(self)` index; None is a
+0 slot. `adafruit_pca9685` moves off that onto storing a `PWMChannel` into the
+integer cache. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
