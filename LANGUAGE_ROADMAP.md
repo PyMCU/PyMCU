@@ -129,6 +129,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `x = a, b, c` | An unparenthesized comma RHS is a tuple, the same wrap `return a, b` already had. `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` (adafruit_framebuf) |
 | `buf[i:i+n] = bytes(fill)` | Equal-length slice assign onto a `bytearray` (and onto `self.buf`), with a run-time start whose length is compile-time (`i:i+3`) and `bytes(named_seq)` as the source (adafruit_framebuf RGB888 fill) |
+| `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size. `self._gpio = bytearray(self._number_of_shift_registers)` (adafruit_74hc595) |
@@ -395,6 +396,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `x = a, b, c` | An unparenthesized comma RHS is a tuple, the same wrap `return a, b` already had. `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` (adafruit_framebuf) |
 | `buf[i:i+n] = bytes(fill)` | Equal-length slice assign onto a `bytearray` (and onto `self.buf`), with a run-time start whose length is compile-time (`i:i+3`) and `bytes(named_seq)` as the source (adafruit_framebuf RGB888 fill) |
+| `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (`self._gpio = bytearray(self._number_of_shift_registers)`) |

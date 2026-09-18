@@ -934,7 +934,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
 | `adafruit_sht31d` | `word[i*2], crc[i*2], ... = struct.unpack(...)` | Expected newline or end of block (multi-target unpack from a call) |
 | `adafruit_sht4x` | `@classmethod` | no runtime class object; write a module-level factory |
-| `adafruit_si7021` | `obj: "adafruit_si7021.SI7021"` | string (forward reference) type annotations are not supported |
+| `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
 | `adafruit_ssd1306` | (moved off `framebuf.buf[i:i+3] = bytes(fill)`) | equal-length slice assign of compile-time length onto a bytearray, including `bytes(named_seq)`; next construct after that is measured after this landing |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
@@ -1010,7 +1010,9 @@ received a compile-time string keeps the text at any length, so
 0 slot. `adafruit_pca9685` moves off that onto storing a `PWMChannel` into the
 integer cache. `x = a, b, c` is a tuple and `buf[i:i+n] = bytes(fill)` copies n
 bytes at a run-time start, so `adafruit_ssd1306` moves off
-`fill = (color >> 16) & 255, ...` and `framebuf.buf[i:i+3] = bytes(fill)` in `adafruit_framebuf`. The inner Adafruit TYPE_CHECKING guard
+`fill = (color >> 16) & 255, ...` and `framebuf.buf[i:i+3] = bytes(fill)` in `adafruit_framebuf`.
+A quoted dotted class (`"adafruit_si7021.SI7021"`) is the same type as unquoted `mod.Cls`,
+so `adafruit_si7021` moves off that annotation. The inner Adafruit TYPE_CHECKING guard
 (`except NotImplementedError` around `from pwmio import PWMOut`) keeps the
 resolved name and does not load the stub package (#480, #481). `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;

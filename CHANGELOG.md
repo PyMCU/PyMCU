@@ -129,6 +129,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   dest is a module `bytearray` or an instance-member buffer (`self.buf`),
   and `bytes(named_seq)` unwraps to that sequence. Adafruit framebuf RGB888
   fill writes `framebuf.buf[i:i+3] = bytes(fill)`.
+- `"mod.Cls"` is the same type annotation as unquoted `mod.Cls`. A quoted
+  forward reference was already the bare name (#261); a dotted class is the
+  spelling `busio.I2C` already has. Adafruit si7021 writes
+  `obj: "adafruit_si7021.SI7021"`.
 - A `try` whose `except` is not `ImportError` still keeps the imports its
   body resolved. The inner Adafruit TYPE_CHECKING guard
   (`except NotImplementedError: from circuitpython_typing.pwmio import PWMOut`)
