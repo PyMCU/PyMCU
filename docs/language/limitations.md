@@ -928,7 +928,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_mcp9808` | **builds unmodified, 4 646 bytes** | |
 | `adafruit_mlx90614` | **builds unmodified, 3 846 bytes** | |
 | `neopixel` | `all(... for component in val)` in `adafruit_pixelbuf` | generator expression; `import adafruit_pixelbuf` itself is present |
-| `adafruit_pca9685` | `struct.calcsize(struct_format)` in `i2c_struct_array` | (moved off `-> memoryview`: a CPython builtin type this compiler stores is a valid annotation.) `calcsize` needs a format string known at compile time; the descriptor's `struct_format` parameter is not folded |
+| `adafruit_pca9685` | `self._channels = [None] * len(self)` | (moved off `struct.calcsize(struct_format)`: a `str` parameter that received a compile-time format keeps the text, so calcsize folds.) a list literal has no value in this position
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
@@ -1001,7 +1001,11 @@ and `adafruit_aw9523` build unmodified. A class-body dict is the same lookup tab
 module-level one, so `self.gain_values[gain]` is a fold or a compare chain (mixed
 int/float values are a float); `adafruit_veml7700` builds unmodified. A constant tuple
 assigned to a field is the same array as a list (`self.scale = (524288, ...)`), so
-`adafruit_dps310` moves off that onto `coeffs = [None] * 18`. `raise ... from ...`
+`adafruit_dps310` moves off that onto `coeffs = [None] * 18`. A `str` parameter that
+received a compile-time string keeps the text at any length, so
+`struct.calcsize(struct_format)` inside an inlined descriptor constructor folds
+(`StructArray(0x06, "<HH", 16)`); `adafruit_pca9685` moves off that onto
+`self._channels = [None] * len(self)`. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
