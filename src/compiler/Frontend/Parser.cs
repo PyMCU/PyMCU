@@ -315,20 +315,29 @@ public class Parser
         return -1;
     }
 
-    /// Is this the text of a bare type name, the thing an unquoted annotation would be?
+    /// Is this the text of a type name someone could have written without quotes?
     ///
-    /// Deliberately narrow (#261). A quoted annotation is accepted only when unquoting it
-    /// yields exactly what someone could have written without the quotes, so `"Vec"` passes
-    /// and `"busio.I2C"` or `"Optional[Vec]"` do not: those are a dotted annotation and a
-    /// typing subscript, refused on their own terms, and letting them in through the string
-    /// door would give them a second spelling that behaves differently from the first.
-    private static bool IsBareTypeName(string s)
+    /// A quoted annotation is the SAME annotation with quotes round it (#261). An unquoted
+    /// forward reference already compiles, and so does an unquoted dotted class
+    /// (`busio.I2C`, #342). `"Vec"` and `"adafruit_si7021.SI7021"` therefore pass;
+    /// `"Optional[Vec]"` does not: a typing subscript as the whole quoted string is not
+    /// what the unquoted reader would have tokenised from a single string token.
+    /// Adafruit si7021 writes <c>obj: "adafruit_si7021.SI7021"</c>.
+    private static bool IsQuotedTypeName(string s)
     {
         if (s.Length == 0) return false;
-        if (!char.IsLetter(s[0]) && s[0] != '_') return false;
-        foreach (char c in s)
-            if (!char.IsLetterOrDigit(c) && c != '_') return false;
-        return true;
+        int i = 0;
+        while (i < s.Length)
+        {
+            if (!char.IsLetter(s[i]) && s[i] != '_') return false;
+            i++;
+            while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '_')) i++;
+            if (i == s.Length) return true;
+            if (s[i] != '.') return false;
+            i++;
+            if (i == s.Length) return false;
+        }
+        return false;
     }
 
     /// <summary>
@@ -443,12 +452,11 @@ public class Parser
             //
             // PyMCU already resolves annotation names after the whole module is seen -- an
             // UNQUOTED forward reference, where the class is defined below the function that
-            // names it, compiles today on both front ends. So the quotes were the only thing
-            // in the way, and the fix is to hand the text to the identical downstream path
-            // rather than to add a second resolution mechanism that could drift from the
-            // first.
+            // names it, compiles today on both front ends. A dotted class (`busio.I2C`,
+            // #342) is the same name with dots, so `"adafruit_si7021.SI7021"` is that
+            // spelling quoted, not a second resolution mechanism.
             string inner = Peek().Value;
-            if (!IsBareTypeName(inner))
+            if (!IsQuotedTypeName(inner))
                 Error("string ('forward reference') type annotations are not supported; " +
                       "use the bare class name (e.g. `-> Vec`, not `-> " + (char)34 + "Vec" + (char)34 + "`)");
             Advance();

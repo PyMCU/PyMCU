@@ -325,13 +325,16 @@ def annotation_of(node):
     # reference compiles today on both front ends -- so the quotes were the only thing in the
     # way, and the text is returned as the type name the unquoted spelling would have produced.
     #
-    # Only a bare name: `"busio.I2C"` and `"Optional[Vec]"` fall through to the refusals below,
-    # because a dotted annotation and a typing subscript are refused on their own terms and
-    # must not gain a second spelling through the string door.
+    # Only a type name: `"Vec"` or `"adafruit_si7021.SI7021"` (a dotted class, the same
+    # text unquoted `busio.I2C` already produces, #342). `"Optional[Vec]"` falls through
+    # to the refusals below, because a typing subscript as the whole quoted string is not
+    # what the unquoted reader tokenises from one string token.
     #
-    # Kept in step with Parser.cs's IsBareTypeName. Change one, change both.
-    if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
-        return node.value
+    # Kept in step with Parser.cs's IsQuotedTypeName. Change one, change both.
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        parts = node.value.split(".")
+        if parts and all(p.isidentifier() for p in parts):
+            return node.value
     # `...` inside an annotation is CARRIED as its text now (#357). The C# reader does the
     # same, one normaliser in Common/AnnotationText.cs reads both, and the judging happens
     # downstream where the position is known. Refusing it in the readers meant `tuple[int, ...]`
