@@ -1,3 +1,4 @@
+using FluentAssertions;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
@@ -35,6 +36,50 @@ public class BufferGrownByExtendTests
             new Parser(new Lexer(src).Tokenize()).ParseProgram(),
             new Dictionary<string, ProgramNode>(),
             new DeviceConfig { Arch = "avr" });
+
+    /// <summary>
+    /// adafruit_register splits the buffer, _fit, and RWBits across modules:
+    /// the package defines <c>_BUFFER</c>, i2c_bits imports it and constructs
+    /// the descriptor, the sensor's class body calls <c>RWBits(..., width)</c>.
+    /// </summary>
+    private static ProgramIR GenAdafruitRegisterShape()
+    {
+        const string pack =
+            "_BUFFER = bytearray(1)\n" +
+            "def _fit(size: uint8) -> None:\n" +
+            "    if len(_BUFFER) < 1 + size:\n" +
+            "        _BUFFER.extend(bytes(1 + size - len(_BUFFER)))\n";
+        const string bits =
+            "from pack import _BUFFER, _fit\n" +
+            "class Field:\n" +
+            "    def __init__(self, width: uint8) -> None:\n" +
+            "        self.width = width\n" +
+            "        _fit(width)\n";
+        const string sensor =
+            "from bits import Field\n" +
+            "class Dev:\n" +
+            "    bits = Field(2)\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self.reg: uint8 = 0\n";
+        const string main =
+            "from pack import _BUFFER\n" +
+            "from sensor import Dev\n" +
+            "out = bytearray([0])\n" +
+            "d = Dev()\n" +
+            "out[0] = _BUFFER[2]\n";
+
+        var imported = new Dictionary<string, ProgramNode>
+        {
+            ["pack"] = new Parser(new Lexer(pack).Tokenize()).ParseProgram(),
+            ["bits"] = new Parser(new Lexer(bits).Tokenize()).ParseProgram(),
+            ["sensor"] = new Parser(new Lexer(sensor).Tokenize()).ParseProgram(),
+        };
+        return new IRGenerator().Generate(
+            new Parser(new Lexer(main).Tokenize()).ParseProgram(),
+            imported,
+            new DeviceConfig { Arch = "avr" },
+            projectModules: new HashSet<string> { "pack", "bits", "sensor" });
+    }
 
     /// <summary>
     /// The size the buffer is compiled at, read from what actually decides its storage: the
@@ -97,6 +142,43 @@ public class BufferGrownByExtendTests
             "_fit(2)\n");
 
         Assert.Equal(5, SizeOfGlobalArray(ir, "_BUFFER"));
+    }
+
+    // Adafruit RWBits: class-body `bits = Field(2)` calls _fit(2) and later
+    // `_BUFFER[i]` with i from range(width). Class-body constructors run ahead
+    // of `_BUFFER = bytearray(1)` (#270), and replaying that declaration used
+    // to shrink the grown buffer back to 1.
+    [Fact]
+    public void AClassBodyConstructorFit_KeepsTheGrownSize()
+    {
+        var ir = Gen(
+            Fit +
+            "class Field:\n" +
+            "    def __init__(self, width: uint8) -> None:\n" +
+            "        self.width = width\n" +
+            "        _fit(width)\n" +
+            "class Dev:\n" +
+            "    bits = Field(2)\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self.reg: uint8 = 0\n" +
+            "d = Dev()\n" +
+            "out[0] = _BUFFER[2]\n");
+
+        Assert.Equal(3, SizeOfGlobalArray(ir, "_BUFFER"));
+    }
+
+    [Fact]
+    public void AnImportedFitFromAClassBody_KeepsTheGrownSize()
+    {
+        var act = () => GenAdafruitRegisterShape();
+
+        act.Should().NotThrow<PyMCU.Common.CompilerError>(
+            because: "a class-body Field(2) in another module calls _fit on the imported "
+                     + "_BUFFER, and indexing _BUFFER[2] must see the grown size, not bytearray(1)");
+
+        var ir = GenAdafruitRegisterShape();
+        SizeOfGlobalArray(ir, "_BUFFER").Should().Be(3,
+            because: "_fit(2) from Field(2) in the sensor class body grows the imported _BUFFER to 3");
     }
 
     // `len()` must fold to the size the buffer ended up with, not to the size it was declared
