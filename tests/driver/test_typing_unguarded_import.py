@@ -1,7 +1,9 @@
 """PyMCU#444. An unguarded `from typing import X` (or `import typing`) at module level is
 a no-op, the same way the guarded forms `try: from typing import X except ImportError: pass`
 and `if TYPE_CHECKING: import X` already are (#417): `typing` provides nothing at run time,
-so there is nothing to fetch and nothing to fail an import over.
+so there is nothing to fetch and nothing to fail an import over. `typing_extensions` is the
+same no-op (#462): CircuitPython libraries write `from typing_extensions import Protocol`
+unguarded, for Python 3.7.
 
 Before this, `typing` was not resolvable at all: DependencyGraphBuilder tried to LOAD it like
 any third-party module and refused with "Module not found: typing", before ConditionalCompilator
@@ -94,3 +96,44 @@ def test_a_real_read_of_an_unguarded_typing_name_is_still_refused(tmp_path, py_p
     assert "'x'" in err
     assert "Protocol" in err
     assert "no width" in err
+
+
+@BOTH_FRONT_ENDS
+def test_an_unguarded_from_typing_extensions_import_is_a_no_op(tmp_path, py_parser):
+    """PyMCU#462. The CircuitPython spelling of #444: `from typing_extensions import Protocol`
+    is how adafruit_register / circuitpython_typing open, unguarded, for Python 3.7.
+    """
+    ok, err = _compile(tmp_path,
+        "from typing_extensions import Protocol\n\n\n"
+        "class Foo(Protocol):\n"
+        "    def bar(self) -> None: ...\n\n\n"
+        "def main():\n"
+        "    while True:\n"
+        "        pass\n",
+        py_parser)
+    assert ok, f"an unguarded 'from typing_extensions import X' should be a no-op, got:\n{err}"
+
+
+@BOTH_FRONT_ENDS
+def test_a_bare_import_typing_extensions_is_also_a_no_op(tmp_path, py_parser):
+    ok, err = _compile(tmp_path,
+        "import typing_extensions\n\n\n"
+        "def main():\n"
+        "    while True:\n"
+        "        pass\n",
+        py_parser)
+    assert ok, f"a bare 'import typing_extensions' should be a no-op, got:\n{err}"
+
+
+@BOTH_FRONT_ENDS
+def test_from_future_import_annotations_is_a_no_op(tmp_path, py_parser):
+    """PyMCU#452. `from __future__ import annotations` is a compiler pragma that
+    enables nothing here: annotations are already read from the source.
+    """
+    ok, err = _compile(tmp_path,
+        "from __future__ import annotations\n\n\n"
+        "def main() -> None:\n"
+        "    while True:\n"
+        "        pass\n",
+        py_parser)
+    assert ok, f"'from __future__ import annotations' should be a no-op, got:\n{err}"
