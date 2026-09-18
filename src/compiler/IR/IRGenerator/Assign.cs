@@ -5945,13 +5945,23 @@ public partial class IRGenerator
             // `total += v` left the locals map saying 0, and a call after the loop was handed
             // that (PyMCU#327).
             ForgetLocalConstant(ve.Name);
-            if (target is Constant)
+            if (target is Constant c)
             {
+                // A compile-time parameter (descriptor `__set__(..., value)` with a literal
+                // RHS, or any @inline arg bound as a constant) lives only in
+                // constantVariables. Removing that entry without a slot made the next read
+                // of the name (`reg |= value` after `value <<= self.lowest_bit` in
+                // adafruit_register.RWBits.__set__) report the parameter as never assigned.
+                // Copy the folded value into a real local first so the RMW sees it and
+                // later reads resolve.
                 string q = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + ve.Name
                     : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
                 DataType dt = variableTypes.TryGetValue(q, out var dt2) ? dt2 : DataType.UINT8;
-                target = new Variable(q, dt);
+                var slot = new Variable(q, dt);
+                variableTypes[q] = dt;
+                Emit(new Copy(c, slot));
+                target = slot;
                 constantVariables.Remove(q);
             }
 
