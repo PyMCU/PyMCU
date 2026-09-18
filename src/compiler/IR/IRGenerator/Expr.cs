@@ -2101,6 +2101,15 @@ public partial class IRGenerator
             && (IsStructCall(unpackCall, "unpack_from") || IsStructCall(unpackCall, "unpack")))
             return EmitStructUnpackFromIndexed(unpackCall, expr.Index);
 
+        // `self.measurements[0]`: a @property is a call. Visiting the member first
+        // used it as a scalar and refused "'measurements' returns 2 values". The
+        // getter is the same f()[k] site as a written call (adafruit_sht4x).
+        if (expr.Target is MemberAccessExpr propIx && IsPropertyGetterRead(propIx))
+            expr = new IndexExpr(
+                new CallExpr(propIx, new List<Expression>()) { Line = propIx.Line },
+                expr.Index)
+            { Line = expr.Line, Column = expr.Column, Length = expr.Length };
+
         // `f()[k]`: the subscript and the call are only visible together here.
         // The sentinel tells the expansion this site wants the tuple's slots, so
         // a multi-value return lands in them and the subscript picks element k --
