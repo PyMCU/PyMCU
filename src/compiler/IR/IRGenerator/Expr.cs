@@ -2818,16 +2818,30 @@ public partial class IRGenerator
     /// <c>servo = servo.Servo(pwm)</c>. VisitAssign tags the target as the
     /// instance before the RHS runs, so <see cref="StillNamesAModule"/> is
     /// already false there; the member is the class on the module (#467).
+    ///
+    /// A module-level singleton (<c>time = _TimeAlarmModule()</c> in alarm.py) is
+    /// also a module member: it is filed under the mangled key, not as a class.
+    /// <c>import time</c> against that name can file the ALARM module itself as
+    /// an instance (#381), and without this check <c>alarm.time.TimeAlarm</c>
+    /// was refused as "object has no attribute 'time'" -- the instance path,
+    /// which has no such field. A rebound alias whose member is NOT on the
+    /// module (<c>servo.fraction</c> after <c>servo = servo.Servo()</c>) still
+    /// returns false, so the instance path keeps the field.
     /// </summary>
     private bool NamesAModuleMember(string name, string member)
     {
         if (!modules.ContainsKey(name)) return false;
         if (InstanceClassOfName(name) == null) return true;
         string realMod = TryImportedAlias(name, out var rm) && rm != null ? rm : name;
-        string cls = realMod.Replace('.', '_') + "_" + member;
-        return inlineFunctions.ContainsKey(cls + "___init__")
-            || overloadedFunctions.Contains(cls + "___init__")
-            || classFieldLayout.ContainsKey(cls);
+        string mangled = realMod.Replace('.', '_') + "_" + member;
+        return inlineFunctions.ContainsKey(mangled + "___init__")
+            || overloadedFunctions.Contains(mangled + "___init__")
+            || classFieldLayout.ContainsKey(mangled)
+            || instanceClasses.ContainsKey(mangled)
+            || mutableGlobals.ContainsKey(mangled)
+            || globals.ContainsKey(mangled)
+            || functionReturnTypes.ContainsKey(mangled)
+            || inlineFunctions.ContainsKey(mangled);
     }
 
     /// <summary>
@@ -3377,14 +3391,17 @@ public partial class IRGenerator
         {
             // Fall through to the slot read below.
         }
-        else if (expr.Object is VariableExpr varExpr && InstanceClassOfName(varExpr.Name) == null)
+        else if (expr.Object is VariableExpr varExpr
+                 && (InstanceClassOfName(varExpr.Name) == null
+                     || NamesAModuleMember(varExpr.Name, expr.Member)))
         {
             // Resolve a module alias (import machine as m) to the real module name so
             // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
-            // Skipped when the name has been rebound to an instance (#467):
-            // `from adafruit_motor import servo` then `servo = servo.Servo(pwm)`
-            // then `print(servo.fraction)` is a field/property read, not a
-            // module member.
+            // Skipped when the name has been rebound to an instance AND the member is
+            // not on the module (#467): `from adafruit_motor import servo` then
+            // `servo = servo.Servo(pwm)` then `print(servo.fraction)` is a field
+            // read. A module-level singleton (`alarm.time`) stays a module member
+            // even if `import time` filed `alarm` as an instance (#381).
             //
             // `.Replace('.', '_')`: a SUBMODULE import (`import adafruit_mcp3xxx.mcp3008 as
             // MCP`) resolves realModName to the full dotted path, and every OTHER module-name
@@ -3428,6 +3445,15 @@ public partial class IRGenerator
                 {
                     if (key.StartsWith(classPrefix)) return new Variable(mangledName, DataType.UINT8);
                 }
+
+                // A module-level singleton (`alarm.time = _TimeAlarmModule()`) is an
+                // instance, not a global constant. Without this the member was unknown
+                // even after NamesAModuleMember admitted the hop (#381).
+                if (instanceClasses.ContainsKey(mangledName)
+                    || classFieldLayout.ContainsKey(mangledName)
+                    || inlineFunctions.ContainsKey(mangledName + "___init__")
+                    || overloadedFunctions.Contains(mangledName + "___init__"))
+                    return new Variable(mangledName, DataType.UINT8);
 
                 throw UserError("Unknown module member: " + mangledName, expr);
             }
