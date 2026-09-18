@@ -677,10 +677,13 @@ def test_raise_message_verdict_agrees(tmp_path, body, accepted):
     ('from pymcu.types import uint8\ndef f(v: "V") -> uint8:\n    return v.a\n'
      'class V:\n    def __init__(self) -> None:\n        self.a: uint8 = 1\n'
      'def main() -> None:\n    x: uint8 = f(V())\n', True),
-    # A dotted name and a typing subscript are refused on their own terms and must NOT gain a
-    # second spelling through the string door.
-    ('from pymcu.types import uint8\ndef f(v: "busio.I2C") -> uint8:\n    return 1\n'
-     'def main() -> None:\n    x: uint8 = 1\n', False),
+    # A dotted name is the same annotation unquoted `busio.I2C` already is (#342), so the
+    # quotes around it are not a second spelling. A typing subscript as the WHOLE quoted
+    # string is still refused: that is not what the unquoted reader tokenises from one
+    # string token.
+    ('from pymcu.types import uint8\nclass Pack:\n    class Dev:\n        def __init__(self) -> None:\n'
+     '            self.a: uint8 = 1\ndef f(v: "Pack.Dev") -> uint8:\n    return v.a\n'
+     'def main() -> None:\n    x: uint8 = f(Pack.Dev())\n', True),
     ('from pymcu.types import uint8\ndef f(v: "Optional[V]") -> uint8:\n    return 1\n'
      'def main() -> None:\n    x: uint8 = 1\n', False),
 ])
