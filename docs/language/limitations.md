@@ -819,7 +819,7 @@ alone.
 | `str(n)` | ✅ Supported | Compile-time only |
 | `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
 | `int.from_bytes(b, e)` | ✅ Supported | Compile-time fold or runtime |
-| `memoryview(buf)` | ✅ Supported | Compile-time alias of a fixed-size buffer (bytearray or fixed array): `memoryview(buf)[k]` indexes it, and `memoryview(buf)[a:]` inside `struct.unpack`/`unpack_from` adds its start to the read offset. No run-time buffer protocol |
+| `memoryview(buf)` | ✅ Supported | Compile-time alias of a fixed-size buffer (bytearray or fixed array): `memoryview(buf)[k]` indexes it, and `memoryview(buf)[a:]` inside `struct.unpack`/`unpack_from` adds its start to the read offset. The name is a CPython builtin type this compiler stores, so `-> memoryview` is the same view the call already wraps. No run-time buffer protocol |
 | `sorted()` | ❌ Not supported | No dynamic allocation |
 | `map()` / `filter()` | ❌ Not supported | Use explicit `for` loops |
 | `input()` | ✅ Supported | `line: bytearray = input("prompt")` — reads until newline from UART; prompt is optional compile-time string; max length is optional integer (default 64); UART preamble auto-injected |
@@ -925,7 +925,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_mcp9808` | **builds unmodified, 4 646 bytes** | |
 | `adafruit_mlx90614` | **builds unmodified, 3 846 bytes** | |
 | `neopixel` | `all(... for component in val)` in `adafruit_pixelbuf` | generator expression; `import adafruit_pixelbuf` itself is present |
-| `adafruit_pca9685` | `def _get_buffer(...) -> memoryview` | unknown type `memoryview` |
+| `adafruit_pca9685` | `struct.calcsize(struct_format)` in `i2c_struct_array` | (moved off `-> memoryview`: a CPython builtin type this compiler stores is a valid annotation.) `calcsize` needs a format string known at compile time; the descriptor's `struct_format` parameter is not folded |
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
