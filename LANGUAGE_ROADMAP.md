@@ -23,7 +23,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `class` | Zero-cost flattening, `@inline` methods, constructors |
 | Nested `class` | Constructible, and its constants readable through both names: `Outer.Inner.A`, and `mod.Outer.Inner.A` through the declaring module |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
-| Single-level class inheritance | ZCA base + derived; `super()` calls. `class C(mod.Base)` after `import pkg as mod` resolves `mod.Base` to the defining module, so `super().__init__` expands the imported constructor (adafruit_ssd1306 / `framebuf.FrameBuffer`) |
+| Single-level class inheritance | ZCA base + derived; `super()` calls. `class C(mod.Base)` after `import pkg as mod` resolves `mod.Base` to the defining module, so `super().__init__` expands the imported constructor. A field assigned inside that base `__init__` `if` (`self.format = Fmt()`) is still a constructor field (adafruit_ssd1306 / `framebuf.FrameBuffer`) |
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `return` | With/without value; tuple multi-return, optionally annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]` (the element types set the result widths). A tuple-returning function force-inlines so the caller's targets bind; the bound name indexes (`t[k]`), measures (`len(t)`), iterates (`for x in t`) and prints as `(a, b)`. A `@property` that returns a tuple is the same `f()[k]` site (`self.measurements[0]`). A `...` in a return annotation is refused: the count is what the caller unpacks |
@@ -136,6 +136,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
 | `self.buf[a:b]` | A field bytearray slices the same way a named `buf[a:b]` does. `temp_data = self._buffer[0:2]` (adafruit_sht4x) |
 | `class C(mod.Base)` + `super()` | An imported dotted base unwraps the module alias. `import adafruit_framebuf as framebuf` then `class _SSD1306(framebuf.FrameBuffer)` expands `super().__init__` (adafruit_ssd1306) |
+| `self.x = ...` inside a base `__init__` `if` | A super-expanded base constructor is still `__init__`. `self.format = MVLSBFormat()` in `FrameBuffer.__init__` is a constructor field, not a missing field of the subclass (adafruit_ssd1306) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size. `self._gpio = bytearray(self._number_of_shift_registers)` (adafruit_74hc595) |
@@ -408,6 +409,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
 | `self.buf[a:b]` | A field bytearray slices the same way a named `buf[a:b]` does. `temp_data = self._buffer[0:2]` (adafruit_sht4x) |
 | `class C(mod.Base)` + `super()` | An imported dotted base unwraps the module alias. `import adafruit_framebuf as framebuf` then `class _SSD1306(framebuf.FrameBuffer)` expands `super().__init__` (adafruit_ssd1306) |
+| `self.x = ...` inside a base `__init__` `if` | A super-expanded base constructor is still `__init__`. `self.format = MVLSBFormat()` in `FrameBuffer.__init__` is a constructor field, not a missing field of the subclass (adafruit_ssd1306) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (`self._gpio = bytearray(self._number_of_shift_registers)`) |
