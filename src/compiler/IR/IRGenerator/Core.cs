@@ -1913,10 +1913,15 @@ public partial class IRGenerator
         }
 
         // A name that denotes something other than a variable: a class, a function, an import.
+        // Imported classes are filed under the mangled key (adafruit_ina219_INA219) in
+        // classDirectMethods / classFieldLayout, while classNames holds the bare spelling.
+        // A synthesized `type(inst)` that still carries the key must count as defined.
         if (classNames.Contains(name) || IsImportedAlias(name)
             || aliasToOriginal.ContainsKey(name) || inlineFunctions.ContainsKey(name)
             || functionParams.ContainsKey(name) || functionReturnTypes.ContainsKey(name)
-            || externFunctionMap.ContainsKey(name))
+            || externFunctionMap.ContainsKey(name)
+            || classDirectMethods.ContainsKey(name) || classFieldLayout.ContainsKey(name)
+            || classDirectMethods.ContainsKey(qualified) || classFieldLayout.ContainsKey(qualified))
             return true;
 
         // Filed under a module prefix by whichever module declared it.

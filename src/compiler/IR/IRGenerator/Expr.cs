@@ -3150,6 +3150,29 @@ public partial class IRGenerator
             : null;
 
     /// <summary>
+    /// The source spelling of a class key, so the descriptor rewrite can name
+    /// <c>type(inst)</c> as a VariableExpr that ResolveBinding knows.
+    ///
+    /// TryFindClassAttribute returns the class KEY. A class in the file being
+    /// compiled is already that spelling (<c>Dev</c>); an imported class arrives
+    /// mangled (<c>adafruit_ina219_INA219</c>). classNames and classModuleMap are
+    /// keyed by the bare name, so <c>self.raw_bus_voltage</c> inside a method of
+    /// the imported class was reported as "name 'adafruit_ina219_INA219' is not
+    /// defined" -- the second argument of the synthesized <c>__get__</c> is
+    /// <c>type(inst)</c>.
+    /// </summary>
+    private string ClassNameForDescriptorRewrite(string owner)
+    {
+        if (classNames.Contains(owner)) return owner;
+        foreach (var (bare, pfx) in classModuleMap)
+        {
+            if (string.Equals((pfx ?? "") + bare, owner, StringComparison.Ordinal))
+                return bare;
+        }
+        return owner;
+    }
+
+    /// <summary>
     /// The descriptor protocol (PyMCU#360): `inst.attr`, where `attr` is a class attribute whose
     /// class defines `__get__`, IS `type(inst).attr.__get__(inst, type(inst))`.
     ///
@@ -3169,7 +3192,8 @@ public partial class IRGenerator
             || !ClassDefinesMethod(attrCls, "__get__"))
             return null;
 
-        var attr = new MemberAccessExpr(new VariableExpr(owner) { Line = expr.Line }, expr.Member)
+        string clsName = ClassNameForDescriptorRewrite(owner);
+        var attr = new MemberAccessExpr(new VariableExpr(clsName) { Line = expr.Line }, expr.Member)
             { Line = expr.Line };
         return VisitCall(new CallExpr(
             new MemberAccessExpr(attr, "__get__") { Line = expr.Line },
@@ -3178,7 +3202,7 @@ public partial class IRGenerator
                 // The receiver has already been lowered on the way here; handing the expression
                 // over again would emit it a second time.
                 new PreEvaluatedExpr(receiver, null) { Line = expr.Line },
-                new VariableExpr(owner) { Line = expr.Line },
+                new VariableExpr(clsName) { Line = expr.Line },
             })
             { Line = expr.Line });
     }
@@ -3196,7 +3220,8 @@ public partial class IRGenerator
             || !ClassDefinesMethod(attrCls, "__set__"))
             return false;
 
-        var attr = new MemberAccessExpr(new VariableExpr(owner) { Line = target.Line }, target.Member)
+        string clsName = ClassNameForDescriptorRewrite(owner);
+        var attr = new MemberAccessExpr(new VariableExpr(clsName) { Line = target.Line }, target.Member)
             { Line = target.Line };
         VisitCall(new CallExpr(
             new MemberAccessExpr(attr, "__set__") { Line = target.Line },
