@@ -933,11 +933,11 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
-| `adafruit_sht4x` | `@classmethod` | no runtime class object; write a module-level factory |
+| `adafruit_sht4x` | (moved off `@classmethod` `CV.add_values`) | `cls` is the receiver class: `setattr(cls, name, value)` and `cls.string[k] = v` populate that class at compile time; next construct after that is measured after this landing |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
 | `adafruit_ssd1306` | (moved off `framebuf.buf[i:i+3] = bytes(fill)`) | equal-length slice assign of compile-time length onto a bytearray, including `bytes(named_seq)`; next construct after that is measured after this landing |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
-| `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
+| `adafruit_tmp117` | (moved off `@classmethod` `CV.add_values`) | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
 | `adafruit_veml7700` | **builds unmodified, 10 614 bytes** | (moved off `self.gain_values[gain]`: a class-body dict is a compile-time lookup table, including mixed int/float values) |
 | `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |

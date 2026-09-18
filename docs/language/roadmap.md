@@ -75,6 +75,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `buf[i:i+n] = bytes(fill)` | Equal-length slice assign onto a `bytearray` (and onto `self.buf`), with a run-time start whose length is compile-time (`i:i+3`) and `bytes(named_seq)` as the source (adafruit_framebuf RGB888 fill) |
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
+| `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` fill that class; `return cls()` constructs it (adafruit_sht4x / tmp117 `CV.add_values`) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (adafruit_74hc595's `self._gpio = bytearray(self._number_of_shift_registers)`) |
@@ -109,6 +110,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
 | `float` (soft-float) | IEEE 754 single-precision; AVR (`__fp_*` intrinsics) and RP2040 (bootrom fast-float library via `__aeabi_f*` shims); annotation `x: float = 3.14`; float↔int conversions truncate toward zero. RP2350 pending (M33 FPU) |
 | `@naked` | No compiler prolog/epilog; registers hold raw calling-convention values at function entry; required for precise `uint16` register manipulation |
+| `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `Class.method(args)` expands with `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` filling that class (adafruit_sht4x / tmp117 `CV.add_values`). `return cls()` constructs the receiver class. `cls` is not a runtime object |
 | `@staticmethod` | Accepted and ignored: what makes a method callable through the class is having no `self` parameter. `def f(x)` in a class body compiles as `Class_f` and is reached by `A.f(x)` or by `obj.f(x)`, neither of which consumes the argument. A method that DOES take `self` cannot be called as `A.f(x)` and is refused where it is written, not at the linker (PyMCU#201) |
 | `CompileError` intrinsic | `raise CompileError("msg")` aborts compilation with a `CompileError:` diagnostic; never generates `RaiseExn` IR; used in all HAL modules for unsupported arch/chip guards; cannot be caught by `try/except` |
 
