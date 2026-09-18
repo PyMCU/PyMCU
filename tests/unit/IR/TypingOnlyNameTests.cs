@@ -95,6 +95,18 @@ public class TypingOnlyNameTests
     }
 
     [Fact]
+    public void AnyMeansTheArgumentAtThisCallSite()
+    {
+        // Adafruit UnaryStruct.__set__(..., value: Any) then reads value.
+        // Any is "whatever the caller passed", not a missing width.
+        var ir = Gen(Hdr +
+            "@inline\ndef take(v: Any) -> uint8:\n    return v\n\n" +
+            "def main():\n    GPIOR0.value = take(7)\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
+            c => c.Src is Constant k && k.Value == 7);
+    }
+
+    [Fact]
     public void ATypoIsStillATypo()
     {
         // The whole point of #278 is that an unreadable annotation never silently becomes
