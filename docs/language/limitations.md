@@ -935,7 +935,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht31d` | `word[i*2], crc[i*2], ... = struct.unpack(...)` | Expected newline or end of block (multi-target unpack from a call) |
 | `adafruit_sht4x` | `@classmethod` | no runtime class object; write a module-level factory |
 | `adafruit_si7021` | `obj: "adafruit_si7021.SI7021"` | string (forward reference) type annotations are not supported |
-| `adafruit_ssd1306` | `fill = (color >> 16) & 255, ...` in `adafruit_framebuf` | Expected newline or end of block (tuple assignment) |
+| `adafruit_ssd1306` | (moved off `fill = a, b, c` in `adafruit_framebuf`) | an unparenthesized comma RHS is a tuple; next construct after that is measured after this landing |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
@@ -957,7 +957,7 @@ restrictions of the lowering, not of the model, and all three libraries that sto
 `**kwargs` now stop somewhere else entirely.
 
 **`adafruit_ssd1306` now reaches `adafruit_framebuf`** (the module is present in the
-harness); it stops on a tuple assignment. `onewireio` is still missing for
+harness); `fill = a, b, c` is a tuple, so it moves off that assignment. `onewireio` is still missing for
 `adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
 a generator expression in `adafruit_pixelbuf`.
 
@@ -1007,7 +1007,8 @@ received a compile-time string keeps the text at any length, so
 (`StructArray(0x06, "<HH", 16)`). `[None] * n` is a fixed SRAM array, so
 `coeffs = [None] * 18` and `self._channels = [None] * len(self)` index; None is a
 0 slot. `adafruit_pca9685` moves off that onto storing a `PWMChannel` into the
-integer cache. The inner Adafruit TYPE_CHECKING guard
+integer cache. `x = a, b, c` is a tuple, so `adafruit_ssd1306` moves off
+`fill = (color >> 16) & 255, ...` in `adafruit_framebuf`. The inner Adafruit TYPE_CHECKING guard
 (`except NotImplementedError` around `from pwmio import PWMOut`) keeps the
 resolved name and does not load the stub package (#480, #481). `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;

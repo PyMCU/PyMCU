@@ -120,6 +120,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   `coeffs = [None] * 18` (adafruit_dps310) and a field
   `self._channels = [None] * len(self)` (adafruit_pca9685) are indexable;
   None is a 0 slot, so `if not xs[i]` still reads empty.
+- `x = a, b, c` is `x = (a, b, c)`. The same comma wrap `return a, b` and
+  `a, b = 1, 2` already had. Adafruit framebuf writes
+  `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` without
+  parentheses around the whole RHS.
 - A `try` whose `except` is not `ImportError` still keeps the imports its
   body resolved. The inner Adafruit TYPE_CHECKING guard
   (`except NotImplementedError: from circuitpython_typing.pwmio import PWMOut`)
