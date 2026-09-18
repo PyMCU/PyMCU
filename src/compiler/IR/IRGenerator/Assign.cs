@@ -2853,52 +2853,205 @@ public partial class IRGenerator
         if (LocalScopeBinds(name)) return null;
 
         if (arraySizes.TryGetValue(name, out int bareSz)) return (name, bareSz);
+
+        // A module-level tuple/array (`fill = 17, 34, 51`) is filed as `main.fill`.
+        // Slice assign from another function (`buf[i:i+3] = bytes(fill)` in blit)
+        // arrives here with the bare name; the indexed-store path already falls
+        // back through ModuleScopeArrayName, and this lookup has to too.
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            string mod = ModuleScopeArrayName(currentFunction + "." + name);
+            if (arraySizes.TryGetValue(mod, out int modSz)) return (mod, modSz);
+        }
         return null;
     }
 
-    // `arr[a:b] = <same-length source>` — element-wise copy. Compile-time indices only.
-    // When source and destination are the SAME array (possibly overlapping ranges), the
-    // source elements are snapshotted into temporaries first, Python-style.
+    // `arr[a:b] = <same-length source>` — element-wise copy.
+    // Dest indices may be compile-time, or a run-time start whose LENGTH is
+    // compile-time (`i:i+3`, adafruit_framebuf). Source: list/tuple literal,
+    // named array, array slice, or `bytes(...)` of any of those. Destination:
+    // a named array or an instance-member buffer (`self.buf` / `framebuf.buf`).
+    // When source and destination are the SAME array (possibly overlapping
+    // ranges), the source elements are snapshotted into temporaries first,
+    // Python-style.
     private bool TryEmitSliceAssign(AssignStmt stmt, IndexExpr tgt, SliceExpr sl)
     {
-        if (tgt.Target is not VariableExpr arrVe) return false;
-        var dst = ResolveArrayVar(arrVe.Name);
-        if (dst == null) return false;
+        int dstSize;
+        string dstStorage;
+        if (tgt.Target is VariableExpr arrVe)
+        {
+            if (ResolveArrayVar(arrVe.Name) is not { } dst) return false;
+            dstSize = dst.Size;
+            dstStorage = dst.Name;
+        }
+        else if (tgt.Target is MemberAccessExpr mem
+                 && ResolveMemberArrayName(mem) is { } flat)
+        {
+            dstSize = arraySizes[flat];
+            dstStorage = flat;
+        }
+        else return false;
 
-        List<int> dstIdx;
-        try { dstIdx = SliceIndices(sl, dst.Value.Size); }
-        catch (Exception) { return false; }   // runtime indices -> generic message
+        Expression srcExpr = UnwrapBytesSliceSource(stmt.Value);
 
-        // Source: list literal | whole array | array slice.
-        switch (stmt.Value)
+        List<int>? dstIdx = null;
+        try { dstIdx = SliceIndices(sl, dstSize); }
+        catch (Exception) { dstIdx = null; }
+
+        Expression? runtimeStart = null;
+        int count;
+        if (dstIdx != null)
+            count = dstIdx.Count;
+        else if (TryStartPlusNSlice(sl, out runtimeStart, out count))
+            { }
+        else
+            return false;
+
+        if (!TrySliceAssignSource(srcExpr, count, sl,
+                out List<Expression>? srcElems, out VariableExpr? srcVe, out List<int>? srcIdx))
+            return false;
+
+        bool sameArray = srcVe != null
+            && ResolveArrayVar(srcVe.Name) is { } srcWhole
+            && srcWhole.Name == dstStorage;
+
+        if (sameArray && dstIdx != null)
+            return EmitSliceCopy(tgt.Target, dstIdx, srcVe!, srcIdx!, sameArray: true);
+
+        if (sameArray)
+        {
+            var temps = new List<Val>(count);
+            for (int k = 0; k < count; k++)
+            {
+                Val v = VisitExpression(srcElems != null
+                    ? srcElems[k]
+                    : new IndexExpr(srcVe!, new IntegerLiteral(srcIdx![k])));
+                var t = MakeTemp(GetValType(v));
+                Emit(new Copy(v, t));
+                temps.Add(t);
+            }
+            var elemType = arrayElemTypes.TryGetValue(dstStorage, out var et) ? et : DataType.UINT8;
+            for (int k = 0; k < count; k++)
+            {
+                Expression dIdx = k == 0
+                    ? runtimeStart!
+                    : new BinaryExpr(runtimeStart!, PyMCU.Frontend.BinaryOp.Add, new IntegerLiteral(k));
+                Val idxVal = VisitExpression(dIdx);
+                Emit(new ArrayStore(dstStorage, idxVal, temps[k], elemType, dstSize));
+            }
+            return true;
+        }
+
+        for (int k = 0; k < count; k++)
+        {
+            Expression dIdx = dstIdx != null
+                ? new IntegerLiteral(dstIdx[k])
+                : k == 0
+                    ? runtimeStart!
+                    : new BinaryExpr(runtimeStart!, PyMCU.Frontend.BinaryOp.Add, new IntegerLiteral(k));
+            Expression sElem = srcElems != null
+                ? srcElems[k]
+                : new IndexExpr(srcVe!, new IntegerLiteral(srcIdx![k]));
+            VisitStatement(new AssignStmt(new IndexExpr(tgt.Target, dIdx), sElem));
+        }
+        return true;
+    }
+
+    // `bytes(x)` as a slice source is the same copy `x` already is: a list/tuple
+    // of elements, or the named array `bytes` was wrapping. `bytes(n)` with a
+    // compile-time n still becomes n zeros via TryBytesLiteralElements.
+    private Expression UnwrapBytesSliceSource(Expression src)
+    {
+        if (src is not CallExpr { Callee: VariableExpr { Name: "bytes" } } call
+            || call.Args.Count != 1)
+            return src;
+        Expression a0 = call.Args[0];
+        if (a0 is ListExpr or TupleExpr) return a0;
+        if (a0 is VariableExpr ve
+            && (ResolveArrayVar(ve.Name) != null || ResolveConstSequence(ve.Name) != null))
+            return a0;
+        if (TryBytesLiteralElements(call) is { } elems) return new ListExpr(elems);
+        return a0;
+    }
+
+    // `i:i+n` (step omitted or 1): the start is only known at run time, the
+    // length is n. Adafruit framebuf writes `buf[i:i+3]` and `buf[index:index+3]`.
+    private static bool TryStartPlusNSlice(SliceExpr sl, out Expression start, out int n)
+    {
+        start = sl.Start ?? new IntegerLiteral(0);
+        n = 0;
+        if (sl.Step != null)
+        {
+            if (sl.Step is not IntegerLiteral { Value: 1 }) return false;
+        }
+        if (sl.Stop is not BinaryExpr { Op: PyMCU.Frontend.BinaryOp.Add } bin) return false;
+        if (SameSliceStart(start, bin.Left) && bin.Right is IntegerLiteral ir && ir.Value > 0)
+        {
+            n = ir.Value;
+            return true;
+        }
+        if (SameSliceStart(start, bin.Right) && bin.Left is IntegerLiteral il && il.Value > 0)
+        {
+            n = il.Value;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool SameSliceStart(Expression a, Expression b)
+        => a is VariableExpr va && b is VariableExpr vb && va.Name == vb.Name;
+
+    private bool TrySliceAssignSource(Expression src, int count, SliceExpr sl,
+        out List<Expression>? elems, out VariableExpr? arr, out List<int>? arrIdx)
+    {
+        elems = null;
+        arr = null;
+        arrIdx = null;
+        switch (src)
         {
             case ListExpr le:
-                if (le.Elements.Count != dstIdx.Count)
+                if (le.Elements.Count != count)
                     throw UserError(
-                        $"slice assignment length mismatch: target selects {dstIdx.Count} " +
+                        $"slice assignment length mismatch: target selects {count} " +
                         $"element(s), source list has {le.Elements.Count}", sl);
-                for (int k = 0; k < dstIdx.Count; k++)
-                    VisitStatement(new AssignStmt(
-                        new IndexExpr(tgt.Target, new IntegerLiteral(dstIdx[k])), le.Elements[k]));
+                elems = le.Elements;
                 return true;
-
+            case TupleExpr te:
+                if (te.Elements.Count != count)
+                    throw UserError(
+                        $"slice assignment length mismatch: target selects {count} " +
+                        $"element(s), source tuple has {te.Elements.Count}", sl);
+                elems = te.Elements;
+                return true;
             case VariableExpr srcVe when ResolveArrayVar(srcVe.Name) is { } srcWhole:
-            {
-                var srcIdx = Enumerable.Range(0, srcWhole.Size).ToList();
-                return EmitSliceCopy(tgt.Target, dstIdx, srcVe, srcIdx,
-                    sameArray: srcWhole.Name == dst.Value.Name);
-            }
-
+                if (srcWhole.Size != count)
+                    throw UserError(
+                        $"slice assignment length mismatch: target selects {count} " +
+                        $"element(s), source selects {srcWhole.Size}", srcVe);
+                arr = srcVe;
+                arrIdx = Enumerable.Range(0, srcWhole.Size).ToList();
+                return true;
+            case VariableExpr srcVe when ResolveConstSequence(srcVe.Name) is { } seq:
+                if (seq.Count != count)
+                    throw UserError(
+                        $"slice assignment length mismatch: target selects {count} " +
+                        $"element(s), source selects {seq.Count}", srcVe);
+                elems = seq;
+                return true;
             case IndexExpr { Index: SliceExpr srcSl, Target: VariableExpr srcVe2 }
                 when ResolveArrayVar(srcVe2.Name) is { } srcArr:
             {
                 List<int> srcIdx;
                 try { srcIdx = SliceIndices(srcSl, srcArr.Size); }
                 catch (Exception) { return false; }
-                return EmitSliceCopy(tgt.Target, dstIdx, srcVe2, srcIdx,
-                    sameArray: srcArr.Name == dst.Value.Name);
+                if (srcIdx.Count != count)
+                    throw UserError(
+                        $"slice assignment length mismatch: target selects {count} " +
+                        $"element(s), source selects {srcIdx.Count}", srcVe2);
+                arr = srcVe2;
+                arrIdx = srcIdx;
+                return true;
             }
-
             default:
                 return false;
         }
@@ -3020,18 +3173,21 @@ public partial class IRGenerator
                 + "identical, and a list is the spelling that says the name is written to.",
                 indexExpr);
 
-        // Slice assignment: supported for compile-time indices and a MATCHING-length
-        // source (list literal, whole array, or array slice) — an element-wise copy loop.
-        // Differing lengths would need a memmove/realloc (insert/delete), which has no
-        // bare-metal representation; that case still reports clearly.
+        // Slice assignment: a MATCHING-length source (list/tuple literal, named
+        // array, `bytes(...)`, or array slice) copied element-wise. Dest bounds
+        // are compile-time, or a run-time start whose length is compile-time
+        // (`i:i+n`). Differing lengths would need a memmove/realloc, which has
+        // no bare-metal representation; that case still reports clearly.
         if (indexExpr.Index is SliceExpr slA)
         {
             if (TryEmitSliceAssign(stmt, indexExpr, slA)) return;
             if (TryEmitDunderSliceAssign(stmt, indexExpr, slA)) return;
             throw UserError(
-                "slice assignment needs compile-time indices and a source of the SAME length " +
-                "(list literal, array, or array slice); inserting/deleting via slices is not " +
-                "supported — restructure with explicit element assignments", indexExpr);
+                "slice assignment needs a source of the SAME length " +
+                "(list literal, array, bytes(...), or array slice) and a slice whose " +
+                "length is known while compiling (constant bounds, or i:i+n); " +
+                "inserting/deleting via slices is not supported — restructure with " +
+                "explicit element assignments", indexExpr);
         }
 
         if (indexExpr.Target is VariableExpr ve)
@@ -3883,7 +4039,14 @@ public partial class IRGenerator
                     || currentFunction.EndsWith("___module_init", StringComparison.Ordinal));
             if (replayingModuleLevel
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Name))
+            {
+                // Slice assign (and anything else that starts from TerminalAliasOf)
+                // looks up `main.buf`. The storage is the bare module name; without
+                // the alias it never reaches arraySizes["buf"] because LocalScopeBinds
+                // sees the assignment in boundNames (adafruit_framebuf).
+                variableAliases[qualified] = stmt.Name;
                 qualified = stmt.Name;
+            }
 
             int grown = KeepGrownArraySize(qualified, count);
             arrayElemTypes[qualified] = DataType.UINT8;
