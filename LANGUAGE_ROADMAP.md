@@ -26,7 +26,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
-| `return` | With/without value; tuple multi-return, optionally annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]` (the element types set the result widths). A tuple-returning function force-inlines so the caller's targets bind; the bound name indexes (`t[k]`), measures (`len(t)`), iterates (`for x in t`) and prints as `(a, b)`. A `...` in a return annotation is refused: the count is what the caller unpacks |
+| `return` | With/without value; tuple multi-return, optionally annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]` (the element types set the result widths). A tuple-returning function force-inlines so the caller's targets bind; the bound name indexes (`t[k]`), measures (`len(t)`), iterates (`for x in t`) and prints as `(a, b)`. A `@property` that returns a tuple is the same `f()[k]` site (`self.measurements[0]`). A `...` in a return annotation is refused: the count is what the caller unpacks |
 | `pass` / `raise` | `raise ExnType` signals an error via the T flag and returns; caught at the call site by an enclosing `try` (SET/BRTS, no `longjmp`); `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required. `raise X(...) from Y` is accepted and compiled as `raise X(...)` (#434); `e.__cause__` / `e.__context__` are refused. A non-literal raise message is a deferred print (#435) |
 | `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` / `from ... import *` | Relative imports (`from .util import half`, `from . import util`), multi-level; a star binds the names the module defines at top level, or exactly its `__all__` |
@@ -75,7 +75,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `delay_ms(n)` / `delay_us(n)` | Intrinsic timing |
 | `@inline` | Zero-cost abstraction |
 | `@interrupt(vector)` | ISR handler generation with automatic `sei` |
-| `@property` / `@name.setter` | Compile-time expansion only |
+| `@property` / `@name.setter` | Compile-time expansion only. A tuple-returning getter indexes like `f()[k]` (`self.measurements[0]`, adafruit_sht4x) |
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `Class.method(args)` expands with `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` filling that class (adafruit_sht4x / tmp117 `CV.add_values`). `return cls()` constructs the receiver class. `cls` is not a runtime object |
 | `@staticmethod` | NOT supported, and not silently. `A.f(x)` emits a call to `A_f` that the same build never defines, so it fails at link time with a symbol and no source line; `a.f(x)` binds the receiver to the first parameter, so the argument has nowhere to go. Calling anything through the class object is what is missing; the decorator changes nothing either way (PyMCU#201) |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
@@ -133,6 +133,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` fill that class; `return cls()` constructs it (adafruit_sht4x / tmp117 `CV.add_values`) |
+| `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size. `self._gpio = bytearray(self._number_of_shift_registers)` (adafruit_74hc595) |
@@ -402,6 +403,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` fill that class; `return cls()` constructs it (adafruit_sht4x / tmp117 `CV.add_values`) |
+| `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (`self._gpio = bytearray(self._number_of_shift_registers)`) |

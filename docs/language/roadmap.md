@@ -20,7 +20,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `for x, y in zip(a, b)` | Compile-time unroll over paired lists |
 | `reversed(iterable)` | Compile-time reverse unroll; `reversed(range(...))` is the descending range |
 | `match / case` | Literal, wildcard, OR (`\|`), guard `if cond`, sequence, capture, dotted-name patterns; DCE on `__CHIP__` |
-| `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (a tuple-returning function force-inlines; annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]`). Buffer parameters may be annotated `bytearray`, `WriteableBuffer` or `ReadableBuffer` |
+| `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return (a tuple-returning function force-inlines; annotated `-> (T1, T2)`, `-> tuple[T1, T2]` or `-> Tuple[T1, T2]`). A `@property` that returns a tuple is the same `f()[k]` site (`self.measurements[0]`). Buffer parameters may be annotated `bytearray`, `WriteableBuffer` or `ReadableBuffer` |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level statements |
 | Module-level `main()` (bare, or under `if __name__ == "__main__":`) | Says where the entry point's body runs: what is written after the call runs after the body. A second call, and an early `return` with module-level code after the call, are refused |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter`; a class attribute whose class defines `__get__`/`__set__` is a descriptor, and `obj` is the owning instance even when annotated with a typing-only name (#360, #419); `type(inst)` in that rewrite is the source class name, including for an imported class; `value: Any` on `__set__` is the written value, not a missing width; `value <<= n` keeps `value` so a later read of it is the shifted bits |
@@ -76,6 +76,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` fill that class; `return cls()` constructs it (adafruit_sht4x / tmp117 `CV.add_values`) |
+| `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (adafruit_74hc595's `self._gpio = bytearray(self._number_of_shift_registers)`) |
@@ -104,7 +105,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `millis()` / `micros()` | Timer0 overflow; atomic 32-bit read under CLI/SEI. `millis()` carries the Arduino-style fractional correction (an overflow is 1024 µs, not 1000 µs); `micros()` is monotonic across an overflow |
 | `@inline` | Zero-cost expansion |
 | `@interrupt(vector)` | ISR handler generation with automatic `sei` |
-| `@property` / `@name.setter` | Compile-time expansion |
+| `@property` / `@name.setter` | Compile-time expansion. A tuple-returning getter indexes like `f()[k]` (`self.measurements[0]`, adafruit_sht4x) |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
 | `__FREQ__` | Compile-time clock frequency in Hz |
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
