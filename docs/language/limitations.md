@@ -917,7 +917,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_hcsr04` | **builds unmodified, 3 430 bytes** | |
 | `adafruit_ht16k33` (matrix) | `bytearray((self._buffer_size) * len(self.i2c_device))` | could not determine buffer size from initializer |
 | `adafruit_ht16k33` (segments) | `def print(self, value: Union[str, float], ...)` | a union of two REAL types; a call in a raise message is a deferred print (#435) |
-| `adafruit_ina219` | `_BUFFER[i]` in `RWBits.__set__` | `IndexError: array index 1 out of range for size 1` -- `value <<= self.lowest_bit` keeps `value`; the shared `_BUFFER` is one byte and `range(self.register_width, 0, -1)` indexes past it |
+| `adafruit_ina219` | `value: Any` in `UnaryStruct.__set__` | (moved off `_BUFFER[i]`: a class-body `_fit(n)` keeps the grown size.) `struct.pack_into(..., value)` reads an `Any` annotation |
 | `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
 | `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
 | `adafruit_mcp230xx` | `Pin.high()` runtime bit index | same as `adafruit_character_lcd` |
@@ -936,7 +936,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `@classmethod` | same as `adafruit_sht4x` |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
-| `adafruit_veml7700` | `_BUFFER[i]` in `RWBits.__set__` | same as `adafruit_ina219` (`array index 2 out of range for size 1`) |
+| `adafruit_veml7700` | `self.light_gain` in `gain_value` | (moved off `_BUFFER[i]`, same `_fit`.) name `adafruit_veml7700_VEML7700` is not defined -- a descriptor read of `self.light_gain` from a method of the imported class |
 | `adafruit_motor` (servo) | **builds unmodified, 2 332 bytes** | (moved off `self._min_duty`; the whole four-module package compiles) |
 
 ### Which of these are limits and which are gaps
@@ -988,7 +988,9 @@ A `try`-guarded
 the resolved names entirely; with the fold fixed, `adafruit_ina219` and `adafruit_veml7700`
 move inside `adafruit_register` to `RWBits.__get__`/`__set__`, where `obj` is the owning
 instance even though it is annotated `I2CDeviceDriver` (#419); `value <<= self.lowest_bit`
-keeps `value` as a local so `reg |= value` is the shifted bits. `raise ... from ...`
+keeps `value` as a local so `reg |= value` is the shifted bits. A class-body
+`_fit(n)` keeps the grown `_BUFFER` rather than letting the replay of
+`bytearray(1)` shrink it, so `_BUFFER[i]` in `RWBits` is in range. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
