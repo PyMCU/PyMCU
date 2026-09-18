@@ -934,7 +934,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
 | `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
-| `adafruit_sht4x` | (moved off `return self.measurements[0]`) | a tuple-returning `@property` indexes like `f()[k]`; next is `temp_data = self._buffer[0:2]` (`Slice indexing is only supported on named fixed-size arrays` -- a field bytearray is named, the slice path only accepts a VariableExpr) |
+| `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
 | `adafruit_ssd1306` | (moved off `framebuf.buf[i:i+3] = bytes(fill)`) | equal-length slice assign of compile-time length onto a bytearray, including `bytes(named_seq)`; next construct after that is measured after this landing |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
@@ -1031,8 +1031,9 @@ nine-field stub, so the RTC drivers move off that import. `@classmethod` setattr
 in an imported subclass uses the same class key as `Mode.ATTR` (the mangled
 `adafruit_sht4x_Mode` is not prefixed again), so `adafruit_sht4x` moves off
 `self._mode = Mode.NOHEAT_HIGHPRECISION`. A tuple-returning `@property`
-indexes like `f()[k]`, so it also moves off `return self.measurements[0]`
-onto `self._buffer[0:2]`.
+indexes like `f()[k]`, so it also moves off `return self.measurements[0]`.
+A field bytearray slices like a named `buf[a:b]`, so it also moves off
+`temp_data = self._buffer[0:2]` onto `for byte in buffer` in `_crc8`.
 
 **Five more I2C sensors build unmodified** on the expanded list: `adafruit_ahtx0`,
 `adafruit_mcp9808`, `adafruit_lis3dh`, `adafruit_tsl2591`, `adafruit_mlx90614`.

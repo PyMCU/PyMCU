@@ -77,6 +77,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` fill that class; `return cls()` constructs it (adafruit_sht4x / tmp117 `CV.add_values`) |
 | `self.prop[k]` on a tuple `@property` | A getter that returns a tuple is `f()[k]`. `return self.measurements[0]` from `temperature` is the first slot (adafruit_sht4x) |
+| `self.buf[a:b]` | A field bytearray slices the same way a named `buf[a:b]` does. `temp_data = self._buffer[0:2]` (adafruit_sht4x) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (adafruit_74hc595's `self._gpio = bytearray(self._number_of_shift_registers)`) |
