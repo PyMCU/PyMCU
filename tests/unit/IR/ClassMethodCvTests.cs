@@ -21,6 +21,20 @@ public class ClassMethodCvTests
             new Parser(new Lexer(src).Tokenize()).ParseProgram(),
             new Dictionary<string, ProgramNode>(),
             new DeviceConfig { Arch = "avr" }));
+        return Optimizer.Optimize(ir);
+    }
+
+    private static ProgramIR GenImported(string sensor, string main)
+    {
+        var imported = new Dictionary<string, ProgramNode>
+        {
+            ["sensor"] = new Parser(new Lexer(sensor).Tokenize()).ParseProgram(),
+        };
+        var ir = Optimizer.Optimize(new IRGenerator().Generate(
+            new Parser(new Lexer(main).Tokenize()).ParseProgram(),
+            imported,
+            new DeviceConfig { Arch = "avr" },
+            projectModules: new HashSet<string> { "sensor" }));
         return ir;
     }
 
@@ -141,5 +155,43 @@ public class ClassMethodCvTests
 
         LastStored(ir, 0).Should().Be(new Constant(5),
             because: "return cls() inside Util.make is Util()");
+    }
+
+    [Fact]
+    public void AddValues_OnAnImportedSubclass_BindsTheClassAttribute()
+    {
+        var ir = GenImported(
+            "class CV:\n" +
+            "    @classmethod\n" +
+            "    def add_values(cls, value_tuples):\n" +
+            "        cls.string = {}\n" +
+            "        for value_tuple in value_tuples:\n" +
+            "            name, value, string = value_tuple\n" +
+            "            setattr(cls, name, value)\n" +
+            "            cls.string[value] = string\n" +
+            "class Mode(CV):\n" +
+            "    pass\n" +
+            "Mode.add_values((\n" +
+            "    (\"NOHEAT_HIGHPRECISION\", 0xFD, \"hi\"),\n" +
+            "    (\"NOHEAT_MEDPRECISION\", 0xF6, \"med\"),\n" +
+            "    (\"NOHEAT_LOWPRECISION\", 0xE0, \"lo\"),\n" +
+            "    (\"HIGHHEAT_1S\", 0x39, \"h1\"),\n" +
+            "    (\"HIGHHEAT_100MS\", 0x32, \"h0\"),\n" +
+            "    (\"MEDHEAT_1S\", 0x2F, \"m1\"),\n" +
+            "    (\"MEDHEAT_100MS\", 0x24, \"m0\"),\n" +
+            "    (\"LOWHEAT_1S\", 0x1E, \"l1\"),\n" +
+            "    (\"LOWHEAT_100MS\", 0x15, \"l0\"),\n" +
+            "))\n" +
+            "class SHT:\n" +
+            "    def __init__(self):\n" +
+            "        self._mode = Mode.NOHEAT_HIGHPRECISION\n",
+            "from pymcu.types import uint8\n" +
+            "from sensor import SHT\n" +
+            "buf = bytearray([0])\n" +
+            "s = SHT()\n" +
+            "buf[0] = s._mode\n");
+
+        LastStored(ir, 0).Should().Be(new Constant(0xFD),
+            because: "Mode.add_values in an imported module is setattr on Mode, so SHT._mode is 0xFD");
     }
 }
