@@ -1758,17 +1758,29 @@ public partial class IRGenerator
     // prefix when force-inlined at a construction site, so both spellings are checked.
     private bool IsInsideInit()
     {
-        static bool IsInit(string s) =>
-            s.EndsWith("___init__", StringComparison.Ordinal)
-            || s.EndsWith(".__init__", StringComparison.Ordinal)
-            || s == "__init__";
+        // Ordinary @inline uses `inlineN.__init__.`. super()/unbound expansion of a
+        // base ctor uses `inlineN___init___` (underscore form). Either one is still
+        // the constructor: `self.format = MVLSBFormat()` in adafruit_framebuf is
+        // written in FrameBuffer.__init__, and refusing it as "not a field" after
+        // super() expanded is the same write the layout skips inside __init__.
+        static bool IsInit(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            if (s == "__init__") return true;
+            if (s.EndsWith("___init__", StringComparison.Ordinal)) return true;
+            if (s.EndsWith(".__init__", StringComparison.Ordinal)) return true;
+            if (s.Contains(".__init__.", StringComparison.Ordinal)) return true;
+            if (s.Contains("___init___", StringComparison.Ordinal)) return true;
+            return false;
+        }
 
-        if (!string.IsNullOrEmpty(currentFunction) && IsInit(currentFunction)) return true;
+        if (IsInit(currentFunction)) return true;
         if (string.IsNullOrEmpty(currentInlinePrefix)) return false;
+        if (IsInit(currentInlinePrefix)) return true;
         // The prefix is a dotted chain of expansions (`inline1.__init__.`); any __init__ link
         // in it means this statement came from a constructor body.
         foreach (var part in currentInlinePrefix.Split('.'))
-            if (part == "__init__" || IsInit(part)) return true;
+            if (IsInit(part)) return true;
         return false;
     }
 
