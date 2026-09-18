@@ -2454,6 +2454,12 @@ public partial class IRGenerator
             if (intrinsicNames.Contains(member)
                 && (IsImportedAlias(qualifier) || modules.ContainsKey(qualifier)))
                 return member;
+            // `import adafruit_framebuf as framebuf` then `class C(framebuf.FrameBuffer)`:
+            // the qualifier is the import alias, not the defining module. Mangling
+            // `framebuf_FrameBuffer` finds no methods, so super().__init__ fell through
+            // to the builtin-super refusal (adafruit_ssd1306).
+            if (TryImportedAlias(qualifier, out var realMod) && realMod != null)
+                return realMod.Replace('.', '_') + "_" + member;
             return mod + "_" + func;
         }
 
