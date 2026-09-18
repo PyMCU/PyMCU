@@ -124,6 +124,11 @@ purpose, as opposed to bugs like these three that were silent until found.
   `a, b = 1, 2` already had. Adafruit framebuf writes
   `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` without
   parentheses around the whole RHS.
+- `buf[i:i+n] = bytes(fill)` is an element-wise copy of length n. The start
+  may be known only at run time; the length is compile-time (`i:i+3`). The
+  dest is a module `bytearray` or an instance-member buffer (`self.buf`),
+  and `bytes(named_seq)` unwraps to that sequence. Adafruit framebuf RGB888
+  fill writes `framebuf.buf[i:i+3] = bytes(fill)`.
 - A `try` whose `except` is not `ImportError` still keeps the imports its
   body resolved. The inner Adafruit TYPE_CHECKING guard
   (`except NotImplementedError: from circuitpython_typing.pwmio import PWMOut`)
