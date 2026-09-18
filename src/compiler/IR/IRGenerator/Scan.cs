@@ -2501,11 +2501,16 @@ public partial class IRGenerator
 
     // True for primitive/built-in type names (and any bracketed form like const[..]/ptr[..]/T[N]).
     // A field type that is NOT one of these is a class name -- tracked in fieldClasses.
+    // CPython builtin types this compiler stores (memoryview, object, ...) live in
+    // PythonBuiltinNames.RepresentedTypes so a call builtin and its annotation cannot drift.
+    private static bool IsKnownBareTypeName(string ty) =>
+        ScalarTypeNames.Contains(ty) || PythonBuiltinNames.IsRepresentedType(ty);
+
     private static bool IsScalarTypeName(string ty)
     {
         if (string.IsNullOrEmpty(ty)) return true;
         if (ty.Contains('[')) return true;
-        return ScalarTypeNames.Contains(ty);
+        return IsKnownBareTypeName(ty);
     }
 
     private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody,
@@ -3280,7 +3285,7 @@ public partial class IRGenerator
         // a capitalized or dotted name that is not a known scalar is still a class.
         string rt = (method.ReturnType ?? "").Trim().Trim('"');
         var returnScalars = new HashSet<string>(scalarTypes)
-            { "int", "str", "bytes", "bytearray", "None", "void", "" };
+            { "int", "str", "bytes", "bytearray", "memoryview", "None", "void", "" };
         if (!returnScalars.Contains(rt))
         {
             int nameStart = rt.LastIndexOf('.') + 1;

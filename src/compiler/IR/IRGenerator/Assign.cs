@@ -4254,7 +4254,7 @@ public partial class IRGenerator
         new() { "ptr", "list", "tuple", "Callable", "PIORegister" };
 
     private static bool IsKnownBracketedHead(string head) =>
-        ScalarTypeNames.Contains(head) || BracketedFormHeads.Contains(head);
+        IsKnownBareTypeName(head) || BracketedFormHeads.Contains(head);
 
     // Word for word Parser.cs's UnionAnnotationRefusal and the CPython bridge's copy of it in
     // pymcu_translate.py, which already carry "change one, change both" notes to each other.
@@ -4410,7 +4410,7 @@ public partial class IRGenerator
         }
 
         RefuseSixtyFourBit(annotation, at);
-        if (ScalarTypeNames.Contains(annotation)) return;
+        if (IsKnownBareTypeName(annotation)) return;
         if (annotation is "ptr" or "object" or "self") return;
         if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
 
@@ -4432,7 +4432,7 @@ public partial class IRGenerator
             if (modules.ContainsKey(head) || IsImportedAlias(head) || aliasToOriginal.ContainsKey(head))
             {
                 string tail = annotation[(lastDot + 1)..];
-                if (ScalarTypeNames.Contains(tail)
+                if (IsKnownBareTypeName(tail)
                     || classNames.Contains(tail) || classFieldLayout.ContainsKey(tail)
                     || IsImportedAlias(tail) || aliasToOriginal.ContainsKey(tail)
                     || classNames.Any(c => c.EndsWith("." + tail, StringComparison.Ordinal)
@@ -4571,7 +4571,8 @@ public partial class IRGenerator
     /// a suggestion identical to the input cannot work by construction (#280).</summary>
     private string NearMissHint(string annotation)
     {
-        string? near = ScalarTypeNames.Concat(BracketedFormHeads).Concat(classNames)
+        string? near = ScalarTypeNames.Concat(PythonBuiltinNames.RepresentedTypes)
+            .Concat(BracketedFormHeads).Concat(classNames)
             .Where(n => n != annotation)
             .Where(n => EditDistance(n, annotation) <= 2)
             .OrderBy(n => EditDistance(n, annotation))

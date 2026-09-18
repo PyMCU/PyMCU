@@ -2782,7 +2782,7 @@ public partial class IRGenerator
     }
 
     private static bool IsBufferTypeName(string? rt) =>
-        rt is "bytearray" or "bytes" or "WriteableBuffer" or "ReadableBuffer";
+        rt is "bytearray" or "bytes" or "memoryview" or "WriteableBuffer" or "ReadableBuffer";
 
     private static bool IsBufferCtor(Expression? e) =>
         e is CallExpr { Callee: VariableExpr { Name: "bytearray" or "bytes" } };

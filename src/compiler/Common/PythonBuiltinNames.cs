@@ -17,6 +17,13 @@ namespace PyMCU.Common;
 /// will RESOLVE, not whether the module defines it, and a builtin resolves. That spelling is
 /// deliberate and widespread here, `from pymcu.hal.console import print` being the way a
 /// program says which sink print writes to.
+///
+/// <see cref="RepresentedTypes"/> is the subset that ARE types and that this compiler
+/// stores -- a width, a buffer, or a compile-time view. <c>memoryview()</c> as a call and
+/// <c>-&gt; memoryview</c> as an annotation are the same name; an annotation check that
+/// only consulted the scalar-width list treated the builtin as unknown. A builtin that is
+/// a function (<c>print</c>, <c>len</c>) is not a type. A builtin that is a type without
+/// a representation here (<c>complex</c>, <c>dict</c>) stays refused, by name.
 /// </summary>
 public static class PythonBuiltinNames
 {
@@ -32,5 +39,17 @@ public static class PythonBuiltinNames
         "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip",
     };
 
+    /// <summary>
+    /// CPython builtin names that are types and that PyMCU has a representation for as a
+    /// bare annotation. <c>list</c> and <c>tuple</c> are types too, but only as the head of
+    /// a bracketed form, so they are not in this set.
+    /// </summary>
+    public static readonly HashSet<string> RepresentedTypes = new(StringComparer.Ordinal)
+    {
+        "int", "bool", "float", "str", "bytes", "bytearray", "memoryview", "object",
+    };
+
     public static bool IsBuiltin(string name) => All.Contains(name);
+
+    public static bool IsRepresentedType(string name) => RepresentedTypes.Contains(name);
 }
