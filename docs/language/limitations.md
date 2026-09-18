@@ -917,7 +917,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_hcsr04` | **builds unmodified, 3 430 bytes** | |
 | `adafruit_ht16k33` (matrix) | `bytearray((self._buffer_size) * len(self.i2c_device))` | could not determine buffer size from initializer |
 | `adafruit_ht16k33` (segments) | `def print(self, value: Union[str, float], ...)` | a union of two REAL types; a call in a raise message is a deferred print (#435) |
-| `adafruit_ina219` | `value: Any` in `UnaryStruct.__set__` | (moved off `_BUFFER[i]`: a class-body `_fit(n)` keeps the grown size.) `struct.pack_into(..., value)` reads an `Any` annotation |
+| `adafruit_ina219` | `self.raw_bus_voltage` in `bus_voltage` | (moved off `value: Any`: the written value has a width.) name `adafruit_ina219_INA219` is not defined -- a descriptor read of `self.raw_bus_voltage` from a method of the imported class |
 | `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
 | `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
 | `adafruit_mcp230xx` | `Pin.high()` runtime bit index | same as `adafruit_character_lcd` |
@@ -990,7 +990,8 @@ move inside `adafruit_register` to `RWBits.__get__`/`__set__`, where `obj` is th
 instance even though it is annotated `I2CDeviceDriver` (#419); `value <<= self.lowest_bit`
 keeps `value` as a local so `reg |= value` is the shifted bits. A class-body
 `_fit(n)` keeps the grown `_BUFFER` rather than letting the replay of
-`bytearray(1)` shrink it, so `_BUFFER[i]` in `RWBits` is in range. `raise ... from ...`
+`bytearray(1)` shrink it, so `_BUFFER[i]` in `RWBits` is in range. `value: Any`
+on a descriptor `__set__` is the written value, not a missing width. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
