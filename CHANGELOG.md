@@ -108,6 +108,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   `self.gain_values[gain]` is a fold or a compare chain; mixed int/float values
   (VEML7700's `0.25` / `0.125`) make the lookup a float. Last construct unmodified
   `adafruit_veml7700` stopped on.
+- A constant tuple assigned to a field is a fixed array, the same as
+  `self.buf = [0, 0, 0]`. Counted as a uint8 the class became one-field and
+  `self.scale[n]` compiled as a bit index. Last construct unmodified
+  `adafruit_dps310` stopped on (`self._oversample_scalefactor = (524288, ...)`).
 - `import os` / `from os import uname` resolve to a stdlib stub. `uname()` is a
   compile-time five-field record of `__CHIP__` (sysname `"PyMCU"`, machine the chip
   name, with an `RP2040`/`RP2350` token on those parts). `"Linux" not in uname()`

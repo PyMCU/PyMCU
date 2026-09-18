@@ -913,7 +913,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
 | `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
-| `adafruit_dps310` | `self._oversample_scalefactor = (524288, ...)` | (moved off name `adafruit_dps310_basic_DPS310`: same `type(inst)` spelling.) tuples are not supported as runtime values |
+| `adafruit_dps310` | `coeffs = [None] * 18` in `_read_calibration` | (moved off `self._oversample_scalefactor = (524288, ...)`: a constant tuple assigned to a field is a fixed array.) a list literal has no value in this position |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_ds3231` | `from time import struct_time` | `pymcu.time` defines the nine-field stub; the CircuitPython overlay's advertised names are still only `monotonic` / `monotonic_ns` / `sleep` |
 | `adafruit_74hc595` | **builds unmodified, 402 bytes** | (moved off `bytearray(self._number_of_shift_registers)` and `DigitalInOut(pin, self)`: a compile-time field is a buffer size, and a class defined in the module shadows the entry file's `from digitalio import DigitalInOut`) |
@@ -999,7 +999,9 @@ descriptor rewrite is the source class name, so `self.raw_bus_voltage` inside a 
 an imported class is not "name 'adafruit_ina219_INA219' is not defined"; `adafruit_ina219`
 and `adafruit_aw9523` build unmodified. A class-body dict is the same lookup table as a
 module-level one, so `self.gain_values[gain]` is a fold or a compare chain (mixed
-int/float values are a float); `adafruit_veml7700` builds unmodified. `raise ... from ...`
+int/float values are a float); `adafruit_veml7700` builds unmodified. A constant tuple
+assigned to a field is the same array as a list (`self.scale = (524288, ...)`), so
+`adafruit_dps310` moves off that onto `coeffs = [None] * 18`. `raise ... from ...`
 (#434) and `from __future__ import annotations` (#452) no longer stop `adafruit_irremote`;
 `namedtuple` is a compile-time ZCA class factory, so it moves off
 `from collections import namedtuple` onto `yield` in a method. `isinstance(address, (tuple, list))`
