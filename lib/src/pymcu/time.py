@@ -17,6 +17,36 @@ from pymcu.types import uint8, uint16, uint32, const, inline, asm, ptr
 from pymcu.chips import __CHIP__, __FREQ__
 from pymcu.exceptions import CompileError
 
+
+# CircuitPython `from time import struct_time`. Adafruit RTC drivers
+# (ds3231, pcf8523) import it in a try used only for typing. pymcu.time
+# exists, so that try does not raise ImportError and the name has to be
+# here. Construction from a 9-tuple (`struct_time((y, m, d, ...))`) is
+# not this stub -- that is a later lowering of the CPython constructor.
+class struct_time:
+    def __init__(
+        self,
+        tm_year: int = 0,
+        tm_mon: int = 0,
+        tm_mday: int = 0,
+        tm_hour: int = 0,
+        tm_min: int = 0,
+        tm_sec: int = 0,
+        tm_wday: int = 0,
+        tm_yday: int = 0,
+        tm_isdst: int = -1,
+    ):
+        self.tm_year = tm_year
+        self.tm_mon = tm_mon
+        self.tm_mday = tm_mday
+        self.tm_hour = tm_hour
+        self.tm_min = tm_min
+        self.tm_sec = tm_sec
+        self.tm_wday = tm_wday
+        self.tm_yday = tm_yday
+        self.tm_isdst = tm_isdst
+
+
 @inline
 def sleep(seconds: const[float]):
     """Python's sleep, in seconds, folded to the millisecond delay.

@@ -5,6 +5,19 @@
 from pymcu.types import uint8, uint16, inline
 
 
+# namedtuple is a compile-time factory. The IR generator rewrites a module-level
+#   Point = namedtuple("Point", ("x", "y"))
+# into a ZCA class with those fields (adafruit_irremote's IRMessage shape). This
+# function body is never lowered for that assignment. A call that is not a
+# module-level binding is refused so the factory is not silently a no-op.
+@inline
+def namedtuple(typename: str, field_names):
+    raise CompileError(
+        "namedtuple is a compile-time factory: bind it at module level as "
+        "Name = namedtuple('Name', ('a', 'b'))"
+    )
+
+
 class FixedDict:
     # Fixed-capacity integer dictionary: open addressing with linear probing over
     # fixed arrays sized at construction (a compile-time constant) -- no heap, no
