@@ -2813,6 +2813,30 @@ public partial class IRGenerator
     // guard's refusal still throws, because that one is an answer worth keeping.
     private string? InstanceClassOfName(string recvName)
     {
+        // A parameter or local of this scope, even when the bare name is also a
+        // module alias. `import adafruit_framebuf as framebuf` then
+        // `def set_pixel(framebuf, ...): ... framebuf.stride` is the instance
+        // (adafruit_ssd1306 / MVLSBFormat). ProbeBinding of the bare name can
+        // miss the prefixed binding and leave this null, which then sent the
+        // member onto the module path as `adafruit_framebuf_stride`.
+        foreach (string? key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + recvName,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + recvName,
+                 })
+        {
+            if (key == null) continue;
+            string n = key;
+            for (int depth = 0; depth < 20; depth++)
+            {
+                if (instanceClasses.TryGetValue(n, out var scoped) && scoped != null)
+                    return scoped;
+                if (!variableAliases.TryGetValue(n, out var next)
+                    || next == null || next.StartsWith("tmp_")) break;
+                n = next;
+            }
+        }
+
         if (ProbeBinding(recvName) is not Variable rv) return null;
         string name = rv.Name;
         for (int depth = 0; depth < 20; depth++)
@@ -3421,15 +3445,21 @@ public partial class IRGenerator
         }
         else if (expr.Object is VariableExpr varExpr
                  && (InstanceClassOfName(varExpr.Name) == null
-                     || NamesAModuleMember(varExpr.Name, expr.Member)))
+                     ? !LocalScopeBinds(varExpr.Name)
+                     : NamesAModuleMember(varExpr.Name, expr.Member)))
         {
             // Resolve a module alias (import machine as m) to the real module name so
             // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
-            // Skipped when the name has been rebound to an instance AND the member is
-            // not on the module (#467): `from adafruit_motor import servo` then
-            // `servo = servo.Servo(pwm)` then `print(servo.fraction)` is a field
-            // read. A module-level singleton (`alarm.time`) stays a module member
-            // even if `import time` filed `alarm` as an instance (#381).
+            // A parameter of the same name as the alias is the parameter when we
+            // already know its class (`framebuf.stride` inside set_pixel). A name
+            // we have not typed yet still takes the module path unless the current
+            // scope binds it -- otherwise `thing = thing.Thing()` (#467) would skip
+            // the constructor. Skipped when the name has been rebound to an
+            // instance AND the member is not on the module: `from adafruit_motor
+            // import servo` then `servo = servo.Servo(pwm)` then
+            // `print(servo.fraction)` is a field read. A module-level singleton
+            // (`alarm.time`) stays a module member even if `import time` filed
+            // `alarm` as an instance (#381).
             //
             // `.Replace('.', '_')`: a SUBMODULE import (`import adafruit_mcp3xxx.mcp3008 as
             // MCP`) resolves realModName to the full dotted path, and every OTHER module-name
