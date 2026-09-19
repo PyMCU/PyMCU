@@ -3498,7 +3498,15 @@ public partial class IRGenerator
             // Variable, `if buf_format == MVLSB` was a run-time compare,
             // every format class was constructed, and self.format.fill
             // expanded the last elif (GS2HMSBFormat.fill / ssd1306).
-            if (argVal is Constant cArg)
+            if (argVal is Variable arrArg && TryArraySource(arrArg.Name, out var arrSrc))
+            {
+                // A memoryview window (or any fixed array) is storage, not a
+                // scalar a Copy can carry. Alias the param so self.buf = buf
+                // and len(framebuf.buf) see the same bytes
+                // (ssd1306's I2C -> _SSD1306 -> FrameBuffer hop).
+                BindArrayAlias(paramKey, arrSrc);
+            }
+            else if (argVal is Constant cArg)
             {
                 constantVariables[paramKey] = cArg.Value;
             }
@@ -5251,9 +5259,10 @@ public partial class IRGenerator
     // memoryview(buf): there is no buffer protocol to build an object with, but
     // the buffer already has fixed element storage, so the view is a compile-time
     // ALIAS of it -- the same Val the name alone would lower to. `mv =
-    // memoryview(buf)` then binds through the ordinary name-alias machinery, and
-    // `memoryview(buf)[k:]`/`[k]` unwraps in VisitIndex (PyMCU#361 --
-    // adafruit_register.i2c_struct writes the memoryview spelling).
+    // memoryview(buf)` then binds through the ordinary name-alias machinery.
+    // `memoryview(buf)[k]` unwraps in VisitIndex; `memoryview(buf)[k:]` as a
+    // value is a writable window (ssd1306). unpack_from still adds the slice
+    // start via NormalizeUnpackBuffer (PyMCU#361).
     private Val EmitMemoryviewBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1)
@@ -5266,6 +5275,76 @@ public partial class IRGenerator
         throw UserError(
             "memoryview() wraps a fixed-size buffer (a bytearray or a fixed array); " +
             "there is no run-time buffer protocol to view anything else through", ArgAt(expr, 0));
+    }
+
+    /// <summary>
+    /// <c>memoryview(buf)[a:b]</c> as a value: a named window of
+    /// <paramref name="inner"/>, not a copy. Writes through the window
+    /// reach the original bytes, which is why ssd1306 passes
+    /// <c>memoryview(self.buffer)[1:]</c> into FrameBuffer.
+    /// </summary>
+    private Val EmitMemoryviewSliceView(Expression inner, IndexExpr at)
+    {
+        if (at.Index is not SliceExpr sl)
+            throw UserError("memoryview slice expected", at);
+        if (sl.Step != null)
+            throw UserError(
+                "a strided view of the buffer is not supported; use a plain "
+                + "`buf[off:]` slice", sl.Step);
+
+        string? storage = null;
+        if (inner is VariableExpr ve)
+        {
+            string q = ResolveNameKey(ve.Name);
+            if (TryResolveArrayStorageKey(q, out var sk)) storage = sk;
+            else if (arraySizes.ContainsKey(q)) storage = q;
+            else if (arraySizes.ContainsKey(ve.Name)) storage = ve.Name;
+        }
+        else if (inner is MemberAccessExpr mem && ResolveMemberArrayName(mem) is { } flat)
+            storage = flat;
+
+        if (storage == null)
+        {
+            Val v = VisitExpression(inner);
+            if (v is Variable vv)
+            {
+                if (TryResolveArrayStorageKey(vv.Name, out var sk)) storage = sk;
+                else if (arraySizes.ContainsKey(vv.Name)) storage = vv.Name;
+            }
+        }
+
+        if (storage == null || !arraySizes.TryGetValue(storage, out int srcSize))
+            throw UserError(
+                "memoryview() wraps a fixed-size buffer (a bytearray or a fixed array); " +
+                "there is no run-time buffer protocol to view anything else through", inner);
+
+        int nestedOff = 0;
+        string real = storage;
+        while (arrayViewBase.TryGetValue(real, out var next))
+        {
+            nestedOff += arrayViewOffset.TryGetValue(real, out var vo) ? vo : 0;
+            real = next;
+        }
+
+        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
+        if (start < 0) start += srcSize;
+        if (stop < 0) stop += srcSize;
+        start = Math.Max(0, Math.Min(start, srcSize));
+        stop = Math.Max(0, Math.Min(stop, srcSize));
+        int count = Math.Max(0, stop - start);
+        if (count == 0)
+            throw UserError("a memoryview slice must cover at least one byte", sl);
+
+        string viewName = "__view_" + tempCounter++;
+        DataType elemDt = arrayElemTypes.TryGetValue(real, out var edt)
+            ? edt : DataType.UINT8;
+        arraySizes[viewName] = count;
+        arrayElemTypes[viewName] = elemDt;
+        arrayViewBase[viewName] = real;
+        arrayViewOffset[viewName] = nestedOff + start;
+        arraysWithVariableIndex.Add(viewName);
+        return new Variable(viewName, elemDt);
     }
 
     /// <summary>

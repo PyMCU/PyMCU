@@ -2084,13 +2084,17 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
-        // `memoryview(buf)[k]`/`[a:b]`: the view is a compile-time alias of the
-        // buffer it wraps, so the subscript is the argument's own subscript.
-        // (PyMCU#361 -- `unpack_from(fmt, memoryview(self._buf)[1:])`.)
+        // `memoryview(buf)[k]`/`[a:b]`: a slice is a writable window of the
+        // buffer (ssd1306's `memoryview(self.buffer)[1:]`). A single index
+        // is the argument's own subscript (PyMCU#361).
         if (expr.Target is CallExpr { Callee: VariableExpr { Name: "memoryview" } } mvCall
             && mvCall.Args.Count == 1)
+        {
+            if (expr.Index is SliceExpr)
+                return EmitMemoryviewSliceView(mvCall.Args[0], expr);
             return VisitIndex(new IndexExpr(mvCall.Args[0], expr.Index)
                 { Line = expr.Line, Column = expr.Column });
+        }
 
         // `struct.unpack(fmt, buf)[k]` / `struct.unpack_from(fmt, buf, off)[k]`. This is
         // the ONLY place the subscript and the call are visible together, and the pair is
@@ -2603,10 +2607,13 @@ public partial class IRGenerator
                 if (flashArrays.Contains(qualified))
                     return EmitFlashArrayRead(qualified, idxVal, sz);
 
-                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified)
+                    || arrayViewBase.ContainsKey(qualified))
                 {
-                    Temporary tmp = MakeTemp(arrayElemTypes[qualified]);
-                    Emit(new ArrayLoad(qualified, idxVal, tmp, arrayElemTypes[qualified], sz));
+                    RemapArrayAccess(qualified, idxVal, out var loadName, out var loadIdx,
+                        out var loadSize, out var loadDt);
+                    Temporary tmp = MakeTemp(loadDt);
+                    Emit(new ArrayLoad(loadName, loadIdx, tmp, loadDt, loadSize));
                     return tmp;
                 }
                 else
@@ -2635,8 +2642,10 @@ public partial class IRGenerator
             && ResolveMemberArrayName(memLoad) is string flatLoad)
         {
             Val idxVal = VisitExpression(expr.Index);
-            Temporary tmp = MakeTemp(arrayElemTypes[flatLoad]);
-            Emit(new ArrayLoad(flatLoad, idxVal, tmp, arrayElemTypes[flatLoad], arraySizes[flatLoad]));
+            RemapArrayAccess(flatLoad, idxVal, out var loadName, out var loadIdx,
+                out var loadSize, out var loadDt);
+            Temporary tmp = MakeTemp(loadDt);
+            Emit(new ArrayLoad(loadName, loadIdx, tmp, loadDt, loadSize));
             return tmp;
         }
 

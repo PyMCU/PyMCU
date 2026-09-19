@@ -965,6 +965,13 @@ public partial class IRGenerator
     // Module-level arrays that unconditionally use SRAM (bytearray declarations at global scope).
     private HashSet<string> moduleSramArrays = new();
 
+    // `memoryview(buf)[k:]` is a writable window of `buf`, not a copy.
+    // arraySizes[view] is the window length; loads and stores go to
+    // arrayViewBase at index + arrayViewOffset (adafruit_ssd1306's
+    // `super().__init__(memoryview(self.buffer)[1:])`).
+    private Dictionary<string, string> arrayViewBase = new();
+    private Dictionary<string, int> arrayViewOffset = new();
+
     // Global arrays declared with const[uint8[N]] annotation: placed in flash (PROGMEM).
     // Only uint8 element type is supported.  SRAM not allocated; access via LPM Z.
     private HashSet<string> flashArrays = new();

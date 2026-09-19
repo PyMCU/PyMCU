@@ -677,8 +677,7 @@ public partial class IRGenerator
                     && (arraySizes.ContainsKey(seqArrSrc) || bytearrayParams.Contains(seqArrSrc))
                     && !instanceClasses.ContainsKey(seqArrSrc + "__0"))
                 {
-                    BindSequenceAlias(seqFieldKey, seqArrSrc);
-                    if (bytearrayParams.Contains(seqArrSrc)) bytearrayParams.Add(seqFieldKey);
+                    BindArrayAlias(seqFieldKey, seqArrSrc);
                     return;
                 }
             }
@@ -703,6 +702,15 @@ public partial class IRGenerator
                 if (sliceVal is Variable sliceArr
                     && arraySizes.TryGetValue(sliceArr.Name, out int sliceN))
                 {
+                    // A memoryview window is the original bytes. Binding it as a
+                    // compile-time sequence would copy the slots and lose writes
+                    // (ssd1306's FrameBuffer.buf).
+                    if (arrayViewBase.ContainsKey(sliceArr.Name)
+                        || arraysWithVariableIndex.Contains(sliceArr.Name))
+                    {
+                        BindArrayAlias(seqFieldKey, sliceArr.Name);
+                        return;
+                    }
                     constSequenceBindings[seqFieldKey] =
                         FixedArrayElementExprs(new VariableExpr(sliceArr.Name), sliceN);
                     variableAliases.Remove(seqFieldKey);
@@ -3349,12 +3357,14 @@ public partial class IRGenerator
 
             if (arraySizes.ContainsKey(qualified))
             {
-                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified)
+                    || arrayViewBase.ContainsKey(qualified))
                 {
                     Val idxVal = VisitExpression(indexExpr.Index);
                     Val srcVal = VisitExpression(stmt.Value);
-                    Emit(new ArrayStore(qualified, idxVal, srcVal, arrayElemTypes[qualified],
-                        arraySizes[qualified]));
+                    RemapArrayAccess(qualified, idxVal, out var storeName, out var storeIdx,
+                        out var storeSize, out var storeDt);
+                    Emit(new ArrayStore(storeName, storeIdx, srcVal, storeDt, storeSize));
                 }
                 else
                 {
@@ -3386,7 +3396,9 @@ public partial class IRGenerator
         {
             Val idxVal = VisitExpression(indexExpr.Index);
             Val srcVal = VisitExpression(stmt.Value);
-            Emit(new ArrayStore(flatStore, idxVal, srcVal, arrayElemTypes[flatStore], arraySizes[flatStore]));
+            RemapArrayAccess(flatStore, idxVal, out var storeName, out var storeIdx,
+                out var storeSize, out var storeDt);
+            Emit(new ArrayStore(storeName, storeIdx, srcVal, storeDt, storeSize));
             return;
         }
 

@@ -82,6 +82,49 @@ public partial class IRGenerator
         return false;
     }
 
+    /// <summary>
+    /// A <c>memoryview(buf)[k:]</c> window's loads and stores go to the
+    /// underlying array at <c>index + offset</c>. A name that is not a
+    /// view is returned unchanged.
+    /// </summary>
+    private void RemapArrayAccess(string name, Val idx,
+        out string storage, out Val mappedIdx, out int totalSize, out DataType elemDt)
+    {
+        string n = name;
+        for (int hop = 0; hop < 20; hop++)
+        {
+            if (!variableAliases.TryGetValue(n, out var next) || next == null || next == n)
+                break;
+            n = next;
+        }
+
+        int off = 0;
+        storage = n;
+        for (int hop = 0; hop < 8 && arrayViewBase.TryGetValue(storage, out var next); hop++)
+        {
+            off += arrayViewOffset.TryGetValue(storage, out var o) ? o : 0;
+            storage = next;
+        }
+
+        if (!arraySizes.ContainsKey(storage) && TryResolveArrayStorageKey(storage, out var sk))
+            storage = sk;
+        if (!arraySizes.TryGetValue(storage, out totalSize))
+            totalSize = arraySizes.TryGetValue(n, out var vs) ? vs : 0;
+        elemDt = arrayElemTypes.TryGetValue(storage, out var edt)
+            ? edt
+            : (arrayElemTypes.TryGetValue(n, out var vedt) ? vedt : DataType.UINT8);
+
+        if (off == 0) { mappedIdx = idx; return; }
+        if (idx is Constant c)
+        {
+            mappedIdx = new Constant(c.Value + off);
+            return;
+        }
+        Temporary t = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, idx, new Constant(off), t));
+        mappedIdx = t;
+    }
+
     // A subscripted name the current function does not claim resolves at MODULE scope -- in
     // Python `cfg[i] = v` mutates the module global with no `global` statement needed, the
     // declaration only rebinds the name itself. Module arrays canonicalize to the BARE name

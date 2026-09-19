@@ -477,6 +477,57 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Alias <paramref name="targetKey"/> to array storage AND copy the size
+    /// (and view window, if any) onto the new name. A second <c>super()</c>
+    /// hop receives <c>VisitVariable</c> as the parameter's own key, not the
+    /// view; without the copied size that hop Copies a scalar and
+    /// <c>len(framebuf.buf)</c> dies (ssd1306: I2C -> _SSD1306 -> FrameBuffer).
+    /// </summary>
+    private void BindArrayAlias(string targetKey, string baseKey)
+    {
+        string src = baseKey;
+        if (!arraySizes.ContainsKey(src) && TryResolveArrayStorageKey(src, out var sk))
+            src = sk;
+        src = FollowAliases(src);
+        BindSequenceAlias(targetKey, src);
+        if (!arraySizes.TryGetValue(src, out int n)) return;
+        arraySizes[targetKey] = n;
+        if (arrayElemTypes.TryGetValue(src, out var dt))
+            arrayElemTypes[targetKey] = dt;
+        if (arrayViewBase.TryGetValue(src, out var vb))
+        {
+            arrayViewBase[targetKey] = vb;
+            arrayViewOffset[targetKey] = arrayViewOffset.TryGetValue(src, out var vo) ? vo : 0;
+        }
+        if (arraysWithVariableIndex.Contains(src) || arrayViewBase.ContainsKey(src)
+            || arrayViewBase.ContainsKey(targetKey))
+            arraysWithVariableIndex.Add(targetKey);
+        if (bytearrayParams.Contains(src)) bytearrayParams.Add(targetKey);
+    }
+
+    private bool TryArraySource(string name, out string src)
+    {
+        src = FollowAliases(name);
+        if (arraySizes.ContainsKey(src)) return true;
+        if (TryResolveArrayStorageKey(src, out var sk) && arraySizes.ContainsKey(sk))
+        {
+            src = sk;
+            return true;
+        }
+        if (arraySizes.ContainsKey(name))
+        {
+            src = name;
+            return true;
+        }
+        if (TryResolveArrayStorageKey(name, out sk) && arraySizes.ContainsKey(sk))
+        {
+            src = sk;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// `t = f()` where f's expansion just delivered a tuple through
     /// <c>lastTupleResults</c>: materialise one fixed slot per element --
     /// `t__0`, `t__1`, ... -- and register the name as a tuple-valued variable.
