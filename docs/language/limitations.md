@@ -936,7 +936,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
-| `adafruit_ssd1306` | (moved off a listcomp assigned to a declared field array) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)`; remesure still hits `GS2HMSBFormat.fill`'s listcomp because `if buf_format == MVLSB` does not fold, so `self.format` is the last format class, and `buf` is `memoryview(self.buffer)[1:]` |
+| `adafruit_ssd1306` | (moved off unused `GS2HMSBFormat.rect` and an unfolded format if after `super().__init__(_FRAMEBUF_FORMAT)`) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)`; remesure reaches `MVLSBFormat.fill`'s `for i in range(len(framebuf.buf))` (`len() argument`); `buf` is `memoryview(self.buffer)[1:]` |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `with obj.i2c_device as i2c` in `adafruit_register.i2c_struct` | `call to undefined function '__with_manager_0___enter__'`; CV.add_values and imported `Mode.ATTR` no longer stop it |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
@@ -978,10 +978,22 @@ named like an import alias (`def set_pixel(framebuf, ...)` after
 `import adafruit_framebuf as framebuf`) is the parameter, so
 `framebuf.stride` is the instance field. A class-body function with
 no `self` that reads a parameter field expands at the call site
-(the outlined body cannot see the argument's class). Next is
+(the outlined body cannot see the argument's class).
 `framebuf.buf = [fill for i in range(len(framebuf.buf))]` fills
-the field array already bound (`GS2HMSBFormat.fill`). Next construct
-after that is measured after this landing.
+the field array already bound (`GS2HMSBFormat.fill`).
+`if buf_format == MVLSB` with a bound constant keeps that format
+class; a no-self method that forwards the buffer to a sibling
+(`rect` -> `set_pixel(framebuf, ...)`) expands at the call site,
+so unused `GS2HMSBFormat.rect` is not compiled.
+A local that holds that constant
+(`_FRAMEBUF_FORMAT = framebuf.MVLSB`) forwarded through
+`super().__init__` is still a constant, so the I2C subclass's
+`self.format.fill` is `MVLSBFormat.fill`.
+`FrameBuffer(buf, w, h, MVLSB); fb.fill(0)` and a subclass
+`super().__init__(buf, w, h, _FRAMEBUF_FORMAT); fb.fill(0)`
+build. Remesure of the I2C driver reaches `MVLSBFormat.fill`
+(`for i in range(len(framebuf.buf))`); `buf` is still
+`memoryview(self.buffer)[1:]`.
 `onewireio` is still missing for
 `adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
 a generator expression in `adafruit_pixelbuf`.
