@@ -936,7 +936,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
-| `adafruit_ssd1306` | (moved off `framebuf.buf = [fill for i in range(len(framebuf.buf))]`) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)` (128x32 is the same class); next construct after that is measured after this landing |
+| `adafruit_ssd1306` | (moved off a listcomp assigned to a declared field array) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)`; remesure still hits `GS2HMSBFormat.fill`'s listcomp because `if buf_format == MVLSB` does not fold, so `self.format` is the last format class, and `buf` is `memoryview(self.buffer)[1:]` |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `with obj.i2c_device as i2c` in `adafruit_register.i2c_struct` | `call to undefined function '__with_manager_0___enter__'`; CV.add_values and imported `Mode.ATTR` no longer stop it |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
