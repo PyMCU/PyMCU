@@ -3478,6 +3478,20 @@ public partial class IRGenerator
             var paramKey = newPrefix + p.Name;
             constantVariables.Remove(paramKey);
             variableAliases.Remove(paramKey);
+            // A None argument (literal, or a caller name already tracked as None) has
+            // no runtime value. The ordinary @inline binder records that on the
+            // parameter; this unbound/super path used to Copy the NoneVal into a
+            // Variable and leave noneValuedNames empty. The base body then stored
+            // `self.reset_pin = reset` as a live DigitalInOut, `if self.reset_pin:`
+            // did not fold, and Pin.low() ran on a port that was never a register
+            // (adafruit_ssd1306's Optional reset=None).
+            if (argVal is NoneVal || SourceIsNoneInThisScope(args[paramIdx]))
+            {
+                noneValuedNames.Add(paramKey);
+                paramIdx++;
+                continue;
+            }
+            noneValuedNames.Remove(paramKey);
             if (argVal is Constant cArg)
             {
                 constantVariables[paramKey] = cArg.Value;
