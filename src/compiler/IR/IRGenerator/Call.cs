@@ -3492,9 +3492,23 @@ public partial class IRGenerator
                 continue;
             }
             noneValuedNames.Remove(paramKey);
+            // A local that HOLDS a compile-time constant binds the same way
+            // the ordinary @inline path does (PyMCU#327). Without this,
+            // super().__init__(buf, w, h, _FRAMEBUF_FORMAT) forwarded a
+            // Variable, `if buf_format == MVLSB` was a run-time compare,
+            // every format class was constructed, and self.format.fill
+            // expanded the last elif (GS2HMSBFormat.fill / ssd1306).
             if (argVal is Constant cArg)
             {
                 constantVariables[paramKey] = cArg.Value;
+            }
+            else if (!ParameterIsAssignedIn(funcSuper, p.Name)
+                     && (argVal is Variable vArg && TryArgumentConstant(vArg.Name, out int argConst)
+                         || TryFoldedConstant(argVal, out argConst)
+                         || TryFoldArgumentExpression(args[paramIdx], p.Type,
+                             currentInlinePrefix, out argConst)))
+            {
+                constantVariables[paramKey] = argConst;
             }
             else if (argVal is Variable instArg
                      && instanceClasses.TryGetValue(FollowAliases(instArg.Name), out var instArgCls)
