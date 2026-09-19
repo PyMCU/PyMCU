@@ -936,7 +936,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
-| `adafruit_ssd1306` | (moved off `super().__init__(reset=None)` / `if self.reset_pin:`) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)` (128x32 is the same class); next is `for cmd in (SET_DISP, ..., 0x10 if self.page_addressing else 0x00, ...)` -- for-in tuple elements must be compile-time constants |
+| `adafruit_ssd1306` | (moved off `for cmd in (SET_DISP, 0x10 if self.page_addressing else 0x00, self.height - 1, ...)`) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)` (128x32 is the same class); next is `framebuf.stride` in `MVLSBFormat.set_pixel` (`Unknown module member: adafruit_framebuf_stride`) |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `with obj.i2c_device as i2c` in `adafruit_register.i2c_struct` | `call to undefined function '__with_manager_0___enter__'`; CV.add_values and imported `Mode.ATTR` no longer stop it |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
@@ -971,10 +971,12 @@ class with a different height. A None argument through
 `super().__init__(reset=reset)` is still None, so
 `if self.reset_pin:` folds and the guarded `DigitalInOut` use is
 not lowered (that path was `Pin.low()` on a port that was never a
-register). Next is `for cmd in (SET_DISP, ..., 0x10 if
-self.page_addressing else 0x00, self.height - 1, ...)`: a for-in
-tuple element must be a compile-time constant, and a field or
-ternary in that tuple is not folded yet.
+register). A for-in tuple element folds like any other constant:
+a `const` name, a field ternary, a comparison ternary, or field
+arithmetic, so `init_display`'s command table unrolls. Next is
+`framebuf.stride` in `MVLSBFormat.set_pixel`: a parameter named
+`framebuf` is read as the module, so `stride` is
+`adafruit_framebuf_stride` rather than the instance field.
 `onewireio` is still missing for
 `adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
 a generator expression in `adafruit_pixelbuf`.

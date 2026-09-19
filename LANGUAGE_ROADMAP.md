@@ -138,6 +138,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `class C(mod.Base)` + `super()` | An imported dotted base unwraps the module alias. `import adafruit_framebuf as framebuf` then `class _SSD1306(framebuf.FrameBuffer)` expands `super().__init__` (adafruit_ssd1306) |
 | `self.x = ...` inside a base `__init__` `if` | A super-expanded base constructor is still `__init__`. `self.format = MVLSBFormat()` in `FrameBuffer.__init__` is a constructor field, not a missing field of the subclass (adafruit_ssd1306) |
 | `super().__init__(reset=None)` | A None argument through super() is still None. `if self.reset_pin:` folds and the guarded DigitalInOut use is not lowered (adafruit_ssd1306) |
+| `for x in (NAME, a if c else b, self.n - 1)` | A for-in tuple element folds like any other constant: a `const` name, a field ternary, a comparison ternary, or field arithmetic (adafruit_ssd1306 `init_display`) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter (adafruit_character_lcd) |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size. `self._gpio = bytearray(self._number_of_shift_registers)` (adafruit_74hc595) |
@@ -412,6 +413,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `class C(mod.Base)` + `super()` | An imported dotted base unwraps the module alias. `import adafruit_framebuf as framebuf` then `class _SSD1306(framebuf.FrameBuffer)` expands `super().__init__` (adafruit_ssd1306) |
 | `self.x = ...` inside a base `__init__` `if` | A super-expanded base constructor is still `__init__`. `self.format = MVLSBFormat()` in `FrameBuffer.__init__` is a constructor field, not a missing field of the subclass (adafruit_ssd1306) |
 | `super().__init__(reset=None)` | A None argument through super() is still None. `if self.reset_pin:` folds and the guarded DigitalInOut use is not lowered (adafruit_ssd1306) |
+| `for x in (NAME, a if c else b, self.n - 1)` | A for-in tuple element folds like any other constant: a `const` name, a field ternary, a comparison ternary, or field arithmetic (adafruit_ssd1306 `init_display`) |
 | TYPE_CHECKING inner `except NotImplementedError` | The try body's import stays in scope. `from pwmio import PWMOut` is not dropped, and the stub handler is not loaded (#480, #481) |
 | `for p in (inst, inst)` | A tuple or list of already-constructed ZCA instances unrolls the same way `for p in self._pins` does. `pin.direction = OUTPUT` through the loop variable is the `@property` setter |
 | `bytearray(self.field)` | A field that holds a compile-time integer is a compile-time size (`self._gpio = bytearray(self._number_of_shift_registers)`) |
