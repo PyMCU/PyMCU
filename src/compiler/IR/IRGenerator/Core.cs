@@ -2821,9 +2821,11 @@ public partial class IRGenerator
     /// call site binds it, the outlined form does not. <c>framebuf.stride</c>
     /// inside <c>MVLSBFormat.set_pixel</c> then refused the member as a
     /// numeric value (or mangled it as the import alias). Expand those that
-    /// actually read a parameter field, the same move as a tuple-returning
-    /// function. A no-self method that only does arithmetic stays a
-    /// subroutine, which is what <c>A.f(x)</c> in #201 pins.
+    /// actually read a parameter field, or that pass the parameter to a
+    /// sibling that does (<c>GS2HMSBFormat.rect</c> -> <c>set_pixel</c>),
+    /// the same move as a tuple-returning function. A no-self method that
+    /// only does arithmetic stays a subroutine, which is what <c>A.f(x)</c>
+    /// in #201 pins.
     /// </summary>
     private void ForceInlineClassPlainFunctionsThatReadParamMembers()
     {
@@ -2916,8 +2918,22 @@ public partial class IRGenerator
             case CallExpr c:
                 if (ExprReadsParamMember(c.Callee, names)) return true;
                 foreach (var a in c.Args)
+                {
+                    // A parameter handed to another call is that call's
+                    // receiver: GS2HMSBFormat.rect does
+                    // GS2HMSBFormat.set_pixel(framebuf, ...) and the callee
+                    // reads framebuf.stride. Without this, rect stayed an
+                    // outlined subroutine, was compiled unused, and
+                    // set_pixel saw a numeric framebuf.
+                    if (a is VariableExpr ve && names.Contains(ve.Name)) return true;
                     if (ExprReadsParamMember(a, names)) return true;
+                }
                 return false;
+            case ListCompExpr lc:
+                return ExprReadsParamMember(lc.Element, names)
+                    || ExprReadsParamMember(lc.Iterable, names)
+                    || ExprReadsParamMember(lc.Iterable2, names)
+                    || ExprReadsParamMember(lc.Filter, names);
             case BinaryExpr b:
                 return ExprReadsParamMember(b.Left, names) || ExprReadsParamMember(b.Right, names);
             case UnaryExpr u: return ExprReadsParamMember(u.Operand, names);
