@@ -1099,6 +1099,7 @@ public partial class IRGenerator
         ForceInlineClassReturningFactories();
         ForceInlineTupleReturningFunctions();
         ForceInlineBufferReturningFunctions();
+        ForceInlineClassPlainFunctionsThatReadParamMembers();
 
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
         //
@@ -2811,6 +2812,131 @@ public partial class IRGenerator
             if (!FunctionReturnsFixedBuffer(func)) continue;
             inlineFunctions[name] = func;
             outlinedMethods.Remove(name);
+        }
+    }
+
+    /// <summary>
+    /// A class-body function with no <c>self</c> is compiled as an ordinary
+    /// subroutine (#201). That body cannot see the argument's class: the
+    /// call site binds it, the outlined form does not. <c>framebuf.stride</c>
+    /// inside <c>MVLSBFormat.set_pixel</c> then refused the member as a
+    /// numeric value (or mangled it as the import alias). Expand those that
+    /// actually read a parameter field, the same move as a tuple-returning
+    /// function. A no-self method that only does arithmetic stays a
+    /// subroutine, which is what <c>A.f(x)</c> in #201 pins.
+    /// </summary>
+    private void ForceInlineClassPlainFunctionsThatReadParamMembers()
+    {
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (!classPlainFunctions.Contains(fullName)) continue;
+            if (!FunctionReadsParamMember(entry.Func)) continue;
+            if (inlineFunctions.ContainsKey(fullName)) continue;
+            inlineFunctions[fullName] = entry.Func;
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    private static bool FunctionReadsParamMember(FunctionDef func)
+    {
+        if (func.Params.Count == 0) return false;
+        var names = new HashSet<string>(func.Params.Select(p => p.Name));
+        return StatementReadsParamMember(func.Body, names);
+    }
+
+    private static bool StatementReadsParamMember(Statement? st, HashSet<string> names)
+    {
+        switch (st)
+        {
+            case null: return false;
+            case Block b:
+                foreach (var s in b.Statements)
+                    if (StatementReadsParamMember(s, names)) return true;
+                return false;
+            case AssignStmt a:
+                return ExprReadsParamMember(a.Target, names) || ExprReadsParamMember(a.Value, names);
+            case AugAssignStmt aug:
+                return ExprReadsParamMember(aug.Target, names) || ExprReadsParamMember(aug.Value, names);
+            case AnnAssign an: return ExprReadsParamMember(an.Value, names);
+            case VarDecl vd: return ExprReadsParamMember(vd.Init, names);
+            case TupleUnpackStmt tu: return ExprReadsParamMember(tu.Value, names);
+            case ExprStmt es: return ExprReadsParamMember(es.Expr, names);
+            case ReturnStmt r: return ExprReadsParamMember(r.Value, names);
+            case ForStmt f:
+                return ExprReadsParamMember(f.Iterable, names)
+                    || StatementReadsParamMember(f.Body, names);
+            case WhileStmt w:
+                return ExprReadsParamMember(w.Condition, names)
+                    || StatementReadsParamMember(w.Body, names);
+            case IfStmt i:
+                if (ExprReadsParamMember(i.Condition, names)
+                    || StatementReadsParamMember(i.ThenBranch, names)
+                    || StatementReadsParamMember(i.ElseBranch, names))
+                    return true;
+                foreach (var (cond, br) in i.ElifBranches)
+                    if (ExprReadsParamMember(cond, names) || StatementReadsParamMember(br, names))
+                        return true;
+                return false;
+            case WithStmt wi:
+                return ExprReadsParamMember(wi.ContextExpr, names)
+                    || StatementReadsParamMember(wi.Body, names);
+            case MatchStmt m:
+                if (ExprReadsParamMember(m.Target, names)) return true;
+                foreach (var br in m.Branches)
+                    if (StatementReadsParamMember(br.Body, names)) return true;
+                return false;
+            case TryStmt t:
+                foreach (var s in t.Body)
+                    if (StatementReadsParamMember(s, names)) return true;
+                foreach (var (_, h) in t.Handlers)
+                    foreach (var s in h)
+                        if (StatementReadsParamMember(s, names)) return true;
+                if (t.ElseBody != null)
+                    foreach (var s in t.ElseBody)
+                        if (StatementReadsParamMember(s, names)) return true;
+                if (t.Finally != null)
+                    foreach (var s in t.Finally)
+                        if (StatementReadsParamMember(s, names)) return true;
+                return false;
+            default: return false;
+        }
+    }
+
+    private static bool ExprReadsParamMember(Expression? e, HashSet<string> names)
+    {
+        switch (e)
+        {
+            case null: return false;
+            case MemberAccessExpr { Object: VariableExpr ve }:
+                return names.Contains(ve.Name);
+            case MemberAccessExpr m: return ExprReadsParamMember(m.Object, names);
+            case CallExpr c:
+                if (ExprReadsParamMember(c.Callee, names)) return true;
+                foreach (var a in c.Args)
+                    if (ExprReadsParamMember(a, names)) return true;
+                return false;
+            case BinaryExpr b:
+                return ExprReadsParamMember(b.Left, names) || ExprReadsParamMember(b.Right, names);
+            case UnaryExpr u: return ExprReadsParamMember(u.Operand, names);
+            case IndexExpr ix:
+                return ExprReadsParamMember(ix.Target, names) || ExprReadsParamMember(ix.Index, names);
+            case TernaryExpr t:
+                return ExprReadsParamMember(t.Condition, names)
+                    || ExprReadsParamMember(t.TrueVal, names)
+                    || ExprReadsParamMember(t.FalseVal, names);
+            case ListExpr l:
+                foreach (var x in l.Elements)
+                    if (ExprReadsParamMember(x, names)) return true;
+                return false;
+            case TupleExpr tp:
+                foreach (var x in tp.Elements)
+                    if (ExprReadsParamMember(x, names)) return true;
+                return false;
+            case KeywordArgExpr k: return ExprReadsParamMember(k.Value, names);
+            default: return false;
         }
     }
 
