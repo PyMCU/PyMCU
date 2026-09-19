@@ -821,7 +821,7 @@ alone.
 | `str(n)` | ✅ Supported | Compile-time only |
 | `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
 | `int.from_bytes(b, e)` | ✅ Supported | Compile-time fold or runtime |
-| `memoryview(buf)` | ✅ Supported | Compile-time alias of a fixed-size buffer (bytearray or fixed array): `memoryview(buf)[k]` indexes it, and `memoryview(buf)[a:]` inside `struct.unpack`/`unpack_from` adds its start to the read offset. The name is a CPython builtin type this compiler stores, so `-> memoryview` is the same view the call already wraps. No run-time buffer protocol |
+| `memoryview(buf)` | ✅ Supported | Compile-time alias of a fixed-size buffer (bytearray or fixed array): `memoryview(buf)[k]` indexes it, `memoryview(buf)[a:]` as a value is a writable window (offset + shorter `len`), and the same slice inside `struct.unpack`/`unpack_from` adds its start to the read offset. A plain `buf[a:b]` is still a copy. The name is a CPython builtin type this compiler stores, so `-> memoryview` is the same view the call already wraps. No run-time buffer protocol |
 | `sorted()` | ❌ Not supported | No dynamic allocation |
 | `map()` / `filter()` | ❌ Not supported | Use explicit `for` loops |
 | `input()` | ✅ Supported | `line: bytearray = input("prompt")` — reads until newline from UART; prompt is optional compile-time string; max length is optional integer (default 64); UART preamble auto-injected |
@@ -936,7 +936,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
-| `adafruit_ssd1306` | (moved off unused `GS2HMSBFormat.rect` and an unfolded format if after `super().__init__(_FRAMEBUF_FORMAT)`) | hardware-test shape is `SSD1306_I2C(128, 64, i2c)`; remesure reaches `MVLSBFormat.fill`'s `for i in range(len(framebuf.buf))` (`len() argument`); `buf` is `memoryview(self.buffer)[1:]` |
+| `adafruit_ssd1306` | **builds unmodified, 18 928 bytes** | (moved off unused `GS2HMSBFormat.rect`, an unfolded format if after `super().__init__(_FRAMEBUF_FORMAT)`, and `len(framebuf.buf)` on `memoryview(self.buffer)[1:]` through I2C -> `_SSD1306` -> `FrameBuffer`) |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `with obj.i2c_device as i2c` in `adafruit_register.i2c_struct` | `call to undefined function '__with_manager_0___enter__'`; CV.add_values and imported `Mode.ATTR` no longer stop it |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
@@ -991,9 +991,15 @@ A local that holds that constant
 `self.format.fill` is `MVLSBFormat.fill`.
 `FrameBuffer(buf, w, h, MVLSB); fb.fill(0)` and a subclass
 `super().__init__(buf, w, h, _FRAMEBUF_FORMAT); fb.fill(0)`
-build. Remesure of the I2C driver reaches `MVLSBFormat.fill`
-(`for i in range(len(framebuf.buf))`); `buf` is still
-`memoryview(self.buffer)[1:]`.
+build. `memoryview(self.buffer)[1:]` as a constructor argument
+is a writable window of that field (offset 1, shorter `len`).
+The I2C subclass forwards that window through `_SSD1306(buffer)`
+into `FrameBuffer(buffer)`, so `MVLSBFormat.fill`'s
+`for i in range(len(framebuf.buf))` / `framebuf.buf[i] = fill`
+writes `buffer[1:]` and leaves the I2C command byte. A plain
+`buf[a:b]` is still a copy. The 128x64 I2C simpletest
+(`SSD1306_I2C(128, 64, i2c)` plus two corner pixels) builds
+unmodified (18 928 bytes).
 `onewireio` is still missing for
 `adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
 a generator expression in `adafruit_pixelbuf`.
