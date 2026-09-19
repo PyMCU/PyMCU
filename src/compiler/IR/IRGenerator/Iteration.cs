@@ -218,7 +218,11 @@ public partial class IRGenerator
     /// </summary>
     private bool BindUnrolledElement(string key, Expression elem)
     {
-        if (TryEvalConstElement(elem, out int iv))
+        // Names, field reads, arithmetic and constant ternaries fold the same way a
+        // bound sequence already does (TryFoldConstElement). Literal-only evaluation
+        // refused adafruit_ssd1306's `for cmd in (SET_DISP, 0x10 if self.page_addressing
+        // else 0x00, self.height - 1, ...)`.
+        if (TryFoldConstElement(elem, out int iv))
         {
             constantVariables[key] = iv;
             strConstantVariables.Remove(key);

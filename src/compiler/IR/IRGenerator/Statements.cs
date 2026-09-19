@@ -128,8 +128,22 @@ public partial class IRGenerator
                 case PyMCU.Frontend.BinaryOp.BitXor: return l ^ r;
                 case PyMCU.Frontend.BinaryOp.LShift: return l << r;
                 case PyMCU.Frontend.BinaryOp.RShift: return l >> r;
+                case PyMCU.Frontend.BinaryOp.Equal: return l == r ? 1 : 0;
+                case PyMCU.Frontend.BinaryOp.NotEqual: return l != r ? 1 : 0;
+                case PyMCU.Frontend.BinaryOp.Less: return l < r ? 1 : 0;
+                case PyMCU.Frontend.BinaryOp.LessEq: return l <= r ? 1 : 0;
+                case PyMCU.Frontend.BinaryOp.Greater: return l > r ? 1 : 0;
+                case PyMCU.Frontend.BinaryOp.GreaterEq: return l >= r ? 1 : 0;
             }
         }
+
+        // `0x10 if self.page_addressing else 0x00` in a for-in tuple (adafruit_ssd1306
+        // init_display). The condition and both arms are the same constant expressions
+        // this evaluator already answers, so the chosen arm is a number.
+        if (expr is TernaryExpr tern)
+            return EvaluateConstantExpr(tern.Condition) != 0
+                ? EvaluateConstantExpr(tern.TrueVal)
+                : EvaluateConstantExpr(tern.FalseVal);
 
         if (expr is UnaryExpr un)
         {
