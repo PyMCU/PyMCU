@@ -834,6 +834,14 @@ public partial class IRGenerator
             return;
         }
 
+        // `framebuf.buf = [fill for i in range(len(framebuf.buf))]`: a list
+        // comprehension as a VALUE is refused (no array to fill). Assigned to a
+        // field that already is a fixed array, it fills that storage.
+        // adafruit GS2HMSBFormat.fill writes this.
+        if (stmt.Target is MemberAccessExpr lcMem && stmt.Value is ListCompExpr lcVal
+            && TryEmitMemberListComp(lcMem, lcVal))
+            return;
+
         // `t = f()` / `t = obj.prop` where the value is a multi-return call: ask
         // the expansion for the tuple's slots (the same sentinel `f()[k]` uses)
         // and, when they arrive, bind the name to materialised copies so it
@@ -5805,9 +5813,16 @@ public partial class IRGenerator
                 int start = 0, stop = 0, step = 1;
                 if (call.Args.Count == 1)
                 {
-                    var sv = EvalConst(call.Args[0]);
-                    if (sv == null) throw UserError("List comprehension const err", lc);
-                    stop = sv.Value;
+                    // `range(len(framebuf.buf))`: len of a field array is the
+                    // size already recorded. EvalConst does not fold that call.
+                    if (TryRepeatCount(call.Args[0], out int stopN))
+                        stop = stopN;
+                    else
+                    {
+                        var sv = EvalConst(call.Args[0]);
+                        if (sv == null) throw UserError("List comprehension const err", lc);
+                        stop = sv.Value;
+                    }
                 }
                 else if (call.Args.Count >= 2)
                 {
@@ -5975,6 +5990,23 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// A list comprehension assigned to a field that already names a fixed
+    /// array fills that array. <c>framebuf.buf = [fill for i in
+    /// range(len(framebuf.buf))]</c> is GS2HMSBFormat.fill: the length is the
+    /// buffer already bound, not a new declaration.
+    /// </summary>
+    private bool TryEmitMemberListComp(MemberAccessExpr target, ListCompExpr lc)
+    {
+        if (lc.Filter != null || lc.Iterable2 != null) return false;
+        if (ComprehensionElementIsInstance(lc)) return false;
+        if (ResolveMemberArrayName(target) is not { } flat) return false;
+        if (!arraySizes.TryGetValue(flat, out int count) || count <= 0) return false;
+        DataType elemDt = arrayElemTypes.TryGetValue(flat, out var dt) ? dt : DataType.UINT8;
+        VisitListComp(lc, flat, count, elemDt);
+        return true;
+    }
+
     private bool TryFoldLenOf(Expression container, out int n)
     {
         n = 0;
@@ -5983,9 +6015,19 @@ public partial class IRGenerator
             case ListExpr le: n = le.Elements.Count; return n > 0;
             case TupleExpr te: n = te.Elements.Count; return n > 0;
             case VariableExpr ve:
+                if (TryResolveArrayStorageKey(
+                        string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name,
+                        out var named)
+                    && arraySizes.TryGetValue(named, out n) && n > 0)
+                    return true;
+                if (arraySizes.TryGetValue(ve.Name, out n) && n > 0) return true;
                 if (InstanceClassOfName(ve.Name) is not { } cls) return false;
                 if (DunderConstLen(cls) is not { } len || len <= 0) return false;
                 n = len;
+                return true;
+            case MemberAccessExpr mem:
+                if (ResolveMemberArrayName(mem) is not { } flat) return false;
+                if (!arraySizes.TryGetValue(flat, out n) || n <= 0) return false;
                 return true;
             default:
                 return false;
