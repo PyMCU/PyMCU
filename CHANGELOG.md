@@ -594,6 +594,7 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **ir**: a function taking a class instance is expanded, not dropped
 - **ir**: a raise after a search loop is not an unconditional raise
 - **ir**: an instance argument never binds to a numeric parameter
+- **ir**: a chip file under the project root gets a __module_init like any user module -- and its device_info() annotation no longer compiles as a call to a function that does not exist
 - **ir**: an undefined name is an error, not an unwritten slot
 - **ir**: the __main__ guard calls the entry point, which is not recursion
 - **ir**: an alias for a builtin still reaches the builtin

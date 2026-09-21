@@ -2589,6 +2589,13 @@ public partial class IRGenerator
         // runtime representation in a function body.
         if (s is ImportStmt || s is ClassDef) return true;
 
+        // device_info() is the chip file's declaration of the target, and the prescan
+        // consumes it before IR generation starts. A user chip file under the project
+        // root is a project module, so its module level becomes a __module_init like
+        // any other -- and without this the annotation compiled as a call to a function
+        // that does not exist ('device_info' is not exported by pymcu.types).
+        if (s is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "device_info" } } }) return true;
+
         // Dict/set literal bindings are compile-time lookup tables (registered during
         // the scan) -- no runtime initialization exists.
         if (s is AssignStmt { Value: DictExpr or SetExpr, Target: VariableExpr }) return true;
