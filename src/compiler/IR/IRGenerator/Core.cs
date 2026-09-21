@@ -386,6 +386,30 @@ public partial class IRGenerator
         return order;
     }
 
+    /// Runs a pre-scan transform on one imported module with that module's file attached.
+    ///
+    /// AsyncTransform and NamedtupleTransform walk a bare <see cref="ProgramNode"/>: AST
+    /// nodes carry a line and column but no file, so an error one of them raises keeps the
+    /// module's position and falls back to the entry file's name -- `yield` inside a method
+    /// of adafruit_irremote.py:226 was reported as main.py:226:5, a line that file does not
+    /// have. The module's recorded path is the same answer <c>RecordSourcePaths</c> gives a
+    /// function that survives the transform, so stamp it here for every error the transform
+    /// did not already locate.
+    private void TransformModule(string modName, ProgramNode ast, Action<ProgramNode> transform)
+    {
+        try
+        {
+            transform(ast);
+        }
+        catch (PyMCU.Common.CompilerError e)
+            when (!e.LocationIsFinal && e.File == null
+                  && PathOfModule(modName) is { Length: > 0 } modPath)
+        {
+            throw new PyMCU.Common.CompilerError(
+                e.TypeName, e.Message, e.Line, e.Column, e.Length) { File = modPath };
+        }
+    }
+
     private ProgramIR GenerateCore(
         ProgramNode mainAst,
         Dictionary<string, ProgramNode> importedModules,
@@ -494,14 +518,14 @@ public partial class IRGenerator
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes.
         PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst);
-        foreach (var m in importedModules.Values)
-            PyMCU.Frontend.AsyncTransform.TransformProgram(m);
+        foreach (var m in importedModules)
+            TransformModule(m.Key, m.Value, PyMCU.Frontend.AsyncTransform.TransformProgram);
 
         // `Name = namedtuple("Name", ("a", "b"))` is a ZCA class, not a heap type. Rewrite
         // every module before TypeInference / scan see the assignment as a call.
         PyMCU.Frontend.NamedtupleTransform.TransformProgram(mainAst);
-        foreach (var m in importedModules.Values)
-            PyMCU.Frontend.NamedtupleTransform.TransformProgram(m);
+        foreach (var m in importedModules)
+            TransformModule(m.Key, m.Value, PyMCU.Frontend.NamedtupleTransform.TransformProgram);
 
         // Fill unannotated params/returns of outlined functions from call-site evidence
         // (safe integer-widening join) BEFORE scanning, so an unannotated helper no longer
