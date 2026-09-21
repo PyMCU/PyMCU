@@ -1100,6 +1100,11 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **driver**: natmod says so when the ARM backend has no native-module mode
 - **driver**: the pyelftools probe does not import from the project directory
 - **driver**: the __bad_interrupt stub counts with the vector table, not as user code
+- **driver**: a bytearray built from a literal is not an arena allocation --
+  bytearray([0x15, 0x2A]), bytearray(b"..."), bytearray("...") and
+  bytearray((1, 2)) tripped the runtime-size scan into injecting pymcu.arena
+  (two uint16 globals plus the SRAM reservation) for a program that never
+  allocates at run time; the false positive dates to 91c57e5b
 
 ### Performance
 
