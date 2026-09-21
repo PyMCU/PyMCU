@@ -258,6 +258,79 @@ class TestMeasureUpstreamExample:
         assert entries[0]["provides"] == ["adafruit_hcsr04"]
         assert entries[0]["layer"] == "circuitpython"
 
+    def test_every_submission_of_the_run_is_listed_for_the_measurement(
+            self, tmp_path, monkeypatch):
+        """
+        A submission's example can import another upstream entry -- the ssd1306
+        simpletest imports adafruit_bus_device and adafruit_framebuf -- and a
+        real build stages every installed upstream entry the index lists.  So
+        the index handed to the measurement subprocess must name the whole
+        submission set, not just the entry being measured, or such an example
+        can never compile.
+        """
+        example = tmp_path / "ssd1306_simpletest.py"
+        example.write_text("import adafruit_ssd1306\n")
+
+        captured = {}
+
+        def fake_run(cmd, cwd, capture_output, text, env):
+            index_path = env.get("PYMCU_UPSTREAM_INDEX")
+            captured["index"] = json.loads(Path(index_path).read_text())
+            class R:
+                returncode = 0
+                stdout = "Flash: 6244 bytes\n"
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(uidx.subprocess, "run", fake_run)
+        busdevice = _submission(
+            distribution="adafruit-circuitpython-busdevice",
+            provides=("adafruit_bus_device",),
+            example="upstream-examples/adafruit-circuitpython-busdevice/busdevice_i2c_probe.py",
+        )
+        ssd1306 = _submission(
+            distribution="adafruit-circuitpython-ssd1306",
+            provides=("adafruit_ssd1306",),
+            example="upstream-examples/adafruit-circuitpython-ssd1306/ssd1306_simpletest.py",
+        )
+        uidx.measure_upstream_example(
+            ssd1306, "atmega328p", pymcu=Path("/fake/pymcu"), example_source=example,
+            version="2.12.24", submissions=[busdevice, ssd1306],
+        )
+
+        entries = captured["index"]["libraries"]
+        assert [e["distribution"] for e in entries] == [
+            "adafruit-circuitpython-busdevice",
+            "adafruit-circuitpython-ssd1306",
+        ]
+        assert all(e["kind"] == "upstream" for e in entries)
+        # The entry under measurement carries its real version; a sibling is
+        # only there so its modules stage, and keeps the placeholder.
+        assert entries[0]["version"] == "0.0.0"
+        assert entries[1]["version"] == "2.12.24"
+
+    def test_build_index_hands_the_whole_submission_set_to_each_measurement(
+            self, tmp_path, monkeypatch):
+        """build_index must forward the upstream list it was given, or the
+        scoping above silently reverts to one entry per measurement."""
+        submissions = [
+            _submission(distribution="dist-a", provides=("a",)),
+            _submission(distribution="dist-b", provides=("b",)),
+        ]
+        seen = []
+
+        def fake_build_upstream_entry(submission, **kwargs):
+            seen.append(kwargs.get("submissions"))
+            return None, "not installed"
+
+        monkeypatch.setattr(idx, "discover_libraries", lambda search_path=None: ([], []))
+        monkeypatch.setattr(uidx, "build_upstream_entry", fake_build_upstream_entry)
+        idx.build_index(tmp_path, pymcu=Path("/fake/pymcu"),
+                        compiler_version="0.0.0", generated="2026-09-21",
+                        upstream=submissions, repo_root=tmp_path)
+
+        assert seen == [submissions, submissions]
+
 
 class TestUpstreamIndexEntry:
     def test_to_json_shape(self):
