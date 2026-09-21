@@ -83,7 +83,7 @@ except a `bytearray(n)` that the compiler can prove allocates at most once, abov
 | `f"..."` inline in arbitrary expressions | No general runtime string objects | Assign it to a name first (`s = f"..."` builds a fixed buffer), or stream it: `print(f"...")` |
 | `str.split()` as a value | There is no list to hand back | `for chunk in s.split(sep)` / `for i, chunk in enumerate(s.split(sep))` unroll the pieces at compile time -- receiver and separator must be compile-time strings, `maxsplit` a compile-time int (adafruit_framebuf `text()`) |
 | `str.format()` | Heap strings | Not available |
-| `str.join()` outside an assignment | The result needs a home | `s = sep.join([...])` folds compile-time strings; `s = ''.join([chr(b) for b in buf])` builds a runtime string from a fixed buffer |
+| `str.join()` over a sequence whose length is not compile-time | The result is spelled out while compiling | `sep.join([...])` folds compile-time strings (expression position too); `sep.join(f"{x:02x}" for x in buf)` over a compile-time sequence streams in `print`/`write_str`/`println` and materializes into a fixed buffer elsewhere; `s = ''.join([chr(b) for b in buf])` builds a runtime string from a fixed buffer |
 | `len(string_variable)` | Runtime string object required | A name bound to ONE compile-time text folds -- `len(byteorder)` in `adafruit_pixelbuf`; a name that can hold several texts is still refused (below). Otherwise use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` calls |
 | `str[i]` on a runtime string | No runtime string object | Use `const[str]` parameters |
@@ -970,8 +970,9 @@ twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
 **Nineteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
-`adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
-argument and a generator expression in `join`, which need the supported spellings),
+`adafruit_bus_device` (800 bytes; its own example now builds too -- the
+`bytearray([...])` inline argument and the generator expression in `join` are
+supported spellings),
 `adafruit_mcp3xxx` (3 094 bytes), `adafruit_74hc595` (402 bytes),
 `adafruit_ahtx0` (7 108 bytes), `adafruit_mcp9808` (4 646 bytes),
 `adafruit_lis3dh` (2 522 bytes), `adafruit_tsl2591` (5 814 bytes),
@@ -989,7 +990,7 @@ base, `pixels[i] = (r, g, b)` included, verified on the wire on the emulated Uno
 | `adafruit_aw9523` | **builds unmodified, 2 294 bytes** | (moved off name `adafruit_aw9523_AW9523`: `type(inst)` in the descriptor rewrite is the source class name) |
 | `adafruit_bme280` | `_bus_implementation.read_register` | call to undefined function |
 | `adafruit_bmp280` | **builds unmodified, 25 006 bytes** | (moved off `list(struct.unpack(...))`: an unpack result is a compile-time sequence, and a function returning its local buffer binds the caller's name to that slot) |
-| `adafruit_bus_device` | **builds unmodified, 800 bytes** | the library itself compiles; its own example needs the bound-name `bytearray` and no generator expression in `join` |
+| `adafruit_bus_device` | **builds unmodified, 800 bytes** (simpletest too, 1 444 bytes) | the library and its example compile; the example's `print("".join(f"{x:02x}" for x in result))` is the expression-position join |
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
 | `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
