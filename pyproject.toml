@@ -50,9 +50,10 @@ pymcu-backend-riscv = {path = "extensions/pymcu-backend-riscv", editable = true}
 [project.scripts]
 pymcu = "driver.main:run_cli"
 
+# PIC programmers are not listed here on purpose: pymcu-pic registers pk2cmd
+# and pymcuprog under the same group, and its pk2cmd drives the PICkit 3.
 [project.entry-points."pymcu.programmers"]
 avrdude = "driver.programmers.avrdude:AvrdudeProgrammer"
-pk2cmd  = "driver.programmers.pk2cmd:Pk2cmdProgrammer"
 ipecmd  = "driver.programmers.ipecmd:IpecmdProgrammer"
 
 [tool.hatch.build.targets.wheel]

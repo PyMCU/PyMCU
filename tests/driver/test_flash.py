@@ -140,10 +140,13 @@ class TestProgrammerDispatch:
     def test_flash_section_overrides_the_default(
         self, tmp_path, monkeypatch, fake_programmer
     ):
-        toml = AVR_TOML + '\n[tool.pymcu.flash]\nprogrammer = "pk2cmd"\nport = "/dev/ttyX"\nbaud = 57600\n'
+        # The name is arbitrary here -- get_programmer is patched out, so what
+        # is tested is that the configured value reaches the lookup. A neutral
+        # name keeps it that way now that pk2cmd lives in pymcu-pic.
+        toml = AVR_TOML + '\n[tool.pymcu.flash]\nprogrammer = "my-prog"\nport = "/dev/ttyX"\nbaud = 57600\n'
         _project(tmp_path, monkeypatch, toml, ("firmware.hex",))
         assert _invoke_flash().exit_code == 0
-        assert fake_programmer.requested == ["pk2cmd"]
+        assert fake_programmer.requested == ["my-prog"]
         assert fake_programmer.flashed[0][2:] == ("/dev/ttyX", 57600)
 
     def test_cli_port_wins_over_config(self, tmp_path, monkeypatch, fake_programmer):

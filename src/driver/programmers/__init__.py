@@ -16,7 +16,6 @@ from typing import Optional
 from rich.console import Console
 from importlib.metadata import entry_points
 from .base import HardwareProgrammer
-from .pk2cmd import Pk2cmdProgrammer
 from .avrdude import AvrdudeProgrammer
 from .ipecmd import IpecmdProgrammer
 
@@ -25,6 +24,14 @@ from .ipecmd import IpecmdProgrammer
 # meant to override it -- pymcu-pic registers a pk2cmd that drives the PICkit 3
 # the driver's retired implementation could not.
 _OWN_DISTRIBUTION = "pymcu-compiler"
+
+# Reached when the driver's own dist-info is not visible -- running from a
+# source checkout, for instance. The PIC programmers (pk2cmd, pymcuprog) are
+# not here on purpose: they ship with pymcu-pic.
+_BUILTINS = {
+    "avrdude": AvrdudeProgrammer,
+    "ipecmd": IpecmdProgrammer,
+}
 
 
 def _registered_by_this_driver(ep) -> bool:
@@ -46,7 +53,7 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
        this driver's own entry point -- an override is the reason a plugin
        reuses a built-in name at all, and the outcome must not depend on the
        order dist-info scanning happens to return.
-    2. Built-in programmers bundled with the pymcu driver (avrdude, pk2cmd, ipecmd).
+    2. Built-in programmers bundled with the pymcu driver (avrdude, ipecmd).
     """
     matches = [
         ep for ep in entry_points(group="pymcu.programmers") if ep.name == name
@@ -55,11 +62,7 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
     if matches:
         return matches[0].load()(console)
 
-    if name == "pk2cmd":
-        return Pk2cmdProgrammer(console)
-    elif name == "avrdude":
-        return AvrdudeProgrammer(console)
-    elif name == "ipecmd":
-        return IpecmdProgrammer(console)
-
+    cls = _BUILTINS.get(name)
+    if cls is not None:
+        return cls(console)
     return None

@@ -76,3 +76,24 @@ class TestSameNameTie:
             monkeypatch, [_EntryPoint("pk2cmd", _DriverPk2cmd, "pymcu-compiler")]
         )
         assert isinstance(get_programmer("pk2cmd", Console()), _DriverPk2cmd)
+
+
+class TestBuiltinFallback:
+    def test_avrdude_and_ipecmd_resolve_without_dist_info(self, monkeypatch):
+        # A source checkout has no dist-info, so the built-ins are reached by
+        # name. pk2cmd is deliberately not one of them.
+        _patch_eps(monkeypatch, [])
+        assert (
+            type(get_programmer("avrdude", Console())).__name__
+            == "AvrdudeProgrammer"
+        )
+        assert (
+            type(get_programmer("ipecmd", Console())).__name__
+            == "IpecmdProgrammer"
+        )
+
+    def test_pk2cmd_is_unknown_without_pymcu_pic(self, monkeypatch):
+        # No built-in and no plugin: the name must not resolve, so `pymcu
+        # flash` can point at the package that provides it.
+        _patch_eps(monkeypatch, [])
+        assert get_programmer("pk2cmd", Console()) is None

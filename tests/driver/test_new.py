@@ -71,6 +71,8 @@ class TestNewProgrammerDefaults:
 
     def test_pic_chip_uses_pk2cmd(self, tmp_path, monkeypatch):
         # PIC chips are accessed via the hidden --chip flag (no board mapping).
+        # The scaffolded name stays "pk2cmd": it now resolves to pymcu-pic's
+        # plugin, which also drives the PICkit 3.
         monkeypatch.chdir(tmp_path)
         result = _invoke_new(
             "pic_proj",
