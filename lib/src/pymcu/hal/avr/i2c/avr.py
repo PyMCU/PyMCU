@@ -30,7 +30,7 @@
 #   0x58 - data byte received, NACK returned (last byte)
 # -----------------------------------------------------------------------------
 
-from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR, SREG, PORTC, PORTD
+from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR, SREG, PORTC, PORTD, PINC, PIND
 from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
 from pymcu.chips import __CHIP__, __FREQ__
 from pymcu.exceptions import CompileError
@@ -74,6 +74,43 @@ def _twi_pullup(port: const, bit: const):
         case _:
             raise CompileError(
                 "the chip module names a TWI port this HAL has no register for")
+
+
+@inline
+def _twi_level(port: const, bit: const) -> uint8:
+    # The level on one bus line, read off the PIN register -- PORT facts minus
+    # two in data space. The TWI drives nothing until the first START, so this
+    # is the idle level of the bus, which is what CircuitPython's busio.I2C
+    # checks for a pull-up when the bus is constructed.
+    match port:
+        case 0x28:  # PORTC -> PINC
+            match bit:
+                case 4: return PINC[4]
+                case 5: return PINC[5]
+                case _:
+                    raise CompileError("a TWI pin on PORTC that is not PC4/PC5")
+        case 0x2B:  # PORTD -> PIND
+            match bit:
+                case 0: return PIND[0]
+                case 1: return PIND[1]
+                case _:
+                    raise CompileError("a TWI pin on PORTD that is not PD0/PD1")
+        case _:
+            raise CompileError(
+                "the chip module names a TWI port this HAL has no register for")
+
+
+@inline
+def i2c_bus_idle() -> uint8:
+    # 1 when both bus lines read high: the internal pull-ups i2c_init left on
+    # hold a wired bus up, so a line that still reads low is being held down --
+    # nothing on the bus is pulling it up. Read after the pull-ups are on and
+    # before the first transfer; CircuitPython's busio.I2C raises then.
+    if _twi_level(_twi_chip.TWI_SDA_PORT, _twi_chip.TWI_SDA_BIT) == 0:
+        return 0
+    if _twi_level(_twi_chip.TWI_SCL_PORT, _twi_chip.TWI_SCL_BIT) == 0:
+        return 0
+    return 1
 
 
 def _twi_wait() -> uint8:

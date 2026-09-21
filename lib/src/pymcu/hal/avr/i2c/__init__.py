@@ -13,8 +13,8 @@
 from pymcu.types import uint8, uint32, inline, const, Callable
 from pymcu.hal.avr.i2c.avr import (
     i2c_init, i2c_frequency, i2c_start, i2c_stop, i2c_write, i2c_read_ack, i2c_read_nack,
-    i2c_ping, i2c_write_to, i2c_write_byte, i2c_write_bytes, i2c_read_from, i2c_read_n,
-    i2c_writeto_mem, i2c_readfrom_mem,
+    i2c_bus_idle, i2c_ping, i2c_write_to, i2c_write_byte, i2c_write_bytes,
+    i2c_read_from, i2c_read_n, i2c_writeto_mem, i2c_readfrom_mem,
     i2c_peripheral_init, i2c_peripheral_ready, i2c_peripheral_status,
     i2c_peripheral_acknowledge, i2c_peripheral_nack,
     i2c_peripheral_read, i2c_peripheral_write, i2c_irq_setup,
@@ -64,6 +64,13 @@ class I2C:
     @inline
     def frequency(self) -> uint32:
         return i2c_frequency(self._freq)
+
+    @inline
+    def lines_high(self) -> uint8:
+        # 1 when both bus lines read high at the pins. The TWI drives nothing
+        # until the first START, so with the pull-ups on this is the idle level
+        # of the bus -- the wiring check a CircuitPython layer does.
+        return i2c_bus_idle()
 
     @inline
     def ping(self, addr: uint8) -> uint8:
