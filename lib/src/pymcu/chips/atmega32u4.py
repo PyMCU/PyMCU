@@ -196,6 +196,18 @@ USBCON:  ptr[uint8] = ptr(0xD8)
 USBSTA:  ptr[uint8] = ptr(0xD9)
 USBINT:  ptr[uint8] = ptr(0xDA)
 
+# TWI bus pins on this part: SDA is PD1, SCL is PD0. i2c_init raises
+# these PORT bits to switch the internal pull-ups on before enabling the
+# TWI, the way Arduino's twi_init() does -- a module with weak or missing
+# pull-up resistors answers anyway. Numbers, not pin-name strings: a
+# string in a module every program imports shifts its string pool.
+# (The TWI register map is the ATmega328P's at 0xB8 and comes from there.)
+TWI_SDA_PORT = 0x2B
+TWI_SDA_BIT = 1
+TWI_SCL_PORT = 0x2B
+TWI_SCL_BIT = 0
+
+
 # ==========================================
 #  Bit Definitions
 # ==========================================

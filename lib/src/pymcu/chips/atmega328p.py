@@ -122,6 +122,17 @@ TWDR:    ptr[uint8] = ptr(0xBB)
 TWCR:    ptr[uint8] = ptr(0xBC)
 TWAMR:   ptr[uint8] = ptr(0xBD)
 
+# TWI bus pins on this part: SDA is PC4, SCL is PC5. i2c_init raises
+# these PORT bits to switch the internal pull-ups on before enabling the
+# TWI, the way Arduino's twi_init() does -- a module with weak or missing
+# pull-up resistors answers anyway. Numbers, not pin-name strings: a
+# string in a module every program imports shifts its string pool.
+TWI_SDA_PORT = 0x28
+TWI_SDA_BIT = 4
+TWI_SCL_PORT = 0x28
+TWI_SCL_BIT = 5
+
+
 UCSR0A:  ptr[uint8] = ptr(0xC0)
 UCSR0B:  ptr[uint8] = ptr(0xC1)
 UCSR0C:  ptr[uint8] = ptr(0xC2)
