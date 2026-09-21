@@ -554,6 +554,19 @@ public static class AstJsonWriter
                 w.WriteEndObject();
                 return;
 
+            case GeneratorExpr ge:
+                w.WriteStartObject();
+                w.WriteString("k", "GenExp");
+                w.WritePropertyName("element"); WriteExpr(w, ge.Element);
+                w.WriteString("varName", ge.VarName);
+                w.WritePropertyName("iterable"); WriteExpr(w, ge.Iterable);
+                w.WriteString("var2Name", ge.Var2Name);
+                w.WritePropertyName("iterable2"); WriteExpr(w, ge.Iterable2);
+                w.WritePropertyName("filter"); WriteExpr(w, ge.Filter);
+                w.WriteNumber("line", ge.Line);
+                w.WriteEndObject();
+                return;
+
             case TernaryExpr t:
                 w.WriteStartObject();
                 w.WriteString("k", "Ternary");

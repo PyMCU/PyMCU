@@ -128,8 +128,11 @@ def line_of(node):
 # `ListComp` is a different CPython node and keeps its own entry in DERIVED_KINDS, so this
 # cannot reach a comprehension by accident. Checked over `[]`, `[1]`, `[[1], [2]]`, a list
 # written across two lines, one starting with a call, and a comprehension.
+#   GenExp  CPython puts it at its `(` -- for `all(x for x in t)` that IS the call's own
+#           paren -- and ends it at the `)`. The C# parser marks the same two tokens, so the
+#           node's whole span is the answer on both sides.
 POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
-                     "Break", "Continue", "Tuple", "List")
+                     "Break", "Continue", "Tuple", "List", "GenExp")
 
 # Kinds this file has to COMPUTE some part of the position for, because taking the node whole
 # would disagree with the hand-written parser. Each entry says which part to mark and how it is
@@ -630,6 +633,15 @@ def e_listcomp(node):
     }
 
 
+def e_genexp(node):
+    # A generator expression has no value of its own: the IR generator unrolls it inside
+    # all()/any()/sum()/min()/max() over an iterable whose length is known at compile time
+    # and refuses it anywhere else. The clause rules are the comprehension's own.
+    out = e_listcomp(node)
+    out["k"] = "GenExp"
+    return out
+
+
 def e_lambda(node):
     # An unannotated lambda parameter is uint8 in the C# parser, not untyped.
     return {"k": "Lambda", "params": params_of(node.args, default_type="uint8"),
@@ -656,6 +668,7 @@ EXPR = {
         {"key": expr(k), "value": expr(v)} for k, v in zip(n.keys, n.values)]},
     ast.JoinedStr: e_joinedstr,
     ast.ListComp: e_listcomp,
+    ast.GeneratorExp: e_genexp,
     ast.IfExp: lambda n: {"k": "Ternary", "trueVal": expr(n.body),
                           "condition": expr(n.test), "falseVal": expr(n.orelse)},
     ast.NamedExpr: lambda n: {"k": "Walrus", "varName": n.target.id, "value": expr(n.value)},

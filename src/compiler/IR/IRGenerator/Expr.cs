@@ -104,6 +104,13 @@ public partial class IRGenerator
                 "tuples are not supported as runtime values -- use a fixed list " +
                 "([a, b, c]) for indexable storage, or unpack directly (x, y = f())", expr);
 
+        // A generator expression in any position that wants a value. all(), any(), sum(),
+        // min() and max() unwrap theirs before this is ever asked, so reaching here means
+        // the program put one where it cannot work -- an assignment, a return, another
+        // call's argument, a `for` iterable -- and the refusal names the five places it can.
+        if (expr is GeneratorExpr)
+            throw UserError(GenExpWhere + ".", expr);
+
         // Three different programs reached this line and all three were told there is a
         // filter. `[DigitalInOut(p) for p in pins]` has no `if` in it, and the reader was sent
         // to look for one; what is unsupported is a comprehension of INSTANCES, which have no

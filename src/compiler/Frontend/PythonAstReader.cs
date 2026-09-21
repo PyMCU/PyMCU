@@ -465,6 +465,12 @@ public static class PythonAstReader
                     ReadExpr(e.GetProperty("iterable"))!, Str(e, "var2Name"),
                     Has(e, "iterable2") ? ReadExpr(e.GetProperty("iterable2")) : null,
                     Has(e, "filter") ? ReadExpr(e.GetProperty("filter")) : null), e);
+            case "GenExp":
+                return Located(new GeneratorExpr(
+                    ReadExpr(e.GetProperty("element"))!, Str(e, "varName"),
+                    ReadExpr(e.GetProperty("iterable"))!, Str(e, "var2Name"),
+                    Has(e, "iterable2") ? ReadExpr(e.GetProperty("iterable2")) : null,
+                    Has(e, "filter") ? ReadExpr(e.GetProperty("filter")) : null), e);
             case "Ternary":
                 return Located(new TernaryExpr(ReadExpr(e.GetProperty("trueVal"))!,
                     ReadExpr(e.GetProperty("condition"))!, ReadExpr(e.GetProperty("falseVal"))!), e);

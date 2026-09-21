@@ -2,7 +2,10 @@ using System;
 using Xunit;
 using FluentAssertions;
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
+using PyMCU.IR;
+using PyMCU.IR.IRGenerator;
 
 namespace PyMCU.UnitTests;
 
@@ -24,10 +27,6 @@ public class GeneratorSurfaceDiagnosticTests
         var act = () => AsyncTransform.TransformProgram(ast);
         return act.Should().Throw<SyntaxError>().Which.Message;
     }
-
-    private static string ParseError(string source)
-        => Assert.ThrowsAny<Exception>(
-            () => new Parser(new Lexer(source).Tokenize()).ParseProgram()).Message;
 
     // ── a generator written as a method ──────────────────────────────────────────
     // Only `prog.Functions` is scanned for `yield`, so a method never became a generator and
@@ -98,11 +97,26 @@ public class GeneratorSurfaceDiagnosticTests
     // These are IR-level and are pinned in IR/GeneratorProtocolDiagnosticTests.
 
     // ── a generator expression ───────────────────────────────────────────────────
+    // `(x for x in ...)` PARSES now: as the argument of all()/any()/sum()/min()/max() it
+    // unrolls over a compile-time sequence. Everywhere else the IR generator refuses it --
+    // so the refusal has moved from the parser to IR generation, which is where these pin
+    // the wording.
+
+    private static string IRError(string source)
+    {
+        var ast = new Parser(new Lexer(source).Tokenize()).ParseProgram();
+        AsyncTransform.TransformProgram(ast);
+        var ex = Assert.ThrowsAny<CompilerError>(
+            () => new IRGenerator().Generate(
+                ast, new Dictionary<string, ProgramNode>(),
+                new DeviceConfig { Arch = "avr" }));
+        return ex.Message;
+    }
 
     [Fact]
     public void AGeneratorExpressionIsNamed_NotReportedAsAMissingParen()
     {
-        var msg = ParseError("""
+        var msg = IRError("""
             def main():
                 for v in (x for x in range(3)):
                     print(v)
@@ -115,14 +129,13 @@ public class GeneratorSurfaceDiagnosticTests
     [Fact]
     public void AGeneratorExpressionPointsAtTheFormThatWorks()
     {
-        var msg = ParseError("""
+        var msg = IRError("""
             def main():
                 for v in (x for x in range(3)):
                     print(v)
             """);
 
-        // A generator function plus `for` is the supported shape, and a plain `for` covers
-        // this particular one outright.
-        msg.Should().Contain("for");
+        // The supported shape is the reductions unrolling it at compile time.
+        msg.Should().Contain("all()").And.Contain("any()").And.Contain("sum()");
     }
 }

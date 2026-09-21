@@ -3343,6 +3343,11 @@ public partial class IRGenerator
                     || ExprReadsParamMember(lc.Iterable, names)
                     || ExprReadsParamMember(lc.Iterable2, names)
                     || ExprReadsParamMember(lc.Filter, names);
+            case GeneratorExpr gx:
+                return ExprReadsParamMember(gx.Element, names)
+                    || ExprReadsParamMember(gx.Iterable, names)
+                    || ExprReadsParamMember(gx.Iterable2, names)
+                    || ExprReadsParamMember(gx.Filter, names);
             case BinaryExpr b:
                 return ExprReadsParamMember(b.Left, names) || ExprReadsParamMember(b.Right, names);
             case UnaryExpr u: return ExprReadsParamMember(u.Operand, names);

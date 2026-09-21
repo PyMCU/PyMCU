@@ -4079,6 +4079,9 @@ public partial class IRGenerator
                 case ListCompExpr lc:
                     Expr(lc.Element); Expr(lc.Iterable); Expr(lc.Iterable2); Expr(lc.Filter);
                     return;
+                case GeneratorExpr gx:
+                    Expr(gx.Element); Expr(gx.Iterable); Expr(gx.Iterable2); Expr(gx.Filter);
+                    return;
                 default: return;
             }
         }

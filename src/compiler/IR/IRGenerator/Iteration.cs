@@ -355,6 +355,39 @@ public partial class IRGenerator
         return false;
     }
 
+    /// <summary>
+    /// Binds a compile-time string to an unrolled variable's key, leaving the name in the
+    /// same state `s = "..."` leaves it in: the TEXT in strConstantVariables (what len(),
+    /// s.split(), enumerate(s) and `case "..."` read) plus the number the same literal
+    /// lowers to in constantVariables -- the char code for one character, the interned id
+    /// for a longer one. Used by `for chunk in s.split()`, by enumerate() over a compile-time
+    /// string, and by generator expressions whose elements are strings.
+    /// </summary>
+    private void BindUnrolledString(string key, string text)
+    {
+        strConstantVariables[key] = text;
+        if (VisitExpression(new StringLiteral(text)) is Constant sc)
+            constantVariables[key] = sc.Value;
+        else
+            constantVariables.Remove(key);
+    }
+
+    /// <summary>
+    /// Drops every binding an unrolled element may have left on a variable's key, so the
+    /// next iteration -- and the code after the loop or reduction -- never reads a stale
+    /// answer. variableTypes is deliberately kept: a runtime element materialized a slot
+    /// under the name, and Python's scoping leaves the loop variable bound after the loop.
+    /// </summary>
+    private void UnbindUnrolledVar(string key)
+    {
+        constantVariables.Remove(key);
+        strConstantVariables.Remove(key);
+        floatConstantVariables.Remove(key);
+        constSequenceBindings.Remove(key);
+        variableAliases.Remove(key);
+        instanceClasses.Remove(key);
+    }
+
     // The compile-time array a bare name denotes: its base key and length, or a negative length
     // when the name is not one. The probe order is inline expansion, enclosing function, bare
     // name, then the alias chain -- the same order every other lookup on this path uses.
@@ -861,6 +894,12 @@ public partial class IRGenerator
                 ? currentInlinePrefix + stmt.VarName
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
 
+            // A generator expression is not an iterable this dispatch can lower -- there is
+            // no iterator for `for` to draw from. The five reductions unwrap theirs before
+            // `for` is ever asked, so say where the construct does work.
+            if (iter is GeneratorExpr)
+                throw UserError(GenExpWhere + " -- as a `for` iterable it would have to be "
+                    + "a value, and it is not one.", iter);
 
             string? GetStr(Expression e)
             {
@@ -1275,6 +1314,13 @@ public partial class IRGenerator
                 // lowerings below and are reported as something about the argument.
                 call = CheckBuiltinKeywords(call, calleeVar.Name);
                 iter = call;
+
+                // A generator expression nested inside enumerate()/zip()/reversed() is the
+                // same refusal as the value-position one -- the unrolling happens only at
+                // the five reductions, where the iterable's length is the question asked.
+                if (call.Args.Any(a => a is GeneratorExpr))
+                    throw UserError(GenExpWhere + ".",
+                        call.Args.First(a => a is GeneratorExpr));
 
                 if (calleeVar.Name == "range")
                 {

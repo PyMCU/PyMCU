@@ -4853,6 +4853,8 @@ public partial class IRGenerator
     // min(xs): expanded to the above over the array's elements.
     private Val EmitMinBuiltin(CallExpr expr)
     {
+        if (expr.Args.Count > 0 && expr.Args[0] is GeneratorExpr)
+            return EmitGenExpReduction(expr, "min");
         var (minArgs, minKey) = SplitMinMaxKey(expr, "min");
         if (minKey != null) return EmitMinMaxByKey(minArgs, minKey, "min", expr.Callee);
         if (minArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, minArgs) { Line = expr.Line };
@@ -4890,6 +4892,8 @@ public partial class IRGenerator
     // max(xs): expanded to the above over the array's elements.
     private Val EmitMaxBuiltin(CallExpr expr)
     {
+        if (expr.Args.Count > 0 && expr.Args[0] is GeneratorExpr)
+            return EmitGenExpReduction(expr, "max");
         var (maxArgs, maxKey) = SplitMinMaxKey(expr, "max");
         if (maxKey != null) return EmitMinMaxByKey(maxArgs, maxKey, "max", expr.Callee);
         if (maxArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, maxArgs) { Line = expr.Line };
@@ -4952,6 +4956,8 @@ public partial class IRGenerator
     // sum(seq): fold a list literal or sum a fixed-size array's unrolled elements.
     private Val EmitSumBuiltin(CallExpr expr)
     {
+        if (expr.Args.Count > 0 && expr.Args[0] is GeneratorExpr)
+            return EmitGenExpReduction(expr, "sum");
         if (expr.Args.Count != 1) throw UserError("sum() expects exactly one argument", expr.Callee);
         switch (expr.Args[0])
         {
@@ -5128,6 +5134,7 @@ public partial class IRGenerator
     private Val EmitAnyBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("any() expects exactly one argument", expr.Callee);
+        if (expr.Args[0] is GeneratorExpr) return EmitGenExpReduction(expr, "any");
         if (!(expr.Args[0] is ListExpr le)) throw UserError("any() requires a list literal argument", ArgAt(expr, 0));
         if (le.Elements.Count == 0) return new Constant(0);
         bool allConst = true;
@@ -5163,6 +5170,7 @@ public partial class IRGenerator
     private Val EmitAllBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("all() expects exactly one argument", expr.Callee);
+        if (expr.Args[0] is GeneratorExpr) return EmitGenExpReduction(expr, "all");
         if (!(expr.Args[0] is ListExpr le)) throw UserError("all() requires a list literal argument", ArgAt(expr, 0));
         if (le.Elements.Count == 0) return new Constant(1);
         bool allConst = true;

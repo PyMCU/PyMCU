@@ -222,6 +222,33 @@ public class ListCompExpr : Expression
     }
 }
 
+/// <summary>
+/// `(f(x) for x in xs)` -- a generator expression. It carries no value of its own: there is
+/// no heap to hold an iterator and no iterator protocol to drive one, so the node exists only
+/// as the argument of all()/any()/sum()/min()/max(), where the IR generator unrolls it over an
+/// iterable whose length is known at compile time. Anywhere else it is refused.
+/// </summary>
+public class GeneratorExpr : Expression
+{
+    public Expression Element { get; }
+    public string VarName { get; }
+    public Expression Iterable { get; }
+    public string Var2Name { get; }
+    public Expression? Iterable2 { get; }
+    public Expression? Filter { get; }
+
+    public GeneratorExpr(Expression element, string varName, Expression iterable,
+        string var2Name = "", Expression? iterable2 = null, Expression? filter = null)
+    {
+        Element = element;
+        VarName = varName;
+        Iterable = iterable;
+        Var2Name = var2Name;
+        Iterable2 = iterable2;
+        Filter = filter;
+    }
+}
+
 public class MemberAccessExpr : Expression
 {
     public Expression Object { get; }

@@ -141,6 +141,9 @@ public partial class IRGenerator
             case ListCompExpr l:
                 yield return l.Element; yield return l.Iterable; yield return l.Iterable2; yield return l.Filter;
                 break;
+            case GeneratorExpr g:
+                yield return g.Element; yield return g.Iterable; yield return g.Iterable2; yield return g.Filter;
+                break;
             case MemberAccessExpr m: yield return m.Object; break;
             case CallExpr c: yield return c.Callee; foreach (var a in c.Args) yield return a; break;
             case StarArgExpr s: yield return s.Value; break;

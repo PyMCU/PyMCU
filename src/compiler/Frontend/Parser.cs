@@ -1681,6 +1681,43 @@ public class Parser
                   + "fixed-size array in it.");
     }
 
+    /// Parses `for x in it [for y in it2] [if cond]` -- the tail of a generator expression,
+    /// once the element expression and the `for` have been seen. The shapes a list
+    /// comprehension takes are the shapes this takes, so the target and clause rules are the
+    /// same ones. Returns the node UNSTAMPED: where its span starts depends on the enclosing
+    /// parentheses, which only the caller has seen.
+    private GeneratorExpr ParseGeneratorExpTail(Expression element)
+    {
+        Consume(TokenType.For, "Expected 'for'");
+        var varTok = Consume(TokenType.Identifier, "Expected loop variable");
+        RejectComprehensionTupleTarget();
+        Consume(TokenType.In, "Expected 'in'");
+        var iterable = ParseLogicalOr();
+
+        string var2Name = "";
+        Expression? iterable2 = null;
+        if (Match(TokenType.For))
+        {
+            var var2Tok = Consume(TokenType.Identifier, "Expected loop variable");
+            RejectComprehensionTupleTarget();
+            Consume(TokenType.In, "Expected 'in'");
+            iterable2 = ParseLogicalOr();
+            var2Name = var2Tok.Value;
+        }
+
+        Expression? filter = null;
+        if (Match(TokenType.If))
+            filter = ParseLogicalOr();
+        // CPython accepts any number of `if` clauses; the CPython-AST front end keeps the
+        // comprehension rule of one, so the second one is refused here rather than falling
+        // to "Expected ')'" against a token that is not a mistake.
+        if (Check(TokenType.If))
+            Error("a comprehension with more than one 'if' condition is not supported; "
+                  + "combine them with `and`");
+
+        return new GeneratorExpr(element, varTok.Value, iterable, var2Name, iterable2, filter);
+    }
+
     // The `else` clause of a loop, or null when there is none. The clause runs only when the
     // loop finished WITHOUT a `break`; LoopElseDesugar lowers that, shared with the CPython-AST
     // front end so the two produce the same nodes.
@@ -2622,7 +2659,9 @@ public class Parser
         {
             if (Match(TokenType.LParen))
             {
+                var callParen = Previous();
                 var args = new List<Expression>();
+                GeneratorExpr? genExpArg = null;
                 while (Check(TokenType.Newline)) Advance();
                 if (!Check(TokenType.RParen))
                 {
@@ -2655,14 +2694,36 @@ public class Parser
                         }
                         else
                         {
-                            args.Add(ParseExpression());
+                            var arg = ParseExpression();
+                            // `all(x for x in xs)`: a bare generator expression is legal
+                            // Python only as a call's ONLY argument -- `f(a, x for x in xs)`
+                            // and `f(x for x in xs, y)` are CPython SyntaxErrors, and so is
+                            // the trailing comma on `f(x for x in xs,)`. The node it builds
+                            // is refused in the IR generator for every callee but all(),
+                            // any(), sum(), min() and max().
+                            if (Check(TokenType.For))
+                            {
+                                if (args.Count != 0)
+                                    Error("Generator expression must be parenthesized");
+                                genExpArg = ParseGeneratorExpTail(arg);
+                                args.Add(genExpArg);
+                                if (Check(TokenType.Comma))
+                                    Error("Generator expression must be parenthesized");
+                                break;
+                            }
+                            args.Add(arg);
                         }
                     } while (Match(TokenType.Comma));
 
                     while (Check(TokenType.Newline)) Advance();
                 }
 
-                Consume(TokenType.RParen, "Expected ')'");
+                var callClose = Consume(TokenType.RParen, "Expected ')'");
+                // CPython's GeneratorExp spans the parentheses around it -- for the
+                // sole-argument spelling those ARE the call's own parens, so
+                // `all(x for x in t)` marks `(x for x in t)`, which is what the bridge
+                // reports.
+                if (genExpArg != null) Spanning(genExpArg, callParen, callClose);
                 expr = new CallExpr(expr, args);
             }
             else if (Match(TokenType.LBracket))
@@ -3095,15 +3156,17 @@ public class Parser
             }
 
             var first = ParseExpression();
-            // `(x for x in xs)` -- a generator expression. It builds a lazy iterator object,
-            // which needs a heap and the iterator protocol; neither exists here. Named at the
-            // `for`, because "Expected ')'" reads as a typo in the parentheses.
+            // `(x for x in xs)` -- a generator expression. It has no value of its own: an
+            // iterator needs a heap and the protocol to drive it, and neither exists here.
+            // What does exist is the reductions -- all(), any(), sum(), min() and max()
+            // unroll one when the iterable's length is known at compile time -- so the node
+            // is kept and the IR generator refuses it anywhere else. Spanned over the parens,
+            // which is where CPython puts a GeneratorExp.
             if (Check(TokenType.For))
-                Error("generator expressions are not supported: `(x for x in ...)` builds a lazy "
-                      + "iterator object, and there is no heap to hold one. Write the producer as "
-                      + "a generator function (a `def` whose body yields) and consume it with "
-                      + "`for v in gen(...):`, or iterate the sequence directly with a plain "
-                      + "`for`.");
+            {
+                var gen = ParseGeneratorExpTail(first);
+                return Spanning(gen, lparen, Consume(TokenType.RParen, "Expected ')'"));
+            }
             if (Check(TokenType.Comma))
             {
                 var elems = new List<Expression> { first };
