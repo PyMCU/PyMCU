@@ -1185,7 +1185,12 @@ private static Function CloneFunction(Function f)
                             // extension at a call boundary, a signed comparison, or the print
                             // formatter would read the source's signedness instead of the cast's.
                             // Keep the temp materialized.
-                            else if (ChangesRepr(copy.Src, tDst.Type))
+                            // An int constant into a FLOAT temp is the same change in disguise:
+                            // a Constant's type is UNKNOWN, so ChangesRepr passes and the raw
+                            // integer constant reached float argument slots as its bit pattern
+                            // (`f"{x:.1f}"` on a name the const-pass had folded printed 0.0).
+                            else if (ChangesRepr(copy.Src, tDst.Type)
+                                     || (copy.Src is Constant && tDst.Type == DataType.FLOAT))
                                 blacklistedTemps.Add(tDst.Name);
                             else
                                 tempCopies[tDst.Name] = copy.Src;

@@ -73,6 +73,25 @@ public class OptimizerTests
     }
 
     [Fact]
+    public void CopyPropagation_DoesNotForwardIntConstantThroughFloatCopy()
+    {
+        // The mirror of the float->int case above: `float(r)` where r const-folds
+        // emits Copy(Constant -> FLOAT temp) once the variable folds inside it. A
+        // Constant's type is UNKNOWN, so the repr-change check passed and the raw
+        // integer reached float consumers as its bit pattern -- `f"{r:.1f}"` printed
+        // 0.0. The copy is a conversion; it has to stay materialized.
+        var optimized = Optimizer.Optimize(MakeProgram(
+            new Copy(new Constant(255), new Variable("r", DataType.UINT8)),
+            new Copy(new Variable("r", DataType.UINT8), new Temporary("t0", DataType.FLOAT)),
+            new Return(new Temporary("t0", DataType.FLOAT))));
+        var body = optimized.Functions[0].Body;
+
+        Assert.Contains(body, i =>
+            i is Copy { Src: Constant } c
+            && (c.Dst is Temporary { Type: DataType.FLOAT } or Variable { Type: DataType.FLOAT }));
+    }
+
+    [Fact]
     public void InlineParam_ShadowsSameNamedModuleGlobal()
     {
         // A user global named like a library @inline's parameter must not hijack the
