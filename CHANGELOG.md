@@ -351,6 +351,16 @@ purpose, as opposed to bugs like these three that were silent until found.
   constant still emits nothing. The same answer through a parameter and through a `self`
   field. A table the program stores into keeps its refusal, because flash cannot be
   written (#317).
+- A method call on a parameter annotated with an imported class resolves to that class
+  even when the argument was built by an unannotated factory function.
+  `i2c = board.I2C()` -- `def I2C(): return _board_i2c(SCL, SDA)`, the generated board.py
+  spelling -- declares no return type, so the factory stayed an outlined subroutine whose
+  result carried no class, and `def probe(b: busio.I2C)` followed by `b.try_lock()`
+  flattened the receiver's own name into the undefined `i2c_try_lock`. A plain function
+  whose body returns a ZCA construction now expands at the call site when the class has
+  no ABI return form -- the same lowering a declared `-> busio.I2C` factory already got.
+  Both spellings of the annotation (`b: busio.I2C` and `from busio import I2C` then
+  `b: I2C`) work under both front ends.
 
 ### Correctness (silent-miscompile class)
 - A class-level `_BUFFER = bytearray(N)` reached through an instance now iterates and
