@@ -554,18 +554,20 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
     return total
 
 
-# Last resort only, for a caller holding no artifacts, and it is the ATmega328P's table and
-# nobody else's. An AVR vector-table slot is 4 bytes on the parts with JMP/CALL (avr5/avr6,
+# Last resort only, for a caller holding no artifacts, and it is the ATmega328P's preamble
+# and nobody else's. An AVR vector-table slot is 4 bytes on the parts with JMP/CALL (avr5/avr6,
 # the ATmega328P among them) and 2 bytes on the parts without them (avr25, every ATtiny), and
 # the last slot is not padded because nothing follows it. So the ATmega's 26 slots occupy
-# 25*4 + 2 = 102 bytes and an ATtiny's occupy 25*2 + 2 = 52.
+# 25*4 + 2 = 102 bytes and an ATtiny's occupy 25*2 + 2 = 52, and the `__bad_interrupt`
+# stub that trails the table adds its relaxed RJMP: 104 and 54 with it counted.
 #
-# This was 104, which is 26*4 and two bytes more than the image has: `__bad_interrupt` sits at
-# 0x66 in the linked ELF. And it was applied to both families, because the guard below tests
-# `startswith("at")`, so an attiny13 whose table is 52 and whose whole flash is 1024 was told
-# "8 bytes of your code" for a program with 60. Measured from the emitted assembly wherever
-# that exists, which is every real build.
-_AVR_PREAMBLE_BYTES = 102
+# The table alone was 104 once, which is 26*4 and two bytes more than the image has:
+# `__bad_interrupt` sits at 0x66 in the linked ELF. And the constant was applied to both
+# families, because the guard below tests `startswith("at")`, so an attiny13 whose table
+# is 52 and whose whole flash is 1024 was told "8 bytes of your code" for a program with 60.
+# Measured from the linked ELF wherever it exists, and from the emitted assembly otherwise,
+# which together is every real build.
+_AVR_PREAMBLE_BYTES = 104
 
 
 def _avr_vector_table_bytes(artifacts_dir) -> int | None:
@@ -605,6 +607,104 @@ def _avr_vector_table_bytes(artifacts_dir) -> int | None:
     return orgs[-1] + 2
 
 
+def _avr_stub_bytes(artifacts_dir) -> int | None:
+    """The width the backend emitted for the `__bad_interrupt` jump, or None.
+
+    Fallback for a caller with no ELF to measure: the emitted mnemonic is RJMP on
+    the parts without JMP/CALL (2 bytes) and JMP on the rest (4). The linker then
+    relaxes JMP back to RJMP wherever main is in range -- which is nearly always,
+    since only interrupt handlers sit between the stub and it -- so a build that
+    produced an ELF takes that figure instead of this one.
+    """
+    try:
+        text = (Path(artifacts_dir) / "firmware.gas.asm").read_text()
+    except OSError:
+        return None
+    seen_label = False
+    for line in text.splitlines():
+        s = line.strip()
+        if not seen_label:
+            if s.startswith("__bad_interrupt"):
+                seen_label = True
+            continue
+        if s and not s.startswith(";"):
+            return 4 if s.split(None, 1)[0].upper() in ("JMP", "CALL") else 2
+    return None
+
+
+def _elf_text_symbol_addrs(elf_file) -> dict | None:
+    """{name: byte address} for the .text symbols of a little-endian ELF32, or None.
+
+    Read straight from the section and symbol tables so the report does not depend
+    on an avr-nm the WASI toolchain does not ship. Anything that is not a 32-bit
+    little-endian ELF with a findable .text and symtab returns None and the caller
+    falls back to the assembly.
+    """
+    import struct
+    try:
+        data = Path(elf_file).read_bytes()
+        if len(data) < 52 or data[:6] != b"\x7fELF\x01\x01":
+            return None
+        hdr = struct.unpack_from("<HHIIIIIHHHHHH", data, 16)
+        e_shoff, e_shentsize, e_shnum, e_shstrndx = hdr[5], hdr[10], hdr[11], hdr[12]
+        if not e_shoff or e_shentsize < 40 or not 0 < e_shstrndx < e_shnum:
+            return None
+        sections = [struct.unpack_from("<10I", data, e_shoff + i * e_shentsize)
+                    for i in range(e_shnum)]
+
+        def cstring(offset: int, base: int) -> bytes:
+            start = base + offset
+            return data[start:data.index(b"\0", start)]
+
+        shstr_base = sections[e_shstrndx][4]
+        text_idx = next(
+            (i for i, sh in enumerate(sections)
+             if cstring(sh[0], shstr_base) == b".text"),
+            None,
+        )
+        if text_idx is None:
+            return None
+        addrs = {}
+        for sh in sections:
+            if sh[1] != 2 or sh[9] < 16:            # SHT_SYMTAB, Elf32_Sym
+                continue
+            str_base = sections[sh[6]][4]           # sh_link -> its string table
+            for off in range(sh[4], sh[4] + sh[5], sh[9]):
+                st_name, st_value, _sz, _info, _other, st_shndx = \
+                    struct.unpack_from("<IIIBBH", data, off)
+                if st_name and st_shndx == text_idx:
+                    addrs[cstring(st_name, str_base).decode("utf-8", "replace")] = st_value
+        return addrs
+    except (IndexError, TypeError, ValueError, struct.error, OSError):
+        return None
+
+
+def _avr_preamble_bytes(artifacts_dir) -> int | None:
+    """Vector table plus the `__bad_interrupt` stub, or None.
+
+    The stub is the soft-reset jump every unused vector points at -- runtime
+    scaffolding, not user code -- so it counts with the table. The linked ELF
+    carries its real size: `__bad_interrupt` ends where the first .text symbol
+    after it begins (`main` whenever no ISR was emitted ahead of it), which is
+    104 on the ATmega328P blink -- table 102, stub a relaxed RJMP of 2 -- and two
+    more on a part whose JMP could not relax. With no ELF the assembly gives the
+    table and the stub's emitted width instead.
+    """
+    if artifacts_dir is None:
+        return None
+    addrs = _elf_text_symbol_addrs(Path(artifacts_dir) / "debug" / "firmware.elf")
+    if addrs is not None and "__bad_interrupt" in addrs:
+        following = min((a for a in addrs.values() if a > addrs["__bad_interrupt"]),
+                        default=None)
+        if following is not None:
+            return following
+    table = _avr_vector_table_bytes(artifacts_dir)
+    stub = _avr_stub_bytes(artifacts_dir)
+    if table is None or stub is None:
+        return None
+    return table + stub
+
+
 def _check_flash_capacity(flash_bytes: int, flash_total: int, target: str) -> None:
     """Refuse to call an over-capacity image a successful build.
 
@@ -635,13 +735,13 @@ def _flash_report_lines(flash_bytes: int, flash_total: int, target: str,
 
     lines = [head]
     if target.lower().startswith("at"):
-        table = _avr_vector_table_bytes(artifacts_dir)
-        if table is None:
-            table = _AVR_PREAMBLE_BYTES
-        if flash_bytes > table:
+        preamble = _avr_preamble_bytes(artifacts_dir)
+        if preamble is None:
+            preamble = _AVR_PREAMBLE_BYTES
+        if flash_bytes > preamble:
             lines.append(
-                f"[dim]       {flash_bytes - table} bytes of your code + "
-                f"{table} bytes of interrupt vector table[/dim]"
+                f"[dim]       {flash_bytes - preamble} bytes of your code + "
+                f"{preamble} bytes of interrupt vector table[/dim]"
             )
     return lines
 

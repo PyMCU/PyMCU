@@ -135,91 +135,196 @@ class TestFlashMetric:
         assert _parse_hex_flash_bytes(self._hex(tmp_path, 104 + 38)) == 142
 
     def test_the_published_blink_figure_is_reproduced(self, tmp_path):
-        # 142 bytes of image is what the gist's blink assembles to. The article quotes the
-        # split as 38 + 104; the total is right and the split was two bytes out, so it is
-        # 40 + 102 here. See the note below for why.
+        # 142 bytes of image is what the gist's blink assembles to, and the article's split
+        # is reproduced exactly: `__bad_interrupt`, the 2-byte soft-reset stub at 0x66, is
+        # runtime scaffolding and counts with the table, not as the user's code.
         lines = _flash_report_lines(142, 32768, "atmega328p")
         assert "142 / 32768" in lines[0]
-        assert "40 bytes of your code" in lines[1]
-        assert "102 bytes of interrupt vector table" in lines[1]
+        assert "38 bytes of your code" in lines[1]
+        assert "104 bytes of interrupt vector table" in lines[1]
 
     def test_the_scaffold_blink_figure_is_reproduced(self, tmp_path):
-        # The scaffold uses value(1)/value(0) rather than toggle(): 150 total, 48 + 102.
+        # The scaffold uses value(1)/value(0) rather than toggle(): 150 total, 46 + 104.
         lines = _flash_report_lines(150, 32768, "atmega328p")
         assert "150 / 32768" in lines[0]
-        assert "48 bytes of your code" in lines[1]
+        assert "46 bytes of your code" in lines[1]
 
-    # Those two call the three-argument form, which has no assembly to read and falls back to
-    # the constant. The constant is the ATmega328P's table and it is 102, not 104:
+    # Those two call the three-argument form, which has no artifacts to read and falls back
+    # to the constant. The constant is the ATmega328P's preamble and it is 104:
     #
     #     the assembler pads each slot out to the stride EXCEPT the last, because nothing
-    #     follows it, so 26 four-byte slots occupy 25*4 + 2 = 102
+    #     follows it, so 26 four-byte slots occupy 25*4 + 2 = 102, and the `__bad_interrupt`
+    #     stub that trails them is a relaxed RJMP: 102 + 2 = 104
     #
-    # Verified against the linked ELF, where `__bad_interrupt` is at 0x66 on the ATmega328P
-    # and at 0x34 on the ATtiny13. The ATtiny figures were already exact, because there the
-    # slot IS an RJMP and the padding question does not arise.
+    # Verified against the linked ELF, where `__bad_interrupt` is at 0x66 and `main` at 0x68
+    # on the ATmega328P, and the pair sits at 0x34/0x36 on the ATtiny13. The ATtiny figures
+    # were already exact, because there the slot IS an RJMP and the padding question does
+    # not arise.
     #
-    # The two bytes were code being charged to the table. Totals do not move, so the article's
-    # 142 and 150 still hold and only the split does: 38 + 104 -> 40 + 102, 46 + 104 ->
-    # 48 + 102.
+    # The two bytes had been charged to the user's code. Totals do not move, so the
+    # article's 142 and 150 still hold and only the split does: the report now agrees with
+    # the published 38 + 104 and 46 + 104.
 
     # --- the table is measured, not assumed ---------------------------------
     #
     # A vector-table slot is 4 bytes on the parts with JMP/CALL and 2 on the parts without,
-    # so the 104-byte constant is the ATmega's table and double every ATtiny's. The guard is
-    # `startswith("at")`, which is both families, and an attiny13 was told it had "8 bytes of
-    # your code + 104 bytes of interrupt vector table" for a 112-byte image whose table is 52
-    # and whose code is 60. Two wrong numbers, and the smaller one is the one a reader would
-    # act on. Issue #235.
+    # so the 104-byte constant is the ATmega's preamble and double every ATtiny's. The guard
+    # is `startswith("at")`, which is both families, and an attiny13 was told it had "8 bytes
+    # of your code + 104 bytes of interrupt vector table" for a 112-byte image whose table
+    # is 52 and whose code is 60. Two wrong numbers, and the smaller one is the one a reader
+    # would act on. Issue #235.
     #
     # Of the four below, two DISCRIMINATE: the attiny table and the shorter table, which give
-    # 52 and 20 where the constant gives 104. The two ATmega ones cannot, because they need
+    # 54 and 22 where the constant gives 104. The two ATmega ones cannot, because they need
     # the fourth argument to exist, so against the unfixed driver they fail on the signature
     # rather than on the answer. What holds the ATmega end on both sides is the pair of
     # published-figure tests above, which call the three-argument form and must keep passing.
 
     @staticmethod
-    def _asm(tmp_path, stride: int, slots: int):
+    def _asm(tmp_path, stride: int, slots: int, stub: str = "RJMP"):
         """A vector table as the backend emits it: `.org` per slot, then __bad_interrupt."""
         body = "".join(f".org 0x{i * stride:X}\n\tRJMP\t__bad_interrupt\n"
                        for i in range(slots))
         (tmp_path / "firmware.gas.asm").write_text(
-            body + "\n__bad_interrupt:\n\tRJMP\tmain\nmain:\n\tCLR\tR1\n")
+            body + f"\n__bad_interrupt:\n\t{stub}\tmain\nmain:\n\tCLR\tR1\n")
         return tmp_path
 
     def test_an_attiny_table_is_read_from_the_assembly(self, tmp_path):
-        d = self._asm(tmp_path, stride=2, slots=26)      # 2-byte slots: 52 bytes
+        d = self._asm(tmp_path, stride=2, slots=26)      # 2-byte slots, RJMP stub: 52 + 2
         lines = _flash_report_lines(112, 1024, "attiny13", d)
-        assert "52 bytes of interrupt vector table" in lines[1]
-        assert "60 bytes of your code" in lines[1]
+        assert "54 bytes of interrupt vector table" in lines[1]
+        assert "58 bytes of your code" in lines[1]
 
     def test_an_atmega_table_is_read_and_the_last_slot_is_not_padded(self, tmp_path):
-        # 25 padded 4-byte slots plus the last slot's RJMP: 102, not 26 x 4. Checked against
-        # the linked ELF, where __bad_interrupt sits at 0x66.
+        # 25 padded 4-byte slots plus the last slot's RJMP: 102, not 26 x 4, plus the stub:
+        # 104. Checked against the linked ELF, where __bad_interrupt sits at 0x66 and the
+        # first function at 0x68.
         d = self._asm(tmp_path, stride=4, slots=26)
         lines = _flash_report_lines(150, 32768, "atmega328p", d)
-        assert "102 bytes of interrupt vector table" in lines[1]
-        assert "48 bytes of your code" in lines[1]
+        assert "104 bytes of interrupt vector table" in lines[1]
+        assert "46 bytes of your code" in lines[1]
 
     def test_a_shorter_table_is_followed_rather_than_assumed(self, tmp_path):
         """pymcu-avr#16 will cut the slot COUNT per part. The report has to follow it.
 
         This is what says the fix reads the table rather than swapping one constant for two:
-        with ten slots the answer is 20, which neither 104 nor 52 would give.
+        with ten slots and the stub the answer is 22, which neither 104 nor 54 would give.
         """
         d = self._asm(tmp_path, stride=2, slots=10)
         lines = _flash_report_lines(112, 1024, "attiny13", d)
-        assert "20 bytes of interrupt vector table" in lines[1]
+        assert "22 bytes of interrupt vector table" in lines[1]
 
     def test_no_assembly_falls_back_to_the_atmegas_real_table(self, tmp_path):
-        """A caller with no artifacts gets the constant, and the constant is 102.
+        """A caller with no artifacts gets the constant, and the constant is 104.
 
-        Unreachable from a real build, which always has the assembly. It is pinned anyway
-        because the constant is the one place a reader looks up "how big is the table", and
-        104 is the figure this issue exists to refute.
+        Unreachable from a real build, which always has the ELF and the assembly. It is
+        pinned anyway because the constant is the one place a reader looks up "how big is
+        the preamble", and the table alone is 102: 104 is table + stub.
         """
         lines = _flash_report_lines(150, 32768, "atmega328p", tmp_path)
-        assert "102 bytes of interrupt vector table" in lines[1]
+        assert "104 bytes of interrupt vector table" in lines[1]
+
+    # --- the boundary is the ELF's, when an ELF exists -------------------------
+    #
+    # The stub's size is decided by the linker: the backend emits JMP on the parts
+    # that have one (avr5/avr6) and the linker's -mrelax shrinks it to RJMP wherever
+    # main is in range -- nearly always, since only ISRs sit between. So the report
+    # reads the address of the first .text symbol after __bad_interrupt out of the
+    # ELF's symtab rather than assuming a width. That is main on a program with no
+    # ISR; on one that has ISRs the first of them is the boundary, which is the
+    # same rule: everything after the stub is the user's.
+
+    @staticmethod
+    def _elf(tmp_path, text_symbols: dict, abs_symbols: dict | None = None):
+        """A minimal ELF32: a .text section, and a symtab carrying `text_symbols`
+        on it. `abs_symbols` land on SHN_ABS and must be ignored by the reader."""
+        import struct
+
+        syms = [(n, a, 1) for n, a in text_symbols.items()]
+        syms += [(n, a, 0xFFF1) for n, a in (abs_symbols or {}).items()]
+
+        strtab = b"\0"
+        stroff = {}
+        for n, _, _ in syms:
+            stroff[n] = len(strtab)
+            strtab += n.encode() + b"\0"
+        shstr = b"\0.text\0.symtab\0.strtab\0.shstrtab\0"
+        shoff = {n: shstr.index(n.encode())
+                 for n in (".text", ".symtab", ".strtab", ".shstrtab")}
+
+        text = b"\0" * (max(a for _, a, _ in syms) + 2)
+        symtab = b"".join(
+            struct.pack("<IIIBBH", stroff[n], a, 0, 0, 0, shndx)
+            for n, a, shndx in syms)
+
+        offsets, body, pos = {}, b"", 52
+        for name, payload in ((".text", text), (".symtab", symtab),
+                              (".strtab", strtab), (".shstrtab", shstr)):
+            offsets[name] = pos
+            body += payload
+            pos += len(payload)
+
+        def sh(name, sh_type, size, link=0, entsize=0):
+            return struct.pack("<10I", shoff[name], sh_type, 0, 0,
+                               offsets[name], size, link, 0, 1, entsize)
+
+        sections = b"".join([
+            b"\0" * 40,
+            sh(".text", 1, len(text)),
+            sh(".symtab", 2, len(symtab), link=3, entsize=16),
+            sh(".strtab", 3, len(strtab)),
+            sh(".shstrtab", 3, len(shstr)),
+        ])
+        ehdr = (b"\x7fELF" + bytes([1, 1, 1]) + b"\0" * 9 +
+                struct.pack("<HHIIIIIHHHHHH", 2, 83, 1, 0, 0, pos, 0,
+                            52, 0, 0, 40, 5, 4))
+        debug = tmp_path / "debug"
+        debug.mkdir()
+        (debug / "firmware.elf").write_bytes(ehdr + body + sections)
+        return tmp_path
+
+    def test_the_blink_split_is_read_off_the_elf(self, tmp_path):
+        """The published listing's figures, measured: __bad_interrupt at 0x66 and
+        main at 0x68, so the preamble is 104 and the user's code is 38."""
+        d = self._elf(tmp_path,
+                      {"__bad_interrupt": 0x66, "main": 0x68, "L_48": 0x78},
+                      abs_symbols={"RAMEND": 0x8FF})
+        lines = _flash_report_lines(142, 32768, "atmega328p", d)
+        assert "38 bytes of your code" in lines[1]
+        assert "104 bytes of interrupt vector table" in lines[1]
+
+    def test_the_elf_overrules_the_assembly(self, tmp_path):
+        """The gas file says the stub is a JMP (4); the linked ELF shows it
+        relaxed to RJMP (2). The measured one wins."""
+        self._asm(tmp_path, stride=4, slots=26, stub="JMP")
+        d = self._elf(tmp_path, {"__bad_interrupt": 0x66, "main": 0x68})
+        lines = _flash_report_lines(142, 32768, "atmega328p", d)
+        assert "104 bytes of interrupt vector table" in lines[1]
+
+    def test_a_stub_that_stayed_a_jmp_is_counted_wide(self, tmp_path):
+        """On a part whose main lands out of RJMP range (a >4 KB run of ISRs ahead
+        of it, an atmega2560's kind of program) the stub keeps all four bytes and
+        the report follows the ELF: 0x66 to 0x6a, so the preamble is 106."""
+        d = self._elf(tmp_path, {"__bad_interrupt": 0x66, "main": 0x6A})
+        lines = _flash_report_lines(300, 262144, "atmega2560", d)
+        assert "194 bytes of your code" in lines[1]
+        assert "106 bytes of interrupt vector table" in lines[1]
+
+    def test_an_isr_ahead_of_main_is_the_boundary(self, tmp_path):
+        """ISRs are emitted before main, so the stub ends at the first ISR, not at
+        main: the handlers are the user's code, not the preamble's."""
+        d = self._elf(tmp_path, {"__bad_interrupt": 0x66, "timer0_ovf": 0x68,
+                                 "main": 0x90})
+        lines = _flash_report_lines(200, 32768, "atmega328p", d)
+        assert "96 bytes of your code" in lines[1]
+        assert "104 bytes of interrupt vector table" in lines[1]
+
+    def test_no_elf_reads_the_stub_width_from_the_assembly(self, tmp_path):
+        """With no ELF the emitted mnemonic is the figure: JMP reserves four."""
+        d = self._asm(tmp_path, stride=4, slots=26, stub="JMP")
+        lines = _flash_report_lines(300, 262144, "atmega2560", d)
+        assert "106 bytes of interrupt vector table" in lines[1]
+        assert "194 bytes of your code" in lines[1]
 
     def test_pic_images_lose_nothing(self, tmp_path):
         # A PIC14 image has no AVR vector table. Deducting 104 from one
