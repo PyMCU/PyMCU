@@ -142,6 +142,53 @@ class TestBuildStdlibFlag:
 
 
 # ---------------------------------------------------------------------------
+# The one declared compat layer reaches pymcuc as --stdlib (RFC 0007)
+# ---------------------------------------------------------------------------
+
+class TestBuildStdlibFlavorPassthrough:
+    @staticmethod
+    def _spy_compile(monkeypatch, captured: dict) -> None:
+        from src.driver.core.compiler import PyMCUCompiler
+
+        original_compile = PyMCUCompiler.compile
+
+        def spy(self, *args, **kwargs):
+            captured["stdlib_flavor"] = kwargs.get("stdlib_flavor")
+            return original_compile(self, *args, **kwargs)
+
+        monkeypatch.setattr(PyMCUCompiler, "compile", spy)
+
+    def test_declared_flavor_reaches_compile(self, tmp_path, monkeypatch,
+                                             mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
+        pytest.importorskip("pymcu_circuitpython", reason="pymcu-circuitpython not installed")
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, 'board = "arduino_uno"\nstdlib = ["circuitpython"]\n')
+
+        captured: dict = {}
+        self._spy_compile(monkeypatch, captured)
+
+        _invoke_build()
+        assert captured.get("stdlib_flavor") == "circuitpython", (
+            "the project's one compat layer must reach pymcuc as --stdlib; "
+            "CompileTimeEvaluator folds sys.implementation/os.uname() against it")
+
+    def test_no_flavor_passes_empty(self, tmp_path, monkeypatch,
+                                    mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, 'board = "arduino_uno"\n')
+
+        captured: dict = {}
+        self._spy_compile(monkeypatch, captured)
+
+        _invoke_build()
+        assert captured.get("stdlib_flavor") == "", (
+            "a project with no compat layer passes no --stdlib, and the introspection "
+            "fold stays off -- the image is then identical to before the option existed")
+
+
+# ---------------------------------------------------------------------------
 # Board key resolves to correct chip
 # ---------------------------------------------------------------------------
 
