@@ -959,7 +959,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |
-| `adafruit_ssd1306` | **builds unmodified, 18 928 bytes** | (moved off unused `GS2HMSBFormat.rect`, an unfolded format if after `super().__init__(_FRAMEBUF_FORMAT)`, and `len(framebuf.buf)` on `memoryview(self.buffer)[1:]` through I2C -> `_SSD1306` -> `FrameBuffer`) |
+| `adafruit_ssd1306` | **the 128x32 simpletest builds unmodified and matches the CPython I2C oracle byte for byte on the emulated Uno, 4 348 bytes** | (moved off unused `GS2HMSBFormat.rect`, an unfolded format if after `super().__init__(_FRAMEBUF_FORMAT)`, `len(framebuf.buf)` on `memoryview(self.buffer)[1:]` through I2C -> `_SSD1306` -> `FrameBuffer`, and `board.I2C()` returning the bus object) |
 | `adafruit_tcs34725` | **builds unmodified, 28 414 bytes** | (moved off run-time `pow` to `__pymcu_powf`; tuple-valued property reads bind a compile-time sequence) |
 | `adafruit_tmp117` | `with obj.i2c_device as i2c` in `adafruit_register.i2c_struct` | `call to undefined function '__with_manager_0___enter__'`; CV.add_values and imported `Mode.ATTR` no longer stop it |
 | `adafruit_tsl2591` | **builds unmodified, 5 814 bytes** | |
@@ -988,8 +988,8 @@ unwraps the alias, so `super().__init__(buffer, width, height, fmt)` expands
 the imported constructor. A field first assigned inside that base
 `__init__` `if` (`self.format = MVLSBFormat()`) is still a constructor
 field: the super expansion prefix is `inlineN___init___`, which is
-inside `__init__`. The harness simpletest is the 128x64 I2C module
-(`SSD1306_I2C(128, 64, i2c)` plus two corner pixels); 128x32 is the same
+inside `__init__`. The harness simpletest is the 128x32 I2C module
+(`SSD1306_I2C(128, 32, i2c)` plus two corner pixels); 128x64 is the same
 class with a different height. A None argument through
 `super().__init__(reset=reset)` is still None, so
 `if self.reset_pin:` folds and the guarded `DigitalInOut` use is
@@ -1020,9 +1020,14 @@ The I2C subclass forwards that window through `_SSD1306(buffer)`
 into `FrameBuffer(buffer)`, so `MVLSBFormat.fill`'s
 `for i in range(len(framebuf.buf))` / `framebuf.buf[i] = fill`
 writes `buffer[1:]` and leaves the I2C command byte. A plain
-`buf[a:b]` is still a copy. The 128x64 I2C simpletest
-(`SSD1306_I2C(128, 64, i2c)` plus two corner pixels) builds
-unmodified (18 928 bytes).
+`buf[a:b]` is still a copy. A plain function that returns a
+multi-field ZCA instance (`def I2C(): return _board_i2c(SCL, SDA)`
+in the board layer) expands at the call site, so the constructor's
+field stores land in the caller's binding and `self._mode == "c"`
+answers true. The 128x32 I2C simpletest
+(`SSD1306_I2C(128, 32, i2c)` plus two corner pixels) builds
+unmodified (4 348 bytes) and emits the same 50 I2C transactions
+as the CPython oracle, byte for byte, on the emulated Uno.
 `onewireio` is still missing for
 `adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
 a generator expression in `adafruit_pixelbuf`.

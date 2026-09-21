@@ -434,6 +434,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | Generators (`yield`) | A top-level function containing `yield` lowers to the same zero-cost state-machine class as `async def` (poll() returns 2 = yielded / 1 = working / 0 = done, value via `._value`); `for x in gen(...)` desugars to a poll loop with Python break/continue semantics. Not inside `@inline`/methods; `yield` as an expression not supported |
 | Module-level statements with explicit `def main()` | Module-scope executable statements (peripheral constructions, calls) run at startup before `main()`'s body, mirroring Python — previously rejected |
 | Nested class-typed ZCA fields | Method calls / field reads on a class-typed field (`machine.Pin` wrapping the HAL `Pin`) dispatch correctly, including through facade re-exports and single-level inheritance |
+| `def f(): return C(...)` returning a multi-field ZCA | A plain function whose return is a ZCA construction force-inlines at the call site, the same rule as a ZCA-typed parameter: `board.I2C()` -> `_board_i2c(SCL, SDA)` keeps every field store the constructor emits (adafruit_ssd1306). A single-field class still returns its register-packed handle; a declared `-> C` still lowers sret |
 
 ### Tooling / Targets
 
