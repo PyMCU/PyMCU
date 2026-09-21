@@ -2199,7 +2199,7 @@ public partial class IRGenerator
                     // The single-type form keeps the instructions it has had, to the byte: one
                     // comparison and a skip. A tuple of one is the same program as a bare name
                     // and must not cost more than one.
-                    Val expectedCode = ResolveBinding(alternatives[0]);
+                    Val expectedCode = ResolveExceptionCode(alternatives[0], stmt);
                     Val matchTemp = MakeTemp(DataType.UINT8);
                     Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
                     Emit(new JumpIfZero(matchTemp, skipLabel));
@@ -2211,7 +2211,7 @@ public partial class IRGenerator
                     string bodyLabel = MakeLabel();
                     foreach (string alternative in alternatives)
                     {
-                        Val expectedCode = ResolveBinding(alternative);
+                        Val expectedCode = ResolveExceptionCode(alternative, stmt);
                         Val matchTemp = MakeTemp(DataType.UINT8);
                         Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
                         Emit(new JumpIfNotZero(matchTemp, bodyLabel));
@@ -2273,6 +2273,32 @@ public partial class IRGenerator
         Emit(new Label(afterLabel));
     }
 
+
+    /// <summary>
+    /// The code an except alternative compares against. A dotted type
+    /// (`except adafruit_irremote.IRNECRepeatException:`) names the class through its module:
+    /// the qualifier resolves an `import ... as` alias first, then dots mangle to underscores,
+    /// which is the key the module's exception classes are scanned under. A module member that
+    /// exists but is not an exception has no entry in constantVariables, so the refusal names
+    /// the type rather than finding the member and comparing the code against, say, a pin.
+    /// </summary>
+    private Val ResolveExceptionCode(string name, ASTNode at)
+    {
+        if (!name.Contains('.')) return ResolveBinding(name);
+
+        string head = name.Split('.')[0];
+        string qualified = TryImportedAlias(head, out var realMod) && realMod != null
+            ? realMod + name.Substring(head.Length)
+            : name;
+        string mangled = qualified.Replace('.', '_');
+        if (constantVariables.TryGetValue(mangled, out int code)
+            || constantVariables.TryGetValue(currentModulePrefix + mangled, out code))
+            return new Constant(code);
+
+        throw UserError(
+            $"'{name}' is not a known exception type -- no class by that name deriving "
+            + "from Exception is defined on the module it names", at);
+    }
 
     /// The key an `except ... as` name is held under, qualified the way every other local is,
     /// so a name bound in one @inline expansion is not the name bound in another.

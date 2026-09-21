@@ -1564,7 +1564,12 @@ public partial class IRGenerator
                     b is "Exception" or "BaseException" || constantVariables.ContainsKey(b) && exceptionNames.Contains(b));
                 if (isException)
                 {
-                    constantVariables[classDef.Name] = nextUserExceptionCode++;
+                    int exnCode = nextUserExceptionCode++;
+                    constantVariables[classDef.Name] = exnCode;
+                    // `except mod.Exc:` resolves the class through the qualified key a
+                    // `mod.X` read mangles to. The bare key above stays: `except Exc:`
+                    // inside the defining module, and `from mod import Exc`, bind it.
+                    constantVariables[currentModulePrefix + classDef.Name] = exnCode;
                     exceptionNames.Add(classDef.Name);
                     continue;
                 }
