@@ -166,6 +166,13 @@ purpose, as opposed to bugs like these three that were silent until found.
   and `"RP2350" in uname().machine` fold. `listdir` / `getenv` stay undefined --
   there is still no filesystem (#466). Last construct unmodified `adafruit_dht`
   stopped on.
+- Under a declared compat layer (`stdlib = ["circuitpython"]` / `["micropython"]`),
+  `if` / `match` conditions on `sys.implementation.name`, `sys.implementation.version[i]`,
+  `sys.platform` and `os.uname()` / `uname()` fields fold at compile time, answered with
+  the strings a real board of that layer reports (RFC 0007, PyMCU#266). The
+  adafruit_requests guard `if not sys.implementation.name == "circuitpython":` drops its
+  dead `import typing` branch rather than keeping it. With no compat layer the fold does
+  not fire and the firmware image is unchanged.
 - A non-literal raise message (f-string, concatenation, call) compiles as a deferred
   print: runtime pieces are stored at the raise, and `print(e)` / `str(e)` / `e.args[0]`
   replay them (#435). A program that never binds `as e` is unchanged to the byte.

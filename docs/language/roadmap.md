@@ -10,7 +10,7 @@ This page tracks which language and HAL features have been implemented, and what
 
 | Feature | Notes |
 |---|---|
-| `if / elif / else` | Compile-time DCE on `__CHIP__` branches |
+| `if / elif / else` | Compile-time DCE on `__CHIP__` branches; under `stdlib = [...]` also `sys.implementation` / `sys.platform` / `uname()` guards (RFC 0007, PyMCU#266) |
 | `while` + `break` / `continue` | |
 | `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1, 2, 3]` | Fixed-size array or constant list literal |
@@ -118,6 +118,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `@interrupt(vector)` | ISR handler generation with automatic `sei` |
 | `@property` / `@name.setter` | Compile-time expansion. A tuple-returning getter indexes like `f()[k]` (`self.measurements[0]`, adafruit_sht4x) |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
+| `sys.implementation` / `sys.platform` / `os.uname()` in `if` / `match` | When the project declares `stdlib = ["circuitpython"]` or `["micropython"]`, these fold to the answers a real board of that layer reports (RFC 0007, PyMCU#266) |
 | `__FREQ__` | Compile-time clock frequency in Hz |
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
 | `float` (soft-float) | IEEE 754 single-precision; AVR (`__fp_*` intrinsics) and RP2040 (bootrom fast-float library via `__aeabi_f*` shims); annotation `x: float = 3.14`; float↔int conversions truncate toward zero. RP2350 pending (M33 FPU) |

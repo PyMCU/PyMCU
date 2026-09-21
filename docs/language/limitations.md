@@ -810,6 +810,17 @@ fallback `import time` already uses. `uname()`, `os.name` and `os.sep` are compi
 facts of `__CHIP__`. Names that need a filesystem (`listdir`, `getenv`, `stat`) are not
 defined on that module, and `import uos` points at `import os`.
 
+When the project declares a compat layer (`stdlib = ["circuitpython"]` or
+`["micropython"]`), conditions on `sys.implementation.name`, `sys.implementation.version[i]`,
+`sys.platform` and `os.uname()` / `uname()` fields fold at compile time with the answer a
+real board of that layer reports -- `sys.implementation.name` is `"circuitpython"` /
+`"micropython"`, `sys.platform` is `"RP2040"` / `"rp2"`, `uname().sysname` is `"rp2040"` /
+`"rp2350a"` / `"rp2"`, and parts with no upstream port answer with the plain chip name
+(RFC 0007, PyMCU#266). `if not sys.implementation.name == "circuitpython":` therefore drops
+its branch instead of keeping it. The folded answers come from the compiler's per-board
+table, not from parsing a `sys.py` / `os.py`; without a compat layer these conditions stay
+run-time and `import sys` resolves the way it always did.
+
 A module-level object in an imported module is constructed at startup, before the entry
 file's own module-level statements, in the order the modules are imported. This applies to
 the project's own modules, the ones under `sources`. An installed distribution (the `pymcu`

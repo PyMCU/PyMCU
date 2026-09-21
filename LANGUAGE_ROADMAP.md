@@ -10,7 +10,7 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Feature | Notes |
 |---------|-------|
-| `if` / `elif` / `else` | Compile-time DCE for `__CHIP__` branches |
+| `if` / `elif` / `else` | Compile-time DCE for `__CHIP__` branches; under `stdlib = [...]` also `sys.implementation` / `sys.platform` / `uname()` guards (RFC 0007, PyMCU#266) |
 | `while` + `break` / `continue` | Full support |
 | `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1,2,3]` | Fixed-size array or constant list literal |
@@ -79,6 +79,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `@classmethod` | Compile-time class-namespace population: `cls` is the receiver class. `Class.method(args)` expands with `setattr(cls, name, value)`, `cls.attr = {}` and `cls.attr[k] = v` filling that class (adafruit_sht4x / tmp117 `CV.add_values`). `return cls()` constructs the receiver class. `cls` is not a runtime object |
 | `@staticmethod` | NOT supported, and not silently. `A.f(x)` emits a call to `A_f` that the same build never defines, so it fails at link time with a symbol and no source line; `a.f(x)` binds the receiver to the first parameter, so the argument has nowhere to go. Calling anything through the class object is what is missing; the decorator changes nothing either way (PyMCU#201) |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
+| `sys.implementation` / `sys.platform` / `os.uname()` in `if` / `match` | When the project declares `stdlib = ["circuitpython"]` or `["micropython"]`, these fold to the answers a real board of that layer reports (RFC 0007, PyMCU#266) |
 | `__FREQ__` | Compile-time clock frequency in Hz (e.g. `16000000` at 16 MHz); use for timing calculations |
 | `.value` dereference | 8/16-bit memory read/write via `ptr` |
 
