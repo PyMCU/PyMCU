@@ -22,7 +22,8 @@ docs: mark @extern as implemented in roadmap and limitations
 
 Each commit must leave the test suites that exist in this repo green: `just test-unit`
 for the compiler and `pytest tests/driver` for the driver. The AVR integration suite
-lives in the `pymcu-avr` repo since the split — run it there when you touch codegen.
+and the language oracle corpus (`just test-oracle`, both front ends) live in the
+`pymcu-avr` repo since the split — run them there when you touch codegen.
 
 ---
 

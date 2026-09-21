@@ -53,10 +53,14 @@ Every commit you create must:
    docs: add @extern to roadmap and limitations
    ```
 
-5. **Each commit must leave the test suite green.** Run before committing:
+5. **Each commit must leave the test suites green.** Run before committing:
    ```bash
-   dotnet test tests/integration/PyMCU.IntegrationTests.csproj
+   just test-unit        # compiler unit tests
+   pytest tests/driver   # driver tests
    ```
+   The AVR integration suite and the language oracle corpus (`just test-oracle`,
+   both front ends) live in the `pymcu-avr` repo — run them there when you touch
+   codegen.
 
 ---
 
@@ -87,18 +91,26 @@ Violations of these rules cause compile errors in the PyMCU compiler itself:
 
 ## Testing
 
-The integration test suite uses AVR8Sharp (cycle-accurate AVR simulator) and .NET:
-
 ```bash
-# Run all tests (must stay green — currently 691 passing)
-dotnet test tests/integration/PyMCU.IntegrationTests.csproj
+# Compiler unit tests (must stay green)
+just test-unit
+
+# Driver tests
+pytest tests/driver
+
+# The AVR8Sharp integration suite and the language oracle corpus live in the
+# pymcu-avr repo -- run them there when you touch codegen:
+#   dotnet test tests/integration   # in the pymcu-avr checkout
+#   just test-oracle                # oracle corpus, both front ends
 
 # Install the stdlib editable once; lib/src edits are then picked up live.
 # Do NOT rsync a copy into site-packages/pymcu/ — it shadows the editable .pth.
 just sync-stdlib   # = uv pip install --no-deps -e lib/
 ```
 
-Add a test for every new compiler or HAL feature in `tests/integration/Tests/AVR/`.
+Add a test for every new compiler or HAL feature in `tests/unit/` (compiler
+lowering) and in `tests/integration/` of the `pymcu-avr` checkout (wire-visible
+behaviour).
 
 ---
 
