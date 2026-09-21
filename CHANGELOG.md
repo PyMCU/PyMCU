@@ -45,6 +45,14 @@ purpose, as opposed to bugs like these three that were silent until found.
   probe (`us * 17 // 100`): 952 bytes before, 888 after (#408).
 
 ### Silent wrong code
+- A program whose module level can end parks the CPU instead of returning into nothing. The
+  entry function is reached by `RJMP` with an empty hardware stack, so the `RET` its trailing
+  return lowered to popped two bytes past RAMEND and jumped wherever they pointed -- on
+  silicon a reboot loop or a wild PC. Every reachable return in `main` (the module body and
+  `def main()` alike) now jumps to a shared `__pymcu_halt` (`cli` + spin), the avr-libc
+  `_exit` idiom: interrupts off, last outputs held. A body that cannot fall through
+  (`while True:`) has that return deleted as unreachable, so a never-ending program is
+  byte-identical.
 - An unhandled `raise` written in the entry function halts with its name instead of returning
   from a function that has no caller. It lowered to `SET; RET`, so the RET popped a return
   address that was never pushed and the chip ran off into whatever the top of SRAM held; the

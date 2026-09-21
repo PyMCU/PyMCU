@@ -817,6 +817,10 @@ stdlib and the compat layers) is written knowing that only the entry file's modu
 runs, and several guard their top level on the target chip, so theirs is deliberately left
 alone.
 
+A program whose module level ends parks the CPU with interrupts disabled and its last
+outputs held, like avr-libc's `_exit`. A body held by a `while True:` never ends, so it
+never parks.
+
 ---
 
 ## Built-ins summary
