@@ -15,7 +15,7 @@
  */
 
 // The PGO profile produced by `pymcu profile --pgo` (see
-// docs/rfcs/0009-profile-guided-optimisation.md). Blocks are keyed by the MIR
+// docs/rfcs/0010-profile-guided-optimisation.md). Blocks are keyed by the MIR
 // label names the backend emitted in its block map; counts/cycles are
 // aggregated across every scenario the workload declared.
 

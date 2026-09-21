@@ -1,12 +1,14 @@
-# RFC 0009: profile-guided optimisation (workload -> emulator -> profile -> optimizer)
+# RFC 0010: profile-guided optimisation (workload -> emulator -> profile -> optimizer)
 
-- Status: **PROPOSED**, implemented on the `pgo-spike` spike branches of this repo and
-  `pymcu-avr` as a feasibility proof. Everything below past the design sections is the
-  measured result of that spike.
+- Status: **EXPERIMENTAL**, implemented on the `pgo-land` branches of this repo and
+  `pymcu-avr`, gated behind `[tool.pymcu.experimental] pgo = true` (or
+  `PYMCU_EXPERIMENTAL_PGO=1`). Everything below past the design sections is the
+  measured result of the `pgo-spike` feasibility study this landed from.
 - Date: 2026-09-21
-- Affects: `src/driver/core/workload.py` (new), `src/driver/commands/profile.py`,
-  `src/driver/commands/build.py`, `src/driver/core/compiler.py`,
-  `src/driver/backends/__init__.py`, `src/compiler/Common/Models/CompilerOptions.cs`,
+- Affects: `src/driver/core/workload.py` (new), `src/driver/core/project_config.py`,
+  `src/driver/commands/profile.py`, `src/driver/commands/build.py`,
+  `src/driver/core/compiler.py`, `src/driver/backends/__init__.py`,
+  `src/compiler/Common/Models/CompilerOptions.cs`,
   `src/compiler/Infrastructure/Cli/CompilerCliBuilder.cs`,
   `src/compiler/IR/PgoProfile.cs` (new), `src/compiler/Pipeline/Phases/IrGenerationPhase.cs`,
   `src/compiler/IR/Optimizer.cs`;
@@ -15,7 +17,7 @@
   `src/csharp/profiler/{Program,Workload,PgoRunner}.cs`,
   `tests/integration/{PymcuCompiler,Differential/TraceComparison}.cs`,
   `tests/integration/Tests/AVR/PgoDifferentialTests.cs`,
-  `tests/integration/fixtures/pgo-cold-outline/`.
+  `tests/integration/fixtures/pgo-hot-veto/`.
 - Builds on: the TestKit stimulus surface (`SetPinValue`, `Serial.InjectByte`,
   `ProfilingDecoder`), the existing `--emit-symbols`/`--emit-linemap` machinery, the
   ELF symtab reader in `build.py`, and the `@inline` outlining pass in `Optimizer.cs`.
@@ -41,13 +43,15 @@
    peephole pattern (any label is a potential jump target); measured on
    `fixtures/yield-from`, markers-as-labels cost +216 B of lost jump threading.
    As comments they are inert; as post-peephole labels they still reach the symtab.
-5. There is exactly **one consumer**, in `Optimizer.OutlineInlineExpansions`: a region
-   every site of which ran zero times under the workload is outlined even when the
-   static word-cost model cannot prove the win, and a region whose enclosing block
-   burns >= 1% of the workload's cycles is never outlined. Only a flipped decision is
-   attributed to the profile (`__pymcu_outline_pgo_N` name, `pgo: kept N region(s)
-   inline` DebugLine) -- a decision the cost model already made is not the profile's
-   work and keeps the normal `__pymcu_outline_N` name.
+5. There is exactly **one consumer**, in `Optimizer.OutlineInlineExpansions`, and it
+   is **veto-only**: a region whose enclosing block burns >= 1% of the workload's
+   cycles is never outlined. The spike also carried a cold override (a region every
+   site of which ran zero times was outlined even when the static word-cost model
+   could not prove the win); it was dropped on landing because it only ever adds
+   bytes -- the measured corpus delta is in section 6. Only a flipped decision is
+   attributed to the profile (`pgo: kept N region(s) inline` DebugLine) -- a decision
+   the cost model already made is not the profile's work and keeps the normal
+   `__pymcu_outline_N` name.
 6. `pymcu profile --pgo` **delegates the build to the real `pymcu build --debug`**
    rather than re-implementing compile+assemble+link. The first draft of the spike
    duplicated that path and silently dropped the preamble injection (print/input UART
@@ -58,8 +62,16 @@
 7. The gate is a **differential axis, not a size assertion**: every corpus program is
    built with and without the profile and must produce identical UART bytes, GPIO
    transitions and BREAK checkpoints under the same scenario. Speed and size are
-   measured, not gated -- the spike's own consumer is allowed to trade bytes for
-   correctness of the mechanism, and the measurement reports what it actually did.
+   measured, not gated -- the consumer is allowed to trade bytes for correctness of
+   the mechanism, and the measurement reports what it actually did.
+8. The whole path is **opt-in behind a feature flag**:
+   `[tool.pymcu.experimental] pgo = true` in pyproject.toml, mirrored by
+   `PYMCU_EXPERIMENTAL_PGO=1` for CI and scripts. With the flag off, `pymcu profile
+   --pgo` and `pymcu build --profile` (or `PYMCU_PROFILE`) refuse with a one-line
+   message that names the flag, and the driver never passes `--profile` to `pymcuc`
+   nor `--emit-blockmap` to `pymcuc-avr`. The flag is a driver policy: `pymcuc
+   --profile` itself keeps working, because the compiler is a tool and the knob on
+   it is documented input, not a secret.
 
 ## 1. Workload format
 
@@ -126,37 +138,44 @@ would miss the commonest delay loop in the corpus).
 
 `Optimizer.OutlineInlineExpansions` already groups identical `@inline` expansion
 regions and proves a word-cost win (`nSites * body` vs `body + 1 + params + nSites *
-(params + 2)`). The profile participates at exactly that decision point, per group:
+(params + 2)`). The profile participates at exactly that decision point, per group,
+as a veto only:
 
-- `ClassifyGroupByProfile` computes each region's blocks as its own internal labels
-  plus the label that falls through into it (the block that owns the branch check).
-- `allCold` (every site at count 0) + statically rejected => outline anyway, named
-  `__pymcu_outline_pgo_N`. The CALL it pays for is never executed; the size cost is
-  the price of not leaving the dead shape inline.
-- `anyHot` (enclosing block cycles >= 1% of `TotalCycles`) + statically accepted =>
+- `GroupIsHotByProfile` computes each region's blocks as its own internal labels
+  plus the label that falls through into it (the block that owns the branch check),
+  and sums the cycles the profile recorded against them.
+- hot (enclosing block cycles >= 1% of `TotalCycles`) + statically accepted =>
   refuse, and record `pgo: kept N region(s) inline` as a `DebugLine` at the top of
   the function. Timing-critical loops keep their straight-line code.
-- A veto that merely agrees with the cost model, or an override the model did not
-  need, is not the profile's decision and gets no marker.
+- A veto that merely agrees with the cost model is not the profile's decision and
+  gets no marker; a group the model rejects stays inline, profile or not.
 
-Measured interaction, all of it intended: the override fires only where the static
-model said no, so on `pgo-cold-outline` it emits `__pymcu_outline_pgo_1` for a 2-site
-x 2-word group (+2 B), and on `dsp-stress` taking an extra cold group early reorders
-the fixpoint so a different group becomes profitable later (-16 B net). The profile
-can shrink only through such second-order effects: an override by construction pays
-more static words than it saves, so its direct size contribution is always >= 0.
+The spike's second direction -- `allCold` (every site at count 0) + statically
+rejected => outline anyway, named `__pymcu_outline_pgo_N` -- was removed before
+landing. Its premise was that a CALL nobody executes is free, but the CALL's words
+are still in the image: an override by construction pays more static words than it
+saves, so its direct size contribution is always >= 0 (section 6 has the measured
+ledger). What remains is the veto, which cannot grow the image: it only ever
+declines an outlining the static model had already proved a win.
 
 ## 5. The gate
 
 `PgoDifferentialTests` runs the whole corpus through `BuildFixtureProfiled` /
 `BuildProfiled` (which do `pymcu profile --pgo` then `PYMCU_PROFILE=... pymcu build` in
-a scratch copy) and `BehaviorRecorder`-compares UART bytes, pin-change sequences and
-BREAK checkpoints against the plain build under the same trace budget. A guard test
-(`ProfileSwitch_ActuallyChangesTheEmittedImage`) compiles `pgo-cold-outline` both ways
-and fails if the images are identical -- without it the axis could pass vacuously on a
-profile that never reached the optimizer.
+a scratch copy, with `PYMCU_EXPERIMENTAL_PGO=1` set explicitly) and
+`BehaviorRecorder`-compares UART bytes, pin-change sequences and BREAK checkpoints
+against the plain build under the same trace budget. A guard test
+(`ProfileSwitch_ActuallyChangesTheEmittedImage`) compiles `pgo-hot-veto` both ways
+and fails if the images are identical -- without it the axis could pass vacuously on
+a profile that never reached the optimizer. The fixture's `@inline` sites sit in the
+hot loop, where the static model outlines them and the veto keeps them in.
 
 ## 6. Measurements (the corpus run this RFC cites)
+
+These numbers are the spike's, measured with BOTH directions of the consumer live
+(cold override + hot veto). They are kept because the +286 B net is the reason the
+override did not survive landing: a consumer that can only ever add bytes is a
+pessimiser with extra steps.
 
 487 ATmega328P programs (`examples/*` + `tests/integration/fixtures/*` that build for
 the Uno class, default 200 ms scenario each): **23 changed, 464 identical images, 0
@@ -172,11 +191,12 @@ blink 142 B -> 142 B with `<main>` still at 0x68 and the loop `rjmp` still at 0x
 
 Differential axis: **484/484 pass**, 0 failures.
 
-Read of the numbers: the loop closes end to end on real programs -- declared workload
--> emulator run -> profile -> different firmware -> identical behaviour -> measured
-delta -- but one consumer that only ever flips *rejected* groups cannot net-win on
-flash: it either adds bytes (cold override) or keeps them (hot veto). The value the
-spike proves is the plumbing and the gate, not this consumer's ledger.
+With the override removed the ledger is one-sided by construction: a veto can only
+ever keep bytes the static model would have cut, so a profiled build is the same
+size or larger, and the only changed images are the ones where the profile refused
+a hot outlining. What the spike proved -- and what stays -- is the plumbing and the
+gate: declared workload -> emulator run -> profile -> different firmware ->
+identical behaviour -> measured delta, end to end on real programs.
 
 ## 7. What the profile must never do
 
@@ -190,6 +210,11 @@ spike proves is the plumbing and the gate, not this consumer's ledger.
 
 ## 8. Not done / deliberately out of scope
 
+- Cold-region override: done on the spike, removed on landing. Outlining a region
+  the workload never ran only moves cost from executed cycles to image bytes; the
+  corpus paid +286 B net for it (section 6). The plumbing to bring it back exists
+  (`ClassifyGroupByProfile` kept the per-region block sum as `GroupIsHotByProfile`),
+  the ledger says do not.
 - Second consumer: R2-R15 named-variable homes are already ordered by *static* IR use
   count (`AvrRegisterAllocator.Allocate`, `OrderByDescending(useCount)`). Swapping in
   dynamic counts needs the profile (or a per-name weight table) threaded through the
