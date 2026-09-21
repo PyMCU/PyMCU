@@ -4522,10 +4522,10 @@ public partial class IRGenerator
     // Everything is expanded from the format read at compile time. Nothing parses a format on
     // the chip, and there is no run-time `struct` object.
     //
-    // OUT OF SCOPE, each refused by name and never guessed at: a result that is not indexed on
-    // the spot, a non-literal format, a non-literal index, `pack_into(..., *values)`, and any
-    // code outside B/b/H/h. A width read from the wrong code is a silent wrong value on a
-    // sensor reading, which is the failure this whole surface has to not have.
+    // OUT OF SCOPE, each refused by name and never guessed at: a non-literal format,
+    // a non-literal index, and any code outside B/b/H/h. A width read from the wrong
+    // code is a silent wrong value on a sensor reading, which is the failure this whole
+    // surface has to not have.
 
     /// <summary>
     /// AST-only: does this call name `struct.&lt;member&gt;`, under whatever name the file imported
@@ -4844,50 +4844,56 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// `struct.pack_into(fmt, buf, off, value)` -- one scalar, written into a buffer the caller
-    /// owns. Lowered as the byte stores the format describes, through the ordinary assignment
-    /// path for the same reason the read goes through the ordinary expression path.
+    /// `struct.pack_into(fmt, buf, off, v0, ...)` -- one value per format field, written
+    /// into a buffer the caller owns. Lowered as the byte stores the format describes,
+    /// through the ordinary assignment path for the same reason the read goes through
+    /// the ordinary expression path.
     /// </summary>
     private Val EmitStructPackInto(CallExpr expr)
     {
         const string who = "struct.pack_into()";
-        var fields = ParseStructFormat(StructFormatArg(expr, who), who, expr.Callee);
+        string fmt = StructFormatArg(expr, who);
+        var fields = ParseStructFormat(fmt, who, expr.Callee);
 
-        if (expr.Args.Count != 4)
+        // (format, buffer, offset, v0, v1, ...) -- one value argument per field the
+        // format describes. `pack_into(fmt, buf, off, *pair)` arrives spliced, with
+        // pair's elements already in the list. A count that disagrees is the mistake
+        // CPython raises for pack_into as well: an N-field format wants N values.
+        int nValues = expr.Args.Count - 3;
+        if (expr.Args.Count < 4 || nValues != fields.Count)
             throw UserError(
-                $"{who} is supported for ONE field: (format, buffer, offset, value). "
-                + $"This format describes {fields.Count} field"
+                $"{who} writes one value per field: '{fmt}' describes {fields.Count} field"
                 + (fields.Count == 1 ? "" : "s")
-                + ", and packing several at once needs the values to travel as a tuple, which "
-                + "there is no heap to hold.", expr.Callee);
-        if (fields.Count != 1)
-            throw UserError(
-                $"{who}: '{StructFormatArg(expr, who)}' describes {fields.Count} fields. One "
-                + "call writes one field, because several values would have to arrive as a "
-                + "tuple and there is no heap to hold one. Write one call per field, each with "
-                + "its own one-field format and offset.", ArgAt(expr, 0));
+                + $" and {Math.Max(nValues, 0)} value{(nValues == 1 ? "" : "s")} "
+                + (nValues == 1 ? "was" : "were")
+                + " given. A `*seq` argument splices to one value per element, so a "
+                + "sequence that does not fill the format still stops here.", expr.Callee);
 
-        var f = fields[0];
         int at = StructOffsetArg(expr, 2, who);
         Expression buf = expr.Args[1];
-        Expression value = expr.Args[3];
 
-        void Store(int n, Expression e) =>
-            VisitStatement(new AssignStmt(new IndexExpr(buf, new IntegerLiteral(at + n)), e)
-                { Line = expr.Line, Column = expr.Column });
+        for (int k = 0; k < fields.Count; ++k)
+        {
+            var f = fields[k];
+            Expression value = expr.Args[3 + k];
 
-        if (f.Width == 1)
-        {
-            Store(0, new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF)));
-        }
-        else
-        {
-            Expression lo = new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
-            Expression hi = new BinaryExpr(
-                new BinaryExpr(value, PyMCU.Frontend.BinaryOp.RShift, new IntegerLiteral(8)),
-                PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
-            Store(f.LittleEndian ? 0 : 1, lo);
-            Store(f.LittleEndian ? 1 : 0, hi);
+            void Store(int n, Expression e) =>
+                VisitStatement(new AssignStmt(new IndexExpr(buf, new IntegerLiteral(at + f.Offset + n)), e)
+                    { Line = expr.Line, Column = expr.Column });
+
+            if (f.Width == 1)
+            {
+                Store(0, new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF)));
+            }
+            else
+            {
+                Expression lo = new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
+                Expression hi = new BinaryExpr(
+                    new BinaryExpr(value, PyMCU.Frontend.BinaryOp.RShift, new IntegerLiteral(8)),
+                    PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
+                Store(f.LittleEndian ? 0 : 1, lo);
+                Store(f.LittleEndian ? 1 : 0, hi);
+            }
         }
 
         // pack_into returns None. A caller that uses the value gets the ordinary void-in-an-

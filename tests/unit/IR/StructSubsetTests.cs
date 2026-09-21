@@ -317,13 +317,37 @@ public class StructSubsetTests
         Assert.Contains("gives no byte order", ex.Message);
     }
 
+    // Multi-field pack_into is the write half of i2c_struct.Struct.__set__:
+    // `pack_into("<HH", _BUFFER, 1, *value)`. One value per field, each stored at the
+    // sum of the widths before it.
     [Fact]
-    public void PackingSeveralFieldsAtOnce_IsRefused()
+    public void PackIntoWritesOneValuePerField()
     {
+        var ir = Gen(Head + "    struct.pack_into(\"<HH\", buf, 1, 0xBEEF, 0x0A0B)\n    return buf[0]\n");
+
+        Assert.Equal(new[] { 1, 2, 3, 4 }, BytesWritten(ir, 8));
+    }
+
+    // The splat spelling is the same call: `*value` delivers its elements as the
+    // positional list, so a bound tuple fills the format one field at a time.
+    [Fact]
+    public void PackIntoSplatWritesOneValuePerField()
+    {
+        var ir = Gen(Head +
+            "    pair = (0xBEEF, 0x0A0B)\n" +
+            "    struct.pack_into(\">HH\", buf, 1, *pair)\n    return buf[0]\n");
+
+        Assert.Equal(new[] { 2, 1, 4, 3 }, BytesWritten(ir, 8));
+    }
+
+    [Fact]
+    public void AValueCountShortOfTheFormat_IsRefused()
+    {
+        // A 2-field format with ONE value: the arity is wrong, and the message says so.
         var ex = Fails(Head + "    struct.pack_into(\"<HH\", buf, 0, 1)\n    return buf[0]\n");
 
         Assert.Contains("describes 2 fields", ex.Message);
-        Assert.Contains("one call per field", ex.Message);
+        Assert.Contains("1 value", ex.Message);
     }
 
     [Fact]

@@ -3588,6 +3588,40 @@ public partial class IRGenerator
         return true;
     }
 
+    /// <summary>
+    /// The same rewrite for a value that has no Val form: <c>inst.attr = (a, b)</c>,
+    /// where <c>attr</c> is a class attribute whose class defines <c>__set__</c>
+    /// (adafruit_register's <c>Struct</c>). A tuple is not a scalar, so the expression
+    /// itself is handed to the call, which binds it to the <c>value</c> parameter as the
+    /// sequence a tuple argument always becomes. Asked before the field-array path, which
+    /// would otherwise swallow the write into storage the descriptor protocol never reads.
+    /// </summary>
+    private bool TryDescriptorSeqWrite(MemberAccessExpr target, Expression value)
+    {
+        var objVal = VisitExpression(target.Object);
+        string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : null);
+        while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+        if (!TryFindClassAttribute(baseName, target.Member, out var owner, out var fullName)
+            || !instanceClasses.TryGetValue(fullName, out var attrCls)
+            || !ClassDefinesMethod(attrCls, "__set__"))
+            return false;
+
+        string clsName = ClassNameForDescriptorRewrite(owner);
+        var attr = new MemberAccessExpr(new VariableExpr(clsName) { Line = target.Line }, target.Member)
+            { Line = target.Line };
+        VisitCall(new CallExpr(
+            new MemberAccessExpr(attr, "__set__") { Line = target.Line },
+            new List<Expression>
+            {
+                // The receiver was already lowered on the way here; handing the expression
+                // over again would emit it a second time. The value is the tuple as written:
+                // the __set__ expansion binds it to `value` as a sequence parameter.
+                new PreEvaluatedExpr(objVal, null) { Line = target.Line },
+                value,
+            }) { Line = target.Line });
+        return true;
+    }
+
     // True when this reads a @property getter on a known instance: the receiver is a plain
     // name bound to a class that registers <member> as a getter. The MRO walk makes a getter
     // declared on a base class reachable from a subclass instance (`lcd.columns`).

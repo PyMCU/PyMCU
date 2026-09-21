@@ -880,6 +880,15 @@ public partial class IRGenerator
             var fieldElems = stmt.Value is ListExpr fieldList
                 ? fieldList.Elements
                 : ((TupleExpr)stmt.Value).Elements;
+
+            // `registers.tuple_of_numbers = (0, 0x00FF)` where `tuple_of_numbers` is a
+            // class attribute holding a Struct (adafruit_register): a data descriptor
+            // takes precedence over instance storage, so the write IS
+            // `__set__(obj, value)` and the tuple binds to its `value` parameter the
+            // way any tuple argument binds. Only then is a tuple RHS field storage.
+            if (fieldElems.Count > 0 && TryDescriptorSeqWrite(listMem, stmt.Value))
+                return;
+
             if (fieldElems.Count > 0
                 && fieldElems.All(e => TryEvalElemConst(e, out _))
                 && ResolveMemberArrayName(listMem) is null)
