@@ -107,6 +107,38 @@ purpose, as opposed to bugs like these three that were silent until found.
   `print()` after a runtime `s` was bound re-emitted the buffer instead of the text
   (oracle probe 070). The load path now applies the local-binding rule the indexed
   store path has had since #458/#460.
+- A field a module-level object got from an inline call's return reads the same value
+  inside a function as at module scope. `pwmio.PWMOut.__init__` stores
+  `self._real_frequency = self._pwm.frequency()`, an inlined call whose result temp
+  aliases the folded constant: the field assignment checked the temp itself for a
+  constant instead of chasing the alias, emitted a real store, and dead-store
+  elimination then removed that store once the module-scope reads had folded -- so
+  `print(pwm.frequency)` printed 61 in `main` and 0 inside `def show()`. The fold now
+  walks the alias chain, and a module-instance field a function reads but nothing can
+  fold is promoted to real global storage instead of being left a dead-stored local.
+  This is the field `adafruit_motor.servo` computes `_min_duty` and `_duty_range` from.
+- A `return` expression sitting in dead code behind a folded `if` no longer overwrites
+  the result alias the taken arm already set. `pymcu.hal.pwm.PWM.frequency()` reads
+  `if self._exact: return pwm_t1_exact_frequency(...)` then
+  `return pwm_bucket_frequency(...)`: on a mode-14 pin the first return is selected
+  and binds the result temp to the exact frequency, but the trailing dead return was
+  still walked and rebound that alias to the bucket arm -- so once field stores
+  chased aliases (previous entry) a `Timer1` PWMOut reported 61 Hz while emitting an
+  exact 50 Hz. Variable and temporary results now respect the same
+  `afterUnconditionalReturn` guard the constant arm already had.
+- A `float` constant passed through a property setter binds its parameter.
+  `Servo.fraction`'s setter receives `value = angle / actuation_range` as a
+  compile-time `0.5`, but the setter binding switch had a case for every value kind
+  except `FloatConstant`, so the body read an unwritten slot and `_duty_range *
+  value` computed 0 -- `s.angle = 90` wrote `_min_duty` for every angle. A
+  `FloatConstant` now binds like the other constant kinds, truncating to the
+  parameter's integer annotation when it has one.
+- A comparison between two compile-time floats folds to its boolean result instead
+  of `FloatConstant(0.0)` -- the catch-all arm of the constant-float fold answered
+  `0.0` for every operator, so `if not 0.0 <= value <= 1.0:` on a bound float
+  constant read the range check as failed and `Servo.fraction`'s setter raised on a
+  legal value. Comparison operators now fold to `0`/`1` while arithmetic keeps its
+  float result.
 
 ### Language surface
 - `bytearray(n)` with a runtime `n` allocates from a static arena (no `free()`, AVR only)
