@@ -40,7 +40,7 @@ def main():
 ```
 ```
 
-Both compile to the same 36-byte AVR toggle loop (142 bytes total firmware including interrupt vector table).
+Both compile to the same 36-byte AVR toggle loop (138 bytes total firmware including interrupt vector table).
 
 ---
 
@@ -178,10 +178,10 @@ Compiling `blink` (toggle D13, delay 500 ms) for Arduino Uno (16 MHz):
 | Toolchain | Flash | SRAM |
 |-----------|-------|------|
 | Arduino (avr-gcc -Os) | 924 bytes | 9 bytes |
-| PyMCU | **142 bytes** | **0 bytes** |
+| PyMCU | **138 bytes** | **0 bytes** |
 
-Both numbers are total firmware (user code + interrupt vector table). PyMCU's 142 bytes
-breaks down as 36 bytes of user code + 106 bytes of IVT and startup stub — the same fixed
+Both numbers are total firmware (user code + interrupt vector table). PyMCU's 138 bytes
+breaks down as 36 bytes of user code + 102 bytes of interrupt vector table — the same fixed
 overhead any AVR toolchain emits.
 
 PyMCU eliminates the Arduino runtime overhead (init code, millis ISR,

@@ -336,7 +336,7 @@
     },
     "compat-mp-blink-toggle": {
       "kind": "fixture",
-      "hex_bytes": 142
+      "hex_bytes": 138
     },
     "compat-mp-i2c-rw": {
       "kind": "fixture",
@@ -1479,7 +1479,7 @@
     },
     "zca-mixed-fold-and-share": {
       "kind": "fixture",
-      "hex_bytes": 1032
+      "hex_bytes": 1024
     },
     "zca-outline": {
       "kind": "fixture",
@@ -1740,5 +1740,6 @@
       "hex_bytes": 324
     }
   },
-  "note_added_2026-09-15c": "compat-mp-blink-toggle (142 B) and zca-mixed-fold-and-share are now committed in pymcu-avr proper (main @ 970e8c8a65c3779d49a365007c84a8f838b0fbdb), each with an NUnit test class (CompatMpBlinkToggleTests, ZcaMixedFoldAndShareTests) asserting both the exact byte count and the runtime behaviour (PORTB5 toggling in avr8sharp; serial output matching CPython for the identical class). zca-mixed-fold-and-share's byte count changed from 602 to 1032 between the RFC's first draft and this commit: 602 B was the program before it printed anything, which made it buildable but not behaviour-checkable; printing the five values needed for the CPython-equality assertion pulled in UART init and decimal formatting. The RFC text (Section 11 Phase 1, Section 13.2) reflects 1032 B."
+  "note_added_2026-09-15c": "compat-mp-blink-toggle (142 B) and zca-mixed-fold-and-share are now committed in pymcu-avr proper (main @ 970e8c8a65c3779d49a365007c84a8f838b0fbdb), each with an NUnit test class (CompatMpBlinkToggleTests, ZcaMixedFoldAndShareTests) asserting both the exact byte count and the runtime behaviour (PORTB5 toggling in avr8sharp; serial output matching CPython for the identical class). zca-mixed-fold-and-share's byte count changed from 602 to 1032 between the RFC's first draft and this commit: 602 B was the program before it printed anything, which made it buildable but not behaviour-checkable; printing the five values needed for the CPython-equality assertion pulled in UART init and decimal formatting. The RFC text (Section 11 Phase 1, Section 13.2) reflects 1032 B.",
+  "note_added_2026-09-21": "The constant-delay busy loop now counts on as many registers as the iteration count needs (1-4 registers at regs+2 cycles per iteration) instead of always 4. compat-mp-blink-toggle is 138 B (the sleep_ms(500) count fits in 24 bits, dropping one LDI and one SBCI) and zca-mixed-fold-and-share is 1024 B (delay_us(1000) fits in 16 bits). Both NUnit pins were updated with the compiler change. The website's '142 bytes' copy is a historical quote of the old number."
 }

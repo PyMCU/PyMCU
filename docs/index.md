@@ -60,7 +60,7 @@ interpreter loop, no bytecode dispatch.
 :::
 
 :::{grid-item-card} Minimal flash footprint
-A blink program compiles to ~36 bytes of user code (142 bytes total firmware). MicroPython needs ~256 KB before your code even starts.
+A blink program compiles to ~36 bytes of user code (138 bytes total firmware). MicroPython needs ~256 KB before your code even starts.
 :::
 
 :::{grid-item-card} Python syntax you already know
