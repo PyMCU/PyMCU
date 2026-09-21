@@ -93,6 +93,39 @@ class TestWorkloadParsing:
             '    expect: {uart_tx: "OK\\r\\n"}\n')
         assert doc["scenarios"][0]["expect"] == {"uart_tx": "OK\r\n"}
 
+    def test_i2c_slave_stimulus(self):
+        doc = wl.parse_workload(
+            "scenarios:\n  - name: s\n    run: {ms: 1}\n    stimuli:\n"
+            "      - {i2c_slave: 0x3C}\n"
+            "      - {i2c_slave: '0x40'}\n"
+            "      - {i2c_slave: '60'}\n")
+        st = doc["scenarios"][0]["stimuli"]
+        assert st[0] == {"i2c_slave": 0x3C}
+        assert st[1] == {"i2c_slave": 0x40}
+        assert st[2] == {"i2c_slave": 60}
+
+    def test_i2c_slave_needs_no_time(self):
+        # An i2c_slave stimulus is a bus device, not a timed event.
+        doc = wl.parse_workload(
+            "scenarios:\n  - name: s\n    run: {ms: 1}\n"
+            "    stimuli: [{i2c_slave: 0x3C}]\n")
+        assert doc["scenarios"][0]["stimuli"] == [{"i2c_slave": 0x3C}]
+
+    def test_until_i2c_transactions_bound(self):
+        doc = wl.parse_workload(
+            "scenarios:\n  - name: s\n    run: {until_i2c_transactions: 50, max_ms: 2000}\n"
+            "    stimuli: [{i2c_slave: 0x3C}]\n")
+        assert doc["scenarios"][0]["run"] == {
+            "until_i2c_transactions": 50, "max_ms": 2000.0}
+
+    def test_expect_i2c_tx(self):
+        doc = wl.parse_workload(
+            "scenarios:\n  - name: s\n    run: {ms: 1}\n"
+            "    stimuli: [{i2c_slave: 0x3C}]\n"
+            "    expect: {i2c_tx: '3c 3c 80 af'}\n")
+        assert doc["scenarios"][0]["expect"] == {
+            "i2c_tx": [0x3C, 0x3C, 0x80, 0xAF]}
+
     @pytest.mark.parametrize("text, needle", [
         ("scenarios: []", "non-empty"),
         ("scenarios:\n  - {run: {ms: 1, cycles: 5}}", "exactly one"),
@@ -107,6 +140,14 @@ class TestWorkloadParsing:
          "hc_sr04"),
         ("scenarios:\n  - {run: {ms: 1}, stimuli: [{responder: hc_sr04, at_us: 0, trig: PB1}]}",
          "echo"),
+        ("scenarios:\n  - {run: {ms: 1}, stimuli: [{i2c_slave: 0x80}]}",
+         "7-bit"),
+        ("scenarios:\n  - {run: {ms: 1}, stimuli: [{i2c_slave: 'zzz'}]}",
+         "7-bit"),
+        ("scenarios:\n  - {run: {until_i2c_transactions: 0}}",
+         "positive integer"),
+        ("scenarios:\n  - {run: {ms: 1, until_i2c_transactions: 5}}",
+         "exactly one"),
     ])
     def test_validation_errors(self, text, needle):
         with pytest.raises(wl.WorkloadError, match=needle):

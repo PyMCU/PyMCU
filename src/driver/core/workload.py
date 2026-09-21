@@ -8,10 +8,11 @@
 """workload.yaml -> workload JSON for the PGO profiler.
 
 The YAML is deliberately small: a `scenarios` list, each with a `run` bound
-(`{ms: N}`, `{cycles: N}`, `{until: break}` or `{until_uart_bytes: N}`), a
-`stimuli` list of timed pin/UART injections or hc_sr04 responders, and an
-optional `expect.uart_tx` prefix. The driver translates it to the JSON the C#
-profiler consumes -- no YAML parser ships in C#.
+(`{ms: N}`, `{cycles: N}`, `{until: break}`, `{until_uart_bytes: N}` or
+`{until_i2c_transactions: N}`), a `stimuli` list of timed pin/UART injections,
+hc_sr04 responders or attached I2C slaves (`{i2c_slave: 0x3C}`), and an
+optional `expect.uart_tx` / `expect.i2c_tx` prefix. The driver translates it
+to the JSON the C# profiler consumes -- no YAML parser ships in C#.
 """
 
 from __future__ import annotations
@@ -62,6 +63,24 @@ def _pin_name(v, what: str) -> str:
     return "P" + v[1].upper() + v[2:]
 
 
+def _i2c_addr(v, what: str) -> int:
+    """i2c_slave accepts a 7-bit address as int (60), hex string ('0x3C') or decimal str."""
+    if isinstance(v, bool):
+        raise _err(f"{what} must be a 7-bit I2C address, got {v!r}")
+    if isinstance(v, int):
+        addr = v
+    elif isinstance(v, str):
+        try:
+            addr = int(v, 0)
+        except ValueError:
+            raise _err(f"{what} must be a 7-bit I2C address, got {v!r}")
+    else:
+        raise _err(f"{what} must be a 7-bit I2C address, got {v!r}")
+    if not 0 < addr < 0x80:
+        raise _err(f"{what}: 0x{addr:02X} is outside the 7-bit address range")
+    return addr
+
+
 def _stimulus(raw, i: int) -> dict:
     if not isinstance(raw, dict):
         raise _err(f"stimuli[{i}] must be a mapping, got {raw!r}")
@@ -84,6 +103,13 @@ def _stimulus(raw, i: int) -> dict:
             out["echo_delay_us"] = _num(raw["echo_delay_us"], f"stimuli[{i}].echo_delay_us")
         return out
 
+    if "i2c_slave" in raw:
+        # A bus device wired to the TWI for the whole scenario: it ACKs its
+        # address and returns 0xFF on reads. Not a timed event, so the
+        # at_us/every_us requirement below does not apply to it.
+        out["i2c_slave"] = _i2c_addr(raw["i2c_slave"], f"stimuli[{i}].i2c_slave")
+        return out
+
     if "uart_rx" in raw:
         out["uart_rx"] = _uart_bytes(raw["uart_rx"])
     if "pin" in raw:
@@ -96,7 +122,7 @@ def _stimulus(raw, i: int) -> dict:
         if raw.get("toggle"):
             out["toggle"] = True
     if "uart_rx" not in out and "pin" not in out:
-        raise _err(f"stimuli[{i}] needs one of: uart_rx, pin, responder")
+        raise _err(f"stimuli[{i}] needs one of: uart_rx, pin, responder, i2c_slave")
     if "at_us" not in out and "every_us" not in out:
         raise _err(f"stimuli[{i}] needs a time: at_us or every_us")
     return out
@@ -124,13 +150,19 @@ def _run(raw, name: str) -> dict:
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
             raise _err(f"scenario '{name}'.run.until_uart_bytes must be a positive integer")
         out["until_uart_bytes"] = n
+    if "until_i2c_transactions" in raw:
+        n = raw["until_i2c_transactions"]
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise _err(f"scenario '{name}'.run.until_i2c_transactions must be a positive integer")
+        out["until_i2c_transactions"] = n
     if "max_ms" in raw:
         out["max_ms"] = _num(raw["max_ms"], f"scenario '{name}'.run.max_ms")
-    bounds = [k for k in ("ms", "cycles", "until", "until_uart_bytes") if k in out]
+    bounds = [k for k in ("ms", "cycles", "until", "until_uart_bytes",
+                         "until_i2c_transactions") if k in out]
     if len(bounds) != 1:
         raise _err(
-            f"scenario '{name}'.run needs exactly one of ms/cycles/until/until_uart_bytes, "
-            f"got {bounds or 'none'}")
+            f"scenario '{name}'.run needs exactly one of ms/cycles/until/"
+            f"until_uart_bytes/until_i2c_transactions, got {bounds or 'none'}")
     return out
 
 
@@ -144,6 +176,11 @@ def _expect(raw, name: str) -> dict | None:
         if not isinstance(raw["uart_tx"], str):
             raise _err(f"scenario '{name}'.expect.uart_tx must be a string")
         out["uart_tx"] = raw["uart_tx"]
+    if "i2c_tx" in raw:
+        # Prefix over the flattened transaction stream: each transaction
+        # contributes its address byte followed by its data bytes, so
+        # "3c 3c 80 af" pins an empty probe at 0x3C then a 0x80 0xAF write.
+        out["i2c_tx"] = _uart_bytes(raw["i2c_tx"])
     return out or None
 
 
