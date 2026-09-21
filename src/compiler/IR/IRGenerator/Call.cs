@@ -3840,9 +3840,18 @@ public partial class IRGenerator
             {
                 ListExpr le => le.Elements,
                 TupleExpr te => te.Elements,
-                VariableExpr ve => ResolveConstSequence(ve.Name) ?? (List<Expression>?)ResolveListLiteralParam(ve.Name)?.Elements,
+                VariableExpr ve => ResolveConstSequence(ve.Name)
+                    ?? (List<Expression>?)ResolveListLiteralParam(ve.Name)?.Elements
+                    ?? NamedTupleElemsOf(ve.Name),
                 _ => null,
             };
+            // A field bound to a constant sequence (`*_GAINS`) resolves without emitting;
+            // a member read or call that returns a tuple (`*registers.tuple_of_numbers`,
+            // where Struct.__get__ is `return struct.unpack_from(...)`) delivers its
+            // elements through the result slots -- evaluated under the sentinel, and the
+            // slots read back as pre-evaluated operands. Both run AFTER the pure cases so
+            // a literal or a name never pays for a speculative evaluation.
+            elements ??= ResolveConstSequenceExpr(star.Value) ?? TupleResultElementsOf(star.Value);
 
             if (elements == null)
                 throw UserError(
@@ -3856,6 +3865,29 @@ public partial class IRGenerator
         }
 
         return spliced;
+    }
+
+    /// <summary>
+    /// The elements of a `*expr` whose operand yields a tuple RETURN -- `*f()` or
+    /// `*obj.prop`, where the callee's `return` filled the expansion's result slots.
+    /// The sentinel requests them, exactly as `f()[k]` does; each slot is wrapped
+    /// pre-evaluated so a later re-visit does not emit the load twice. Null when the
+    /// expression produced no tuple, leaving the splice's diagnostic to name the shape.
+    /// </summary>
+    private List<Expression>? TupleResultElementsOf(Expression e)
+    {
+        lastTupleResults.Clear();
+        pendingTupleCount = -1;
+        VisitExpression(e);
+        pendingTupleCount = 0;
+        if (lastTupleResults.Count == 0) return null;
+
+        var elems = new List<Expression>(lastTupleResults.Count);
+        foreach (var s in lastTupleResults)
+            elems.Add(new PreEvaluatedExpr(
+                new Variable(s, variableTypes.TryGetValue(s, out var sdt) ? sdt : DataType.UINT8),
+                null));
+        return elems;
     }
 
     /// The expression that stands for an argument once it has been carried into a `*args` or a
@@ -6123,7 +6155,13 @@ public partial class IRGenerator
     /// </summary>
     private Expression DesugarStrFormat(string format, CallExpr call)
     {
+        // `"...{}...{}...".format(*values)`: the starred argument is the positional list --
+        // splice it through the same compile-time expansion every other call gets, so the
+        // placeholders count the elements, not the star. `**map` arrives here as the keyword
+        // argument the check below already refuses.
         var args = call.Args;
+        if (args.Any(a => a is StarArgExpr or DoubleStarArgExpr))
+            args = SpliceVariadicArgs(args);
         foreach (var a in args)
             if (a is KeywordArgExpr)
                 throw UserError(

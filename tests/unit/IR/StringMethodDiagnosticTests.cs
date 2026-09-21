@@ -94,6 +94,22 @@ public class StringMethodDiagnosticTests
     public void FormatOnALiteral_StillLowersInsteadOfBeingRefused()
         => Assert.NotNull(Gen("def main():\n    s = \"v{}\".format(1)\n"));
 
+    // `"...{}...".format(*values)` -- the starred argument IS the positional list, so the
+    // placeholders count its elements. A name bound to a constant tuple is visible; a
+    // run-time value is not an argument list and gets the splice's own message.
+    [Fact]
+    public void FormatWithAStarredConstantTuple_SplicesItsElements()
+        => Assert.NotNull(Gen(
+            "def main():\n" +
+            "    values = (0, 255)\n" +
+            "    s = \"register 1: {}; register 2: {}\".format(*values)\n"));
+
+    [Fact]
+    public void FormatWithAStarredRuntimeValue_KeepsTheSpliceMessage()
+        => Assert.Contains("needs a sequence the compiler can see",
+            Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+                "def main(n: uint8):\n    s = \"v{}\".format(*n)\n")).Message);
+
     // A join whose sequence the compiler cannot lay out gets the join-specific refusal --
     // the one that names the sequence forms that DO work -- not a generic member message.
     [Fact]
