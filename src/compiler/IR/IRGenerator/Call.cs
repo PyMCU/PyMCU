@@ -8507,6 +8507,10 @@ public partial class IRGenerator
         var savedLoopStack     = loopStack;
         var savedInlineStack   = inlineStack;
         int savedLastLine      = lastLine;
+        var savedSourcePath    = currentSourcePath;
+        var savedSourceFile    = currentSourceFile;
+        bool savedTracksCallee = inlineTracksCalleeLine;
+        int savedCalleeLine    = inlineCalleeStmtLine;
         var savedFunctionGlobals = currentFunctionGlobals;
 
         // Set up fresh compilation context for the wrapper
@@ -8518,7 +8522,19 @@ public partial class IRGenerator
         loopStack             = new List<LoopLabels>();
         inlineStack           = new List<InlineContext>();
         lastLine              = -1;
+        inlineTracksCalleeLine = false;
+        inlineCalleeStmtLine  = 0;
         currentFunctionGlobals = new HashSet<string>();
+
+        // The handler's body is text in the file that function is DEFINED in, which can be a
+        // module the registration call only imported. The wrapper keeps the caller's prefix
+        // already; the file has to move the same way or a diagnostic raised inside pairs the
+        // handler's line with a module that does not contain it.
+        if (functionSourcePath.TryGetValue(funcDef, out var handlerPath))
+        {
+            currentSourcePath = handlerPath;
+            currentSourceFile = handlerPath.Length > 0 ? SourceFileLabel(handlerPath) : "";
+        }
 
         // Bind handler's first parameter to the ZCA root variable
         string paramName = currentInlinePrefix + funcDef.Params[0].Name;
@@ -8562,6 +8578,10 @@ public partial class IRGenerator
         loopStack              = savedLoopStack;
         inlineStack            = savedInlineStack;
         lastLine               = savedLastLine;
+        currentSourcePath      = savedSourcePath;
+        currentSourceFile      = savedSourceFile;
+        inlineTracksCalleeLine = savedTracksCallee;
+        inlineCalleeStmtLine   = savedCalleeLine;
         currentFunctionGlobals = savedFunctionGlobals;
 
         return synthName;

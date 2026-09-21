@@ -380,6 +380,10 @@ public partial class IRGenerator
         var savedPrefix = currentInlinePrefix;
         var savedMod = currentModulePrefix;
         var savedDepth = inlineDepth;
+        var savedSourcePath = currentSourcePath;
+        var savedSourceFile = currentSourceFile;
+        var savedTracksCallee = inlineTracksCalleeLine;
+        var savedCalleeLine = inlineCalleeStmtLine;
 
         currentInlinePrefix = newPrefix;
         currentModulePrefix = className + "_";
@@ -388,13 +392,39 @@ public partial class IRGenerator
             EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath };
         inlineStack.Add(dunderCtx);
 
+        // The dunder's body is text in the file the method is DEFINED in, which is not the
+        // file the `obj[i]` is written in. Until the path moved with the body, a diagnostic
+        // raised here kept the module's line under the caller's file -- `isinstance(index,
+        // slice)` at adafruit_pixelbuf.py:293 arrived as main.py:293. The same four
+        // assignments EmitInlineFunctionCall makes, for the same reason.
+        string? calleeSourcePath =
+            functionSourcePath.TryGetValue(func, out var calleePath) ? calleePath : null;
+        if (calleeSourcePath != null)
+        {
+            currentSourcePath = calleeSourcePath;
+            currentSourceFile = calleeSourcePath.Length > 0 ? SourceFileLabel(calleeSourcePath) : "";
+            inlineTracksCalleeLine = true;
+            inlineCalleeStmtLine = 0;
+        }
+        else
+        {
+            inlineTracksCalleeLine = false;
+        }
+
+        int savedLastLine = lastLine;
+        lastLine = -1;
         VisitBlock(func.Body);
+        lastLine = savedLastLine;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
 
         inlineDepth = savedDepth;
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedMod;
+        currentSourcePath = savedSourcePath;
+        currentSourceFile = savedSourceFile;
+        inlineTracksCalleeLine = savedTracksCallee;
+        inlineCalleeStmtLine = savedCalleeLine;
 
         // An unannotated dunder (`def __getitem__(self, key): return ...`, no `-> T`) makes
         // `func.ReturnType` "void", so `result` above is null and no result slot exists yet
