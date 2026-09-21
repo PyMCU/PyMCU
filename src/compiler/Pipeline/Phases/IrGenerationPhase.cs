@@ -53,11 +53,24 @@ public class IrGenerationPhase : CompilerPhaseBase
         // name once, so two widths for one name is a miscompile, not a missed optimisation.
         Optimizer.UnifyVariableWidths(ir);
 
+        // PGO: a --profile JSON is advisory input to the optimizer. A file that
+        // does not parse degrades to an ordinary build with a warning -- the
+        // profile must never be what makes a build fail.
+        PgoProfile? pgoProfile = null;
+        if (!string.IsNullOrEmpty(context.Options.ProfilePath))
+        {
+            pgoProfile = PgoProfile.Load(context.Options.ProfilePath);
+            if (pgoProfile == null)
+                Logger.Warning("pgo",
+                    $"could not read profile '{context.Options.ProfilePath}' -- " +
+                    "building without it.");
+        }
+
         // PYMCU_NO_OPT=1 skips the optimizer: lets a miscompile be bisected to the
         // IR generator (raw IR wrong) vs an optimizer pass (raw IR right).
         var optimized = Environment.GetEnvironmentVariable("PYMCU_NO_OPT") == "1"
             ? ir
-            : Optimizer.Optimize(ir);
+            : Optimizer.Optimize(ir, pgoProfile);
 
         // CanFail analysis runs after optimization so that dead-code-eliminated
         // functions and cloned bodies are the final IR seen by the backend.

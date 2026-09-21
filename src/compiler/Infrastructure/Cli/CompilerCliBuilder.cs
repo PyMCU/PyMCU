@@ -148,6 +148,14 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => []
         };
 
+        Option<string?> profileOption = new("--profile")
+        {
+            Description = "PGO profile JSON (from 'pymcu profile --pgo'); the optimizer "
+                        + "reads block/edge counts to guide outlining. A profile that does "
+                        + "not match the program is ignored with a warning",
+            DefaultValueFactory = parseResult => null
+        };
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -167,6 +175,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(projectRootOption);
         rootCommand.Options.Add(stdlibOption);
         rootCommand.Options.Add(embedOption);
+        rootCommand.Options.Add(profileOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -195,7 +204,8 @@ public static class CompilerCliBuilder
                 Timebase: parseResult.GetValue(timebaseOption),
                 Library: parseResult.GetValue(libraryOption),
                 Stdlib: parseResult.GetValue(stdlibOption) ?? string.Empty,
-                Embeds: parseResult.GetValue(embedOption) ?? []
+                Embeds: parseResult.GetValue(embedOption) ?? [],
+                ProfilePath: parseResult.GetValue(profileOption)
             );
 
             // Return the exit code so Invoke() (and thus the process) actually fails

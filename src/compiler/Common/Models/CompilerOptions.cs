@@ -68,5 +68,10 @@ public sealed record CompilerOptions(
     // resolves at compile time to a handle over the blob read from PATH. The compiler keys
     // the table by NAME exactly as open() receives it; a name open() never reaches embeds
     // nothing (the blob is only emitted when a handle over it is created).
-    List<string>? Embeds = null
+    List<string>? Embeds = null,
+    // Path to a PGO profile JSON (from `pymcu profile --pgo`). Read by the IR
+    // generation phase and handed to the optimizer; a file that does not parse
+    // or whose block names share nothing with this program is warned about and
+    // ignored -- a profile must never fail a build. Optional, like Board.
+    string? ProfilePath = null
 );

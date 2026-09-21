@@ -22,7 +22,7 @@ namespace PyMCU.IR;
 
 public static class Optimizer
 {
-    public static ProgramIR Optimize(ProgramIR program)
+    public static ProgramIR Optimize(ProgramIR program, PgoProfile? profile = null)
     {
         // PyMCU lays out locals in a static (overlay) frame, so a function that can
         // reach itself through synchronous calls would alias its own storage. Reject
@@ -68,8 +68,16 @@ public static class Optimizer
         // not live-in locals) and the regions are already dead-store-free; the
         // freshly synthesised subroutines are then optimised individually.
         // See OutlineInlineExpansions for the full contract.
+        if (profile != null && !profile.MatchesProgram(optimized))
+        {
+            Logger.Warning("pgo",
+                "profile shares no block names with this program's labels -- " +
+                "it was captured from a different program or a different build. " +
+                "Ignoring it.");
+            profile = null;
+        }
         var preOutline = new HashSet<string>(optimized.Functions.Select(f => f.Name));
-        OutlineInlineExpansions(optimized, globalNames);
+        OutlineInlineExpansions(optimized, globalNames, profile);
         foreach (var func in optimized.Functions)
             if (!preOutline.Contains(func.Name))
                 OptimizeFunction(func, globalNames, isrShared);
@@ -2547,7 +2555,8 @@ private static Function CloneFunction(Function f)
         public Val? LiveOutSite;                         // this site's produced value, if any
     }
 
-    private static void OutlineInlineExpansions(ProgramIR program, HashSet<string> globalNames)
+    private static void OutlineInlineExpansions(ProgramIR program, HashSet<string> globalNames,
+        PgoProfile? profile)
     {
         int counter = 0;
         // Sites inside functions that DFE is about to drop must not be counted:
@@ -2563,10 +2572,14 @@ private static Function CloneFunction(Function f)
         // exposes the enclosing expansion as the next innermost candidate. Both
         // operations strictly reduce the tagged-marker count, so this terminates;
         // the bound is a safety net.
+        // Regions the profile vetoed are recorded per function and marked once,
+        // after the fixpoint: inserting mid-round would shift the region indices
+        // the round is still using.
+        var hotKept = new Dictionary<Function, int>();
         int budget = 100000;
         while (budget-- > 0)
         {
-            if (OutlineOneRound(program, globalNames, live, ref counter)) continue;
+            if (OutlineOneRound(program, globalNames, live, ref counter, profile, hotKept)) continue;
             if (PromoteInnermostRegions(program)) continue;
             break;
         }
@@ -2576,10 +2589,15 @@ private static Function CloneFunction(Function f)
         // ever see the untouched non-@inline markers.
         foreach (var func in program.Functions)
             func.Body.RemoveAll(IsInlineTag);
+
+        foreach (var (func, kept) in hotKept)
+            func.Body.Insert(0, new DebugLine(0,
+                $"pgo: kept {kept} region(s) inline -- hot under the workload", ""));
     }
 
     private static bool OutlineOneRound(
-        ProgramIR program, HashSet<string> globalNames, HashSet<string>? live, ref int counter)
+        ProgramIR program, HashSet<string> globalNames, HashSet<string>? live, ref int counter,
+        PgoProfile? profile, Dictionary<Function, int> hotKept)
     {
         // How often each label is jumped to program-wide, so a region can tell its
         // own internal edges from an edge that crosses its boundary.
@@ -2608,7 +2626,8 @@ private static Function CloneFunction(Function f)
         }
 
         foreach (var kv in groups)
-            if (kv.Value.Count >= 2 && TryOutlineGroup(program, kv.Value, ref counter))
+            if (kv.Value.Count >= 2 &&
+                TryOutlineGroup(program, kv.Value, ref counter, profile, hotKept))
                 return true;
         return false;
     }
@@ -3095,7 +3114,37 @@ private static Function CloneFunction(Function f)
         return words;
     }
 
-    private static bool TryOutlineGroup(ProgramIR program, List<RegionCanon> regions, ref int counter)
+    // PGO verdict for a group of identical regions. A region's blocks are its own
+    // internal labels plus the block that falls through into it (the last Label
+    // before the region, else the function entry). ALL regions cold means the
+    // expansion ran zero times under the workload; ANY region hot (>= 1% of the
+    // workload's cycles) means outlining it would put a CALL/RET inside timed
+    // code the profile shows matters.
+    private static (bool allCold, bool anyHot) ClassifyGroupByProfile(
+        List<RegionCanon> regions, PgoProfile profile)
+    {
+        ulong total = profile.TotalCycles;
+        bool allCold = true, anyHot = false;
+        foreach (var r in regions)
+        {
+            string enclosing = r.Func.Name;
+            for (int i = r.Start - 1; i >= 0; i--)
+                if (r.Func.Body[i] is Label l) { enclosing = l.Name; break; }
+            ulong count = profile.BlockCount(enclosing);
+            ulong cycles = profile.BlockCycles(enclosing);
+            foreach (var lab in r.Core.OfType<Label>())
+            {
+                count += profile.BlockCount(lab.Name);
+                cycles += profile.BlockCycles(lab.Name);
+            }
+            if (count != 0) allCold = false;
+            if (total > 0 && cycles * 100 >= total) anyHot = true;
+        }
+        return (allCold, anyHot);
+    }
+
+    private static bool TryOutlineGroup(ProgramIR program, List<RegionCanon> regions, ref int counter,
+        PgoProfile? profile, Dictionary<Function, int>? hotKept)
     {
         var r0 = regions[0];
         int nHoles = r0.HoleValues.Count;
@@ -3128,7 +3177,27 @@ private static Function CloneFunction(Function f)
         long bodyCost = r0.Core.Sum(i => i is Return ? 0 : InstrCost(i));
         long inlineTotal = (long)nSites * bodyCost;
         long outlineTotal = bodyCost + 1 + nParams + (long)nSites * (nParams + 2);
-        if (outlineTotal >= inlineTotal) return false;
+        // PGO: the workload may veto or override the size proof. A group every
+        // site of which ran zero times is worth a subroutine even when the
+        // word-cost model cannot prove the win statically -- the CALL it pays is
+        // never executed. A group any scenario shows hot is never outlined: the
+        // CALL/RET would land inside timed code. Only a flipped decision counts
+        // as decided-by-profile; a veto that only agrees with the cost model is
+        // not the profile's work.
+        bool decidedByProfile = false;
+        if (profile != null)
+        {
+            var (allCold, anyHot) = ClassifyGroupByProfile(regions, profile);
+            if (anyHot && outlineTotal < inlineTotal)
+            {
+                if (hotKept != null)
+                    foreach (var r in regions)
+                        hotKept[r.Func] = hotKept.GetValueOrDefault(r.Func) + 1;
+                return false;
+            }
+            decidedByProfile = allCold && outlineTotal >= inlineTotal;
+        }
+        if (outlineTotal >= inlineTotal && !decidedByProfile) return false;
 
         // Parameter types.  Inputs take their val's type; varying constants take
         // the inferred slot type widened to cover the actual values.
@@ -3154,7 +3223,12 @@ private static Function CloneFunction(Function f)
             finalHoleTypes[k] = t;
         }
 
-        string gName = "__pymcu_outline_" + counter++;
+        // The _pgo_ infix is the MIR-level flag that this group was outlined on
+        // the profile's word alone -- visible in the .mir, the symbol map, and
+        // the generated asm.
+        string gName = decidedByProfile
+            ? "__pymcu_outline_pgo_" + counter++
+            : "__pymcu_outline_" + counter++;
         // A region with a live-out ends in Return(<local>) (see TryCanonicalizeRegion):
         // the subroutine returns that value and each call site's Call receives it.
         var retVal = r0.Core.OfType<Return>()
