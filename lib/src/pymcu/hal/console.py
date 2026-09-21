@@ -14,6 +14,7 @@ if __CHIP__.name == "rp2040" or __CHIP__.name == "rp2350":
 from pymcu.hal.uart_text import (
     uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
     uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+    uart_write_float_fmt,
 )
 
 

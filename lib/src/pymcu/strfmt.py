@@ -12,6 +12,7 @@
 # Digit extraction branches on the base (shifts/masks for 2/8/16, //10 for
 # decimal) so no runtime-base division is needed -- portable to every backend.
 from pymcu.types import uint8, uint16, uint32, int32
+from pymcu.hal.uart_text import _float_fmt_digits
 
 
 def _fs_text(buf: bytearray, pos: uint16, s: const[str]) -> uint16:
@@ -115,4 +116,62 @@ def _fs_fmt(buf: bytearray, pos: uint16, value: int32, base: uint8, width: uint8
         n = n - 1
         buf[pos] = tmp[n]
         pos = pos + 1
+    return pos
+
+
+def _fs_ffmt(buf: bytearray, pos: uint16, value: float, prec: uint8, width: uint8, flags: uint8) -> uint16:
+    # Float format-spec path ({t:.1f}, {v:6.3f}) -- the buffer-side twin of
+    # uart_write_float_fmt: `prec` digits after the decimal point from
+    # _float_fmt_digits (exact expansion, half-to-even like CPython),
+    # right-justified to `width`, flags bit0 = zero-pad.
+    neg: uint8 = 0
+    if value < 0.0:
+        neg = 1
+        value = -value
+    digs: uint8[17] = [0] * 17
+    int_part: uint32 = _float_fmt_digits(value, prec, digs)
+    tmp: uint8[12] = [0] * 12
+    n: uint8 = 0
+    if int_part == 0:
+        tmp[0] = 48
+        n = 1
+    else:
+        while int_part > 0:
+            tmp[n] = 48 + uint8(int_part % 10)
+            int_part = int_part // 10
+            n = n + 1
+    total: uint8 = n + neg
+    if prec > 0:
+        total = total + 1 + prec
+    padn: uint8 = 0
+    if width > total:
+        padn = width - total
+    if (flags & 0x01) != 0:
+        if neg != 0:
+            buf[pos] = 45
+            pos = pos + 1
+        while padn > 0:
+            buf[pos] = 48
+            pos = pos + 1
+            padn = padn - 1
+    else:
+        while padn > 0:
+            buf[pos] = 32
+            pos = pos + 1
+            padn = padn - 1
+        if neg != 0:
+            buf[pos] = 45
+            pos = pos + 1
+    while n > 0:
+        n = n - 1
+        buf[pos] = tmp[n]
+        pos = pos + 1
+    if prec > 0:
+        buf[pos] = 46
+        pos = pos + 1
+        j: uint8 = 0
+        while j < prec:
+            buf[pos] = digs[j] + 48
+            pos = pos + 1
+            j = j + 1
     return pos

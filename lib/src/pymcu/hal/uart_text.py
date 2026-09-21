@@ -165,6 +165,139 @@ def uart_write_float(value: float):
         uart_write(frac + 48)
 
 
+def _float_fmt_digits(value: float, prec: uint8, digs: bytearray) -> uint32:
+    # The first `prec` decimal digits of the fractional part of `value`, plus
+    # one rounding digit, written into digs[0..prec]. Returns the integer part
+    # with the rounding carry already applied. The caller writes the sign.
+    #
+    # The digits are EXACT: a float32 is a dyadic m * 2^-e, so its decimal
+    # expansion is finite and computable in integers. frac * 2^64 is held in
+    # the (hi, lo) limb pair and multiplied by ten per digit; a .5 boundary is
+    # then a real tie -- the limbs read exactly 0x8000... -- so the rounding
+    # digit lands half-to-even on the decimal expansion, as CPython's does.
+    int_part: uint32 = uint32(value)
+    frac: float = value - float(int_part)
+    hi: uint32 = 0
+    lo: uint32 = 0
+    if frac > 0.0:
+        # Normalise to m in [2^23, 2^24): frac = m * 2^-s. Multiplying by two
+        # is exact (exponent step, same mantissa), and f in [2^23, 2^24) is an
+        # integer, so uint32(f) loses nothing.
+        f: float = frac
+        s: uint8 = 0
+        while f < 8388608.0:
+            f = f * 2.0
+            s = s + 1
+        m: uint32 = uint32(f)
+        # frac * 2^64 = m << (64 - s), split into two 32-bit limbs. m < 2^s
+        # because frac < 1, so no shift here can carry out of a limb.
+        if s <= 32:
+            hi = m << (32 - s)
+        elif s <= 64:
+            sh: uint8 = s - 32
+            rem: uint32 = m
+            if sh < 32:
+                hi = m >> sh
+                rem = m - (hi << sh)
+            else:
+                hi = 0
+            lo = rem << (64 - s)
+        elif s <= 88:
+            lo = m >> (s - 64)
+        # s > 88 leaves hi:lo at zero -- frac < 2^-64, and every digit this
+        # routine is asked for (prec <= 15 plus the rounding digit) is zero.
+    l0: uint32 = 0
+    l1: uint32 = 0
+    h0: uint32 = 0
+    h1: uint32 = 0
+    k: uint8 = 0
+    ndig: uint8 = prec + 1
+    while k < ndig:
+        # (hi:lo) *= 10 a 16-bit limb at a time; the carry out is the digit.
+        l0 = (lo & 65535) * 10
+        l1 = (lo >> 16) * 10 + (l0 >> 16)
+        lo = ((l1 & 65535) << 16) | (l0 & 65535)
+        h0 = (hi & 65535) * 10 + (l1 >> 16)
+        h1 = (hi >> 16) * 10 + (h0 >> 16)
+        hi = ((h1 & 65535) << 16) | (h0 & 65535)
+        digs[k] = uint8(h1 >> 16)
+        k = k + 1
+    rd: uint8 = digs[prec]
+    sticky: uint8 = 0
+    if (hi | lo) != 0:
+        sticky = 1
+    roundup: uint8 = 0
+    if rd > 5 or (rd == 5 and sticky != 0):
+        roundup = 1
+    if rd == 5 and sticky == 0:
+        # Exact tie: round half to even.
+        if prec > 0:
+            if (digs[prec - 1] & 1) != 0:
+                roundup = 1
+        else:
+            if (int_part & 1) != 0:
+                roundup = 1
+    if roundup != 0:
+        carry: uint8 = 1
+        i: int16 = int16(prec) - 1
+        while i >= 0 and carry != 0:
+            if digs[i] == 9:
+                digs[i] = 0
+            else:
+                digs[i] = digs[i] + 1
+                carry = 0
+            i = i - 1
+        if carry != 0:
+            int_part = int_part + 1
+    return int_part
+
+
+def uart_write_float_fmt(value: float, prec: uint8, width: uint8, flags: uint8):
+    # f-string `{v:W.Nf}`: N digits after the decimal point, right-justified to
+    # at least W characters, flags bit0 = zero-pad. The digits come from
+    # _float_fmt_digits, so the rounding is CPython's: half-to-even on the
+    # exact decimal expansion of the float32 value.
+    neg: uint8 = 0
+    if value < 0.0:
+        neg = 1
+        value = -value
+    digs: uint8[17] = [0] * 17
+    int_part: uint32 = _float_fmt_digits(value, prec, digs)
+    # The integer part's digit count decides the padding, which has to be
+    # known before any of it is written.
+    ndig: uint8 = 1
+    t: uint32 = int_part
+    while t >= 10:
+        t = t // 10
+        ndig = ndig + 1
+    total: uint8 = ndig + neg
+    if prec > 0:
+        total = total + 1 + prec
+    padn: uint8 = 0
+    if width > total:
+        padn = width - total
+    if (flags & 0x01) != 0:
+        # Zero-pad: the sign leads, then zeros, then the digits ('-001.2').
+        if neg != 0:
+            uart_write(45)
+        while padn > 0:
+            uart_write(48)
+            padn = padn - 1
+    else:
+        while padn > 0:
+            uart_write(32)
+            padn = padn - 1
+        if neg != 0:
+            uart_write(45)
+    uart_write_decimal_u32(int_part)
+    if prec > 0:
+        uart_write(46)
+        j: uint8 = 0
+        while j < prec:
+            uart_write(digs[j] + 48)
+            j = j + 1
+
+
 def uart_write_float_compact(value: float):
     # One decimal, for parts where the standard writer does not fit: an
     # ATtiny2313 has 2 KB of flash and uart_write_float pulls in the whole
