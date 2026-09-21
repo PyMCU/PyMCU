@@ -2347,6 +2347,26 @@ public partial class IRGenerator
                     continue;
                 }
 
+                // A parameter the body REASSIGNS cannot stay an alias: the first write
+                // (possibly inside a conditional that does not always run) has to
+                // materialize a fresh local, and every read on a path where that write
+                // did not happen would see an uninitialized slot -- `x, y = y, x`
+                // under `if self.rotation == 1:` in adafruit_framebuf.rect. Bind a
+                // real variable initialized with the argument's value instead. A
+                // subscripted parameter keeps its alias: `buf[i] = v` writes THROUGH
+                // the binding into the caller's array, it never rebinds the name.
+                if (ParameterIsAssignedIn(func, func.Params[paramIdx].Name)
+                    && !IsSubscriptedInBody(func.Body, func.Params[paramIdx].Name))
+                {
+                    variableAliases.Remove(paramName);
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                    Emit(new Copy(vArg, new Variable(paramName, variableTypes[paramName])));
+                    continue;
+                }
+
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
