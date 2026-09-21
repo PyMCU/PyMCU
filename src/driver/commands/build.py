@@ -229,11 +229,13 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     return has_print, has_uart, has_input
 
 
-_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']''')
+_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']|\.join\s*\(''')
 
 
 def _detect_fstring_value_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file assigns an f-string to a name (`s = f"..."`).
+    """Return True if any .py file assigns an f-string to a name (`s = f"..."`)
+    or calls str.join (a join over a generator/comprehension materializes
+    through the same pymcu.strfmt helpers).
 
     Over-inclusive on purpose (a fully-constant f-string assignment also matches):
     the injected pymcu.strfmt helpers are plain module functions, so anything
