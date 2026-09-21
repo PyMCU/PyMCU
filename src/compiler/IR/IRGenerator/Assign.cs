@@ -2543,7 +2543,13 @@ public partial class IRGenerator
 
                 if (isZcaInstance)
                 {
-                    variableAliases[flattenedName] = vVal.Name;
+                    // File the field against the alias's terminal (`pwm`), not the name as
+                    // spelled at the write: inside an expansion that is
+                    // `inlineK.__init__.pwm_out`, a callee-local binding the expansion-entry
+                    // clean wipes when the prefix repeats -- stranding the field's second
+                    // hop while its own key survives (`s._pwm_out` -> a dead name -> a
+                    // minted `pwm_out_duty_cycle` slot instead of the property setter).
+                    variableAliases[flattenedName] = FollowAliases(vVal.Name);
                     return;
                 }
             }
