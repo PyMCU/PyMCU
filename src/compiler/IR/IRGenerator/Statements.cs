@@ -155,6 +155,17 @@ public partial class IRGenerator
             }
         }
 
+        // `byteorder_tuple[0] + 1` where the name is bound to a compile-time sequence
+        // (adafruit_pixelbuf's `self._byteorder_tuple = (byteorder_tuple[0] + 1, ...)`):
+        // the subscript is the literal's element, folded like the literal itself.
+        if (expr is IndexExpr cix && cix.Index is IntegerLiteral cii
+            && ResolveConstSequenceExpr(cix.Target) is { } cixElems)
+        {
+            int ci = cii.Value < 0 ? cixElems.Count + cii.Value : cii.Value;
+            if (ci >= 0 && ci < cixElems.Count)
+                return EvaluateConstantExpr(cixElems[ci]);
+        }
+
         // `bytearray(self._number_of_shift_registers)` after
         // `self._number_of_shift_registers = n` with a compile-time n (adafruit_74hc595).
         // The field store already recorded the constant under the flattened name; this
@@ -1170,6 +1181,31 @@ public partial class IRGenerator
 
                 for (int k = 0; k < tup.Elements.Count; ++k)
                 {
+                    // `return bpp, order, has_w, ds` where `order` was rebound to a tuple
+                    // of constants (pixelbuf's parse_byteorder): the element is a
+                    // compile-time sequence, not a scalar. It crosses to the caller's
+                    // unpack target through the result slot's NAME in
+                    // constSequenceBindings -- there is no scalar value to copy, and
+                    // reading the name as one would emit a load of storage that never
+                    // existed. Only literal elements cross: a name in the list would be
+                    // resolved against the CALLER's scope, where it means nothing.
+                    List<Expression>? retSeqElems = null;
+                    if (tup.Elements[k] is VariableExpr retSeqVe)
+                        retSeqElems = ResolveConstSequenceExpr(retSeqVe);
+                    else if (tup.Elements[k] is TupleExpr retLitTup)
+                        retSeqElems = retLitTup.Elements;
+                    else if (tup.Elements[k] is ListExpr retLitList)
+                        retSeqElems = retLitList.Elements;
+                    if (retSeqElems is { Count: > 0 }
+                        && retSeqElems.All(e => e is IntegerLiteral or StringLiteral or FloatLiteral))
+                    {
+                        constSequenceBindings[ctx.ResultVars[k]] = retSeqElems;
+                        constantVariables.Remove(ctx.ResultVars[k]);
+                        floatConstantVariables.Remove(ctx.ResultVars[k]);
+                        strConstantVariables.Remove(ctx.ResultVars[k]);
+                        continue;
+                    }
+
                     Val elemVal = VisitExpression(tup.Elements[k]);
                     // The result slots carry the annotated element widths when the callee
                     // declared them (see EmitInlineFunctionCall); uint8 otherwise.
@@ -1185,6 +1221,7 @@ public partial class IRGenerator
                     if (elemVal is FloatConstant fc) floatConstantVariables[ctx.ResultVars[k]] = fc.Value;
                     else floatConstantVariables.Remove(ctx.ResultVars[k]);
                     strConstantVariables.Remove(ctx.ResultVars[k]);
+                    constSequenceBindings.Remove(ctx.ResultVars[k]);
                 }
 
                 Emit(new Jump(ctx.ExitLabel));

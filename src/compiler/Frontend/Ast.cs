@@ -846,4 +846,13 @@ public class ProgramNode : ASTNode
     /// board does not have them. A name in this set stands for no value at run time, which is
     /// the fact the annotation reader needs and cannot recover once the import has folded away.
     public HashSet<string> TypingOnlyNames { get; } = new();
+
+    /// <summary>
+    /// The aliases a discarded optional-import try would have bound: `ColorUnion =
+    /// Union[int, Tuple[int, int, int]]` written next to `from typing import Union` is a
+    /// type expression, not a value, so when the import fails and the body folds away the
+    /// name survives as its rendered annotation text. CheckAnnotationNames resolves a bare
+    /// annotation name through this map, the same way it resolves an import alias.
+    /// </summary>
+    public Dictionary<string, string> TypeAliases { get; } = new();
 }

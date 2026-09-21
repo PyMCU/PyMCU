@@ -1027,6 +1027,32 @@ public partial class IRGenerator
                     + "at the call (\",\".join([...])), or bind the name to a literal.",
                     expr.Callee);
 
+            // `getattr(module, "name", default)` on an imported module is not reflection:
+            // a module's members are all registered at compile time, so the answer is
+            // already known -- the attribute itself when the module exports it, the
+            // default when it does not. This is how neopixel.py feature-detects
+            // board.NEOPIXEL / NEOPIXEL_POWER. On anything that is not a module (an
+            // instance, a class, a name bound to a value) it stays refused below.
+            if (expr.Callee is VariableExpr { Name: "getattr" }
+                && TryResolveModuleGetattr(expr) is { } getattrResolved)
+                return VisitExpression(getattrResolved);
+
+            if (expr.Callee is VariableExpr { Name: "getattr" }
+                && expr.Args.Count == 2
+                && expr.Args[0] is VariableExpr getattrObj2
+                && expr.Args[1] is StringLiteral getattrMember2
+                && modules.ContainsKey(getattrObj2.Name))
+            {
+                string getattrMod2 = TryImportedAlias(getattrObj2.Name, out var realGetattrMod)
+                                     && realGetattrMod != null
+                    ? realGetattrMod : getattrObj2.Name;
+                throw UserError(
+                    $"module '{getattrMod2}' has no attribute '{getattrMember2.Value}' -- "
+                    + "the same AttributeError CPython raises, caught at compile time. "
+                    + $"Pass a default: getattr({getattrObj2.Name}, \"{getattrMember2.Value}\", ...)",
+                    expr);
+            }
+
             // Reflection builtins: name the real reason instead of "undefined function".
             if (shown is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec" or "vars" or "dir" or "globals" or "locals")
                 throw UserError($"'{shown}' is runtime reflection, which PyMCU does not support " +
@@ -1079,6 +1105,25 @@ public partial class IRGenerator
                     + $"implement: a generator here is a state machine driven by `for`, and it "
                     + $"has no {shown}(). Consume '{genName}' with `for v in {genName}(...):`, "
                     + "which drives it and ends when it does.", expr.Callee);
+
+            if (expr.Callee is VariableExpr && shown == "open")
+            {
+                // adafruit_framebuf's BitmapFont gets here: `open(font_name, "rb")` for
+                // font_name "font5x8.bin". The reader needs to know WHICH file was being
+                // opened and that the wall is the missing filesystem, not their call -- so
+                // name the file when the argument is a compile-time string, and name the
+                // feature track it belongs to (embedded files are RFC 0008, not yet done).
+                string? openName = expr.Args.Count > 0 ? StaticStringOf(expr.Args[0]) : null;
+                throw UserError(
+                    openName != null
+                        ? $"open('{openName}') needs a file to read, and a PyMCU program has no "
+                          + "filesystem: embedded files are RFC 0008 work, not yet implemented. "
+                          + "Until then the bytes have to live in the program itself -- a bytes "
+                          + "literal or a const table."
+                        : "open() is a Python builtin that PyMCU does not provide: there is no "
+                          + "filesystem. Use the chip's flash or EEPROM helpers",
+                    expr.Callee);
+            }
 
             if (expr.Callee is VariableExpr && PythonBuiltins.Contains(shown))
                 throw UserError(
@@ -2192,6 +2237,19 @@ public partial class IRGenerator
 
             if (argValues[i] is Variable vArg)
             {
+                // `neopixel_write(pin, self._post_brightness_buffer)`: an arena-backed
+                // buffer arrives as the scalar variable holding its arena offset.
+                // Register the parameter under the arena name too, so `for b in buf`,
+                // `buf[i]` and `len(buf)` inside the callee resolve through the same
+                // path the caller's name did. The ordinary binding below still runs --
+                // it is what stores the offset the indexed reads add to.
+                if (arenaBufferNames.Contains(vArg.Name))
+                {
+                    arenaBufferNames.Add(paramName);
+                    if (arenaBufferLenVar.TryGetValue(vArg.Name, out var arenaArgLen))
+                        arenaBufferLenVar[paramName] = arenaArgLen;
+                }
+
                 if (func.Params[paramIdx].Type is "const[str]" or "str")
                 {
                     string? strVal = ResolveStrConstant(vArg.Name);
@@ -7830,11 +7888,37 @@ public partial class IRGenerator
     private void CheckUnionArgumentMatchesAMember(FunctionDef func, int paramIdx, Expression? rawArg, Val argVal)
     {
         string ptype = func.Params[paramIdx].Type ?? "";
+        // `val: ColorUnion` is `val: Union[...]` under the alias the discarded `from typing
+        // import` try recorded -- resolve before the shape test the same way
+        // CheckAnnotationNames does.
+        for (int hops = 0; typeAliases.TryGetValue(ptype, out var aliasedP) && hops < 8; hops++)
+            ptype = aliasedP;
         if (!ptype.StartsWith("Union[") || !ptype.EndsWith("]") || rawArg == null) return;
 
         var members = PyMCU.Common.AnnotationText.SplitTopLevel(ptype[6..^1])
             .Select(m => m.Trim()).Where(m => m.Length > 0).ToList();
         if (members.Count == 0) return;
+
+        // A member that is itself an alias -- `Union[ColorUnion, Sequence[ColorUnion]]` --
+        // stands for the text it was bound to; a member that resolves to another union
+        // contributes its members, which is what `Union[int, Tuple[...]]` inside one means.
+        var expanded = new List<string>();
+        var work = new Queue<string>(members);
+        for (int hops = 0; work.Count > 0 && hops < 64; hops++)
+        {
+            string m = work.Dequeue();
+            if (typeAliases.TryGetValue(m, out var aliasedM)
+                && aliasedM.StartsWith("Union[") && aliasedM.EndsWith("]"))
+            {
+                foreach (var inner in PyMCU.Common.AnnotationText.SplitTopLevel(aliasedM[6..^1]))
+                    if (inner.Trim().Length > 0) work.Enqueue(inner.Trim());
+            }
+            else
+            {
+                expanded.Add(typeAliases.TryGetValue(m, out var leaf) ? leaf : m);
+            }
+        }
+        members = expanded.Count > 0 ? expanded : members;
 
         static string Bare(string m) => m.Contains('.') ? m[(m.LastIndexOf('.') + 1)..] : m;
 
@@ -7871,8 +7955,12 @@ public partial class IRGenerator
             || (rawArg is VariableExpr seqVe && ResolveConstSequence(seqVe.Name) != null);
         if (isSeq)
         {
+            // `Sequence[X]`/`Iterable[X]` reach here un-normalized inside a union's member
+            // list -- the same compile-time sequence a `list[X]` member asks for.
             if (members.Any(m => Bare(m).StartsWith("List[") || Bare(m).StartsWith("Tuple[")
-                                || Bare(m) is "list" or "tuple"))
+                                || Bare(m).StartsWith("Sequence[") || Bare(m).StartsWith("Iterable[")
+                                || Bare(m).StartsWith("list[") || Bare(m).StartsWith("tuple[")
+                                || Bare(m) is "list" or "tuple" or "Sequence" or "Iterable"))
                 return;
             Refuse();
             return;
@@ -8232,8 +8320,12 @@ public partial class IRGenerator
         foreach (var c in cands)
         {
             if (c is not VariableExpr ve) return null;
+            // `slice` matches nothing here: PyMCU has no slice VALUE at all (a[b:c]
+            // reaches __setitem__ as a SliceExpr index, never as a bound object), so
+            // `isinstance(x, slice)` on any name the shapes below resolve is False --
+            // pixelbuf's `if isinstance(index, slice)` is exactly that test.
             if (ve.Name is not ("tuple" or "list" or "int" or "bool"
-                or "bytes" or "bytearray" or "str" or "float"))
+                or "bytes" or "bytearray" or "str" or "float" or "slice"))
                 return null;
             names.Add(ve.Name);
         }

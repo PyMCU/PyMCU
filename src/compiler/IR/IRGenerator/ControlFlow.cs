@@ -148,6 +148,17 @@ public partial class IRGenerator
             return -1;
         }
 
+        // `not x` where x is bound to None -- the mirror of the check above: None is
+        // falsy, so `not x` is always true and only the taken side may be lowered.
+        // Without this the UnaryExpr was lowered as a run-time `not` on a slot that
+        // never received a value (None has no storage), and BOTH branches were
+        // compiled -- `if not pixel_order:` in neopixel.py's __init__ is this shape.
+        if (cond is UnaryExpr { Op: AstUnOp.Not } notCond && IsNoneValued(notCond.Operand))
+        {
+            if (jumpIfTrue) Emit(new Jump(targetLabel));
+            return 2;
+        }
+
         // An `if` does not lower its comparison through VisitBinary; it comes straight here and
         // becomes a conditional jump. That is how `a == b` over two bytes names emitted a
         // one-byte `jne` between the two array names and answered without reading either.
@@ -1968,8 +1979,16 @@ public partial class IRGenerator
         // no diagnostic, so it aborts compilation. `SawDynamicLoop` is what keeps that rule off
         // the shape it does not mean: a lookup that probes a table and raises when the search
         // runs out reaches its raise only for data the compiler cannot see.
+        //
+        // `handlerCodeStack` is the other exclusion, for the same reason: a `raise` inside an
+        // `except` body is a re-raise to the NEXT handler up, and it is reached only when the
+        // try body actually raised -- a run-time condition the compiler does not decide.
+        // Lowering it as an abort made `try: x = s.index(v) except ValueError: raise
+        // ValueError(...)` fail the build on a string the try always resolves
+        // (adafruit_pixelbuf.parse_byteorder).
         if (!string.IsNullOrEmpty(stmt.ErrorType) && inlineStack.Count > 0 &&
-            tryCatchStack.Count == 0 && !inlineStack[^1].SawDynamicLoop &&
+            tryCatchStack.Count == 0 && handlerCodeStack.Count == 0 &&
+            !inlineStack[^1].SawDynamicLoop &&
             _runtimeBranchDepth <= inlineStack[^1].EntryBranchDepth)
         {
             string reason = resolvedMessage.Length > 0 ? resolvedMessage : stmt.ErrorType;

@@ -2383,6 +2383,48 @@ public partial class IRGenerator
                     $"directly, or write the loop over the length you have (`for i in range(n): " +
                     $"v = {sqBadVe.Name}[i]`).", sqBadVe);
 
+            // `for b in buf` over an arena-allocated bytearray (neopixel_write's frame
+            // loop, handed `self._post_brightness_buffer`): the region's byte length is a
+            // run-time value, so this is a real counter loop -- `b` is read one byte at a
+            // time through arena.read8, not unrolled. The offset is materialised into a
+            // local first, for the same reason the indexed read does (PyMCU#415): an
+            // inline parameter re-resolved inside read8's own expansion answers a name
+            // from the wrong scope.
+            if (stmt.Iterable is VariableExpr arenaItVe
+                && TryResolveArenaBuffer(arenaItVe.Name, out string arenaItQ)
+                && arenaBufferLenVar.TryGetValue(arenaItQ, out string? arenaItLen))
+            {
+                string arenaItMod = ResolveArenaModuleAlias(stmt.Iterable);
+                string offLocal = $"__arena_itr_off_{arenaFieldTempId++}";
+                string lenLocal = $"__arena_itr_len_{arenaFieldTempId++}";
+                string idxLocal = $"__arena_itr_i_{arenaFieldTempId++}";
+                string offQ = currentInlinePrefix + offLocal;
+                string lenQ = currentInlinePrefix + lenLocal;
+
+                variableTypes[offQ] = DataType.UINT16;
+                Emit(new Copy(VisitExpression(stmt.Iterable), new Variable(offQ, DataType.UINT16)));
+                variableTypes[lenQ] = DataType.UINT16;
+                Emit(new Copy(new Variable(arenaItLen, DataType.UINT16),
+                    new Variable(lenQ, DataType.UINT16)));
+
+                var arenaBody = new Block();
+                arenaBody.Statements.Add(new AssignStmt(
+                    new VariableExpr(stmt.VarName),
+                    new CallExpr(
+                        new MemberAccessExpr(new VariableExpr(arenaItMod), "read8"),
+                        new List<Expression>
+                        {
+                            new BinaryExpr(new VariableExpr(offLocal),
+                                Frontend.BinaryOp.Add, new VariableExpr(idxLocal))
+                        })));
+                if (stmt.Body is Block arenaOuter) arenaBody.Statements.AddRange(arenaOuter.Statements);
+                else arenaBody.Statements.Add(stmt.Body);
+                VisitStatement(new ForStmt(idxLocal,
+                    new IntegerLiteral(0), new VariableExpr(lenLocal), null, arenaBody)
+                    { Line = stmt.Line });
+                return;
+            }
+
             throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.",
                 stmt.Iterable);

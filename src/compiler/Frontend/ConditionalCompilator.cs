@@ -187,6 +187,123 @@ public class ConditionalCompilator(DeviceConfig config)
     }
 
     /// <summary>
+    /// Records `Name = &lt;type expression&gt;` assignments in a try body that is being
+    /// discarded because an optional import in it failed. The expression counts as a type
+    /// only when its head names something the failed import would have bound (or an alias
+    /// already recorded): `_USE_PULSEIO = True` in the same body is a value, and is left
+    /// alone.
+    /// </summary>
+    private static void RecordDiscardedTypeAliases(List<Statement> body, ProgramNode prog)
+    {
+        foreach (var s in body)
+        {
+            string? name = s switch
+            {
+                AssignStmt { Target: VariableExpr v } => v.Name,
+                AnnAssign an => an.Target,
+                _ => null,
+            };
+            Expression? value = s switch
+            {
+                AssignStmt a => a.Value,
+                AnnAssign an => an.Value,
+                _ => null,
+            };
+            if (name == null || value == null || !IsTypeAliasValue(value, prog)) continue;
+            prog.TypeAliases[name] =
+                PyMCU.Common.AnnotationText.Normalize(RenderTypeAnnotation(value));
+        }
+    }
+
+    /// <summary>
+    /// The heads a type alias's right-hand side may be built on. The `typing` spellings a
+    /// module gets from a skipped-builtin or folded import, plus the annotation forms this
+    /// compiler already reads -- `Union`, `Optional`, `Tuple`, the sequence spellings, and
+    /// the `|`-union members.
+    /// </summary>
+    private static readonly HashSet<string> TypeAliasHeads = new()
+    {
+        "Union", "Optional", "Tuple", "tuple", "List", "list", "Dict", "dict", "Set", "set",
+        "FrozenSet", "Callable", "Literal", "Annotated", "Type", "Sequence", "Iterable",
+        "Iterator", "Mapping", "MutableMapping", "MutableSequence", "Collection", "ClassVar",
+        "Final", "Generic", "TypeVar", "Protocol", "Any", "NoReturn", "NamedTuple", "Deque",
+        "DefaultDict", "Counter", "ChainMap", "OrderedDict", "type", "None",
+        "int", "float", "bool", "str", "bytes", "bytearray", "object",
+        "uint8", "uint16", "uint32", "int8", "int16", "int32", "pin", "const",
+    };
+
+    /// <summary>
+    /// Whether <paramref name="e"/> is a type expression -- renders to annotation text whose
+    /// head is an annotation form, a typing-only name, or an alias already recorded. That is
+    /// what separates `ColorUnion = Union[...]` from `x = foo[0]` one line lower in the same
+    /// discarded body: only the first names something no run-time object stands behind.
+    /// </summary>
+    private static bool IsTypeAliasValue(Expression e, ProgramNode prog)
+    {
+        if (RenderTypeAnnotation(e) is not { } text) return false;
+        string head = text;
+        int cut = head.IndexOfAny(TypeHeadCuts);
+        if (cut >= 0) head = head[..cut];
+        head = head[(head.LastIndexOf('.') + 1)..];
+        return TypeAliasHeads.Contains(head)
+               || prog.TypingOnlyNames.Contains(head)
+               || prog.TypeAliases.ContainsKey(head);
+    }
+
+    private static readonly char[] TypeHeadCuts = { '[', '|' };
+
+    /// <summary>
+    /// Renders the shapes a type alias is written in -- `Union[a, b]`, `Optional[x]`,
+    /// `Tuple[int, int]`, `a | b`, a bare or dotted name -- back to the annotation text
+    /// CheckAnnotationNames reads. Anything else (a call, an arithmetic expression, a
+    /// subscript on a runtime value) answers null, and the assignment is not an alias.
+    /// </summary>
+    private static string? RenderTypeAnnotation(Expression e)
+    {
+        switch (e)
+        {
+            case VariableExpr v:
+                return v.Name;
+            case MemberAccessExpr m:
+            {
+                string? obj = RenderTypeAnnotation(m.Object);
+                return obj == null ? null : obj + "." + m.Member;
+            }
+            case IndexExpr ix:
+            {
+                string? head = RenderTypeAnnotation(ix.Target);
+                string? args = ix.Index is TupleExpr te
+                    ? RenderTypeAnnotationList(te.Elements)
+                    : RenderTypeAnnotation(ix.Index);
+                return head == null || args == null ? null : head + "[" + args + "]";
+            }
+            case BinaryExpr { Op: BinaryOp.BitOr } b:
+            {
+                string? l = RenderTypeAnnotation(b.Left);
+                string? r = RenderTypeAnnotation(b.Right);
+                return l == null || r == null ? null : l + "|" + r;
+            }
+            case IntegerLiteral il:
+                return il.Value.ToString();
+            case StringLiteral sl:
+                return "\"" + sl.Value + "\"";
+            default:
+                return null;
+        }
+    }
+
+    private static string? RenderTypeAnnotationList(List<Expression> elements)
+    {
+        var parts = new List<string>();
+        foreach (var el in elements)
+        {
+            if (RenderTypeAnnotation(el) is not { } p) return null;
+            parts.Add(p);
+        }
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>
     /// True when the try body is only imports (and nested import-only tries / pass).
     /// The Adafruit inner guard is that shape; a try that also runs runtime code keeps
     /// its handler.
@@ -278,6 +395,14 @@ public class ConditionalCompilator(DeviceConfig config)
                     foreach (var alias in failed.Aliases.Values) prog.TypingOnlyNames.Add(alias);
                     if (!string.IsNullOrEmpty(failed.ModuleAlias))
                         prog.TypingOnlyNames.Add(failed.ModuleAlias!);
+
+                    // `ColorUnion = Union[int, Tuple[int, int, int]]` sits next to the failed
+                    // `from typing import Union` -- a type alias, not a value binding. When
+                    // the body is discarded the name vanishes with it, and `color: ColorUnion`
+                    // then reads as an unknown type in a signature the program may never
+                    // even call. Record the alias text so the annotation reader resolves the
+                    // name to the union it spelled.
+                    RecordDiscardedTypeAliases(tryStmt.Body, prog);
                 }
                 foreach (var inner in chosen)
                 {
@@ -336,6 +461,21 @@ public class ConditionalCompilator(DeviceConfig config)
                 {
                     return false;
                 }
+            // `ColorUnion = Union[int, Tuple[int, int, int]]` -- a type alias, not a value
+            // binding. The right-hand side is built from annotation spellings (`Union`,
+            // `Optional`, `Tuple`, a name a folded import marked typing-only) and no run-time
+            // object exists for it to bind, so the statement lowers as nothing and the name
+            // is what annotations resolve it to.
+            case AssignStmt { Target: VariableExpr aliasTarget, Value: { } aliasValue }
+                    when IsTypeAliasValue(aliasValue, prog):
+                prog.TypeAliases[aliasTarget.Name] =
+                    PyMCU.Common.AnnotationText.Normalize(RenderTypeAnnotation(aliasValue));
+                return true;
+            case AnnAssign { Value: { } annAliasValue } annAlias
+                    when IsTypeAliasValue(annAliasValue, prog):
+                prog.TypeAliases[annAlias.Target] =
+                    PyMCU.Common.AnnotationText.Normalize(RenderTypeAnnotation(annAliasValue));
+                return true;
             default:
                 return false;
         }

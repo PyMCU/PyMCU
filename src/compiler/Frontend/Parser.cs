@@ -1807,30 +1807,37 @@ public class Parser
             Consume(TokenType.Identifier, "Expected 'range'");
             Consume(TokenType.LParen, "Expected '('");
 
-            var arg1 = ParseExpression();
-            Expression? arg2 = null;
-            Expression? arg3 = null;
-            // `!Check(RParen)` after each comma is the trailing comma. A comma before `)` ends
-            // the list in every Python call, and ParsePostfix already allows it, so `len(xs,)`
-            // compiled while `range(n,)` did not -- the same comma accepted in one call and
-            // refused in another, in the same program, because this header parses its own
-            // argument list and went straight to ParseExpression(), which met `)` and said
-            // "Expected expression" (PyMCU#228).
-            //
-            // `range(,)` is still an error: arg1 is parsed before any of this, so a leading
-            // comma has nothing in front of it and fails the same way it always did.
-            if (Match(TokenType.Comma) && !Check(TokenType.RParen))
+            // `for i in range(*t)`: a star-spliced argument cannot decompose into
+            // start/stop/step at parse time -- the sequence it names lives behind a name.
+            // Keep the call whole as the iterable and let the IR generator splice it, which
+            // is what the CPython-AST front end produces for the same source.
+            var rargs = new List<Expression>();
+            bool rargsStar = false;
+            do
             {
-                arg2 = ParseExpression();
-                if (Match(TokenType.Comma) && !Check(TokenType.RParen))
+                if (Check(TokenType.Star))
                 {
-                    arg3 = ParseExpression();
-                    // And after the LAST argument too. Handling only the first two commas is
-                    // the same bug one position along: `range(n,)` and `range(1, n,)` would
-                    // work while `range(0, n, 2,)` did not.
-                    Match(TokenType.Comma);
+                    int starLine = Peek().Line;
+                    Advance();
+                    rargsStar = true;
+                    rargs.Add(new StarArgExpr(ParseExpression()) { Line = starLine });
                 }
-            }
+                else if (Check(TokenType.DoubleStar))
+                {
+                    int starLine = Peek().Line;
+                    Advance();
+                    rargsStar = true;
+                    rargs.Add(new DoubleStarArgExpr(ParseExpression()) { Line = starLine });
+                }
+                else
+                {
+                    // `!Check(RParen)` in the loop condition is the trailing comma, allowed
+                    // the same way ParsePostfix allows it in a call; `range(,)` still fails
+                    // because a leading comma finds nothing here (PyMCU#228).
+                    if (rargs.Count == 0 && Check(TokenType.RParen)) break;
+                    rargs.Add(ParseExpression());
+                }
+            } while (Match(TokenType.Comma) && !Check(TokenType.RParen));
 
             Consume(TokenType.RParen, "Expected ')'");
             if (groupingParens > 0)
@@ -1838,21 +1845,33 @@ public class Parser
             Consume(TokenType.Colon, "Expected ':'");
             var blockBody = ParseSuite();
 
-            Expression? start = null, stop = null, step = null;
-            if (arg2 == null)
+            if (rargsStar)
             {
-                stop = arg1;
+                var starIter = new ForStmt(varTok.Value,
+                    new CallExpr(new VariableExpr("range"), rargs) { Line = line },
+                    blockBody) { Var2Name = var2Name, Line = line };
+                return LoopElseDesugar.Attach(starIter, blockBody, ParseLoopElse(), line);
             }
-            else if (arg3 == null)
+
+            Expression? start = null, stop = null, step = null;
+            if (rargs.Count == 1)
             {
-                start = arg1;
-                stop = arg2;
+                stop = rargs[0];
+            }
+            else if (rargs.Count == 2)
+            {
+                start = rargs[0];
+                stop = rargs[1];
+            }
+            else if (rargs.Count >= 3)
+            {
+                start = rargs[0];
+                stop = rargs[1];
+                step = rargs[2];
             }
             else
             {
-                start = arg1;
-                stop = arg2;
-                step = arg3;
+                Error("for-in range() requires at least one argument.");
             }
 
             var stmt = new ForStmt(varTok.Value, start, stop, step, blockBody) { Var2Name = var2Name, Line = line };

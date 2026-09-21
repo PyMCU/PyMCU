@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
 using AstBinOp = PyMCU.Frontend.BinaryOp;
@@ -750,9 +751,40 @@ public partial class IRGenerator
         return false;
     }
 
+    /// `getattr(module, "name"[, default])` where the first argument is an imported
+    /// module and the second a string literal: resolved at compile time to the member
+    /// access itself when the module exports the name, to the default expression when
+    /// it does not. Null when the shape is not a module getattr (the reflection
+    /// refusal handles those), or when a two-argument form names a member the module
+    /// does not export (the caller reports the AttributeError).
+    private Expression? TryResolveModuleGetattr(CallExpr expr)
+    {
+        if (expr.Callee is not VariableExpr { Name: "getattr" }
+            || expr.Args.Count is not (2 or 3)
+            || expr.Args[0] is not VariableExpr getattrObj
+            || expr.Args[1] is not StringLiteral getattrMember
+            || !modules.ContainsKey(getattrObj.Name))
+            return null;
+
+        string getattrMod = TryImportedAlias(getattrObj.Name, out var realGetattrMod)
+                            && realGetattrMod != null
+            ? realGetattrMod : getattrObj.Name;
+        if (ExportedNames(getattrMod).Contains(getattrMember.Value))
+            return new MemberAccessExpr(getattrObj, getattrMember.Value)
+                { Line = expr.Line, Column = expr.Column, Length = expr.Length };
+        return expr.Args.Count == 3 ? expr.Args[2] : null;
+    }
+
     private bool IsNoneValued(Expression e)
     {
         if (e is NoneLiteral) return true;
+
+        // `getattr(module, "x", None)` on a module that does not export "x" resolves
+        // to its default -- a None the compiler already knows, the shape
+        // `power = getattr(board, "NEOPIXEL", None)` has in neopixel.py.
+        if (e is CallExpr getattrCall
+            && TryResolveModuleGetattr(getattrCall) is { } getattrRes)
+            return IsNoneValued(getattrRes);
 
         // `obj.field is None`: a field assigned None is tracked under its flattened name
         // (<base>_<field>) by EmitMemberAssign. Resolve the same name without emitting code.
@@ -837,8 +869,8 @@ public partial class IRGenerator
         // integer or a concrete instance is never None; only a name bound to None
         // (or the None literal itself) is. This replaces the old None==-1 model,
         // which made `x == None` collide with a real value of -1 / 255 / 0xFFFF.
-        bool leftNone = expr.Left is NoneLiteral;
-        bool rightNone = expr.Right is NoneLiteral;
+        bool leftNone = IsNoneValued(expr.Left);
+        bool rightNone = IsNoneValued(expr.Right);
         if (leftNone || rightNone)
         {
             if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
@@ -848,9 +880,14 @@ public partial class IRGenerator
                     || IsNoneValued(leftNone ? expr.Right : expr.Left);
                 return new Constant(otherIsNone == isEq ? 1 : 0);
             }
-            throw new TypeError(
-                "None supports only ==, !=, is and is not comparisons",
-                expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+            // A None LITERAL in arithmetic is a program error. A NAME bound to None can only
+            // reach this in code that is already dead -- the `if x is None:` fold above has
+            // taken its branch, and what is left lowers but never runs (`gain(3)`'s
+            // `return a + b`). Treating the name like a literal would refuse the dead half.
+            if (expr.Left is NoneLiteral || expr.Right is NoneLiteral)
+                throw new TypeError(
+                    "None supports only ==, !=, is and is not comparisons",
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
         }
 
         string? dunder = BinaryOpDunder(expr.Op);
@@ -1808,8 +1845,15 @@ public partial class IRGenerator
         // the protocol: the raw handle was negated instead, so `not x` answered true for an
         // instance whose __bool__ says true. The other unary operators take a number, not a
         // truth value, and are left alone.
-        Val operand = VisitExpression(
-            expr.Op == AstUnOp.Not ? LowerInstanceTruthiness(expr.Operand) : expr.Operand);
+        Expression unaryOperand =
+            expr.Op == AstUnOp.Not ? LowerInstanceTruthiness(expr.Operand) : expr.Operand;
+
+        // `not x` where x is bound to None: None is falsy, so the answer is always 1 --
+        // the same decision EmitOptimizedConditionalJump makes for `if not x:`. Without
+        // this the name read as its slot, which nothing ever wrote.
+        if (expr.Op == AstUnOp.Not && IsNoneValued(unaryOperand)) return new Constant(1);
+
+        Val operand = VisitExpression(unaryOperand);
 
         string cls = GetValClass(operand);
         if (!string.IsNullOrEmpty(cls))
@@ -2110,6 +2154,40 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // `sys.implementation.version[i]` (neopixel.py's `version[0] >= 7` feature-detect).
+        // RFC 0007 folds this chain through CompileTimeEvaluator in `if`/`match`/`try`
+        // conditions, but a condition the frontend cannot finish -- `version[0] >= 7 and
+        // getattr(board, "NEOPIXEL", None) == pin` keeps its runtime half -- survives to
+        // here, where the compat layer's sys.py carries no `version` field at all. Same
+        // syntactic match, same table: the shim file's tuple is a placeholder for IDEs,
+        // and the compiler substitutes the real answer (docs/rfcs/0007 sections 0.1, 4.2).
+        if (expr.Target is MemberAccessExpr
+            {
+                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "implementation" },
+                Member: "version"
+            })
+        {
+            if (!IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib))
+                throw UserError(
+                    "'sys.implementation.version' is answered by the compat layer: this project "
+                    + "has no CircuitPython/MicroPython stdlib layer selected (stdlib = [...] "
+                    + "in pyproject.toml), so 'sys' is not the shim that carries it", expr);
+            if (expr.Index is not IntegerLiteral versionIdx)
+                throw UserError(
+                    "'sys.implementation.version' is a compile-time (major, minor, micro) tuple -- "
+                    + "index it with an integer literal (sys.implementation.version[0])", expr);
+            var (vMajor, vMinor, vMicro) = IntrospectionTable.ImplementationVersion(deviceConfig);
+            return new Constant(versionIdx.Value switch
+            {
+                0 => vMajor,
+                1 => vMinor,
+                2 => vMicro,
+                _ => throw UserError(
+                    "'sys.implementation.version' has 3 elements: [0] major, [1] minor, [2] micro",
+                    expr),
+            });
+        }
+
         // docs/rfcs/0004-arena-allocator.md: `buf[i]` on an arena-allocated runtime-sized
         // bytearray -- see the matching write-side comment in Assign.cs EmitIndexAssign.
         if (expr.Target is VariableExpr arenaReadVe && TryResolveArenaBuffer(arenaReadVe.Name, out _))

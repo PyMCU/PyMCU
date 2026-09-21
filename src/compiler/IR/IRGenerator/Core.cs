@@ -433,6 +433,11 @@ public partial class IRGenerator
             foreach (var n in modAst0.TypingOnlyNames) typingOnlyNames.Add(n);
         typingOnlyValues.Clear();
 
+        typeAliases.Clear();
+        foreach (var (alias, text) in mainAst.TypeAliases) typeAliases[alias] = text;
+        foreach (var modAst1 in importedModules.Values)
+            foreach (var (alias, text) in modAst1.TypeAliases) typeAliases[alias] = text;
+
         globals.Clear();
         mutableGlobals.Clear();
         functionReturnTypes.Clear();

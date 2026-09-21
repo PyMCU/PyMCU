@@ -665,6 +665,20 @@ public partial class IRGenerator
             // `self._data[i]` was read as a bit index into that scalar.
             if (stmt.Value is VariableExpr seqArrVe)
             {
+                // `self._post_brightness_buffer = buf` where `buf = bytearray(n)` arena-
+                // allocated the line above (adafruit_pixelbuf): the field becomes another
+                // name for the arena region, so `self.f[i]` lowers to arena.read8/write8
+                // exactly like the direct `self.f = bytearray(n)` hook already arranges.
+                // The field still takes the offset as its scalar value below --
+                // TryResolveArenaBufferField's reads load the offset from it -- so this
+                // only registers the name and falls through to the ordinary write.
+                if (TryResolveArenaBuffer(seqArrVe.Name, out string arenaSrcQ))
+                {
+                    arenaBufferNames.Add(seqFieldKey);
+                    if (arenaBufferLenVar.TryGetValue(arenaSrcQ, out var fieldLenVar))
+                        arenaBufferLenVar[seqFieldKey] = fieldLenVar;
+                }
+
                 string seqArrSrc = ResolveNameKey(seqArrVe.Name);
                 // The alias chain can end on a stale qualified name (`main.buf`) while the
                 // scanner filed the storage under the bare module name (`buf`) -- the same
@@ -1549,7 +1563,13 @@ public partial class IRGenerator
         // had just built it one line above.
         if (target is Variable noneTgt)
         {
-            if (stmt.Value is NoneLiteral) noneValuedNames.Add(noneTgt.Name);
+            // The CallExpr clause is `x = getattr(module, "x", None)` with the attribute
+            // missing: the call resolves to its None default at compile time, so the name
+            // is None-valued the same as if the literal had been written (IsNoneValued
+            // knows the shape; a constructor call returns false there and stays exempt).
+            if (stmt.Value is NoneLiteral
+                || (stmt.Value is CallExpr && IsNoneValued(stmt.Value)))
+                noneValuedNames.Add(noneTgt.Name);
             else if (value is not NoneVal) noneValuedNames.Remove(noneTgt.Name);
         }
 
@@ -2216,9 +2236,22 @@ public partial class IRGenerator
             // value resolves to the parameter's BINDING rather than to a NoneVal, so testing the
             // Val alone missed it: a later `if self._pin is not None:` in a method then lowered
             // both sides, and the instance that has no pin ran the branch that uses one.
-            if (value is NoneVal || SourceIsNoneInThisScope(stmt.Value))
+            //
+            // A call is the one NoneVal that is not a None source: a constructor's void
+            // __init__ hands it back too, and `self._src = Counted(0)` is the field
+            // receiving the instance the constructor built -- marking it None folded
+            // `while not self._src:` to an always-true loop that polled nothing (the
+            // plain-name assign guards `x = C()` the same way). Every other NoneVal --
+            // the literal, a None-bound name, `Pin(p) if p else None` -- is a real None
+            // the field holds, and IsNoneValued covers the call that resolves to one
+            // (`getattr(module, "x", None)` missing the member).
+            if (value is NoneVal || IsNoneValued(stmt.Value))
             {
-                noneValuedNames.Add(flattenedName);
+                if (IsNoneValued(stmt.Value)
+                    || (value is NoneVal && stmt.Value is not CallExpr))
+                    noneValuedNames.Add(flattenedName);
+                else
+                    noneValuedNames.Remove(flattenedName);
                 constantVariables.Remove(flattenedName);
                 return;
             }
@@ -4767,6 +4800,16 @@ public partial class IRGenerator
     {
         if (string.IsNullOrEmpty(annotation)) return;
 
+        // A bare name that a discarded optional-import try bound as a type alias --
+        // `ColorUnion = Union[int, Tuple[int, int, int]]` -- resolves to the annotation it
+        // spelled, and the checks below then run on that text: `def fill(self, color:
+        // ColorUnion)` answers the same way `color: Union[...]` written out would.
+        for (int hops = 0; typeAliases.TryGetValue(annotation, out var aliased); hops++)
+        {
+            if (hops == 8) break;   // `A = B; B = A` -- stop looping and judge `annotation`.
+            annotation = aliased;
+        }
+
         // `...` on its own. Both readers now carry it here as text rather than refusing it
         // themselves (#357), so this is the one site that answers for it and the two front ends
         // produce the same sentence by construction rather than by a comment asking for it.
@@ -5041,7 +5084,7 @@ public partial class IRGenerator
     /// </summary>
     private void CheckSignatureAnnotations(ProgramNode ast)
     {
-        void Fn(FunctionDef f)
+        void Fn(FunctionDef f, string? methodKey)
         {
             // The FILE the signature is written in, for as long as it is being checked (#347).
             // Every module's functions reach this one sweep, and it used to run with
@@ -5069,6 +5112,22 @@ public partial class IRGenerator
                 // already builds that way. A real subroutine has one ABI for every caller, and
                 // a union parameter there keeps its refusal.
                 bool paramUnionAllowed = f.IsInline || f.Name == "__init__";
+                if (!paramUnionAllowed && methodKey != null)
+                {
+                    // An instance method that is never a shared subroutine expands at its
+                    // call sites, so each parameter's type is resolved per call -- which is
+                    // what `index: Union[int, slice]` on `__setitem__` means. A method that
+                    // STAYS outlined, and a no-self `A.f(x)` plain function, have one ABI and
+                    // keep the refusal. A method can still be demoted to expansion after this
+                    // sweep (fixed-buffer or unrepresented-ZCA return, no-self reader of a
+                    // parameter's members) -- those are counted as expandable here.
+                    bool staysSubroutine =
+                        (outlinedMethods.Contains(methodKey) || classPlainFunctions.Contains(methodKey))
+                        && !FunctionReturnsFixedBuffer(f)
+                        && !BodyReturnsUnrepresentedZca(f.Body, f.ReturnType ?? "")
+                        && !(classPlainFunctions.Contains(methodKey) && FunctionReadsParamMember(f));
+                    paramUnionAllowed = !staysSubroutine;
+                }
                 foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f, paramUnionAllowed);
                 CheckAnnotationNames(f.ReturnType ?? "", f);
 
@@ -5091,11 +5150,12 @@ public partial class IRGenerator
             }
         }
 
-        foreach (var f in ast.Functions) Fn(f);
+        foreach (var f in ast.Functions) Fn(f, null);
         foreach (var st in ast.GlobalStatements)
-            if (st is ClassDef { Body: Block cb })
+            if (st is ClassDef { Body: Block cb } cls)
                 foreach (var m in cb.Statements)
-                    if (m is FunctionDef mf) Fn(mf);
+                    if (m is FunctionDef mf)
+                        Fn(mf, currentModulePrefix + cls.Name + "_" + mf.Name);
     }
 
     /// <summary>
@@ -7106,6 +7166,17 @@ public partial class IRGenerator
             {
                 string srcName = lastTupleResults[k];
                 string dstName = QualifyTarget(stmt.Targets[k]);
+                // A return element that is itself a compile-time sequence -- `a, t, c =
+                // parse(...)` where parse bound a name to (r, g, b) -- has no scalar
+                // slot on the callee side. It arrives as a sequence binding on the
+                // result slot's name and becomes one on the target's, which is what
+                // `t[i]` and `len(t)` read.
+                if (constSequenceBindings.TryGetValue(srcName, out var retSeq))
+                {
+                    constSequenceBindings[dstName] = retSeq;
+                    constantVariables.Remove(dstName);
+                    continue;
+                }
                 // An undeclared target inherits the result slot's width, so a callee annotated
                 // `-> (uint8, uint16)` does not get its second value truncated to 8 bits.
                 DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t

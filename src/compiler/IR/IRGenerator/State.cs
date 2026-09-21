@@ -85,6 +85,11 @@ public partial class IRGenerator
     // The values currently carrying such an annotation, by their qualified name, with the
     // annotation as the reader wrote it so the refusal can quote it.
     private readonly Dictionary<string, string> typingOnlyValues = new();
+
+    // Type aliases recorded where an optional-import try folded away the assignment that
+    // bound them (`ColorUnion = Union[int, Tuple[int, int, int]]` next to a failed
+    // `from typing import Union`). The value is the rendered annotation text.
+    private readonly Dictionary<string, string> typeAliases = new();
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
     // docs/rfcs/0004-arena-allocator.md: nonzero while lowering the body of a WhileStmt or
