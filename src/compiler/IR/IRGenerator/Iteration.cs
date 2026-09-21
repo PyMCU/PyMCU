@@ -1444,6 +1444,27 @@ public partial class IRGenerator
                             DataType elemDt = arrayElemTypes.TryGetValue(@base, out var dt) ? dt : DataType.UINT8;
                             bool useSram = arraysWithVariableIndex.Contains(@base) || moduleSramArrays.Contains(@base);
 
+                            // An SRAM-resident array past the unroll limit iterates as a
+                            // counter loop, the same rewrite `for b in buf[0:n]` takes:
+                            // `for i in range(n): b = arr[i]; <body>`. Its elements are
+                            // runtime data either way, so unrolling only multiplies the
+                            // body by the array size -- a 513-byte framebuffer write did
+                            // not fit in flash where the counter loop is a few instructions.
+                            if (useSram && arrSize > ConstSequenceUnrollLimit)
+                            {
+                                string rtIdx = QualifyLoopVar(stmt.VarName);
+                                variableTypes[rtIdx] = NarrowestTypeFor(0, arrSize);
+                                var rtBody = new Block();
+                                rtBody.Statements.Add(new AssignStmt(
+                                    new VariableExpr(stmt.Var2Name),
+                                    new IndexExpr(new VariableExpr(vE.Name), new VariableExpr(stmt.VarName))));
+                                if (stmt.Body is Block enOb) rtBody.Statements.AddRange(enOb.Statements);
+                                else rtBody.Statements.Add(stmt.Body);
+                                VisitStatement(new ForStmt(stmt.VarName,
+                                    new IntegerLiteral(0), new IntegerLiteral(arrSize), null, rtBody));
+                                return;
+                            }
+
                             string qualifiedVal;
                             if (!string.IsNullOrEmpty(currentInlinePrefix))
                                 qualifiedVal = currentInlinePrefix + stmt.Var2Name;
