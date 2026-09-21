@@ -366,6 +366,106 @@ class TestBackendBlockmapFlag:
 
 
 # ---------------------------------------------------------------------------
+# run_backend --profile  (RFC 0010 second consumer: register priority)
+# ---------------------------------------------------------------------------
+
+class TestBackendProfileFlag:
+    def test_profile_flag_forwarded(self, tmp_path, monkeypatch):
+        import subprocess as sp
+        from src.driver import backends
+
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            stdout = None
+            returncode = 0
+
+            def __init__(self, cmd, **kw):
+                calls.append(list(cmd))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(sp, "Popen", FakeProc)
+        backend = tmp_path / "pymcuc-avr"
+        backend.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(backends, "get_backend_capabilities",
+                            lambda _b: frozenset(
+                                {"--output", "--target", "--freq",
+                                 "--profile"}))
+
+        backends.run_backend(
+            backend_binary=backend, ir_file=tmp_path / "f.mir",
+            output_file=tmp_path / "f.asm", target="atmega328p",
+            freq=16_000_000, configs={},
+            profile_path=tmp_path / "profile.json")
+
+        assert calls and "--profile" in calls[0]
+        idx = calls[0].index("--profile")
+        assert calls[0][idx + 1].endswith("profile.json")
+
+    def test_profile_flag_refused_when_undeclared(self, tmp_path, monkeypatch):
+        # A backend that predates --profile must refuse, not silently build
+        # unprofiled: the caller asked for the profiled image by name.
+        from src.driver import backends
+
+        backend = tmp_path / "pymcuc-avr"
+        backend.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(backends, "get_backend_capabilities",
+                            lambda _b: frozenset({"--output", "--target", "--freq"}))
+
+        with pytest.raises(RuntimeError, match="--profile"):
+            backends.run_backend(
+                backend_binary=backend, ir_file=tmp_path / "f.mir",
+                output_file=tmp_path / "f.asm", target="atmega328p",
+                freq=16_000_000, configs={},
+                profile_path=tmp_path / "profile.json")
+
+    def test_no_profile_passes_no_flag(self, tmp_path, monkeypatch):
+        import subprocess as sp
+        from src.driver import backends
+
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            stdout = None
+            returncode = 0
+
+            def __init__(self, cmd, **kw):
+                calls.append(list(cmd))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(sp, "Popen", FakeProc)
+        backend = tmp_path / "pymcuc-avr"
+        backend.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(backends, "get_backend_capabilities",
+                            lambda _b: frozenset(
+                                {"--output", "--target", "--freq",
+                                 "--profile"}))
+
+        backends.run_backend(
+            backend_binary=backend, ir_file=tmp_path / "f.mir",
+            output_file=tmp_path / "f.asm", target="atmega328p",
+            freq=16_000_000, configs={})
+
+        assert calls and "--profile" not in calls[0]
+
+
+# ---------------------------------------------------------------------------
 # pymcu profile --pgo
 # ---------------------------------------------------------------------------
 
