@@ -2914,8 +2914,14 @@ public partial class IRGenerator
         else if (isInlineMethod)
             Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, true));
 
-        if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
-            lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
+        // The slots THIS call produced describe its result; when it produced none,
+        // the list must be emptied, not left holding whatever an inner call last
+        // returned -- `temperature`'s `return self.measurements[0]` consumed the
+        // inner tuple itself, and print(s.temperature) then re-read those slots
+        // and wrote "(10, 20)" where the scalar 10 belonged.
+        lastTupleResults = Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0
+            ? new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars)
+            : new List<string>();
         // A result temporary the expansion allocated itself (a value return in a callee the
         // parser filed as void) is the call's value too.
         result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;

@@ -100,4 +100,27 @@ public class PropertyTupleIndexTests
         LastStored(ir, 0).Should().Be(new Constant(10),
             because: "an imported SHT.temperature is still measurements[0]");
     }
+
+    // print(s.temperature) asks the getter for a tuple by sentinel; temperature
+    // itself is scalar (ResultVars empty), but its body's measurements[0] left
+    // lastTupleResults holding the inner call's two slots -- the print then wrote
+    // "(10, 20)" where 10 belonged. The expansion must hand back an empty list
+    // when it produced no result slots of its own.
+
+    [Fact]
+    public void PrintingAnIndexedTupleProperty_PrintsTheScalar_NotTheTuple()
+    {
+        var ir = Gen(
+            Sht +
+            "def uart_write_str(s: const[str]):\n    pass\n" +
+            "def uart_write_decimal_u8(v: uint8):\n    pass\n" +
+            "s = SHT()\n" +
+            "def main():\n    print(s.temperature)\n");
+
+        // A tuple print brackets the elements: "(" then ", " then ")". None of
+        // those strings may be interned for this program.
+        var interned = ir.Functions.SelectMany(f => f.Body).OfType<FlashData>()
+            .Select(d => d.Bytes).ToList();
+        Assert.DoesNotContain(interned, b => b.Count > 0 && b[0] == 40 /* '(' */);
+    }
 }
