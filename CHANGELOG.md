@@ -549,6 +549,20 @@ purpose, as opposed to bugs like these three that were silent until found.
   entries -- the ssd1306 simpletest importing its bus and framebuffer libraries --
   compiles instead of failing on an unresolved import.
 
+### Experimental
+- Profile-guided optimisation lands behind a flag (RFC 0010):
+  `pgo = true` under `[tool.pymcu.experimental]` in pyproject.toml, or
+  `PYMCU_EXPERIMENTAL_PGO=1`, unlocks `pymcu build --profile <file>` /
+  `PYMCU_PROFILE` and `pymcu profile --pgo`. The latter runs a declared
+  `workload.yaml` on the emulator and writes a per-block cycle profile the build
+  then feeds to `pymcuc --profile`. The only optimizer consumer is a veto in the
+  `@inline` outlining pass: a region whose block burns at least 1% of profiled
+  cycles stays inline, recorded as `pgo: kept N region(s) inline` in the MIR. With
+  the flag off, asking for a profiled build stops with a one-line error naming the
+  flag and nothing is built; the driver never passes `--profile` to `pymcuc` nor
+  `--emit-blockmap` to the backend. `pymcuc --profile` itself stays usable
+  directly -- the flag is driver policy, not a compiler feature.
+
 ### Full commit log
 
 <details>

@@ -914,6 +914,11 @@ never parks.
   the backend with the same shape (`static data needs 2700 bytes but atmega328p has 2048
   bytes of SRAM`). The SRAM check reserves 64 bytes for the hardware call stack, which grows
   down into the same space.
+- **Profile-guided optimisation is experimental and off by default:** `pymcu build
+  --profile` / `PYMCU_PROFILE` and `pymcu profile --pgo` refuse unless
+  `pgo = true` under `[tool.pymcu.experimental]` or `PYMCU_EXPERIMENTAL_PGO=1` is set;
+  the only optimizer effect is a veto that keeps `@inline` regions hot under the
+  workload from being outlined (RFC 0010).
 
 ## Platform notes (RP2040 / Raspberry Pi Pico) — alpha
 

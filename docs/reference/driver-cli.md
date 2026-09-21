@@ -80,6 +80,18 @@ pymcu build -v    # verbose — prints assembler output and full build log
 - Valid `pyproject.toml` in the project root
 - All dependencies installed (`uv sync` or `pip install pymcu-compiler`)
 
+### Profile-guided optimisation (experimental)
+
+`pymcu build --profile <path>` (or the `PYMCU_PROFILE` environment variable) feeds a
+per-block cycle profile -- produced by `pymcu profile --pgo` -- into the compiler.
+PGO is experimental (RFC 0010) and off by default: enable it with
+`pgo = true` under `[tool.pymcu.experimental]` in `pyproject.toml`, or set
+`PYMCU_EXPERIMENTAL_PGO=1` for CI and scripts. With the flag off, a profiled build
+request stops with a one-line error naming the flag and nothing is built; the
+driver never passes `--profile` to `pymcuc` nor `--emit-blockmap` to the backend.
+The flag is driver policy only -- `pymcuc --profile` invoked directly on the
+compiler keeps working regardless.
+
 ### Compiler error output
 
 When the compiler detects an error, it prints a human-readable diagnostic with source
@@ -399,11 +411,19 @@ pymcu profile -v                           # verbose build + simulation output
 | `--open` | off | Open [speedscope.app](https://speedscope.app) in the browser after profiling |
 | `--freq HZ` | from `pyproject.toml` | Override the clock frequency used for cycle→ms conversion |
 | `--assert-cycles-lt N` | — | Exit with code 1 if total simulated cycles ≥ N (CI regression guard) |
+| `--pgo` | off | **Experimental:** run the declared `workload.yaml` scenarios and write `dist/profile.json` for `pymcu build --profile` (RFC 0010) |
 | `-v` / `--verbose` | off | Show full build and profiler output |
 
 :::{note}
 `--cycles` and `--ms` are mutually exclusive. If neither is provided, the profiler
 simulates 100 ms by default.
+:::
+
+:::{note}
+`--pgo` is experimental: it requires `pgo = true` under `[tool.pymcu.experimental]`
+in `pyproject.toml` or `PYMCU_EXPERIMENTAL_PGO=1`. With the flag off it refuses
+before anything is built. See *Profile-guided optimisation (experimental)* under
+`pymcu build` for the consuming half.
 :::
 
 **CI example — enforce a cycle budget:**
