@@ -24,8 +24,6 @@ dependencies = [
     # preferred certifi when it happened to be installed; depending on it
     # removes a whole class of errors that read like the server being down.
     "certifi>=2023.7.22",
-    # workload.yaml -> JSON translation for `pymcu profile --pgo`.
-    "pyyaml>=6.0",
     "pymcu-stdlib>=0.1.0b1",
     "pymcu-sdk>=0.1.0b1",
 ]
@@ -34,6 +32,10 @@ dependencies = [
 avr = ["pymcu-avr>=0.1.0b1"]
 arm = ["pymcu-arm>=0.1.0a4"]
 pic = ["pymcu-pic>=0.1.0a3"]
+# workload.yaml -> JSON translation for `pymcu profile --pgo` (experimental,
+# RFC 0010). Kept out of the base dependencies so a venv without it still runs
+# every other command; the driver imports yaml only when it reads a workload.
+pgo = ["pyyaml>=6.0"]
 # No `riscv` extra yet: pymcu-backend-riscv is not on PyPI, and an extra that
 # cannot resolve fails harder than a missing one (pip only warns about an
 # unknown extra, and `pymcu build` already points at the install command).

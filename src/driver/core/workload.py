@@ -20,8 +20,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import yaml
-
 _PIN_RE = re.compile(r"^[Pp][B-Db-d][0-7]$")
 _HEX_RE = re.compile(r"^(?:[0-9a-fA-F]{2})(?:\s+[0-9a-fA-F]{2})*$")
 
@@ -184,8 +182,23 @@ def _expect(raw, name: str) -> dict | None:
     return out or None
 
 
+def _load_yaml():
+    """pyyaml is the `pgo` extra, not a driver dependency: `pymcu flash` on a
+    venv without it must keep working, so the import happens here, on the
+    only path that reads a workload.yaml."""
+    try:
+        import yaml
+    except ModuleNotFoundError as ex:
+        raise _err(
+            "reading it needs pyyaml, which is the optional 'pgo' extra: "
+            "pip install 'pymcu-compiler[pgo]'"
+        ) from ex
+    return yaml
+
+
 def parse_workload(text: str) -> dict:
     """Parse workload.yaml text into the normalized workload JSON dict."""
+    yaml = _load_yaml()
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as ex:

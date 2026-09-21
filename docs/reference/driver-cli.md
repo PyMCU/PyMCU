@@ -422,8 +422,9 @@ simulates 100 ms by default.
 :::{note}
 `--pgo` is experimental: it requires `pgo = true` under `[tool.pymcu.experimental]`
 in `pyproject.toml` or `PYMCU_EXPERIMENTAL_PGO=1`. With the flag off it refuses
-before anything is built. See *Profile-guided optimisation (experimental)* under
-`pymcu build` for the consuming half.
+before anything is built. Reading `workload.yaml` needs pyyaml, the optional `pgo`
+extra (`pip install 'pymcu-compiler[pgo]'`); no other command needs it. See
+*Profile-guided optimisation (experimental)* under `pymcu build` for the consuming half.
 :::
 
 **CI example — enforce a cycle budget:**

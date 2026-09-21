@@ -438,3 +438,36 @@ class TestProfilePgo:
         assert "default scenario" in unwrapped(result.output)
         wj = json.loads((tmp_path / "dist" / "workload.json").read_text())
         assert wj["scenarios"][0]["run"] == {"ms": 200.0}
+
+
+# -- pyyaml is the optional `pgo` extra, never a driver dependency --------------
+#
+# The regression: the driver imported yaml at start-up through
+# commands/profile.py -> core/workload.py, so a venv without pyyaml could not
+# run `pymcu flash` (ModuleNotFoundError: yaml). The import now lives on the
+# one path that reads a workload.yaml.
+
+
+def test_the_driver_starts_without_pyyaml():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "sys.modules['yaml'] = None\n"        # any `import yaml` now raises
+        "import src.driver.main\n"
+        "print('started')\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                       cwd=Path(__file__).resolve().parents[2])
+    assert r.returncode == 0, r.stderr
+    assert "started" in r.stdout
+
+
+def test_a_workload_without_pyyaml_names_the_extra(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    with pytest.raises(wl.WorkloadError) as ex:
+        wl.parse_workload("scenarios: []\n")
+    assert "pymcu-compiler[pgo]" in str(ex.value)

@@ -562,6 +562,9 @@ purpose, as opposed to bugs like these three that were silent until found.
   flag and nothing is built; the driver never passes `--profile` to `pymcuc` nor
   `--emit-blockmap` to the backend. `pymcuc --profile` itself stays usable
   directly -- the flag is driver policy, not a compiler feature.
+  pyyaml, which reads `workload.yaml`, is the optional `pgo` extra
+  (`pip install 'pymcu-compiler[pgo]'`), not a driver dependency: a venv without
+  it runs every other command, and only `pymcu profile --pgo` asks for it by name.
 
 ### Full commit log
 
