@@ -123,4 +123,32 @@ public class PropertyTupleIndexTests
             .Select(d => d.Bytes).ToList();
         Assert.DoesNotContain(interned, b => b.Count > 0 && b[0] == 40 /* '(' */);
     }
+
+    // `print("P", f())` where f returns a tuple: the print snapshots the result
+    // slots, then writes "(" -- which expands the @inline print_str helper. That
+    // expansion produces no slots of its own and empties lastTupleResults, so the
+    // element loop read a cleared list and wrote "()" (struct-tuple-return on AVR).
+    // The slots must be copied out before the first write goes out.
+
+    [Fact]
+    public void PrintingATupleCall_PrintsEachElement_BetweenTheBrackets()
+    {
+        var ir = GenImported(
+            "from pymcu.types import uint8\n" +
+            "def uart_write_str(s: const[str]):\n    pass\n" +
+            "def uart_write_decimal_u8(v: uint8):\n    pass\n" +
+            "@inline\n" +
+            "def print_str(s: const[str]):\n    uart_write_str(s)\n",
+            "from pymcu.types import uint8\n" +
+            "from sensor import print_str\n" +
+            "from sensor import uart_write_decimal_u8\n" +
+            "def read_pair():\n    return (10, 20)\n" +
+            "def main():\n    print(\"P\", read_pair())\n");
+
+        var reads = ir.Functions.SelectMany(f => f.Body).OfType<Call>()
+            .Where(c => c.FunctionName.Contains("uart_write_decimal")).ToList();
+        reads.Should().HaveCount(2,
+            because: "both result slots are printed between the ( and ) writes -- " +
+                     "a cleared lastTupleResults would write () with no element reads");
+    }
 }

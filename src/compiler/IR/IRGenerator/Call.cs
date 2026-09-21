@@ -7821,19 +7821,23 @@ public partial class IRGenerator
                 pendingTupleCount = -1;
                 Val seqVal = VisitExpression(arg);
                 pendingTupleCount = 0;
-                if (lastTupleResults.Count > 0)
+                // Snapshot before emitting: the "(" and ", " writes expand the
+                // @inline print_str helper, and an expansion that yields no tuple
+                // slots empties lastTupleResults -- the loop would read nothing.
+                var printSlots = new List<string>(lastTupleResults);
+                if (printSlots.Count > 0)
                 {
                     EmitStreamStr(writeStrFn, "(");
-                    for (int k = 0; k < lastTupleResults.Count; ++k)
+                    for (int k = 0; k < printSlots.Count; ++k)
                     {
                         if (k > 0) EmitStreamStr(writeStrFn, ", ");
-                        string slot = lastTupleResults[k];
+                        string slot = printSlots[k];
                         EmitPrintArg(new PreEvaluatedExpr(
                             new Variable(slot, variableTypes.TryGetValue(slot, out var sdt)
                                 ? sdt : DataType.UINT8), null)
                             { Line = arg.Line });
                     }
-                    if (lastTupleResults.Count == 1) EmitStreamStr(writeStrFn, ",");
+                    if (printSlots.Count == 1) EmitStreamStr(writeStrFn, ",");
                     EmitStreamStr(writeStrFn, ")");
                     return;
                 }
