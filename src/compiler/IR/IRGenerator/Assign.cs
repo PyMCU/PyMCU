@@ -1227,6 +1227,18 @@ public partial class IRGenerator
                     if (ResolveStrConstant(vv.Name) is { } varStr)
                         strConstantVariables[paramName] = varStr;
                     break;
+                case FloatConstant fc:
+                    // The same split an ordinary call binds with: an int-typed param
+                    // truncates to it, anything else keeps the float (the annotation can
+                    // be Optional[float], which StringToDataType reads as UNKNOWN).
+                    // `s.fraction = 0.5` used to fall through every arm here, so `value`
+                    // inside the setter read a slot nothing wrote and the duty was 0.
+                    if (setter?.Params[1].Type is "uint8" or "uint16" or "uint32"
+                        or "int8" or "int16" or "int32" or "int")
+                        constantVariables[paramName] = (int)fc.Value;
+                    else
+                        floatConstantVariables[paramName] = fc.Value;
+                    break;
                 case Temporary tt:
                     // Materialize the runtime value into the param's own SRAM slot.
                     // A bare alias (val -> tmp_N) would resolve to a dead temporary
