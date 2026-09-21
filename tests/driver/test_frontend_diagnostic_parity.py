@@ -694,3 +694,118 @@ def test_string_annotation_verdict_agrees(tmp_path, source, accepted):
         f"front ends disagree: hand-written rc={hand}, CPython rc={cpython}\n{source}")
     assert (hand == 0) == accepted, (
         f"expected {'accepted' if accepted else 'refused'}, rc={hand}\n{source}")
+
+
+# --- the FILE half of the location, when the construct lives in another module ----------
+#
+# Everything above is single-file, so it cannot see this half: a diagnostic raised while a
+# callee's body is lowered keeps the callee's own line, and the file has to move with it or
+# the pair names a location that exists in neither file. Measured on real programs:
+# `bytearray(17 * len(self.i2c_device))` in adafruit_ht16k33/ht16k33.py:60 reported
+# segments.py:60, `isinstance(index, slice)` in adafruit_pixelbuf.py:293 reported
+# main.py:293, and `yield` in a method of adafruit_irremote.py reported main.py:226.
+
+
+def _header(src: Path, py_parser: bool) -> str:
+    """The whole `file:line:col:` header -- _where() drops the file, which is what these
+    tests are about."""
+    env = dict(os.environ)
+    if py_parser:
+        env["PYMCU_PY_PARSER"] = "1"
+        env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+    else:
+        env.pop("PYMCU_PY_PARSER", None)
+    proc = subprocess.run(
+        [str(PYMCUC), str(src), "--target", "atmega328p",
+         "--emit-ir", os.devnull, "-o", os.devnull,
+         "-I", str(STDLIB), "-I", str(src.parent)],
+        capture_output=True, text=True, env=env,
+    )
+    m = re.search(r"^[^\s:]+:\d+:\d+: error:", proc.stderr, re.MULTILINE)
+    assert m, f"expected a diagnostic, got:\n{proc.stderr}"
+    return m.group(0)
+
+
+def test_an_error_in_a_base_method_reached_through_super_names_the_base_file(tmp_path):
+    """bytearray(n * 4) is base.py's construct, written inside the base __init__ that
+    sub.py's `super().__init__(n)` expands. The line always came from the base's node; the
+    file used to stay sub.py's -- segments.py:60 for a construct in ht16k33.py."""
+    (tmp_path / "base.py").write_text(
+        "from pymcu.types import uint8\n"
+        "class Base:\n"
+        "    def __init__(self, n: uint8) -> None:\n"
+        "        self.buf = bytearray(n * 4)\n")
+    (tmp_path / "sub.py").write_text(
+        "from pymcu.types import uint8\n"
+        "from base import Base\n"
+        "class Sub(Base):\n"
+        "    def __init__(self, n: uint8) -> None:\n"
+        "        super().__init__(n)\n")
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "from sub import Sub\n"
+                   "GPIOR0: ptr[uint8] = ptr(0x3E)\n"
+                   "while True:\n"
+                   "    s = Sub(GPIOR0.value)\n")
+
+    for py in (False, True):
+        header = _header(src, py_parser=py)
+        assert "base.py:4:" in header, header
+        assert "sub.py:" not in header and "main.py:" not in header, header
+    # The column is the documented BinOp gap: the hand-written parser marks the operator,
+    # the bridge carries no position for the node. Only the file and the line are the same
+    # answer on both sides.
+    assert _where(src, py_parser=False)[0] == _where(src, py_parser=True)[0] == 4
+
+
+def test_an_isinstance_in_an_imported_dunder_names_the_module_file(tmp_path):
+    """__setitem__ is expanded where `pix[i] = v` is written; the isinstance() inside it is
+    pix.py's. The callee is a Name, a position both front ends carry identically, so the
+    whole triple agrees -- it is the file that used to be wrong (adafruit_pixelbuf.py:293
+    arrived as main.py:293)."""
+    (tmp_path / "pix.py").write_text(
+        "from typing import Union\n"
+        "from pymcu.types import uint8\n"
+        "class Pix:\n"
+        "    def __init__(self) -> None:\n"
+        "        self.n: uint8 = 0\n"
+        "    def __setitem__(self, index: Union[int, slice], val: uint8) -> None:\n"
+        "        if isinstance(index, slice):\n"
+        "            self.n = 0\n"
+        "        self.n = val\n")
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "from pix import Pix\n"
+                   "GPIOR0: ptr[uint8] = ptr(0x3E)\n"
+                   "pix = Pix()\n"
+                   "i: uint8 = GPIOR0.value\n"
+                   "pix[i] = 3\n")
+
+    assert _where(src, py_parser=False) == (7, 12, 10)
+    assert _where(src, py_parser=True) == (7, 12, 10)
+    for py in (False, True):
+        header = _header(src, py_parser=py)
+        assert "pix.py:7:12:" in header, header
+        assert "main.py:" not in header, header
+
+
+def test_a_yield_in_an_imported_method_names_the_module_file(tmp_path):
+    """A method with `yield` is refused before any scanning exists, on a bare AST that
+    carries no file: the module's line under the entry file's name (adafruit_irremote.py's
+    `def read` reported as main.py:226, then clamped to a line main.py does have)."""
+    (tmp_path / "gen.py").write_text(
+        "from pymcu.types import uint8\n"
+        "class Decoder:\n"
+        "    def read(self, n: uint8) -> uint8:\n"
+        "        yield n\n")
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "from gen import Decoder\n"
+                   "d = Decoder()\n")
+
+    assert _where(src, py_parser=False) == (3, 5, 3)
+    assert _where(src, py_parser=True) == (3, 5, 3)
+    for py in (False, True):
+        header = _header(src, py_parser=py)
+        assert "gen.py:3:5:" in header, header
+        assert "main.py:" not in header, header
