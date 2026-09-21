@@ -78,25 +78,31 @@
 ```yaml
 scenarios:
   - name: idle
-    run: {ms: 200}                       # exactly one of ms | cycles | until | until_uart_bytes
+    run: {ms: 200}                       # exactly one of ms | cycles | until | until_uart_bytes | until_i2c_transactions
     stimuli:
       - {at_us: 1000, uart_rx: "A"}      # text, hex "41 42", or a byte list
       - {at_us: 5000, pin: PD2, level: 1}
       - {every_us: 20000, pin: PD3, toggle: true}
       - {responder: hc_sr04, trig: PD6, echo: PD5, distance_cm: 9.7}
+      - {i2c_slave: 0x3C}                # a bus device, not a timed event -- ACKs its address, reads 0xFF
     expect:
       uart_tx: "OK\r\n"                  # prefix match on emitted bytes
+      i2c_tx: "3c 3c 80 af"              # prefix on the flattened transaction stream
 ```
 
-`run.until: break` and `run.until_uart_bytes` bound a run by an event instead of a
-duration; `run.max_ms` (default 5000) is the safety cap so a broken scenario cannot
-sim forever. `expect.uart_tx` turns a scenario into a test: a miss makes the profiler
-exit 1 with the mismatch, so a workload can assert that the profiled run actually did
-the thing it was declared to do.
+`run.until: break`, `run.until_uart_bytes` and `run.until_i2c_transactions` bound a
+run by an event instead of a duration; `run.max_ms` (default 5000) is the safety cap
+so a broken scenario cannot sim forever. `expect.uart_tx` / `expect.i2c_tx` turn a
+scenario into a test: a miss makes the profiler exit 1 with the mismatch, so a
+workload can assert that the profiled run actually did the thing it was declared to
+do. `until_i2c_transactions` closes a run when the Nth TWI transaction ends, which
+is how the SSD1306 workloads bound themselves to the oracle's transaction count.
 
 Validation lives in the driver (`workload.py`): pin names must look like `P[BD][0-7]`,
-a stimulus needs one payload (`uart_rx`, `pin`, `responder`) and one time (`at_us`,
-`every_us`), `run` takes exactly one bound. Errors say `workload.yaml: <what>` and exit 1.
+a stimulus needs one payload (`uart_rx`, `pin`, `responder`, `i2c_slave`) and one
+time (`at_us`, `every_us`) -- `i2c_slave` is the exception, a device attachment that
+needs no time -- `run` takes exactly one bound, and `i2c_slave` is a 7-bit address
+given as int, hex or decimal string. Errors say `workload.yaml: <what>` and exit 1.
 
 ## 2. Block map
 
