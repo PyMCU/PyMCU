@@ -537,6 +537,13 @@ purpose, as opposed to bugs like these three that were silent until found.
   this library" instead of telling the reader to remove a decorator they never wrote; the
   remedies it names (a constant divisor, a shift, `%`) are the ones that compile.
 
+### Repo layout
+- The language oracle corpus (`tests/oracle/`: 184 probes, the Avr8Sharp.TestKit
+  runner, the pytest driver) moved to the `pymcu-avr` repo, which owns the AVR
+  backend and the emulator every probe exercises. Its CI runs the suite there
+  under both front ends; the `oracle` job here is retired. Probe `# doc:`
+  citations still name the `docs/language/` files in this repository.
+
 ### Full commit log
 
 <details>

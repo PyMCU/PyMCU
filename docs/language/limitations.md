@@ -414,7 +414,7 @@ a read of it: the three interpreters resolve attribute existence dynamically, pe
 execution order, so a write that happens to run before a given read makes that read succeed
 even when it is not the field's "defining" site in the class body PyMCU scans. A read that (in
 execution order) precedes every write reachable from it gets PyMCU's zero-initialized default
-instead of the `AttributeError` the interpreters would raise at that point. `tests/oracle/probes/`
+instead of the `AttributeError` the interpreters would raise at that point. The oracle corpus (`tests/oracle/probes/` in `pymcu-avr`)
 has a probe of this shape marked `# expect: divergence`, citing this paragraph.
 
 ---

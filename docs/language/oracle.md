@@ -1,12 +1,18 @@
 # Language oracle
 
-`tests/oracle/` is a permanent differential test suite: each probe under
-`tests/oracle/probes/` is a small top-level-statement program that is run two ways --
-once directly under CPython, once compiled with PyMCU and executed in the `avr8sharp`
-`ArduinoUno` emulator (UART0 captured until the program prints `END`) -- and the two
-outputs are compared line by line. `tests/oracle/test_oracle.py` is the pytest runner;
-it is parametrized one test per probe file and skips cleanly (rather than failing) when
-`PYMCU_BIN` or `avr8sharp` is unavailable.
+The oracle corpus lives in the `pymcu-avr` repo at `tests/oracle/` -- it needs the AVR
+backend and the Avr8Sharp emulator, not just the compiler, so the 2026-06 repo split
+left it behind here until it was moved over. What this document describes (the probe
+header grammar, the divergence-citation registry, the running log of what the oracle
+has caught) is still the contract; the citations it names (`docs/language/...`) resolve
+in this repository.
+
+Each probe under `tests/oracle/probes/` is a small top-level-statement program that is
+run two ways -- once directly under CPython, once compiled with PyMCU and executed in
+the `avr8sharp` `ArduinoUno` emulator through a small C# runner on `Avr8Sharp.TestKit`
+(UART0 captured until the program prints `END`) -- and the two outputs are compared
+line by line. `tests/oracle/test_oracle.py` is the pytest runner; it is parametrized
+one test per probe file.
 
 Each probe carries headers:
 
@@ -38,17 +44,19 @@ Each probe carries headers:
   issue, so the disagreement itself stays visible in the suite rather than being
   silently narrowed to whichever engine happens to run.
 
-Run it with:
+Run it from a `pymcu-avr` checkout (with `PyMCU` beside it, both venvs installed):
 
 ```sh
-PYMCU_BIN=/path/to/pymcu python3 -m pytest tests/oracle/test_oracle.py -q
-PYMCU_BIN=/path/to/pymcu PYMCU_PY_PARSER=1 python3 -m pytest tests/oracle/test_oracle.py -q
+dotnet build tests/oracle/runner/PyMCU.OracleRunner.csproj -c Release -o build/oracle
+.venv/bin/python -m pytest tests/oracle -q
+PYMCU_PY_PARSER=1 .venv/bin/python -m pytest tests/oracle -q
 ```
 
-`PYMCU_BIN` defaults to `~/PycharmProjects/cp-hcsr04/.venv/bin/pymcu` (a frozen dev
-build); `avr8sharp` is imported from
-`~/Repos/PyMCU/.venv/lib/python3.14/site-packages`. Every probe is meant to be run, and
-kept green, under **both** front ends.
+`PYMCU_BIN` defaults to the pymcu-avr checkout's `.venv/bin/pymcu` (editable installs
+resolve `pymcuc` through the sibling PyMCU's `src/driver/pymcuc` and the backend
+through `pymcu-avr/build/bin/pymcuc-avr`); `PYMCU_BACKEND_BINARY` and
+`PYMCU_ORACLE_RUNNER` override the backend binary and the prebuilt runner DLL. Every
+probe is meant to be run, and kept green, under **both** front ends.
 
 **A probe is never edited to make a genuine mismatch go away.** A probe IS edited when
 the probe itself is wrong -- a stale import path, a header that cites a limitation the

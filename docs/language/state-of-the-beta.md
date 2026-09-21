@@ -18,7 +18,7 @@ reproduce it.
 | CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 230 symbols (175 provided, 55 allowlisted with a reason) | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
 | MicroPython API parity | Every `machine`/`utime`/`network`/… symbol upstream defines, checked against this layer | 292 symbols (74 provided, 218 allowlisted with a reason) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
 | HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 191 facade/API deviations currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
-| Differential oracle (`tests/oracle/test_oracle.py`) | 109 probes compiled and run on the AVR emulator, diffed against CPython running the same source | 109 probes: 78 match (7 documented divergences), 11 correctly refused, 20 tracked as filed compiler bugs (`xfail(strict)`, suite green) | [`docs/language/oracle.md`](oracle.md) |
+| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 109 probes compiled and run on the AVR emulator, diffed against CPython running the same source | 109 probes: 78 match (7 documented divergences), 11 correctly refused, 20 tracked as filed compiler bugs (`xfail(strict)`, suite green) | [`docs/language/oracle.md`](oracle.md) |
 
 ## What the oracle knows is wrong
 

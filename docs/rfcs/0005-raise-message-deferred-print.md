@@ -203,7 +203,7 @@ user-defined exception class, still unimplemented) -- neither is touched.
   message with a `uint8` piece, a `len(...)` call piece, and a `uint8`+`float` pair,
   raised inside functions and read via `print(e)` in the handlers, prints exactly what
   CPython prints for the same program -- on both front ends.
-- Oracle probes `tests/oracle/probes/181..183_raise_message_*.py` cover the
+- Oracle probes `181..183_raise_message_*.py` (the corpus lives at `tests/oracle/probes/` in `pymcu-avr`) cover the
   f-string-with-int-and-float, float-only, and int-only shapes against CPython under both
   front ends.
 - `tests/unit/IR/RaiseMessageDeferredPrintTests.cs` pins the IR shape: site id and slots
