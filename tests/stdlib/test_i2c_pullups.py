@@ -16,9 +16,12 @@ that part does not have.
 
 `pullups=False` on the HAL `I2C.__init__` opts out (a bus of 3.3 V devices that must not
 see a 5 V pull-up); the CircuitPython and MicroPython layers keep their own APIs and get
-the default. The register-level assertion lives in the AVR integration suite
+the default. `I2C.lines_high()` reads both lines off the PIN registers for a layer that
+wants the bus idle level -- the wiring check CircuitPython's `busio.I2C` does at
+construction. The register-level assertion lives in the AVR integration suite
 (`compat-cp-board-buses` reads PORTC at the BREAK); here the MIR is checked for the
-bit-set operations the pull-up writes compile to, per chip, on both front ends.
+bit-set operations the pull-up writes compile to and the bit-checks the line read
+compiles to, per chip, on both front ends.
 """
 
 import json
@@ -41,6 +44,12 @@ HEADER = re.compile(r"^(?P<path>[^\s:]+):(?P<line>\d+):(?P<col>\d+): error:", re
 I2C = ('from pymcu.hal.i2c import I2C\n\n\n'
        'def main() -> None:\n'
        '    i2c = I2C({args})\n')
+
+LINES = ('from pymcu.hal.i2c import I2C\n\n\n'
+         'def main() -> None:\n'
+         '    i2c = I2C()\n'
+         '    if i2c.lines_high() == 0:\n'
+         '        i2c.stop()\n')
 
 # (target, PORTx data-space address, the two bits i2c_init must raise).
 # PORTC is 0x28 on the 48/88/168/328 family, PORTD is 0x2B on the 2560 and 32U4.
@@ -75,12 +84,17 @@ def _compile(tmp_path: Path, source: str, target: str, py_parser: bool):
 
 
 def _main_ops(mir: Path):
-    body = json.loads(mir.read_text())["functions"][0]["body"]
+    fns = json.loads(mir.read_text())["functions"]
+    body = next(f["body"] for f in fns if f["name"] == "main")
     return [op for op in body if op["$t"] != "dbg"]
 
 
 def _bsets(ops):
     return {(op["target"]["address"], op["bit"]) for op in ops if op["$t"] == "bset"}
+
+
+def _bchks(ops):
+    return {(op["source"]["address"], op["bit"]) for op in ops if op["$t"] == "bchk"}
 
 
 @pytest.mark.parametrize("py_parser", [False, True], ids=["hand-written", "cpython"])
@@ -105,6 +119,17 @@ def test_the_pullups_come_before_the_twi_enable(tmp_path, py_parser):
                 if op["$t"] == "copy" and op["dst"].get("address") == TWBR)
     first_bset = next(i for i, op in enumerate(ops) if op["$t"] == "bset")
     assert first_bset < twbr
+
+
+@pytest.mark.parametrize("py_parser", [False, True], ids=["hand-written", "cpython"])
+@pytest.mark.parametrize("target,port,bits", FAMILIES, ids=[f[0] for f in FAMILIES])
+def test_lines_high_reads_the_pin_registers(tmp_path, target, port, bits, py_parser):
+    """The idle level is the PIN registers: the PORT facts minus two."""
+    rc, out, mir = _compile(tmp_path, LINES, target, py_parser)
+
+    assert rc == 0, out
+    assert _bchks(_main_ops(mir)) == {(port - 2, b) for b in bits}, \
+        "SDA and SCL are read at the pins, and nothing else is"
 
 
 @pytest.mark.parametrize("py_parser", [False, True], ids=["hand-written", "cpython"])
