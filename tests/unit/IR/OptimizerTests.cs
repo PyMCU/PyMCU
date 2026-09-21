@@ -843,16 +843,19 @@ public class OptimizerPassTests
     }
 
     [Fact]
-    public void Pgo_ColdRegion_OutlinedDespiteStaticRejection()
+    public void Pgo_ColdRegion_StaticallyRejected_StaysInline()
     {
+        // The spike's cold override outlined this group on the profile's word alone;
+        // it was dropped on landing because it only ever adds bytes (RFC 0010 s.6).
+        // A matching profile that shows the region cold now changes nothing.
         var prog = TwoSmallSitesUnder("cold");
         var profile = Profile(1000, ("cold", 0, 0));
 
         var optimized = Optimizer.Optimize(prog, profile);
 
-        optimized.Functions.Should().Contain(f => f.Name == "__pymcu_outline_pgo_0",
-            "a region whose enclosing block never ran is outlined even though the " +
-            "static cost model cannot prove the win");
+        optimized.Functions.Should().NotContain(f => f.Name.StartsWith("__pymcu_outline"),
+            "the profile is a veto, not an override: a statically rejected group " +
+            "stays inline whatever the workload saw");
     }
 
     [Fact]
@@ -882,6 +885,22 @@ public class OptimizerPassTests
         optimized.Functions[0].Body.OfType<DebugLine>().Should().Contain(
             d => d.Text.Contains("pgo: kept"),
             "a hot veto is recorded in the MIR");
+    }
+
+    [Fact]
+    public void Pgo_HotRegion_StaticallyRejected_GetsNoMarker()
+    {
+        // Same hot profile, small group: the cost model already refuses, so the
+        // veto agrees with it -- nothing flips, and no marker claims the decision.
+        var prog = TwoSmallSitesUnder("hot");
+        var profile = Profile(1000, ("hot", 50, 200));
+
+        var optimized = Optimizer.Optimize(prog, profile);
+
+        optimized.Functions.Should().NotContain(f => f.Name.StartsWith("__pymcu_outline"));
+        optimized.Functions[0].Body.OfType<DebugLine>().Should().NotContain(
+            d => d.Text.Contains("pgo: kept"),
+            "a veto that only agrees with the cost model is not the profile's work");
     }
 
     [Fact]

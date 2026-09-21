@@ -3114,33 +3114,27 @@ private static Function CloneFunction(Function f)
         return words;
     }
 
-    // PGO verdict for a group of identical regions. A region's blocks are its own
+    // PGO veto for a group of identical regions. A region's blocks are its own
     // internal labels plus the block that falls through into it (the last Label
-    // before the region, else the function entry). ALL regions cold means the
-    // expansion ran zero times under the workload; ANY region hot (>= 1% of the
+    // before the region, else the function entry). ANY region hot (>= 1% of the
     // workload's cycles) means outlining it would put a CALL/RET inside timed
     // code the profile shows matters.
-    private static (bool allCold, bool anyHot) ClassifyGroupByProfile(
+    private static bool GroupIsHotByProfile(
         List<RegionCanon> regions, PgoProfile profile)
     {
         ulong total = profile.TotalCycles;
-        bool allCold = true, anyHot = false;
+        if (total == 0) return false;
         foreach (var r in regions)
         {
             string enclosing = r.Func.Name;
             for (int i = r.Start - 1; i >= 0; i--)
                 if (r.Func.Body[i] is Label l) { enclosing = l.Name; break; }
-            ulong count = profile.BlockCount(enclosing);
             ulong cycles = profile.BlockCycles(enclosing);
             foreach (var lab in r.Core.OfType<Label>())
-            {
-                count += profile.BlockCount(lab.Name);
                 cycles += profile.BlockCycles(lab.Name);
-            }
-            if (count != 0) allCold = false;
-            if (total > 0 && cycles * 100 >= total) anyHot = true;
+            if (cycles * 100 >= total) return true;
         }
-        return (allCold, anyHot);
+        return false;
     }
 
     private static bool TryOutlineGroup(ProgramIR program, List<RegionCanon> regions, ref int counter,
@@ -3177,27 +3171,20 @@ private static Function CloneFunction(Function f)
         long bodyCost = r0.Core.Sum(i => i is Return ? 0 : InstrCost(i));
         long inlineTotal = (long)nSites * bodyCost;
         long outlineTotal = bodyCost + 1 + nParams + (long)nSites * (nParams + 2);
-        // PGO: the workload may veto or override the size proof. A group every
-        // site of which ran zero times is worth a subroutine even when the
-        // word-cost model cannot prove the win statically -- the CALL it pays is
-        // never executed. A group any scenario shows hot is never outlined: the
-        // CALL/RET would land inside timed code. Only a flipped decision counts
-        // as decided-by-profile; a veto that only agrees with the cost model is
-        // not the profile's work.
-        bool decidedByProfile = false;
-        if (profile != null)
+        // PGO: the workload vetoes the size proof but never overrides it. A group
+        // any scenario shows hot is never outlined: the CALL/RET would land inside
+        // timed code. Only a flipped decision counts as the profile's work -- a
+        // veto that merely agrees with the cost model gets no marker.
+        if (profile != null
+                && outlineTotal < inlineTotal
+                && GroupIsHotByProfile(regions, profile))
         {
-            var (allCold, anyHot) = ClassifyGroupByProfile(regions, profile);
-            if (anyHot && outlineTotal < inlineTotal)
-            {
-                if (hotKept != null)
-                    foreach (var r in regions)
-                        hotKept[r.Func] = hotKept.GetValueOrDefault(r.Func) + 1;
-                return false;
-            }
-            decidedByProfile = allCold && outlineTotal >= inlineTotal;
+            if (hotKept != null)
+                foreach (var r in regions)
+                    hotKept[r.Func] = hotKept.GetValueOrDefault(r.Func) + 1;
+            return false;
         }
-        if (outlineTotal >= inlineTotal && !decidedByProfile) return false;
+        if (outlineTotal >= inlineTotal) return false;
 
         // Parameter types.  Inputs take their val's type; varying constants take
         // the inferred slot type widened to cover the actual values.
@@ -3223,12 +3210,7 @@ private static Function CloneFunction(Function f)
             finalHoleTypes[k] = t;
         }
 
-        // The _pgo_ infix is the MIR-level flag that this group was outlined on
-        // the profile's word alone -- visible in the .mir, the symbol map, and
-        // the generated asm.
-        string gName = decidedByProfile
-            ? "__pymcu_outline_pgo_" + counter++
-            : "__pymcu_outline_" + counter++;
+        string gName = "__pymcu_outline_" + counter++;
         // A region with a live-out ends in Return(<local>) (see TryCanonicalizeRegion):
         // the subroutine returns that value and each call site's Call receives it.
         var retVal = r0.Core.OfType<Return>()
