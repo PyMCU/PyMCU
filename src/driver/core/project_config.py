@@ -26,6 +26,7 @@ Catching them here means a bad combination never reaches a build.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +47,23 @@ from .boards import (
 )
 
 LAYERS = ("native", "micropython", "circuitpython")
+
+# [tool.pymcu.experimental] <name> = true gates a feature that is not yet part of
+# the stable surface. PYMCU_EXPERIMENTAL_<NAME> mirrors each key for CI and
+# scripts that cannot edit the file; set, the env var wins outright so a job can
+# also force a feature OFF on a project that has it on.
+def experimental_enabled(pymcu_cfg: dict, name: str) -> bool:
+    """Whether experimental feature *name* is on for this project.
+
+    ``pymcu_cfg`` is the ``[tool.pymcu]`` table already loaded from
+    pyproject.toml. Env values read as on: 1/true/yes/on (case-insensitive);
+    any other value, including "0", reads as off.
+    """
+    env = os.environ.get("PYMCU_EXPERIMENTAL_" + name.upper())
+    if env is not None:
+        return env.strip().lower() in ("1", "true", "yes", "on")
+    table = pymcu_cfg.get("experimental", {}) or {}
+    return bool(table.get(name, False))
 
 
 @dataclass

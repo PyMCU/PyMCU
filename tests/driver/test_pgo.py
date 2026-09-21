@@ -19,7 +19,7 @@ def _invoke(*args: str):
     return runner.invoke(app, list(args), catch_exceptions=False)
 
 
-def _project(tmp_path: Path) -> None:
+def _project(tmp_path: Path, pgo: bool = False) -> None:
     (tmp_path / "src").mkdir(exist_ok=True)
     (tmp_path / "src" / "main.py").write_text("def main():\n    print(1)\n")
     (tmp_path / "pyproject.toml").write_text(
@@ -32,6 +32,7 @@ def _project(tmp_path: Path) -> None:
         "frequency = 16000000\n"
         'sources = "src"\n'
         'entry = "main.py"\n'
+        + ("\n[tool.pymcu.experimental]\npgo = true\n" if pgo else "")
     )
 
 
@@ -144,9 +145,14 @@ class TestBuildProfileForwarding:
 
         monkeypatch.setattr(PyMCUCompiler, "compile", spy)
 
-    def test_profile_flag_reaches_compile(self, tmp_path, monkeypatch):
+    # The forwarding tests only assert that the profile reaches the compile()
+    # call; reaching it needs an AVR toolchain plugin, which the CI driver-test
+    # venv does not install -- same importorskip pattern as test_build.py.
+    def test_profile_flag_reaches_compile(self, tmp_path, monkeypatch,
+                                          mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
         monkeypatch.chdir(tmp_path)
-        _project(tmp_path)
+        _project(tmp_path, pgo=True)
         profile = tmp_path / "profile.json"
         profile.write_text('{"format": 1}')
         captured: dict = {}
@@ -155,9 +161,12 @@ class TestBuildProfileForwarding:
         _invoke("build", "--profile", str(profile))
         assert captured.get("profile_path") == str(profile)
 
-    def test_profile_env_is_picked_up(self, tmp_path, monkeypatch):
+    def test_profile_env_is_picked_up(self, tmp_path, monkeypatch,
+                                    mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
         monkeypatch.chdir(tmp_path)
         _project(tmp_path)
+        monkeypatch.setenv("PYMCU_EXPERIMENTAL_PGO", "1")
         profile = tmp_path / "profile.json"
         profile.write_text('{"format": 1}')
         monkeypatch.setenv("PYMCU_PROFILE", str(profile))
@@ -167,30 +176,90 @@ class TestBuildProfileForwarding:
         _invoke("build")
         assert captured.get("profile_path") == str(profile)
 
-    def test_missing_profile_is_an_error(self, tmp_path, monkeypatch):
+    def test_missing_profile_is_an_error(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.chdir(tmp_path)
-        _project(tmp_path)
+        _project(tmp_path, pgo=True)
         result = _invoke("build", "--profile", str(tmp_path / "nope.json"))
         assert result.exit_code == 1
-        assert "profile not found" in result.output
+        assert "profile not found" in unwrapped(result.output)
 
-    def test_missing_env_profile_is_an_error(self, tmp_path, monkeypatch):
+    def test_missing_env_profile_is_an_error(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.chdir(tmp_path)
         _project(tmp_path)
+        monkeypatch.setenv("PYMCU_EXPERIMENTAL_PGO", "1")
         monkeypatch.setenv("PYMCU_PROFILE", str(tmp_path / "nope.json"))
         result = _invoke("build")
         assert result.exit_code == 1
-        assert "profile not found" in result.output
+        assert "profile not found" in unwrapped(result.output)
 
-    def test_no_profile_passes_none(self, tmp_path, monkeypatch):
+    def test_no_profile_passes_none(self, tmp_path, monkeypatch,
+                                    mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("PYMCU_PROFILE", raising=False)
+        monkeypatch.delenv("PYMCU_EXPERIMENTAL_PGO", raising=False)
         _project(tmp_path)
         captured: dict = {}
         self._spy_compile(monkeypatch, captured)
 
         _invoke("build")
         assert captured.get("profile_path") is None
+
+
+# ---------------------------------------------------------------------------
+# The experimental flag
+# ---------------------------------------------------------------------------
+
+class TestExperimentalFlag:
+    """With no flag set, the PGO entry points refuse before building anything."""
+
+    def test_build_profile_refused_without_flag(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("PYMCU_EXPERIMENTAL_PGO", raising=False)
+        _project(tmp_path)
+        profile = tmp_path / "profile.json"
+        profile.write_text('{"format": 1}')
+        captured: dict = {}
+        TestBuildProfileForwarding._spy_compile(monkeypatch, captured)
+
+        result = _invoke("build", "--profile", str(profile))
+        assert result.exit_code == 1
+        assert "experimental" in result.output
+        assert "tool.pymcu.experimental" in result.output
+        assert captured.get("profile_path") is None
+
+    def test_build_env_profile_refused_without_flag(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("PYMCU_EXPERIMENTAL_PGO", raising=False)
+        _project(tmp_path)
+        monkeypatch.setenv("PYMCU_PROFILE", str(tmp_path / "profile.json"))
+        result = _invoke("build")
+        assert result.exit_code == 1
+        assert "experimental" in result.output
+
+    def test_env_zero_overrides_toml(self, tmp_path, monkeypatch):
+        """PYMCU_EXPERIMENTAL_PGO=0 wins over an enabling pyproject, so CI can
+        force the feature off."""
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, pgo=True)
+        monkeypatch.setenv("PYMCU_EXPERIMENTAL_PGO", "0")
+        result = _invoke("build", "--profile", str(tmp_path / "p.json"))
+        assert result.exit_code == 1
+        assert "experimental" in result.output
+
+    def test_profile_pgo_refused_without_flag(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("PYMCU_EXPERIMENTAL_PGO", raising=False)
+        _project(tmp_path)
+        (tmp_path / "workload.yaml").write_text(
+            "scenarios:\n  - name: idle\n    run: {ms: 10}\n")
+
+        result = _invoke("profile", "--pgo")
+        assert result.exit_code == 1
+        assert "experimental" in result.output
+        assert "tool.pymcu.experimental" in result.output
+        # nothing was built
+        assert not (tmp_path / "dist" / "firmware.hex").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +332,7 @@ class TestProfilePgo:
     def test_pgo_flow(self, tmp_path, monkeypatch):
         """--pgo builds via `pymcu build --debug` and feeds the profiler."""
         monkeypatch.chdir(tmp_path)
-        _project(tmp_path)
+        _project(tmp_path, pgo=True)
         (tmp_path / "workload.yaml").write_text(
             "scenarios:\n  - name: idle\n    run: {ms: 10}\n")
 
@@ -301,9 +370,9 @@ class TestProfilePgo:
         assert any(a.endswith("workload.json") for a in prof_call)
         assert any(a.endswith("firmware.hex") for a in prof_call)
 
-    def test_pgo_default_workload_says_so(self, tmp_path, monkeypatch):
+    def test_pgo_default_workload_says_so(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.chdir(tmp_path)
-        _project(tmp_path)  # no workload.yaml
+        _project(tmp_path, pgo=True)  # no workload.yaml
 
         import subprocess as sp
 
@@ -325,6 +394,6 @@ class TestProfilePgo:
 
         result = _invoke("profile", "--pgo")
         assert result.exit_code == 0, result.output
-        assert "default scenario" in result.output
+        assert "default scenario" in unwrapped(result.output)
         wj = json.loads((tmp_path / "dist" / "workload.json").read_text())
         assert wj["scenarios"][0]["run"] == {"ms": 200.0}

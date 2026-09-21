@@ -30,6 +30,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import binary_for_plugin, get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler, map_line
+from ..core.project_config import experimental_enabled
 from ..core.boards import (
     board_frequency,
     default_frequency,
@@ -1161,13 +1162,6 @@ def build(
     ),
 ):
     is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
-    # PGO profile: --profile wins over PYMCU_PROFILE; a named file that does not
-    # exist is an error rather than a silent unprofiled build, for the same
-    # reason PYMCU_BACKEND_BINARY refuses to fall back.
-    profile_path = profile or os.environ.get("PYMCU_PROFILE") or None
-    if profile_path is not None and not Path(profile_path).exists():
-        console.print(f"[bold red]Error:[/bold red] profile not found: {profile_path}")
-        raise typer.Exit(code=1)
     _diag_log("=== BUILD COMMAND STARTED ===", verbose=is_verbose)
     _diag_log(f"Working directory: {os.getcwd()}", verbose=is_verbose)
     _diag_log(f"sys.executable: {sys.executable}", verbose=is_verbose)
@@ -1202,6 +1196,25 @@ def build(
         _diag_log("pyproject.toml loaded successfully", verbose=is_verbose)
         pymcu_config = config.get("tool", {}).get("pymcu", {})
         _diag_log(f"pymcu_config keys: {list(pymcu_config.keys())}", verbose=is_verbose)
+
+        # PGO is experimental (RFC 0010): 'pgo = true' under
+        # [tool.pymcu.experimental], or PYMCU_EXPERIMENTAL_PGO=1. Asking for a
+        # profiled build with the flag off stops here, before anything is built.
+        # --profile wins over PYMCU_PROFILE; a named file that does not exist is
+        # an error rather than a silent unprofiled build, for the same reason
+        # PYMCU_BACKEND_BINARY refuses to fall back.
+        pgo_enabled = experimental_enabled(pymcu_config, "pgo")
+        profile_path = profile or os.environ.get("PYMCU_PROFILE") or None
+        if profile_path is not None:
+            if not pgo_enabled:
+                console.print(
+                    "[bold red]Error:[/bold red] PGO is experimental: set 'pgo = true' "
+                    "under \\[tool.pymcu.experimental] in pyproject.toml "
+                    "(or PYMCU_EXPERIMENTAL_PGO=1) to use --profile/PYMCU_PROFILE.")
+                raise typer.Exit(code=1)
+            if not Path(profile_path).exists():
+                console.print(f"[bold red]Error:[/bold red] profile not found: {profile_path}")
+                raise typer.Exit(code=1)
 
         target_key   = pymcu_config.get("target", None)
         _diag_log(f"target_key from config: {target_key}", verbose=is_verbose)
@@ -1705,7 +1718,10 @@ def build(
                         debug_dir.mkdir(parents=True, exist_ok=True)
                         linemap_path = debug_dir / "linemap.json"
                         varmap_path  = debug_dir / "varmap.json"
-                        blockmap_path = debug_dir / "blockmap.json"
+                        # The block map feeds `pymcu profile --pgo`; with the
+                        # experimental flag off the backend never sees the flag.
+                        if pgo_enabled:
+                            blockmap_path = debug_dir / "blockmap.json"
                     run_backend(
                         backend_binary=binary_for_plugin(backend_plugin),
                         ir_file=ir_file,

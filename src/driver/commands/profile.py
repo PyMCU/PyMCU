@@ -26,6 +26,7 @@ from rich.console import Console
 from ..backends import get_backend_for_chip, run_backend
 from ..core.boards import BOARD_CHIPS
 from ..core.compiler import PyMCUCompiler
+from ..core.project_config import experimental_enabled
 from ..core.workload import WorkloadError, load_workload
 
 console = Console()
@@ -333,6 +334,14 @@ def profile(
             extra_includes.append(str(pkg_dir))
 
     if pgo:
+        # Experimental (RFC 0010): gated by [tool.pymcu.experimental] pgo = true
+        # or PYMCU_EXPERIMENTAL_PGO=1. Refuse before anything is built.
+        if not experimental_enabled(pymcu_cfg, "pgo"):
+            console.print(
+                "[bold red]Error:[/bold red] pymcu profile --pgo is experimental: "
+                "set 'pgo = true' under \\[tool.pymcu.experimental] in pyproject.toml "
+                "(or PYMCU_EXPERIMENTAL_PGO=1).")
+            raise typer.Exit(1)
         _profile_pgo(chip, freq, workload, verbose)
         return
 
