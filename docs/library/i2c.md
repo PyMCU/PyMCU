@@ -33,6 +33,14 @@ still want external resistors (the usual 4.7 kOhm). Pass `pullups=False` on a bu
 devices are 3.3 V and should not see a 5 V pull-up -- the bus then needs external
 resistors of its own. The flag is compile-time, so a program that never asks is identical.
 
+The CircuitPython layer goes a step further, the way upstream does: `busio.I2C` reads SDA
+and SCL right after the pull-ups come up and raises
+`RuntimeError("No pull up found on SDA or SCL; check your wiring")` when either line sits
+low -- the TWI does not drive the lines until the first START, so the read is the bus idle
+level, and a line held low means something is pulling it down. `machine.I2C` does not
+check; it raises `OSError` only when a transfer fails, and neither does `bitbangio.I2C`,
+which drives its own pins.
+
 `freq` is the SCL rate in Hz and reaches the bit-rate register:
 `TWBR = (F_CPU / SCL - 16) / 2`, so 100 kHz at 16 MHz is 72 and 400 kHz is 12. It used to be
 the literal 72 and nothing else, so every layer above took a frequency from its caller and

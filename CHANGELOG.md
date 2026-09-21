@@ -441,6 +441,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   and timing out the first probe. Two `SBI` on the 328P (4 bytes), and a program that
   never asks is byte-identical. `I2C(pullups=False)` opts out for a 3.3 V bus;
   `board.I2C()`, `busio.I2C` and `machine.I2C` get the default through the same init.
+  With the pull-ups up, the CircuitPython layer's `busio.I2C` also checks the wiring the
+  way upstream does: it reads both lines and raises
+  `RuntimeError("No pull up found on SDA or SCL; check your wiring")` when either is held
+  low. `machine.I2C` and `bitbangio.I2C` do not check, matching their upstreams.
 - The two channels of one timer share its prescaler: the second `PWM()` (or a
   `set_freq()` next to a running sibling) asking for another bucket is refused at compile
   time, where it is written, through the new `claim()` intrinsic in `pymcu.types` (#300).
