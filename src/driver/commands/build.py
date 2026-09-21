@@ -437,6 +437,108 @@ def _sources_contain(sources_dir: Path, token: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# RFC 0008 -- embedded files (romfs).
+#
+# `open("name", mode)` resolves at compile time to a handle over a flash blob;
+# there is no filesystem table on the chip. The driver's part is discovery only:
+# decide which (name, path) pairs the compiler embeds, hand them over via
+# `--embed name=path`, and report them on the build line. The compiler keys its
+# table by the name open() is given and refuses anything it cannot resolve.
+# ---------------------------------------------------------------------------
+
+# A literal first argument to open(): open("font5x8.bin"), open('data/x.bin', "rb").
+# The string may use any Python prefix combination a compiler could accept later
+# (b, r, u, and combinations), so the literal is captured with the prefix group.
+_OPEN_LITERAL_RE = re.compile(
+    r"""\bopen\s*\(\s*(?:[bBrRuU]{0,3})["']([^"'\n]+)["']""")
+
+
+def _detect_open_literals(sources_dir: Path) -> list[str]:
+    """Return every literal filename an open() call in the sources names.
+
+    Pure discovery for the auto-embedding rule: a name found here that exists
+    under the source tree gets embedded without the project listing it in
+    [tool.pymcu] files. Non-literal arguments (open(self.font_name, ...)) match
+    nothing, which is correct -- the compiler still resolves those at compile
+    time through constant folding, and the project lists such files explicitly.
+    """
+    names: list[str] = []
+    for py_file in sorted(sources_dir.rglob("*.py")):
+        try:
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+        except OSError:
+            continue
+        for m in _OPEN_LITERAL_RE.finditer(code):
+            if m.group(1) not in names:
+                names.append(m.group(1))
+    return names
+
+
+def _resolve_embed_files(
+    project_root: Path,
+    sources_dir: Path,
+    entry_point: Path,
+    pymcu_config: dict,
+) -> list[tuple[str, Path, int]]:
+    """Resolve the (name, path, size) triples the compiler embeds.
+
+    Two sources, union on name (first hit wins):
+      * [tool.pymcu] files = [...] -- paths or glob patterns, resolved against
+        the project root first and the sources dir second, so `files =
+        ["font5x8.bin"]` finds `src/font5x8.bin` as well as a top-level file.
+        The embedded name is the path relative to the base it matched under.
+      * Auto-embed: every literal `open("name")` in the sources whose file
+        exists under sources_dir, the project root, or next to the entry file.
+
+    Returns sorted by name for a stable build line.
+    """
+    embedded: dict[str, Path] = {}
+
+    for pattern in pymcu_config.get("files", []) or []:
+        matches: list[Path] = []
+        for base in (project_root, sources_dir):
+            matches.extend(sorted(base.glob(pattern)))
+        matched_any = False
+        for m in matches:
+            if not m.is_file():
+                continue
+            matched_any = True
+            # sources first: `files = ["font5x8.bin"]` resolving to
+            # `src/font5x8.bin` embeds under the name open() names.
+            for base in (sources_dir, project_root):
+                try:
+                    name = m.resolve().relative_to(base.resolve()).as_posix()
+                    break
+                except ValueError:
+                    continue
+            else:
+                name = m.name
+            embedded.setdefault(name, m.resolve())
+        if not matched_any:
+            console.print(
+                f"[yellow]warning:[/yellow] \\[tool.pymcu] files pattern "
+                f"'{pattern}' matched no file -- nothing embedded for it")
+
+    for name in _detect_open_literals(sources_dir):
+        if name in embedded:
+            continue
+        for base in (sources_dir, project_root, entry_point.parent):
+            candidate = base / name
+            if candidate.is_file():
+                embedded[name] = candidate.resolve()
+                break
+
+    out: list[tuple[str, Path, int]] = []
+    for name, path in sorted(embedded.items()):
+        try:
+            out.append((name, path, path.stat().st_size))
+        except OSError:
+            continue
+    return out
+
+
 _MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
 
 # Every line `pymcu build` inserts into the entry file carries this. It is what lets a
@@ -1392,6 +1494,15 @@ def build(
             else None
         )
 
+        # RFC 0008 -- resolve which files open() can name at compile time. Runs
+        # against the ORIGINAL entry point: discovery scans the user's sources,
+        # not any synthetic preamble staged into dist/_generated.
+        _embedded_files = _resolve_embed_files(
+            project_root, sources_dir, _original_entry_point, pymcu_config)
+        for _name, _path, _size in _embedded_files:
+            console.print(f"Embedded: {_name}, {_size} bytes")
+            _diag_log(f"romfs: {_name} <- {_path} ({_size} B)", verbose=is_verbose)
+
         # Detect C interop: [tool.pymcu.ffi] sources = [...]
         ffi_config = pymcu_config.get("ffi", {})
         ffi_sources_raw: list[str] = list(ffi_config.get("sources", []))
@@ -1458,6 +1569,7 @@ def build(
                         diagnostic_source=_diagnostic_source,
                         timebase=_timebase,
                         stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
+                        embed_files=_embedded_files,
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
                     linemap_path: Path | None = None
@@ -1503,6 +1615,7 @@ def build(
                         on_output=compiler_handler,
                         timebase=_timebase,
                         stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
+                        embed_files=_embedded_files,
                     )
             except RuntimeError as e:
                 progress.stop()
