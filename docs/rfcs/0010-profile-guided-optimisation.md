@@ -210,9 +210,10 @@ identical behaviour -> measured delta, end to end on real programs.
   names all degrade to an ordinary build with a `pgo:` warning on stderr.
 - Change observable behaviour: UART byte order/content, GPIO sequence, timing of any
   block the workload showed hot (the 1% veto exists for this), or the ABI.
-- Reach the backend allocator directly. The `pymcuc-avr` binary never sees the
-  profile; anything the backend is to do differently has to be encoded in the MIR
-  first.
+- ~~Reach the backend allocator directly.~~ Amended by section 9: the profile
+  now reaches `pymcuc-avr` for one purpose only -- the ORDER of register homes.
+  It still may not change what the backend is allowed to do, only which
+  eligible variable sits in which callee-saved register.
 
 ## 8. Not done / deliberately out of scope
 
@@ -221,13 +222,7 @@ identical behaviour -> measured delta, end to end on real programs.
   corpus paid +286 B net for it (section 6). The plumbing to bring it back exists
   (`ClassifyGroupByProfile` kept the per-region block sum as `GroupIsHotByProfile`),
   the ledger says do not.
-- Second consumer: R2-R15 named-variable homes are already ordered by *static* IR use
-  count (`AvrRegisterAllocator.Allocate`, `OrderByDescending(useCount)`). Swapping in
-  dynamic counts needs the profile (or a per-name weight table) threaded through the
-  MIR into `pymcuc-avr`, which has no profile input today. Read and rejected for this
-  spike: the static proxy correlates with dynamic use on the surveyed corpus, the
-  plumbing crosses a process boundary, and the one-consumer rule keeps the gate's
-  signal clean.
+- ~~Second consumer~~: implemented 2026-09-21 -- see section 9.
 - Runtime-helper attribution: hand-emitted runtime subs (`__dly_*`, `__div*`,
   interrupt stubs) have no block-map entries, so their cycles fold into the last
   preceding user block. Cycle *shares* stay approximately right (helpers serve the
@@ -236,3 +231,58 @@ identical behaviour -> measured delta, end to end on real programs.
   with both a hot and an idle scenario cannot yet say "cold under load only".
 - Speedscope mode and PGO mode share the binary but not a code path; `--emit-profile`
   with neither `--blockmap` nor `--workload` is an error by design.
+
+## 9. Amendment (2026-09-21): the second consumer -- register priority
+
+The profile now reaches the backend for ordering only. `pymcuc-avr --profile
+<profile.json>` loads the same `format:1` profile the optimizer consumes and feeds
+its block execution counts to `AvrRegisterAllocator.Allocate`. Per-variable weight
+= sum over MIR instructions of (uses of the variable in the instruction x
+execution count of the block containing it), where a use's block is the last
+`Label` seen in the function body, else the function name -- the same boundaries
+`--emit-blockmap` records. Blocks the profile does not mention count 1, never 0:
+a variable the workload never touched still competes for a home. Only the ORDER
+of the R2-R15 homes changes; eligibility (<= 2-byte ints, no GC_REF/FUNCREF, no
+address-taken names) and the ordinal-name tiebreak are exactly as before. An
+unreadable, wrong-version or foreign (zero shared block names) profile degrades
+to the static order -- the profile is a hint, never a build blocker -- and the
+backend prints one `[PGO]` line saying what it did, which the driver relays into
+build output.
+
+Driver plumbing: `pymcu build --profile <p>` (experimental flag on) forwards
+`--profile` to `pymcuc-avr` alongside `pymcuc`. A backend binary whose `--help`
+does not declare the flag is refused rather than silently building unprofiled.
+Flag off or no profile: nothing reaches the backend and the image is
+byte-identical to before this amendment (ROM gate: 508/508 examples + fixtures).
+
+Measured, flag on, each program built plain and then with its own profile;
+cycles come from re-profiling the profiled image on the same workload
+(`pymcuc-avr-profiler <hex> --workload --blockmap --emit-profile`), per-frame
+from the I2C trace's span between consecutive frame-write transactions:
+
+| program | flash B | scenario cycles | last `show()` frame |
+|---|---|---|---|
+| fixtures/adafruit-ssd1306-unmodified (128x32) | 4,386 -> 4,484 (+98) | 171,815 -> 164,948 (-4.0%) | 44,632 -> 42,476 (-4.8%) |
+| fixtures/adafruit-ssd1306-unmodified-64 | 13,888 -> 14,450 (+562) | 449,083 -> 369,593 (-17.7%) | 149,092 -> 131,708 (-11.7%) |
+| examples/ssd1306 | 628 -> 628 (image differs) | 78,361 -> 78,361 | init only, no `show()` |
+| examples/stopwatch | 562 -> 586 (+24) | ms-bound: flat (instr +0.00%) | -- |
+| fixtures/fstring-bool | 1,020 -> 1,020 (image differs) | ms-bound: flat | -- |
+| examples/error-handling | 884 -> 884 (image differs) | ms-bound: flat | -- |
+| examples/blink | 150 -> 150 (byte-identical) | ms-bound: flat | -- |
+| fixtures/pgo-hot-veto | 186 -> 210 (+24) | ms-bound: +7.3% instructions in-window | -- |
+
+Honest reads: the two Adafruit fixtures pay +98/+562 B of flash for -4.0%/-17.7%
+cycles; the bytes cost comes from static per-*site* counting happening to favour
+code size (each LDS/STS replaced by a register access saves a word per static
+site), so the dynamic order can trade words for cycles. The ms-bound scenarios
+run to the time cap either way, so "cycles" cannot move on them -- the honest
+metric there is instructions completed in the window: flat for stopwatch
+(+24 B paid for nothing measurable), fstring-bool and error-handling (order
+flipped, size unchanged, work-rate flat); only blink came out byte-identical.
+pgo-hot-veto's +7.3% instructions-in-window is the section-4 hot veto doing its
+job, not the allocator; it is listed because a profiled build now exercises
+both consumers. The 128x64 row's baseline moved since the spike measured it
+(the fixture's *unoptimized* leg no longer fits the 2048 B SRAM -- fba8fb0 sits
+it out of the differential axes for that reason; the optimized build the table
+measures still fits and runs) -- the -17.7% is a like-for-like delta on today's
+sources, not comparable to the spike's -3.9%.

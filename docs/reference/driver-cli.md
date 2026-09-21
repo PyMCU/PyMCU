@@ -92,6 +92,15 @@ driver never passes `--profile` to `pymcuc` nor `--emit-blockmap` to the backend
 The flag is driver policy only -- `pymcuc --profile` invoked directly on the
 compiler keeps working regardless.
 
+A profiled build also passes `--profile` to `pymcuc-avr`, where the profile
+orders the R2-R15 register homes by dynamic use: each variable's uses count the
+profiled execution count of the MIR block containing them, so variables hot in
+the workload win callee-saved registers ahead of statically-busy cold ones.
+Only the order changes -- eligibility and fallbacks are untouched -- and flash
+may grow a few percent when a statically-cheap variable loses its home to a
+dynamically-hot one. A backend that does not declare `--profile` in its own
+`--help` is refused rather than silently building unprofiled.
+
 ### Compiler error output
 
 When the compiler detects an error, it prints a human-readable diagnostic with source
