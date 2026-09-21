@@ -931,6 +931,7 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **driver**: follow the backend's widened native-module arch tuple
 - **driver**: natmod says so when the ARM backend has no native-module mode
 - **driver**: the pyelftools probe does not import from the project directory
+- **driver**: the __bad_interrupt stub counts with the vector table, not as user code
 
 ### Performance
 
