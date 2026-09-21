@@ -929,6 +929,100 @@ def _resolve_blockmap(blockmap_path: Path, elf_syms: dict[str, int]) -> None:
     blockmap_path.write_text(json.dumps(raw, indent=2))
 
 
+def _splice_avr_math_runtime(asm_path: Path, asm_content: str, avr_math_path: Path) -> None:
+    """Splice the AVR math runtime sources into firmware.asm before assembling.
+
+    The backend emits CALLs to the ``__div*``/``__mod*``/``__mul*`` helpers but
+    their bodies live in ``lib/src/pymcu/math/avr/*.S``; pull in exactly the
+    files the asm references, inserted before the first function label so the
+    helpers stay within RCALL range of their callers. Shared by ``build`` and
+    ``profile --pgo`` -- anything assembled straight from the backend output
+    needs it or ``avr-ld`` reports the helpers undefined.
+    """
+    # The signed floor div/mod routines (__divs*/__mods*) build on the unsigned
+    # core, so a reference to one of them pulls in the core's file as well.
+    runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32",
+                     "__divs8", "__mods8", "__divs16", "__mods16", "__divs32", "__mods32",
+                     "__mul32"]
+    needed_funcs = [f for f in runtime_funcs if f in asm_content]
+    if not needed_funcs:
+        return
+
+    # Which source files each entry point needs. A whole file is spliced in, so
+    # anything sharing a file is paid for whether or not it is called: the 32-bit
+    # signed pair sits in its own file for that reason, and an unsigned-only
+    # program -- the decimal printer among them -- no longer carries its 226
+    # bytes. __mod32 is split out to mod32.S for the same reason (PyMCU/PyMCU#408).
+    func_map = {
+        "__div8": ("div.S",),
+        "__mod8": ("div.S",),
+        "__divs8": ("div.S",),
+        "__mods8": ("div.S",),
+        "__mul8": ("mul.S",),
+        "__div16": ("div16.S",),
+        "__mod16": ("div16.S",),
+        "__divs16": ("div16.S",),
+        "__mods16": ("div16.S",),
+        "__div32": ("div32.S",),
+        "__mod32": ("div32.S", "mod32.S"),
+        "__divs32": ("div32.S", "div32s.S"),
+        "__mods32": ("div32.S", "div32s.S"),
+        "__mul32": ("mul32.S",),
+    }
+    math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
+    included_files = set()
+    for func in [f for f in needed_funcs if not f.startswith("__fp")]:
+        for fname in func_map.get(func, ()):
+            if fname in included_files:
+                continue
+            src_path = avr_math_path / fname
+            if src_path.exists():
+                with open(src_path, "r") as lib_f:
+                    math_runtime_text += lib_f.read() + "\n"
+                included_files.add(fname)
+            else:
+                console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
+
+    # Insert math runtime BEFORE the first function label so that __div8/__mod8
+    # are at a low word address, within RCALL range (±2047 words) of any call
+    # site in large firmware images.
+    with open(asm_path, "r") as f:
+        lines = f.readlines()
+
+    insert_idx = len(lines)  # fallback: append
+    past_vector_table = False
+    org_line_idx = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(".org"):
+            past_vector_table = True
+            org_line_idx = i
+        elif past_vector_table and stripped and not stripped.startswith(";") \
+                and not stripped.startswith(".") \
+                and stripped.endswith(":"):
+            # First function label after the vector table
+            insert_idx = i
+            break
+
+    # The peephole optimiser removes "RJMP main" when main: is the very next
+    # label in the compiler's internal list (programs with no ISRs). If we are
+    # about to insert the math runtime before main: and the reset-vector jump
+    # is gone, re-add it so the CPU jumps past the runtime to main at reset.
+    if insert_idx < len(lines):
+        first_label = lines[insert_idx].strip().rstrip(":")
+        if first_label == "main" and org_line_idx >= 0:
+            has_reset_jump = any(
+                "RJMP\tmain" in lines[j] or "JMP\tmain" in lines[j]
+                for j in range(org_line_idx + 1, insert_idx)
+            )
+            if not has_reset_jump:
+                math_runtime_text = "\tRJMP\tmain\n" + math_runtime_text
+
+    lines.insert(insert_idx, math_runtime_text + "\n")
+    with open(asm_path, "w") as f:
+        f.writelines(lines)
+
+
 def _avr_preamble_bytes(artifacts_dir) -> int | None:
     """Vector table plus the `__bad_interrupt` stub, or None.
 
@@ -1054,6 +1148,11 @@ def build(
              "Can be specified multiple times.",
     ),
     debug: bool = typer.Option(False, "--debug", help="Emit debug symbols and line map for the emulator debugger"),
+    profile: Optional[str] = typer.Option(
+        None, "--profile",
+        help="Compile with a PGO profile (a profile.json from 'pymcu profile --pgo'). "
+             "Also read from PYMCU_PROFILE.",
+    ),
     explain: bool = typer.Option(
         False, "--explain",
         help="After the build, list everything that happened implicitly: injected "
@@ -1062,6 +1161,13 @@ def build(
     ),
 ):
     is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
+    # PGO profile: --profile wins over PYMCU_PROFILE; a named file that does not
+    # exist is an error rather than a silent unprofiled build, for the same
+    # reason PYMCU_BACKEND_BINARY refuses to fall back.
+    profile_path = profile or os.environ.get("PYMCU_PROFILE") or None
+    if profile_path is not None and not Path(profile_path).exists():
+        console.print(f"[bold red]Error:[/bold red] profile not found: {profile_path}")
+        raise typer.Exit(code=1)
     _diag_log("=== BUILD COMMAND STARTED ===", verbose=is_verbose)
     _diag_log(f"Working directory: {os.getcwd()}", verbose=is_verbose)
     _diag_log(f"sys.executable: {sys.executable}", verbose=is_verbose)
@@ -1589,6 +1695,7 @@ def build(
                         timebase=_timebase,
                         stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
                         embed_files=_embedded_files,
+                        profile_path=profile_path,
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
                     linemap_path: Path | None = None
@@ -1637,6 +1744,7 @@ def build(
                         timebase=_timebase,
                         stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
                         embed_files=_embedded_files,
+                        profile_path=profile_path,
                     )
             except RuntimeError as e:
                 progress.stop()
@@ -1675,93 +1783,7 @@ def build(
                 # if the compiler emitted calls to __div8, __mod8, etc.
                 if toolchain.get_name() == "avr-as":
                     progress.update(build_task, description="Injecting AVR Math Runtime...")
-                    avr_math_path = math_lib_path / "avr"
-                    
-                    # List of runtime functions to check. The signed floor div/mod
-                    # routines (__divs*/__mods*) build on the unsigned core, so a
-                    # reference to one of them pulls in the core's file as well.
-                    runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32",
-                                     "__divs8", "__mods8", "__divs16", "__mods16", "__divs32", "__mods32",
-                                     "__mul32"]
-                    needed_funcs = [f for f in runtime_funcs if f in asm_content]
-
-                    if needed_funcs:
-                        # Which source files each entry point needs. A whole file is
-                        # spliced in, so anything sharing a file is paid for whether or
-                        # not it is called: the 32-bit signed pair sits in its own file
-                        # for that reason, and an unsigned-only program -- the decimal
-                        # printer among them -- no longer carries its 226 bytes. __mod32
-                        # is split out to mod32.S for the same reason (PyMCU/PyMCU#408):
-                        # a program that only divides no longer carries the modulo
-                        # wrapper it never calls.
-                        func_map = {
-                            "__div8": ("div.S",),
-                            "__mod8": ("div.S",),
-                            "__divs8": ("div.S",),
-                            "__mods8": ("div.S",),
-                            "__mul8": ("mul.S",),
-                            "__div16": ("div16.S",),
-                            "__mod16": ("div16.S",),
-                            "__divs16": ("div16.S",),
-                            "__mods16": ("div16.S",),
-                            "__div32": ("div32.S",),
-                            "__mod32": ("div32.S", "mod32.S"),
-                            "__divs32": ("div32.S", "div32s.S"),
-                            "__mods32": ("div32.S", "div32s.S"),
-                            "__mul32": ("mul32.S",),
-                        }
-                        math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
-                        included_files = set()
-                        for func in [f for f in needed_funcs if not f.startswith("__fp")]:
-                            for fname in func_map.get(func, ()):
-                                if fname in included_files:
-                                    continue
-                                src_path = avr_math_path / fname
-                                if src_path.exists():
-                                    with open(src_path, "r") as lib_f:
-                                        math_runtime_text += lib_f.read() + "\n"
-                                    included_files.add(fname)
-                                else:
-                                    console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
-                        # Insert math runtime BEFORE the first function label so that
-                        # __div8/__mod8 are at a low word address, within RCALL range
-                        # (±2047 words) of any call site in large firmware images.
-                        with open(output_file, "r") as f:
-                            lines = f.readlines()
-
-                        insert_idx = len(lines)  # fallback: append
-                        past_vector_table = False
-                        org_line_idx = -1
-                        for i, line in enumerate(lines):
-                            stripped = line.strip()
-                            if stripped.startswith(".org"):
-                                past_vector_table = True
-                                org_line_idx = i
-                            elif past_vector_table and stripped and not stripped.startswith(";") \
-                                    and not stripped.startswith(".") \
-                                    and stripped.endswith(":"):
-                                # First function label after the vector table
-                                insert_idx = i
-                                break
-
-                        # The peephole optimiser removes "RJMP main" when main: is the
-                        # very next label in the compiler's internal list (programs with
-                        # no ISRs).  If we are about to insert the math runtime before
-                        # main: and the reset-vector jump is gone, re-add it so the CPU
-                        # jumps past the runtime to main at reset.
-                        if insert_idx < len(lines):
-                            first_label = lines[insert_idx].strip().rstrip(":")
-                            if first_label == "main" and org_line_idx >= 0:
-                                has_reset_jump = any(
-                                    "RJMP\tmain" in lines[j] or "JMP\tmain" in lines[j]
-                                    for j in range(org_line_idx + 1, insert_idx)
-                                )
-                                if not has_reset_jump:
-                                    math_runtime_text = "\tRJMP\tmain\n" + math_runtime_text
-
-                        lines.insert(insert_idx, math_runtime_text + "\n")
-                        with open(output_file, "w") as f:
-                            f.writelines(lines)
+                    _splice_avr_math_runtime(output_file, asm_content, math_lib_path / "avr")
 
             else:
                 console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, math operations may fail.")

@@ -220,13 +220,18 @@ class PyMCUCompiler:
                 self.console.print(f"\\[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
-    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None, diagnostic_source: tuple = None, timebase: bool = False, library: bool = False, stdlib_flavor: str = "", embed_files: list = None):
+    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None, diagnostic_source: tuple = None, timebase: bool = False, library: bool = False, stdlib_flavor: str = "", embed_files: list = None, profile_path: str = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--target", target, "--freq", str(freq)]
 
         if emit_ir_path:
             cmd.extend(["--emit-ir", emit_ir_path])
+        # PGO: the profile JSON produced by `pymcu profile --pgo`. Consumed by the
+        # optimizer inside pymcuc, so it goes on the frontend invocation -- the
+        # backend binary only ever sees the resulting .mir.
+        if profile_path:
+            cmd.extend(["--profile", str(profile_path)])
         # Which CircuitPython/MicroPython compat layer the project builds against, if any --
         # a single build-wide fact, same as target/freq. Folds sys.implementation.name/
         # .version, sys.platform and os.uname() the same way __CHIP__ is folded

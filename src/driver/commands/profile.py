@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ from rich.console import Console
 from ..backends import get_backend_for_chip, run_backend
 from ..core.boards import BOARD_CHIPS
 from ..core.compiler import PyMCUCompiler
+from ..core.workload import WorkloadError, load_workload
 
 console = Console()
 
@@ -136,23 +138,44 @@ def _get_profiler_binary() -> Path:
     """Locate pymcuc-avr-profiler using the same search order as get_backend_binary."""
     binary_name = "pymcuc-avr-profiler.exe" if sys.platform == "win32" else "pymcuc-avr-profiler"
 
+    # 0. PYMCU_PROFILER_BINARY; same contract as PYMCU_BACKEND_BINARY: naming
+    # one binary is how a measurement proves which profiler ran.
+    override = os.environ.get("PYMCU_PROFILER_BINARY")
+    if override:
+        p = Path(override).expanduser()
+        if not p.exists():
+            raise FileNotFoundError(
+                f"PYMCU_PROFILER_BINARY names '{p}' and it does not exist. Refusing "
+                "to fall back: the point of the variable is knowing which binary ran.")
+        return p
+
     # 1. Adjacent to this file (wheel layout for future distribution)
     adjacent = Path(__file__).parent / binary_name
     if adjacent.exists():
         return adjacent
 
-    # 2. extensions/pymcu-avr/build-profiler/bin/ — self-contained publish output
+    # 2. Next to the bundled pymcuc-avr backend binary (pymcu.backend.avr pkg dir)
+    try:
+        import pymcu.backend.avr as avr_backend_pkg
+        pkg_dir = Path(list(avr_backend_pkg.__path__)[0])
+        bundled = pkg_dir / binary_name
+        if bundled.exists():
+            return bundled
+    except Exception:
+        pass
+
+    # 3. extensions/pymcu-avr/build-profiler/bin/, self-contained publish output
     repo_root = Path(__file__).parents[3]
     avr_profiler_path = repo_root / "extensions" / "pymcu-avr" / "build-profiler" / "bin" / binary_name
     if avr_profiler_path.exists():
         return avr_profiler_path
 
-    # 3. build/bin/ — legacy dev path
+    # 4. build/bin/, legacy dev path
     dev_path = repo_root / "build" / "bin" / binary_name
     if dev_path.exists():
         return dev_path
 
-    # 4. profiler Debug build output (fast iteration)
+    # 5. profiler Debug build output (fast iteration)
     profiler_debug = (
         Path(__file__).parents[4]
         / "extensions" / "pymcu-avr" / "src" / "csharp" / "profiler"
@@ -161,12 +184,111 @@ def _get_profiler_binary() -> Path:
     if profiler_debug.exists():
         return profiler_debug
 
-    # 4. System PATH
+    # 6. System PATH
     which_result = shutil.which(binary_name)
     if which_result:
         return Path(which_result)
 
     return avr_profiler_path  # caller will get FileNotFoundError
+
+
+def _splice_math_runtime_if_needed(toolchain, asm_path: Path) -> None:
+    """Give the AVR math runtime to an asm file about to be assembled.
+
+    ``build`` splices ``lib/src/pymcu/math/avr/*.S`` into firmware.asm when the
+    backend emitted calls to the ``__div*``/``__mod*`` helpers; the profile
+    paths assemble the same backend output and need the same splice or
+    ``avr-ld`` reports them undefined.
+    """
+    if toolchain.get_name() != "avr-as":
+        return
+    from .build import _splice_avr_math_runtime
+    spec = importlib.util.find_spec("pymcu.math")
+    if spec and spec.origin:
+        _splice_avr_math_runtime(asm_path, asm_path.read_text(),
+                                 Path(spec.origin).parent / "avr")
+
+
+def _profile_pgo(
+    chip: str, freq: int,
+    workload_yaml: Optional[str], verbose: bool,
+) -> None:
+    """`pymcu profile --pgo`: build with a block map, run the declared workload
+    scenarios on the emulator, and write dist/profile.json for `pymcu build
+    --profile`."""
+    dist = Path("dist")
+    hex_path = dist / "firmware.hex"
+    # `pymcu build --debug` writes the resolved block map here.
+    blockmap_path = dist / "_debug" / "blockmap.json"
+    workload_json_path = dist / "workload.json"
+    profile_path = dist / "profile.json"
+
+    # ── Workload: workload.yaml -> workload.json (no YAML in the C# side) ────
+    yaml_path = Path(workload_yaml) if workload_yaml else Path("workload.yaml")
+    try:
+        workload, user_provided = load_workload(yaml_path)
+    except WorkloadError as ex:
+        console.print(f"[red]{ex}[/red]")
+        raise typer.Exit(1)
+    dist.mkdir(exist_ok=True)
+    workload_json_path.write_text(json.dumps(workload, indent=2))
+    if user_provided:
+        console.print(f"[cyan]Workload:[/cyan] {yaml_path} "
+                      f"({len(workload['scenarios'])} scenario(s)) -> {workload_json_path}")
+    else:
+        console.print("[cyan]Workload:[/cyan] no workload.yaml -- "
+                      "default scenario: run {ms: 200}, no stimuli")
+
+    # ── Build through the real pipeline: `pymcu build --debug` does preamble
+    # injection, math-runtime splicing, FFI, and emits a resolved blockmap at
+    # dist/_debug/blockmap.json. Re-running this CLI keeps `profile --pgo` from
+    # drifting out of sync with what `build` actually does. ───────────────────
+    pymcu_script = Path(sys.argv[0])
+    build_cmd = ([sys.executable, str(pymcu_script)] if pymcu_script.exists()
+                 else [shutil.which("pymcu") or "pymcu"])
+    console.print("[cyan]Building[/cyan] baseline firmware (pymcu build --debug)...")
+    result = subprocess.run(
+        build_cmd + ["build", "--debug"],
+        text=True, encoding="utf-8", errors="replace",
+        capture_output=not verbose,
+    )
+    if result.stdout and (verbose or result.returncode != 0):
+        console.print(result.stdout)
+    if result.returncode != 0:
+        console.print(f"[red]Build failed:[/red] {result.stderr or result.stdout}")
+        raise typer.Exit(1)
+    if not hex_path.exists() or not blockmap_path.exists():
+        console.print(f"[red]Build did not produce {hex_path} + {blockmap_path}[/red]")
+        raise typer.Exit(1)
+
+    # ── Run the scenarios through the profiler ────────────────────────────────
+    profiler_bin = _get_profiler_binary()
+    if not profiler_bin.exists():
+        console.print("[red]pymcuc-avr-profiler not found.[/red]")
+        console.print("  Build it: dotnet publish src/csharp/profiler/ -c Release -o build/bin/ "
+                      "(in the pymcu-avr checkout)")
+        raise typer.Exit(1)
+
+    cmd = [
+        str(profiler_bin),
+        str(hex_path),
+        "--blockmap", str(blockmap_path),
+        "--workload", str(workload_json_path),
+        "--emit-profile", str(profile_path),
+        "--chip", chip,
+        "--freq", str(freq),
+    ]
+    console.print("[cyan]Profiling scenarios...[/cyan]")
+    result = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
+                            capture_output=not verbose)
+    if result.stdout and (verbose or result.returncode != 0):
+        console.print(result.stdout)
+    if result.returncode != 0:
+        console.print(f"[red]Profiler failed:[/red] {result.stderr or result.stdout}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]PGO profile written:[/green] {profile_path}")
+    console.print("  Build with it: [bold]pymcu build --profile dist/profile.json[/bold]")
 
 
 def profile(
@@ -176,6 +298,8 @@ def profile(
     open_browser: bool = typer.Option(False, "--open", help="Open speedscope.app after profiling"),
     freq_override: Optional[int] = typer.Option(None, "--freq", help="Override clock frequency (Hz)"),
     assert_cycles_lt: Optional[int] = typer.Option(None, "--assert-cycles-lt", help="Fail (exit 1) if total simulated cycles >= N (CI regression guard)"),
+    pgo: bool = typer.Option(False, "--pgo", help="Collect a PGO profile: run the workload.yaml scenarios and write dist/profile.json for 'pymcu build --profile'"),
+    workload: Optional[str] = typer.Option(None, "--workload", help="Path to workload.yaml for --pgo (default: ./workload.yaml; a single 200 ms idle scenario when absent)"),
     verbose: bool = typer.Option(False, "-v", "--verbose"),
 ):
     """Compile the project and generate a Speedscope flamegraph from AVR simulation."""
@@ -207,6 +331,10 @@ def profile(
             pkg_dir = Path(list(spec.submodule_search_locations)[0])
             extra_includes.append(str(pkg_dir.parent))
             extra_includes.append(str(pkg_dir))
+
+    if pgo:
+        _profile_pgo(chip, freq, workload, verbose)
+        return
 
     console.print(f"[cyan]Profiling[/cyan] {entry_point} → {chip} @ {freq:,} Hz")
 
@@ -260,6 +388,7 @@ def profile(
 
     cur_task_addr: int | None = None
     try:
+        _splice_math_runtime_if_needed(toolchain, asm_path)
         obj = toolchain.assemble(asm_path)
         elf = toolchain.link(obj, [], dist)
         result_hex = toolchain.elf_to_hex(elf)
