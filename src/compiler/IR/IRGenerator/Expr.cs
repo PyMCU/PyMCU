@@ -4097,6 +4097,23 @@ public partial class IRGenerator
             if (variableTypes.TryGetValue(flattenedName, out var ft))
                 return new Variable(flattenedName, ft);
 
+            // A field of a module-level instance read inside a FUNCTION needs a real
+            // global: its store ran in main, so as a plain local the optimizer
+            // dead-stored it once main's own reads folded, and the function's reader
+            // loaded a slot nothing wrote. A read in main needs nothing -- the same
+            // main-scope store that wrote it stays live for the read. Registering the
+            // global here is enough: Globals are collected after all functions lower,
+            // and the store targets the same flattened name. Fields that fold never
+            // reach this point, so a compile-time value keeps its zero-cost read.
+            if (baseName != null && topLevelInstanceTargets.Contains(baseName)
+                && instanceClasses.ContainsKey(baseName)
+                && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main")
+            {
+                var gft = FlattenedFieldType(baseName, expr.Member);
+                mutableGlobals[flattenedName] = gft;
+                return new Variable(flattenedName, gft);
+            }
+
             return new Variable(flattenedName, DataType.UINT8);
         }
         if (sym5.IsMemoryAddress) return new MemoryAddress(sym5.Value, sym5.Type);

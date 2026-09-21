@@ -2542,6 +2542,19 @@ public partial class IRGenerator
 
             bool TryTempName(string tname)
             {
+                // The value can arrive under an alias: an inline call's result temp
+                // aliases whatever its `return` produced (tmp_N -> tmp_M), and the
+                // constant lives under the target's name. Chase the chain so the
+                // field folds to the same value -- without it the store emitted a
+                // runtime Copy the optimizer dead-stored once this function's reads
+                // folded, while a read in ANOTHER function kept the variable and
+                // loaded a slot nothing wrote (pwmio.PWMOut._real_frequency read
+                // through `pwm.frequency` inside a function printed 0).
+                var aliasSeen = new HashSet<string>();
+                while (variableAliases.TryGetValue(tname, out var aliasT)
+                       && !string.IsNullOrEmpty(aliasT) && aliasSeen.Add(aliasT))
+                    tname = aliasT;
+
                 if (constantAddressVariables.TryGetValue(tname, out int cv))
                 {
                     constantAddressVariables[flattenedName] = cv;
