@@ -1982,6 +1982,17 @@ public partial class IRGenerator
 
     private string? ResolveStrConstant(string name)
     {
+        string bare = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+
+        // A parameter or local of the scope being compiled shadows a same-named
+        // module-level string, exactly as Python scoping works (#438). A bare probe has
+        // to ask this BEFORE the walk below: `b` would otherwise hit the global's own
+        // entry on the first step, so `def f(b: uint8)` read next to a module-level
+        // `b = "world"` answered with the text. A scoped binding that IS a string
+        // answers with its own text -- the local wins over the global there too.
+        if (name == bare && ScopedStrBinding(bare, out string? scopedText))
+            return scopedText;
+
         var key = name;
         for (var depth = 0; depth < 20; depth++)
         {
@@ -1990,10 +2001,16 @@ public partial class IRGenerator
             else break;
         }
 
+        // The same shadow one level out: the alias walk settled on (or the probe itself
+        // was) a name bound to something that is not a compile-time string -- a typed
+        // variable, a buffer, an instance. A parameter inlined to "f.b" through
+        // variableAliases lands here. The fallbacks below must not read a same-named
+        // global's text for it (#438).
+        if (key != null && BindsNonString(key)) return null;
+
         // Fall back to the module-global / bare-name forms, mirroring how integer globals
         // resolve (ResolveBinding): a qualified `localName` like "main.S" should still find a
         // module-level string `S` registered by ScanGlobals as `currentModulePrefix + "S"`.
-        string bare = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
         if (strConstantVariables.TryGetValue(currentModulePrefix + bare, out var mv)) return mv;
         if (strConstantVariables.TryGetValue(bare, out var bv)) return bv;
 
@@ -2005,6 +2022,77 @@ public partial class IRGenerator
 
         return null;
     }
+
+    /// <summary>
+    /// The compile-time string the scope being compiled binds <paramref name="bare"/> to
+    /// (#438). True with <paramref name="text"/> set when a scoped binding is a string; true
+    /// with <paramref name="text"/> null when a scoped binding is anything else -- a
+    /// parameter, a typed local, a buffer -- because the local shadows any same-named global,
+    /// exactly as Python scoping works. False when no scope binds the name at all.
+    /// </summary>
+    private bool ScopedStrBinding(string bare, out string? text)
+    {
+        text = null;
+        foreach (var scoped in LocalScopeKeys(bare))
+        {
+            var k = scoped;
+            var aliased = false;
+            for (var depth = 0; depth < 20; depth++)
+            {
+                if (strConstantVariables.TryGetValue(k, out var s)) { text = s; return true; }
+                if (variableAliases.TryGetValue(k, out var a) && a != null) { k = a; aliased = true; continue; }
+                break;
+            }
+            // An alias that ends nowhere still IS the scope's binding of the name.
+            if (aliased || BindsNonString(k)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Every qualified key <paramref name="bare"/> could be bound under in the scope being
+    /// compiled, most local first -- the same order <see cref="MultiStrKeys"/> enumerates for
+    /// the same question.
+    /// </summary>
+    private IEnumerable<string> LocalScopeKeys(string bare)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + bare;
+        // `main` is the module's top level: `main.b` and `b` spell one binding, not a
+        // scope over it, so the function key would only shadow the module's own table.
+        if (!string.IsNullOrEmpty(currentFunction) && currentFunction != "main")
+            yield return currentFunction + "." + bare;
+        if (!string.IsNullOrEmpty(currentModulePrefix)) yield return currentModulePrefix + bare;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="key"/> is bound at all to something that is not a compile-time
+    /// string: a typed variable, a constant, a buffer, an instance, a runtime or multi string.
+    /// Callers ask this only after the string tables have already missed, so a hit means the
+    /// name stands for a value a bare-name fallback must never read a global's text for
+    /// (#438). Mirrors the binding tables <see cref="IsDefined"/> consults, minus the string
+    /// ones.
+    /// </summary>
+    private bool BindsNonString(string key) =>
+        variableTypes.ContainsKey(key)
+        || constantVariables.ContainsKey(key)
+        || floatConstantVariables.ContainsKey(key)
+        || constantAddressVariables.ContainsKey(key)
+        || mutableGlobals.ContainsKey(key)
+        || globals.ContainsKey(key)
+        || boundNames.Contains(key)
+        || noneValuedNames.Contains(key)
+        || declaredConstants.Contains(key)
+        || instanceClasses.ContainsKey(key)
+        || bytearrayParams.Contains(key)
+        || listLiteralParams.ContainsKey(key)
+        || dictLiteralBindings.ContainsKey(key)
+        || setLiteralBindings.ContainsKey(key)
+        || runtimeStrVars.ContainsKey(key)
+        || multiStrVariables.ContainsKey(key)
+        || funcrefReturnTypes.ContainsKey(key)
+        || loopFunctionAliases.ContainsKey(key)
+        || arraysWithVariableIndex.Contains(key)
+        || moduleSramArrays.Contains(key);
 
     /// <summary>
     /// The defining module's key for a name this file imported with `from m import name`, or
@@ -2150,6 +2238,11 @@ public partial class IRGenerator
                 materialized = multiStrCandidates.ContainsKey(k);
                 return true;
             }
+
+            // A parameter or local bound to a non-string shadows any same-named global the
+            // remaining keys would find, exactly as Python scoping works (#438) -- the same
+            // guard ResolveStrConstant's bare-name fallback asks.
+            if (BindsNonString(k)) break;
         }
 
         key = "";

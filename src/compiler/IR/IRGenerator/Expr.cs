@@ -558,7 +558,7 @@ public partial class IRGenerator
             nextStringId++;
         }
 
-        return new Constant(stringLiteralIds[result]);
+        return new Constant(stringLiteralIds[result], result);
     }
 
     private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
@@ -1155,47 +1155,51 @@ public partial class IRGenerator
             && ((expr.Left is VariableExpr mlv && TryGetMultiStr(mlv.Name, out _, out _, out _))
                 || (expr.Right is VariableExpr mrv && TryGetMultiStr(mrv.Name, out _, out _, out _)));
 
-        // A string operand is one whose Constant carries its text. That is the whole test:
-        // the value alone never was enough (an interned id collides with an ordinary integer,
-        // `x * 256`), and neither was the id table (a one-character string's id IS its
-        // character code and is never registered in it).
-        //
-        // The previous form asked the id table and excluded one-character literals to stop it
-        // answering nonsense. The comment above it claimed to cover `"a" + "b"`, `s + "x"` and
-        // `name == "PB5"`; measured, it broke the first two. `"a" + "b"` printed 195 -- the two
-        // character codes added -- because neither operand was ever seen as a string (#211).
-        bool HasStringLiteral = expr.Left is StringLiteral || expr.Right is StringLiteral;
-        bool IsStringId(Val v) => v is Constant { Text: not null }
-                                  || v is Constant sc && stringIdToStr.ContainsKey(sc.Value);
-
-        // The text of an operand already known to be a string.
-        string StringTextOf(Val v) =>
-            v is Constant { Text: { } carried } ? carried : stringIdToStr[((Constant)v).Value];
-        if (HasStringLiteral && !multiStrOperand && (IsStringId(v1) || IsStringId(v2)))
+        // A string operand is one whose text the compiler can name at compile time: either the
+        // expression is a literal, or it is a name/field already known to hold fixed text
+        // (StaticStringOf -- the same AST-level lookup f-strings and .join() use for exactly
+        // this), or -- for a nested fold like `"a" + "b" + "c"` -- the Val already computed
+        // above carries its Text from a previous fold. Asking the VALUE alone was the old (and
+        // broken) test: an interned id collides with an ordinary integer (`x * 256`), and a
+        // one-character string's id IS its character code, so a lookup table can only answer
+        // nonsense either way. Gating on the AST being a literal, as before, was narrower still:
+        // a plain variable holding a string (`a = "hello"; b = "world"; a + b`) was never
+        // recognised as a string at all and fell through to integer arithmetic on the interned
+        // ids of "hello"/"world" (#438), and the same gate folded `x == "abc"` to False because
+        // `x` (not a literal) was never seen as a string either.
+        string? LeftText() => multiStrOperand ? null
+            : StaticStringOf(expr.Left) ?? (v1 is Constant { Text: { } lt } ? lt : null);
+        string? RightText() => multiStrOperand ? null
+            : StaticStringOf(expr.Right) ?? (v2 is Constant { Text: { } rt } ? rt : null);
+        string? leftText = LeftText();
+        string? rightText = RightText();
+        if (leftText != null || rightText != null)
         {
-            bool bothStr = IsStringId(v1) && IsStringId(v2);
+            bool bothStr = leftText != null && rightText != null;
 
             // Equality folds at compile time: interning gives identical strings the
             // same ID, and a string is never equal to a non-string. This keeps the
             // `if pin_name == "PB5"` / `__CHIP__ == "..."` dispatch idiom working.
             if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual)
             {
-                bool equal = bothStr && StringTextOf(v1) == StringTextOf(v2);
+                bool equal = bothStr && leftText == rightText;
                 bool isEq = expr.Op == AstBinOp.Equal;
                 return new Constant(equal == isEq ? 1 : 0);
             }
 
-            // Compile-time concatenation of two string literals.
+            // Compile-time concatenation of two compile-time-known strings. The join carries
+            // its own Text so a further `+ "c"` on the result folds through the Val branch
+            // above instead of falling back to the id table.
             if (expr.Op == AstBinOp.Add && bothStr)
             {
-                string joined = StringTextOf(v1) + StringTextOf(v2);
+                string joined = leftText! + rightText!;
                 if (!stringLiteralIds.TryGetValue(joined, out int joinedId))
                 {
                     joinedId = nextStringId++;
                     stringLiteralIds[joined] = joinedId;
                     stringIdToStr[joinedId] = joined;
                 }
-                return new Constant(joinedId);
+                return new Constant(joinedId, joined);
             }
 
             int errLine = expr.Line > 0 ? expr.Line : lastLine;

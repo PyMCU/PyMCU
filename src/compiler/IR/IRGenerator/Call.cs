@@ -5207,7 +5207,7 @@ public partial class IRGenerator
             nextStringId++;
         }
 
-        return new Constant(stringLiteralIds[hexstr]);
+        return new Constant(stringLiteralIds[hexstr], hexstr);
     }
 
     // bin(const): intern "0b…" as a flash string literal, return its id (compile-time only).
@@ -5224,7 +5224,7 @@ public partial class IRGenerator
             nextStringId++;
         }
 
-        return new Constant(stringLiteralIds[binstr]);
+        return new Constant(stringLiteralIds[binstr], binstr);
     }
 
     // str(const): intern the decimal form as a flash string literal (compile-time only).
@@ -5241,7 +5241,7 @@ public partial class IRGenerator
             nextStringId++;
         }
 
-        return new Constant(stringLiteralIds[decstr]);
+        return new Constant(stringLiteralIds[decstr], decstr);
     }
 
     // pow(base, exp): folds compile-time integer operands in place; anything
@@ -6374,6 +6374,14 @@ public partial class IRGenerator
         // A field holding a compile-time string IS statically a string; answering null for
         // one made `sep.join([...])` refuse a separator whose text the compiler was holding.
         if (e is MemberAccessExpr ma) return StaticStringOfField(ma);
+        // `a + b` of two statically-known strings is itself statically known. This is the
+        // same fold VisitBinary emits, answered without visiting: a name bound to the result
+        // (`c = a + b`) records its text through the assign path, so print(c) writes
+        // "helloworld" and not the interned id of the sum (#438).
+        if (e is BinaryExpr { Op: PyMCU.Frontend.BinaryOp.Add } ab
+            && StaticStringOf(ab.Left) is { } lText
+            && StaticStringOf(ab.Right) is { } rText)
+            return lText + rText;
         return null;
     }
 
@@ -6829,6 +6837,10 @@ public partial class IRGenerator
             && runtimeStrVars.TryGetValue(currentInlinePrefix + name, out info)) return true;
         if (!string.IsNullOrEmpty(currentFunction)
             && runtimeStrVars.TryGetValue(currentFunction + "." + name, out info)) return true;
+        // A parameter or local bound to a non-string shadows a same-named module-level
+        // runtime string, the same shadow ResolveStrConstant honors (#438).
+        foreach (var scoped in LocalScopeKeys(name))
+            if (BindsNonString(scoped)) { info = default; return false; }
         return runtimeStrVars.TryGetValue(name, out info);
     }
 
