@@ -792,5 +792,120 @@ public class OptimizerPassTests
 
         OutlinedFunctions(prog).Should().BeEmpty();
     }
+
+    // ─── Profile-guided outlining decisions ──────────────────────────────
+
+    // Two identical sites under a shared enclosing label reached through a
+    // conditional jump (unreferenced labels are stripped before outlining runs,
+    // and an unconditional skip would dead-code the sites themselves). The
+    // bodies are MMIO writes, which the cleanup passes may not fold away.
+    private static ProgramIR TwoSitesUnder(string enclosing, int writesPerSite)
+    {
+        Instruction[] site()
+        {
+            var s = new List<Instruction> { new InlineExpansionMarker(Tag, false) };
+            for (int i = 0; i < writesPerSite; i++)
+                s.Add(new Copy(new Constant(i), new MemoryAddress(0x100 + i)));
+            s.Add(new InlineExpansionMarker(Tag, true));
+            return s.ToArray();
+        }
+        var v = new Variable("main.v", DataType.UINT8);
+        var body = new List<Instruction>
+        {
+            new Copy(new MemoryAddress(0xC0), v),
+            new JumpIfLessThan(v, new Constant(10), enclosing),
+            new Jump("done"),
+            new Label(enclosing),
+        };
+        body.AddRange(site());
+        body.AddRange(site());
+        body.Add(new Label("done"));
+        body.Add(new Return(new NoneVal()));
+        return MakeProgram(body.ToArray());
+    }
+
+    // bodyCost=2, nSites=2, nParams=0 -> inline 4 < outline 7: rejected.
+    private static ProgramIR TwoSmallSitesUnder(string enclosing) =>
+        TwoSitesUnder(enclosing, 2);
+
+    // bodyCost=6, nSites=2 -> inline 12 > outline 11: accepted.
+    private static ProgramIR TwoLargeSitesUnder(string enclosing) =>
+        TwoSitesUnder(enclosing, 6);
+
+    private static PgoProfile Profile(ulong totalCycles,
+        params (string name, ulong count, ulong cycles)[] blocks)
+    {
+        var p = new PgoProfile();
+        p.Scenarios.Add(new PgoScenario { Name = "s", Cycles = totalCycles });
+        foreach (var (name, count, cycles) in blocks)
+            p.Blocks[name] = new PgoBlockStat { Count = count, Cycles = cycles };
+        return p;
+    }
+
+    [Fact]
+    public void Pgo_ColdRegion_OutlinedDespiteStaticRejection()
+    {
+        var prog = TwoSmallSitesUnder("cold");
+        var profile = Profile(1000, ("cold", 0, 0));
+
+        var optimized = Optimizer.Optimize(prog, profile);
+
+        optimized.Functions.Should().Contain(f => f.Name == "__pymcu_outline_pgo_0",
+            "a region whose enclosing block never ran is outlined even though the " +
+            "static cost model cannot prove the win");
+    }
+
+    [Fact]
+    public void Pgo_ColdRegion_StaticallyAccepted_KeepsNormalName()
+    {
+        var prog = TwoLargeSitesUnder("cold");
+        var profile = Profile(1000, ("cold", 0, 0));
+
+        var optimized = Optimizer.Optimize(prog, profile);
+
+        optimized.Functions.Should().Contain(f => f.Name == "__pymcu_outline_0");
+        optimized.Functions.Should().NotContain(f => f.Name.Contains("_pgo_"),
+            "a group the cost model already accepts is not the profile's decision");
+    }
+
+    [Fact]
+    public void Pgo_HotRegion_VetoesStaticAccept()
+    {
+        var prog = TwoLargeSitesUnder("hot");
+        // "hot" burns 200 of 1000 scenario cycles = 20% > 1% threshold.
+        var profile = Profile(1000, ("hot", 50, 200));
+
+        var optimized = Optimizer.Optimize(prog, profile);
+
+        optimized.Functions.Should().NotContain(f => f.Name.StartsWith("__pymcu_outline"),
+            "outlining hot code would bury a CALL/RET inside timed code");
+        optimized.Functions[0].Body.OfType<DebugLine>().Should().Contain(
+            d => d.Text.Contains("pgo: kept"),
+            "a hot veto is recorded in the MIR");
+    }
+
+    [Fact]
+    public void Pgo_MismatchedProfile_IsIgnored()
+    {
+        var prog = TwoSmallSitesUnder("cold");
+        // Names no block this program contains: a profile from another program.
+        var profile = Profile(1000, ("L_foreign", 0, 0));
+
+        var optimized = Optimizer.Optimize(prog, profile);
+
+        optimized.Functions.Should().NotContain(f => f.Name.StartsWith("__pymcu_outline"),
+            "a foreign profile must degrade to the ordinary static decision");
+    }
+
+    [Fact]
+    public void Pgo_NoProfile_SmallGroupStaysInline()
+    {
+        var prog = TwoSmallSitesUnder("cold");
+
+        var optimized = Optimizer.Optimize(prog);
+
+        optimized.Functions.Should().NotContain(f => f.Name.StartsWith("__pymcu_outline"),
+            "without a profile the static cost model rejects the small group");
+    }
 }
 
