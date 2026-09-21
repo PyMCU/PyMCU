@@ -470,8 +470,11 @@ byte-identical across the change.
 
 **Where the knowledge runs out is a `return`.** The caller asked for a number and the path
 answers `None`, which has no width, so that return is refused in one sentence at the line it
-is written on. A `return None` on a path the caller cannot reach is not refused, because the
-guard that excludes it folds first.
+is written on, in an `@inline` expansion and in a plain `def` compiled as a shared
+subroutine alike -- the outlined path used to leave `ret` holding whatever the register
+happened to hold. A `return None` on a path the caller cannot reach is not refused, because
+the guard that excludes it folds first. `Optional[X]` stays the spelling reserved for the
+runtime-tagged return RFC 0009 brings.
 
 **A `Union` of two REAL types on a PARAMETER** of an `@inline`-expanded function or method
 (a constructor included -- every ZCA instance is built at its own call site) reads the same

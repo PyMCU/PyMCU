@@ -45,6 +45,13 @@ purpose, as opposed to bugs like these three that were silent until found.
   probe (`us * 17 // 100`): 952 bytes before, 888 after (#408).
 
 ### Silent wrong code
+- A `return None` on a path the program can reach, in a function declared `-> X` and
+  compiled as a shared subroutine, is refused at the return instead of emitting `ret` with
+  whatever the return register held -- the caller read a stale R24 as its answer. The
+  `@inline` expansion refused the same shape already; the outlined path was the hole
+  RFC 0009 measured. A bare `return` is the same statement to Python and is refused the
+  same way on both paths. `-> Optional[X]` stays the spelling the refusal names, reserved
+  for the runtime-tagged return the RFC brings.
 - A program whose module level can end parks the CPU instead of returning into nothing. The
   entry function is reached by `RJMP` with an empty hardware stack, so the `RET` its trailing
   return lowered to popped two bytes past RAMEND and jumped wherever they pointed -- on
