@@ -154,8 +154,11 @@ The file uploaded depends on the target, and must exist before flashing:
 ### Supported programmers
 
 The programmer defaults to the one for the target family (`avrdude` for AVR,
-`pk2cmd` for PIC, `rp2040` for the RP boards) and can be overridden. For PIC,
-`pk2cmd` drives a PICkit 2 and `ipecmd` drives a PICkit 3:
+`pk2cmd` for PIC, `rp2040` for the RP boards) and can be overridden. The PIC
+programmers ship with the `pymcu-pic` package -- installed by the `pic` extra:
+`pk2cmd` drives the PICkit 2, PICkit 3 and PKOB through the pk2cmd-minus
+fork, and `pymcuprog` drives the Curiosity Nano's on-board nEDBG debugger.
+`ipecmd` remains available for driving a PICkit 3 through MPLAB X:
 
 **AVR (Arduino Uno):**
 
@@ -166,14 +169,14 @@ port       = "/dev/cu.usbmodem14101"   # optional; --port overrides it
 baud       = 115200                    # optional
 ```
 
-**PIC (PICkit 2):**
+**PIC (PICkit 2, PICkit 3 or PKOB):**
 
 ```toml
 [tool.pymcu.flash]
-programmer = "pk2cmd"    # auto-downloaded on first use
+programmer = "pk2cmd"    # pk2cmd-minus from pymcu-pic, auto-downloaded on first use
 ```
 
-**PIC (PICkit 3):**
+**PIC (PICkit 3 via MPLAB X):**
 
 ```toml
 [tool.pymcu.flash]

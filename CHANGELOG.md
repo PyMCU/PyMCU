@@ -594,6 +594,18 @@ purpose, as opposed to bugs like these three that were silent until found.
   backend and the emulator every probe exercises. Its CI runs the suite there
   under both front ends; the `oracle` job here is retired. Probe `# doc:`
   citations still name the `docs/language/` files in this repository.
+
+### Changed
+- The `pk2cmd` programmer moved to `pymcu-pic`: the driver no longer registers
+  or ships its own implementation under that name, and the plugin's
+  pk2cmd-minus binary drives the PICkit 3 and PKOB in addition to the PICkit 2
+  -- the PICkit 3 refusal the built-in printed on failure is gone with it.
+  `pymcu new` still scaffolds `programmer = "pk2cmd"` for PIC chips and the
+  name resolves to the plugin (`pip install pymcu-pic`, also pulled in by the
+  `pic` extra). When two distributions register the same `pymcu.programmers`
+  name, the plugin's entry point wins by design rather than by whichever order
+  dist-info scanning returned, and an unknown programmer name is answered with
+  the names actually registered plus a pointer at pymcu-pic.
 ### Library index
 - An upstream submission is measured with every other upstream submission of the same
   `libraries.txt` in scope, so a measurement example whose imports are other upstream

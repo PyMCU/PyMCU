@@ -133,7 +133,7 @@ The **PIC16F84A** and **PIC16F877A** are supported through the PIC backend
 |---|---|
 | Language | No `float`, no f-strings, no generators, no `async`, no `@interrupt`, and no general `try`/`except`, only the `ZeroDivisionError` guard. Use return codes |
 | Fuses | Builds emit **no configuration word**, so the image will not boot until you program the fuses yourself. The build warns about this |
-| Output | `dist/firmware.hex`; `pymcu flash` drives a PICkit 2 by default |
+| Output | `dist/firmware.hex`; `pymcu flash` uses `pk2cmd` from the `pymcu-pic` package by default, which drives the PICkit 2 and PICkit 3 |
 
 ---
 
