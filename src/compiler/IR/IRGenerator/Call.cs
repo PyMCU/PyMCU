@@ -281,6 +281,19 @@ public partial class IRGenerator
 
             if (!resolvedAsModule)
             {
+                // `seq.index(x)` on a tuple/list literal or a name bound to one: the
+                // elements are compile-time expressions, so the call resolves to a
+                // constant when x folds and a compare chain when it does not -- either
+                // way no free-function fallback like `main__GAINS_index` is minted.
+                if (memC.Member == "index"
+                    && (memC.Object switch
+                    {
+                        TupleExpr t => t.Elements,
+                        ListExpr l => l.Elements,
+                        _ => ResolveConstSequenceExpr(memC.Object)
+                    }) is { } idxElems)
+                    return EmitConstSeqIndex(expr, memC, idxElems);
+
                 // A generator constructed HERE is the receiver of a method call, and the
                 // protocol check below (RejectGeneratorProtocol) gives a better answer for that
                 // shape than the value-position refusal does: `counter().send(1)` should be told
@@ -6794,6 +6807,69 @@ public partial class IRGenerator
             case "lower": return expr.Args.Count == 0 ? InternConstString(text.ToLowerInvariant()) : null;
         }
         return null;
+    }
+
+    /// <summary>
+    /// `seq.index(x)` where the sequence's elements are compile-time expressions -- a
+    /// tuple/list literal or a name bound to one (`_GAINS.index(val)` in tcs34725's
+    /// gain setter). A needle that folds yields a constant position; one that does
+    /// not lowers to a first-match compare chain. A miss raises ValueError, the same
+    /// contract `str.index` above keeps.
+    /// </summary>
+    private Val EmitConstSeqIndex(CallExpr expr, MemberAccessExpr memC, List<Expression> elems)
+    {
+        if (expr.Args.Count != 1)
+            throw UserError(
+                "'.index()' on a compile-time sequence takes the value to find -- " +
+                "start/end positions are not supported", memC);
+
+        Val needle = VisitExpression(expr.Args[0]);
+
+        if (needle is Constant nc)
+        {
+            // The first match wins, so a hit at k is only certain when every element
+            // before it folded to something that is NOT the needle -- a run-time
+            // element could still equal it, and the lookup must wait for the chain.
+            bool allFolded = true;
+            for (int k = 0; k < elems.Count; ++k)
+            {
+                if (VisitExpression(elems[k]) is not Constant ec) { allFolded = false; break; }
+                bool hit = nc.Text != null && ec.Text != null
+                    ? nc.Text == ec.Text
+                    : nc.Value == ec.Value;
+                if (hit) return new Constant(k);
+            }
+            if (allFolded)
+            {
+                // Every element folded and none matched: a miss the compiler can see.
+                VisitRaise(new RaiseStmt("ValueError", "tuple.index(x): x not in tuple"));
+                return new Constant(0);
+            }
+        }
+
+        // At least one element -- or the needle itself -- is run-time: emit a
+        // first-match compare chain, with the miss arm's ValueError under a
+        // runtime-branch guard so an inlined call does not abort the build on a
+        // path the program may never take.
+        Temporary result = MakeTemp(elems.Count > 255 ? DataType.UINT16 : DataType.UINT8);
+        string endLabel = MakeLabel();
+        for (int k = 0; k < elems.Count; ++k)
+        {
+            Val ev = VisitExpression(elems[k]);
+            string nextLabel = MakeLabel();
+            Emit(new JumpIfNotEqual(needle, ev, nextLabel));
+            Emit(new Copy(new Constant(k), result));
+            Emit(new Jump(endLabel));
+            Emit(new Label(nextLabel));
+        }
+        EnterRuntimeBranch(DescribeOperand(expr.Args[0]));
+        try
+        {
+            VisitRaise(new RaiseStmt("ValueError", "tuple.index(x): x not in tuple"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(endLabel));
+        return result;
     }
 
     /// <summary>Interns a computed compile-time string and returns it as a Constant
