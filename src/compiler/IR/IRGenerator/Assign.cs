@@ -7554,6 +7554,7 @@ public partial class IRGenerator
                 // `-> (uint8, uint16)` does not get its second value truncated to 8 bits.
                 DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t
                     : variableTypes.TryGetValue(srcName, out var st) ? st : DataType.UINT8;
+                variableTypes[dstName] = dt;
                 Emit(new Copy(new Variable(srcName, dt), new Variable(dstName, dt)));
                 if (constantVariables.TryGetValue(srcName, out int cVal)) constantVariables[dstName] = cVal;
             }

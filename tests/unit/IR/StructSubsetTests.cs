@@ -11,11 +11,12 @@ namespace PyMCU.UnitTests;
 /// The `struct` subset an ahead-of-time target can do without a heap.
 ///
 /// The refusal used to be at the IMPORT: no heap, so no packed bytes to hand back. That is
-/// exact for the half of `struct` that returns a tuple and describes nothing about the half
+/// exact for a `struct` tuple held as a runtime value and describes nothing about the half
 /// driver libraries write. Measured across the twelve most-used Adafruit libraries: every
-/// format is a string literal, 21 of 21; the workhorse descriptors index the result on the
-/// spot so no tuple ever escapes; every `pack_into` target is a buffer the caller owns. Four
-/// type codes, five distinct format strings, no floats and no repeat counts.
+/// format is a string literal, 21 of 21; the workhorse descriptors unpack into a tuple the
+/// caller indexes or unpacks -- the elements live in slots, so no tuple ever escapes to the
+/// heap -- and every `pack_into` target is a buffer the caller owns. Four type codes, five
+/// distinct format strings, no floats and no repeat counts.
 ///
 /// EVERY ASSERTION HERE IS ON WHAT THE CODE READS OR WRITES, never on the build succeeding.
 /// Endianness is the reason: `<H` and `>H` compile to the same instructions in a different
@@ -167,6 +168,93 @@ public class StructSubsetTests
 
         Assert.Equal(new[] { 2, 1, 4, 3 }, BytesRead(ir));
     }
+
+    // ---- `return struct.unpack_from(...)`: the call's value is the tuple itself. ----
+    // i2c_struct's Struct.__get__ returns it, and the caller's read of a field is a
+    // read of a result slot the expansion minted. The arity lives in the format text,
+    // which only binds inside the body, so none of these callers counts it from a
+    // signature.
+
+    private const string ReadPair =
+        "def read_pair(buf: bytearray):\n" +
+        "    return struct.unpack_from(\"<HH\", buf, 1)\n";
+
+    private const string ReadPairHead =
+        "def main() -> uint8:\n" +
+        "    buf = bytearray(8)\n";
+
+    // Every field materialises into its slot at the return, so a caller of
+    // read_pair always reads all four bytes; which SLOT the caller consumes is
+    // what the index decides. `main` reads them as the expansion emits them:
+    // field 0 is bytes 1,2 little-endian, field 1 is 3,4.
+    private static List<string> ResultSlotsRead(ProgramIR ir)
+    {
+        IEnumerable<Val> Srcs(Instruction i) => i switch
+        {
+            Copy c => new[] { c.Src },
+            Binary b => new[] { b.Src1, b.Src2 },
+            Return r => new[] { r.Value },
+            _ => [],
+        };
+        return ir.Functions.SelectMany(f => f.Body).SelectMany(Srcs)
+            .OfType<Variable>().Select(v => v.Name)
+            .Where(n => n.Contains("iret_")).ToList();
+    }
+
+    [Fact]
+    public void AReturnedTuple_IndexedAtTheCall_ReadsThatField()
+    {
+        var ir = Gen(ReadPair + ReadPairHead + "    return read_pair(buf)[1] & 0xFF\n");
+
+        Assert.Equal(new[] { 2, 1, 4, 3 }, BytesRead(ir));
+        Assert.Contains(ResultSlotsRead(ir), s => s.EndsWith("_1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AReturnedTuple_BoundToAName_KeepsItsElements()
+    {
+        var ir = Gen(ReadPair + ReadPairHead + "    t = read_pair(buf)\n    return t[0] & 0xFF\n");
+
+        Assert.Equal(new[] { 2, 1, 4, 3 }, BytesRead(ir));
+        Assert.Contains(ResultSlotsRead(ir), s => s.EndsWith("_0", StringComparison.Ordinal));
+    }
+
+    // `a, b = read_pair()` copies each result slot into its target. The H is a
+    // uint16: the copy into `b` must carry that width or the high byte truncates.
+    [Fact]
+    public void AReturnedTuple_Unpacked_KeepsEachFieldsWidth()
+    {
+        var ir = Gen(ReadPair + ReadPairHead +
+            "    a: uint16 = 0\n    b: uint16 = 0\n    a, b = read_pair(buf)\n    return b & 0xFF\n");
+
+        Assert.Equal(new[] { 2, 1, 4, 3 }, BytesRead(ir));
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.EndsWith("b", StringComparison.Ordinal))
+            .Select(c => ((Variable)c.Dst).Type), t => t == DataType.UINT16);
+    }
+
+    // An unannotated def whose returns are `unpack_from` is still a tuple return:
+    // the force-inline pass keys off the call shape, not a `-> (T, T)` signature.
+    [Fact]
+    public void AReturnedTuple_WithoutAnnotation_StillExpands()
+    {
+        var ir = Gen(
+            "def half(buf: bytearray):\n    return struct.unpack_from(\"<H\", buf, 0)\n" +
+            ReadPairHead + "    return half(buf)[0] & 0xFF\n");
+
+        Assert.Equal(new[] { 1, 0 }, BytesRead(ir));
+    }
+
+    [Fact]
+    public void AReturnedTuple_UnpackTargetCountMismatch_IsRefused()
+    {
+        var ex = Fails(ReadPair + ReadPairHead +
+            "    a: uint16 = 0\n    b: uint16 = 0\n    c: uint16 = 0\n" +
+            "    a, b, c = read_pair(buf)\n    return a\n");
+
+        Assert.Contains("Tuple return size mismatch", ex.Message);
+    }
+
 
     [Fact]
     public void ANonLiteralFormat_IsRefused()

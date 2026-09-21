@@ -26,6 +26,12 @@ public class InlineContext
 
     // Multi-return tuple: each result slot is a named variable "prefix.result_K"
     public List<string> ResultVars { get; set; } = [];
+
+    // The "bBase.iret_depth_" prefix ResultVars names are built under. A return whose
+    // arity the call site cannot count -- `return struct.unpack_from(fmt, ...)` reads
+    // the arity from a format that only binds inside the body -- mints its slots here,
+    // under the same names a caller's request would have allocated.
+    public string TupleSlotPrefix { get; set; } = "";
     public string CalleeName { get; set; } = "";
     public bool ResultAssigned { get; set; } = false;
 

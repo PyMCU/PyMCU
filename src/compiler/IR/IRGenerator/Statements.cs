@@ -1161,6 +1161,53 @@ public partial class IRGenerator
             return;
         }
 
+        // `return struct.unpack_from(fmt, buf, off)` -- i2c_struct's Struct.__get__. The
+        // call's value is a compile-time sequence of field reads, the tuple the caller
+        // unpacks; delivering it is the same ResultVars write a `return (a, b)` does.
+        // The arity lives in the format text, which neither a signature nor the
+        // TupleExpr arity scan can see (`self.format` binds inside __init__), so a
+        // caller that asked for the tuple by sentinel allocated zero slots: mint them
+        // here, at the return, under the names that request would have used.
+        if (stmt.Value != null && inlineStack.Count > 0
+            && TryStructUnpackSeq(stmt.Value, out var unpackRetElems, out var unpackRetTypes))
+        {
+            var seqCtx = inlineStack.Last();
+            if (seqCtx.ResultVars.Count == 0)
+            {
+                for (int k = 0; k < unpackRetElems.Count; ++k)
+                    seqCtx.ResultVars.Add(seqCtx.TupleSlotPrefix + k);
+            }
+            else if (seqCtx.ResultVars.Count != unpackRetElems.Count)
+            {
+                throw UserError(
+                    $"Tuple return size mismatch: the format describes {unpackRetElems.Count} " +
+                    $"field(s), but {seqCtx.ResultVars.Count} unpack target(s) were given",
+                    stmt.Value);
+            }
+
+            for (int k = 0; k < unpackRetElems.Count; ++k)
+            {
+                Val seqElem = VisitExpression(unpackRetElems[k]);
+                // A slot the request widened from a declared `-> tuple[...]` keeps that
+                // width; a minted or unannotated one takes the field's, so an `H` read
+                // does not truncate to uint8.
+                DataType seqDt = variableTypes.TryGetValue(seqCtx.ResultVars[k], out var declaredSeqDt)
+                    ? declaredSeqDt
+                    : unpackRetTypes?[k] ?? DataType.UINT8;
+                variableTypes[seqCtx.ResultVars[k]] = seqDt;
+                Emit(new Copy(seqElem, new Variable(seqCtx.ResultVars[k], seqDt)));
+                if (seqElem is Constant sc) constantVariables[seqCtx.ResultVars[k]] = sc.Value;
+                else constantVariables.Remove(seqCtx.ResultVars[k]);
+                if (seqElem is FloatConstant sfc) floatConstantVariables[seqCtx.ResultVars[k]] = sfc.Value;
+                else floatConstantVariables.Remove(seqCtx.ResultVars[k]);
+                strConstantVariables.Remove(seqCtx.ResultVars[k]);
+                constSequenceBindings.Remove(seqCtx.ResultVars[k]);
+            }
+
+            Emit(new Jump(seqCtx.ExitLabel));
+            return;
+        }
+
         if (stmt.Value != null && inlineStack.Count > 0 && inlineStack.Last().ResultVars.Count > 0)
         {
             if (stmt.Value is TupleExpr tup)

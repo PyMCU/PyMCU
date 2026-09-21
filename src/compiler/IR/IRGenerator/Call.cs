@@ -1561,6 +1561,12 @@ public partial class IRGenerator
 
         Temporary? result = null;
         var tupleResultNames = new List<string>();
+        // `return struct.unpack_from(fmt, buf, off)`: the element count lives in the format
+        // text, which only a field binding inside the body can resolve -- no signature or
+        // TupleExpr scan sees it. The return mints its own slots under this prefix when the
+        // call site asked for the tuple by sentinel and got zero.
+        string tupleSlotPrefix =
+            $"{(string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction)}.iret_{newDepth}_";
 
         // `-> (T1, T2)` / `-> tuple[T1, T2]`: the arity is part of the signature, so a call
         // that unpacks a different number of targets is a mismatch worth naming here -- the
@@ -2014,7 +2020,8 @@ public partial class IRGenerator
         }
 
         inlineStack.Add(new InlineContext
-            { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames, CalleeName = callee,
+            { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames,
+              TupleSlotPrefix = tupleSlotPrefix, CalleeName = callee,
               Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth,
               // Recorded here because the pair has not moved yet: the switch to the callee
               // happens at the body walk. See #227 and the note on the field.
@@ -7670,6 +7677,36 @@ public partial class IRGenerator
             }
 
             RejectInstanceInterpolation(arg);
+
+            // `print(obj.prop)` / `print(f())` where the read or call returns a tuple
+            // (Struct.__get__'s `return struct.unpack_from(...)`): the sentinel asks the
+            // expansion for the result slots, and the text is the tuple they form.
+            if (arg is MemberAccessExpr or CallExpr)
+            {
+                lastTupleResults.Clear();
+                pendingTupleCount = -1;
+                Val seqVal = VisitExpression(arg);
+                pendingTupleCount = 0;
+                if (lastTupleResults.Count > 0)
+                {
+                    EmitStreamStr(writeStrFn, "(");
+                    for (int k = 0; k < lastTupleResults.Count; ++k)
+                    {
+                        if (k > 0) EmitStreamStr(writeStrFn, ", ");
+                        string slot = lastTupleResults[k];
+                        EmitPrintArg(new PreEvaluatedExpr(
+                            new Variable(slot, variableTypes.TryGetValue(slot, out var sdt)
+                                ? sdt : DataType.UINT8), null)
+                            { Line = arg.Line });
+                    }
+                    if (lastTupleResults.Count == 1) EmitStreamStr(writeStrFn, ",");
+                    EmitStreamStr(writeStrFn, ")");
+                    return;
+                }
+                EmitStreamVal(floatWriteFn, seqVal, DeclaredWidthOfName(arg));
+                return;
+            }
+
             // The declared width of a NAME travels with its value, because a folded constant no
             // longer carries one (#331): `lo: int32 = -2147483648` printed its low byte.
             EmitStreamVal(floatWriteFn, VisitExpression(arg), DeclaredWidthOfName(arg));

@@ -2334,11 +2334,21 @@ public partial class IRGenerator
         // a multi-value return lands in them and the subscript picks element k --
         // `self._temperature_and_lux_dn40()[0]` in adafruit_tcs34725. A call
         // whose result is a buffer, an instance or a scalar keeps its old meaning.
-        if (expr.Target is CallExpr tupleCall)
+        //
+        // `d.pair[k]` is the same site when `pair` is a descriptor: __get__ is the
+        // call, and a `return struct.unpack_from(...)` in it fills the slots just
+        // the same (adafruit_register's Struct, read per-element).
+        Expression? tupleSrc = expr.Target switch
+        {
+            CallExpr tc => tc,
+            MemberAccessExpr tm when IsDescriptorMemberRead(tm) => tm,
+            _ => null,
+        };
+        if (tupleSrc != null)
         {
             lastTupleResults.Clear();
             pendingTupleCount = -1;
-            Val callResult = VisitExpression(tupleCall);
+            Val callResult = VisitExpression(tupleSrc);
             pendingTupleCount = 0;
 
             if (lastTupleResults.Count > 0)
@@ -3531,6 +3541,23 @@ public partial class IRGenerator
                 new VariableExpr(clsName) { Line = expr.Line },
             })
             { Line = expr.Line });
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> reads a class attribute whose class defines
+    /// <c>__get__</c> -- the shape <c>TryDescriptorRead</c> rewrites. The check is the
+    /// same, and separate, because a subscript site (<c>d.pair[k]</c>) needs the answer
+    /// BEFORE it commits to the tuple-return evaluation, while TryDescriptorRead decides
+    /// inside it.
+    /// </summary>
+    private bool IsDescriptorMemberRead(MemberAccessExpr expr)
+    {
+        if (expr.Object is not VariableExpr recv
+            || ReceiverNameForLookup(recv) is not { } baseName)
+            return false;
+        return TryFindClassAttribute(baseName, expr.Member, out _, out var fullName)
+            && instanceClasses.TryGetValue(fullName, out var attrCls)
+            && ClassDefinesMethod(attrCls, "__get__");
     }
 
     /// <summary>

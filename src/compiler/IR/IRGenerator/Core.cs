@@ -3214,7 +3214,8 @@ public partial class IRGenerator
         foreach (var entry in functionsToCompile)
         {
             if (!TupleType.IsTupleType(entry.Func.ReturnType)
-                && TupleReturnArity(entry.Func) == 0) continue;
+                && TupleReturnArity(entry.Func) == 0
+                && !BodyReturnsStructUnpack(entry.Func)) continue;
 
             string fullName = (entry.Prefix ?? "") + entry.Func.Name;
             if (inlineFunctions.ContainsKey(fullName)) continue;
@@ -3222,6 +3223,59 @@ public partial class IRGenerator
             moved.Add(entry);
         }
         foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// True when a body has `return struct.unpack(fmt, buf)` / `return struct.unpack_from(...)`.
+    /// The element count lives in the format text -- possibly a field that only binds inside
+    /// __init__ -- so TupleReturnArity cannot count it, but the return still delivers a tuple,
+    /// which an outlined body cannot carry. Registering the function for expansion lets
+    /// VisitReturn mint the result slots at the return, where the format resolves.
+    /// AST-only like the arity scan: nothing is lowered, so a format the compiler would later
+    /// refuse is still reported there and not here.
+    /// </summary>
+    private bool BodyReturnsStructUnpack(FunctionDef func)
+    {
+        bool found = false;
+        void S(Statement? s)
+        {
+            switch (s)
+            {
+                case null: break;
+                case ReturnStmt { Value: { } rv }:
+                    Expression inner = rv;
+                    if (inner is CallExpr { Callee: VariableExpr { Name: "list" or "tuple" } } wrap
+                        && wrap.Args.Count == 1)
+                        inner = wrap.Args[0];
+                    if (inner is CallExpr uc
+                        && (IsStructCall(uc, "unpack") || IsStructCall(uc, "unpack_from")))
+                        found = true;
+                    break;
+                case Block b:
+                    foreach (var innerStmt in b.Statements) S(innerStmt);
+                    break;
+                case IfStmt i:
+                    S(i.ThenBranch);
+                    foreach (var (_, eb) in i.ElifBranches) S(eb);
+                    S(i.ElseBranch);
+                    break;
+                case WhileStmt w: S(w.Body); break;
+                case ForStmt f: S(f.Body); break;
+                case WithStmt w: S(w.Body); break;
+                case MatchStmt m:
+                    foreach (var br in m.Branches) S(br.Body);
+                    break;
+                case TryStmt t:
+                    foreach (var innerStmt in t.Body) S(innerStmt);
+                    foreach (var (_, handler) in t.Handlers)
+                        foreach (var innerStmt in handler) S(innerStmt);
+                    if (t.Finally != null) foreach (var innerStmt in t.Finally) S(innerStmt);
+                    if (t.ElseBody != null) foreach (var innerStmt in t.ElseBody) S(innerStmt);
+                    break;
+            }
+        }
+        S(func.Body);
+        return found;
     }
 
     /// <summary>
