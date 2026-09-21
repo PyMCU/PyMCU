@@ -571,6 +571,7 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **driver**: natmod says which exports narrow an int to 16 bits
 - **driver**: the generated adapter checks what the interpreter hands the kernel
 - **compiler**: a buffer parameter carries its own length in library mode
+- **driver**: `pymcu monitor` is a serial console -- UART to stdout, stdin to the board, no pyserial on POSIX
 
 ### Fixed
 

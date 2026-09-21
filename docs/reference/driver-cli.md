@@ -176,6 +176,40 @@ honoured as a fallback, with a deprecation warning — move it to
 
 ---
 
+## `pymcu monitor`
+
+Opens a serial console on the board: what the firmware prints over UART is
+written to stdout, and what you type is forwarded back to the board. Stop with
+Ctrl+C.
+
+```bash
+pymcu monitor
+pymcu monitor --port /dev/cu.usbmodem14101 --baud 115200
+pymcu monitor --no-send    # read only: stdin is not forwarded
+```
+
+Port resolution order, the same as `pymcu flash`:
+
+1. `--port` / `-P` on the command line
+2. `port = "..."` in `[tool.pymcu.flash]` of `pyproject.toml`
+3. Auto-detection, when exactly one USB-serial device is connected
+
+Baud resolution order:
+
+1. `--baud` / `-b` on the command line
+2. `stdout_baud = ...` in `[tool.pymcu]` of `pyproject.toml`, the speed
+   `print()` runs at
+3. 115200
+
+Firmware bytes are the only thing on stdout, so `pymcu monitor | tee log`
+captures exactly what the board said. The exit code is 0 on a clean stop, 2
+when the board disappears mid-stream, and 1 on a usage error. The command
+works outside a project too: with `--port` there is nothing to read from
+`pyproject.toml`. On POSIX the monitor uses termios directly and needs no
+extra dependency; on Windows it needs pyserial (`pip install pyserial`).
+
+---
+
 ## `pymcu clean`
 
 Removes the `dist/` directory and all build artifacts.

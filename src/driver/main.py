@@ -125,6 +125,7 @@ from .commands.build import build
 from .commands.natmod import natmod
 from .commands.clean import clean
 from .commands.flash import flash
+from .commands.monitor import monitor
 from .commands.sync import sync
 from .commands.version import version
 from .commands.toolchain import toolchain_app
@@ -165,6 +166,7 @@ app.command()(natmod)
 app.command()(version)
 app.command()(clean)
 app.command()(flash)
+app.command()(monitor)
 app.command()(sync)
 app.command()(upgrade)
 app.command(hidden=True)(coffee)
