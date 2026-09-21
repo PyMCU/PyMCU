@@ -226,6 +226,61 @@ A union whose members are both ZCA instance types is refused: instances are not 
 (RFC 0006 gives them a layout but no shared representation across different classes), and
 there is no demandant. Same refusal, new wording: it names the two types.
 
+## 6.1 N members inferred from the return statements themselves
+
+A function with no return annotation whose `return` statements produce different types on
+different paths (`return 5` on one arm, `return 2.5` on another, `return None` on a third)
+is the same object as a declared `Union[int, float, None]`, and the tag is the same byte:
+the member INDEX of the type returned, not the index of the path. Two paths that return an
+int share a tag; the member list is the set of distinct representations across every
+`return` reached, in first-appearance order, deduplicated by representation width and kind
+(uint8 and bool are distinct members, as 11.6 says; two `return 5` are one). Today's
+inference already gives an unannotated function one return type when every path agrees;
+this section only says what happens when they do not: the compiler infers the union
+instead of refusing or, worse, picking the first path's type and reading garbage on the
+others (the silent case 0.5 measures).
+
+The limit is not the byte (255 members fit) but the READERS. Every use of the value has to
+dispatch on the tag, and each arm is compiled for its member: with 2 or 3 members that is a
+flat `CPI`/`BREQ` chain and a small body per arm (section 4 measures the 3-state case at
++28 bytes over the base); with ten it is a jump table and ten bodies at every consumer,
+the program stops being monomorphic, and the author is asking for a dynamic type system
+with extra steps. So:
+
+- **Inferred or declared unions of up to 4 scalar members are accepted.** The tag is one
+  byte, the payload the widest member, `isinstance(r, T)` folds to a tag compare, and a
+  read outside an `isinstance`/`is None` arm is the same CompileError section 5 names.
+- **Five or more members are refused**, with a message that lists the members and the
+  return lines that produce them, and says why: "a value with N possible types makes every
+  reader dispatch N ways; PyMCU keeps one type per value. Return one type, or split the
+  function". This is a design ceiling, not a technical one; raise it only with a demandant
+  and a measurement.
+- **Members that are ZCA instances are refused** as in section 6 (no shared
+  representation), naming the return lines.
+- **Provable paths do not count.** A `return` on an arm the compiler folds away (a constant
+  guard, a dead `except`) contributes no member; a union that collapses to one member is
+  the plain type at zero cost, byte-identical to today. That is the gate of section 10
+  applied to inference.
+- The diagnostic for a refused union prints the member list with one return line each, so
+  the author sees the paths, not a type name.
+
+### 6.2 The `Result` shape: a union as an error channel without exceptions
+
+The N-state tag makes a second idiom cheap: `Union[int, ErrorCode]` (or `Union[T, None]`
+with the None arm meaning "failed"), the `Result<T, E>` of Rust and Zig's error unions. On
+a microcontroller it is attractive: one tag byte on the wire, no T-flag bookkeeping, no
+deferred print, and the caller decides at the read site. It is exactly what section 4's (b)
+already provides when `E` is a scalar (an `IntEnum` member or a `uint8` code), so it costs
+this RFC nothing to name it.
+
+It stays a LATER phase, not phase 1: the demandants (the Adafruit corpus, the MicroPython
+and CircuitPython idioms) write `raise`, and RFC 0003/0005 already give `raise` a working
+model. `Result` becomes a recommendation for PyMCU-native code (HAL, drivers written for
+PyMCU) once the tag exists; it never replaces exceptions in code written for an
+interpreter. Where a PyMCU-native function returns `Union[T, SomeErrorEnum]`, the
+documentation should show the two spellings side by side with their measured cost, so an
+author picks with numbers.
+
 ## 7. Demandants, from the Adafruit corpus
 
 Grepping `~/PycharmProjects/cp-*/src` (20 libraries):
@@ -332,3 +387,6 @@ representation itself, in GAS, exactly as RFC 0006 measured its cost model.
 6. **`Union` of an int and a bool**, or other members CPython distinguishes but PyMCU
    stores identically (bool is uint8 here): the tag keeps them distinct even when the
    payload width is shared, which is *more* faithful than today.
+7. **The 4-member ceiling of 6.1.** Chosen from the reader cost, not measured on a
+   demandant: no Adafruit library returns more than three types from one function. Revisit
+   with the first program that needs five, and measure its readers.
