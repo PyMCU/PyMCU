@@ -135,7 +135,7 @@ statically bounded per part (`pymcu.strfmt` lowering, auto-injected by the build
 value form, `len(s)` is the formatted length, `s[i]` indexes bytes, `print(s)` /
 `uart.write_str(s)` stream it, and re-assigning `s` in a loop reuses the buffer (assign the
 longest f-string first — the buffer is sized at the first assignment). Not yet supported in
-the value form: float interpolations, `s == "lit"` comparison, and f-strings inline in
+the value form: `s == "lit"` comparison, and f-strings inline in
 other expression positions (assign to a name first). Streamed examples:
 
 ```python
@@ -146,14 +146,19 @@ lcd.print_str(f"{hours:02d}:{mins:02d}")
 ```
 
 **Format specs** supported in interpolations: `{x:02x}`, `{x:X}`, `{x:08b}`, `{x:o}`,
-`{x:5d}`, `{x:04d}` (width, zero-pad, and `x`/`X`/`b`/`o`/`d` bases). Compile-time constant
+`{x:5d}`, `{x:04d}` (width, zero-pad, and `x`/`X`/`b`/`o`/`d` bases), and float specs
+`{v:f}`, `{v:.Nf}`, `{v:W.Nf}` including zero-pad (`{v:08.2f}`) — precision up to 15 digits.
+Compile-time constant
 interpolations (`f"text={const}"`) are folded into the flash string as before.
 
 A **streamed** interpolation accepts a `float` and prints it the way CPython does for the
 common cases — two decimals, rounded, with a trailing zero trimmed but never past the first
 decimal (`3.25`, `-2.25`, `0.05`, `123.75` and `1234.5` all print exactly). `print(x)` on a
-`float` uses the same formatter. The **value** form (`s = f"..."`) still has no float
-lowering — stream it, or convert to a scaled integer first.
+`float` uses the same formatter. Under a `.{N}f` spec the value formats with exactly N
+decimals — the digits come from the float32's exact decimal expansion, so a `.5` boundary
+is a real tie and rounds half-to-even, matching CPython (`f"{2.5:.0f}"` is `"2"`,
+`f"{2.675:.2f}"` is `"2.67"`). Both sink kinds share the formatter, so the value form
+(`s = f"{v:.2f}"`) writes the same text into the fixed buffer.
 
 ### `print()` of a buffer
 
