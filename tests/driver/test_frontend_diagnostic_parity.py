@@ -108,6 +108,23 @@ def test_a_binary_argument_is_the_known_gap(tmp_path):
     assert cpython[1] == 1, "the bridge carries no position for a BinOp"
 
 
+def test_a_reached_return_none_points_at_the_none_on_both_front_ends(tmp_path):
+    # The refusal a real subroutine gained for `return None` on a reached path (RFC 0009,
+    # decision 5) points at the `None` the return hands over -- the thing that has no width.
+    # The argument is a constant on purpose: a subroutine's parameters are run-time inside
+    # the body, so `a == 0` does not fold and the return IS reached, whatever is passed.
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "def read(a: uint8) -> uint8:\n"
+                   "    if a == 0:\n"
+                   "        return None\n"
+                   "    return a\n"
+                   "def main() -> None:\n"
+                   "    x: uint8 = read(3)\n")
+
+    assert _where(src, py_parser=False) == _where(src, py_parser=True) == (4, 16, 4)
+
+
 # --- the UNDERLINE, not only the character it starts at -------------------------------
 #
 # These four kinds agreed on the column and disagreed on how much they marked, which is why
