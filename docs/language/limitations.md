@@ -799,6 +799,13 @@ An alias is kept (`from adafruit_motor import servo as s`).
 An import alias belongs to the file that writes it. Two modules that alias different things
 to the same name each keep their own, the way Python scopes them.
 
+`from __future__ import X` (#452) is a no-op: `__future__`'s members are CPython compiler
+pragmas that change how CPython parses the source, and PyMCU already reads annotations
+straight from the source unconditionally, so there is nothing to enable. The import is
+dropped rather than resolved -- unconditionally, unlike the guarded optional-import idiom
+(`try: ... except ImportError: pass`, `if TYPE_CHECKING:`), which folds away one branch of a
+compile-time choice.
+
 `from foo import *` binds the public top-level names of `foo`: its functions, classes and
 module-level variables, minus the ones whose name starts with `_`, which are private and
 which a star never binds in CPython either. A module that declares `__all__` gets exactly
