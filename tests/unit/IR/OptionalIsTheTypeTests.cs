@@ -233,4 +233,139 @@ public class OptionalIsTheTypeTests
             "    c = Child(3)\n" +
             "    y = c.v\n"));
     }
+
+    // ── The same sentence, when the callee is a REAL subroutine ─────────────────────────
+    //
+    // The checks above run while an @inline body is expanded into its caller. A plain `def`
+    // lowers to a shared subroutine instead, where `return None` used to leave `ret` with
+    // nothing in the return register: the caller read whatever R24 held (RFC 0009, decision
+    // 5). Both paths refuse the shape now, in the same words.
+
+    [Fact]
+    public void ARealSubroutineReturnOfNoneOnAReachedPathIsRefused()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Hdr +
+            "def read(a: uint8) -> uint8:\n" +
+            "    if a == 0:\n" +
+            "        return None\n" +
+            "    return a\n\n" +
+            "x: uint8 = read(GPIOR0.value)\n"));
+
+        Assert.Contains("PyMCU reads Optional[X] as X", ex.Message);
+        Assert.Contains("this return gives None at run time", ex.Message);
+        Assert.Contains("'read'", ex.Message);
+        Assert.Contains("declared to return uint8", ex.Message);
+        Assert.Contains("Optional[uint8]", ex.Message);
+        Assert.Equal(6, ex.Line);
+        Assert.Equal(16, ex.Column);
+    }
+
+    [Fact]
+    public void ARealSubroutineBareReturnOnAReachedPathIsRefused()
+    {
+        // `return` is `return None` to Python, so the same sentence covers it. Without the
+        // literal the node carries no column, and the diagnostic lands on the line.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Hdr +
+            "def read(a: uint8) -> uint8:\n" +
+            "    if a == 0:\n" +
+            "        return\n" +
+            "    return a\n\n" +
+            "x: uint8 = read(GPIOR0.value)\n"));
+
+        Assert.Contains("this return gives None at run time", ex.Message);
+        Assert.Contains("'read'", ex.Message);
+        Assert.Equal(6, ex.Line);
+    }
+
+    [Fact]
+    public void ARealSubroutineReturnOfNoneInsideAFinallyIsRefused()
+    {
+        // A `return` inside a `try`/`finally` takes the early lowering that runs the pending
+        // finally first, which is why the check sits ahead of every lowering in VisitReturn.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Hdr +
+            "def read(a: uint8) -> uint8:\n" +
+            "    try:\n" +
+            "        return None\n" +
+            "    finally:\n" +
+            "        GPIOR0.value = 0\n" +
+            "    return a\n\n" +
+            "x: uint8 = read(GPIOR1.value)\n"));
+
+        Assert.Contains("this return gives None at run time", ex.Message);
+        Assert.Equal(6, ex.Line);
+    }
+
+    [Fact]
+    public void AnInlineBareReturnOnAReachedPathIsRefused()
+    {
+        // The @inline check judged only the literal: a bare `return` on a reached path left
+        // the caller's result slot just as unwritten, so the shared check covers it.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Hdr +
+            "@inline\n" +
+            "def f(a: uint8) -> uint8:\n" +
+            "    if a == 0:\n" +
+            "        return\n" +
+            "    return a\n\n" +
+            "def main():\n" +
+            "    GPIOR0.value = f(GPIOR1.value)\n"));
+
+        Assert.Contains("this return gives None at run time", ex.Message);
+        Assert.Contains("'f'", ex.Message);
+    }
+
+    [Fact]
+    public void ARealSubroutineReturnOfNoneBehindAFoldedGuardCompiles()
+    {
+        // A real subroutine's parameters are run-time values, so `a == 0` cannot fold inside
+        // one; a guard on a compile-time constant can. The arm is never visited and `read`
+        // is an ordinary `return a` to its caller.
+        var ir = Gen(Hdr +
+            "MODE: const = 1\n" +
+            "def read(a: uint8) -> uint8:\n" +
+            "    if MODE == 0:\n" +
+            "        return None\n" +
+            "    return a\n\n" +
+            "x: uint8 = read(GPIOR0.value)\n");
+
+        var f = ir.Functions.Single(fn => fn.Name == "read");
+        Assert.Contains(f.Body, i => i is Return { Value: not NoneVal });
+        Assert.DoesNotContain(f.Body, i => i is Return { Value: NoneVal });
+    }
+
+    [Fact]
+    public void ARealSubroutineDeclaredNoneKeepsItsReturnNone()
+    {
+        // `-> None` declares nothing to return, so its `return None` is the ordinary
+        // "returns nothing", not the lie this check is about.
+        Assert.NotNull(Gen(Hdr +
+            "def touch(a: uint8) -> None:\n" +
+            "    if a == 0:\n" +
+            "        return None\n" +
+            "    GPIOR0.value = a\n\n" +
+            "touch(GPIOR1.value)\n"));
+    }
+
+    [Fact]
+    public void AnUnannotatedMixedReturnKeepsTodaysVoidSemantics()
+    {
+        // Measured, not endorsed: `read` files as void -- return-type inference gives up the
+        // moment a `return None` is in the mix -- so the call asks for no result and `x` is
+        // a copy of None; the value return never reaches it. That is the same hole as the
+        // declared case, but refusing it would refuse the unannotated get/set pattern
+        // unmodified CircuitPython code uses (FrameBuffer.pixel answers a value only on the
+        // getter path). The pin stands until the language decides what an unannotated mixed
+        // return means.
+        var ir = Gen(Hdr +
+            "def read(a: uint8):\n" +
+            "    if a == 0:\n" +
+            "        return None\n" +
+            "    return a\n\n" +
+            "x: uint8 = read(GPIOR0.value)\n");
+
+        var f = ir.Functions.Single(fn => fn.Name == "read");
+        Assert.Equal(DataType.VOID, f.ReturnType);
+        var call = ir.Functions.SelectMany(fn => fn.Body).OfType<Call>()
+            .Single(c => c.FunctionName == "read");
+        Assert.IsType<NoneVal>(call.Dst);
+    }
 }
