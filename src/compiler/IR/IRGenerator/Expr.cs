@@ -984,6 +984,21 @@ public partial class IRGenerator
                                                : (hay.Contains(ned) ? 1 : 0));
             }
 
+            // `"W" in byteorder`: the name holds a compile-time string, so this is a
+            // substring test -- the same fold the MemberAccessExpr/StringLiteral path
+            // above performs. A name bound to a sequence, set or dict keeps the element
+            // path below (its membership tests elements, not substrings).
+            if (expr.Right is VariableExpr strRight
+                && !TryGetSetBinding(strRight.Name, out _) && !TryGetDictBinding(strRight.Name, out _)
+                && ElementsOfNamedSequence(strRight.Name) == null
+                && TryGetCompileTimeText(strRight) is { } hayVar)
+            {
+                string? nedVar = StringTextOfVal(lhs) ?? TryGetCompileTimeText(expr.Left);
+                if (nedVar != null)
+                    return new Constant(negate ? (hayVar.Contains(nedVar) ? 0 : 1)
+                                               : (hayVar.Contains(nedVar) ? 1 : 0));
+            }
+
             // The RHS may be a list `[...]`, tuple `(...)`, set `{...}` or dict literal
             // (membership tests the KEYS, as in Python), directly or bound to a name.
             // Normalize to the element list.

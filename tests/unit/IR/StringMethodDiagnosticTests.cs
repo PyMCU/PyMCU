@@ -37,14 +37,16 @@ public class StringMethodDiagnosticTests
         return ex.Message;
     }
 
-    // The four the issue reports, plus the two the same branch also swallows.
+    // The methods that fold (strip/index/find/startswith/endswith/count/replace/
+    // upper/lower, pinned in ConstStringMethodFoldTests) never reach this branch. What
+    // still does -- the methods with no compile-time answer -- must keep naming what the
+    // receiver is rather than guessing at a ZCA that is not there.
     [Theory]
-    [InlineData("split", "    x = \"a,b,c\".split(\",\")")]
-    [InlineData("upper", "    x = \"hi\".upper()")]
-    [InlineData("strip", "    x = \"  hi  \".strip()")]
-    [InlineData("replace", "    x = \"a-b\".replace(\"-\", \"+\")")]
-    [InlineData("startswith", "    x = \"hi\".startswith(\"h\")")]
-    [InlineData("find", "    x = \"hi\".find(\"i\")")]
+    [InlineData("capitalize", "    x = \"hi\".capitalize()")]
+    [InlineData("title", "    x = \"hi there\".title()")]
+    [InlineData("zfill", "    x = \"42\".zfill(5)")]
+    [InlineData("partition", "    x = \"a-b\".partition(\"-\")")]
+    [InlineData("isdigit", "    x = \"42\".isdigit()")]
     public void AStringMethod_IsRefusedAsAStringMethod(string method, string body)
     {
         var msg = Refusal(body);
@@ -61,9 +63,9 @@ public class StringMethodDiagnosticTests
     [Fact]
     public void AStringMethodOnANameBoundToALiteral_GetsTheSameAnswer()
     {
-        var msg = Refusal("    s = \"hi\"\n    x = s.upper()");
+        var msg = Refusal("    s = \"hi\"\n    x = s.capitalize()");
 
-        Assert.Contains("'.upper()'", msg);
+        Assert.Contains("'.capitalize()'", msg);
         Assert.Contains("on a string", msg);
     }
 
@@ -97,6 +99,20 @@ public class StringMethodDiagnosticTests
     [Fact]
     public void JoinUsedAsAValue_KeepsItsOwnMessage()
         => Assert.Contains("assignment form", Refusal("    x = len(\",\".join([\"a\", \"b\"]))"));
+
+    // split() is carved out the way join() is: it works as the iterable of a `for` or of
+    // enumerate() over a compile-time string, so a value position gets the message that
+    // says where it does work, not the generic "not supported on a string" one.
+    [Fact]
+    public void SplitUsedAsAValue_PointsAtTheFormThatWorks()
+    {
+        var msg = Refusal("    x = \"a,b,c\".split(\",\")");
+
+        Assert.Contains("split", msg);
+        Assert.Contains("for", msg);
+        Assert.DoesNotContain("nested member access", msg);
+        Assert.DoesNotContain("ZCA", msg);
+    }
 
     // The reason the ZCA sentence went rather than being reworded: the program it described
     // compiles. If this ever stops compiling, the gap is real again and needs its own message

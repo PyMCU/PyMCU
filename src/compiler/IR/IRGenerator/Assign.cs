@@ -167,7 +167,16 @@ public partial class IRGenerator
             // two-line program printed 256 for "abc" (#209).
             string? boundText = StaticStringOf(stmt.Value);
             if (boundText != null)
+            {
                 strConstantVariables[strKey] = boundText;
+                // A name that was None-marked and now holds a string is not None: the
+                // mark clears on the Variable-target path below, but a compile-time
+                // string resolves to a Constant, not a Variable, so the clear never
+                // ran and `pixel_order = "GRB" ...` kept answering "this is None" to
+                // SourceIsNoneInThisScope -- which then bound the NEXT parameter it
+                // was passed to as None (neopixel's pixel_order -> byteorder hop).
+                noneValuedNames.Remove(strKey);
+            }
             else
                 strConstantVariables.Remove(strKey);
 

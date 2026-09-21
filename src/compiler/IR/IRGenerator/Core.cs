@@ -1589,7 +1589,10 @@ public partial class IRGenerator
             string inlineName = currentInlinePrefix + name;
             if (constantVariables.TryGetValue(inlineName, out int inlineVal))
             {
-                return new Constant(inlineVal);
+                // Same note as the read below: a name in both maps (a compile-time
+                // string bound through an inline parameter) must carry its text, or
+                // the value arrives downstream as a bare interned id.
+                return new Constant(inlineVal, ResolveStrConstant(inlineName));
             }
 
             if (constantAddressVariables.TryGetValue(inlineName, out int inlineAddr))

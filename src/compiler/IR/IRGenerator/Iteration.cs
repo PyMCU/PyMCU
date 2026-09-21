@@ -388,6 +388,74 @@ public partial class IRGenerator
         instanceClasses.Remove(key);
     }
 
+    /// <summary>
+    /// `s.split(sep[, maxsplit])` where s is a compile-time string: the pieces, as
+    /// compile-time strings, in the order a `for` over the call unrolls them. There is no
+    /// list to return -- the chunks exist only as a per-iteration binding -- so a caller
+    /// that is not a `for` or `enumerate` iterable never reaches this. Empties are kept,
+    /// which is Python's rule: "a\n".split("\n") is ["a", ""], and "".split("\n") is [""].
+    ///
+    /// The receiver's text and the separator must both be known when the program is
+    /// compiled; anything else is refused with the reason named, because the alternative --
+    /// a runtime split -- needs a heap to hold the pieces.
+    /// </summary>
+    private List<string> CompileTimeSplit(CallExpr call, ASTNode at)
+    {
+        var ma = (MemberAccessExpr)call.Callee;
+        if (StaticStringOf(ma.Object) is not { } text)
+        {
+            if (ma.Object is ListExpr)
+                throw UserError(
+                    "bytes.split() is not supported: only str.split() unrolls at compile "
+                    + "time, over a string whose text the compiler knows.", call);
+            throw UserError(
+                "str.split() is supported only where it unrolls at compile time -- the "
+                + "iterable of a `for` or of enumerate() -- and only on a string whose text "
+                + "is known when the program is compiled: a literal, a module constant, or a "
+                + "parameter bound to one. This receiver is none of those; a runtime split "
+                + "would need a heap to hold the pieces.", ma.Object);
+        }
+        if (call.Args.Count == 0)
+            throw UserError(
+                "str.split() with no separator splits on runs of whitespace, which is not "
+                + "supported -- pass a compile-time separator, like s.split(\"\\n\").", call);
+        if (call.Args.Count > 2)
+            throw UserError("str.split() takes at most sep and maxsplit.", ArgAt(call, 2));
+        if (StaticStringOf(call.Args[0]) is not { } sep)
+            throw UserError(
+                "str.split() needs a compile-time string separator -- a literal or a name "
+                + "bound to one. A runtime separator would make the chunk count a runtime "
+                + "property, and the unrolled loop needs it fixed.", call.Args[0]);
+        if (sep.Length == 0)
+            throw UserError(
+                "str.split() separator cannot be empty -- a ValueError in Python too.",
+                call.Args[0]);
+        int? maxsplit = null;
+        if (call.Args.Count >= 2)
+        {
+            if (call.Args[1] is KeywordArgExpr msk)
+            {
+                if (msk.Key != "maxsplit")
+                    throw UserError(
+                        $"str.split() takes no keyword argument '{msk.Key}=' -- only 'maxsplit'.",
+                        call.Args[1]);
+                if (!TryFoldConstElement(msk.Value, out int msv))
+                    throw UserError("str.split() maxsplit must be a compile-time integer.",
+                        msk.Value);
+                maxsplit = msv;
+            }
+            else if (TryFoldConstElement(call.Args[1], out int ms))
+                maxsplit = ms;
+            else
+                throw UserError("str.split() maxsplit must be a compile-time integer.",
+                    call.Args[1]);
+        }
+        var parts = maxsplit is int ms2 && ms2 >= 0
+            ? text.Split(new[] { sep }, ms2 + 1, StringSplitOptions.None)
+            : text.Split(new[] { sep }, StringSplitOptions.None);
+        return new List<string>(parts);
+    }
+
     // The compile-time array a bare name denotes: its base key and length, or a negative length
     // when the name is not one. The probe order is inline expansion, enclosing function, bare
     // name, then the alias chain -- the same order every other lookup on this path uses.
@@ -1306,8 +1374,36 @@ public partial class IRGenerator
                 }
             }
 
+            // `for chunk in s.split(sep)`: a compile-time string split into compile-time
+            // strings, unrolled one iteration per chunk (adafruit_framebuf's text() does
+            // `for chunk in string.split("\n")` on its `string` parameter). There is no
+            // runtime list to hold the pieces -- the chunks exist only as the loop
+            // variable's per-iteration binding.
+            if (iter is CallExpr { Callee: MemberAccessExpr { Member: "split" } } forSplit)
+            {
+                var chunks = CompileTimeSplit(forSplit, iter);
+                string spBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                foreach (var chunk in chunks)
+                {
+                    BindUnrolledString(varKey, chunk);
+                    EmitUnrolledIteration(stmt.Body, spBrk);
+                }
+                if (spBrk.Length > 0) Emit(new Label(spBrk));
+                UnbindUnrolledVar(varKey);
+                return;
+            }
+
             if (iter is CallExpr call && call.Callee is VariableExpr calleeVar)
             {
+                // `for i in range(*t)` reaches here as a call node, not through
+                // EmitBuiltinCall -- splice the compile-time sequence the same way, so the
+                // iterable below sees the elements the call would have been written with.
+                if (call.Args.Any(a => a is StarArgExpr or DoubleStarArgExpr))
+                {
+                    call = new CallExpr(call.Callee, SpliceVariadicArgs(call.Args)) { Line = call.Line };
+                    iter = call;
+                }
+
                 // The same check the expression dispatch runs. enumerate(), zip() and range()
                 // reach the compiler as the ITERABLE of a `for` and never pass through
                 // EmitBuiltinCall, so without this line their keywords fall through to the
@@ -1425,6 +1521,45 @@ public partial class IRGenerator
                         }
 
                         constantVariables.Remove(idxKey);
+                        constantVariables.Remove(valKey);
+                        return;
+                    }
+
+                    // enumerate() over a compile-time string: (index, char) pairs, the same
+                    // one-character-string binding `for c in s` makes for the value. A string
+                    // longer than the unroll cap refuses rather than multiplies the body.
+                    if (StaticStringOf(inner) is { } enumStr)
+                    {
+                        if (enumStr.Length > ConstSequenceUnrollLimit)
+                            throw UserError(
+                                $"enumerate() over a string unrolls it at compile time; this one is "
+                                + $"{enumStr.Length} characters, past the {ConstSequenceUnrollLimit} "
+                                + "cap. Loop over range(len(s)) and index instead.", inner);
+                        for (int k = 0; k < enumStr.Length; k++)
+                        {
+                            constantVariables[idxKey] = k;
+                            BindUnrolledString(valKey, enumStr[k].ToString());
+                            VisitStatement(stmt.Body);
+                        }
+                        constantVariables.Remove(idxKey);
+                        strConstantVariables.Remove(valKey);
+                        constantVariables.Remove(valKey);
+                        return;
+                    }
+
+                    // enumerate() over a compile-time split: the chunks the `for` over
+                    // `s.split(sep)` unrolls, with an index next to each.
+                    if (inner is CallExpr { Callee: MemberAccessExpr { Member: "split" } } enumSplit)
+                    {
+                        var eChunks = CompileTimeSplit(enumSplit, inner);
+                        for (int k = 0; k < eChunks.Count; k++)
+                        {
+                            constantVariables[idxKey] = k;
+                            BindUnrolledString(valKey, eChunks[k]);
+                            VisitStatement(stmt.Body);
+                        }
+                        constantVariables.Remove(idxKey);
+                        strConstantVariables.Remove(valKey);
                         constantVariables.Remove(valKey);
                         return;
                     }

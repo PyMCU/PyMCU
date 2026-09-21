@@ -565,6 +565,14 @@ public partial class IRGenerator
                     if (memC.Member == "format" && memC.Object is StringLiteral fmtLit)
                         return VisitExpression(DesugarStrFormat(fmtLit.Value, expr));
 
+                    // `byteorder.strip("RGBWP")`, `byteorder.index("R")` -- the string
+                    // transforms an unmodified CircuitPython library applies to its
+                    // arguments (adafruit_pixelbuf.parse_byteorder). With the receiver's
+                    // text in hand the answer is a new constant, computed here; no string
+                    // object is ever built.
+                    if (TryEmitConstStrMethod(expr, memC) is { } constStrResult)
+                        return constStrResult;
+
                     // str.join used as a bare expression: the supported forms live in the
                     // assignment lowering (constant fold and the bytes-to-string idiom), so
                     // point there instead of the generic nested-member message.
@@ -574,6 +582,16 @@ public partial class IRGenerator
                             "compile-time strings, or s = ''.join([chr(b) for b in buf]) over a " +
                             "fixed-size buffer; assign the result to a variable before using it",
                             memC);
+                    // s.split(sep) DOES work -- as the iterable of a `for` or of enumerate(),
+                    // where the chunks unroll at compile time. In a value position it would
+                    // have to be a list, and there is no heap to build one in.
+                    if (memC.Member == "split")
+                        throw UserError(
+                            "str.split() is supported only where the chunks are consumed "
+                            + "directly: `for chunk in s.split(sep)` or `for i, chunk in "
+                            + "enumerate(s.split(sep))`, with s and sep compile-time strings. "
+                            + "In this position the result would have to be a value -- a "
+                            + "list -- and there is no heap to hold one.", memC);
                     // What arrives here is a method whose RECEIVER is a compile-time constant:
                     // a string ("a,b,c".split(",")) or a number ((5).bit_length()). It used to
                     // answer with a sentence about a ZCA field that is itself a ZCA, like
@@ -2408,11 +2426,19 @@ public partial class IRGenerator
                 // (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685). The declared type
                 // is still the discriminator: `uart.write('\n')` is a `uint8`, and giving
                 // that parameter a text made the UART HAL refuse itself.
-                if (func.Params[paramIdx].Type == "str")
+                if (func.Params[paramIdx].Type is "str" or "")
                 {
                     string? text = i < rawStrArgs.Count ? rawStrArgs[i]?.Value : null;
                     if (text == null && !string.IsNullOrEmpty(cArg3.Text)) text = cArg3.Text;
-                    if (text == null && stringIdToStr.TryGetValue(cArg3.Value, out var internedArg))
+                    // A declared `str` keeps resolving an interned id handed in through
+                    // another call. An unannotated parameter does not get that fallback:
+                    // `f(300)` binds 300, and 300 can collide with an id in stringIdToStr --
+                    // the param would come out the other side as text it never held.
+                    // (adafruit_framebuf's text(string, ...) is why the unannotated shape
+                    // keeps any text at all: `display.text("PyMCU", ...)` has to reach
+                    // string.split() inside the method with "PyMCU" still readable.)
+                    if (text == null && func.Params[paramIdx].Type == "str"
+                        && stringIdToStr.TryGetValue(cArg3.Value, out var internedArg))
                         text = internedArg;
                     if (text != null) strConstantVariables[paramName] = text;
                     else strConstantVariables.Remove(paramName);
@@ -3477,6 +3503,7 @@ public partial class IRGenerator
             var argVal = VisitExpression(args[paramIdx]);
             var paramKey = newPrefix + p.Name;
             constantVariables.Remove(paramKey);
+            strConstantVariables.Remove(paramKey);
             variableAliases.Remove(paramKey);
             // A None argument (literal, or a caller name already tracked as None) has
             // no runtime value. The ordinary @inline binder records that on the
@@ -3509,6 +3536,32 @@ public partial class IRGenerator
             else if (argVal is Constant cArg)
             {
                 constantVariables[paramKey] = cArg.Value;
+                // A compile-time string reaches this path as a Constant too -- the
+                // interned id carrying its Text. Binding only the number dropped the
+                // text the ordinary binder keeps (`super().__init__(byteorder=
+                // pixel_order)` in neopixel.py): `len(byteorder)` inside the base
+                // body then refused a string the compiler was holding.
+                if (p.Type is "str" or "const[str]" or "")
+                {
+                    string? text = args[paramIdx] is StringLiteral argLit ? argLit.Value
+                        : cArg.Text;
+                    if (text == null && p.Type != ""
+                        && stringIdToStr.TryGetValue(cArg.Value, out var interned))
+                        text = interned;
+                    if (text != null) strConstantVariables[paramKey] = text;
+                }
+            }
+            else if (argVal is Variable vStrArg
+                     && p.Type is "str" or "const[str]"
+                     && ResolveStrConstant(vStrArg.Name) is string vStr)
+            {
+                // A name holding a compile-time string, arriving as a Variable:
+                // the same binding the ordinary path makes for `str`/`const[str]`
+                // params, so `byteorder=pixel_order` keeps "GRB" across the super()
+                // hop too.
+                strConstantVariables[paramKey] = vStr;
+                if (p.Type != "const[str]" && TryArgumentConstant(vStrArg.Name, out int strId))
+                    constantVariables[paramKey] = strId;
             }
             else if (!ParameterIsAssignedIn(funcSuper, p.Name)
                      && (argVal is Variable vArg && TryArgumentConstant(vArg.Name, out int argConst)
@@ -6390,7 +6443,162 @@ public partial class IRGenerator
             && StaticStringOf(ab.Left) is { } lText
             && StaticStringOf(ab.Right) is { } rText)
             return lText + rText;
+
+        // `po = "GRB" if bpp == 3 else "GRBW"` (adafruit_pixelbuf's pixel_order, then
+        // NeoPixel's byteorder= argument): when the condition is a compile-time
+        // expression the name holds whichever branch it selects, so the text is the
+        // selected branch's text. A condition this evaluator cannot answer means the
+        // name genuinely varies at run time -- null, exactly like any other non-static
+        // right-hand side.
+        if (e is TernaryExpr tern)
+        {
+            try
+            {
+                return StaticStringOf(EvaluateConstantExpr(tern.Condition) != 0
+                    ? tern.TrueVal : tern.FalseVal);
+            }
+            catch (CompilerError)
+            {
+                return null;
+            }
+        }
         return null;
+    }
+
+    /// <summary>
+    /// Compile-time string methods. `s.strip(...)`, `s.index(...)`, `s.find(...)`,
+    /// `s.startswith(...)`, `s.endswith(...)`, `s.count(...)`, `s.replace(...)`,
+    /// `s.upper()`/`s.lower()` on a receiver whose text the compiler holds are folded to
+    /// a new constant here -- the answer is data the compiler already has, so no string
+    /// object is ever built (adafruit_pixelbuf's parse_byteorder runs `strip`/`index`
+    /// on the `byteorder` parameter). Null when the receiver's text is not known or the
+    /// member is not one of these; the caller then falls through to the refusal.
+    /// </summary>
+    private Val? TryEmitConstStrMethod(CallExpr expr, MemberAccessExpr memC)
+    {
+        string? text = StaticStringOf(memC.Object) ?? TryGetCompileTimeText(memC.Object);
+        if (text == null) return null;
+
+        // Whitespace as Python defines it for strip(): the same set CPython's
+        // str.strip() uses when no argument is given.
+        const string whitespace = " \t\n\r\v\f";
+
+        switch (memC.Member)
+        {
+            case "strip" or "lstrip" or "rstrip":
+            {
+                if (expr.Args.Count > 1) return null;
+                string? chars = whitespace;
+                if (expr.Args.Count == 1)
+                {
+                    chars = StaticStringOf(expr.Args[0]) ?? TryGetCompileTimeText(expr.Args[0]);
+                    if (chars == null) return null;
+                }
+                string trimmed = memC.Member switch
+                {
+                    "lstrip" => text.TrimStart(chars!.ToCharArray()),
+                    "rstrip" => text.TrimEnd(chars!.ToCharArray()),
+                    _ => text.Trim(chars!.ToCharArray()),
+                };
+                return InternConstString(trimmed);
+            }
+
+            case "index" or "find":
+            {
+                if (expr.Args.Count is < 1 or > 3) return null;
+                string? needle = StaticStringOf(expr.Args[0]) ?? TryGetCompileTimeText(expr.Args[0]);
+                if (needle == null) return null;
+                int start = 0, end = text.Length;
+                if (expr.Args.Count >= 2 && !TryConstIntArg(expr.Args[1], out start)) return null;
+                if (expr.Args.Count >= 3 && !TryConstIntArg(expr.Args[2], out end)) return null;
+                start = Math.Clamp(start < 0 ? text.Length + start : start, 0, text.Length);
+                end = Math.Clamp(end < 0 ? text.Length + end : end, 0, text.Length);
+                int at = start <= end ? text.IndexOf(needle, start, end - start,
+                        StringComparison.Ordinal) : -1;
+                if (at >= 0 || memC.Member == "find") return new Constant(at);
+                // `s.index` on a miss raises ValueError. Lowered as a raise so a
+                // try/except around it (pixelbuf wraps its index calls in one) catches
+                // it exactly as it would at runtime.
+                VisitRaise(new RaiseStmt("ValueError", "substring not found"));
+                return new Constant(0);
+            }
+
+            case "startswith" or "endswith":
+            {
+                if (expr.Args.Count != 1) return null;
+                string? affix = StaticStringOf(expr.Args[0]) ?? TryGetCompileTimeText(expr.Args[0]);
+                if (affix == null) return null;
+                bool hit = memC.Member == "startswith"
+                    ? text.StartsWith(affix, StringComparison.Ordinal)
+                    : text.EndsWith(affix, StringComparison.Ordinal);
+                return new Constant(hit ? 1 : 0);
+            }
+
+            case "count":
+            {
+                if (expr.Args.Count != 1) return null;
+                string? needle = StaticStringOf(expr.Args[0]) ?? TryGetCompileTimeText(expr.Args[0]);
+                if (needle == null || needle.Length == 0) return null;
+                int n = 0, from = 0;
+                while ((from = text.IndexOf(needle, from, StringComparison.Ordinal)) >= 0)
+                {
+                    n++;
+                    from += needle.Length;
+                }
+                return new Constant(n);
+            }
+
+            case "replace":
+            {
+                if (expr.Args.Count is < 2 or > 3) return null;
+                string? oldS = StaticStringOf(expr.Args[0]) ?? TryGetCompileTimeText(expr.Args[0]);
+                string? newS = StaticStringOf(expr.Args[1]) ?? TryGetCompileTimeText(expr.Args[1]);
+                if (oldS == null || newS == null || oldS.Length == 0) return null;
+                if (expr.Args.Count == 3)
+                {
+                    if (!TryConstIntArg(expr.Args[2], out int maxCount) || maxCount < 0)
+                        return null;
+                    // Python's count is a cap on leading replacements, left to right.
+                    var sb = new System.Text.StringBuilder();
+                    int pos = 0;
+                    while (pos <= text.Length - oldS.Length && maxCount > 0)
+                    {
+                        int hit = text.IndexOf(oldS, pos, StringComparison.Ordinal);
+                        if (hit < 0) break;
+                        sb.Append(text, pos, hit - pos).Append(newS);
+                        pos = hit + oldS.Length;
+                        maxCount--;
+                    }
+                    sb.Append(text, pos, text.Length - pos);
+                    return InternConstString(sb.ToString());
+                }
+                return InternConstString(text.Replace(oldS, newS, StringComparison.Ordinal));
+            }
+
+            case "upper": return expr.Args.Count == 0 ? InternConstString(text.ToUpperInvariant()) : null;
+            case "lower": return expr.Args.Count == 0 ? InternConstString(text.ToLowerInvariant()) : null;
+        }
+        return null;
+    }
+
+    /// <summary>Interns a computed compile-time string and returns it as a Constant
+    /// carrying its text, the same shape a literal read produces.</summary>
+    private Constant InternConstString(string text)
+    {
+        if (!stringLiteralIds.TryGetValue(text, out int id))
+        {
+            id = nextStringId++;
+            stringLiteralIds[text] = id;
+            stringIdToStr[id] = text;
+        }
+        return new Constant(id, text);
+    }
+
+    /// <summary>A compile-time integer argument (literal or folded expression), else false.</summary>
+    private bool TryConstIntArg(Expression e, out int v)
+    {
+        try { v = EvaluateConstantExpr(e); return true; }
+        catch (CompilerError) { v = 0; return false; }
     }
 
     /// <summary>

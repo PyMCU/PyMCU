@@ -77,10 +77,12 @@ public class CallColumnTests
     [Fact]
     public void AMethodOnAStringLiteral_PointsAtTheMethod()
     {
+        // capitalize() is one of the string methods that does not fold; the foldable ones
+        // (upper, strip, ...) produce a constant and never raise at all.
         const string src =
             "def main():\n" +
-            "    n: uint8 = len(\"abc\".upper())\n";
-        PointsAt(src, "\"abc\".upper()", "upper");
+            "    n: uint8 = len(\"abc\".capitalize())\n";
+        PointsAt(src, "\"abc\".capitalize()", "capitalize");
     }
 
     [Fact]
