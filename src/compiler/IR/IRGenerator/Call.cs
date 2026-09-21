@@ -1572,6 +1572,14 @@ public partial class IRGenerator
         var newDepth = inlineDepth + 1;
         var newPrefix = $"inline{newDepth}.{func?.Name}.";
 
+        // The prefix repeats for every expansion at this depth, and the callee's
+        // own locals file under it (`inline2._parse_color.r`): a previous
+        // expansion's constant/str/alias bindings would leak into this one and
+        // fold a rebind like `b = 0` to the stale value -- `pixels[i] =
+        // wheel(...)` reached _parse_color carrying fill()'s constants. Clean
+        // before the parameters bind.
+        CleanCtState(newPrefix[..^1]);
+
         Temporary? result = null;
         var tupleResultNames = new List<string>();
         // `return struct.unpack_from(fmt, buf, off)`: the element count lives in the format

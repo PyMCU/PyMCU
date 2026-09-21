@@ -279,4 +279,48 @@ public class ZcaInlineRegressionTests
     {
         Assert.NotNull(Gen(DuplicateInline));
     }
+
+    // ── A repeated expansion does not inherit the previous one's locals ──────
+    // The expansion prefix repeats at each depth (`inline1.f.r` for every call to f
+    // from the same frame), and a callee local's constant was filed under it: a
+    // second call's `r = v` rebind folded to the FIRST call's constant -- in
+    // adafruit_pixelbuf's `_parse_color`, the wheel-driven call returned fill()'s
+    // constants. The entry-side CleanCtState wipes the prefix before the parameters
+    // bind.
+
+    private const string SeqUnpackLocals =
+        "from pymcu.types import uint8, inline, ptr\n" +
+        "G: ptr[uint8] = ptr(0x3E)\n" +
+        "def parse(v):\n" +
+        "    r = 0\n" +
+        "    g = 0\n" +
+        "    b = 0\n" +
+        "    r, g, b = v\n" +
+        "    return (r, g, b)\n";
+
+    [Fact]
+    public void ASecondExpansionDoesNotFoldALocalToTheFirstCallsConstant()
+    {
+        // _parse_color's shape: the locals init to constants, then a sequence unpack
+        // rebinds them. The first call leaves `constantVariables[inline1.parse.r] =
+        // 255`; without the entry clean, the second call's `r = 0` lowers as
+        // `copy const0 -> const255` -- a write aimed AT a constant, which is no write
+        // at all.
+        var ir = Gen(SeqUnpackLocals +
+            "def main():\n" +
+            "    x0, y0, z0 = parse([255, 0, 0])\n" +
+            "    x1, y1, z1 = parse([G.value, 1, 2])\n");
+
+        // A Copy's destination is always a place; a Constant dst means the name folded
+        // to a stale value from a previous expansion.
+        Assert.DoesNotContain(
+            ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
+            c => c.Dst is Constant);
+
+        // And the run-time element still arrives: x1 is the register read, not a fold.
+        var writes = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable { Name: var n } && n.EndsWith("x1")).ToList();
+        Assert.Contains(writes, c => c.Src is Variable or Temporary);
+        Assert.DoesNotContain(writes, c => c.Src is Constant);
+    }
 }
