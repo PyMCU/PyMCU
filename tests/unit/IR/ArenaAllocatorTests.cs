@@ -110,7 +110,7 @@ public class ArenaAllocatorTests
         // mechanism -- see the RFC, "Model").
         Assert.DoesNotContain(main.Body, i => i is GcAlloc);
         Assert.DoesNotContain(main.Body,
-            i => i is ArrayStore st && st.ArrayName.EndsWith(".buf", StringComparison.Ordinal));
+            i => i is ArrayStore st && st.ArrayName == "buf");
         // The MemoryError guard (arena.alloc's own bounds check) is present, proving the
         // call was actually inlined rather than silently dropped.
         Assert.Contains(main.Body, i => i is SignalError);
@@ -141,7 +141,7 @@ public class ArenaAllocatorTests
         var program = Generate("buf: bytearray = bytearray(8)\n" + "buf[0] = 1\n");
         var main = Assert.Single(program.Functions, f => f.Name == "main");
         Assert.Contains(main.Body,
-            i => i is ArrayStore st && st.ArrayName.EndsWith(".buf", StringComparison.Ordinal)
+            i => i is ArrayStore st && st.ArrayName == "buf"
                                      && st.Count == 8);
     }
 
@@ -376,5 +376,34 @@ public class ArenaAllocatorTests
         var main = Assert.Single(program.Functions, f => f.Name == "main");
         Assert.Contains(main.Body, i => i is ArrayStore st && st.ArrayName == "_arena");
         Assert.Contains(main.Body, i => i is ArrayLoad ld && ld.ArrayName == "_arena");
+    }
+
+    [Fact]
+    public void ClassDictIndexingCoexistsWithArenaBuffers()
+    {
+        // `cls.string[k]` is a compile-time class-dict access, not an instance field --
+        // and `cls` is a pseudo-receiver that resolves to no variable. Before
+        // TryResolveArenaBufferField skipped class receivers, probing it evaluated the
+        // name and raised "name 'cls' is not defined" whenever ANY arena buffer was
+        // registered in the program (with none, the probe never ran). This is
+        // ClassMethodCvTests' scenario with an arena buffer present.
+        var program = Generate(
+            "class CV:\n" +
+            "    @classmethod\n" +
+            "    def add_values(cls, value_tuples):\n" +
+            "        cls.string = {}\n" +
+            "        for value_tuple in value_tuples:\n" +
+            "            name, value, string = value_tuple\n" +
+            "            setattr(cls, name, value)\n" +
+            "            cls.string[value] = string\n\n" +
+            "class Mode(CV):\n" +
+            "    pass\n\n" +
+            "Mode.add_values(((\"LOW\", 0xE0, \"lo\"),))\n" +
+            "n: uint16 = uint16(GPIOR0.value) + 3\n" +
+            "buf: bytearray = bytearray(n)\n" +
+            "buf[0] = Mode.LOW\n");
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is ArrayStore st && st.ArrayName == "_arena");
     }
 }

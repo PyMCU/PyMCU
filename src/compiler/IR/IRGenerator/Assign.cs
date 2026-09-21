@@ -5732,7 +5732,13 @@ public partial class IRGenerator
     private bool TryResolveArenaBufferField(Expression target, string member, out string flattened)
     {
         flattened = "";
+        if (arenaBufferNames.Count == 0) return false;
         if (target is not (VariableExpr or MemberAccessExpr)) return false;
+        // A class receiver -- `cls` inside a @classmethod, or a class name itself --
+        // holds class attributes, never an instance's arena field. Skipping it matters:
+        // `cls` is not a resolvable name, so VisitExpression would throw before the
+        // class-dict path in EmitIndexAssign/VisitIndex gets to handle it.
+        if (ClassNameOf(target) != null) return false;
         Val objVal = VisitExpression(target);
         string baseName = objVal is Variable v ? v.Name : objVal is Temporary t ? t.Name : "";
         while (!string.IsNullOrEmpty(baseName) && variableAliases.TryGetValue(baseName, out var alias))
