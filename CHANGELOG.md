@@ -380,6 +380,24 @@ purpose, as opposed to bugs like these three that were silent until found.
   `print()` is four lines longer in `dist/_generated`, so the quoted line pointed past the
   end of the source: measured at "at line 11" for an eight-line program (#303).
 
+### Native modules
+- `pymcu natmod` builds a CircuitPython/MicroPython native module (.mpy) for the RP2040
+  and RP2350: a file of annotated top-level functions becomes a relocatable object the
+  interpreter imports at runtime. The C adapter between the interpreter and the kernels is
+  generated from the signatures, not written by hand, because py/dynruntime.h is the only
+  statement of the runtime fun-table's layout and that layout is version-specific -- going
+  through the header turns a layout change into a compile error. Integers are unboxed with
+  a range check that raises ValueError naming the function and the parameter, buffers are
+  taken by pointer through the buffer protocol, and a module that keeps state of its own
+  is refused before any tool runs.
+- The compiler's `--library` mode is what a file of bare functions compiles under: every
+  top-level function is a root under its source name, and a bytearray/bytes parameter
+  carries its own length as a hidden trailing argument that `len()` reads -- the count can
+  no longer disagree with the buffer it came from.
+- An export that can raise is refused, and in library mode the refusal says "an export of
+  this library" instead of telling the reader to remove a decorator they never wrote; the
+  remedies it names (a constant divisor, a shift, `%`) are the ones that compile.
+
 ### Full commit log
 
 <details>
@@ -540,6 +558,11 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **ir**: refuse a Union argument matching none of the members, naming them
 - **frontend**: treat typing as a builtin module, resolved by no file
 - **test**: let an oracle probe restrict itself to one front end
+- **compiler**: --library roots every top-level function of the entry file
+- **driver**: `pymcu natmod` builds a CircuitPython native module
+- **driver**: natmod says which exports narrow an int to 16 bits
+- **driver**: the generated adapter checks what the interpreter hands the kernel
+- **compiler**: a buffer parameter carries its own length in library mode
 
 ### Fixed
 
@@ -904,6 +927,10 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **ir**: a promoted single-field slot is a live slot too
 - **oracle**: measure with this checkout's own venv, and track the isinstance probe to #386
 - **ir**: a property returning a zca instance keeps it dispatchable
+- **diagnostics**: a library export is not told to remove a decorator it never had
+- **driver**: follow the backend's widened native-module arch tuple
+- **driver**: natmod says so when the ARM backend has no native-module mode
+- **driver**: the pyelftools probe does not import from the project directory
 
 ### Performance
 
@@ -1000,6 +1027,8 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **language**: document field layout from setters/helpers and the read-order divergence ([#441](https://github.com/PyMCU/PyMCU/issues/441))
 - mark Union[A, B] on an @inline/constructor parameter as implemented
 - **oracle**: document the language-surface sweep (probes 121-178, new bugs, frontend-scoped headers)
+- **driver**: the dropped-export refusal cites the defect it most often means
+- document `pymcu natmod` in the driver CLI reference
 
 ### Tests
 
@@ -1137,6 +1166,9 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **oracle**: untrack the nested inline closure probe, fixed per #427
 - **ir**: super() plus a value-named subclass field, constant args ([#430](https://github.com/PyMCU/PyMCU/issues/430))
 - **oracle**: untrack the super()-plus-field-constant-args probe, fixed per #430
+- **ir**: pin --library rooting and the hidden buffer length
+- **ir**: pin the library-export boundary sentence, both spellings
+- **driver**: the natmod signature conversion and generated adapter
 
 ### CI
 

@@ -253,6 +253,58 @@ See {doc}`../library/authoring` for the full authoring guide.
 
 ---
 
+## `pymcu natmod`
+
+Compiles the project into a CircuitPython/MicroPython **native module** (`.mpy`) that the
+interpreter imports at runtime — for the RP2040 and RP2350, through the ARM backend.
+
+```bash
+pymcu natmod --circuitpython ../circuitpython
+pymcu natmod -m plasma -o dist/ -v
+```
+
+It is a command of its own rather than a flag on `build` because it produces a different
+artifact for a different consumer: `build` makes the image that IS the firmware, `natmod`
+makes a relocatable object that another runtime loads beside its own code. There is no
+entry point and nothing to flash — the module's entry point is the loader's `mpy_init`.
+
+**What is exported:** every top-level function of the entry file (the compiler's
+`--library` mode roots them; `@inline` functions and interrupt handlers are skipped).
+Each function needs a full signature — annotated parameters and an annotated return.
+The boundary carries integers (`int`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
+`uint32`, `bool`) and buffers (`bytearray` read-write, `bytes` read-only). Everything
+else is refused at the `def` that declares it: `float`, `str`, `tuple`/`list`/`dict`/
+`set`, class instances, an unannotated parameter, a missing return annotation, returning
+a buffer, `*args`/defaults, and `async def`.
+
+**What the adapter guarantees:** the C adapter between the interpreter and the kernels is
+generated from the annotations, never written by hand. It unboxes each argument by its
+declared type — an integer outside its width raises `ValueError` naming the function and
+the parameter — calls the PyMCU symbol, and boxes the result. A buffer argument is passed
+with its own length, which `len()` returns inside the kernel; indexing past that length is
+not checked, so every count derived from `len()` is the kernel author's contract, as with
+viper's pointer types. A module that keeps state of its own (a rebound `global`, a write
+through a module-level table's subscript) is refused before any tool runs.
+
+:::{note}
+A bare `int` is 16 bits in PyMCU and unbounded in the interpreter calling in. The build
+prints which exports that applies to; annotate `int32` for a wider one.
+:::
+
+**Requirements:**
+
+| Requirement | Why |
+|---|---|
+| CircuitPython source tree | supplies `tools/mpy_ld.py` and `py/dynruntime.h`; must be the tag the board runs. Pass `--circuitpython`, set `PYMCU_CIRCUITPYTHON`, or add `[tool.pymcu.natmod] circuitpython = "..."` |
+| `pymcu-arm` with native-module mode | emits the relocatable kernel object (`-relocation-model=pic`, `.text`/`.rodata` only) |
+| `arm-none-eabi-gcc` | compiles the generated adapter against `py/dynruntime.h` (or set `PYMCU_NATMOD_CC`) |
+| `pyelftools` | needed by `mpy_ld.py`, on whichever interpreter has it |
+
+**Output:** `dist/<module>.mpy` (the module name defaults to the project name). Copy it
+to the board's `CIRCUITPY` drive and `import <module>`.
+
+---
+
 ## `pymcu index` (index maintainers)
 
 Builds the curated index by **compiling**, not by reading declarations. Run by the CI of
