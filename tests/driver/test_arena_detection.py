@@ -113,6 +113,64 @@ class TestDetectAndSizeArenaUsage:
 
 
 # ---------------------------------------------------------------------------
+# Literal buffer forms: bytearray([...]), bytearray((...)), bytearray(b"..."),
+# bytearray("...") are laid out statically by the compiler and never allocate
+# from the arena, so they must not mark the program an arena user.
+# ---------------------------------------------------------------------------
+
+class TestLiteralBufferArgumentsAreNotArenaUsage:
+    def test_a_list_literal_is_a_compile_time_buffer(self, tmp_path: Path):
+        (tmp_path / "main.py").write_text("buf: bytearray = bytearray([0x15, 0x2A])\n")
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (False, 0, True)
+
+    def test_a_bytes_literal_is_a_compile_time_buffer(self, tmp_path: Path):
+        (tmp_path / "main.py").write_text('buf: bytearray = bytearray(b"\\x15\\x2a")\n')
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (False, 0, True)
+
+    def test_a_str_literal_is_a_compile_time_buffer(self, tmp_path: Path):
+        (tmp_path / "main.py").write_text('buf: bytearray = bytearray("abc")\n')
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (False, 0, True)
+
+    def test_a_tuple_literal_is_a_compile_time_buffer(self, tmp_path: Path):
+        (tmp_path / "main.py").write_text("buf: bytearray = bytearray((1, 2))\n")
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (False, 0, True)
+
+    def test_an_int_size_still_counts_exactly(self, tmp_path: Path):
+        (tmp_path / "main.py").write_text("buf: bytearray = bytearray(16)\n")
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (True, 16, True)
+
+    def test_a_name_still_falls_back_to_the_board_default(self, tmp_path: Path):
+        (tmp_path / "main.py").write_text(
+            "n: int = 5\nbuf: bytearray = bytearray(n)\n")
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (True, 256, False)
+
+    def test_a_literal_and_a_sized_call_in_one_file(self, tmp_path: Path):
+        # The literal contributes nothing; the sized call folds exactly, so the
+        # reservation is its size alone.
+        (tmp_path / "main.py").write_text(
+            "a: bytearray = bytearray([1, 2])\nb: bytearray = bytearray(16)\n")
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (True, 16, True)
+
+    def test_an_argument_truncated_at_an_inner_paren_lands_safe(self, tmp_path: Path):
+        # The capture regex stops at the first ')' unless the argument starts
+        # with a balanced group, so bytearray([f(1), 2]) arrives as '[f(1' and
+        # fails ast.parse. A list with a call inside is not a compile-time
+        # buffer, and an unparseable argument stays unknown: used, not exact,
+        # board default -- the safe side.
+        (tmp_path / "main.py").write_text(
+            "buf: bytearray = bytearray([f(1), 2])\n")
+        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
+        assert (used, reserved, exact) == (True, 256, False)
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: `pymcu build` injects the import, generates the shim and prints the line.
 # ---------------------------------------------------------------------------
 
