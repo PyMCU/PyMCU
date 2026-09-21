@@ -1090,8 +1090,61 @@ public partial class IRGenerator
         return us > 0 && us + 1 < key.Length ? key[(us + 1)..] : key;
     }
 
+    /// <summary>
+    /// The return type <paramref name="functionKey"/> was written with, when it declares a
+    /// result with a width -- <see cref="DeclaresARealResult"/> with the text attached, so
+    /// the diagnostic can quote the annotation. The real-subroutine owner is looked up in
+    /// functionReturnTypes; an @inline callee falls through to the same table the result
+    /// slot was allocated from, because overload keys live only there. Empty, "void" and
+    /// "None" declare nothing, and a class or tuple name has no width StringToDataType can
+    /// size (an instance travels out of band), which is the same exclusion the inline
+    /// check makes.
+    /// </summary>
+    private string? DeclaredResultType(string functionKey)
+    {
+        if (string.IsNullOrEmpty(functionKey)) return null;
+        if (!functionReturnTypes.TryGetValue(functionKey, out var rt) || rt == null)
+            rt = inlineFunctions.TryGetValue(functionKey, out var fn) ? fn?.ReturnType : null;
+        if (string.IsNullOrEmpty(rt) || rt == "void" || rt == "None") return null;
+        return DataTypeExtensions.StringToDataType(rt) != DataType.UNKNOWN ? rt : null;
+    }
+
+    /// The sentence both return paths use for `return None` on a reached path of a function
+    /// whose declared result has a width, so a real subroutine and an @inline expansion
+    /// refuse the same shape in the same words.
+    private static string ReturnNoneOnReachedPathText(string name, string declaredRt) =>
+        "PyMCU reads Optional[X] as X, and this return gives None at run time on a reached "
+        + $"path of '{name}', which is declared to return {declaredRt} and has no width for "
+        + $"it. `-> Optional[{declaredRt}]` is the spelling PyMCU will accept once RFC 0009 "
+        + "lands; until then, return a value on this path, or keep it from being reached -- "
+        + "a guard the compiler can fold removes the arm, and for an @inline callee the "
+        + "caller can decide before calling (the compiler folds `is None` on an argument it "
+        + "can see).";
+
     private void VisitReturn(ReturnStmt stmt)
     {
+        // `return None` -- and the bare `return`, which is the same statement to Python --
+        // on a path the program can REACH, from a function whose declared result has a
+        // width. None is a compile-time property here, not a value: nothing exists to put
+        // in the return register or the inline result slot, so until this check the caller
+        // read whatever the register or slot happened to hold (RFC 0009 decision 5). It
+        // runs ahead of every lowering below because a `return` inside a `try`/`finally`
+        // takes the early path and would escape it.
+        //
+        // Only a reached return arrives here: an arm behind a guard the compiler can fold
+        // is pruned before it is visited, which is the whole point of folding the guard,
+        // and is why the sentence names the return rather than the annotation. And only
+        // the WRITTEN spelling is judged -- a constructor call yields a NoneVal whose
+        // instance travels out of band, so testing the Val refused `return ADC(Pin(ch))`.
+        if (stmt.Value == null || stmt.Value is NoneLiteral)
+        {
+            string noneOwner = inlineStack.Count > 0 ? inlineStack[^1].CalleeName : currentFunction;
+            if (DeclaredResultType(noneOwner) is { } noneRt)
+                throw UserError(
+                    ReturnNoneOnReachedPathText(CalleeShortName(noneOwner), noneRt),
+                    (ASTNode?)stmt.Value ?? stmt);
+        }
+
         // Returning a (multi-char) string from a function declared to return an integer is
         // a type confusion — the string folds to its flash id and would be returned as that
         // numeric id. (A single-char string is its code point, which is a valid integer.)
@@ -1435,36 +1488,6 @@ public partial class IRGenerator
                 // constants). Variable/Temporary returns always update regardless of order —
                 // this preserves the `return -1; ... return result` pattern where a runtime
                 // return must clear a stale constant set by an earlier const return.
-                // `return None` on a path the caller REACHES, from a function whose result has
-                // a width.
-                //
-                // `Optional[X]` is read as X, because None-ness is a compile-time property and
-                // the compiler knows which call sites passed a value. A return is the one
-                // position where that knowledge runs out: the caller asked for a number, this
-                // path answers None, and None has no width. It used to be copied into the
-                // result slot anyway, so the caller read whatever that slot held.
-                //
-                // Only a REACHED path. `if a == 0: return None` under a call with a != 0 is
-                // pruned before it gets here, which is the whole point of folding the guard,
-                // and is why the sentence names the return rather than the annotation.
-                // Only when the callee DECLARED a result. An unannotated `def` gets a result
-                // slot allocated speculatively -- an empty return type is neither "void" nor
-                // "None" at the site that allocates it -- and its implicit `return` is the
-                // ordinary "this returns nothing", which is not what this sentence is about.
-                // A `__init__` delegating to its base is that shape, and refusing it would
-                // refuse every class with a base.
-                // The RETURN HAS TO BE WRITTEN `return None`. A NoneVal is also what a
-                // constructor call hands back -- the instance travels out of band through
-                // instanceClasses -- so testing the Val refused `return Vec(...)` and
-                // `return ADC(Pin(ch))`, which are three fixtures and not a mistake. Only the
-                // literal says what this sentence claims it says.
-                if (stmt.Value is NoneLiteral && DeclaresARealResult(ctx.CalleeName))
-                    throw UserError(
-                        "PyMCU reads Optional[X] as X, and this return gives None at run time, "
-                        + $"which has no width to put in the result of '{CalleeShortName(ctx.CalleeName)}'. "
-                        + "Return a value on this path, or let the caller decide before calling "
-                        + "(the compiler folds `is None` on an argument it can see).", stmt);
-
                 bool wasAlreadyAssigned = ctx.ResultAssigned;
                 Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;
