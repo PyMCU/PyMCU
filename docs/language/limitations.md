@@ -237,6 +237,7 @@ finally:
 | AVR + ARM (RP2040/RP2350) | PIC and other backends: use return codes or sentinel values instead |
 | Exception types are integer codes | Builtins (`ValueError` etc.); handlers match by integer code. A string-literal message is one flash word (#369). A non-literal message (f-string, concatenation, call) is a deferred print: runtime pieces are stored at the raise and `print(e)` / `str(e)` / `e.args[0]` replay them (#435) |
 | `raise X(...) from Y` | Accepted; compiled as `raise X(...)`. There is no traceback. `e.__cause__` / `e.__context__` are refused (#434) |
+| `except mod.Exc:` / `except (A, B):` | A handler names the type the way the library spells it: a module-qualified `module.Class` (alias included) or a tuple of alternatives sharing one body — compile-time name resolution onto the class's code, no tuple allocated |
 | Unmatched at top level | An exception with no handler hits `__pymcu_unhandled_exn` — `E:<TypeName>` to UART0 then a halt, never a silent continue. Whether it reached `main` from a callee or was raised in `main`'s own body (or in an `@inline` expansion there) makes no difference |
 
 :::{admonition} Return codes are still often clearer for firmware
