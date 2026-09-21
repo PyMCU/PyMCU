@@ -38,6 +38,17 @@ public class DeviceConfig
     public string Arch { get; set; } = "";
     public ulong Frequency { get; set; }
 
+    /// The CircuitPython/MicroPython compat layer the project builds against:
+    /// "circuitpython", "micropython", or "" for neither. A single build-wide fact, exactly
+    /// like Board or Chip -- the driver already refuses a project naming two layers at once.
+    ///
+    /// Backs the compile-time folding of `sys.implementation.name`,
+    /// `sys.implementation.version`, `sys.platform` and `os.uname()` (docs/rfcs/0007), the
+    /// same way Chip/Arch/Board back the folding of `__CHIP__.arch`: the compiler substitutes
+    /// the real per-board value directly at the point one of those is read, and never parses
+    /// the compat layer's own sys.py/os.py to derive one.
+    public string Stdlib { get; set; } = "";
+
     /// True when the program runs the millisecond time base (millis_init(): the driver
     /// injects it for ticks_ms()/monotonic()/asyncio, or the sources call it). On the
     /// ATmega that is Timer0's overflow at prescaler 64, and the PWM HAL reads it as

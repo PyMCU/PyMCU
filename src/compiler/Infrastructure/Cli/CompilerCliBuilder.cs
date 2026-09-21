@@ -132,6 +132,14 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => null
         };
 
+        Option<string> stdlibOption = new("--stdlib")
+        {
+            Description = "CircuitPython/MicroPython compat layer the project builds against "
+                        + "(circuitpython, micropython), or empty for neither. Folds "
+                        + "sys.implementation.name/.version, sys.platform and os.uname()",
+            DefaultValueFactory = parseResult => string.Empty
+        };
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -149,6 +157,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(emitIrOption);
         rootCommand.Options.Add(libraryOption);
         rootCommand.Options.Add(projectRootOption);
+        rootCommand.Options.Add(stdlibOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -175,7 +184,8 @@ public static class CompilerCliBuilder
                 EmitIrPath: parseResult.GetValue(emitIrOption),
                 ProjectRoot: parseResult.GetValue(projectRootOption),
                 Timebase: parseResult.GetValue(timebaseOption),
-                Library: parseResult.GetValue(libraryOption)
+                Library: parseResult.GetValue(libraryOption),
+                Stdlib: parseResult.GetValue(stdlibOption) ?? string.Empty
             );
 
             // Return the exit code so Invoke() (and thus the process) actually fails

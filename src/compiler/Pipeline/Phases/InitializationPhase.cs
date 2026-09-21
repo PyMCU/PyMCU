@@ -33,6 +33,7 @@ public class InitializationPhase : CompilerPhaseBase
         context.DeviceConfig.Timebase = options.Timebase;
         context.DeviceConfig.ResetVector = options.ResetVector;
         context.DeviceConfig.InterruptVector = options.InterruptVector;
+        context.DeviceConfig.Stdlib = options.Stdlib;
 
         if (!string.IsNullOrEmpty(options.Arch))
         {

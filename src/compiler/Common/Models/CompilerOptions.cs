@@ -53,5 +53,15 @@ public sealed record CompilerOptions(
     // main, no HAL init. Without it a file that only defines functions compiles to nothing,
     // because dead-code elimination roots `main` and the functions marked @used, and a library
     // has neither. Used by the natmod emitter, whose entry point is the loader's `mpy_init`.
-    bool Library = false
+    bool Library = false,
+    // Which CircuitPython/MicroPython compat layer, if any, the project builds against:
+    // "circuitpython", "micropython", or "" for neither. The driver already resolves this
+    // (`stdlib_flavors` in build.py) and already refuses a project that names two at once,
+    // so it is a single build-wide fact, exactly like Board or Arch.
+    //
+    // Used by CompileTimeEvaluator to fold `sys.implementation.name`,
+    // `sys.implementation.version`, `sys.platform` and `os.uname()` the same way __CHIP__ is
+    // folded (docs/rfcs/0007): the compiler substitutes the real per-board value directly,
+    // it never parses the compat layer's own sys.py/os.py to derive one. Optional, like Board.
+    string Stdlib = ""
 );
