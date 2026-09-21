@@ -280,7 +280,13 @@ public partial class IRGenerator
         void RemoveDescendants<T>(Dictionary<string, T> map, string sep)
         {
             string dp = dst + sep;
-            foreach (var k in map.Keys.Where(k => k.StartsWith(dp, StringComparison.Ordinal)).ToList())
+            foreach (var k in map.Keys.Where(k => k.StartsWith(dp, StringComparison.Ordinal)
+                         // `__ctseqN` is minted from a counter no later expansion
+                         // re-uses, so its elements can never be stale state: they
+                         // are either escaped storage (a field aliases them) or
+                         // unreferenced. Removing them broke `self.segments = [Pin..
+                         // for ..]` the moment a second __init__ shared the prefix.
+                         && !k.AsSpan(dp.Length).StartsWith("__ctseq", StringComparison.Ordinal)).ToList())
                 map.Remove(k);
         }
 

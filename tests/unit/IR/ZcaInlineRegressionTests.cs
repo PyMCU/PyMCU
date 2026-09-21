@@ -323,4 +323,34 @@ public class ZcaInlineRegressionTests
         Assert.Contains(writes, c => c.Src is Variable or Temporary);
         Assert.DoesNotContain(writes, c => c.Src is Constant);
     }
+
+    // ── The entry clean must keep minted __ctseq backing ─────────────────────
+    // `self.segs = [P(p) for p in pins]` hoists the comprehension elements under
+    // the __init__ expansion's own prefix (`inline1.__init__.__ctseq1`) and
+    // aliases the field to them. A second class's __init__ expands at the same
+    // prefix, so the entry clean must not remove __ctseq entries: they are minted
+    // from a global counter, never re-bound by a later expansion, and are the
+    // escaped storage the field points at (list-param-dict-char-keys, PyMCU#338).
+
+    [Fact]
+    public void SecondInitAtSamePrefix_KeepsFirstInstancesSeqElements()
+    {
+        // zip() probes instanceClasses[base__0] -- the key the second __init__'s
+        // entry clean removes without the exemption, so the build refuses.
+        var body = MainBody(Gen(PinClass +
+            "ONS = [1, 0, 1]\n" +
+            "class Seg:\n" +
+            "    @inline\n    def __init__(self, pins):\n        self.segs = [P(p) for p in pins]\n" +
+            "    @inline\n    def walk(self):\n        t: uint8 = 0\n        for pin, on in zip(self.segs, ONS):\n            t = pin.show()\n" +
+            "class Other:\n" +
+            "    @inline\n    def __init__(self):\n        self.x = 0\n" +
+            "def main():\n" +
+            "    a = Seg([2, 3, 4])\n" +
+            "    b = Other()\n" +
+            "    a.walk()\n"));
+
+        // Three unrolled iterations, each folding pin.show() to its element's _n.
+        foreach (var n in new[] { 2, 3, 4 })
+            Assert.Contains(body, i => i is Copy { Src: Constant { Value: var v } } && v == n);
+    }
 }
