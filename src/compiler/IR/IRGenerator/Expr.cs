@@ -3180,6 +3180,17 @@ public partial class IRGenerator
     {
         if (!TryFindClassAttribute(baseName, member, out _, out var fullName)) return null;
 
+        // A class-level ARRAY attribute (`_BUFFER = bytearray(8)` in the class body,
+        // CircuitPython's shared scratch-buffer idiom, PyMCU#442) also registers a scalar
+        // placeholder under `fullName` -- its bytearray initializer does not fold to a
+        // constant. The real storage lives under the module-init-qualified spelling that
+        // TryResolveArrayStorageKey normalizes to, and that is the name a whole-attribute
+        // read must answer with: `f(self._BUFFER)` hands the callee an alias to the array,
+        // not a copy of the placeholder.
+        if (TryResolveArrayStorageKey(fullName, out var arrStorage))
+            return new Variable(arrStorage,
+                arrayElemTypes.TryGetValue(arrStorage, out var arrElem) ? arrElem : DataType.UINT8);
+
         if (globals.TryGetValue(fullName, out var sym))
             return sym.IsMemoryAddress
                 ? new MemoryAddress(sym.Value, sym.Type)

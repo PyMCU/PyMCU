@@ -1403,40 +1403,52 @@ public partial class IRGenerator
                         return;
                     }
 
-                    if (inner is VariableExpr vE)
+                    if (inner is VariableExpr or MemberAccessExpr)
                     {
                         string @base = "";
                         int arrSize = -1;
-                        if (!string.IsNullOrEmpty(currentInlinePrefix))
+                        // A class-level fixed array reached through the receiver --
+                        // `for i, b in enumerate(self._BUFFER):` (PyMCU#442).
+                        if (inner is MemberAccessExpr enMem
+                            && ResolveMemberArrayName(enMem) is { } enArr
+                            && arraySizes.TryGetValue(enArr, out int enArrSz))
                         {
-                            string k = currentInlinePrefix + vE.Name;
-                            if (arraySizes.TryGetValue(k, out int s))
+                            arrSize = enArrSz;
+                            @base = enArr;
+                        }
+                        else if (inner is VariableExpr vE)
+                        {
+                            if (!string.IsNullOrEmpty(currentInlinePrefix))
                             {
-                                arrSize = s;
-                                @base = k;
+                                string k = currentInlinePrefix + vE.Name;
+                                if (arraySizes.TryGetValue(k, out int s))
+                                {
+                                    arrSize = s;
+                                    @base = k;
+                                }
                             }
-                        }
 
-                        if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                        {
-                            string k = currentFunction + "." + vE.Name;
-                            if (arraySizes.TryGetValue(k, out int s))
+                            if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
                             {
-                                arrSize = s;
-                                @base = k;
+                                string k = currentFunction + "." + vE.Name;
+                                if (arraySizes.TryGetValue(k, out int s))
+                                {
+                                    arrSize = s;
+                                    @base = k;
+                                }
                             }
-                        }
 
-                        if (arrSize < 0 && arraySizes.TryGetValue(vE.Name, out int s2))
-                        {
-                            arrSize = s2;
-                            @base = vE.Name;
-                        }
+                            if (arrSize < 0 && arraySizes.TryGetValue(vE.Name, out int s2))
+                            {
+                                arrSize = s2;
+                                @base = vE.Name;
+                            }
 
-                        if (arrSize < 0)
-                        {
-                            int s3a = ResolveAliasedArraySize(vE.Name, out var b3a);
-                            if (s3a > 0) { arrSize = s3a; @base = b3a; }
+                            if (arrSize < 0)
+                            {
+                                int s3a = ResolveAliasedArraySize(vE.Name, out var b3a);
+                                if (s3a > 0) { arrSize = s3a; @base = b3a; }
+                            }
                         }
 
                         if (arrSize > 0)
@@ -1457,7 +1469,7 @@ public partial class IRGenerator
                                 var rtBody = new Block();
                                 rtBody.Statements.Add(new AssignStmt(
                                     new VariableExpr(stmt.Var2Name),
-                                    new IndexExpr(new VariableExpr(vE.Name), new VariableExpr(stmt.VarName))));
+                                    new IndexExpr(inner, new VariableExpr(stmt.VarName))));
                                 if (stmt.Body is Block enOb) rtBody.Statements.AddRange(enOb.Statements);
                                 else rtBody.Statements.Add(stmt.Body);
                                 VisitStatement(new ForStmt(stmt.VarName,
@@ -1483,9 +1495,8 @@ public partial class IRGenerator
                                 constantVariables[idxKey] = k;
                                 if (useSram)
                                 {
-                                    var synTarget = new VariableExpr(vE.Name);
                                     var synIndex = new IntegerLiteral(k);
-                                    var synIdxExpr = new IndexExpr(synTarget, synIndex);
+                                    var synIdxExpr = new IndexExpr(inner, synIndex);
                                     Val elemVal = VisitIndex(synIdxExpr);
                                     var valVar = new Variable(qualifiedVal, elemDt);
                                     Emit(new Copy(elemVal, valVar));
@@ -1986,9 +1997,17 @@ public partial class IRGenerator
             {
                 string forBase = "";
                 int forSize = -1;
-                if (iter is MemberAccessExpr
-                    && TryResolveInstanceSequence(iter, out var memSeqBase, out int memSeqCount))
-                { forSize = memSeqCount; forBase = memSeqBase; }
+                if (iter is MemberAccessExpr)
+                {
+                    if (TryResolveInstanceSequence(iter, out var memSeqBase, out int memSeqCount))
+                    { forSize = memSeqCount; forBase = memSeqBase; }
+                    // A class-level fixed array reached through the receiver --
+                    // `for b in self._BUFFER:` (PyMCU#442). Indexed access already resolves
+                    // it through the same helper; the iterable only had to ask.
+                    else if (ResolveMemberArrayName((MemberAccessExpr)iter) is { } forMemArr
+                             && arraySizes.TryGetValue(forMemArr, out int forMemArrSize))
+                    { forSize = forMemArrSize; forBase = forMemArr; }
+                }
                 if (forSize < 0 && iter is VariableExpr forVarExpr2)
                     ResolveForBase(forVarExpr2.Name, out forBase, out forSize);
 
