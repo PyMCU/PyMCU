@@ -370,7 +370,7 @@ branch is refused, naming the branch.
 |---|---|---|
 | Multiple inheritance / MRO | C3 linearization is a runtime concept | Single-level inheritance only |
 | Runtime polymorphism (vtable dispatch) | Requires vtable + heap class objects | Compile-time `match / case` dispatch |
-| `isinstance()` / `type()` | No type tags at runtime | `isinstance(x, T)` on a ZCA instance folds (#424); `isinstance(x, (tuple, list))` folds from the receiver's known shape (#423); `isinstance(x, slice)` folds too -- nothing here is a runtime slice, so it is always False (adafruit_pixelbuf `__setitem__`). `type()` is still refused |
+| `isinstance()` / `type()` | No type tags at runtime | `isinstance(x, T)` on a ZCA instance folds (#424); `isinstance(x, (tuple, list))` folds from the receiver's known shape (#423) -- through an inline-parameter alias, a keyword argument, or a module-level string's own text (adafruit_neopixel `pixel_order`); `isinstance(x, slice)` folds too -- nothing here is a runtime slice, so it is always False (adafruit_pixelbuf `__setitem__`); a `None`-bound name answers False to every builtin. `type()` is still refused |
 | `__repr__`, `__str__` | No runtime string formatting | `uart.println()` with explicit fields |
 | `dataclass` | Metaclass + runtime heap | Manual `@inline` class |
 | `namedtuple` **defaults / rename / module** | Extra factory kwargs | `Name = namedtuple("Name", ("a", "b"))` -- two positional arguments. The assignment is a ZCA class |
