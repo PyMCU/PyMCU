@@ -1208,7 +1208,28 @@ public partial class IRGenerator
             return;
         }
 
-        if (stmt.Value != null && inlineStack.Count > 0 && inlineStack.Last().ResultVars.Count > 0)
+        // `return (r, g, b) if cond else (r, g, b, 0)` -- neopixel's wheel(): a
+        // tuple return whose arity the condition picks. The condition must decide
+        // at compile time -- the caller's result slots are allocated before the
+        // body runs, so a run-time choice could not be delivered -- and the taken
+        // arm is then an ordinary return of whatever shape it has.
+        if (stmt.Value is TernaryExpr retTern && inlineStack.Count > 0
+            && (retTern.TrueVal is TupleExpr || retTern.FalseVal is TupleExpr))
+        {
+            Val ternCond = VisitExpression(LowerInstanceTruthiness(retTern.Condition));
+            if (ternCond is not Constant ternC)
+                throw UserError(
+                    "a conditional expression returning a tuple must decide at " +
+                    "compile time -- each arm can deliver a different number of " +
+                    "values, and the caller's result slots are fixed before the " +
+                    "function runs", retTern.Condition);
+            VisitReturn(new ReturnStmt(ternC.Value != 0 ? retTern.TrueVal : retTern.FalseVal)
+                { Line = stmt.Line, Column = stmt.Column });
+            return;
+        }
+
+        if (stmt.Value != null && inlineStack.Count > 0
+            && (inlineStack.Last().ResultVars.Count > 0 || stmt.Value is TupleExpr))
         {
             if (stmt.Value is TupleExpr tup)
             {
@@ -1221,7 +1242,16 @@ public partial class IRGenerator
                         $"'{ctx.CalleeName}' is declared to return {declared.Count} values " +
                         $"{TupleType.Describe(ctxRt!)}, but this return has {tup.Elements.Count}", stmt.Value);
 
-                if (tup.Elements.Count != ctx.ResultVars.Count)
+                if (ctx.ResultVars.Count == 0)
+                {
+                    // The caller asked for the tuple by sentinel (`t = f()`,
+                    // `pixels[i] = wheel(...)`) but the arity lived inside a
+                    // conditional arm the scan cannot count -- mint the slots
+                    // here, under the names that request would have used.
+                    for (int k = 0; k < tup.Elements.Count; ++k)
+                        ctx.ResultVars.Add(ctx.TupleSlotPrefix + k);
+                }
+                else if (tup.Elements.Count != ctx.ResultVars.Count)
                 {
                     throw UserError($"Tuple return size mismatch: expected {ctx.ResultVars.Count} elements", stmt.Value);
                 }
@@ -1258,6 +1288,7 @@ public partial class IRGenerator
                     // declared them (see EmitInlineFunctionCall); uint8 otherwise.
                     DataType dt = variableTypes.TryGetValue(ctx.ResultVars[k], out var slotDt)
                         ? slotDt : DataType.UINT8;
+                    variableTypes[ctx.ResultVars[k]] = dt;
                     Emit(new Copy(elemVal, new Variable(ctx.ResultVars[k], dt)));
                     // The iret_ slots are scratch shared by every expansion at this
                     // depth: a slot a previous call filled with a constant keeps that

@@ -3734,6 +3734,22 @@ public partial class IRGenerator
                     // by constant subscript; otherwise evaluate a scalar value.
                     ListExpr? seqRhs = stmt.Value as ListExpr
                         ?? (stmt.Value is TupleExpr tup ? new ListExpr(tup.Elements) : null);
+                    Val? srcVal = null;
+                    // `pixels[i] = wheel(...)`: a call whose expansion delivers tuple
+                    // slots is the same value shape once the slots are read as its
+                    // elements -- ask for them by sentinel and bind the slot names
+                    // as the sequence literal the parameter expects.
+                    if (seqRhs == null && stmt.Value is CallExpr)
+                    {
+                        lastTupleResults = new List<string>();
+                        pendingTupleCount = -1;
+                        Val callRhs = VisitExpression(stmt.Value);
+                        pendingTupleCount = 0;
+                        if (lastTupleResults.Count > 0)
+                            seqRhs = new ListExpr(lastTupleResults
+                                .Select(s => (Expression)new VariableExpr(s)).ToList());
+                        else srcVal = callRhs;
+                    }
                     if (seqRhs != null)
                     {
                         EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, new NoneVal() },
@@ -3741,7 +3757,7 @@ public partial class IRGenerator
                     }
                     else
                     {
-                        Val srcVal = VisitExpression(stmt.Value);
+                        srcVal ??= VisitExpression(stmt.Value);
                         EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
                     }
                     return;

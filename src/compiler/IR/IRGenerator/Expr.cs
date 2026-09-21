@@ -1123,6 +1123,31 @@ public partial class IRGenerator
 
                 if (allConst) return new Constant(negate ? 1 : 0);
             }
+            else if (TryGetCompileTimeText(expr.Left) is { } lhsStrText)
+            {
+                // `ORDER in {neopixel.RGB, neopixel.GRB}` -- a name bound to a
+                // compile-time string reads back as a Variable over the interned
+                // id, so the Constant fold above never saw it and emitted a
+                // run-time compare chain for a question the compiler can answer
+                // (wheel()'s conditional tuple return then refused on it). The
+                // text is what membership compares: a str matches a str element
+                // iff the texts match, and never matches a non-str constant --
+                // drop both from the chain and let only genuinely run-time
+                // elements keep a compare.
+                foreach (var e in rhsElems)
+                {
+                    Val ev = VisitExpression(e);
+                    string? eText = (ev as Constant)?.Text ?? TryGetCompileTimeText(e);
+                    if (eText != null)
+                    {
+                        if (eText == lhsStrText) return new Constant(negate ? 0 : 1);
+                        continue;   // a different compile-time string: never equal
+                    }
+                    if (ev is Constant) continue;   // a non-str constant: never equal
+                    elems.Add(ev);                  // run-time value: keep the compare
+                }
+                if (elems.Count == 0) return new Constant(negate ? 1 : 0);
+            }
             else
             {
                 foreach (var e in rhsElems) elems.Add(VisitExpression(e));

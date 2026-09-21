@@ -1761,6 +1761,13 @@ public partial class IRGenerator
         int dotCount = finalLocalName.Count(c => c == '.');
         if (dotCount >= 2)
         {
+            // A name that already carries a caller's scope (`rainbow_cycle.iret_1_0`,
+            // a tuple-result slot passed on as a sequence element) is not a local of
+            // this expansion -- the qualified spelling IS the binding. Source text
+            // cannot spell a dotted name, so only compiler-built references reach this.
+            if (name.Contains('.') && variableTypes.TryGetValue(name, out var fqSlotDt))
+                return new Variable(name, fqSlotDt);
+
             string resolved = finalLocalName;
             string lastNonTemp = finalLocalName;
             for (int depth = 0; depth < 20; depth++)
@@ -3236,7 +3243,8 @@ public partial class IRGenerator
         {
             if (!TupleType.IsTupleType(entry.Func.ReturnType)
                 && TupleReturnArity(entry.Func) == 0
-                && !BodyReturnsStructUnpack(entry.Func)) continue;
+                && !BodyReturnsStructUnpack(entry.Func)
+                && !BodyReturnsConditionalTuple(entry.Func)) continue;
 
             string fullName = (entry.Prefix ?? "") + entry.Func.Name;
             if (inlineFunctions.ContainsKey(fullName)) continue;
@@ -3292,6 +3300,53 @@ public partial class IRGenerator
                         foreach (var innerStmt in handler) S(innerStmt);
                     if (t.Finally != null) foreach (var innerStmt in t.Finally) S(innerStmt);
                     if (t.ElseBody != null) foreach (var innerStmt in t.ElseBody) S(innerStmt);
+                    break;
+            }
+        }
+        S(func.Body);
+        return found;
+    }
+
+    /// <summary>
+    /// True when a body has `return (a, b) if cond else (a, b, c)` -- a tuple that
+    /// lives in a conditional expression's arm. TupleReturnArity cannot count it
+    /// (the arms can differ, and which one runs is the condition's answer), but the
+    /// return still delivers a tuple an outlined body cannot carry; VisitReturn
+    /// folds the condition and mints the taken arm's slots. AST-only like the arity
+    /// scan: nothing is lowered here.
+    /// </summary>
+    private static bool BodyReturnsConditionalTuple(FunctionDef func)
+    {
+        bool found = false;
+        void S(Statement? s)
+        {
+            switch (s)
+            {
+                case null: break;
+                case ReturnStmt { Value: TernaryExpr t }
+                    when t.TrueVal is TupleExpr || t.FalseVal is TupleExpr:
+                    found = true;
+                    break;
+                case Block b:
+                    foreach (var inner in b.Statements) S(inner);
+                    break;
+                case IfStmt i:
+                    S(i.ThenBranch);
+                    foreach (var (_, eb) in i.ElifBranches) S(eb);
+                    S(i.ElseBranch);
+                    break;
+                case WhileStmt w: S(w.Body); break;
+                case ForStmt f: S(f.Body); break;
+                case WithStmt w: S(w.Body); break;
+                case MatchStmt m:
+                    foreach (var br in m.Branches) S(br.Body);
+                    break;
+                case TryStmt t:
+                    foreach (var inner in t.Body) S(inner);
+                    foreach (var (_, handler) in t.Handlers)
+                        foreach (var inner in handler) S(inner);
+                    if (t.Finally != null) foreach (var inner in t.Finally) S(inner);
+                    if (t.ElseBody != null) foreach (var inner in t.ElseBody) S(inner);
                     break;
             }
         }
