@@ -1289,6 +1289,7 @@ public partial class IRGenerator
             Temporary t => t.Type,
             Variable v => v.Type,
             FloatConstant => DataType.FLOAT,
+            Constant cc => NarrowestTypeFor(cc.Value, cc.Value),
             _ => DataType.UNKNOWN,
         };
         if (vt == DataType.UNKNOWN || vt == tv.Type) return target;
@@ -1367,6 +1368,7 @@ public partial class IRGenerator
                     Temporary vt => vt.Type,
                     Variable vv => vv.Type,
                     FloatConstant => DataType.FLOAT,
+                    Constant nc => NarrowestTypeFor(nc.Value, nc.Value),
                     _ => DataType.UNKNOWN,
                 };
                 if (noneWidth != DataType.UNKNOWN
