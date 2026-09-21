@@ -1338,9 +1338,27 @@ public partial class IRGenerator
                 throw new ValueError("float division by zero",
                     expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
+            bool isCompare = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
+                or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
+
             if (f1.HasValue && f2.HasValue)
             {
-                // Compile-time fold: both operands are known constants.
+                // Compile-time fold: both operands are known constants. A comparison is a
+                // bool, not a float -- it used to fall to the `_ => 0.0` arm and fold to
+                // FloatConstant(0.0) whatever the operands were, so `0.0 <= value <= 1.0`
+                // on a bound float parameter read as false and its `raise` fired on 0.5.
+                if (isCompare)
+                    return new Constant((expr.Op switch
+                    {
+                        AstBinOp.Equal => f1.Value == f2.Value,
+                        AstBinOp.NotEqual => f1.Value != f2.Value,
+                        AstBinOp.Less => f1.Value < f2.Value,
+                        AstBinOp.LessEq => f1.Value <= f2.Value,
+                        AstBinOp.Greater => f1.Value > f2.Value,
+                        AstBinOp.GreaterEq => f1.Value >= f2.Value,
+                        _ => false
+                    }) ? 1 : 0);
+
                 double res = expr.Op switch
                 {
                     AstBinOp.Add => f1.Value + f2.Value,
@@ -1373,8 +1391,6 @@ public partial class IRGenerator
                 AstBinOp.GreaterEq => BinaryOp.GreaterEqual,
                 _ => throw new NotSupportedException($"Float op {op} not supported at runtime")
             };
-            bool isCompare = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
-                or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
 
             // Run-time float divide/modulo by zero raises ZeroDivisionError, matching Python and
             // matching what the INTEGER path has always done. Without this the division produced
