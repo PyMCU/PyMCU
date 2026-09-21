@@ -2038,6 +2038,27 @@ public partial class IRGenerator
         // variable, a buffer, an instance. A parameter inlined to "f.b" through
         // variableAliases lands here. The fallbacks below must not read a same-named
         // global's text for it (#438).
+        //
+        // One exception: a module-level string carries TWO bindings that disagree about
+        // whether it is "non-string". The bare name is the run-time slot (the interned
+        // id, a uint8 in mutableGlobals), while the text is filed under the entry
+        // function's scope spelling `main.S` -- module-level statements lower inside
+        // `main`, and Assign files the text as `currentFunction + "." + name`. A probe
+        // that settles on that bare name -- written bare at module level, or reached
+        // through an inline parameter's alias (`pixel_order` -> `ORDER`) -- IS the
+        // global itself, not a scope shadowing it, so the `main.S` probe runs before
+        // BindsNonString can rule the name non-string on the strength of its own
+        // storage slot. An owning module's same-named global keeps precedence: inside
+        // `helper`'s code a bare `S` means `helper_S`, which the ordinary fallbacks
+        // below already find.
+        if (key != null && !key.Contains('.') && !key.StartsWith("tmp_")
+            && (mutableGlobals.ContainsKey(key) || globals.ContainsKey(key))
+            && !OwningModulePrefixes().Any(mp =>
+                mutableGlobals.ContainsKey(mp + key) || globals.ContainsKey(mp + key)
+                || strConstantVariables.ContainsKey(mp + key))
+            && strConstantVariables.TryGetValue("main." + key, out var ownText))
+            return ownText;
+
         if (key != null && BindsNonString(key)) return null;
 
         // Fall back to the module-global / bare-name forms, mirroring how integer globals

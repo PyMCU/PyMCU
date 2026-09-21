@@ -193,4 +193,117 @@ public class IsInstanceFoldTests
         HasRuntimeJump(body).Should().BeFalse(
             because: "Union is resolved per call site, so both isinstance tests fold away");
     }
+
+    // ── receivers spelled through bindings the flags used to miss (neopixel) ────────────
+    //
+    // neopixel's `elif isinstance(pixel_order, tuple)` asks about a constructor parameter
+    // bound through a keyword argument to a module-level string constant. The parameter
+    // name holds only an alias to the caller's name, and the module string's TEXT is filed
+    // under `main.ORDER` while the bare name holds the interned-id slot -- neither spelling
+    // is the one a bare probe of `pixel_order` asks about.
+
+    [Fact]
+    public void TupleCandidateFoldsFalseOnAModuleStringConstant()
+    {
+        var body = Main(Preamble +
+            "ORDER = \"GRB\"\n" +
+            "if isinstance(ORDER, tuple):\n" +
+            "    GPIOR1.value = 9\n" +
+            "else:\n" +
+            "    GPIOR1.value = 3\n");
+
+        CopiesToGpior(body, 3).Should().BeTrue(
+            because: "a module-level string is not a tuple, so the false arm is the program");
+        CopiesToGpior(body, 9).Should().BeFalse(
+            because: "the true arm is dead once the fold answers False");
+        HasRuntimeJump(body).Should().BeFalse(
+            because: "the text is a compile-time fact, so no runtime test may remain");
+    }
+
+    [Fact]
+    public void StrCandidateFoldsTrueOnAModuleStringConstant()
+    {
+        var body = Main(Preamble +
+            "ORDER = \"GRB\"\n" +
+            "if isinstance(ORDER, str):\n" +
+            "    GPIOR1.value = 9\n" +
+            "else:\n" +
+            "    GPIOR1.value = 3\n");
+
+        CopiesToGpior(body, 9).Should().BeTrue(
+            because: "ORDER is a string, so the true arm is the program");
+        HasRuntimeJump(body).Should().BeFalse(
+            because: "the text is a compile-time fact, so no runtime test may remain");
+    }
+
+    [Fact]
+    public void TupleCandidateFoldsFalseOnAParamAliasedThroughAKeywordArgument()
+    {
+        // The reported shape: `NeoPixel(pin, n, pixel_order=ORDER)`. `not pixel_order`
+        // folds False (a non-empty string), so the rebound arm is dead and the alias
+        // survives for the elif's isinstance to read.
+        var body = Main(Preamble +
+            "ORDER = \"GRB\"\n\n" +
+            "class Px:\n" +
+            "    def __init__(self, pixel_order = None) -> None:\n" +
+            "        if not pixel_order:\n" +
+            "            pixel_order = \"RGB\"\n" +
+            "        elif isinstance(pixel_order, tuple):\n" +
+            "            pixel_order = \"XXX\"\n" +
+            "        self._o = pixel_order\n\n" +
+            "p = Px(pixel_order=ORDER)\n" +
+            "GPIOR1.value = 1\n");
+
+        body.Any(i => i is Copy { Src: Constant { Text: "GRB" } }).Should().BeTrue(
+            because: "pixel_order stays \"GRB\": the dead rebind arm never lowered and the " +
+                     "tuple arm folded False, so the field store carries the original text");
+        body.Any(i => i is Copy { Src: Constant { Text: "RGB" or "XXX" } }).Should().BeFalse(
+            because: "neither dead arm may write pixel_order");
+    }
+
+    [Fact]
+    public void TupleCandidateFoldsFalseOnANoneBoundParam()
+    {
+        // `NeoPixel(pin, n)` -- pixel_order defaults to None, and None is no candidate.
+        var body = Main(Preamble +
+            "class Px:\n" +
+            "    def __init__(self, pixel_order = None) -> None:\n" +
+            "        if isinstance(pixel_order, tuple):\n" +
+            "            self._o = 9\n" +
+            "        else:\n" +
+            "            self._o = 3\n\n" +
+            "p = Px()\n" +
+            "GPIOR1.value = p._o\n");
+
+        CopiesToGpior(body, 3).Should().BeTrue(
+            because: "None is not a tuple, so the else arm assigns");
+        CopiesToGpior(body, 9).Should().BeFalse(
+            because: "the true arm is dead once the fold answers False");
+    }
+
+    [Fact]
+    public void SliceCandidateFoldsFalseOnAnIntParamBoundToALoopVariable()
+    {
+        // pixelbuf's `if isinstance(index, slice)`: the parameter binds through an alias
+        // to the caller's unrolled loop variable -- an int, and PyMCU has no slice VALUE
+        // at all, so the answer is False.
+        var body = Main(Preamble +
+            "class Px:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._v: uint8 = 0\n" +
+            "    def __setitem__(self, index: uint8, val: uint8) -> None:\n" +
+            "        if isinstance(index, slice):\n" +
+            "            self._v = 9\n" +
+            "        else:\n" +
+            "            self._v = val\n\n" +
+            "p = Px()\n" +
+            "for i in range(2):\n" +
+            "    p[i] = 5\n");
+
+        body.Any(i => i is Copy { Src: Constant { Value: 5 } }).Should().BeTrue(
+            because: "the else arm assigns val -- index is an int, never a slice");
+        body.Any(i => i is Copy { Src: Constant { Value: 9 }, Dst: Variable { Name: var n } }
+                      && n.Contains("_v")).Should().BeFalse(
+            because: "the slice arm is dead once the fold answers False");
+    }
 }

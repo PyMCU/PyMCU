@@ -8796,26 +8796,50 @@ public partial class IRGenerator
             names.Add(ve.Name);
         }
 
-        bool isSeq = ResolveArrayVar(recv.Name) != null
-            || ResolveConstSequence(recv.Name) != null
-            || ResolveListLiteralParam(recv.Name) != null;
-        bool isClass = InstanceClassOfName(recv.Name) != null;
-        bool isStr = ResolveStrConstant(recv.Name) != null;
-
         string q = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + recv.Name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + recv.Name : recv.Name);
-        bool isFloat = floatConstantVariables.ContainsKey(q) || floatConstantVariables.ContainsKey(recv.Name)
-            || (variableTypes.TryGetValue(q, out var ft) && ft == DataType.FLOAT);
+
+        // The name's VALUE is not necessarily filed under the name itself. An inlined
+        // parameter binds through variableAliases to the caller's binding -- pixelbuf's
+        // `isinstance(index, slice)` asks about the loop variable `main.i`, which only
+        // the walk to the alias's terminal reaches. And a module-level string's text is
+        // filed under the qualified `module.name` key while the bare name holds the
+        // string's storage id, so a bare probe is refused by BindsNonString before the
+        // module-global fallback can answer. Every flag probes the qualified key, the
+        // alias-terminal keys, and the bare/module spellings.
+        string rk = FollowAliases(q);
+        string rb = FollowAliases(recv.Name);
+        var keys = new List<string> { q };
+        foreach (var k in new[] { rk, rb, recv.Name, currentModulePrefix + recv.Name })
+            if (!keys.Contains(k)) keys.Add(k);
+
+        bool isSeq = ResolveArrayVar(recv.Name) != null
+            || ResolveConstSequence(recv.Name) != null
+            || ResolveListLiteralParam(recv.Name) != null
+            || keys.Any(k => bytearrayParams.Contains(k));
+        bool isClass = InstanceClassOfName(recv.Name) != null;
+        bool isStr = keys.Any(k => ResolveStrConstant(k) != null)
+            || keys.Any(k => runtimeStrVars.ContainsKey(k))
+            || keys.Any(k => multiStrVariables.ContainsKey(k));
+        bool isFloat = keys.Any(k => floatConstantVariables.ContainsKey(k))
+            || keys.Any(k => variableTypes.TryGetValue(k, out var ft) && ft == DataType.FLOAT);
 
         static bool IsIntDt(DataType d) => d is DataType.UINT8 or DataType.UINT16 or DataType.UINT32
             or DataType.INT8 or DataType.INT16 or DataType.INT32;
         bool isInt = !isSeq && !isClass && !isStr && !isFloat
-            && (constantVariables.ContainsKey(q) || constantVariables.ContainsKey(recv.Name)
-                || (variableTypes.TryGetValue(q, out var it) && IsIntDt(it))
-                || (variableTypes.TryGetValue(recv.Name, out var it2) && IsIntDt(it2)));
+            && (keys.Any(k => constantVariables.ContainsKey(k))
+                || keys.Any(k => variableTypes.TryGetValue(k, out var it) && IsIntDt(it))
+                || keys.Any(k => mutableGlobals.TryGetValue(k, out var mg) && IsIntDt(mg))
+                || keys.Any(k => globals.TryGetValue(k, out var g) && !g.IsMemoryAddress && IsIntDt(g.Type)));
 
-        if (!isSeq && !isClass && !isStr && !isFloat && !isInt) return null;
+        // `isinstance(p, T)` where p is bound to None: None is none of the builtin
+        // candidates, so the answer is known even though no flag above names it --
+        // neopixel's `elif isinstance(pixel_order, tuple)` on the defaulted parameter.
+        bool isNone = keys.Any(k => noneValuedNames.Contains(k));
+
+        if (!isSeq && !isClass && !isStr && !isFloat && !isInt && !isNone)
+            return null;
 
         bool match = false;
         foreach (var n in names)

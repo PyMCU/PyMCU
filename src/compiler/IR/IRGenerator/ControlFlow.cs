@@ -159,6 +159,23 @@ public partial class IRGenerator
             return 2;
         }
 
+        // `not x` where x is a compile-time string: the text decides the branch --
+        // `not ""` is always true, `not "GRB"` always false. Without the fold the
+        // `not` lowered as a run-time test, BOTH sides compiled, and a dead side's
+        // rebind (`pixel_order = GRB` in neopixel's __init__) discarded the string
+        // binding the `elif` arm still needed to see.
+        if (cond is UnaryExpr { Op: AstUnOp.Not } notStr
+            && TryConstStrTruthiness(notStr.Operand, out bool notStrTruthy))
+        {
+            if (notStrTruthy)
+            {
+                if (!jumpIfTrue) Emit(new Jump(targetLabel));
+                return -1;
+            }
+            if (jumpIfTrue) Emit(new Jump(targetLabel));
+            return 2;
+        }
+
         // An `if` does not lower its comparison through VisitBinary; it comes straight here and
         // becomes a conditional jump. That is how `a == b` over two bytes names emitted a
         // one-byte `jne` between the two array names and answered without reading either.
@@ -490,6 +507,25 @@ public partial class IRGenerator
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// The truthiness of an operand that is a name bound to a compile-time string:
+    /// "" is falsy, any other text truthy. False when the operand is not such a name --
+    /// a run-time string's length is not known here, and a non-string is not this
+    /// helper's question.
+    /// </summary>
+    private bool TryConstStrTruthiness(Expression operand, out bool truthy)
+    {
+        truthy = false;
+        if (operand is not VariableExpr ve) return false;
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        string? text = ResolveStrConstant(q) ?? ResolveStrConstant(ve.Name);
+        if (text == null) return false;
+        truthy = text.Length > 0;
+        return true;
     }
 
     // Python's truthiness for an instance: __bool__, else __len__ != 0, else always true.
