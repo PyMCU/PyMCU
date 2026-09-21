@@ -572,6 +572,7 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **driver**: the generated adapter checks what the interpreter hands the kernel
 - **compiler**: a buffer parameter carries its own length in library mode
 - **driver**: `pymcu monitor` is a serial console -- UART to stdout, stdin to the board, no pyserial on POSIX
+- **pic14**: IEEE-754 soft-float -- the eight __fp_* routines PIC14CodeGen emits calls into
 
 ### Fixed
 
