@@ -1457,6 +1457,7 @@ def build(
                         emit_ir_path=str(ir_file),
                         diagnostic_source=_diagnostic_source,
                         timebase=_timebase,
+                        stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
                     linemap_path: Path | None = None
@@ -1501,6 +1502,7 @@ def build(
                         extra_includes=extra_includes or None,
                         on_output=compiler_handler,
                         timebase=_timebase,
+                        stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
                     )
             except RuntimeError as e:
                 progress.stop()
