@@ -353,4 +353,49 @@ public class ZcaInlineRegressionTests
         foreach (var n in new[] { 2, 3, 4 })
             Assert.Contains(body, i => i is Copy { Src: Constant { Value: var v } } && v == n);
     }
+
+    // ── A field holding an instance survives a same-prefix re-expansion ──────
+    // `self._pwm_out = pwm_out` inside a base __init__ filed the field's alias as
+    // `inlineK.__init__.pwm_out` -- the parameter's expansion-scoped name. When
+    // Holder's __init__ reused the `inline1.__init__` prefix, the entry clean wiped
+    // the second hop (`...pwm_out` -> `pwm`), so `s._pwm_out.duty_cycle = v` could
+    // no longer see the PWMOut instance and fell to a phantom field write
+    // (freq-probe's `s.angle = 90` wrote 5996 & 0xFF). The field now files the
+    // alias's terminal.
+
+    private const string FieldHeldThroughReexpansion =
+        "from pymcu.chips.atmega328p import GPIOR0\n" +
+        "from pymcu.types import uint8, uint16, inline\n" +
+        "class Pwm:\n" +
+        "    @inline\n    def __init__(self) -> None:\n        self._duty: uint16 = 0\n" +
+        "    @property\n    def duty_cycle(self) -> uint16:\n        return self._duty\n" +
+        "    @duty_cycle.setter\n    def duty_cycle(self, val: uint16) -> None:\n        self._duty = val\n        GPIOR0.value = 1\n" +
+        "class Base:\n" +
+        "    @inline\n    def __init__(self, pwm_out) -> None:\n        self._pwm_out = pwm_out\n" +
+        "    @property\n    def fraction(self) -> uint16:\n        return 0\n" +
+        "    @fraction.setter\n    def fraction(self, f: uint16) -> None:\n        self._pwm_out.duty_cycle = f\n" +
+        "class Srv(Base):\n" +
+        "    @inline\n    def __init__(self, pwm_out) -> None:\n        super().__init__(pwm_out)\n" +
+        "    @property\n    def angle(self) -> uint16:\n        return 0\n" +
+        "    @angle.setter\n    def angle(self, a: uint16) -> None:\n        self.fraction = a\n" +
+        "class Holder:\n" +
+        "    @inline\n    def __init__(self, o) -> None:\n        self.out = o\n";
+
+    [Fact]
+    public void AFieldBoundToAnInitParam_KeepsTheInstanceAfterASamePrefixExpansion()
+    {
+        // Holder() re-expands `inline1.__init__` and its entry clean wipes the
+        // parameter binding `s._pwm_out`'s alias used to point through. The write
+        // must still reach Pwm's duty_cycle setter -- its GPIOR0.value = 1 side
+        // effect is the tell.
+        var body = MainBody(Gen(FieldHeldThroughReexpansion +
+            "pwm = Pwm()\n" +
+            "s = Srv(pwm)\n" +
+            "h = Holder(pwm)\n" +
+            "v: uint16 = GPIOR0.value\n" +
+            "s.angle = v\n"));
+
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 1 }, Dst: Variable { Name: var n } }
+                                   && n.EndsWith("GPIOR0", StringComparison.Ordinal));
+    }
 }
