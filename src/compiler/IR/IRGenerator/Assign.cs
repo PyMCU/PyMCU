@@ -1687,6 +1687,173 @@ public partial class IRGenerator
         }
     }
 
+    // The class a CallExpr delivers to its assignment target: a constructor's own
+    // (`x = Pin(...)`), a base-class method's declared ZCA return, `mod.Cls(...)`, a
+    // method whose body returns `Cls(...)` (`pcf.get_pin`), a module-level singleton's
+    // nested class (`mod.singleton.Nested(...)`), or a factory function's
+    // `return Cls(...)`. "" when the call hands back a plain value.
+    private string ResolveAssignedCallClass(CallExpr call)
+    {
+        string resolvedClass = "";
+        if (call.Callee is VariableExpr calleeVar)
+        {
+            resolvedClass = ResolveCallee(calleeVar.Name);
+        }
+        // A base-class call whose declared return type is a ZCA class, in either spelling:
+        // `super().split(raw)` and `Base.split(self, raw)`. Without this the target is never
+        // registered as that class, so the constructor inside the base body builds into an
+        // anonymous `__cN` and the caller reads `p_a` / `p_b`, names nothing ever writes. It
+        // read two unwritten slots as zero, silently (PyMCU#157). The module branch below
+        // covers `m.Pin(...)`; a CLASS receiver is a different thing and had no branch.
+        if (string.IsNullOrEmpty(resolvedClass)
+            && TryResolveBaseCallClass(call) is { } baseRt)
+        {
+            resolvedClass = baseRt;
+        }
+
+        if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
+        {
+            if (modules.ContainsKey(objVar.Name))
+            {
+                // Resolve a module alias (import machine as m) to the real module
+                // name so `m.Pin(...)` resolves the machine_Pin class.
+                string realMod = TryImportedAlias(objVar.Name, out var rm) && rm != null
+                    ? rm : objVar.Name;
+                string mangled = realMod.Replace('.', '_');
+                resolvedClass = mangled + "_" + calleeMem.Member;
+            }
+            else if (string.IsNullOrEmpty(resolvedClass)
+                     && TryResolveInstanceMethodAst(objVar.Name, calleeMem.Member) is { } factoryMethod
+                     && factoryMethod.Body?.Statements != null)
+            {
+                // `led = pcf.get_pin(7)`: an ordinary METHOD -- not a constructor -- whose
+                // body constructs and returns a class instance. adafruit_pcf8574.py's
+                // `get_pin` is exactly this shape: it validates the pin number and hands
+                // back `DigitalInOut(pin, self)`. Nothing tagged the assignment target
+                // with a class before, so the first method called on it (`led
+                // .switch_to_output(...)`) mangled to the undefined `led_switch_to_output`
+                // -- the free-function factory case just above resolves the same shape
+                // for a bare function name; a method call had no equivalent.
+                //
+                // Read statically, the same way the free-function factory case does:
+                // find a `return ClassName(...)` in the method's own body. The call
+                // itself still runs normally (the method is force-inlined at its call
+                // site like any other instance method, and validation code such as the
+                // assert above executes); this only tells the ASSIGNMENT TARGET what
+                // class the value it receives is.
+                //
+                // Resolved under the DEFINING module's prefix, not the caller's: a
+                // cross-module `pcf.get_pin(...)` (adafruit_pcf8574's own shape --
+                // PCF8574 and its DigitalInOut return type are both defined in
+                // adafruit_pcf8574.py, used from main.py) has `Pin`/`DigitalInOut`
+                // written unqualified inside a method that belongs to the OTHER module,
+                // and ResolveCallee reads a name against `currentModulePrefix`, which at
+                // this assignment is the CALLER's module, not the one that wrote it.
+                string savedFactoryPrefix = currentModulePrefix;
+                // classModuleMap is keyed by the BARE class name (however InstanceClassOfName
+                // answers qualified, e.g. "pinlib_Owner" for a cross-module receiver) -- find
+                // the entry whose prefix + bare name reconstructs it, rather than assuming
+                // either spelling.
+                if (InstanceClassOfName(objVar.Name) is { } recvCls)
+                {
+                    foreach (var (bareName, modPrefix) in classModuleMap)
+                    {
+                        if (modPrefix + bareName == recvCls || bareName == recvCls)
+                        {
+                            currentModulePrefix = modPrefix;
+                            break;
+                        }
+                    }
+                }
+                try
+                {
+                    foreach (var fbs in factoryMethod.Body.Statements)
+                        if (fbs is ReturnStmt fr && fr.Value is CallExpr frcall
+                            && frcall.Callee is VariableExpr frcv)
+                        {
+                            string frc = ResolveCallee(frcv.Name);
+                            if (inlineFunctions.ContainsKey(frc + "___init__")
+                                || overloadedFunctions.Contains(frc + "___init__")
+                                || classFieldLayout.ContainsKey(frc))
+                                resolvedClass = frc;
+                        }
+                }
+                finally
+                {
+                    currentModulePrefix = savedFactoryPrefix;
+                }
+            }
+        }
+
+        // `mod.singleton.Nested(...)` -- a nested class reached through a module-level
+        // singleton, which is how a compat layer spells a submodule (alarm.time.TimeAlarm,
+        // alarm.pin.PinAlarm). The branch above resolves `m.Pin(...)`, ONE member access
+        // deep; this is two, and nothing covered it.
+        //
+        // The consequence was not a diagnostic about the constructor. With resolvedClass
+        // empty, the assignment never set pendingConstructorTarget, so the constructor
+        // minted an anonymous `__cN`, tagged THAT with the class, and left the named
+        // variable untagged. A later `o.field` then resolved against a name carrying no
+        // class and reported "'field' is not a member of a numeric value" -- pointing at
+        // the field read, one function away from the assignment that lost the type.
+        //
+        // Ordering made it look like something else entirely: whether the read reached the
+        // untagged name or the tagged `__cN` depended on what had been expanded first, so
+        // an @inline call before the read failed and the same call after it passed
+        // (PyMCU#271).
+        if (string.IsNullOrEmpty(resolvedClass)
+            && call.Callee is MemberAccessExpr nestMem
+            && nestMem.Object is MemberAccessExpr ownerMem
+            && ownerMem.Object is VariableExpr ownerModVar
+            && modules.ContainsKey(ownerModVar.Name))
+        {
+            string ownerMod = TryImportedAlias(ownerModVar.Name, out var orm) && orm != null
+                ? orm : ownerModVar.Name;
+            string ownerKey = ownerMod.Replace('.', '_') + "_" + ownerMem.Member;
+            if (instanceClasses.TryGetValue(ownerKey, out var ownerCls) && ownerCls != null)
+                resolvedClass = ownerCls + "_" + nestMem.Member;
+        }
+
+        // Factory: `a = setup()` where setup returns ClassName(...) -- an @inline
+        // function, or a plain one force-inlined because its return is a ZCA
+        // construction with no ABI form (Core.cs ForceInlineClassReturningFactories).
+        // Resolve to the returned ZCA class so the tracking below treats `a` as that
+        // instance and its methods inline (otherwise `a.read()` mangles to an
+        // undefined flattened name like main.a_read and fails at link).
+        //
+        // The body's `return ClassName(...)` is read under the DEFINING module's
+        // prefix, the same gap the instance-method factory above carries: a class
+        // defined in the factory's own module (`def make(): return I2C(1, 2)` in
+        // layer.py) resolves to nothing under the caller's imports.
+        if (!string.IsNullOrEmpty(resolvedClass)
+            && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
+            && !overloadedFunctions.Contains(resolvedClass + "___init__")
+            && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
+            && factoryFn?.Body?.Statements != null)
+        {
+            string savedFactoryPrefix = currentModulePrefix;
+            if (functionModulePrefix.TryGetValue(resolvedClass, out var factoryPrefix))
+                currentModulePrefix = factoryPrefix;
+            try
+            {
+                foreach (var bs in factoryFn.Body.Statements)
+                    if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
+                    {
+                        var rc = ResolveCallee(rcv.Name);
+                        if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__")
+                            || classFieldLayout.ContainsKey(rc))
+                            resolvedClass = rc;
+                    }
+            }
+            finally
+            {
+                currentModulePrefix = savedFactoryPrefix;
+            }
+        }
+
+        return resolvedClass;
+    }
+
     // `x = ClassName(args)` constructor target: set up the (virtual) constructor
     // expansion state. Falls through to the inline-expansion path that follows.
     private void EmitConstructorTargetSetup(AssignStmt stmt, VariableExpr varExprCtor)
@@ -1716,162 +1883,7 @@ public partial class IRGenerator
                 return;
             }
 
-            string resolvedClass = "";
-            if (call.Callee is VariableExpr calleeVar)
-            {
-                resolvedClass = ResolveCallee(calleeVar.Name);
-            }
-            // A base-class call whose declared return type is a ZCA class, in either spelling:
-            // `super().split(raw)` and `Base.split(self, raw)`. Without this the target is never
-            // registered as that class, so the constructor inside the base body builds into an
-            // anonymous `__cN` and the caller reads `p_a` / `p_b`, names nothing ever writes. It
-            // read two unwritten slots as zero, silently (PyMCU#157). The module branch below
-            // covers `m.Pin(...)`; a CLASS receiver is a different thing and had no branch.
-            if (string.IsNullOrEmpty(resolvedClass)
-                && TryResolveBaseCallClass(call) is { } baseRt)
-            {
-                resolvedClass = baseRt;
-            }
-
-            if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
-            {
-                if (modules.ContainsKey(objVar.Name))
-                {
-                    // Resolve a module alias (import machine as m) to the real module
-                    // name so `m.Pin(...)` resolves the machine_Pin class.
-                    string realMod = TryImportedAlias(objVar.Name, out var rm) && rm != null
-                        ? rm : objVar.Name;
-                    string mangled = realMod.Replace('.', '_');
-                    resolvedClass = mangled + "_" + calleeMem.Member;
-                }
-                else if (string.IsNullOrEmpty(resolvedClass)
-                         && TryResolveInstanceMethodAst(objVar.Name, calleeMem.Member) is { } factoryMethod
-                         && factoryMethod.Body?.Statements != null)
-                {
-                    // `led = pcf.get_pin(7)`: an ordinary METHOD -- not a constructor -- whose
-                    // body constructs and returns a class instance. adafruit_pcf8574.py's
-                    // `get_pin` is exactly this shape: it validates the pin number and hands
-                    // back `DigitalInOut(pin, self)`. Nothing tagged the assignment target
-                    // with a class before, so the first method called on it (`led
-                    // .switch_to_output(...)`) mangled to the undefined `led_switch_to_output`
-                    // -- the free-function factory case just above resolves the same shape
-                    // for a bare function name; a method call had no equivalent.
-                    //
-                    // Read statically, the same way the free-function factory case does:
-                    // find a `return ClassName(...)` in the method's own body. The call
-                    // itself still runs normally (the method is force-inlined at its call
-                    // site like any other instance method, and validation code such as the
-                    // assert above executes); this only tells the ASSIGNMENT TARGET what
-                    // class the value it receives is.
-                    //
-                    // Resolved under the DEFINING module's prefix, not the caller's: a
-                    // cross-module `pcf.get_pin(...)` (adafruit_pcf8574's own shape --
-                    // PCF8574 and its DigitalInOut return type are both defined in
-                    // adafruit_pcf8574.py, used from main.py) has `Pin`/`DigitalInOut`
-                    // written unqualified inside a method that belongs to the OTHER module,
-                    // and ResolveCallee reads a name against `currentModulePrefix`, which at
-                    // this assignment is the CALLER's module, not the one that wrote it.
-                    string savedFactoryPrefix = currentModulePrefix;
-                    // classModuleMap is keyed by the BARE class name (however InstanceClassOfName
-                    // answers qualified, e.g. "pinlib_Owner" for a cross-module receiver) -- find
-                    // the entry whose prefix + bare name reconstructs it, rather than assuming
-                    // either spelling.
-                    if (InstanceClassOfName(objVar.Name) is { } recvCls)
-                    {
-                        foreach (var (bareName, modPrefix) in classModuleMap)
-                        {
-                            if (modPrefix + bareName == recvCls || bareName == recvCls)
-                            {
-                                currentModulePrefix = modPrefix;
-                                break;
-                            }
-                        }
-                    }
-                    try
-                    {
-                        foreach (var fbs in factoryMethod.Body.Statements)
-                            if (fbs is ReturnStmt fr && fr.Value is CallExpr frcall
-                                && frcall.Callee is VariableExpr frcv)
-                            {
-                                string frc = ResolveCallee(frcv.Name);
-                                if (inlineFunctions.ContainsKey(frc + "___init__")
-                                    || overloadedFunctions.Contains(frc + "___init__")
-                                    || classFieldLayout.ContainsKey(frc))
-                                    resolvedClass = frc;
-                            }
-                    }
-                    finally
-                    {
-                        currentModulePrefix = savedFactoryPrefix;
-                    }
-                }
-            }
-
-            // `mod.singleton.Nested(...)` -- a nested class reached through a module-level
-            // singleton, which is how a compat layer spells a submodule (alarm.time.TimeAlarm,
-            // alarm.pin.PinAlarm). The branch above resolves `m.Pin(...)`, ONE member access
-            // deep; this is two, and nothing covered it.
-            //
-            // The consequence was not a diagnostic about the constructor. With resolvedClass
-            // empty, the assignment never set pendingConstructorTarget, so the constructor
-            // minted an anonymous `__cN`, tagged THAT with the class, and left the named
-            // variable untagged. A later `o.field` then resolved against a name carrying no
-            // class and reported "'field' is not a member of a numeric value" -- pointing at
-            // the field read, one function away from the assignment that lost the type.
-            //
-            // Ordering made it look like something else entirely: whether the read reached the
-            // untagged name or the tagged `__cN` depended on what had been expanded first, so
-            // an @inline call before the read failed and the same call after it passed
-            // (PyMCU#271).
-            if (string.IsNullOrEmpty(resolvedClass)
-                && call.Callee is MemberAccessExpr nestMem
-                && nestMem.Object is MemberAccessExpr ownerMem
-                && ownerMem.Object is VariableExpr ownerModVar
-                && modules.ContainsKey(ownerModVar.Name))
-            {
-                string ownerMod = TryImportedAlias(ownerModVar.Name, out var orm) && orm != null
-                    ? orm : ownerModVar.Name;
-                string ownerKey = ownerMod.Replace('.', '_') + "_" + ownerMem.Member;
-                if (instanceClasses.TryGetValue(ownerKey, out var ownerCls) && ownerCls != null)
-                    resolvedClass = ownerCls + "_" + nestMem.Member;
-            }
-
-            // Factory: `a = setup()` where setup returns ClassName(...) -- an @inline
-            // function, or a plain one force-inlined because its return is a ZCA
-            // construction with no ABI form (Core.cs ForceInlineClassReturningFactories).
-            // Resolve to the returned ZCA class so the tracking below treats `a` as that
-            // instance and its methods inline (otherwise `a.read()` mangles to an
-            // undefined flattened name like main.a_read and fails at link).
-            //
-            // The body's `return ClassName(...)` is read under the DEFINING module's
-            // prefix, the same gap the instance-method factory above carries: a class
-            // defined in the factory's own module (`def make(): return I2C(1, 2)` in
-            // layer.py) resolves to nothing under the caller's imports.
-            if (!string.IsNullOrEmpty(resolvedClass)
-                && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
-                && !overloadedFunctions.Contains(resolvedClass + "___init__")
-                && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
-                && factoryFn?.Body?.Statements != null)
-            {
-                string savedFactoryPrefix = currentModulePrefix;
-                if (functionModulePrefix.TryGetValue(resolvedClass, out var factoryPrefix))
-                    currentModulePrefix = factoryPrefix;
-                try
-                {
-                    foreach (var bs in factoryFn.Body.Statements)
-                        if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
-                        {
-                            var rc = ResolveCallee(rcv.Name);
-                            if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__")
-                                || classFieldLayout.ContainsKey(rc))
-                                resolvedClass = rc;
-                        }
-                }
-                finally
-                {
-                    currentModulePrefix = savedFactoryPrefix;
-                }
-            }
+            string resolvedClass = ResolveAssignedCallClass(call);
 
             if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
                                                          overloadedFunctions.Contains(resolvedClass + "___init__")))
@@ -6773,6 +6785,18 @@ public partial class IRGenerator
         for (int k = 0; k < count; ++k)
         {
             ctorClasses[k] = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
+            // `pins = [pcf.get_pin(i) for i in range(8)]`: the element is not a
+            // constructor spelling but a call whose body returns an instance. Resolve
+            // the class it hands back the way a plain `x = pcf.get_pin(i)` does, so
+            // the element slot carries the instance and `for p in pins` keeps it.
+            if (ctorClasses[k] == null && elemExprs[k] is CallExpr fc)
+            {
+                string fcCls = ResolveAssignedCallClass(fc);
+                if (!string.IsNullOrEmpty(fcCls)
+                    && (inlineFunctions.ContainsKey(fcCls + "___init__")
+                        || overloadedFunctions.Contains(fcCls + "___init__")))
+                    ctorClasses[k] = fcCls;
+            }
             if (ctorClasses[k] == null) visited[k] = VisitExpression(elemExprs[k]);
         }
         if (!allConst && elemTypes == null && visited[0] is { } firstVal)
@@ -6808,6 +6832,11 @@ public partial class IRGenerator
                 virtualInstances.Add(elemName);
                 pendingConstructorTarget = elemName;
                 VisitExpression(elemExprs[k]);
+                // A factory element (`pcf.get_pin(i)`) hands the target to the
+                // constructor INSIDE the call, not to the call itself; if no
+                // construction ran, the pending name must not leak into the next
+                // `Cls(...)` this statement happens to contain.
+                if (pendingConstructorTarget == elemName) pendingConstructorTarget = "";
                 continue;
             }
 

@@ -297,4 +297,42 @@ public class MethodFactoryReturnsClassTests
         stores.Should().AllBeEquivalentTo(new Constant(7),
             because: "mcp.get_pin() through Character_LCD.__init__ is the expander DigitalInOut, not digitalio's");
     }
+
+    [Fact]
+    public void AComprehensionOfFactoryCallsTagsEachElementForTheLoop()
+    {
+        // The list form of the reported shape: adafruit_pcf8574's
+        // `pins = [pcf.get_pin(i) for i in range(8)]` followed by
+        // `for p in pins: p.switch_to_output(value=False)`. The comprehension visited
+        // each factory call as a plain expression, so no flattened element slot carried
+        // the returned class and `p.switch_to_output` mangled to an undefined
+        // `p_switch_to_output`.
+        var ir = Gen(Preamble +
+            "class Pin:\n" +
+            "    def __init__(self, n: uint8, owner: \"Owner\") -> None:\n" +
+            "        self._n: uint8 = n\n" +
+            "        self._owner: Owner = owner\n\n" +
+            "    def switch_to_output(self, value: bool = False) -> None:\n" +
+            "        self._owner.written = value\n\n" +
+            "class Owner:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self.written: bool = False\n\n" +
+            "    def get_pin(self, n: uint8) -> Pin:\n" +
+            "        return Pin(n, self)\n\n" +
+            "o = Owner()\n" +
+            "pins = [o.get_pin(i) for i in range(3)]\n" +
+            "for p in pins:\n" +
+            "    p.switch_to_output(value=True)\n" +
+            "GPIOR1.value = o.written\n");
+
+        // Each element expands Pin.switch_to_output once, and the write lands on the
+        // owner's field -- the read has to reach the same `o_written` storage.
+        ir.Functions.SelectMany(f => f.Body).OfType<InlineExpansionMarker>()
+            .Count(m => m.FuncName == "Pin_switch_to_output" && !m.IsEnd)
+            .Should().Be(3, because: "the unrolled loop calls the method once per pin");
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.EndsWith("GPIOR1", StringComparison.Ordinal))
+            .ToList();
+        Assert.Contains(stores, s => s.Src is Variable sv && sv.Name == "o_written");
+    }
 }
