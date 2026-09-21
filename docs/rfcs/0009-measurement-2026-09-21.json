@@ -1,0 +1,92 @@
+{
+  "rfc": "0009-optional-tagged-union",
+  "date": "2026-09-21",
+  "compiler_commit": "9ebbbb6386ae64373bb8e7d7531ed7e21f8101df (rescue/optional, at main)",
+  "pymcu_avr_commit": "2f3880c62e951f5f6afa918b071780ad2bd17c64",
+  "target": "atmega328p",
+  "toolchain": "GNU Binutils 2.45.1 (avr-as/avr-ld/avr-objcopy), Avr8Sharp.TestKit 1.1.0-beta1 (cycle-accurate classic-core AVR sim)",
+  "measured_with": "hand-written GAS snippets (same method as RFC 0006 section 7 -- these are the mechanism cost, not the compiler's actual output). Bytes = nm label deltas read..read_end (callee) and m_start..m_end (caller); cycles = Cpu.Cycles between the same two byte addresses on ArduinoUnoSimulation. Snippets and the sim harness live on branch rescue/optional-proto under proto/optional-tag/; they are never merged into the RFC branch.",
+  "measured_unit": "def read() -> Optional[uint8]: if <PINB0>: return None; return 42  /  r = read(); if r is None: led_on(); else: PORTB = r.  The runtime fact is PINB.0 (SBIC/SBIS), which the sim reads as 0; two assembled variants walk each arm. Semantic check: the _val arm leaves PORTB=0x2A (payload 42), the _none arm leaves DDRB=PORTB=0x20 (led).",
+  "candidates": {
+    "base": {
+      "shape": "today: plain -> uint8, no None anywhere (the zero-cost gate anchor)",
+      "callee_bytes": 14, "caller_bytes": 6, "code_bytes": 44,
+      "cycles_val": 13, "cycles_none": 14,
+      "note": "CALL + OUT only; no check exists because the type cannot be None"
+    },
+    "a_tflag": {
+      "shape": "T flag carries the tag (SET=none, CLT=value at each return); caller materializes with MOV R19,R1 + BLD R19,0 then TST/BRNE",
+      "callee_bytes": 16, "caller_bytes": 20, "code_bytes": 60,
+      "cycles_val": 20, "cycles_none": 22,
+      "tag_machinery_caller_bytes": 8,
+      "conflicts": "unusable when the callee is CanFail (T already means 'exception in flight', R22 the code) and inside a try body (every call gets a BranchOnError/BRTS inserted before CanFail is known, so a None return reads as an exception). adafruit_dht.measure() raises RuntimeError, so the headline demandant cannot use this wire."
+    },
+    "a_tflag_imm": {
+      "shape": "same wire, but the caller consumes T with a bare BRTS -- valid only when `is None` is the very next use before any clobbering call",
+      "callee_bytes": 16, "caller_bytes": 14, "code_bytes": 54,
+      "cycles_val": 17, "cycles_none": 19,
+      "tag_machinery_caller_bytes": 2,
+      "note": "the cheapest read of a tag, but gated on adjacency AND non-CanFail; see RFC open questions"
+    },
+    "b_tagbyte": {
+      "shape": "tag byte in the return run: R24 payload, R25 tag (8-bit payload; the pair's second register is free). Callee: CLR R25 (value) / LDI R25,1 (none). Caller: MOV tag into the local's tag byte, TST/BRNE.",
+      "callee_bytes": 16, "caller_bytes": 18, "code_bytes": 58,
+      "cycles_val": 19, "cycles_none": 21,
+      "tag_machinery_caller_bytes": 6,
+      "note": "uniform: works for CanFail callees and inside try, because the exception channel (T + R22) is untouched"
+    },
+    "b_tagbyte16": {
+      "shape": "16-bit payload R24:R25, tag in R22 (arg1's slot, dead at return)",
+      "callee_bytes": 18, "caller_bytes": 18, "code_bytes": 60,
+      "cycles_val": 20, "cycles_none": 21,
+      "tag_machinery_caller_bytes": 6
+    },
+    "c_sentinel": {
+      "shape": "no tag at all: None is a provably-unused payload value (0xFF for a uint8 the compiler has range-proven). Caller: CPI R24,0xFF + BREQ.",
+      "callee_bytes": 14, "caller_bytes": 16, "code_bytes": 54,
+      "cycles_val": 17, "cycles_none": 20,
+      "tag_machinery_caller_bytes": 4,
+      "note": "cheapest read, zero materialization -- but only when a payload value is provably free; CPython semantics forbid it otherwise (0xFF is a real uint8). Optimization note, not a representation."
+    },
+    "d_outparam": {
+      "shape": "caller passes a pointer to a {payload,tag} slot; callee stores both (MOVW Z + ST/STD). Caller loads tag, tests, loads payload.",
+      "callee_bytes": 24, "caller_bytes": 28, "code_bytes": 76,
+      "cycles_val": 28, "cycles_none": 27,
+      "tag_machinery_caller_bytes": 16,
+      "sram": "+1 byte per stored value (the tag) in the slot; register forms keep the tag in a register until the allocator spills it",
+      "note": "the heaviest wire, but it is also what a tag FIELD costs (f_field) -- the store form is unavoidable wherever the value must persist"
+    },
+    "e_union_ifn": {
+      "shape": "Union[int, float, None]: tag in R20, 3 states (snippet: 0=float in R22:R25, 1=int in R24:R25, 2=None; each member returns in its own natural registers, the tag says which are live; declaration order would give int=0). Caller: MOV tag, CPI 2/BREQ (is None), CPI 0/BREQ (isinstance dispatch).",
+      "callee_bytes": 22, "caller_bytes": 26, "code_bytes": 72,
+      "cycles_val": 25, "cycles_none": 21,
+      "tag_machinery_caller_bytes": 10,
+      "note": "the value arm's 4xLDI dominates; the tag machinery over (b) is one extra CPI+BREQ per additional member"
+    },
+    "f_field": {
+      "shape": "Optional field in a Model B slot: slot = {payload byte, tag byte}; store = ST payload + STD tag; `if self._x is None` = LDD tag + TST + BRNE",
+      "callee_bytes": 0, "caller_bytes": 28, "code_bytes": 52,
+      "cycles_val": 16, "cycles_none": 17,
+      "sram": "+1 byte per Optional field (the tag)",
+      "note": "measured inside main (no call); the adafruit_dht shape is f_field composed with b_tagbyte: field stores the tag, the property returns field.payload + field.tag"
+    }
+  },
+  "summary_deltas_vs_base": {
+    "comment": "whole-unit delta; the two arms' bodies (OUT vs SBI+SBI) are the program's own semantics and constant across candidates",
+    "a_tflag": "+16 code bytes, +7/+8 cycles (val/none)",
+    "a_tflag_imm": "+10 code bytes, +4/+5 cycles",
+    "b_tagbyte": "+14 code bytes, +6/+7 cycles",
+    "b_tagbyte16": "+16 code bytes, +7/+7 cycles",
+    "c_sentinel": "+10 code bytes, +4/+6 cycles (only when a value is provably free)",
+    "d_outparam": "+32 code bytes, +13/+15 cycles"
+  },
+  "diagnostics_today": {
+    "captured": "scratch projects under /tmp/rfc0009/diag built with ~/Repos/pymcu-avr-rescue-measure/.venv/bin/pymcu (pymcu-compiler 0.1.0b1)",
+    "real_subroutine_optional_return_none": "NO DIAGNOSTIC. `def read(pin: uint8) -> Optional[uint8]: if p.value(): return None; return pin + 1` builds; the .mir carries {\"$t\":\"ret\",\"value\":{\"$t\":\"none\"}}, CompileReturn skips the load and RET runs with R24 = the pin read; the caller's `if r is None:` folds to False (r is not None-known) and its body is dropped. Silent miscompile on both sides.",
+    "inline_optional_return_none": "CompileError at the return: 'PyMCU reads Optional[X] as X, and this return gives None at run time, which has no width to put in the result of 'read'. Return a value on this path, or let the caller decide before calling (the compiler folds `is None` on an argument it can see).'",
+    "union_int_float_none_return": "CompileError at the def: 'a union type annotation is not supported. PyMCU needs one concrete type, because the storage for a value is decided at compile time and two types do not share a size'",
+    "optional_field_runtime_write": "NO DIAGNOSTIC. `self._last: Optional[uint8] = None` then a runtime `self._last = v`/`= None`: both stores emit nothing (the field never gets storage) and `s._last is None` folds on whichever write the compiler saw last.",
+    "plain_int_return_none_real_subroutine": "NO DIAGNOSTIC. `-> int` + runtime `return None` returns the register's residual value (here, 1).",
+    "optional_param_default_none": "works today at zero cost: `x: Optional[uint8] = None` binds a compile-time None, `x is None` folds per call site (the 2026-09-14 decision)"
+  }
+}
