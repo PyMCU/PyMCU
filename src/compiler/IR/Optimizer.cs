@@ -1077,11 +1077,22 @@ private static Function CloneFunction(Function f)
                 var isDead = false;
 
                 var dst = GetDst(instr);
-                if (dst is Temporary tDst && instr is not Call)
+                if (dst is Temporary tDst)
                 {
                     if (!currentLive.Contains(tDst.Name))
                     {
-                        isDead = true;
+                        if (instr is Call or IndirectCall or VirtualCall)
+                        {
+                            // The call must run for its side effects, but a result nobody
+                            // reads is a name that still claims a static slot. An unrolled
+                            // `for i, b in enumerate(buf): port.write(b)` leaves one such
+                            // temp per iteration, which is SRAM the program does not have.
+                            instr = ReplaceDst(instr, new NoneVal());
+                        }
+                        else
+                        {
+                            isDead = true;
+                        }
                     }
                     else
                     {
@@ -2013,6 +2024,7 @@ private static Function CloneFunction(Function f)
         FlashLoadPtr flp => flp with { Dst = newDst },
         BytearrayLoad bld => bld with { Dst = newDst },
         IndirectCall ic => ic with { Dst = newDst },
+        VirtualCall vc => vc with { Dst = newDst },
         GcAlloc ga => ga with { Dst = newDst },
         _ => instr,
     };
