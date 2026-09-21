@@ -94,11 +94,12 @@ public class StringMethodDiagnosticTests
     public void FormatOnALiteral_StillLowersInsteadOfBeingRefused()
         => Assert.NotNull(Gen("def main():\n    s = \"v{}\".format(1)\n"));
 
-    // Not the assignment form, which TryEmitJoinAssign folds, but join used as a value
-    // somewhere else: that is the shape with its own message.
+    // A join whose sequence the compiler cannot lay out gets the join-specific refusal --
+    // the one that names the sequence forms that DO work -- not a generic member message.
     [Fact]
-    public void JoinUsedAsAValue_KeepsItsOwnMessage()
-        => Assert.Contains("assignment form", Refusal("    x = len(\",\".join([\"a\", \"b\"]))"));
+    public void JoinOfAnUnknownSequence_KeepsItsOwnMessage()
+        => Assert.Contains("str.join needs a list written out at the call",
+            Refusal("    n: uint8 = 0\n    x = len(\",\".join(n))"));
 
     // split() is carved out the way join() is: it works as the iterable of a `for` or of
     // enumerate() over a compile-time string, so a value position gets the message that

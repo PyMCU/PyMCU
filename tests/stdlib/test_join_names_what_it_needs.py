@@ -197,12 +197,13 @@ BARE_EXPRESSION = (
 )
 
 
-def test_a_join_that_really_is_a_bare_expression_still_asks_for_the_assignment(tmp_path):
-    """The invariant. The old sentence is the right one for exactly this program, and the
-    point of the fix is that it stops being printed for the others -- not that it goes away."""
-    ok, out, _ = compile_(tmp_path, BARE_EXPRESSION)
-    assert not ok, out
-    assert "assignment form" in out, out
+def test_a_join_that_really_is_a_bare_expression_now_compiles(tmp_path):
+    """Was the invariant of this file: the bare-expression join used to be told to put the
+    result in a variable. Expression position is supported now -- a list of compile-time
+    strings folds to the joined constant, so this writes "a,b"."""
+    ok, out, mir = compile_(tmp_path, BARE_EXPRESSION)
+    assert ok, out
+    assert "a,b" in _flash_strings(mir), _flash_strings(mir)
 
 
 OWN_JOIN_METHOD = (

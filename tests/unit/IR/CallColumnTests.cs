@@ -95,11 +95,11 @@ public class CallColumnTests
     }
 
     [Fact]
-    public void StrJoinUsedAsAnExpression_PointsAtTheMethod()
+    public void StrJoinWithTwoArguments_PointsAtTheMethod()
     {
         const string src =
             "def main():\n" +
-            "    n: uint8 = len(\"-\".join([\"a\", \"b\"]))\n";
+            "    n: uint8 = len(\"-\".join([\"a\"], [\"b\"]))\n";
         PointsAt(src, ".join(", "join");
     }
 

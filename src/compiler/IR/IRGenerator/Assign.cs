@@ -2912,6 +2912,15 @@ public partial class IRGenerator
             return true;
         }
 
+        // `s = sep.join(f"{x}" for x in buf)` -- a generator or list comprehension over
+        // a compile-time sequence, materialized into a runtime-string buffer the way an
+        // f-string-as-value is.
+        if (jc.Args[0] is GeneratorExpr or ListCompExpr)
+        {
+            EmitJoinRuntimeStr(target, sep, jc.Args[0], value);
+            return true;
+        }
+
         // The separator is a compile-time string, so this IS str.join in assignment form and
         // the SEQUENCE is what cannot be laid out. The refusal used to be left to the bare
         // expression path, which answers "assign the result to a variable before using it":
@@ -2926,8 +2935,10 @@ public partial class IRGenerator
     private const string JoinIsCompileTime =
         "str.join lays its result out at compile time (a PyMCU string lives in flash, and "
         + "there is no heap to build a new one in), so it needs a separator that is a "
-        + "compile-time string and a list whose elements are all compile-time strings. The "
-        + "one run-time form is ''.join([chr(b) for b in buf]) over a fixed-size buffer.";
+        + "compile-time string and a list whose elements are all compile-time strings "
+        + "(folded to one constant), or a generator/list comprehension over a "
+        + "compile-time sequence producing strings -- f-strings, compile-time strings, "
+        + "or chr(b) -- which materializes into a fixed buffer.";
 
     // Name the element that cannot be laid out, and what to write instead. Naming the FIRST
     // one is deliberate: a message that says "some element" leaves the reader checking each
@@ -2935,8 +2946,9 @@ public partial class IRGenerator
     private string JoinSequenceRefusal(Expression seq)
     {
         if (seq is not ListExpr le)
-            return "str.join needs a list written out at the call ([a, b, c]), or "
-                   + "[chr(b) for b in buf] over a fixed-size buffer. " + JoinIsCompileTime;
+            return "str.join needs a list written out at the call ([a, b, c]), "
+                   + "[chr(b) for b in buf] over a fixed-size buffer, or a "
+                   + "generator/comprehension over a compile-time sequence. " + JoinIsCompileTime;
 
         for (int i = 0; i < le.Elements.Count; i++)
         {
@@ -3892,17 +3904,7 @@ public partial class IRGenerator
     {
         if (value is not FStringExpr topFs) return false;
 
-        // Flatten nested unspecced f-string parts into one part list.
-        var parts = new List<FStringPart>();
-        void Flatten(FStringExpr f)
-        {
-            foreach (var p in f.Parts)
-            {
-                if (p.IsExpr && p.Expr is FStringExpr nf && string.IsNullOrEmpty(p.FormatSpec)) Flatten(nf);
-                else parts.Add(p);
-            }
-        }
-        Flatten(topFs);
+        var parts = FlattenFStringParts(topFs);
 
         // Fully constant (literals / static strings / declared consts): keep the const path.
         bool IsConstPart(FStringPart p) =>
@@ -3915,42 +3917,8 @@ public partial class IRGenerator
                  || constantVariables.ContainsKey(cv.Name)));
         if (parts.All(IsConstPart)) return false;
 
-        // The strfmt helpers must be loaded (pymcu build injects the import on detection).
-        string? strfmtMod = null;
-        foreach (var kv in importedAliases)
-            if (kv.Value == "pymcu.strfmt") { strfmtMod = kv.Key; break; }
-        if (strfmtMod == null)
-            throw UserError(
-                "assigning an f-string with runtime values needs the pymcu.strfmt helpers; " +
-                "`pymcu build` injects them automatically -- if invoking the compiler by hand, " +
-                "add `import pymcu.strfmt as _pymcu_strfmt` to the entry file.", value);
-
-        // Static size bound (type-free, conservative): a plain interpolation is at most 11
-        // chars (sign + 10 decimal digits of a 32-bit value); a spec part is bounded by
-        // max(width, natural digits for its base) + a possible sign.
-        int bound = 1;   // NUL terminator
-        foreach (var p in parts)
-        {
-            if (!p.IsExpr) { bound += p.Text.Length; continue; }
-            string? st = StaticStringOf(p.Expr!);
-            if (st != null) { bound += st.Length; continue; }
-            if (p.Expr is IntegerLiteral pil) { bound += pil.Value.ToString().Length; continue; }
-            if (!string.IsNullOrEmpty(p.FormatSpec))
-            {
-                if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
-                {
-                    var (w, prec, _) = ParseFloatFormatSpec(p.FormatSpec);
-                    bound += Math.Max(w, 12 + prec);   // sign + 10 int digits + '.' + prec
-                }
-                else
-                {
-                    var (w, radix, _, _) = ParseFormatSpec(p.FormatSpec);
-                    int natural = radix switch { 2 => 32, 8 => 11, 16 => 8, _ => 11 };
-                    bound += Math.Max(w, natural) + 1;
-                }
-            }
-            else bound += 11;
-        }
+        string strfmtMod = RequireStrfmtMod(value);
+        int bound = 1 + FStringPartsBound(parts);   // + NUL terminator
 
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + target
@@ -3978,17 +3946,93 @@ public partial class IRGenerator
             runtimeStrVars[qualified] = (lenVar, bound);
         }
 
-        var buf = new VariableExpr(target);
+        EmitFStringPartsInto(strfmtMod, target, lenVar, parts);
+
+        // NUL terminator (the bound reserves its byte).
+        VisitStatement(new AssignStmt(
+            new IndexExpr(new VariableExpr(target), new VariableExpr(lenVar)),
+            new IntegerLiteral(0)));
+        return true;
+    }
+
+    // The strfmt helpers must be loaded (pymcu build injects the import on detection).
+    private string RequireStrfmtMod(Expression blame)
+    {
+        foreach (var kv in importedAliases)
+            if (kv.Value == "pymcu.strfmt") return kv.Key;
+        throw UserError(
+            "building a string with runtime values needs the pymcu.strfmt helpers; " +
+            "`pymcu build` injects them automatically -- if invoking the compiler by hand, " +
+            "add `import pymcu.strfmt as _pymcu_strfmt` to the entry file.", blame);
+    }
+
+    // Flatten nested unspecced f-string parts into one part list.
+    private List<FStringPart> FlattenFStringParts(FStringExpr topFs)
+    {
+        var parts = new List<FStringPart>();
+        void Flatten(FStringExpr f)
+        {
+            foreach (var p in f.Parts)
+            {
+                if (p.IsExpr && p.Expr is FStringExpr nf && string.IsNullOrEmpty(p.FormatSpec)) Flatten(nf);
+                else parts.Add(p);
+            }
+        }
+        Flatten(topFs);
+        return parts;
+    }
+
+    // Static size bound of one f-string's content (type-free, conservative): a plain
+    // interpolation is at most 11 chars (sign + 10 decimal digits of a 32-bit value);
+    // a spec part is bounded by max(width, natural digits for its base) + a possible
+    // sign. The NUL terminator is the caller's byte to add.
+    private int FStringPartsBound(List<FStringPart> parts)
+    {
+        int bound = 0;
+        foreach (var p in parts)
+        {
+            if (!p.IsExpr) { bound += p.Text.Length; continue; }
+            string? st = StaticStringOf(p.Expr!);
+            if (st != null) { bound += st.Length; continue; }
+            if (p.Expr is IntegerLiteral pil) { bound += pil.Value.ToString().Length; continue; }
+            if (!string.IsNullOrEmpty(p.FormatSpec))
+            {
+                if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
+                {
+                    var (w, prec, _) = ParseFloatFormatSpec(p.FormatSpec);
+                    bound += Math.Max(w, 12 + prec);   // sign + 10 int digits + '.' + prec
+                }
+                else
+                {
+                    var (w, radix, _, _) = ParseFormatSpec(p.FormatSpec);
+                    int natural = radix switch { 2 => 32, 8 => 11, 16 => 8, _ => 11 };
+                    bound += Math.Max(w, natural) + 1;
+                }
+            }
+            else bound += 11;
+        }
+        return bound;
+    }
+
+    // `lenVar = strfmtMod._fs_*(buf, lenVar, ...)` -- one chained strfmt call.
+    private void EmitStrfmtCall(string strfmtMod, string lenVar, string fn, List<Expression> args) =>
+        VisitStatement(new AssignStmt(new VariableExpr(lenVar),
+            new CallExpr(new MemberAccessExpr(new VariableExpr(strfmtMod), fn), args)));
+
+    // Emit the _fs_* calls that write an f-string's parts into buf at position lenVar,
+    // threading lenVar through each call's return. No terminator -- that is the caller's.
+    private void EmitFStringPartsInto(string strfmtMod, string bufName, string lenVar,
+                                    List<FStringPart> parts)
+    {
+        var buf = new VariableExpr(bufName);
         var pos = new VariableExpr(lenVar);
-        void EmitFsCall(string fn, List<Expression> args) =>
-            VisitStatement(new AssignStmt(new VariableExpr(lenVar),
-                new CallExpr(new MemberAccessExpr(new VariableExpr(strfmtMod), fn), args)));
 
         string pending = "";
         void FlushLit()
         {
             if (pending.Length == 0) return;
-            EmitFsCall("_fs_text", new List<Expression> { buf, pos, new StringLiteral(pending) });
+            EmitStrfmtCall(strfmtMod, lenVar, "_fs_text",
+                new List<Expression> { buf, pos, new StringLiteral(pending) });
             pending = "";
         }
 
@@ -4008,7 +4052,7 @@ public partial class IRGenerator
                     // float() around the operand: an int arg would marshal raw into the
                     // float parameter (call args carry their own type); the builtin
                     // conversion yields a FLOAT-typed value, or folds a literal.
-                    EmitFsCall("_fs_ffmt", new List<Expression>
+                    EmitStrfmtCall(strfmtMod, lenVar, "_fs_ffmt", new List<Expression>
                     {
                         buf, pos,
                         new CallExpr(new VariableExpr("float"), new List<Expression> { p.Expr! }),
@@ -4022,7 +4066,7 @@ public partial class IRGenerator
                     int flags = (upper ? 0x01 : 0)
                               | (LooksSigned(p.Expr!) ? 0x02 : 0)
                               | (padc == '0' ? 0x04 : 0);
-                    EmitFsCall("_fs_fmt", new List<Expression>
+                    EmitStrfmtCall(strfmtMod, lenVar, "_fs_fmt", new List<Expression>
                     {
                         buf, pos, p.Expr!,
                         new IntegerLiteral(radix), new IntegerLiteral(w), new IntegerLiteral(flags),
@@ -4031,16 +4075,201 @@ public partial class IRGenerator
             }
             else
             {
-                EmitFsCall(LooksSigned(p.Expr!) ? "_fs_i32" : "_fs_u32",
-                           new List<Expression> { buf, pos, p.Expr! });
+                EmitStrfmtCall(strfmtMod, lenVar,
+                    LooksSigned(p.Expr!) ? "_fs_i32" : "_fs_u32",
+                    new List<Expression> { buf, pos, p.Expr! });
             }
         }
         FlushLit();
+    }
+
+    // `sep.join(<genexp or listcomp>)` materialized as a runtime string: the comprehension
+    // unrolls at compile time the way the genexp reductions do (GenExpWalk), and each
+    // produced element's text is appended to a compiler-managed bytearray through the
+    // same pymcu.strfmt helpers an f-string-as-value uses. Returns (bufName, lenVar);
+    // bufName is `target` for an assignment or a fresh `__joinN` for a value position.
+    // The result is registered in runtimeStrVars, so print()/len()/uart.write_str treat
+    // it exactly like an f-string-as-value.
+    private (string Buf, string LenVar) EmitJoinRuntimeStr(string bufName, string sep,
+                                                         Expression seq, Expression blame)
+    {
+        GeneratorExpr? gen = seq switch
+        {
+            GeneratorExpr g => g,
+            ListCompExpr lc => new GeneratorExpr(lc.Element, lc.VarName, lc.Iterable,
+                lc.Var2Name, lc.Iterable2, lc.Filter) { Line = lc.Line, Column = lc.Column },
+            _ => null,
+        };
+        if (gen == null) throw UserError(JoinSequenceRefusal(seq), seq);
+
+        string strfmtMod = RequireStrfmtMod(blame);
+
+        // The buffer's size is decided before any code runs, so bound the elements under
+        // a measuring walk first: only a compile-time STRING binding is installed per
+        // iteration (no IR -- the element bound never needs a number), which is enough
+        // for `", ".join(w for w in words)` to see each word's length.
+        var outer = GenExpIterableElements(gen.Iterable)
+            ?? throw UserError(JoinIterableRefusal(gen.Iterable), gen.Iterable);
+        var inner = gen.Iterable2 == null ? null
+            : GenExpIterableElements(gen.Iterable2)
+              ?? throw UserError(JoinIterableRefusal(gen.Iterable2), gen.Iterable2);
+        string varKey = QualifyLoopVar(gen.VarName);
+        string? var2Key = string.IsNullOrEmpty(gen.Var2Name) ? null : QualifyLoopVar(gen.Var2Name);
+
+        int bound = 1;   // NUL terminator
+        int produced = 0;
+        void BindMeasure(string key, Expression oe)
+        {
+            if (TryEvalConstStrElement(oe, out var t)) strConstantVariables[key] = t;
+            else strConstantVariables.Remove(key);
+        }
+        foreach (var oe in outer)
+        {
+            BindMeasure(varKey, oe);
+            if (inner != null)
+                foreach (var ie in inner)
+                {
+                    BindMeasure(var2Key!, ie);
+                    bound += JoinElementBound(gen.Element, seq);
+                    produced++;
+                    strConstantVariables.Remove(var2Key!);
+                }
+            else
+            {
+                bound += JoinElementBound(gen.Element, seq);
+                produced++;
+            }
+            strConstantVariables.Remove(varKey);
+        }
+        bound += Math.Max(0, produced - 1) * sep.Length;
+
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + bufName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        string lenVar = "__jnlen_" + bufName;
+
+        if (runtimeStrVars.TryGetValue(qualified, out var existing))
+        {
+            if (bound > existing.Capacity)
+                throw UserError(
+                    $"'{bufName}' is re-assigned a join result needing {bound} bytes but its " +
+                    $"buffer was sized {existing.Capacity} by an earlier assignment", blame);
+            lenVar = existing.LenVar;
+            VisitStatement(new AssignStmt(new VariableExpr(lenVar), new IntegerLiteral(0)));
+        }
+        else
+        {
+            VisitStatement(new VarDecl(bufName, "bytearray",
+                new CallExpr(new VariableExpr("bytearray"),
+                             new List<Expression> { new IntegerLiteral(bound) })));
+            VisitStatement(new VarDecl(lenVar, "uint16", new IntegerLiteral(0)));
+            runtimeStrVars[qualified] = (lenVar, bound);
+        }
+
+        var bufE = new VariableExpr(bufName);
+        var posE = new VariableExpr(lenVar);
+
+        // The separator goes between PRODUCED elements. With no runtime filter that is
+        // "not the first iteration" at compile time; behind a runtime filter the count of
+        // produced elements is itself runtime, so a `sepWritten` flag seeded before the
+        // first guard jump answers it instead (the min()/max() `produced` pattern: a
+        // Temporary, so no local-constant folding can answer the read).
+        bool first = true;
+        Temporary? sepFlag = null;
+        GenExpWalk(gen, "str.join", (g, guarded) =>
+        {
+            if (!first && sep.Length > 0)
+            {
+                void WriteSep() => EmitStrfmtCall(strfmtMod, lenVar, "_fs_text",
+                    new List<Expression> { bufE, posE, new StringLiteral(sep) });
+                if (sepFlag != null)
+                {
+                    string skipSep = MakeLabel();
+                    Emit(new JumpIfZero(sepFlag, skipSep));
+                    WriteSep();
+                    Emit(new Label(skipSep));
+                }
+                else WriteSep();
+            }
+            EmitJoinElementInto(strfmtMod, bufName, lenVar, g.Element);
+            if (sepFlag != null)
+                Emit(new Copy(new Constant(1), sepFlag));
+            first = false;
+            return true;
+        }, beforeFilterJump: () =>
+        {
+            if (sep.Length > 0 && sepFlag == null)
+            {
+                sepFlag = MakeTemp();
+                Emit(new Copy(new Constant(first ? 0 : 1), sepFlag));
+            }
+        });
 
         // NUL terminator (the bound reserves its byte).
-        VisitStatement(new AssignStmt(new IndexExpr(buf, pos), new IntegerLiteral(0)));
-        return true;
+        VisitStatement(new AssignStmt(new IndexExpr(bufE, posE), new IntegerLiteral(0)));
+        return (bufName, lenVar);
     }
+
+    // Width bound of one produced element, asked while its iteration's binding is live so
+    // a name bound to a compile-time string answers its own length.
+    private int JoinElementBound(Expression e, Expression seq)
+    {
+        if (e is FStringExpr fel) return FStringPartsBound(FlattenFStringParts(fel));
+        if (StaticStringOf(e) is { } t) return t.Length;
+        if (e is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 }) return 1;
+        throw UserError(JoinElementRefusal(e), seq);
+    }
+
+    // Append one produced element's text to the buffer. The element shapes are the ones
+    // CPython's join accepts -- strings -- in the spellings this compiler can build:
+    // an f-string, a compile-time string (a literal, a name or field bound to one, a
+    // concat of them), or chr(b) writing a single byte.
+    private void EmitJoinElementInto(string strfmtMod, string bufName, string lenVar,
+                                   Expression e)
+    {
+        if (e is FStringExpr fel)
+        {
+            EmitFStringPartsInto(strfmtMod, bufName, lenVar, FlattenFStringParts(fel));
+            return;
+        }
+        if (StaticStringOf(e) is { } constEl)
+        {
+            EmitStrfmtCall(strfmtMod, lenVar, "_fs_text", new List<Expression>
+            {
+                new VariableExpr(bufName), new VariableExpr(lenVar), new StringLiteral(constEl),
+            });
+            return;
+        }
+        if (e is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 } chrEl)
+        {
+            VisitStatement(new AssignStmt(
+                new IndexExpr(new VariableExpr(bufName), new VariableExpr(lenVar)),
+                chrEl.Args[0]));
+            VisitStatement(new AssignStmt(new VariableExpr(lenVar),
+                new BinaryExpr(new VariableExpr(lenVar), Frontend.BinaryOp.Add,
+                               new IntegerLiteral(1))));
+            return;
+        }
+        throw UserError(JoinElementRefusal(e), e);
+    }
+
+    private string JoinIterableRefusal(Expression iterable) =>
+        "str.join over a generator expression unrolls it when the program is compiled, and "
+        + "the iterable's length is not known when the program is compiled. The forms that "
+        + "give it one: a list or tuple literal, a parameter bound to one, a fixed-size "
+        + "array, a compile-time string, or range() with constant bounds.";
+
+    private string JoinElementRefusal(Expression e) =>
+        "str.join takes a sequence of strings, and this element is not a string the "
+        + "compiler can build: "
+        + (e switch
+        {
+            VariableExpr v => $"'{v.Name}' is not a compile-time string here",
+            CallExpr => "a call result (only chr(b) has a string lowering)",
+            _ => "it is only known at run time",
+        })
+        + ". The element forms supported: an f-string, a compile-time string, or chr(b). "
+        + "CPython would also refuse a non-string element (TypeError).";
 
     // Syntactic signedness of an interpolated expression: a declared-signed variable, a
     // negative literal or a unary minus anywhere in it. Conservative -- unsigned by default

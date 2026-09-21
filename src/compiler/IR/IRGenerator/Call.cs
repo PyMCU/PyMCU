@@ -587,15 +587,13 @@ public partial class IRGenerator
                     if (TryEmitConstStrMethod(expr, memC) is { } constStrResult)
                         return constStrResult;
 
-                    // str.join used as a bare expression: the supported forms live in the
-                    // assignment lowering (constant fold and the bytes-to-string idiom), so
-                    // point there instead of the generic nested-member message.
-                    if (memC.Member == "join")
-                        throw UserError(
-                            "str.join is supported in assignment form: s = sep.join([...]) with " +
-                            "compile-time strings, or s = ''.join([chr(b) for b in buf]) over a " +
-                            "fixed-size buffer; assign the result to a variable before using it",
-                            memC);
+                    // `sep.join(<seq>)` in a value position: a compile-time string list
+                    // folds to a constant; a generator/comprehension over a compile-time
+                    // sequence materializes into a runtime-string buffer (the same
+                    // lowering an f-string-as-value gets). A non-string receiver's .join
+                    // is somebody's own method and falls through to the generic checks.
+                    if (memC.Member == "join" && StaticStringOf(memC.Object) is { } joinSep)
+                        return EmitJoinValue(expr, joinSep);
                     // s.split(sep) DOES work -- as the iterable of a `for` or of enumerate(),
                     // where the chunks unroll at compile time. In a value position it would
                     // have to be a list, and there is no heap to build one in.
@@ -7238,12 +7236,17 @@ public partial class IRGenerator
         FStringExpr? sfs = expr.Args[0] as FStringExpr;
         (string Name, string LenVar)? runtimeStr = null;
         bool multiStr = false;
+        CallExpr? joinCall = null;
+        string? joinSep = null;
         if (sfs == null)
         {
             if (expr.Args[0] is VariableExpr rv && TryGetRuntimeStr(rv.Name, out var ri))
                 runtimeStr = (rv.Name, ri.LenVar);
             else if (expr.Args[0] is VariableExpr mv && TryGetMultiStr(mv.Name, out _, out _, out _))
                 multiStr = true;
+            else if (expr.Args[0] is CallExpr { Callee: MemberAccessExpr { Member: "join" } ujm } ujc
+                     && StaticStringOf(ujm.Object) is { } uSep)
+            { joinCall = ujc; joinSep = uSep; }
             else return null;
         }
         if (sm.Object is not VariableExpr) return null;
@@ -7258,6 +7261,8 @@ public partial class IRGenerator
             string ffn = ResolveFloatWriteFn();
             EmitStreamFString(wfn, ffn, sfs);
         }
+        else if (joinCall != null)
+            EmitJoinStream(wfn, ResolveFloatWriteFn(), joinSep!, joinCall);
         else if (multiStr) TryEmitMultiStrStream(wfn, expr.Args[0]);
         else EmitRuntimeStrStream(runtimeStr!.Value.Name, runtimeStr.Value.LenVar);
         if (sm.Member == "println") EmitStreamStr(wfn, "\n");
@@ -7319,6 +7324,128 @@ public partial class IRGenerator
             new BinaryExpr(new VariableExpr(idx), Frontend.BinaryOp.Add, new IntegerLiteral(1))));
         VisitStatement(new WhileStmt(
             new BinaryExpr(new VariableExpr(idx), Frontend.BinaryOp.Less, new VariableExpr(lenVar)), body));
+    }
+
+    // `sep.join(<compile-time seq>)` streamed straight to the writer, used by print() and
+    // uart.write_str/println. A list/tuple of compile-time strings folds to one write; a
+    // generator or list comprehension unrolls at compile time (GenExpWalk, the same walk
+    // the reductions use) into per-element writes with the separator between produced
+    // elements -- CPython's output byte for byte.
+    private void EmitJoinStream(string writeStrFn, string floatWriteFn, string sep,
+                                CallExpr call)
+    {
+        if (call.Args.Count != 1)
+            throw UserError(
+                "str.join takes one argument, the sequence to join; this call passes "
+                + $"{call.Args.Count}.", call.Callee);
+        var seq = call.Args[0];
+
+        if (seq is ListExpr or TupleExpr)
+        {
+            var elems = seq is ListExpr sll ? sll.Elements : ((TupleExpr)seq).Elements;
+            if (elems.All(e => StaticStringOf(e) != null))
+            {
+                EmitStreamStr(writeStrFn,
+                    string.Join(sep, elems.Select(e => StaticStringOf(e)!)));
+                return;
+            }
+            throw UserError(JoinSequenceRefusal(seq), seq);
+        }
+
+        GeneratorExpr? gen = seq switch
+        {
+            GeneratorExpr g => g,
+            ListCompExpr lc => new GeneratorExpr(lc.Element, lc.VarName, lc.Iterable,
+                lc.Var2Name, lc.Iterable2, lc.Filter) { Line = lc.Line, Column = lc.Column },
+            _ => null,
+        };
+        if (gen == null) throw UserError(JoinSequenceRefusal(seq), seq);
+
+        // The separator goes between PRODUCED elements. With no runtime filter that is
+        // "not the first iteration" at compile time; behind a runtime filter the count of
+        // produced elements is itself runtime, so a flag seeded before the first guard
+        // jump answers it instead (the min()/max() `produced` pattern: a Temporary, so no
+        // local-constant folding can answer the read).
+        bool first = true;
+        Temporary? sepFlag = null;
+        GenExpWalk(gen, "str.join", (g, guarded) =>
+        {
+            if (!first)
+            {
+                if (sepFlag != null)
+                {
+                    string skipSep = MakeLabel();
+                    Emit(new JumpIfZero(sepFlag, skipSep));
+                    EmitStreamStr(writeStrFn, sep);
+                    Emit(new Label(skipSep));
+                }
+                else EmitStreamStr(writeStrFn, sep);
+            }
+            EmitJoinStreamElement(writeStrFn, floatWriteFn, g.Element);
+            if (sepFlag != null)
+                Emit(new Copy(new Constant(1), sepFlag));
+            first = false;
+            return true;
+        }, beforeFilterJump: () =>
+        {
+            if (sep.Length > 0 && sepFlag == null)
+            {
+                sepFlag = MakeTemp();
+                Emit(new Copy(new Constant(first ? 0 : 1), sepFlag));
+            }
+        });
+    }
+
+    // One produced element streamed to the writer: an f-string goes through the same
+    // per-part lowering print() gives it, a compile-time string is one write_str, chr(b)
+    // is the byte itself, and a name bound to a runtime string (an f-string-as-value
+    // buffer) streams up to its tracked length.
+    private void EmitJoinStreamElement(string writeStrFn, string floatWriteFn, Expression e)
+    {
+        if (e is FStringExpr fel) { EmitStreamFString(writeStrFn, floatWriteFn, fel); return; }
+        if (e is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 } chrEl)
+        {
+            if (TryEvalConstElement(chrEl.Args[0], out int chrConst)
+                && chrConst is >= 0 and <= 255)
+                EmitStreamStr(writeStrFn, ((char)chrConst).ToString());
+            else
+                EmitStreamCharExpr(chrEl.Args[0]);
+            return;
+        }
+        if (e is VariableExpr rev && TryGetRuntimeStr(rev.Name, out var ri))
+        {
+            EmitRuntimeStrStream(rev.Name, ri.LenVar);
+            return;
+        }
+        if (StaticStringOf(e) is { } constEl) { EmitStreamStr(writeStrFn, constEl); return; }
+        throw UserError(JoinElementRefusal(e), e);
+    }
+
+    // `sep.join(<compile-time seq>)` in a value position: a list/tuple of compile-time
+    // strings folds to a constant; a generator/comprehension materializes into a
+    // compiler-managed buffer (EmitJoinRuntimeStr) whose name is the value.
+    private Val EmitJoinValue(CallExpr expr, string sep)
+    {
+        if (expr.Args.Count != 1)
+            throw UserError(
+                "str.join takes one argument, the sequence to join; this call passes "
+                + $"{expr.Args.Count}.", expr.Callee);
+        var seq = expr.Args[0];
+
+        if (seq is ListExpr vle
+            && vle.Elements.All(e => StaticStringOf(e) != null))
+            return InternConstString(string.Join(sep, vle.Elements.Select(e => StaticStringOf(e)!)));
+        if (seq is TupleExpr vte
+            && vte.Elements.All(e => StaticStringOf(e) != null))
+            return InternConstString(string.Join(sep, vte.Elements.Select(e => StaticStringOf(e)!)));
+
+        if (seq is GeneratorExpr or ListCompExpr)
+        {
+            var (buf, _) = EmitJoinRuntimeStr($"__join{tempCounter++}", sep, seq, expr);
+            return new Variable(buf, DataType.UINT8);
+        }
+
+        throw UserError(JoinSequenceRefusal(seq), seq);
     }
 
     // lcd.print_str(f"...") on an LCD-like instance: lower the f-string to method calls on the
@@ -7476,6 +7603,16 @@ public partial class IRGenerator
             if (staticStr != null)
             {
                 EmitStreamStr(writeStrFn, staticStr);
+                return;
+            }
+
+            // `print(sep.join(<compile-time seq>))`: a list of compile-time strings folds
+            // to one write; a generator/comprehension unrolls to per-element writes, the
+            // same lowering an f-string's parts get.
+            if (arg is CallExpr { Callee: MemberAccessExpr { Member: "join" } joinM } joinCall
+                && StaticStringOf(joinM.Object) is { } joinSep)
+            {
+                EmitJoinStream(writeStrFn, floatWriteFn, joinSep, joinCall);
                 return;
             }
 
