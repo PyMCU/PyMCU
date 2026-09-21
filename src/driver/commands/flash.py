@@ -17,7 +17,7 @@ from typing import Optional
 import tomlkit
 import typer
 from rich.console import Console
-from ..programmers import get_programmer
+from ..programmers import get_programmer, registered_programmers
 from ..core.boards import BOARD_CHIPS, default_programmer, firmware_artifacts
 
 console = Console()
@@ -109,7 +109,14 @@ def flash(
         programmer = get_programmer(programmer_name, console)
         if programmer is None:
             console.print(f"[red]Unknown programmer: {programmer_name!r}[/red]")
-            console.print("Supported programmers: avrdude, pk2cmd, ipecmd")
+            console.print(
+                "Registered programmers: " + ", ".join(registered_programmers())
+            )
+            console.print(
+                "PIC programmers ship with the pymcu-pic package "
+                "('pk2cmd' for PICkit 2/3 and PKOB, 'pymcuprog' for the "
+                "Curiosity Nano): [bold]pip install pymcu-pic[/bold]"
+            )
             raise typer.Exit(code=1)
 
         # 3. Locate the firmware artifact this target/programmer flashes from

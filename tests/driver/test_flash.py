@@ -4,7 +4,9 @@
 # programmer dispatch.  No programmer is ever installed or run — the programmer
 # lookup is replaced by a recording fake.
 
+from importlib.metadata import EntryPoint
 from pathlib import Path
+from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 from src.driver.main import app
@@ -65,6 +67,13 @@ def _invoke_flash(*args: str):
 AVR_TOML = '[tool.pymcu]\ntarget = "atmega328p"\n'
 PICO_TOML = '[tool.pymcu]\nboard = "raspberry_pi_pico"\n'
 PICO2_TOML = '[tool.pymcu]\ntarget = "rp2350"\n'
+
+
+def _registered_ep(name: str):
+    """An entry point under `pymcu.programmers` that only lends its name."""
+    ep = MagicMock(spec=EntryPoint)
+    ep.name = name
+    return ep
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +199,26 @@ class TestProgrammerDispatch:
         result = _invoke_flash()
         assert result.exit_code == 1
         assert "unknown programmer" in unwrapped(result.output).lower()
+
+    def test_unknown_programmer_lists_registered_names_and_points_at_pymcu_pic(
+        self, tmp_path, monkeypatch, unwrapped
+    ):
+        # The PIC programmers moved to pymcu-pic, so the refusal names what is
+        # actually registered -- never a hard-coded list that could keep naming
+        # a programmer the driver no longer ships -- and says where pk2cmd
+        # went.
+        eps = [_registered_ep("pk2cmd"), _registered_ep("pymcuprog")]
+        monkeypatch.setattr(
+            "src.driver.programmers.entry_points", lambda **kw: eps
+        )
+        toml = AVR_TOML + '\n[tool.pymcu.flash]\nprogrammer = "nope"\n'
+        _project(tmp_path, monkeypatch, toml, ("firmware.hex",))
+        result = _invoke_flash()
+        assert result.exit_code == 1
+        out = unwrapped(result.output)
+        assert "unknown programmer" in out.lower()
+        assert "pk2cmd" in out and "pymcuprog" in out
+        assert "pymcu-pic" in out
 
 
 # ---------------------------------------------------------------------------

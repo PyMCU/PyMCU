@@ -97,3 +97,22 @@ class TestBuiltinFallback:
         # flash` can point at the package that provides it.
         _patch_eps(monkeypatch, [])
         assert get_programmer("pk2cmd", Console()) is None
+
+
+class TestRegisteredProgrammers:
+    def test_lists_plugins_and_builtins(self, monkeypatch):
+        from src.driver.programmers import registered_programmers
+
+        _patch_eps(
+            monkeypatch,
+            [
+                _EntryPoint("pk2cmd", _PluginPk2cmd, "pymcu-pic"),
+                _EntryPoint("pymcuprog", _PluginPk2cmd, "pymcu-pic"),
+            ],
+        )
+        assert registered_programmers() == [
+            "avrdude",
+            "ipecmd",
+            "pk2cmd",
+            "pymcuprog",
+        ]

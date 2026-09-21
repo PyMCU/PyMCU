@@ -66,3 +66,9 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
     if cls is not None:
         return cls(console)
     return None
+
+
+def registered_programmers() -> list[str]:
+    """The programmer names get_programmer() can resolve, sorted."""
+    names = {ep.name for ep in entry_points(group="pymcu.programmers")}
+    return sorted(names | set(_BUILTINS))
