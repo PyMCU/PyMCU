@@ -104,6 +104,35 @@ public class DeviceGeometryTests
     }
 
     // ---------------------------------------------------------------------
+    // a chip file the USER ships is a project module, so its module level is
+    // compiled into a synthesized __module_init -- the stdlib chip files never
+    // see that path. device_info() there is an annotation the prescan already
+    // consumed, not a runtime call: before the filter knew it, the call hit
+    // 'device_info' is not exported by pymcu.types and every user chip file
+    // under the project root failed to compile.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void AUserChipFileDeviceInfo_IsAnAnnotation_NotARuntimeCall()
+    {
+        const string moduleName = "pymcu.chips.pic16f1939";
+        var chipAst = new Parser(new Lexer(
+            "from pymcu.types import ptr, uint8, device_info\n"
+            + "RAM_SIZE = 4096\n"
+            + "device_info(chip=\"pic16f1939\", arch=\"pic14e\", ram_size=RAM_SIZE)\n"
+            + "PORTB: ptr[uint8] = ptr(0x000D)\n").Tokenize()).ParseProgram();
+        var mainAst = new Parser(new Lexer("def main():\n    return 0\n").Tokenize()).ParseProgram();
+
+        var ir = new IRGenerator().Generate(
+            mainAst,
+            new Dictionary<string, ProgramNode> { [moduleName] = chipAst },
+            new DeviceConfig { Arch = "pic14e" },
+            projectModules: new HashSet<string> { moduleName });
+
+        Assert.NotNull(ir);
+    }
+
+    // ---------------------------------------------------------------------
     // undeclared is null, not zero
     // ---------------------------------------------------------------------
 
