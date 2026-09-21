@@ -358,6 +358,13 @@ purpose, as opposed to bugs like these three that were silent until found.
 - A single-field instance mutated inside a method's loop keeps its value and the method
   returns it: an unannotated method's `return self.value` arrived as None, and the field
   folded to the constructor's value after the loop (#292).
+- A module-level string no longer shadows a same-named parameter or local: `b = "world"`
+  next to `def f(b: uint8)` made `print(b)` inside the function write "world". The local
+  wins, in print, in `==`/`in` folds and in concatenation (#438).
+- `a + b` of two string VARIABLES folds their texts: it added the two interned ids as
+  integers, so `c = a + b` after `a = "hello"; b = "world"` printed another string's text
+  or a bare id. `x == "abc"` on a non-literal `x` folds False only when `x` is not a
+  string at all (#438).
 
 ### Language
 - `x in range(a, b[, s])`, `reversed(range(...))` and `enumerate(range(...))` over runtime
