@@ -323,3 +323,35 @@ and doc citation actually claim:
 - **`MemoryError` from the bounded bump allocator**: exercising it needs the arena to
   actually fill, which needs `list[T].append()` to actually store elements -- currently
   broken (#398, probes `084`/`153`). Revisit once that is fixed.
+
+## Regression sweep of 2026-09-21 (corpus moved to pymcu-avr)
+
+The corpus moved out of this repository with the backend split and sat unrun while six
+probes went red on main, in both front ends. Bisecting each to its introducing commit:
+
+- `009_for_string_list.py` / `010_for_pair_list.py`: printed the interned ids `256`,
+  `257`, ... where the element texts were meant. Introduced by `107fb08a` ("fold const
+  names and field ternaries in a for-in tuple"), which let the element folder run before
+  the literal's string branch and reduced each literal to its interned id. Fixed by
+  binding a folded id that resolves back to an interned string as text (and keeping the
+  character code for length-1 texts, the convention `os.listdir` unrolling already used).
+- `070_str_join_runtime_buffer.py`: `print(s)` after `s = "".join([chr(b) for b in buf])`
+  printed the buffer once for every string write the program made -- "ABCABCABCABC" with
+  no newline and no "END". `a38f4480` ("resolve module-scope array stores to the
+  canonical name", #460) gave the indexed LOAD path a `ModuleScopeArrayName` fallback
+  whose `main.<suffix>` probe ignores function-local bindings, so the `s` parameter of
+  `uart_write_str` read the module's `main.s` and the callee never touched its argument.
+  Fixed by the `LocalScopeBinds` guard the store path's `ResolveArrayVar` already had.
+- `134_string_concatenation_literals.py`: strict XPASS. #438 was fixed the same day
+  (`a + b` of two string variables folds their texts again); the `# tracked:` marker was
+  dropped and the reason moved into the probe's docstring. `135` stays tracked: `==` on a
+  bound string name still does not fold.
+- `139_in_on_string.py` / `148_dunder_contains.py`: stale `refuse` expectations from
+  before the features shipped -- `needle in s` folds on a compile-time string name
+  (`cbd581d4`, roadmap.md:49) and `x in <bound instance>` dispatches `__contains__`
+  (`334d8bef`, roadmap.md:41). Both now expect the documented bool divergence
+  (`type-system.md:20`: `1` where CPython prints `True`) and were renamed accordingly.
+
+The corpus now has a gate: `just test-oracle` in pymcu-avr builds the runner and runs
+the suite under both front ends, and it is named among the suites a commit must keep
+green in `AGENTS.md`/`CLAUDE.md`.

@@ -95,6 +95,18 @@ purpose, as opposed to bugs like these three that were silent until found.
 - `if not p:` on a parameter bound to `None` folds to the true arm, the same fold
   `if p is None:` already had -- `if not pixel_order:` in `PixelBuf.__init__` picks the
   default byteorder instead of testing an unwritten slot at run time.
+- A `for` unrolled over constant strings binds the loop variable to the text, not the
+  interned id. The element folder ran first and reduced "PD2" to 256, so
+  `for name in ["PD2", "PD3"]: print(name)` printed the ids where the names were meant.
+  A one-character element keeps its character code too, the same spelling a literal
+  assignment gives it (oracle probes 009/010).
+- A parameter or local that shares its name with a module-level array wins the
+  subscript: `def f(s: const[str])` next to `s = bytearray(3)` made `s[i]` inside the
+  function load `main.s`, so the callee streamed the caller's global and ignored the
+  argument it was passed. The HAL's own `uart_write_str` is that shape -- every
+  `print()` after a runtime `s` was bound re-emitted the buffer instead of the text
+  (oracle probe 070). The load path now applies the local-binding rule the indexed
+  store path has had since #458/#460.
 
 ### Language surface
 - `bytearray(n)` with a runtime `n` allocates from a static arena (no `free()`, AVR only)
