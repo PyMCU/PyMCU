@@ -2661,16 +2661,28 @@ public partial class IRGenerator
                 }
             }
 
+            // A name the current function binds -- a parameter or a local -- shadows every
+            // module-scope spelling the fallbacks below probe. Without the guard a `const[str]`
+            // parameter `s` inside uart_write_str resolved `s[i]` to `main.s` and the callee
+            // streamed the caller's global instead of its argument (probe 070; the store
+            // path's ResolveArrayVar has applied the same rule since #458/#460). The local
+            // mechanisms further down (the alias follow and the inline-prefix probe) still
+            // run: they resolve what the local is bound TO, not another scope's name.
+            bool localShadowsModule = LocalScopeBinds(ve.Name);
+
             // A name already carrying its full storage key -- a buffer returned through
             // nested inline expansions (`inline3._read.inline4._read_register.result`,
             // which is what a struct.unpack field expression holds) -- is used verbatim:
-            // prefixing it again produces a name nothing registered.
-            string qualified = arraySizes.ContainsKey(ve.Name) || bytearrayParams.Contains(ve.Name)
+            // prefixing it again produces a name nothing registered. A BARE name filed in
+            // arraySizes is the module array, which the local binding just checked shadows.
+            string qualified = (arraySizes.ContainsKey(ve.Name) || bytearrayParams.Contains(ve.Name))
+                && !localShadowsModule
                 ? ve.Name
                 : (string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name);
+            string localSpelling = qualified;
             // Same module-scope rule as the store path: the module array's canonical
             // spelling is the bare name ScanGlobals filed (PyMCU#460).
-            if (!arraySizes.ContainsKey(qualified))
+            if (!arraySizes.ContainsKey(qualified) && !localShadowsModule)
                 qualified = ModuleScopeArrayName(qualified);
 
             // `x = f()` where f returned its local buffer binds `x` as an alias of the
@@ -2699,8 +2711,10 @@ public partial class IRGenerator
             // ("gbuf"), so the lookup missed and the subscript fell through to the register
             // bit path. With a run-time index that failed as "Bit index must be constant";
             // with a constant index it compiled SILENTLY into a bit test of the array's
-            // ADDRESS. Same normalization the qualified/bare fallback above does.
-            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified))
+            // ADDRESS. Same normalization the qualified/bare fallback above does -- and the
+            // same shadowing rule: a still-unresolved local name never strips to the module's.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && !(localShadowsModule && qualified == localSpelling))
             {
                 int lastDot = qualified.LastIndexOf('.');
                 if (lastDot >= 0)
@@ -2714,6 +2728,7 @@ public partial class IRGenerator
             // An alias can land on a class attribute's canonical name (`Sensor__BUFFER`)
             // while the storage is filed under the module init (`main.Sensor__BUFFER`).
             if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && !(localShadowsModule && qualified == localSpelling)
                 && TryResolveArrayStorageKey(qualified, out var storedKey))
                 qualified = storedKey;
 
@@ -2724,6 +2739,7 @@ public partial class IRGenerator
             // not constant, about a program with no register in it. The prescan has the values.
             if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
                 && !listVarElemTypes.ContainsKey(qualified) && !listVarElemTypes.ContainsKey(ve.Name)
+                && !localShadowsModule
                 && ModuleConstListValues(ve.Name) is { } modValues)
             {
                 Val modIdx = VisitExpression(expr.Index);
@@ -2754,7 +2770,7 @@ public partial class IRGenerator
             // list[T] indexing: x[i] → load element from GC heap list at offset 2 + i*elemSize
             {
                 string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
-                             : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
+                             : !localShadowsModule && listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
                              : "";
                 if (!string.IsNullOrEmpty(listQ))
                 {
