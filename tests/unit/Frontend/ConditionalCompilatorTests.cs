@@ -445,6 +445,47 @@ public class ConditionalCompilatorTests
 
         prog.Imports.Should().ContainSingle().Which.ModuleName.Should().Be("pymcu.avr");
     }
+
+    // -------------------------------------------------------------------------
+    // PyMCU#266: dead-branch elimination on `sys.implementation.name`, not just __CHIP__
+    // -------------------------------------------------------------------------
+
+    private static DeviceConfig CircuitPythonConfig() =>
+        new() { Chip = "atmega328p", Arch = "avr", Stdlib = "circuitpython" };
+
+    private static Expression SysImplementationNameExpr() =>
+        new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("sys"), "implementation"), "name");
+
+    [Fact]
+    public void If_SysImplementationName_DeadBranchImport_IsSkipped()
+    {
+        // adafruit_requests's actual guard (PyMCU#266):
+        //   if not sys.implementation.name == "circuitpython":
+        //       from typing import Optional
+        // On the CircuitPython layer this branch is dead; `typing` must never be resolved.
+        var prog = EmptyProgram();
+        var deadImport = MakeImport("typing", "Optional");
+        var cond = new UnaryExpr(UnaryOp.Not,
+            new BinaryExpr(SysImplementationNameExpr(), BinaryOp.Equal, new StringLiteral("circuitpython")));
+        prog.GlobalStatements.Add(new IfStmt(cond, MakeBlock(deadImport)));
+
+        new ConditionalCompilator(CircuitPythonConfig()).Process(prog);
+
+        prog.Imports.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void If_SysImplementationName_LiveBranchImport_IsKept()
+    {
+        var prog = EmptyProgram();
+        var liveImport = MakeImport("pymcu.avr", "DDRB");
+        var cond = new BinaryExpr(SysImplementationNameExpr(), BinaryOp.Equal, new StringLiteral("circuitpython"));
+        prog.GlobalStatements.Add(new IfStmt(cond, MakeBlock(liveImport)));
+
+        new ConditionalCompilator(CircuitPythonConfig()).Process(prog);
+
+        prog.Imports.Should().ContainSingle().Which.ModuleName.Should().Be("pymcu.avr");
+    }
 }
 
 public class CompileTimeEvaluatorTests
@@ -593,4 +634,137 @@ public class CompileTimeEvaluatorTests
         act.Should().Throw<Exception>();
     }
 
+    // -------------------------------------------------------------------------
+    // sys.implementation.name / .version, sys.platform, os.uname() (docs/rfcs/0007)
+    // -------------------------------------------------------------------------
+
+    private static DeviceConfig CircuitPythonPicoConfig() =>
+        new() { Chip = "rp2040", Arch = "arm", Board = "raspberry_pi_pico", Stdlib = "circuitpython" };
+
+    private static DeviceConfig CircuitPythonPico2Config() =>
+        new() { Chip = "rp2350", Arch = "arm", Board = "raspberry_pi_pico2", Stdlib = "circuitpython" };
+
+    private static DeviceConfig CircuitPythonAvrConfig() =>
+        new() { Chip = "atmega328p", Arch = "avr", Stdlib = "circuitpython" };
+
+    private static DeviceConfig MicroPythonPicoConfig() =>
+        new() { Chip = "rp2040", Arch = "arm", Board = "raspberry_pi_pico", Stdlib = "micropython" };
+
+    private static DeviceConfig MicroPythonPico2Config() =>
+        new() { Chip = "rp2350", Arch = "arm", Board = "raspberry_pi_pico2", Stdlib = "micropython" };
+
+    private static Expression SysImplementationName() =>
+        new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("sys"), "implementation"), "name");
+
+    private static Expression SysPlatform() => new MemberAccessExpr(new VariableExpr("sys"), "platform");
+
+    private static Expression SysImplementationVersionIndex(int i) =>
+        new IndexExpr(
+            new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("sys"), "implementation"), "version"),
+            new IntegerLiteral(i));
+
+    private static Expression BareUnameCall() => new CallExpr(new VariableExpr("uname"), new List<Expression>());
+    private static Expression DottedUnameCall() =>
+        new CallExpr(new MemberAccessExpr(new VariableExpr("os"), "uname"), new List<Expression>());
+
+    [Fact]
+    public void Resolve_SysImplementationName_CircuitPython()
+        => new CompileTimeEvaluator(CircuitPythonAvrConfig()).Resolve(SysImplementationName()).Should().Be("circuitpython");
+
+    [Fact]
+    public void Resolve_SysImplementationName_MicroPython()
+        => new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(SysImplementationName()).Should().Be("micropython");
+
+    [Fact]
+    public void Resolve_SysImplementationName_NoStdlib_Throws()
+    {
+        var act = () => Evaluator().Resolve(SysImplementationName());
+        act.Should().Throw<Exception>();
+    }
+
+    [Fact]
+    public void Resolve_SysPlatform_CircuitPythonRp2040_IsUppercaseMcuName()
+        => new CompileTimeEvaluator(CircuitPythonPicoConfig()).Resolve(SysPlatform()).Should().Be("RP2040");
+
+    [Fact]
+    public void Resolve_SysPlatform_CircuitPythonRp2350_IsUppercaseMcuName()
+        => new CompileTimeEvaluator(CircuitPythonPico2Config()).Resolve(SysPlatform()).Should().Be("RP2350");
+
+    [Fact]
+    public void Resolve_SysPlatform_MicroPythonRp2040AndRp2350_BothAnswerRp2()
+    {
+        new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(SysPlatform()).Should().Be("rp2");
+        new CompileTimeEvaluator(MicroPythonPico2Config()).Resolve(SysPlatform()).Should().Be("rp2");
+    }
+
+    [Fact]
+    public void Resolve_SysPlatform_NoUpstreamPort_FallsBackToChipName()
+        => new CompileTimeEvaluator(CircuitPythonAvrConfig()).Resolve(SysPlatform()).Should().Be("atmega328p");
+
+    [Fact]
+    public void Resolve_UnameSysname_CircuitPythonRp2040_IsLowercaseMcuName()
+        => new CompileTimeEvaluator(CircuitPythonPicoConfig())
+            .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("rp2040");
+
+    [Fact]
+    public void Resolve_UnameSysname_CircuitPythonRp2350_IsExactSiliconVariant_NotPyMcuChipId()
+        // rp2350a, not PyMCU's own simplified "rp2350" chip id -- docs/rfcs/0007 section 0.3.
+        => new CompileTimeEvaluator(CircuitPythonPico2Config())
+            .Resolve(new MemberAccessExpr(DottedUnameCall(), "sysname")).Should().Be("rp2350a");
+
+    [Fact]
+    public void Resolve_UnameSysname_MicroPythonRp2040_IsPortName_NotMcuName()
+        // "rp2", the MicroPython port short name -- NOT "RP2040", a different upstream concept
+        // than CircuitPython's os.uname().sysname (docs/rfcs/0007 section 2.1).
+        => new CompileTimeEvaluator(MicroPythonPicoConfig())
+            .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("rp2");
+
+    [Fact]
+    public void Resolve_UnameSysname_NoUpstreamPort_FallsBackToChipName_BothLayers()
+    {
+        new CompileTimeEvaluator(CircuitPythonAvrConfig())
+            .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("atmega328p");
+        var mpAvr = new DeviceConfig { Chip = "atmega328p", Arch = "avr", Stdlib = "micropython" };
+        new CompileTimeEvaluator(mpAvr).Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("atmega328p");
+    }
+
+    [Fact]
+    public void Resolve_UnameMachine_CircuitPythonPico_MatchesUpstreamConstruction()
+        => new CompileTimeEvaluator(CircuitPythonPicoConfig())
+            .Resolve(new MemberAccessExpr(BareUnameCall(), "machine")).Should().Be("Raspberry Pi Pico with rp2040");
+
+    [Fact]
+    public void Resolve_UnameMachine_MicroPythonPico2_UsesUpstreamsOwnBoardSpelling_NoSpaceBeforeTwo()
+        // MicroPython's RPI_PICO2 board reports "Raspberry Pi Pico2" (no space), CircuitPython's
+        // raspberry_pi_pico2 reports "Raspberry Pi Pico 2" (with space) -- both are upstream's
+        // own strings, not reconciled (docs/rfcs/0007 section 4.3).
+        => new CompileTimeEvaluator(MicroPythonPico2Config())
+            .Resolve(new MemberAccessExpr(BareUnameCall(), "machine")).Should().Be("Raspberry Pi Pico2 with RP2350");
+
+    [Fact]
+    public void EvaluateCondition_SysImplementationVersionIndex0_FeatureDetectionGuard()
+    {
+        // neopixel.py: `sys.implementation.version[0] >= 7` -- must read TRUE on this layer's
+        // claimed CircuitPython 10.3.1 API surface (docs/rfcs/0007 section 3).
+        var cond = new BinaryExpr(SysImplementationVersionIndex(0), BinaryOp.GreaterEq, new IntegerLiteral(7));
+        new CompileTimeEvaluator(CircuitPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateCondition_LinuxNotInUname_AlwaysTrueOnAnyPyMcuBoard()
+    {
+        // adafruit_dht.py:77 exactly: `"Linux" not in uname()`. No PyMCU board is ever Linux.
+        var cond = new BinaryExpr(new StringLiteral("Linux"), BinaryOp.NotIn, BareUnameCall());
+        new CompileTimeEvaluator(CircuitPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+        new CompileTimeEvaluator(CircuitPythonAvrConfig()).EvaluateCondition(cond).Should().BeTrue();
+        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateCondition_SysImplementationNameEqualsCircuitPython_TrueOnCircuitPythonLayer()
+    {
+        var cond = new BinaryExpr(SysImplementationName(), BinaryOp.Equal, new StringLiteral("circuitpython"));
+        new CompileTimeEvaluator(CircuitPythonAvrConfig()).EvaluateCondition(cond).Should().BeTrue();
+        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeFalse();
+    }
 }
