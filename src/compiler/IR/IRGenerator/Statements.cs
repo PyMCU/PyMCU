@@ -1441,7 +1441,7 @@ public partial class IRGenerator
                         strConstantVariables.Remove(ctx.ResultTemp.Name);
                     }
                 }
-                else if (val is Variable v)
+                else if (val is Variable v && !afterUnconditionalReturn)
                 {
                     // A non-constant return path clears any constant tracked from a prior
                     // return path (e.g. `return -1` followed by `return result`).  Without
@@ -1453,7 +1453,7 @@ public partial class IRGenerator
                     if (strConstantVariables.TryGetValue(v.Name, out string? vsv))
                         strConstantVariables[ctx.ResultTemp.Name] = vsv;
                 }
-                else if (val is Temporary t)
+                else if (val is Temporary t && !afterUnconditionalReturn)
                 {
                     constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = t.Name;
