@@ -338,6 +338,10 @@ purpose, as opposed to bugs like these three that were silent until found.
   written (#317).
 
 ### Correctness (silent-miscompile class)
+- A class-level `_BUFFER = bytearray(N)` reached through an instance now iterates and
+  enumerates as the array it is (`for b in self._BUFFER`, `enumerate(self._BUFFER)`),
+  and a whole-attribute read (`bus.write(self._BUFFER)`, `x = c._BUFFER`) names the
+  shared storage instead of a scalar placeholder nothing ever wrote (#442).
 - The counter of `for i in range(...)` is sized from its bounds instead of being an
   unconditional uint8: `range(300)` ran 44 times, `range(0, 256)` never ran,
   `range(200, -1, -1)` never ran, a `uint16` stop variable and a `uint16` annotation on
