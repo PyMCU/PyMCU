@@ -548,7 +548,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 | `complex` / `Decimal` | Not available |
 | `f"..."` inline in arbitrary expressions | Streaming (`print(f"...")`) and assignment (`s = f"..."`, fixed buffer) are supported; an f-string used inline in any other expression position has no lowering — assign it to a name first |
 | Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
-| `*args` / `**kwargs` over a run-time call | The forms are compile-time sequences and mappings: the callee is specialised per call site, so the extra arguments are known there and splice into the callee's named parameters, `super().__init__` included. A `**` built from a run-time mapping is refused |
+| `*args` / `**kwargs` over a run-time call | The forms are compile-time sequences and mappings: the callee is specialised per call site, so the extra arguments are known there and splice into the callee's named parameters, `super().__init__` included. A `*seq` argument expands a literal, a name bound to a constant sequence, a member held as one, and a call or descriptor read that returns a tuple (`"...{}...{}".format(*registers.tuple_of_numbers)` — `str.format` splices like any call). A `**` built from a run-time mapping is refused |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
 | Metaclasses | No runtime type system |
 | Reflection / `getattr` / `hasattr` | No runtime type info. **One compile-time form IS supported:** `getattr(mod, "name", default)` on a module folds to the member or the default (CircuitPython's `getattr(board, "SCK", ...)`); the name must be a literal and the receiver a module -- anything else is refused |

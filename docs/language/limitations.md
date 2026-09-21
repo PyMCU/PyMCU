@@ -82,7 +82,7 @@ except a `bytearray(n)` that the compiler can prove allocates at most once, abov
 |---|---|---|
 | `f"..."` inline in arbitrary expressions | No general runtime string objects | Assign it to a name first (`s = f"..."` builds a fixed buffer), or stream it: `print(f"...")` |
 | `str.split()` as a value | There is no list to hand back | `for chunk in s.split(sep)` / `for i, chunk in enumerate(s.split(sep))` unroll the pieces at compile time -- receiver and separator must be compile-time strings, `maxsplit` a compile-time int (adafruit_framebuf `text()`) |
-| `str.format()` | Heap strings | Not available |
+| `str.format()` | The format must be a compile-time string | Positional holes `{}`, `{0}` and specs `{:02x}` lower to the same writes an f-string makes, in assignment and streamed positions; `*seq` splices a compile-time sequence (literal, bound name, member, or a tuple-returning call like a descriptor `__get__`). Named fields and `**kwargs` are refused -- use an f-string |
 | `str.join()` over a sequence whose length is not compile-time | The result is spelled out while compiling | `sep.join([...])` folds compile-time strings (expression position too); `sep.join(f"{x:02x}" for x in buf)` over a compile-time sequence streams in `print`/`write_str`/`println` and materializes into a fixed buffer elsewhere; `s = ''.join([chr(b) for b in buf])` builds a runtime string from a fixed buffer |
 | `len(string_variable)` | Runtime string object required | A name bound to ONE compile-time text folds -- `len(byteorder)` in `adafruit_pixelbuf`; a name that can hold several texts is still refused (below). Otherwise use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` calls |
