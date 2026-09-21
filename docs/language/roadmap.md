@@ -16,7 +16,8 @@ This page tracks which language and HAL features have been implemented, and what
 | `for x in array` / `for x in [1, 2, 3]` | Fixed-size array or constant list literal |
 | `for x in named` where `named = [...]` / `(...)` | List and tuple alike, at any length: up to 8 constant elements the loop unrolls against the literal, past that the name gets a fixed array. The element width comes from the widest element |
 | `for x in ["PD2", "PD3"]` / `for x in (board.D2, board.D3)` | A constant list of STRINGS unrolls too, and the loop variable binds as a string constant, so a `const` parameter receiving it resolves as it would from a literal. Also the pair form, `for pin, name in [(board.D2, "D2"), ...]` |
-| `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index |
+| `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index. `enumerate(s.split(sep))` on compile-time strings unrolls the split chunks (adafruit_framebuf `text()`) |
+| `for chunk in s.split(sep)` | Compile-time unroll over a string whose text is known -- literal, module constant or parameter bound to one; `maxsplit` as a compile-time int. A `split()` call as a value is refused: there is no list to hand back |
 | `for x, y in zip(a, b)` | Compile-time unroll over paired lists |
 | `reversed(iterable)` | Compile-time reverse unroll; `reversed(range(...))` is the descending range |
 | `match / case` | Literal, wildcard, OR (`\|`), guard `if cond`, sequence, capture, dotted-name patterns; DCE on `__CHIP__` |
@@ -38,18 +39,21 @@ This page tracks which language and HAL features have been implemented, and what
 | `print(float)` | Two rounded decimals, trailing zero trimmed but never past the first: `3.25`, `-2.25`, `0.05`, `123.75`, `1234.5` |
 | Functions with > 5 arguments | Overflow arguments passed via a fixed SRAM spill region |
 | `in` / `not in` | Compile-time fold on constant list; runtime equality chain. A call that returns an instance with `__contains__` dispatches the dunder (`"Linux" not in uname()`, #466); two compile-time strings are substring membership (`"RP2350" in uname().machine`)
-| `isinstance(x, T)` | Folds at compile time: a ZCA instance against a class or subclass (#424), or a value against the builtins `tuple`/`list`/`int` from its known shape (#423) |
+| `isinstance(x, T)` | Folds at compile time: a ZCA instance against a class or subclass (#424), or a value against the builtins `tuple`/`list`/`int` from its known shape (#423); `isinstance(x, slice)` is always False -- nothing is a runtime slice (adafruit_pixelbuf `__setitem__`) |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
 | `bitcast(T, v)` | Reinterpret raw bytes as `T`; float↔uint32; compile-time folding |
 | `hex(n)` / `bin(n)` | Compile-time: `hex(255)` → `"0xff"` |
 | `sum(iterable)` / `any(iterable)` / `all(iterable)` | Compile-time fold or unrolled chain |
+| `all/any/sum/min/max(x ... for x in it)` | A generator expression as the DIRECT argument of a reduction unrolls at compile time over a known-length iterable (tuple/list literal, const sequence, `range` of constants, compile-time string, fixed-size array). `all`/`any` short-circuit like CPython; `sum` honours `start`; a `for ... if` clause filters (adafruit_pixelbuf). Elsewhere a generator expression is refused, naming the five reductions |
+| Compile-time string methods | On a name bound to ONE text (literal, module constant, parameter receiving one -- through `super().__init__` and nested `@inline` calls): `len(s)`, `s[i]`, `needle in s`, `s == "lit"`, `s.strip()`/`lstrip()`/`rstrip()`, `s.index()`/`s.find()` (miss: catchable `ValueError` / -1), `s.startswith()`/`s.endswith()`, `s.count()`, `s.replace()`, `s.upper()`, `s.lower()` all fold |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant |
 | `pow(x, n)` / `x ** n` / `math.pow(x, n)` | Compile-time integer fold; runtime integer unroll; runtime float via `__pymcu_powf` (#463) |
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
 | `bytearray` | Mutable SRAM buffer. A function that fills one and `return`s it is expanded at the call site so the caller indexes the same storage (#464). `memoryview` is a CPython builtin type this compiler stores, so `-> memoryview` is the same view `memoryview()` already wraps. Replaying `name = bytearray(n)` does not undo a `.extend()` that already grew it, so a class-body `_fit(2)` keeps a 3-byte `_BUFFER` |
 | `bytes([...])` / `bytes(N)` as a call argument | Written inline at a call site: unrolls into an `@inline` callee's unannotated buffer parameter the same way a list literal does, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function. `bytes(n)` with a run-time `n` is refused (`bytearray(n)` takes one) |
 | `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type AT THAT CALL SITE, which must be one of the members -- the same way an `@inline` overload dispatches. A field assigned from it takes the site's type. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal; `Callable[...]` matches a function reference. A `Protocol` member is structural (#465): a class that has the protocol's members matches even when it is not named as the protocol. A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal |
+| Annotation alias `Name = Union[...]` | `ColorUnion = Union[int, uint8]` binds the alias at compile time -- including inside a discarded `if TYPE_CHECKING:` / compat-layer guard -- and `x: ColorUnion` resolves it to the same members as the spelled-out union (adafruit_pixelbuf) |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART init preamble |
 | `int.from_bytes(b, 'little'/'big')` | Compile-time fold or runtime |
 | Raw strings `r"\n"` | No escape processing |
@@ -72,6 +76,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `str` parameter text | A compile-time string of any length bound to a `str` parameter keeps its text, so `struct.calcsize(fmt)` folds (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685) |
 | `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `x = a, b, c` | An unparenthesized comma RHS is a tuple, the same wrap `return a, b` already had. `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` (adafruit_framebuf) |
+| `return a, (b, c, d), e` | A tuple-return element that is itself a fixed literal sequence reaches the caller as a compile-time sequence, not a runtime tuple: `bpp, byteorder_tuple, has_white, dotstar_mode = self.parse_byteorder(...)` unpacks `(r, g, b)` so `byteorder_tuple[i]` folds and `if dotstar_mode:` drops its branch (adafruit_pixelbuf) |
 | `buf[i:i+n] = bytes(fill)` | Equal-length slice assign onto a `bytearray` (and onto `self.buf`), with a run-time start whose length is compile-time (`i:i+3`) and `bytes(named_seq)` as the source (adafruit_framebuf RGB888 fill) |
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
@@ -94,7 +99,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Rebound module alias | `from adafruit_motor import servo` then `servo = servo.Servo(pwm)` rebinds the name; later reads and calls see the instance, not the module (#467) |
 | `time.struct_time` | Stdlib stub with the nine CPython field names, so Adafruit RTC `from time import struct_time` in a typing try does not fail |
 | `collections.namedtuple` | Compile-time class factory: `Name = namedtuple("Name", ("a", "b"))` becomes a ZCA class with those fields, `__len__` and `__match_args__`. The bound name is the class (adafruit_irremote's `IRMessage`) |
-| Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) wherever the compiler can prove the statement runs at most once (a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one); refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`, both as a local and as an `@inline __init__`'s field, through further `@inline` method calls; new `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
+| Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) wherever the compiler can prove the statement runs at most once (a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one); refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`, both as a local and as an `@inline __init__`'s field, through further `@inline` method calls; `for b in x` iterates the bytes when the buffer reaches the loop through an `@inline` parameter binding or a field (`self._post_brightness_buffer` into `neopixel_write`); new `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
 | Closed `dict` / `set` literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables with no storage: `d[const]` folds, `d[runtime]` compare-chains and raises `KeyError`, `x in d` and `len(d)` fold. A class-body dict (`self.gain_values[gain]`) is the same table, including mixed int/float values. Read-only |
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict — open addressing over per-instance fixed arrays, no heap and no GC |
 | f-string as a **value** | `s = f"t={t} C"` builds into a compiler-managed fixed `bytearray`; `len(s)`, `s[i]`, `print(s)`, buffer reuse on re-assignment. No float interpolations in this form |
@@ -231,5 +236,5 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 | Closures capturing mutable vars | `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` over a run-time call | The forms are compile-time sequences and mappings: the callee is specialised per call site, so the extra arguments are known there and splice into the callee's named parameters, `super().__init__` included. A `**` built from a run-time mapping is refused |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
-| Reflection / `getattr` / `hasattr` | No runtime type info |
+| Reflection / `getattr` / `hasattr` | No runtime type info. **One compile-time form IS supported:** `getattr(mod, "name", default)` on a module folds to the member or the default (CircuitPython's `getattr(board, "SCK", ...)`); the name must be a literal and the receiver a module -- anything else is refused |
 | `eval()` / `exec()` | No interpreter on MCU |

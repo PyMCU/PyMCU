@@ -81,15 +81,26 @@ except a `bytearray(n)` that the compiler can prove allocates at most once, abov
 | Feature | Why it fails | Alternative |
 |---|---|---|
 | `f"..."` inline in arbitrary expressions | No general runtime string objects | Assign it to a name first (`s = f"..."` builds a fixed buffer), or stream it: `print(f"...")` |
-| `str.split()`, `str.format()` | Heap strings | Not available |
+| `str.split()` as a value | There is no list to hand back | `for chunk in s.split(sep)` / `for i, chunk in enumerate(s.split(sep))` unroll the pieces at compile time -- receiver and separator must be compile-time strings, `maxsplit` a compile-time int (adafruit_framebuf `text()`) |
+| `str.format()` | Heap strings | Not available |
 | `str.join()` outside an assignment | The result needs a home | `s = sep.join([...])` folds compile-time strings; `s = ''.join([chr(b) for b in buf])` builds a runtime string from a fixed buffer |
-| `len(string_variable)` | Runtime string object required | Use fixed-size buffers |
+| `len(string_variable)` | Runtime string object required | A name bound to ONE compile-time text folds -- `len(byteorder)` in `adafruit_pixelbuf`; a name that can hold several texts is still refused (below). Otherwise use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` calls |
 | `str[i]` on a runtime string | No runtime string object | Use `const[str]` parameters |
 
 **Supported:** String literals in flash, raw strings `r"\n"`, `uart.println("literal")`,
 `for ch in "ABC":` (compile-time unroll), `const[str]` runtime subscript (reads byte from
 flash), and **runtime f-strings streamed directly to a sink** — see below.
+
+A name bound to one compile-time text — a literal, a module constant, or a parameter that
+receives one, through `super().__init__` and nested `@inline` calls included — keeps that
+text: `len(s)` folds, `s[i]` folds to the character code, `needle in s` folds substring
+membership, `s == "lit"` folds, and the pure methods `s.strip()` / `lstrip()` /
+`rstrip()` (with an optional chars argument), `s.index()` / `s.find()` (a miss raises a
+catchable `ValueError` / answers -1), `s.startswith()` / `s.endswith()`, `s.count()`,
+`s.replace()`, `s.upper()`, `s.lower()` and `s.split()` (only as a `for` / `enumerate`
+iterable) all evaluate where the program is compiled (adafruit_pixelbuf `parse_byteorder`,
+adafruit_framebuf `text()`).
 
 ### A str that different paths bind differently
 
@@ -353,7 +364,7 @@ branch is refused, naming the branch.
 |---|---|---|
 | Multiple inheritance / MRO | C3 linearization is a runtime concept | Single-level inheritance only |
 | Runtime polymorphism (vtable dispatch) | Requires vtable + heap class objects | Compile-time `match / case` dispatch |
-| `isinstance()` / `type()` | No type tags at runtime | `isinstance(x, T)` on a ZCA instance folds (#424); `isinstance(x, (tuple, list))` folds from the receiver's known shape (#423). `type()` is still refused |
+| `isinstance()` / `type()` | No type tags at runtime | `isinstance(x, T)` on a ZCA instance folds (#424); `isinstance(x, (tuple, list))` folds from the receiver's known shape (#423); `isinstance(x, slice)` folds too -- nothing here is a runtime slice, so it is always False (adafruit_pixelbuf `__setitem__`). `type()` is still refused |
 | `__repr__`, `__str__` | No runtime string formatting | `uart.println()` with explicit fields |
 | `dataclass` | Metaclass + runtime heap | Manual `@inline` class |
 | `namedtuple` **defaults / rename / module** | Extra factory kwargs | `Name = namedtuple("Name", ("a", "b"))` -- two positional arguments. The assignment is a ZCA class |
@@ -470,6 +481,11 @@ local, a return type), keeps its refusal: there both members need storage and di
 how much, and a real subroutine has one ABI for every caller with no call site to resolve it
 at.
 
+An annotation may also be written through an alias: `ColorUnion = Union[int, uint8]` binds
+the name at compile time (inside a discarded `if TYPE_CHECKING:` / compat-layer guard too),
+and a parameter annotated `x: ColorUnion` reads it exactly as if the union were spelled out
+(adafruit_pixelbuf). The alias is a compile-time name for the annotation, not a type object.
+
 **Note on `float`:** Soft-float (IEEE 754 single-precision) is supported on AVR via a
 pure-assembly helper library. Expect ~200-400 cycles per operation. Subnormals are treated as
 zero; NaN and Inf propagate correctly. `uint32(x * 100.0 + 0.5)` and the other float→int
@@ -571,7 +587,7 @@ _loop:
 | A tuple **literal** passed as an argument or stored in a field | A tuple is a compile-time construct here | Separate variables, or a fixed-size array |
 | Dict comprehension | Heap allocation | Not available |
 | Set comprehension | Heap allocation | Not available |
-| Generator expressions | Coroutine frame requires heap | A `yield` generator function (supported — see Async and concurrency) |
+| Generator expressions as lazy values | There is no runtime iterator object | `all(x ... for x in it)` / `any` / `sum` / `min` / `max` unroll the generator at compile time over an iterable whose length is known -- a tuple/list literal, a const sequence, `range` of constants, a compile-time string or a fixed-size array (adafruit_pixelbuf `all(0 <= c <= 255 for c in val)`). `all`/`any` short-circuit like CPython; `sum` takes its `start` argument; a `for ... if` clause filters. Anywhere else the refusal names those five |
 | `map()` / `filter()` with runtime iterables | Lazy iterator requires heap | Explicit `for` loop |
 
 **Supported:** `for i in range(N)` (runtime or constant N), `for x in array`,
@@ -856,7 +872,8 @@ never parks.
 | `enumerate(iterable)` | ✅ Supported | Compile-time index counter over constant sequences, `range()`, and fixed-size arrays -- including a buffer reached through inline parameter bindings or a `bytes([expr])` argument whose elements are run-time |
 | `zip(a, b)` | ✅ Supported | Compile-time unroll over constant lists |
 | `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
-| `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold |
+| `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold; a generator expression argument unrolls the same way (`all(0 <= c <= 255 for c in val)`, adafruit_pixelbuf) and short-circuits like CPython -- the iterable's length must be compile-time known |
+| `sum(genexp)` / `min(genexp)` / `max(genexp)` | ✅ Supported | Same compile-time unroll; `sum` honours its `start` argument and a `for ... if` clause filters. Nowhere else does a generator expression exist -- there is no iterator object to pass around |
 | `divmod(a, b)` | ✅ Supported | Compile-time or runtime |
 | `pow(x, n)` / `x ** n` / `math.pow(x, n)` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float via `__pymcu_powf` (#463) |
 | `hex(n)` / `bin(n)` | ✅ Supported | Compile-time only |
@@ -867,7 +884,8 @@ never parks.
 | `sorted()` | ❌ Not supported | No dynamic allocation |
 | `map()` / `filter()` | ❌ Not supported | Use explicit `for` loops |
 | `input()` | ✅ Supported | `line: bytearray = input("prompt")` — reads until newline from UART; prompt is optional compile-time string; max length is optional integer (default 64); UART preamble auto-injected |
-| `open()` / file I/O | ❌ Not supported | No filesystem |
+| `getattr(mod, "name", default)` | ✅ Supported | Compile-time only, on a module: `getattr(board, "SCK", board.D13)` folds to the member or the default. Attribute names must be literals; `getattr` on anything else is refused |
+| `open()` / file I/O | ❌ Not supported | No filesystem. The refusal names the resolved file and RFC 0008 (embedded files) -- `open('font5x8.bin')` in `adafruit_framebuf.BitmapFont` stops a `text()` build there |
 | `exec()` / `eval()` | ❌ Not supported | Interpreter required |
 
 ---
@@ -936,7 +954,7 @@ Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. The harness is 37 libraries (the original
 twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Eighteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+**Nineteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
 `adafruit_bus_device` (800 bytes; its own example uses a `bytearray([...])` inline
 argument and a generator expression in `join`, which need the supported spellings),
@@ -946,7 +964,9 @@ argument and a generator expression in `join`, which need the supported spelling
 `adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes),
 `adafruit_tcs34725` (28 414 bytes), `adafruit_ina219` (7 294 bytes),
 `adafruit_aw9523` (2 294 bytes), `adafruit_veml7700` (10 614 bytes),
-`adafruit_dps310` (13 162 bytes) and `adafruit_pca9685` (1 852 bytes).
+`adafruit_dps310` (13 162 bytes), `adafruit_pca9685` (1 852 bytes)
+and `neopixel` -- the real CircuitPython `neopixel.py` plus its `adafruit_pixelbuf`
+base, `pixels[i] = (r, g, b)` included, verified on the wire on the emulated Uno.
 
 | Library | Stops at | What the compiler says |
 |---|---|---|
@@ -973,7 +993,7 @@ argument and a generator expression in `join`, which need the supported spelling
 | `adafruit_mcp3xxx` | **builds unmodified, 3 094 bytes** | (moved off `with ... as`: the bound name now takes `__enter__`'s returned instance class) |
 | `adafruit_mcp9808` | **builds unmodified, 4 646 bytes** | |
 | `adafruit_mlx90614` | **builds unmodified, 3 846 bytes** | |
-| `neopixel` | `all(... for component in val)` in `adafruit_pixelbuf` | generator expression; `import adafruit_pixelbuf` itself is present |
+| `neopixel` | **builds unmodified, with unmodified `adafruit_pixelbuf`** | `all(0 <= c <= 255 for c in val)` unrolls over the tuple; `pixels[i] = (r, g, b)` sends GRB on the wire -- verified byte order on the emulated Uno |
 | `adafruit_pca9685` | **builds unmodified, 1 852 bytes** | (moved off `[None] * len(self)` and storing a `PWMChannel` in that cache) |
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
@@ -1051,8 +1071,13 @@ answers true. The 128x32 I2C simpletest
 unmodified (4 348 bytes) and emits the same 50 I2C transactions
 as the CPython oracle, byte for byte, on the emulated Uno.
 `onewireio` is still missing for
-`adafruit_ds18x20`. `neopixel` moved off a call inside a raise message (#435) onto
-a generator expression in `adafruit_pixelbuf`.
+`adafruit_ds18x20`. `neopixel` builds unmodified -- the generator expression in
+`adafruit_pixelbuf` (`all(0 <= component <= 255 for component in val)`) unrolls at
+compile time now that `all`/`any`/`sum`/`min`/`max` accept one over a known-length
+iterable, and `pixels[i] = (r, g, b)` drives the wire in GRB order.
+`adafruit_framebuf.text("...", x, y, color)` gets through `string.split("\n")` and
+`enumerate()` and stops at `open("font5x8.bin", "rb")` inside `BitmapFont` -- embedded
+files are RFC 0008 work, and the diagnostic says so.
 
 **The remaining refusals are scattered, one construct each.** `enumerate()` over a
 buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- the

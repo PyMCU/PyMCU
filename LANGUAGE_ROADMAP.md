@@ -15,7 +15,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)`. The counter is as wide as the bounds need: 8-bit for `range(n)` with `n: uint8`, 16-bit for `range(300)`, signed for `range(200, -1, -1)`; a declared type on the loop variable is used as written. A constant range of at most 8 steps unrolls. After the loop the variable holds the last value visited, as in Python |
 | `for x in array` / `for x in [1,2,3]` | Fixed-size array or constant list literal |
 | `for x in ["PD2", "PD3"]` / `for x in (board.D2, board.D3)` | A constant list of strings unrolls too, binding the loop variable as a string constant, so a `const` parameter resolves as it would from a literal. Also the pair form |
-| `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index |
+| `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index. `enumerate(s.split(sep))` on compile-time strings unrolls the split chunks (adafruit_framebuf `text()`) |
+| `for chunk in s.split(sep)` | Compile-time unroll over a string whose text is known -- literal, module constant or parameter bound to one; `maxsplit` as a compile-time int. A `split()` call as a value is refused: there is no list to hand back |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`) patterns; DCE on `__CHIP__` |
 | `def` (functions) | Typed params, defaults, keyword args, overloading by type |
 | `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
@@ -49,6 +50,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | Augmented assignment `+= -= *= //= &= |= ^= <<= >>=` | Variable, subscript, and member targets |
 | Type cast `uint8(val)`, `uint16(val)` | Constant-fold; truncate/zero-extend at runtime |
 | `abs(x)`, `min(a, b)`, `max(a, b)` | Intrinsic built-ins. `min`/`max` also take a fixed-size sequence and a `key=` function; the key resolves at compile time and is called once per operand |
+| `all/any/sum/min/max(x ... for x in it)` | A generator expression as the DIRECT argument of a reduction unrolls it at compile time over an iterable whose length is known: tuple/list literal, const sequence, `range` of constants, compile-time string, fixed-size array. `all`/`any` short-circuit like CPython (a deciding element ends the walk, later elements are never evaluated); `sum` honours `start`; a `for ... if` clause filters (adafruit_pixelbuf `all(0 <= c <= 255 for c in val)`). Anywhere else a generator expression is refused naming the five reductions -- there is no iterator object |
+| Compile-time string methods | On a name bound to ONE text (literal, module constant, parameter receiving one -- through `super().__init__` and nested `@inline` calls): `len(s)`, `s[i]`, `needle in s`, `s == "lit"`, and `s.strip()`/`lstrip()`/`rstrip()`, `s.index()`/`s.find()` (miss: catchable `ValueError` / -1), `s.startswith()`/`s.endswith()`, `s.count()`, `s.replace()`, `s.upper()`, `s.lower()` all fold |
 | `len(arr)` / `len([...])` | Compile-time constant fold |
 | `ord('A')`, `chr(n)` | Compile-time constant only |
 | Multiple assignment `a = b = 0` | Left-to-right Copy chain |
@@ -130,6 +133,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `str` parameter text | A compile-time string of any length bound to a `str` parameter keeps its text, so `struct.calcsize(fmt)` folds (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685) |
 | `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `x = a, b, c` | An unparenthesized comma RHS is a tuple, the same wrap `return a, b` already had. `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` (adafruit_framebuf) |
+| `return a, (b, c, d), e` | A tuple-return element that is itself a fixed literal sequence reaches the caller as a compile-time sequence, not a runtime tuple: `bpp, byteorder_tuple, has_white, dotstar_mode = self.parse_byteorder(...)` unpacks `(r, g, b)` so `byteorder_tuple[i]` folds and `if dotstar_mode:` drops its branch (adafruit_pixelbuf) |
 | `buf[i:i+n] = bytes(fill)` | Equal-length slice assign onto a `bytearray` (and onto `self.buf`), with a run-time start whose length is compile-time (`i:i+3`) and `bytes(named_seq)` as the source (adafruit_framebuf RGB888 fill) |
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
@@ -152,7 +156,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Rebound module alias | `from adafruit_motor import servo` then `servo = servo.Servo(pwm)` rebinds the name; later reads and calls see the instance, not the module (#467) |
 | `time.struct_time` | Stdlib stub with the nine CPython field names, so `from time import struct_time` in a typing try does not fail because `pymcu.time` exists. Construction from a 9-tuple is not this stub |
 | `collections.namedtuple` | Compile-time class factory: `Name = namedtuple("Name", ("a", "b"))` becomes a ZCA class with those fields, `__len__` and `__match_args__`. The bound name is the class. Last construct unmodified `adafruit_irremote` stopped on |
-| `isinstance(x, T)` | Compile-time fold: ZCA instance vs class/subclass (#424); value vs `tuple`/`list`/`int` from known shape (#423) |
+| `isinstance(x, T)` | Compile-time fold: ZCA instance vs class/subclass (#424); value vs `tuple`/`list`/`int` from known shape (#423); `isinstance(x, slice)` is always False -- nothing is a runtime slice (adafruit_pixelbuf `__setitem__`) |
 | `is` / `is not` | Maps to `==` / `!=` (identity = equality on bare-metal) |
 | `divmod(a, b)` built-in | Returns `(quotient, remainder)`; compile-time fold or `__div8`/`__mod8` |
 | `bitcast(T, v)` built-in | Reinterpret raw bytes as type `T`; float<->uint32 via register swap; compile-time fold for constant operands |
@@ -242,6 +246,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work. A function that fills one and `return`s it is expanded at the call site so the caller indexes the same storage (#464). `memoryview` is a CPython builtin type this compiler stores, so `-> memoryview` is the same view `memoryview()` already wraps. Replaying `name = bytearray(n)` does not undo a `.extend()` that already grew it, so a class-body `_fit(2)` keeps a 3-byte `_BUFFER`. A class-level `_BUFFER = bytearray(N)` reached through an instance iterates and enumerates as itself (`for b in self._BUFFER`), and a whole-attribute read (`bus.write(self._BUFFER)`) hands the callee the shared storage (#442) |
 | `bytes([...])` / `bytes(N)` as a call argument | The same constructor `bytearray` already has, one call spelling later (#431): `f(bytes([1, 2, 3]))` unrolls into an `@inline` callee's unannotated buffer parameter, or lays out a hidden fixed buffer for a `bytearray`/`bytes`-annotated parameter of a real function; `bytes(n)` with a run-time `n` is refused, naming `bytearray(n)` |
 | `Union[A, B]` on an `@inline`/constructor parameter | Read as the argument's type at that call site (#442), which must be one of the members -- the same way an `@inline` overload already dispatches on an argument's type. A field assigned from it takes the site's type, as any unannotated field does. `List[X]`/`Tuple[X, ...]` matches a fixed array/list literal argument; `Callable[...]` matches a plain function reference. A `Protocol` member is structural (#465): a class that has the protocol's members matches even when it is not named as the protocol (adafruit_debouncer's `DigitalInOut` vs `ROValueIO`). A non-matching argument is refused, naming the members. A real subroutine's parameter, or any non-parameter position, keeps the union refusal -- one ABI, no call site to resolve it at |
+| Annotation alias `Name = Union[...]` | `ColorUnion = Union[int, uint8]` binds the alias at compile time -- including inside a discarded `if TYPE_CHECKING:` / compat-layer guard -- and `x: ColorUnion` resolves it to the same members as the spelled-out union (adafruit_pixelbuf). A compile-time name for the annotation, not a type object |
 
 ---
 
@@ -409,6 +414,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `str` parameter text | A compile-time string of any length bound to a `str` parameter keeps its text, so `struct.calcsize(fmt)` folds (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685) |
 | `[None] * n` | A repeated list of None (or a constant) is a fixed SRAM array. `coeffs = [None] * 18` and `self.ch = [None] * len(self)` are indexable; None is a 0 slot (adafruit_dps310, adafruit_pca9685) |
 | `x = a, b, c` | An unparenthesized comma RHS is a tuple, the same wrap `return a, b` already had. `fill = (color >> 16) & 255, (color >> 8) & 255, color & 255` (adafruit_framebuf) |
+| `return a, (b, c, d), e` | A tuple-return element that is itself a fixed literal sequence reaches the caller as a compile-time sequence, not a runtime tuple: `bpp, byteorder_tuple, has_white, dotstar_mode = self.parse_byteorder(...)` unpacks `(r, g, b)` so `byteorder_tuple[i]` folds and `if dotstar_mode:` drops its branch (adafruit_pixelbuf) |
 | `buf[i:i+n] = bytes(fill)` | Equal-length slice assign onto a `bytearray` (and onto `self.buf`), with a run-time start whose length is compile-time (`i:i+3`) and `bytes(named_seq)` as the source (adafruit_framebuf RGB888 fill) |
 | `"mod.Cls"` annotation | A quoted dotted class is the same type as unquoted `mod.Cls`. `"Vec"` already was the bare name (#261); `"adafruit_si7021.SI7021"` is the dotted spelling (adafruit_si7021) |
 | `word[i], crc[i] = unpack(...)` | An IndexExpr unpack binds the RHS to a name then stores `t[k]`. A `struct.unpack` buffer slice may start at a run-time offset (`data[i*6:(i*6)+6]`) (adafruit_sht31d) |
@@ -454,7 +460,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Notes |
 |---------|-------|
-| Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) instead of being refused, wherever the compiler can prove the statement runs at most once: a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one. Refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`; new `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
+| Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) instead of being refused, wherever the compiler can prove the statement runs at most once: a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one. Refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`; `for b in x` iterates the bytes when the buffer reaches the loop through an `@inline` parameter binding or a field (`self._post_brightness_buffer` into `neopixel_write`). New `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
 
 ---
 
@@ -507,7 +513,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 |---------|-------|
 | `machine.Timer(id, period, callback)` | ✅ Implemented — CTC mode on Timer1; period in ms; callback as ISR |
 | `busio.SPI` / `busio.I2C` for CP flavor | ✅ Implemented | Wraps existing HAL under CircuitPython API names |
-| `neopixel` driver (CP flavor) | ✅ Implemented | WS2812 bit-bang via `neopixel.NeoPixel` API |
+| `neopixel` driver (CP flavor) | ✅ Implemented | WS2812 bit-bang via `neopixel.NeoPixel` API. The UNMODIFIED upstream `neopixel.py` + `adafruit_pixelbuf.py` also compile: `pixels[i] = (r, g, b)` writes GRB on the wire (verified on the emulated Uno) |
 
 ---
 
@@ -540,5 +546,5 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 | `*args` / `**kwargs` over a run-time call | The forms are compile-time sequences and mappings: the callee is specialised per call site, so the extra arguments are known there and splice into the callee's named parameters, `super().__init__` included. A `**` built from a run-time mapping is refused |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
 | Metaclasses | No runtime type system |
-| Reflection / `getattr` / `hasattr` | No runtime type info |
+| Reflection / `getattr` / `hasattr` | No runtime type info. **One compile-time form IS supported:** `getattr(mod, "name", default)` on a module folds to the member or the default (CircuitPython's `getattr(board, "SCK", ...)`); the name must be a literal and the receiver a module -- anything else is refused |
 | `eval()` / `exec()` | No interpreter on MCU |

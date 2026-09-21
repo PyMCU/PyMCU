@@ -78,6 +78,23 @@ purpose, as opposed to bugs like these three that were silent until found.
 - A global an ISR writes stays in SRAM. The AVR backend homed it in R2-R15, which every ISR
   prologue saves and every epilogue restores, so the handler's write was undone on RETI and
   an encoder counted every edge and reported 0 for ever (#328, fixed in pymcu-avr).
+- A `raise` inside an `except` handler is reachable only when the `try` raised, and is no
+  longer treated as an unconditional abort of the function: the handler is lowered under
+  the same dispatch as any other, so `try: s.index(...) except ValueError: raise` in
+  `adafruit_pixelbuf.parse_byteorder` keeps the raise conditional instead of ending the
+  expansion for every path.
+- A parameter that starts `None` and is then rebound keeps neither mark: `p = None` made
+  `if not p:` fold, but `p = "GRB"` later still carried the none-flag, so a
+  `super().__init__(byteorder=p)` bound the callee's parameter as `None` and the string
+  was dropped. The mark is cleared the same way any other rebind clears it
+  (adafruit_pixelbuf `PixelBuf.__init__`).
+- A compile-time string read through a second `@inline` hop keeps its text. The prefixed
+  lookup returned the constant's value without the text it was interned with, so
+  `len(s)` inside a callee's callee was told the argument "must be a fixed-size array or
+  list literal" while holding "GRB".
+- `if not p:` on a parameter bound to `None` folds to the true arm, the same fold
+  `if p is None:` already had -- `if not pixel_order:` in `PixelBuf.__init__` picks the
+  default byteorder instead of testing an unwritten slot at run time.
 
 ### Language surface
 - `bytearray(n)` with a runtime `n` allocates from a static arena (no `free()`, AVR only)
@@ -265,6 +282,60 @@ purpose, as opposed to bugs like these three that were silent until found.
 - `Pin.mode()` has the reading half its signature advertises, on AVR and on PIC; every
   `match __CHIP__.name:` in the PIC14 GPIO layer refuses an unsupported part instead of
   falling off the end (#312).
+- A generator expression as the DIRECT argument of `all`, `any`, `sum`, `min` or `max`
+  unrolls at compile time over an iterable whose length is known -- a tuple or list
+  literal, a bound const sequence, a `range` of constants, a compile-time string or a
+  fixed-size array. `all` and `any` short-circuit like CPython, so a deciding element
+  ends the walk and later elements are never evaluated; `sum` honours its `start`
+  argument and a `for ... if` clause filters. In any other position the refusal names
+  the five reductions and says why: there is no iterator object to hand out. This is
+  the line `adafruit_pixelbuf` validates a colour with --
+  `all(0 <= component <= 255 for component in val)` -- and the last thing unmodified
+  `neopixel` + `adafruit_pixelbuf` stopped on: `NeoPixel(board.D6, 4)` then
+  `pixels[0] = (1, 2, 3)` compiles and drives the wire in GRB order on the emulated
+  Uno.
+- `for chunk in s.split(sep)` -- and `for i, chunk in enumerate(s.split(sep))` --
+  unrolls a compile-time string's pieces. The receiver and separator must be texts the
+  compiler knows (a literal, a module constant, or a parameter bound to one, through
+  nested `@inline` calls included), `maxsplit` a compile-time int; anything else is
+  refused naming the reason, because a runtime split needs a heap to hold the pieces.
+  `split()` in a value position is refused: there is no list to hand back. This is the
+  loop `adafruit_framebuf.FrameBuffer.text()` wraps each line in.
+- The pure methods on a compile-time string fold where the program is compiled:
+  `s.strip()` / `lstrip()` / `rstrip()` (optional chars argument), `s.index()` /
+  `s.find()` (a miss raises a catchable `ValueError` / answers -1),
+  `s.startswith()` / `s.endswith()`, `s.count()`, `s.replace()`, `s.upper()` and
+  `s.lower()`, plus `len(s)`, `s[i]`, `needle in s` and `s == "lit"`. The text
+  survives `super().__init__`, keyword arguments, a `p = None` parameter rebound to a
+  string, a `cond else` ternary and a second `@inline` hop, which is the chain
+  `adafruit_pixelbuf.parse_byteorder` runs "GRB" through. A miss inside
+  `s.index(...)` is a real raise, so the `try/except ValueError` around it catches it.
+- `getattr(mod, "name", default)` on a module folds at compile time to the member or
+  the default -- the CircuitPython `getattr(board, "SCK", board.D13)` spelling. The
+  attribute name must be a literal and the receiver a module; `getattr` on anything
+  else stays refused, there is still no runtime type info to walk.
+- A tuple-return element that is itself a fixed literal sequence reaches the caller as
+  a compile-time sequence: `return 3, (r, g, b), False, False` then
+  `bpp, byteorder_tuple, has_white, dotstar_mode = parse(...)` binds
+  `byteorder_tuple` to `(r, g, b)` so `byteorder_tuple[i]` folds, and `dotstar_mode`
+  is still the constant `False`, so `if dotstar_mode:` drops its branch instead of
+  lowering it (adafruit_pixelbuf `parse_byteorder` / `PixelBuf.__init__`).
+- `isinstance(x, slice)` folds to False: nothing in PyMCU is a runtime slice, so the
+  `elif isinstance(pixel_order, (tuple, list))` / `isinstance(index, slice)` guards in
+  `adafruit_pixelbuf` take the arm the value selects.
+- An annotation may be written through an alias: `ColorUnion = Union[int, uint8]`
+  binds the name at compile time -- including inside a discarded `if TYPE_CHECKING:` /
+  compat-layer guard -- and a parameter annotated `x: ColorUnion` resolves it to the
+  same members as the spelled-out union (adafruit_pixelbuf `PixelBuf.__init__`).
+- `for b in buf` iterates an arena-backed buffer byte by byte when the buffer reaches
+  the loop through an `@inline` parameter binding or a field --
+  `self._post_brightness_buffer` forwarded to `neopixel_write` is the shape
+  `adafruit_pixelbuf.show()` uses to push the frame.
+- `adafruit_framebuf.FrameBuffer.text("...", x, y, color)` compiles through
+  `string.split("\n")` and `enumerate()` into `BitmapFont(font_name)` and stops where
+  the platform boundary is: `open("font5x8.bin", "rb")`. The refusal names the
+  resolved file and RFC 0008 (embedded files), which is the piece of that library
+  that is not language work.
 
 ### Diagnostics
 - A refusal about a parameter annotation, a return annotation or an undefined base class
