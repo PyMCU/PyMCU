@@ -999,7 +999,15 @@ public partial class IRGenerator
     // loop being inlined per call site.
     private HashSet<string> flashStrPtrVars = new();
 
-    // Arrays that are subscripted with at least one non-constant index anywhere in the current function.
+    // Names of fixed-size arrays that own one contiguous SRAM block. The per-function scan
+    // adds the locals a body subscripts with a non-constant index; the creation paths add the
+    // arrays they emit ArrayStore init for -- a `self.buf = bytearray(n)` member, a grown
+    // buffer, a memoryview window. Once an array has contiguous storage that fact is true for
+    // every function, so the set is NEVER cleared between functions: a `self.buffer` made in
+    // main's inlined __init__ is still the same storage when `draw` walks it, and forgetting
+    // the mark made a later `enumerate(buffer)` invent `buffer__0..buffer__512` slot variables
+    // beside the real array -- the framebuffer was allocated twice, and the slots were never
+    // even written.
     private HashSet<string> arraysWithVariableIndex = new();
 
     // Module-level arrays that unconditionally use SRAM (bytearray declarations at global scope).

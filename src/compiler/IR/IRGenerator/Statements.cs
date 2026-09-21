@@ -731,7 +731,10 @@ public partial class IRGenerator
             }
         }
 
-        arraysWithVariableIndex.Clear();
+        // No clearing of arraysWithVariableIndex here: the set records which arrays own
+        // contiguous SRAM storage, and that is a property of the storage, not of the function
+        // being compiled. The scan below still adds this function's own variable-indexed
+        // locals; marks from earlier functions keep answering for arrays they created.
         ScanForVariableIndexedArrays(funcNode.Body.Statements, fullName + ".");
 
         VisitBlock(funcNode.Body);
@@ -794,7 +797,6 @@ public partial class IRGenerator
         }
 
         irFunc.Body = new List<Instruction>(currentInstructions);
-        arraysWithVariableIndex.Clear();
         return irFunc;
     }
 
