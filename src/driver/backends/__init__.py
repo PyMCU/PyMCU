@@ -276,6 +276,7 @@ def run_backend(
     emit_linemap_path: Path | None = None,
     emit_varmap_path: Path | None = None,
     emit_blockmap_path: Path | None = None,
+    profile_path: Path | None = None,
     stdout_baud: int | None = None,
     uart_owned: bool = False,
 ) -> None:
@@ -337,6 +338,14 @@ def run_backend(
         if not _capable(caps, "--emit-blockmap"):
             _refuse_unsupported(backend_binary, "--emit-blockmap", "PGO profiling needs a block map")
         cmd.extend(["--emit-blockmap", str(emit_blockmap_path)])
+    # RFC 0010: a profiled build hands the profile to the backend too, where it
+    # orders the R2-R15 register homes by dynamic use. A backend that predates
+    # the flag cannot honour the request the caller explicitly made, so this
+    # refuses rather than silently building unprofiled.
+    if profile_path is not None:
+        if not _capable(caps, "--profile"):
+            _refuse_unsupported(backend_binary, "--profile", "a profiled build needs it")
+        cmd.extend(["--profile", str(profile_path)])
     # PyMCU#340. The unhandled-exception path prints E:<Type> on the UART, and the UART is only
     # set up when this driver sees print()/input() or an explicit UART(). When nobody sets it
     # up, that path turns the transmitter on itself, at the rate stdout is configured for --

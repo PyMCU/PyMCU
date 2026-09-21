@@ -152,6 +152,10 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
                 progress.update(task, description=f"  [cyan]Building[/cyan] {chip}...")
         elif line.startswith("[BUILD_OK] "):
             progress.update(task, completed=50)
+        elif line.startswith("[PGO] "):
+            # The backend reports what the profile did to it (register-home
+            # order today); worth one line whether or not verbose is on.
+            progress.console.print(f"  [dim]{line[len('[PGO] '):]}[/dim]")
         elif verbose and line.startswith(("[INFO] ", "[VERBOSE] ")):
             progress.console.print(f"  [dim]{line}[/dim]")
 
@@ -1774,6 +1778,7 @@ def build(
                         emit_linemap_path=linemap_path,
                         emit_varmap_path=varmap_path,
                         emit_blockmap_path=blockmap_path,
+                        profile_path=Path(profile_path) if profile_path else None,
                         stdout_baud=_get_stdout_config(pymcu_config)[1],
                         uart_owned=_has_uart or _has_print or _has_input,
                     )
