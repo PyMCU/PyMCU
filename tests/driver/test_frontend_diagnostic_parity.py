@@ -74,6 +74,12 @@ def _write(tmp_path: Path, body: str) -> Path:
     "    a: uint8 = 1\n    n = len(a)\n",   # argument, points at a Name
     "    v = abs(\"hello\")\n",             # argument, points at a string
     "    v = ord(\"ab\")\n",
+    # A non-name inside an except tuple. Now that `except (mod.A, mod.B):` parses, the
+    # refusal for an element that is not a name or a dotted chain must still land ON the
+    # element: the hand-written parser's Consume points at the token and the bridge blames
+    # the AST node it rejected.
+    "    try:\n        x: uint8 = 1\n    except (MyErr, 1):\n        pass\n",
+    "    try:\n        x: uint8 = 1\n    except (MyErr, \"oops\"):\n        pass\n",
 ])
 def test_both_front_ends_point_at_the_same_character(tmp_path, body):
     src = _write(tmp_path, body)

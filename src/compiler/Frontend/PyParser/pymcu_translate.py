@@ -995,11 +995,18 @@ def s_try(node):
                     "'except ():' names no exception type, so nothing can reach this handler. "
                     "Name the types to catch, or write 'except:' to catch any", h)
             for el in h.type.elts:
-                if not isinstance(el, ast.Name):
+                # A dotted type (`except (mod.A, mod.B):`) unparses to the same text the
+                # C# parser builds from its tokens. Anything that is not a name or a
+                # dotted chain rooted in one is refused AT the element, which is where
+                # the hand-written parser's Consume points.
+                cur = el
+                while isinstance(cur, ast.Attribute):
+                    cur = cur.value
+                if not isinstance(cur, ast.Name):
                     raise Unsupported(
                         "an exception type inside the parentheses after 'except' must be a "
-                        f"plain name, and '{ast.unparse(el)}' is not", h)
-            exn = ",".join(el.id for el in h.type.elts)
+                        f"name or a dotted module.Type, and '{ast.unparse(el)}' is not", el)
+            exn = ",".join(ast.unparse(el) for el in h.type.elts)
         elif h.type is not None:
             exn = ast.unparse(h.type)
         # `except X as e` binds a bounded exception object (#369): the type code the

@@ -1307,8 +1307,8 @@ public class Parser
                     do
                     {
                         if (Check(TokenType.RParen)) break;   // trailing comma
-                        alternatives.Add(Consume(TokenType.Identifier,
-                            "Expected an exception type inside the parentheses after 'except'").Value);
+                        alternatives.Add(ConsumeDottedExceptionType(
+                            "Expected an exception type inside the parentheses after 'except'"));
                     } while (Match(TokenType.Comma));
                 Consume(TokenType.RParen, "Expected ')' after the exception types");
                 if (alternatives.Count == 0)
@@ -1320,7 +1320,7 @@ public class Parser
             {
                 exnType = Check(TokenType.Colon)
                     ? ""
-                    : Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+                    : ConsumeDottedExceptionType("Expected exception type after 'except'");
             }
 
             // `except X as e` binds a bounded exception object: the type code the dispatcher
@@ -1357,6 +1357,20 @@ public class Parser
         var tryStmt = new TryStmt(body, handlers, finallyBody, elseBody) { Line = line };
         tryStmt.HandlerNames.AddRange(handlerNames);
         return tryStmt;
+    }
+
+    /// <summary>
+    /// One exception type in an except header: a name, or a dotted one for a class reached
+    /// through its module (`except adafruit_irremote.IRNECRepeatException:`). The dots stay
+    /// in the text -- VisitTry mangles the qualifier the way a `mod.X` expression does.
+    /// </summary>
+    private string ConsumeDottedExceptionType(string missingNameMessage)
+    {
+        string name = Consume(TokenType.Identifier, missingNameMessage).Value;
+        while (Match(TokenType.Dot))
+            name += "." + Consume(TokenType.Identifier,
+                "Expected an exception type name after '.'").Value;
+        return name;
     }
 
     private Statement ParseWithStatement()
