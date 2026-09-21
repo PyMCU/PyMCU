@@ -911,6 +911,24 @@ def _elf_text_symbol_addrs(elf_file) -> dict | None:
         return None
 
 
+def _resolve_blockmap(blockmap_path: Path, elf_syms: dict[str, int]) -> None:
+    """Fill in WordAddr fields of a backend-emitted blockmap from the linked ELF.
+
+    The backend emits labels with WordAddr=null: link-time relaxation changes
+    instruction widths, so only the ELF symtab knows where a label landed.
+    *elf_syms* is {name: byte address} from _elf_text_symbol_addrs; a label the
+    linker dropped (peephole-deleted, unreachable) stays null and the profiler
+    merges its PCs into the preceding block.
+    """
+    raw = json.loads(blockmap_path.read_text())
+    for section in ("Blocks", "Branches"):
+        for rec in raw.get(section, []):
+            name = rec.get("Label") or rec.get("Sym")
+            if name and name in elf_syms:
+                rec["WordAddr"] = elf_syms[name] // 2
+    blockmap_path.write_text(json.dumps(raw, indent=2))
+
+
 def _avr_preamble_bytes(artifacts_dir) -> int | None:
     """Vector table plus the `__bad_interrupt` stub, or None.
 
@@ -1550,6 +1568,7 @@ def build(
             progress.update(build_task, description="  [cyan]Compiling[/cyan]...", completed=10)
             compiler_handler = _make_compiler_output_handler(progress, build_task, verbose)
             backend_plugin = get_backend_for_chip(target)
+            blockmap_path: Path | None = None
             try:
                 if backend_plugin is not None:
                     ir_file = output_dir / "firmware.mir"
@@ -1579,6 +1598,7 @@ def build(
                         debug_dir.mkdir(parents=True, exist_ok=True)
                         linemap_path = debug_dir / "linemap.json"
                         varmap_path  = debug_dir / "varmap.json"
+                        blockmap_path = debug_dir / "blockmap.json"
                     run_backend(
                         backend_binary=binary_for_plugin(backend_plugin),
                         ir_file=ir_file,
@@ -1592,6 +1612,7 @@ def build(
                         on_output=compiler_handler,
                         emit_linemap_path=linemap_path,
                         emit_varmap_path=varmap_path,
+                        emit_blockmap_path=blockmap_path,
                         stdout_baud=_get_stdout_config(pymcu_config)[1],
                         uart_owned=_has_uart or _has_print or _has_input,
                     )
@@ -1806,6 +1827,9 @@ def build(
                     firmware_obj = gas_tc.assemble(output_file)
                     progress.update(build_task, description="  [cyan]Linking[/cyan]...", completed=75)
                     elf_file = gas_tc.link(firmware_obj, [], output_dir)
+                    if blockmap_path is not None and blockmap_path.exists():
+                        _resolve_blockmap(blockmap_path,
+                                          _elf_text_symbol_addrs(elf_file) or {})
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = gas_tc.elf_to_hex(elf_file)
 

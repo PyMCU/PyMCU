@@ -275,6 +275,7 @@ def run_backend(
     emit_symbols_path: Path | None = None,
     emit_linemap_path: Path | None = None,
     emit_varmap_path: Path | None = None,
+    emit_blockmap_path: Path | None = None,
     stdout_baud: int | None = None,
     uart_owned: bool = False,
 ) -> None:
@@ -332,6 +333,10 @@ def run_backend(
         if not _capable(caps, "--emit-varmap"):
             _refuse_unsupported(backend_binary, "--emit-varmap", "a debug build asked for a varmap")
         cmd.extend(["--emit-varmap", str(emit_varmap_path)])
+    if emit_blockmap_path is not None:
+        if not _capable(caps, "--emit-blockmap"):
+            _refuse_unsupported(backend_binary, "--emit-blockmap", "PGO profiling needs a block map")
+        cmd.extend(["--emit-blockmap", str(emit_blockmap_path)])
     # PyMCU#340. The unhandled-exception path prints E:<Type> on the UART, and the UART is only
     # set up when this driver sees print()/input() or an explicit UART(). When nobody sets it
     # up, that path turns the transmitter on itself, at the rate stdout is configured for --
