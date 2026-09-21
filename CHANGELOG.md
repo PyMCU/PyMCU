@@ -37,6 +37,12 @@ purpose, as opposed to bugs like these three that were silent until found.
   before, so `range(total_us // 60000000)` was a run-time counter loop over a 32-bit bound;
   1814 bytes on a 380-byte program. A folded count of at most eight unrolls, and an empty
   range emits nothing (#326).
+- An unsigned 32-bit division no longer carries the modulo wrapper it never calls, and the
+  shared division core keeps its remainder in the call-clobbered X and Z registers instead of
+  saving five callee-saved registers on every call. A program that only divides used to pay
+  for `__mod32` too, because the build splices whole assembly files and both lived in
+  `div32.S`; the modulo wrapper now sits in its own `mod32.S`. Measured on the HC-SR04
+  probe (`us * 17 // 100`): 952 bytes before, 888 after (#408).
 
 ### Silent wrong code
 - An unhandled `raise` written in the entry function halts with its name instead of returning
