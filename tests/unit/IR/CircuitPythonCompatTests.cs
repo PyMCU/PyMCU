@@ -262,15 +262,18 @@ public class CircuitPythonCompatTests
     // ── open() names the file ─────────────────────────────────────────────────────
 
     [Fact]
-    public void OpenNamesTheFileAndTheMissingFeature()
+    public void OpenNamesTheFileAndTheMissingEmbed()
     {
+        // RFC 0008: open() resolves at compile time against the embedded-file
+        // table. A name the build did not embed is a diagnostic naming the file
+        // and the two ways to embed it -- `files = [...]` or auto-embedding.
         var ex = Assert.ThrowsAny<CompilerError>(() => Gen(
             Regs +
             "def main():\n" +
             "    name = \"font5x8.bin\"\n" +
             "    f = open(name, \"rb\")\n"));
         Assert.Contains("font5x8.bin", ex.Message);
-        Assert.Contains("RFC 0008", ex.Message);
+        Assert.Contains("embedded", ex.Message);
     }
 
     // ── a Union alias assigned at module level ────────────────────────────────────

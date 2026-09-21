@@ -63,5 +63,10 @@ public sealed record CompilerOptions(
     // `sys.implementation.version`, `sys.platform` and `os.uname()` the same way __CHIP__ is
     // folded (docs/rfcs/0007): the compiler substitutes the real per-board value directly,
     // it never parses the compat layer's own sys.py/os.py to derive one. Optional, like Board.
-    string Stdlib = ""
+    string Stdlib = "",
+    // RFC 0008 romfs: "NAME=PATH" pairs the driver resolved for this build. open(NAME)
+    // resolves at compile time to a handle over the blob read from PATH. The compiler keys
+    // the table by NAME exactly as open() receives it; a name open() never reaches embeds
+    // nothing (the blob is only emitted when a handle over it is created).
+    List<string>? Embeds = null
 );

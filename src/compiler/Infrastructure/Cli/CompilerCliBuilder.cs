@@ -140,6 +140,14 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => string.Empty
         };
 
+        // Same reason as --config above (issue #237): one value per flag occurrence.
+        Option<List<string>> embedOption = new("--embed")
+        {
+            Description = "Embed a file into the romfs table as NAME=PATH; open(NAME) "
+                        + "resolves to a handle over the blob at compile time (RFC 0008)",
+            DefaultValueFactory = parseResult => []
+        };
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -158,6 +166,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(libraryOption);
         rootCommand.Options.Add(projectRootOption);
         rootCommand.Options.Add(stdlibOption);
+        rootCommand.Options.Add(embedOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -185,7 +194,8 @@ public static class CompilerCliBuilder
                 ProjectRoot: parseResult.GetValue(projectRootOption),
                 Timebase: parseResult.GetValue(timebaseOption),
                 Library: parseResult.GetValue(libraryOption),
-                Stdlib: parseResult.GetValue(stdlibOption) ?? string.Empty
+                Stdlib: parseResult.GetValue(stdlibOption) ?? string.Empty,
+                Embeds: parseResult.GetValue(embedOption) ?? []
             );
 
             // Return the exit code so Invoke() (and thus the process) actually fails

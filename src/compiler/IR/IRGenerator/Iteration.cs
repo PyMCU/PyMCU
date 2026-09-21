@@ -1041,6 +1041,30 @@ public partial class IRGenerator
                 return;
             }
 
+            // RFC 0008: `for name in os.listdir(dir)` unrolls over the embedded-file
+            // table -- each iteration binds the loop variable to one file's name as a
+            // compile-time string, which is what `open(name)` inside the body reads.
+            if (iter is CallExpr lsCall && IsOsFsCall(lsCall, "listdir"))
+            {
+                string lsBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                foreach (var el in OsListdirExprs(lsCall))
+                {
+                    // Bind the TEXT, not the interned id: TryFoldConstElement would file
+                    // the name's string id into constantVariables and `print(name)` would
+                    // emit the number.
+                    if (el is StringLiteral lsName)
+                    {
+                        strConstantVariables[varKey] = lsName.Value;
+                        constantVariables.Remove(varKey);
+                        floatConstantVariables.Remove(varKey);
+                        EmitUnrolledIteration(stmt.Body, lsBrk);
+                        strConstantVariables.Remove(varKey);
+                    }
+                }
+                if (lsBrk.Length > 0) Emit(new Label(lsBrk));
+                return;
+            }
+
             // A parameter bound to a bytes/list literal argument (e.g. the `buf` of
             // uart.write(b"Hi")) iterates exactly like a direct list literal.
             ListExpr? GetListParam(Expression e)

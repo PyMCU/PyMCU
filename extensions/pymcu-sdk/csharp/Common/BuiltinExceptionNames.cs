@@ -65,6 +65,13 @@ public static class BuiltinExceptionNames
         // Raised by the arena allocator (lib/src/pymcu/arena.py) when a runtime-sized
         // bytearray() would overflow the static arena. See docs/rfcs/0004-arena-allocator.md.
         ["MemoryError"]          = 12,
+
+        // 13 exists for the same reason 7-10 do: a handler has to name it to compile.
+        // adafruit_framebuf's BitmapFont wraps the embedded-font open() in
+        // `except OverflowError` (CircuitPython shrinks long fonts); with romfs the open is
+        // resolved at compile time and the handler is dead code, but the name must still
+        // resolve for the try to lower at all (docs/rfcs/0008-embedded-files.md).
+        ["OverflowError"]        = 13,
     };
 
     /// <summary>

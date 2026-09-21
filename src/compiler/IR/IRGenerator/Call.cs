@@ -203,6 +203,12 @@ public partial class IRGenerator
             // self.method(args) inside an outlined method: call the sibling outlined method.
             if (TryEmitSelfOutlinedMethodCall(expr, memC) is { } selfResult) return selfResult;
 
+            // RFC 0008: read/seek/tell/close on a romfs handle are lowered here, before
+            // module and instance dispatch -- they are intrinsics over a compile-time
+            // object, not functions any lookup could find.
+            if (ResolveRomfsHandleExpr(memC.Object) is { } romHandle)
+                return EmitRomfsMethod(romHandle, expr, memC);
+
             if (memC.Object is VariableExpr ve)
             {
                 // A name bound to an instance is that instance, even when a
@@ -216,6 +222,14 @@ public partial class IRGenerator
                     // Mangle with the real module name, not the alias: `import time as t`
                     // registers modules["t"] but compiles functions as time_sleep_ms.
                     string realMod = TryImportedAlias(ve.Name, out var rm) && rm != null ? rm : ve.Name;
+                    // RFC 0008: os.stat/os.listdir on the embedded-file table are
+                    // compile-time answers, not module functions -- the table exists
+                    // only while the program is being built.
+                    if (realMod.Replace('.', '_') is "os" or "uos" or "pymcu_os")
+                    {
+                        if (memC.Member == "stat") return EmitOsStat(expr);
+                        if (memC.Member == "listdir") return EmitOsListdir(expr);
+                    }
                     string mangledMod = realMod.Replace('.', '_');
                     string modFn = mangledMod + "_" + memC.Member;
 
@@ -702,6 +716,14 @@ public partial class IRGenerator
                 "'x in range(...)', in reversed(range(...)) or in enumerate(range(...))", expr.Callee);
 
         if (callee == "len") return EmitLenBuiltin(expr);
+        // RFC 0008: open() on an embedded file resolves here, to a compile-time handle
+        // over the blob -- there is no filesystem on the chip for it to call into. A
+        // program that defined its own `def open` keeps it (the builtin name loses).
+        if (callee == "open" && !functionParams.ContainsKey("open")
+            && !inlineFunctions.ContainsKey("open"))
+            return EmitRomfsOpen(expr);
+        if (callee is "os_stat" or "uos_stat" or "pymcu_os_stat") return EmitOsStat(expr);
+        if (callee is "os_listdir" or "uos_listdir" or "pymcu_os_listdir") return EmitOsListdir(expr);
         if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
         if (callee == "struct_calcsize") return EmitStructCalcsize(expr);
         if (callee == "struct_unpack") return EmitStructUnpackFrom(expr, "struct.unpack()");
@@ -4309,6 +4331,21 @@ public partial class IRGenerator
         // A compile-time string constant (literal or a str / const[str] variable) has a
         // statically known length.
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
+
+        // RFC 0008: len() on a read view is its avail count; on a readline buffer the
+        // line's length variable; on os.listdir()'s result the entry count. A direct
+        // len(f.read(n)) mints the view and takes its avail.
+        if (expr.Args[0] is CallExpr lenRead && TryRomfsReadCall(lenRead, out var lenH))
+            return romfsViews[EmitRomfsReadView(lenH, lenRead)].Avail;
+        if (SequenceKeyOf(expr.Args[0]) is { } romLenKey)
+        {
+            if (romfsViews.TryGetValue(romLenKey, out var lenView)) return lenView.Avail;
+            if (romfsBufLen.TryGetValue(romLenKey, out var romLenVar))
+                return new Variable(romLenVar, DataType.UINT16);
+        }
+        if (expr.Args[0] is CallExpr lenLd && IsOsFsCall(lenLd, "listdir"))
+            return new Constant(OsListdirExprs(lenLd).Count);
+
         if (expr.Args[0] is VariableExpr vLen)
         {
             // A runtime string (f-string-as-value buffer): its length is the tracked write
@@ -5099,6 +5136,11 @@ public partial class IRGenerator
             return new Constant((int)sl.Value[0]);
         }
 
+        // `for char in "PyMCU"` binds the loop variable to each compile-time character;
+        // ord() of it folds to the code point instead of emitting a run-time read.
+        if (TryGetCompileTimeText(expr.Args[0]) is { Length: 1 } ordText)
+            return new Constant(ordText[0]);
+
         return VisitExpression(expr.Args[0]);
     }
 
@@ -5548,6 +5590,11 @@ public partial class IRGenerator
     {
         while (true)
         {
+            // RFC 0008: `struct.unpack(fmt, f.read(n))` reads straight from the embedded
+            // blob -- the read mints its view here and the field subscripts below land
+            // on it as flash loads (or constants, while the position is compile-time).
+            if (buf is CallExpr readBuf && TryRomfsReadCall(readBuf, out var romH))
+                return new VariableExpr(EmitRomfsReadView(romH, readBuf));
             if (buf is CallExpr { Callee: VariableExpr { Name: "memoryview" or "bytes" or "bytearray" } } wrap
                 && wrap.Args.Count == 1)
             {
@@ -5720,7 +5767,17 @@ public partial class IRGenerator
         string key = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + ve.Name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
-        return ResolveStrConstant(key) ?? ResolveStrConstant(ve.Name);
+        if ((ResolveStrConstant(key) ?? ResolveStrConstant(ve.Name)) is { } text)
+            return text;
+
+        // A parameter bound to a string literal without a const[str] annotation lands in
+        // constantVariables as the interned string's id -- `def __init__(self,
+        // font_name="font5x8.bin")` then `os.stat(font_name)` inside the body. Decode it
+        // through the string table the way the argument binder does.
+        if ((TryArgumentConstant(key, out int keyId) || TryArgumentConstant(ve.Name, out keyId))
+            && stringIdToStr.TryGetValue(keyId, out var internedText))
+            return internedText;
+        return null;
     }
 
     /// <summary>

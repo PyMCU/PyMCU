@@ -499,8 +499,13 @@ public partial class IRGenerator
             {
                 if (call.Callee is VariableExpr calleeVar)
                 {
-                    string resolvedClass = ResolveCallee(calleeVar.Name);
-                    if (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
+                    // RFC 0008: `self._font = open(name, "rb")` -- the field is the
+                    // handle's name, flattened the same way a constructor target is.
+                    string resolvedClass = calleeVar.Name == "open"
+                        && !functionParams.ContainsKey("open") && !inlineFunctions.ContainsKey("open")
+                        ? RomfsClassMark : ResolveCallee(calleeVar.Name);
+                    if (resolvedClass == RomfsClassMark ||
+                        inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
                         overloadedFunctions.Contains(resolvedClass + "___init__"))
                     {
                         var objVal = VisitExpression(memExpr.Object);
@@ -919,6 +924,40 @@ public partial class IRGenerator
         if (stmt.Target is MemberAccessExpr lcMem && stmt.Value is ListCompExpr lcVal
             && TryEmitMemberListComp(lcMem, lcVal))
             return;
+
+        // RFC 0008 bindings. A write to this name ends whatever it pointed at: a stale
+        // view under a rebound name would answer a subscript with bytes the name no
+        // longer stands for.
+        if (SequenceKeyOf(stmt.Target) is { } romWKey)
+            romfsViews.Remove(romWKey);
+
+        // `hdr = f.read(2)` binds the view the read minted -- a window over the flash
+        // blob, not a buffer of its own, so `hdr[i]` reads program memory.
+        if (stmt.Value is CallExpr romReadAssign && TryRomfsReadCall(romReadAssign, out var romReadH))
+        {
+            if (SequenceKeyOf(stmt.Target) is { } romViewKey)
+            {
+                romfsViews[romViewKey] = romfsViews[EmitRomfsReadView(romReadH, romReadAssign)];
+                return;
+            }
+            throw UserError(
+                "the result of f.read(n) must be bound to a name -- it is a view over the "
+                + "embedded blob and has no storage of its own", stmt.Target);
+        }
+
+        // `st = os.stat(name)` / `names = os.listdir(dir)`: a compile-time sequence the
+        // binding keeps, so `st[6]` and `names[i]` fold the way a literal tuple's do.
+        if (stmt.Value is CallExpr romSeqAssign
+            && (IsOsFsCall(romSeqAssign, "stat") || IsOsFsCall(romSeqAssign, "listdir"))
+            && SequenceKeyOf(stmt.Target) is { } romSeqKey)
+        {
+            Val seqMark = IsOsFsCall(romSeqAssign, "stat")
+                ? EmitOsStat(romSeqAssign) : EmitOsListdir(romSeqAssign);
+            string markName = ((Variable)seqMark).Name;
+            constSequenceBindings[romSeqKey] = constSequenceBindings[markName];
+            constSequenceBindings.Remove(markName);
+            return;
+        }
 
         // `t = f()` / `t = obj.prop` where the value is a multi-return call: ask
         // the expansion for the tuple's slots (the same sentinel `f()[k]` uses)
@@ -1350,6 +1389,22 @@ public partial class IRGenerator
                     $"use {varExpr.Name}.value = ... to write the whole register, or {varExpr.Name}[bit] = ... for one bit", varExpr);
         }
 
+        // RFC 0008: `x = open(...)` (or `x = f`, the same handle under another name) --
+        // the value is a marker variable for a compile-time object with no storage to
+        // copy, so the target aliases the handle rather than receiving its "value".
+        if (value is Variable romH && romfsHandles.ContainsKey(romH.Name))
+        {
+            string romKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + varExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + varExpr.Name : varExpr.Name);
+            if (romKey != romH.Name) variableAliases[romKey] = romH.Name;
+            instanceClasses[romKey] = RomfsClassMark;
+            constantVariables.Remove(romKey);
+            strConstantVariables.Remove(romKey);
+            return;
+        }
+
         // A write creates a NEW binding: kill the target's value-tracking alias BEFORE
         // resolving it (else the store itself is redirected through a stale alias), and
         // every alias that resolves TO it (their recorded value is about to change).
@@ -1617,6 +1672,29 @@ public partial class IRGenerator
     {
         if (stmt.Value is CallExpr call)
         {
+            // RFC 0008: `x = open("file", "rb")` names its handle like a constructor
+            // names its instance -- the handle is a compile-time object, and this is
+            // the channel that tells open() which key to mint it under.
+            if (call.Callee is VariableExpr { Name: "open" }
+                && !functionParams.ContainsKey("open") && !inlineFunctions.ContainsKey("open"))
+            {
+                string openName = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + varExprCtor.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + varExprCtor.Name
+                        : varExprCtor.Name);
+                if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string mutableGlobalKey = currentModulePrefix + varExprCtor.Name;
+                    if (mutableGlobals.ContainsKey(mutableGlobalKey))
+                        openName = mutableGlobalKey;
+                }
+                instanceClasses[openName] = RomfsClassMark;
+                pendingConstructorTarget = openName;
+                virtualInstances.Add(openName);
+                return;
+            }
+
             string resolvedClass = "";
             if (call.Callee is VariableExpr calleeVar)
             {
@@ -7011,6 +7089,22 @@ public partial class IRGenerator
         {
             VisitTupleUnpack(new TupleUnpackStmt(
                 stmt.Targets, new TupleExpr(seqElements), stmt.StarredIndex)
+                { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
+            return;
+        }
+
+        // `w, h = struct.unpack(fmt, buf)` -- including into attributes, as
+        // adafruit_framebuf writes `self.font_width, self.font_height =
+        // struct.unpack("BB", self._font.read(2))`. unpack is a compile-time sequence
+        // of per-field reads; rewriting it to the literal tuple lets BOTH target
+        // shapes through the paths below (the attribute walk needs a written-out
+        // tuple, the name path snapshots the elements) and lets a romfs read buffer
+        // answer them (RFC 0008).
+        if (stmt.Value is CallExpr unpackRhs
+            && TryStructUnpackSeq(unpackRhs, out var unpackSeqElems, out _))
+        {
+            VisitTupleUnpack(new TupleUnpackStmt(
+                stmt.Targets, new TupleExpr(unpackSeqElems), stmt.StarredIndex)
                 { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
             return;
         }

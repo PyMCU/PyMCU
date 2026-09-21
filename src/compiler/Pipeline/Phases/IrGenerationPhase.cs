@@ -43,6 +43,8 @@ public class IrGenerationPhase : CompilerPhaseBase
         if (!string.IsNullOrEmpty(context.Options.FilePath))
             irGen.EntryFileName = System.IO.Path.GetFileName(context.Options.FilePath);
         irGen.LibraryMode = context.Options.Library;
+        // RFC 0008: --embed NAME=PATH pairs build the compile-time romfs table.
+        irGen.EmbeddedFiles = context.Options.Embeds;
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
             context.ModulePaths);

@@ -499,6 +499,11 @@ public partial class IRGenerator
     // is constant-false by accident is worse to debug than a compile error.
     private Expression LowerInstanceTruthiness(Expression cond)
     {
+        // RFC 0008: an open romfs handle is truthy until close() -- both are
+        // compile-time facts, so the condition is a literal.
+        if (ResolveRomfsHandleExpr(cond) is { } romTruth)
+            return new IntegerLiteral(romTruth.Closed ? 0 : 1);
+
         if (cond is MemberAccessExpr fieldAccess && FieldInstanceClass(fieldAccess) is { } fieldCls)
         {
             foreach (var m in new[] { "__bool__", "__len__" })
@@ -2153,6 +2158,20 @@ public partial class IRGenerator
         if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
         EmitFinallyBody(stmt);
         Emit(new Jump(afterLabel));
+
+        // RFC 0008: `try: self._font = open(...); ... except OSError:` -- a body that
+        // emitted no Call and no raise cannot throw, so the handlers are dead code and
+        // the dispatch they hang off unreachable. Folded here rather than lowered: an
+        // `except OSError` around a compile-time open() cannot fire, exactly like the
+        // `except ImportError` around a resolved import never does. Gated on romfs
+        // being in play so programs that open nothing keep their emission, byte for
+        // byte.
+        if (romfsHandles.Count > 0 && callIndices.Count == 0
+            && !currentInstructions.Skip(bodyStart).Any(i => i is SignalError))
+        {
+            Emit(new Label(afterLabel));
+            return;
+        }
 
         // ── Catch dispatcher ─────────────────────────────────────────────────
         Emit(new Label(catchDispatch));

@@ -2267,6 +2267,43 @@ public partial class IRGenerator
             && (IsStructCall(unpackCall, "unpack_from") || IsStructCall(unpackCall, "unpack")))
             return EmitStructUnpackFromIndexed(unpackCall, expr.Index);
 
+        // RFC 0008: `f.read(n)[k]` -- the read mints a view over the blob and the
+        // subscript reads one byte of it, a constant fold while the position is
+        // compile-time and an ArrayLoadFlash once a runtime seek moved it.
+        if (expr.Target is CallExpr romReadCall && TryRomfsReadCall(romReadCall, out var romReadH))
+            return VisitIndex(new IndexExpr(
+                new VariableExpr(EmitRomfsReadView(romReadH, romReadCall)), expr.Index)
+                { Line = expr.Line, Column = expr.Column, Length = expr.Length });
+
+        // `os.stat("name")[6]` / `os.listdir(dir)[k]` on the embedded-file table: the
+        // result is a compile-time sequence, so a constant subscript picks its element.
+        if (expr.Target is CallExpr romSeqCall
+            && (IsOsFsCall(romSeqCall, "stat") || IsOsFsCall(romSeqCall, "listdir")))
+        {
+            Val seqMark = IsOsFsCall(romSeqCall, "stat")
+                ? EmitOsStat(romSeqCall) : EmitOsListdir(romSeqCall);
+            var seqElems = constSequenceBindings[((Variable)seqMark).Name];
+            int seqIdx;
+            try { seqIdx = EvaluateConstantExpr(expr.Index); }
+            catch (Common.CompilerError)
+            {
+                throw UserError(
+                    "the index into a compile-time sequence must be a compile-time constant",
+                    expr.Index);
+            }
+            if (seqIdx < 0 || seqIdx >= seqElems.Count)
+                throw new IndexError($"index {seqIdx} out of range for {seqElems.Count} elements",
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+            return VisitExpression(seqElems[seqIdx]);
+        }
+
+        // A name (or field) bound to a read view -- `hdr = f.read(2)`, then `hdr[k]`:
+        // the view stays a compile-time window over the blob, never a copied buffer.
+        if (expr.Target is VariableExpr or MemberAccessExpr
+            && SequenceKeyOf(expr.Target) is { } romViewKey
+            && romfsViews.TryGetValue(romViewKey, out var romView))
+            return EmitRomfsViewIndex(romView, expr.Index);
+
         // `self.measurements[0]`: a @property is a call. Visiting the member first
         // used it as a scalar and refused "'measurements' returns 2 values". The
         // getter is the same f()[k] site as a written call (adafruit_sht4x).

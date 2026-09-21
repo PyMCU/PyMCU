@@ -2398,6 +2398,16 @@ public partial class IRGenerator
                 return;
             case AssignStmt a: RecordMemberAssignTarget(a.Target, owner); return;
             case AugAssignStmt ag: RecordMemberAssignTarget(ag.Target, owner); return;
+            // `self.a, self.b = ...` writes the members too -- its targets are the dotted
+            // strings TryUnpackIntoAttributes walks, not AssignStmt targets, so without this
+            // they were never counted as fields at all.
+            case TupleUnpackStmt tu:
+                foreach (var t in tu.Targets)
+                {
+                    int td = t.LastIndexOf('.');
+                    if (td >= 0) NoteAssignedMember(t[(td + 1)..], owner);
+                }
+                return;
             case AnnAssign an:
                 // AnnAssign.Target is a (possibly dotted) name string, e.g. "self._buf".
                 int dot = an.Target.LastIndexOf('.');
