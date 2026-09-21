@@ -3937,9 +3937,17 @@ public partial class IRGenerator
             if (p.Expr is IntegerLiteral pil) { bound += pil.Value.ToString().Length; continue; }
             if (!string.IsNullOrEmpty(p.FormatSpec))
             {
-                var (w, radix, _, _) = ParseFormatSpec(p.FormatSpec);
-                int natural = radix switch { 2 => 32, 8 => 11, 16 => 8, _ => 11 };
-                bound += Math.Max(w, natural) + 1;
+                if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
+                {
+                    var (w, prec, _) = ParseFloatFormatSpec(p.FormatSpec);
+                    bound += Math.Max(w, 12 + prec);   // sign + 10 int digits + '.' + prec
+                }
+                else
+                {
+                    var (w, radix, _, _) = ParseFormatSpec(p.FormatSpec);
+                    int natural = radix switch { 2 => 32, 8 => 11, 16 => 8, _ => 11 };
+                    bound += Math.Max(w, natural) + 1;
+                }
             }
             else bound += 11;
         }
@@ -3994,15 +4002,32 @@ public partial class IRGenerator
             FlushLit();
             if (!string.IsNullOrEmpty(p.FormatSpec))
             {
-                var (w, radix, padc, upper) = ParseFormatSpec(p.FormatSpec);
-                int flags = (upper ? 0x01 : 0)
-                          | (LooksSigned(p.Expr!) ? 0x02 : 0)
-                          | (padc == '0' ? 0x04 : 0);
-                EmitFsCall("_fs_fmt", new List<Expression>
+                if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
                 {
-                    buf, pos, p.Expr!,
-                    new IntegerLiteral(radix), new IntegerLiteral(w), new IntegerLiteral(flags),
-                });
+                    var (w, prec, fpad) = ParseFloatFormatSpec(p.FormatSpec);
+                    // float() around the operand: an int arg would marshal raw into the
+                    // float parameter (call args carry their own type); the builtin
+                    // conversion yields a FLOAT-typed value, or folds a literal.
+                    EmitFsCall("_fs_ffmt", new List<Expression>
+                    {
+                        buf, pos,
+                        new CallExpr(new VariableExpr("float"), new List<Expression> { p.Expr! }),
+                        new IntegerLiteral(prec), new IntegerLiteral(w),
+                        new IntegerLiteral(fpad == '0' ? 1 : 0),
+                    });
+                }
+                else
+                {
+                    var (w, radix, padc, upper) = ParseFormatSpec(p.FormatSpec);
+                    int flags = (upper ? 0x01 : 0)
+                              | (LooksSigned(p.Expr!) ? 0x02 : 0)
+                              | (padc == '0' ? 0x04 : 0);
+                    EmitFsCall("_fs_fmt", new List<Expression>
+                    {
+                        buf, pos, p.Expr!,
+                        new IntegerLiteral(radix), new IntegerLiteral(w), new IntegerLiteral(flags),
+                    });
+                }
             }
             else
             {

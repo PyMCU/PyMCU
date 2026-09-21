@@ -264,12 +264,14 @@ public class CallColumnTests
     {
         // The wrong caret this uncovered. It is a caret removed, not a caret added: the line
         // it drew under was the first line of the file, whatever line the f-string was on.
+        // The refusal that remains is a float under an INTEGER spec -- `f"{x:3d}"` names a
+        // base the float path has no meaning for, so it is the format spec that is refused.
         const string src =
             "def main():\n" +
             "    x: float = 1.5\n" +
             "    print(f\"{x:3d}\")\n";
         var ex = Fails(src);
-        Assert.Contains("not supported for float values", ex.Message);
+        Assert.Contains("unsupported f-string format spec", ex.Message);
         Assert.Equal(CompilerError.Unlocated, ex.Column);
         Assert.True(ex.Line > 1, $"the f-string is well past line 1, and this reports line {ex.Line}");
     }

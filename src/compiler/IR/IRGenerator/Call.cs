@@ -6895,6 +6895,15 @@ public partial class IRGenerator
         return fn;
     }
 
+    private string ResolveFloatFmtFn()
+    {
+        string fn = ResolveCallee("uart_write_float_fmt");
+        if (fn == "uart_write_float_fmt")
+            foreach (var k in functionReturnTypes.Keys)
+                if (k.EndsWith("uart_write_float_fmt", StringComparison.Ordinal)) { fn = k; break; }
+        return fn;
+    }
+
     // Parse the supported f-string format-spec subset: [0][width][type], type in d/x/X/b/o (c is
     // rejected for now). Returns the radix, field width, pad char and upper-case flag.
     // Unlocated on purpose, and this one is a WRONG caret removed rather than a missing one
@@ -6919,18 +6928,65 @@ public partial class IRGenerator
         return (width, radix, pad, type == 'X');
     }
 
+    // Parse the float f-string format-spec subset: [0][width][.precision]f. `precision`
+    // defaults to 6 like CPython's, and is capped at 15: the digits come from the exact
+    // decimal expansion (uart_text._float_fmt_digits), which stays exact through the
+    // rounding digit for any float32 at that depth. Unlocated for the same reason as
+    // ParseFormatSpec -- the field text is re-lexed at line 1 column 1.
+    private (int Width, int Prec, char Pad) ParseFloatFormatSpec(string spec)
+    {
+        int i = 0;
+        char pad = ' ';
+        if (i < spec.Length && spec[i] == '0') { pad = '0'; i++; }
+        int width = 0;
+        while (i < spec.Length && spec[i] is >= '0' and <= '9') { width = width * 10 + (spec[i] - '0'); i++; }
+        int prec = 6;
+        if (i < spec.Length && spec[i] == '.')
+        {
+            i++;
+            if (i >= spec.Length || spec[i] is not (>= '0' and <= '9'))
+                throw UserError($"unsupported f-string format spec ':{spec}' (supported: [0][width][.precision]f)");
+            prec = 0;
+            while (i < spec.Length && spec[i] is >= '0' and <= '9') { prec = prec * 10 + (spec[i] - '0'); i++; }
+        }
+        if (i >= spec.Length || spec[i] != 'f' || i != spec.Length - 1)
+            throw UserError($"unsupported f-string format spec ':{spec}' (supported: [0][width][.precision]f)");
+        if (prec > 15)
+            throw UserError($"f-string float precision {prec} exceeds the supported maximum of 15 digits");
+        return (width, prec, pad);
+    }
+
     // Emit an interpolated value formatted per its spec, via the generic uart_write_fmt helper.
     private void EmitFormattedExpr(Expression e, string spec)
     {
-        var (width, radix, pad, upper) = ParseFormatSpec(spec);
         Val v = VisitExpression(e);
         DataType vt = GetValType(v);
-        if (vt == DataType.FLOAT || v is FloatConstant)
-            // `e` is parsed by the f-string sub-lexer and carries line 1 column 1 of the
-            // FIELD (see ParseFormatSpec above), so this drew a caret under the first line of
-            // the file for a diagnostic about line 6. Withheld rather than aimed at a line the
-            // reader did not write.
-            throw UserError("f-string format spec is not supported for float values");
+        if (vt == DataType.FLOAT || v is FloatConstant || spec.EndsWith("f", StringComparison.Ordinal))
+        {
+            // Float specs route to uart_write_float_fmt(value, prec, width, flags) -- flags
+            // bit0 = zero-pad. An int operand under an f spec converts to float, as CPython's
+            // `f"{5:.1f}"` -> "5.0" does.
+            var (fwidth, prec, fpad) = ParseFloatFormatSpec(spec);
+            Val farg = v is Constant icv ? new FloatConstant(icv.Value) : v;
+            if (farg is not FloatConstant && GetValType(farg) != DataType.FLOAT)
+            {
+                // The conversion must keep its FLOAT temp: Copy(Constant -> FLOAT) would be
+                // forwarded as a raw int (GetDataType(Constant) is UNKNOWN), which loaded the
+                // value's integer bits into the float argument slot.
+                Temporary ftmp = MakeTemp(DataType.FLOAT);
+                Emit(new Copy(farg, ftmp));
+                farg = ftmp;
+            }
+            Emit(new Call(ResolveFloatFmtFn(), new List<Val>
+            {
+                farg,
+                new Constant(prec),
+                new Constant(fwidth),
+                new Constant(fpad == '0' ? 1 : 0),
+            }, MakeTemp(DataType.UINT8)));
+            return;
+        }
+        var (width, radix, pad, upper) = ParseFormatSpec(spec);
 
         bool signed = vt is DataType.INT8 or DataType.INT16 or DataType.INT32;
         // Pack the options into one flags byte: bit0 upper, bit1 signed, bit2 zero-pad. Keeping the
