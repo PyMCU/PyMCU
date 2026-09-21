@@ -785,7 +785,9 @@ def test_an_isinstance_in_an_imported_dunder_names_the_module_file(tmp_path):
     """__setitem__ is expanded where `pix[i] = v` is written; the isinstance() inside it is
     pix.py's. The callee is a Name, a position both front ends carry identically, so the
     whole triple agrees -- it is the file that used to be wrong (adafruit_pixelbuf.py:293
-    arrived as main.py:293)."""
+    arrived as main.py:293). The candidate is a user class, not a builtin: the compile-time
+    fold answers isinstance(index, slice) now, so only a candidate it cannot resolve still
+    reaches the refusal this probes."""
     (tmp_path / "pix.py").write_text(
         "from typing import Union\n"
         "from pymcu.types import uint8\n"
@@ -793,7 +795,7 @@ def test_an_isinstance_in_an_imported_dunder_names_the_module_file(tmp_path):
         "    def __init__(self) -> None:\n"
         "        self.n: uint8 = 0\n"
         "    def __setitem__(self, index: Union[int, slice], val: uint8) -> None:\n"
-        "        if isinstance(index, slice):\n"
+        "        if isinstance(index, Pix):\n"
         "            self.n = 0\n"
         "        self.n = val\n")
     src = _program(tmp_path,
