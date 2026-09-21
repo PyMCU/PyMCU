@@ -1706,23 +1706,41 @@ public partial class IRGenerator
                     resolvedClass = ownerCls + "_" + nestMem.Member;
             }
 
-            // Factory: `a = setup()` where @inline setup returns ClassName(...). Resolve
-            // to the returned ZCA class so the tracking below treats `a` as that
+            // Factory: `a = setup()` where setup returns ClassName(...) -- an @inline
+            // function, or a plain one force-inlined because its return is a ZCA
+            // construction with no ABI form (Core.cs ForceInlineClassReturningFactories).
+            // Resolve to the returned ZCA class so the tracking below treats `a` as that
             // instance and its methods inline (otherwise `a.read()` mangles to an
             // undefined flattened name like main.a_read and fails at link).
+            //
+            // The body's `return ClassName(...)` is read under the DEFINING module's
+            // prefix, the same gap the instance-method factory above carries: a class
+            // defined in the factory's own module (`def make(): return I2C(1, 2)` in
+            // layer.py) resolves to nothing under the caller's imports.
             if (!string.IsNullOrEmpty(resolvedClass)
                 && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
                 && !overloadedFunctions.Contains(resolvedClass + "___init__")
                 && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
                 && factoryFn?.Body?.Statements != null)
             {
-                foreach (var bs in factoryFn.Body.Statements)
-                    if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
-                    {
-                        var rc = ResolveCallee(rcv.Name);
-                        if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__"))
-                            resolvedClass = rc;
-                    }
+                string savedFactoryPrefix = currentModulePrefix;
+                if (functionModulePrefix.TryGetValue(resolvedClass, out var factoryPrefix))
+                    currentModulePrefix = factoryPrefix;
+                try
+                {
+                    foreach (var bs in factoryFn.Body.Statements)
+                        if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
+                        {
+                            var rc = ResolveCallee(rcv.Name);
+                            if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__")
+                                || classFieldLayout.ContainsKey(rc))
+                                resolvedClass = rc;
+                        }
+                }
+                finally
+                {
+                    currentModulePrefix = savedFactoryPrefix;
+                }
             }
 
             if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||

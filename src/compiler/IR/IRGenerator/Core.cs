@@ -2730,6 +2730,16 @@ public partial class IRGenerator
     /// defines. `def create_out(i) -> Pin` followed by `led.value(1)` reported
     /// "call to undefined function 'led_value'", naming a function the program never wrote.
     ///
+    /// The declared type is not the only place the returned class shows up. An unannotated
+    /// factory spells it only in the body's `return` -- `def I2C(): return
+    /// _board_i2c(SCL, SDA)`, the CircuitPython board layer -- and a shared subroutine
+    /// lowers the construction's field stores against the callee's frame, where they are
+    /// dropped: the hardware init inside `__init__` still ran (the bus got its TWBR), but
+    /// the caller's `i2c._bus._mode` read a name nothing ever wrote and every method's
+    /// `self._mode == "c"` gate answered false, so the program emitted not one I2C
+    /// transaction. A ZCA instance is compile-time per binding, so the only correct form
+    /// is the same @inline expansion a declared-but-unrepresentable class gets.
+    ///
     /// Registered in inlineFunctions and REMOVED from functionsToCompile, the same shape
     /// force-inlining already takes for a single-field mutator that also returns a value.
     ///
@@ -2742,19 +2752,318 @@ public partial class IRGenerator
         var moved = new List<FunctionEntry>();
         foreach (var entry in functionsToCompile)
         {
-            var rt = entry.Func.ReturnType;
-            if (string.IsNullOrEmpty(rt) || rt == "None") continue;
-
-            string? classKey = ResolveClassKey(rt, entry.Prefix ?? "");
-            if (classKey == null) continue;
-            if (slotClasses.Contains(classKey) || zcaFactoryClasses.ContainsKey(classKey)) continue;
-
             string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            // An outlined method's entry carries the SYNTHESIZED FunctionDef (self
+            // rewritten to field parameters, or a slot pointer). Moving it to
+            // inlineFunctions would expand a frame whose `self` is not bound. The
+            // un-rewritten AST is reached through methodAstByName in the pass below.
+            if (outlinedMethods.Contains(fullName)) continue;
+
+            var rt = entry.Func.ReturnType;
+            string? classKey = null;
+            if (!string.IsNullOrEmpty(rt) && rt != "None")
+                classKey = ResolveClassKey(rt, entry.Prefix ?? "");
+
+            bool needs = classKey != null
+                && !slotClasses.Contains(classKey) && !zcaFactoryClasses.ContainsKey(classKey);
+
+            // The body-scan half: the class shows up in a `return`, not the annotation.
+            // main and __module_init are called by the runtime/injected calls, never
+            // from a site this could expand at, and @naked/@interrupt must stay real
+            // subroutines whatever their body returns.
+            if (!needs && entry.Func.Name is not ("main" or "__module_init")
+                && !entry.Func.IsNaked && !entry.Func.IsInterrupt)
+            {
+                string savedPrefix = currentModulePrefix;
+                currentModulePrefix = entry.Prefix ?? "";
+                try
+                {
+                    needs = BodyReturnsUnrepresentedZca(entry.Func.Body, rt ?? "");
+                }
+                finally
+                {
+                    currentModulePrefix = savedPrefix;
+                }
+            }
+
+            if (!needs) continue;
             if (inlineFunctions.ContainsKey(fullName)) continue;
             inlineFunctions[fullName] = entry.Func;
             moved.Add(entry);
         }
         foreach (var m in moved) functionsToCompile.Remove(m);
+
+        // The same shape through a method: `def get_pin(self): return Pin(5)` declares
+        // no class and does not pass `self` on, so IsOutlineSafe's annotation check did
+        // not see it and it was outlined -- its return dropped the fields the same way.
+        // Move the ORIGINAL AST (methodAstByName), never the synth skipped above.
+        var demoted = new List<string>();
+        foreach (var name in outlinedMethods)
+        {
+            if (!methodAstByName.TryGetValue(name, out var mfunc)) continue;
+            if (inlineFunctions.ContainsKey(name)) continue;
+            string savedPrefix = currentModulePrefix;
+            currentModulePrefix = functionModulePrefix.TryGetValue(name, out var mpfx) ? mpfx : "";
+            try
+            {
+                if (!BodyReturnsUnrepresentedZca(mfunc.Body, mfunc.ReturnType ?? "")) continue;
+            }
+            finally
+            {
+                currentModulePrefix = savedPrefix;
+            }
+            inlineFunctions[name] = mfunc;
+            demoted.Add(name);
+        }
+        foreach (var d in demoted)
+        {
+            outlinedMethods.Remove(d);
+            functionsToCompile.RemoveAll(fe => (fe.Prefix ?? "") + fe.Func.Name == d);
+        }
+    }
+
+    /// <summary>
+    /// True when the body `return`s a ZCA construction the subroutine ABI cannot carry:
+    /// `return C(...)` directly, a name the body bound to one (`x = C(...); return x`),
+    /// or a call to a function that itself returns one. The one shape excepted is the
+    /// one VisitReturn already lowers: `return C(...)` when the declared type, AS
+    /// WRITTEN, is that class AND the class has a runtime return form -- the
+    /// register-packed handle for a single-field class (always), the slot pointer for
+    /// a slot class (only on that direct spelling). Every other spelling -- an
+    /// unannotated `def`, a declared type that does not match, a bound name -- lowers
+    /// the construction against the callee's frame and the fields never reach the
+    /// caller.
+    /// </summary>
+    private bool BodyReturnsUnrepresentedZca(Block body, string rawRt)
+    {
+        var bound = new Dictionary<string, string>();
+        return StmtReturnsUnrepresentedZca(body, bound, rawRt, new HashSet<string>());
+    }
+
+    private bool StmtReturnsUnrepresentedZca(Statement? st, Dictionary<string, string> bound,
+        string rawRt, HashSet<string> visiting)
+    {
+        switch (st)
+        {
+            case null: return false;
+            case Block b:
+                foreach (var s in b.Statements)
+                    if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
+                return false;
+            case AssignStmt { Target: VariableExpr tv } a:
+                if (ClassReturnedByExpr(a.Value, bound, visiting) is { } ac) bound[tv.Name] = ac;
+                return false;
+            case AnnAssign an:
+                if (ClassReturnedByExpr(an.Value, bound, visiting) is { } nc) bound[an.Target] = nc;
+                return false;
+            case VarDecl vd:
+                if (ClassReturnedByExpr(vd.Init, bound, visiting) is { } vc) bound[vd.Name] = vc;
+                return false;
+            case ReturnStmt r:
+                foreach (var (key, direct) in ReturnedZcaClasses(r.Value, bound, visiting))
+                {
+                    if (key == rawRt
+                        && (zcaFactoryClasses.ContainsKey(key)
+                            || (direct && slotClasses.Contains(key))))
+                        continue;
+                    return true;
+                }
+                return false;
+            case IfStmt i:
+                if (StmtReturnsUnrepresentedZca(i.ThenBranch, bound, rawRt, visiting)) return true;
+                foreach (var (_, eb) in i.ElifBranches)
+                    if (StmtReturnsUnrepresentedZca(eb, bound, rawRt, visiting)) return true;
+                return StmtReturnsUnrepresentedZca(i.ElseBranch, bound, rawRt, visiting);
+            case WhileStmt w: return StmtReturnsUnrepresentedZca(w.Body, bound, rawRt, visiting);
+            case ForStmt f: return StmtReturnsUnrepresentedZca(f.Body, bound, rawRt, visiting);
+            case MatchStmt m:
+                foreach (var br in m.Branches)
+                    if (StmtReturnsUnrepresentedZca(br.Body, bound, rawRt, visiting)) return true;
+                return false;
+            case WithStmt wi: return StmtReturnsUnrepresentedZca(wi.Body, bound, rawRt, visiting);
+            case TryStmt t:
+                foreach (var s in t.Body)
+                    if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
+                foreach (var (_, h) in t.Handlers)
+                    foreach (var s in h)
+                        if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
+                if (t.ElseBody != null)
+                    foreach (var s in t.ElseBody)
+                        if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
+                if (t.Finally != null)
+                    foreach (var s in t.Finally)
+                        if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
+                return false;
+            // Nested defs and class bodies have their own returns; do not descend.
+            default: return false;
+        }
+    }
+
+    /// <summary>
+    /// The (classKey, directCtor) pairs a returned expression hands back. `direct` is
+    /// true only for the bare `return C(...)` spelling -- the one VisitReturn's
+    /// register-handle and sret paths recognize; a construction nested in a ternary
+    /// arm or a tuple element, or returned through a bound name, is not it.
+    /// </summary>
+    private IEnumerable<(string Key, bool Direct)> ReturnedZcaClasses(Expression? e,
+        Dictionary<string, string> bound, HashSet<string> visiting)
+    {
+        switch (e)
+        {
+            case CallExpr c:
+                if (ConstructedClassKey(c) is { } ck) yield return (ck, true);
+                else if (FactoryReturnClass(c, visiting) is { } fk) yield return (fk, false);
+                yield break;
+            case VariableExpr v when bound.TryGetValue(v.Name, out var bk):
+                yield return (bk, false);
+                yield break;
+            case TernaryExpr t:
+                foreach (var h in ReturnedZcaClasses(t.TrueVal, bound, visiting)) yield return (h.Key, false);
+                foreach (var h in ReturnedZcaClasses(t.FalseVal, bound, visiting)) yield return (h.Key, false);
+                yield break;
+            case TupleExpr tp:
+                foreach (var el in tp.Elements)
+                    foreach (var h in ReturnedZcaClasses(el, bound, visiting)) yield return (h.Key, false);
+                yield break;
+            case ListExpr l:
+                foreach (var el in l.Elements)
+                    foreach (var h in ReturnedZcaClasses(el, bound, visiting)) yield return (h.Key, false);
+                yield break;
+        }
+    }
+
+    /// <summary>
+    /// The class a `= <expr>` binding hands the name, for the scan's purposes: a
+    /// constructor call's class, or what a called factory returns. Null for any
+    /// other expression.
+    /// </summary>
+    private string? ClassReturnedByExpr(Expression? e, Dictionary<string, string> bound,
+        HashSet<string> visiting) => e switch
+    {
+        CallExpr c => (string?)ConstructedClassKey(c) ?? FactoryReturnClass(c, visiting),
+        _ => null,
+    };
+
+    /// <summary>
+    /// The class key a call constructs, resolving the callee under the module prefix
+    /// the body was written in (already installed by the caller). Null when the call
+    /// constructs no class this compiler tracks.
+    /// </summary>
+    private string? ConstructedClassKey(CallExpr call)
+    {
+        string? resolved = call.Callee switch
+        {
+            VariableExpr v => ResolveCallee(v.Name),
+            MemberAccessExpr { Object: VariableExpr mv } ma when modules.ContainsKey(mv.Name)
+                => (TryImportedAlias(mv.Name, out var rm) && rm != null ? rm : mv.Name)
+                       .Replace('.', '_') + "_" + ma.Member,
+            _ => null,
+        };
+        return resolved != null
+            && (classFieldLayout.ContainsKey(resolved) || classDirectMethods.ContainsKey(resolved))
+            ? resolved : null;
+    }
+
+    /// <summary>
+    /// `return f(...)` / `x = f(...)` where f is not a constructor but a function
+    /// whose own returns are constructions: the returned class is whatever f's body
+    /// hands back -- by its declared return type when there is one, else by scanning
+    /// the callee's body the same way (`def I2C(): return busI2C(...)` re-exported by
+    /// `def board_i2c(): return I2C()`). Bounded by `visiting` so mutually
+    /// re-exporting factories cannot loop.
+    /// </summary>
+    private string? FactoryReturnClass(CallExpr call, HashSet<string> visiting)
+    {
+        string? fn = call.Callee switch
+        {
+            VariableExpr v => ResolveCallee(v.Name),
+            MemberAccessExpr { Object: VariableExpr mv } ma when modules.ContainsKey(mv.Name)
+                => (TryImportedAlias(mv.Name, out var rm) && rm != null ? rm : mv.Name)
+                       .Replace('.', '_') + "_" + ma.Member,
+            _ => null,
+        };
+        if (fn == null || !visiting.Add(fn)) return null;
+
+        if (functionReturnTypes.TryGetValue(fn, out var frt)
+            && !string.IsNullOrEmpty(frt) && frt != "None" && frt != "void")
+        {
+            string fpfx = functionModulePrefix.TryGetValue(fn, out var fp) ? fp : "";
+            if (ResolveClassKey(frt, fpfx) is { } declaredKey) return declaredKey;
+        }
+
+        FunctionDef? fd = null;
+        if (inlineFunctions.TryGetValue(fn, out var f1)) fd = f1;
+        else if (methodAstByName.TryGetValue(fn, out var f2)) fd = f2;
+        else foreach (var fe in functionsToCompile)
+            if ((fe.Prefix ?? "") + fe.Func.Name == fn) { fd = fe.Func; break; }
+        if (fd == null) return null;
+
+        string savedPrefix = currentModulePrefix;
+        currentModulePrefix = functionModulePrefix.TryGetValue(fn, out var mp) ? mp : "";
+        try
+        {
+            var bound = new Dictionary<string, string>();
+            return FirstReturnedZcaClass(fd.Body, bound, visiting);
+        }
+        finally
+        {
+            currentModulePrefix = savedPrefix;
+        }
+    }
+
+    /// The first class key any return in the body hands back, for transitive
+    /// resolution -- directness does not matter at this depth: a construction that
+    /// crosses TWO boundaries is never the register/sret spelling either way.
+    private string? FirstReturnedZcaClass(Statement? st, Dictionary<string, string> bound,
+        HashSet<string> visiting)
+    {
+        switch (st)
+        {
+            case null: return null;
+            case Block b:
+                foreach (var s in b.Statements)
+                    if (FirstReturnedZcaClass(s, bound, visiting) is { } k) return k;
+                return null;
+            case AssignStmt { Target: VariableExpr tv } a:
+                if (ClassReturnedByExpr(a.Value, bound, visiting) is { } ac) bound[tv.Name] = ac;
+                return null;
+            case AnnAssign an:
+                if (ClassReturnedByExpr(an.Value, bound, visiting) is { } nc) bound[an.Target] = nc;
+                return null;
+            case VarDecl vd:
+                if (ClassReturnedByExpr(vd.Init, bound, visiting) is { } vc) bound[vd.Name] = vc;
+                return null;
+            case ReturnStmt r:
+                foreach (var (key, _) in ReturnedZcaClasses(r.Value, bound, visiting))
+                    return key;
+                return null;
+            case IfStmt i:
+                if (FirstReturnedZcaClass(i.ThenBranch, bound, visiting) is { } kt) return kt;
+                foreach (var (_, eb) in i.ElifBranches)
+                    if (FirstReturnedZcaClass(eb, bound, visiting) is { } ke) return ke;
+                return FirstReturnedZcaClass(i.ElseBranch, bound, visiting);
+            case WhileStmt w: return FirstReturnedZcaClass(w.Body, bound, visiting);
+            case ForStmt f: return FirstReturnedZcaClass(f.Body, bound, visiting);
+            case MatchStmt m:
+                foreach (var br in m.Branches)
+                    if (FirstReturnedZcaClass(br.Body, bound, visiting) is { } km) return km;
+                return null;
+            case WithStmt wi: return FirstReturnedZcaClass(wi.Body, bound, visiting);
+            case TryStmt t:
+                foreach (var s in t.Body)
+                    if (FirstReturnedZcaClass(s, bound, visiting) is { } kb) return kb;
+                foreach (var (_, h) in t.Handlers)
+                    foreach (var s in h)
+                        if (FirstReturnedZcaClass(s, bound, visiting) is { } kh) return kh;
+                if (t.ElseBody != null)
+                    foreach (var s in t.ElseBody)
+                        if (FirstReturnedZcaClass(s, bound, visiting) is { } kl) return kl;
+                if (t.Finally != null)
+                    foreach (var s in t.Finally)
+                        if (FirstReturnedZcaClass(s, bound, visiting) is { } kf) return kf;
+                return null;
+            default: return null;
+        }
     }
 
     /// <summary>
