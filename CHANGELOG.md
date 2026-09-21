@@ -349,6 +349,17 @@ purpose, as opposed to bugs like these three that were silent until found.
   The driver mapped the injected preamble by one offset for two insertion points and picked
   the larger, so the number came out one early while the snippet text was right; the
   debugger's line map was off by one over the same region (#311).
+- A refusal raised inside a method body the compiler expands for you names the file that
+  defines the body: a base-class method reached through `super()` or
+  `Base.method(self, ...)`, a dunder like `__setitem__` behind `obj[i] = v`, or the wrapper
+  an interrupt handler is lowered through. Each expansion switched the symbol prefixes but
+  not the source file, so `bytearray(17 * len(self.i2c_device))` inside
+  `adafruit_ht16k33/ht16k33.py` was reported as `segments.py:60` and an `isinstance()`
+  inside `adafruit_pixelbuf.py` as `main.py:1`.
+- A diagnostic from the pre-scan transforms of an imported module names that module's file:
+  `yield` inside a method of `adafruit_irremote.py` was refused as `main.py:1`, because the
+  transform runs on a bare AST that carries no file and the module's line was rendered
+  against the entry file.
 
 ### Peripherals (measured on an Arduino Uno with a scope)
 - `PWM.stop()` takes the channel off the pin and drives it low instead of stopping the
