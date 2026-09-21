@@ -37,6 +37,11 @@ frequency = 16000000
 programmer = "avrdude"
 ```
 
+`files = ["font5x8.bin", "data/*.bin"]` under `[tool.pymcu]` embeds files into the
+firmware as flash blobs (RFC 0008 romfs): a compile-time `open("font5x8.bin", "rb")`
+then reads them straight out of flash. Files under `sources` named by a literal
+`open()` are embedded automatically even without the key.
+
 ### PIC pyproject.toml
 
 ```toml

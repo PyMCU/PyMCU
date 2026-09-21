@@ -64,6 +64,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml`. A `float` prints with two rounded decimals, trailing zero trimmed but never past the first (`3.25`, `-2.25`, `0.05`, `123.75`, `1234.5`). A `bytearray`, an array slice or a `__getitem__`/`__len__` slice prints the CPython repr — `bytearray(b'\xcc\x10\xca\xfe')` — with a compile-time length |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
+| `open(name, mode)` | RFC 0008 romfs: resolves at compile time to a handle over a flash blob — no filesystem exists on the chip. `name` and `mode` must be compile-time strings (literal, or a field/parameter/constant whose text the compiler knows); only read modes (`"r"`, `"rb"`, `"rt"`) — writes are refused. The protocol: `read(n)` (n compile-time; the result is a flash view — `f.read(n)[i]`, `struct.unpack(fmt, f.read(n))` and `len(f.read(n))` land on it), `readinto(buf)`, `readline(max)`, `seek(off, whence)`, `tell()`, `close()`, `with`. Embedding: `files = [...]` under `[tool.pymcu]`, or automatic when a literal `open()` names a file in the sources dir |
 | F-strings `f"text={var}"` | Streamed to a sink (`print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")`) with runtime interpolations and format specs — no heap; a streamed `float` interpolation prints two rounded decimals. As a *value* (`s = f"..."`) since v0.14: built into a compiler-managed fixed buffer, integers only |
 
 ### MCU-Specific Extensions
@@ -102,7 +103,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `sleep_idle / sleep_adc_noise / sleep_power_down / sleep_power_save / sleep_standby / sleep_extended_standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
-| `os` | `uname()`, `name`, `sep` | All | Compile-time facts of `__CHIP__` (#466); no filesystem |
+| `os` | `uname()`, `name`, `sep`, `stat(name)`, `listdir(dir)` | All | Compile-time facts of `__CHIP__` (#466); `stat`/`listdir` answer from the embedded-file table (RFC 0008 romfs) |
+| `pymcu.fs` | `RomFile` | All | The romfs file-protocol declaration (RFC 0008): the shape `open()` returns — the compiler lowers the methods itself; the bodies are `CompileError` guards |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
 | `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
 | `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants (the CLI board key for the 32U4 is `arduino_micro`) |

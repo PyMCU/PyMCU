@@ -830,8 +830,11 @@ star as well.
 
 `import os` / `from os import uname` resolve to `pymcu/os.py`, the same stdlib-alias
 fallback `import time` already uses. `uname()`, `os.name` and `os.sep` are compile-time
-facts of `__CHIP__`. Names that need a filesystem (`listdir`, `getenv`, `stat`) are not
-defined on that module, and `import uos` points at `import os`.
+facts of `__CHIP__`. `stat(name)` and `listdir(dir)` answer from the embedded-file
+table (RFC 0008): `stat` needs the name at compile time and returns the ten-field tuple
+with the file's size at index 6; `listdir` unrolls the embedded names under the
+directory prefix, sorted. `getenv` is not defined on that module, and `import uos`
+points at `import os`.
 
 When the project declares a compat layer (`stdlib = ["circuitpython"]` or
 `["micropython"]`), conditions on `sys.implementation.name`, `sys.implementation.version[i]`,
@@ -885,7 +888,7 @@ never parks.
 | `map()` / `filter()` | ❌ Not supported | Use explicit `for` loops |
 | `input()` | ✅ Supported | `line: bytearray = input("prompt")` — reads until newline from UART; prompt is optional compile-time string; max length is optional integer (default 64); UART preamble auto-injected |
 | `getattr(mod, "name", default)` | ✅ Supported | Compile-time only, on a module: `getattr(board, "SCK", board.D13)` folds to the member or the default. Attribute names must be literals; `getattr` on anything else is refused |
-| `open()` / file I/O | ❌ Not supported | No filesystem. The refusal names the resolved file and RFC 0008 (embedded files) -- `open('font5x8.bin')` in `adafruit_framebuf.BitmapFont` stops a `text()` build there |
+| `open()` / file I/O | ✅ Supported (romfs, RFC 0008) | No filesystem exists on the chip: `open(name, "rb")` resolves at compile time to a handle over a blob the driver embedded in flash (`files = [...]` under `[tool.pymcu]`, or auto-embedded when a literal `open()` names a file in the sources). `name`/`mode` must be compile-time strings; read-only modes only. Protocol: `read(n)` with compile-time `n` (a flash view — subscripts, `len()`, and `struct.unpack(fmt, f.read(n))` fuse onto it), `readinto(buf)`, `readline(max)`, `seek`/`tell`, `close`, `with`. A name that is not compile-time, a write mode, or a file nothing embedded are compile errors that say so |
 | `exec()` / `eval()` | ❌ Not supported | Interpreter required |
 
 ---
@@ -1075,9 +1078,10 @@ as the CPython oracle, byte for byte, on the emulated Uno.
 `adafruit_pixelbuf` (`all(0 <= component <= 255 for component in val)`) unrolls at
 compile time now that `all`/`any`/`sum`/`min`/`max` accept one over a known-length
 iterable, and `pixels[i] = (r, g, b)` drives the wire in GRB order.
-`adafruit_framebuf.text("...", x, y, color)` gets through `string.split("\n")` and
-`enumerate()` and stops at `open("font5x8.bin", "rb")` inside `BitmapFont` -- embedded
-files are RFC 0008 work, and the diagnostic says so.
+`adafruit_framebuf.text("...", x, y, color)` renders: the `open("font5x8.bin", "rb")`
+inside `BitmapFont` is a compile-time romfs handle (RFC 0008), so the font blob
+embedded by the driver feeds `seek`/`read` straight out of flash and the glyphs land
+in the framebuffer byte-identical to CPython.
 
 **The remaining refusals are scattered, one construct each.** `enumerate()` over a
 buffer that reaches `busio.I2C.writeto` through inline bindings now compiles -- the

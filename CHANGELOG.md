@@ -331,11 +331,18 @@ purpose, as opposed to bugs like these three that were silent until found.
   the loop through an `@inline` parameter binding or a field --
   `self._post_brightness_buffer` forwarded to `neopixel_write` is the shape
   `adafruit_pixelbuf.show()` uses to push the frame.
-- `adafruit_framebuf.FrameBuffer.text("...", x, y, color)` compiles through
-  `string.split("\n")` and `enumerate()` into `BitmapFont(font_name)` and stops where
-  the platform boundary is: `open("font5x8.bin", "rb")`. The refusal names the
-  resolved file and RFC 0008 (embedded files), which is the piece of that library
-  that is not language work.
+- `open(name, mode)` compiles to a romfs handle (RFC 0008): no filesystem exists on
+  the chip, so the driver embeds named files as flash blobs (`files = [...]` under
+  `[tool.pymcu]`, or automatically when a literal `open()` names a file in the
+  sources) and the compiler resolves the call at compile time. `name` and `mode`
+  must be compile-time strings; read modes only. The protocol is `read(n)` with a
+  compile-time `n` — the result is a view over the blob that `[i]`, `len()` and
+  `struct.unpack(fmt, f.read(n))` fuse onto — plus `readinto(buf)`, `readline(max)`,
+  `seek`/`tell`, `close`, `with`, `os.stat(name)` and `os.listdir(dir)`. A runtime
+  name, a runtime mode, a write mode or a file nothing embedded is a compile error
+  that names the case. `adafruit_framebuf.FrameBuffer.text("...", x, y, color)`
+  renders through `BitmapFont` and its `open("font5x8.bin", "rb")`, byte-identical
+  to CPython on the emulated Uno.
 
 ### Diagnostics
 - A refusal about a parameter annotation, a return annotation or an undefined base class

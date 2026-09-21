@@ -1,0 +1,76 @@
+{
+  "rfc": "0008-embedded-files",
+  "phase": "1 (romfs)",
+  "date": "2026-09-21",
+  "compiler_commit": "fe406375fd72b5c31eb9bc70fa1b385182fbe44b (plus the romfs working tree)",
+  "pymcu_avr_commit": "2f3880c62e951f5f6afa918b071780ad2bd17c64",
+  "target": "atmega328p",
+  "measured_with": "pymcu build (real driver, no mocks); 'code bytes' = the driver-reported size excluding the interrupt vector table",
+  "embedded_blob": {
+    "file": "font5x8.bin",
+    "bytes": 1282,
+    "mir": "one fdata record named __romfs_1_font5x8_bin inside main; verbatim copy, no runtime table entry"
+  },
+  "programs": {
+    "empty": {
+      "source": "def main() -> None: pass; main()",
+      "code_bytes": 20
+    },
+    "open_close_only": {
+      "source": "f = open('font5x8.bin', 'rb'); f.close()",
+      "code_bytes": 1302,
+      "delta_vs_empty": 1282,
+      "handle_code_bytes": 0,
+      "note": "open/close are compile-time bookkeeping; the whole cost is the blob itself. There is no handle object and no filesystem table."
+    },
+    "const_seek_only": {
+      "source": "open + seek(7, 0) + close",
+      "code_bytes": 1302,
+      "handle_code_bytes": 0,
+      "note": "a constant seek updates the compile-time position; nothing is emitted"
+    },
+    "const_seek_read_print": {
+      "source": "open + seek(7,0) + read(1) + total += b[0] + close + print(total)",
+      "code_bytes": 1558,
+      "delta_vs_blob": 276,
+      "note": "the read folds to a constant -- zero load instructions; the 276 bytes are the print machinery plus the program skeleton"
+    },
+    "runtime_seek_read_loop": {
+      "source": "open; while i < 5: seek(2 + total, 0); b = read(1); total += b[0]; i = i + 1; close; print(total)",
+      "code_bytes": 1714,
+      "delta_vs_blob": 432
+    },
+    "runtime_control_no_file": {
+      "source": "same while-loop arithmetic and print without open/read",
+      "code_bytes": 336
+    }
+  },
+  "runtime_handle_cost": {
+    "bytes": 96,
+    "computation": "runtime_seek_read_loop(1714) - blob(1282) - runtime_control_no_file(336) = 96",
+    "per_instruction": {
+      "pos_store": "binary(+) const+total -> main.f__pos (seek target)",
+      "remaining_clamp": "binary(-) 1282 - f__pos -> tmp; jge EOF guard",
+      "read": "one alf __romfs_1_font5x8_bin[tmp] -> tmp_160 (single LPM sequence per read site)",
+      "pos_advance": "f__pos += consumed (folds into the same binary op stream)",
+      "extra_ir_vs_control": "+1 fdata record, +5 copy, +2 jge, +2 lbl, +1 aug, +1 alf (61 vs 47 IR instructions in main)"
+    },
+    "sram": "2 bytes for the f__pos register pair while the handle is live; 0 bytes of file content (no whole-file copy)"
+  },
+  "byte_identity_gate": {
+    "fixtures_built_with_main_and_romfs_compilers": 33,
+    "identical_hex": 33,
+    "includes": "micropython-blink (142 B, main at 0x68), SPI/UART/I2C and param-heavy fixtures",
+    "note": "ROMFS emission and folds are gated on open() actually resolving to an embedded file; programs that never open a file take the old code paths verbatim"
+  },
+  "size_floor": {
+    "fixture": "compat-mp-blink-toggle",
+    "flash_bytes_total": 142,
+    "breakdown": "40 bytes of user code + 102 bytes of interrupt vector table, counted as the sum of Intel HEX data records (same accounting as CompatMpBlinkToggleTests.FlashSize_Is142Bytes)",
+    "main_address": "0x68 (required range 0x68..0x8D)"
+  },
+  "demandant": {
+    "fixture": "tests/integration/fixtures/compat-cp-framebuf-text",
+    "result": "display.text('PyMCU', 0, 0, 1) + show() over unmodified adafruit_ssd1306 + adafruit_framebuf emits the same 43 I2C transactions as the CPython oracle, on both compiler frontends (4 tests green)"
+  }
+}
