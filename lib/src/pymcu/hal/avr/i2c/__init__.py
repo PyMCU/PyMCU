@@ -45,14 +45,18 @@ class I2C:
     # freq is the SCL rate in Hz. It used to be nowhere: the bit-rate register was the
     # literal for 100 kHz, so every layer above took a frequency from its caller and threw
     # it away, and a bus asked for 400 kHz ran at a quarter of that with nothing said.
+    #
+    # pullups switches the internal pull-ups on SDA/SCL, on by default as Arduino's
+    # twi_init() leaves them. pullups=False is for a bus whose devices are 3.3 V,
+    # where a 5 V pull-up is not wanted; the bus then needs external resistors.
     def __init__(self, addr: uint8 = 0, general_call: uint8 = 0,
-                 freq: const[uint32] = 100000):
+                 freq: const[uint32] = 100000, pullups: const[bool] = True):
         self._freq = freq
         if addr == 0:
-            i2c_init(freq)
+            i2c_init(freq, pullups)
             self._mode = "c"
         else:
-            i2c_peripheral_init(addr, general_call)
+            i2c_peripheral_init(addr, general_call, pullups)
             self._mode = "p"
 
     # The SCL rate the hardware actually produces, which is not always the one asked for:

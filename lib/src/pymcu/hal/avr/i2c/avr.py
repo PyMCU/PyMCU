@@ -30,10 +30,50 @@
 #   0x58 - data byte received, NACK returned (last byte)
 # -----------------------------------------------------------------------------
 
-from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR, SREG
-from pymcu.types import uint8, uint16, inline, compile_isr, Callable
-from pymcu.chips import __FREQ__
+from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR, SREG, PORTC, PORTD
+from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
+from pymcu.chips import __CHIP__, __FREQ__
 from pymcu.exceptions import CompileError
+
+# The two bus lines are a fact of the chip, named in its chip module; the
+# build-time chip name selects which module they come from. A part with no TWI
+# peripheral binds no module, so using the pins there fails to compile instead
+# of silently driving ATmega328P register addresses (the TWI register map this
+# file writes is that part's, and on a USI-only part it is not real either).
+if __CHIP__.name == "atmega2560":
+    import pymcu.chips.atmega2560 as _twi_chip
+elif __CHIP__.name == "atmega32u4":
+    import pymcu.chips.atmega32u4 as _twi_chip
+elif (__CHIP__.name == "atmega328p" or __CHIP__.name == "atmega328"
+        or __CHIP__.name == "atmega168p" or __CHIP__.name == "atmega168"
+        or __CHIP__.name == "atmega88p" or __CHIP__.name == "atmega88"
+        or __CHIP__.name == "atmega48p" or __CHIP__.name == "atmega48"):
+    import pymcu.chips.atmega328p as _twi_chip
+
+
+@inline
+def _twi_pullup(port: const, bit: const):
+    # One internal pull-up on a bus line: the pin stays an input and its PORT
+    # bit is set, the digitalWrite(pin, 1) Arduino's twi_init() does on SDA/SCL.
+    # The port arrives as its data-space address so the chip module can name it
+    # without a string (a string constant in a module every program imports
+    # would shift the string pool it lands in).
+    match port:
+        case 0x28:  # PORTC
+            match bit:
+                case 4: PORTC[4] = 1
+                case 5: PORTC[5] = 1
+                case _:
+                    raise CompileError("a TWI pin on PORTC that is not PC4/PC5")
+        case 0x2B:  # PORTD
+            match bit:
+                case 0: PORTD[0] = 1
+                case 1: PORTD[1] = 1
+                case _:
+                    raise CompileError("a TWI pin on PORTD that is not PD0/PD1")
+        case _:
+            raise CompileError(
+                "the chip module names a TWI port this HAL has no register for")
 
 
 def _twi_wait() -> uint8:
@@ -76,7 +116,7 @@ def i2c_ping(addr: uint8) -> uint8:
 
 
 @inline
-def i2c_init(freq: const[uint32] = 100000):
+def i2c_init(freq: const[uint32] = 100000, pullups: const[bool] = True):
     # The bit-rate register from the clock and the requested SCL rate, both compile-time
     # constants, so this folds to the same single register write the literal 72 was:
     #
@@ -100,6 +140,14 @@ def i2c_init(freq: const[uint32] = 100000):
             "With the prescaler at 1 the slowest SCL is about F_CPU / 526, which at 16 MHz "
             "is 30.5 kHz. Ask for a higher frequency, or bit-bang the bus with "
             "pymcu.hal.softi2c, which can go as slow as you like.")
+    if pullups:
+        # Internal pull-ups on the bus lines before the TWI takes the pins over,
+        # the same thing Arduino's Wire does in twi_init(): with no pull-up at
+        # all SDA/SCL float, START never completes and every probe times out.
+        # 20-50 kOhm is enough for short runs; long wires or 400 kHz still want
+        # external resistors (the usual 4.7 kOhm).
+        _twi_pullup(_twi_chip.TWI_SDA_PORT, _twi_chip.TWI_SDA_BIT)
+        _twi_pullup(_twi_chip.TWI_SCL_PORT, _twi_chip.TWI_SCL_BIT)
     TWBR.value = uint8((__FREQ__ // freq - 16) // 2)
     # TWSR prescaler bits[1:0] default to 00 (prescaler = 1x) after reset -- no write needed.
     TWCR.value = 0x04   # TWEN(2) = 1: enable TWI (takes over PC4/PC5 pins)
@@ -424,7 +472,11 @@ def i2c_readfrom_mem(addr: uint8, reg: uint8, buf, n: uint8) -> uint8:
 #               i2c.acknowledge()
 
 @inline
-def i2c_peripheral_init(addr: uint8, general_call: uint8):
+def i2c_peripheral_init(addr: uint8, general_call: uint8, pullups: const[bool] = True):
+    # A peripheral sits on the same lines, so it gets the same pull-ups.
+    if pullups:
+        _twi_pullup(_twi_chip.TWI_SDA_PORT, _twi_chip.TWI_SDA_BIT)
+        _twi_pullup(_twi_chip.TWI_SCL_PORT, _twi_chip.TWI_SCL_BIT)
     # TWAR: bits 7:1 = 7-bit address; bit 0 = general call enable flag
     TWAR.value = (addr << 1) | general_call
     TWCR.value = 0x44   # TWEA(6)=1 | TWEN(2)=1 -- enable TWI with address ACK
