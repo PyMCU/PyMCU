@@ -182,6 +182,15 @@ class TestPortDisambiguation:
     def _prog(self):
         return Avrdude(Console())
 
+    def test_the_port_list_is_the_shared_one(self, monkeypatch):
+        # flash and monitor read the same candidate list: the programmer's
+        # copy was moved into core.serial_port when the monitor arrived, and
+        # a second copy is exactly the drift the move exists to prevent.
+        from src.driver.core import serial_port
+        monkeypatch.setattr(serial_port, "candidate_ports",
+                            lambda: ["/dev/cu.shared"])
+        assert Avrdude.candidate_ports() == ["/dev/cu.shared"]
+
     def test_one_port_is_used_without_asking(self):
         with patch.object(Avrdude, "candidate_ports", return_value=["/dev/cu.usbmodem1101"]):
             assert self._prog().auto_detect_port() == "/dev/cu.usbmodem1101"

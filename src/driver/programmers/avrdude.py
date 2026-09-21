@@ -13,7 +13,6 @@
 # -----------------------------------------------------------------------------
 
 import errno
-import glob
 import os
 import platform
 import shutil
@@ -267,35 +266,8 @@ class AvrdudeProgrammer(HardwareProgrammer):
     @staticmethod
     def candidate_ports() -> list[str]:
         """Every serial port that could be a USB-connected AVR device."""
-        if sys.platform == "darwin":
-            candidates = glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/cu.usbserial*")
-        elif sys.platform.startswith("linux"):
-            candidates = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
-        elif sys.platform == "win32":
-            # COM ports are not filesystem paths, so glob does not apply. The kernel
-            # publishes the currently-mapped serial ports under
-            # HKLM\HARDWARE\DEVICEMAP\SERIALCOMM (values like "\Device\USBSER000" ->
-            # "COM3"). Reading it needs no extra dependency (no pyserial).
-            candidates = []
-            try:
-                import winreg
-                with winreg.OpenKey(
-                    winreg.HKEY_LOCAL_MACHINE,
-                    r"HARDWARE\DEVICEMAP\SERIALCOMM",
-                ) as key:
-                    i = 0
-                    while True:
-                        try:
-                            _, value, _ = winreg.EnumValue(key, i)
-                            candidates.append(value)
-                            i += 1
-                        except OSError:
-                            break
-            except OSError:
-                candidates = []
-        else:
-            candidates = []
-        return sorted(set(candidates))
+        from ..core import serial_port
+        return serial_port.candidate_ports()
 
     def auto_detect_port(self) -> str | None:
         """
