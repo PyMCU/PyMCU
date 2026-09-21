@@ -145,7 +145,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `pymcu.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified; CTC mode |
 | `pymcu.hal.pwm` | `PWM` — `start/stop/set_duty/set_freq`; multi-channel (two channels of the same timer coexist — the COM bits are OR-ed). `set_freq` picks the **nearest** reachable prescaler bucket |
 | `pymcu.hal.spi` | `SPI` + `SoftSPI` |
-| `pymcu.hal.i2c` | `I2C` + `SoftI2C`; `write_to` / `read_from` / `write_bytes` / `writeto_mem` / `readfrom_mem` |
+| `pymcu.hal.i2c` | `I2C` + `SoftI2C`; `write_to` / `read_from` / `write_bytes` / `writeto_mem` / `readfrom_mem`; internal pull-ups on SDA/SCL on by default, as Arduino (`pullups=False` opts out) |
 | `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
 | `pymcu.hal.watchdog` | `Watchdog` — `enable/disable/feed` |
 | `pymcu.hal.power` | `sleep_idle` / `sleep_adc_noise` / `sleep_power_down` / `sleep_power_save` / `sleep_standby` / `sleep_extended_standby` |

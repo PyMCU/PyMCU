@@ -435,6 +435,12 @@ purpose, as opposed to bugs like these three that were silent until found.
   was driving (a pin made an input after `high()` stayed at 5 V on the Uno);
   `mode(IN_PULLUP)` sets the pull-up instead of writing 2 into the direction bit, and
   `mode(OPEN_DRAIN)` is refused (#309). `digitalio.deinit()` releases without pull.
+- The hardware `I2C` raises the AVR's internal pull-ups on SDA and SCL before enabling
+  the TWI, the `digitalWrite(SDA, 1); digitalWrite(SCL, 1)` Arduino's `twi_init()` does:
+  a module with weak or missing pull-up resistors answers instead of floating the bus
+  and timing out the first probe. Two `SBI` on the 328P (4 bytes), and a program that
+  never asks is byte-identical. `I2C(pullups=False)` opts out for a 3.3 V bus;
+  `board.I2C()`, `busio.I2C` and `machine.I2C` get the default through the same init.
 - The two channels of one timer share its prescaler: the second `PWM()` (or a
   `set_freq()` next to a running sibling) asking for another bucket is refused at compile
   time, where it is written, through the new `claim()` intrinsic in `pymcu.types` (#300).

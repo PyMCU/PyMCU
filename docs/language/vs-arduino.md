@@ -68,7 +68,7 @@ Both compile to the same 36-byte AVR toggle loop (138 bytes total firmware inclu
 | `Serial.println(x)` | `uart.println(x)` | |
 | `EEPROM.read(addr)` | `eeprom.read(addr)` | |
 | `EEPROM.write(addr, v)` | `eeprom.write(addr, v)` | |
-| `Wire.begin()` | `I2C(0)` | master mode |
+| `Wire.begin()` | `I2C(0)` | master mode; internal pull-ups on SDA/SCL on by default, same as `twi_init()` (`pullups=False` opts out) |
 | `Wire.beginTransmission(addr)` + `Wire.write(b)` | `i2c.write_to(addr, buf, n)` | |
 | `SPI.begin()` + `SPI.transfer(b)` | `SPI(SPI.CONTROLLER).transfer(b)` | |
 | `Servo.write(degrees)` | `Servo("PB1").write(degrees)` | Timer1, D9 or D10 |

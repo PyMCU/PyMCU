@@ -98,7 +98,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow`; ATtiny85: Timer0+Timer1 (15 prescaler steps) |
 | `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty/set_freq`. Two channels of the same timer coexist (the COM bits are OR-ed); `set_freq` picks the **nearest** reachable prescaler bucket, which is what keeps `tone()` melodies in tune |
 | `pymcu.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
-| `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
+| `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*`; internal pull-ups on SDA/SCL on by default, as Arduino (`pullups=False` opts out) |
 | `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
 | `pymcu.hal.watchdog` | `Watchdog` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `enable/disable/feed`; timeout is compile-time const |
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `sleep_idle / sleep_adc_noise / sleep_power_down / sleep_power_save / sleep_standby / sleep_extended_standby` |

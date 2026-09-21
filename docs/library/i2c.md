@@ -13,14 +13,25 @@ I2C (TWI) bus communication. Available for AVR (ATmega328P).
 | SDA | `PC4` | A4 |
 | SCL | `PC5` | A5 |
 
+On the ATmega2560 and ATmega32U4 the bus is on `PD1` (SDA) and `PD0` (SCL) instead; the
+chip module names the pair and the HAL picks it up, so the same source drives all three.
+
 ---
 
 ## class `I2C`
 
-### `I2C(addr=0, general_call=0, freq=100000)`
+### `I2C(addr=0, general_call=0, freq=100000, pullups=True)`
 
 Initializes the TWI peripheral. `addr = 0` is controller mode; a non-zero address makes the
 part a peripheral at that address.
+
+`pullups` switches the AVR's internal pull-ups on SDA and SCL, and defaults to on, the way
+Arduino's `twi_init()` leaves them: a module with weak or missing pull-up resistors still
+answers, where without any pull-up the lines float and the START condition never
+completes. Twenty to fifty kOhm is enough for short runs at 100 kHz; long wires or 400 kHz
+still want external resistors (the usual 4.7 kOhm). Pass `pullups=False` on a bus whose
+devices are 3.3 V and should not see a 5 V pull-up -- the bus then needs external
+resistors of its own. The flag is compile-time, so a program that never asks is identical.
 
 `freq` is the SCL rate in Hz and reaches the bit-rate register:
 `TWBR = (F_CPU / SCL - 16) / 2`, so 100 kHz at 16 MHz is 72 and 400 kHz is 12. It used to be
