@@ -603,6 +603,8 @@ list comprehensions with compile-time constant bounds (`range(start, stop, step)
 the step), nested list comprehensions, `if`-filtered list comprehensions (constant condition),
 `for pin in [DigitalInOut(p) for p in (...)]` and
 `for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays),
+including a comprehension whose element is a factory call that returns the instance
+(`[pcf.get_pin(i) for i in range(8)]`, adafruit_pcf8574),
 and `for pin in (reset_dio, enable_dio, ...)` over already-constructed instances,
 and `for x in t` where `t` is a bound tuple-return result.
 

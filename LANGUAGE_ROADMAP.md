@@ -131,6 +131,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | `in` / `not in` operator | Compile-time fold on constant list; runtime OR/AND chain. A call that returns an instance with `__contains__` dispatches the dunder (`"Linux" not in uname()`, #466); two compile-time strings are substring membership (`"RP2350" in uname().machine`). A name bound to a compile-time string tests a set/list of compile-time strings by text (`ORDER in {RGB, GRB}`, adafruit_neopixel `wheel`) |
+| `seq.index(x)` | On a name bound to a compile-time tuple/list: folds when `x` folds, else a compare chain over the elements that raises `ValueError` on a miss (adafruit_tcs34725 `_GAINS.index(val)`) |
 | Unannotated field first store | A string literal or `bytearray(...)` / `bytes(...)` is that kind, not uint8. `self._message = ""` then a `str` setter (adafruit_character_lcd) and `self._gpio = bytearray(n)` then a buffer setter (adafruit_74hc595) are the same field. An int then a str is still refused |
 | Constant tuple field | `self.scale = (524288, ...)` is the same fixed array as `self.buf = [0, 0, 0]` (adafruit_dps310) |
 | `str` parameter text | A compile-time string of any length bound to a `str` parameter keeps its text, so `struct.calcsize(fmt)` folds (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685) |
@@ -244,7 +245,7 @@ Everything in this section is shipped and tested in the current alpha build.
 |---------|-------|
 | Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer x inner product unroll |
 | `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
-| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance array from list comp; `enumerate` also supported |
+| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance array from list comp; `enumerate` also supported. An element built by a factory call keeps its returned class the same way a direct construction does (`[pcf.get_pin(i) for i in range(8)]`, adafruit_pcf8574) |
 | A list given to a class (`Bar([Pin(a), Pin(b)])`, `Bar(pins)`) | Compile-time sequence bound to the parameter and to the `self` field: constant subscript, `for`, `len()`, and a run-time subscript that calls a method (up to 8 elements, lowered as a selection) |
 | A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work. A function that fills one and `return`s it is expanded at the call site so the caller indexes the same storage (#464). `memoryview` is a CPython builtin type this compiler stores, so `-> memoryview` is the same view `memoryview()` already wraps. Replaying `name = bytearray(n)` does not undo a `.extend()` that already grew it, so a class-body `_fit(2)` keeps a 3-byte `_BUFFER`. A class-level `_BUFFER = bytearray(N)` reached through an instance iterates and enumerates as itself (`for b in self._BUFFER`), and a whole-attribute read (`bus.write(self._BUFFER)`) hands the callee the shared storage (#442) |

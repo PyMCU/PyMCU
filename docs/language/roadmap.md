@@ -40,6 +40,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `print(float)` | Two rounded decimals, trailing zero trimmed but never past the first: `3.25`, `-2.25`, `0.05`, `123.75`, `1234.5` |
 | Functions with > 5 arguments | Overflow arguments passed via a fixed SRAM spill region |
 | `in` / `not in` | Compile-time fold on constant list; runtime equality chain. A call that returns an instance with `__contains__` dispatches the dunder (`"Linux" not in uname()`, #466); two compile-time strings are substring membership (`"RP2350" in uname().machine`). A name bound to a compile-time string tests a set/list of compile-time strings by text (`ORDER in {RGB, GRB}`, adafruit_neopixel `wheel`) |
+| `seq.index(x)` | On a name bound to a compile-time tuple/list: folds when `x` folds, else a compare chain over the elements that raises `ValueError` on a miss (adafruit_tcs34725 `_GAINS.index(val)`) |
 | `isinstance(x, T)` | Folds at compile time: a ZCA instance against a class or subclass (#424), or a value against the builtins `tuple`/`list`/`int` from its known shape (#423) -- through an inline-parameter alias, a keyword argument, or a module-level string's own text (adafruit_neopixel `pixel_order`); `isinstance(x, slice)` is always False -- nothing is a runtime slice (adafruit_pixelbuf `__setitem__`); a `None`-bound name answers False to every builtin |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
@@ -61,7 +62,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Raw strings `r"\n"` | No escape processing |
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |
 | Nested list comprehensions | Full outer × inner product unroll; `if` filter supported |
-| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported |
+| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported. An element built by a factory call keeps its returned class (`[pcf.get_pin(i) for i in range(8)]`, adafruit_pcf8574) |
 | A list given to a class (`Bar([Pin(a), Pin(b)])`, `Bar(pins)`) | Compile-time sequence bound to the parameter and to the `self` field: constant subscript, `for`, `len()`, and a run-time subscript that calls a method (up to 8 elements, lowered as a selection) |
 | A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
 | `str.join` | `sep.join([...])` folds compile-time strings, in expression position too (`print(sep.join([a, b]))`); `''.join([chr(b) for b in buf])` lowers to a runtime string (the MicroPython/CircuitPython bytes-to-string idiom); `sep.join(f"{x:02x}" for x in buf)` -- a generator/comprehension over a compile-time sequence producing f-strings, compile-time strings or `chr(b)` -- streams in `print`/`uart.write_str`/`println` and materializes into a fixed buffer (a runtime string, like an f-string-as-value) elsewhere |
