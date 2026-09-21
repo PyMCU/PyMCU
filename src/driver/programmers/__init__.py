@@ -20,6 +20,19 @@ from .pk2cmd import Pk2cmdProgrammer
 from .avrdude import AvrdudeProgrammer
 from .ipecmd import IpecmdProgrammer
 
+# The distribution name this package installs as. An entry point registered by
+# pymcu-compiler itself is a built-in, and a plugin that reuses the name is
+# meant to override it -- pymcu-pic registers a pk2cmd that drives the PICkit 3
+# the driver's retired implementation could not.
+_OWN_DISTRIBUTION = "pymcu-compiler"
+
+
+def _registered_by_this_driver(ep) -> bool:
+    """True when the entry point was registered by pymcu-compiler itself."""
+    dist_name = getattr(getattr(ep, "dist", None), "name", "") or ""
+    return dist_name.replace("_", "-").lower() == _OWN_DISTRIBUTION
+
+
 def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
     """
     Return the programmer instance for the given name.
@@ -29,13 +42,18 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
        Third-party packages register via pyproject.toml:
            [project.entry-points."pymcu.programmers"]
            my-prog = "my_package.programmer:MyProgrammer"
+       When two distributions register the same name, the plugin wins over
+       this driver's own entry point -- an override is the reason a plugin
+       reuses a built-in name at all, and the outcome must not depend on the
+       order dist-info scanning happens to return.
     2. Built-in programmers bundled with the pymcu driver (avrdude, pk2cmd, ipecmd).
     """
-    eps = entry_points(group="pymcu.programmers")
-    for ep in eps:
-        if ep.name == name:
-            cls = ep.load()
-            return cls(console)
+    matches = [
+        ep for ep in entry_points(group="pymcu.programmers") if ep.name == name
+    ]
+    matches.sort(key=_registered_by_this_driver)  # plugins first; stable sort
+    if matches:
+        return matches[0].load()(console)
 
     if name == "pk2cmd":
         return Pk2cmdProgrammer(console)
@@ -45,4 +63,3 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
         return IpecmdProgrammer(console)
 
     return None
-
