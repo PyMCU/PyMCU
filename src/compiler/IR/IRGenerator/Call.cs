@@ -3684,6 +3684,10 @@ public partial class IRGenerator
         var savedPrefix = currentInlinePrefix;
         var savedMod = currentModulePrefix;
         var savedDepth = inlineDepth;
+        var savedSourcePath = currentSourcePath;
+        var savedSourceFile = currentSourceFile;
+        bool savedTracksCallee = inlineTracksCalleeLine;
+        int savedCalleeLine = inlineCalleeStmtLine;
 
         currentInlinePrefix = newPrefix;
         currentModulePrefix = basePrefix;
@@ -3692,10 +3696,37 @@ public partial class IRGenerator
             EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath };
         inlineStack.Add(superCtx);
 
+        // The base method's body is text in the file that method is DEFINED in, which is not
+        // the file the `super().m()` / `Base.m(self)` call is written in. Without the switch
+        // the body's own nodes kept their lines while LocatedFile kept naming the caller's
+        // module, and the pair met in the middle of nowhere: `bytearray(17 * len(dev))` in
+        // adafruit_ht16k33/ht16k33.py reported segments.py:60, a line of a font table.
+        // The same four assignments EmitInlineFunctionCall makes, for the same reason.
+        string? baseSourcePath =
+            functionSourcePath.TryGetValue(funcSuper, out var basePath) ? basePath : null;
+        if (baseSourcePath != null)
+        {
+            currentSourcePath = baseSourcePath;
+            currentSourceFile = baseSourcePath.Length > 0 ? SourceFileLabel(baseSourcePath) : "";
+            inlineTracksCalleeLine = true;
+            inlineCalleeStmtLine = 0;
+        }
+        else
+        {
+            inlineTracksCalleeLine = false;
+        }
+
+        int savedLastLine = lastLine;
+        lastLine = -1;
         VisitBlock(funcSuper.Body);
+        lastLine = savedLastLine;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
 
+        currentSourcePath = savedSourcePath;
+        currentSourceFile = savedSourceFile;
+        inlineTracksCalleeLine = savedTracksCallee;
+        inlineCalleeStmtLine = savedCalleeLine;
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedMod;
         inlineDepth = savedDepth;
