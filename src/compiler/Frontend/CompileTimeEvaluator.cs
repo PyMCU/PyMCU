@@ -56,6 +56,34 @@ public class CompileTimeEvaluator(DeviceConfig config)
                     _ => throw new Exception("Unknown member")
                 };
             }
+            // `sys.implementation.name` -- another compile-time dunder, resolved the same way
+            // __CHIP__ is (docs/rfcs/0007): a per-(stdlib) table, never the compat layer's own
+            // sys.py parsed as source. `sys` here means "whatever the project's --stdlib names",
+            // a single build-wide fact, exactly like __CHIP__ names a single chip.
+            case MemberAccessExpr
+            {
+                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "implementation" },
+                Member: "name"
+            }:
+                return IntrospectionTable.ImplementationName(config);
+            // `sys.platform`.
+            case MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "platform" }:
+                return IntrospectionTable.SysPlatform(config);
+            // `uname().<field>` / `os.uname().<field>` -- `from os import uname; uname()` and
+            // `import os; os.uname()` are both written in the survey (docs/rfcs/0007 section 1).
+            case MemberAccessExpr { Object: { } unameCall, Member: var field } when IsUnameCall(unameCall):
+            {
+                var u = IntrospectionTable.GetUname(config);
+                return field switch
+                {
+                    "sysname" => u.Sysname,
+                    "nodename" => u.Nodename,
+                    "release" => u.Release,
+                    "version" => u.Version,
+                    "machine" => u.Machine,
+                    _ => throw new Exception("Unknown member"),
+                };
+            }
             case StringLiteral str:
                 return str.Value;
             case IntegerLiteral intLit:
@@ -77,6 +105,11 @@ public class CompileTimeEvaluator(DeviceConfig config)
                 return EvaluateCondition(bin.Left) || EvaluateCondition(bin.Right);
             case BinaryExpr { Op: BinaryOp.And } bin:
                 return EvaluateCondition(bin.Left) && EvaluateCondition(bin.Right);
+            // `not <condition>` -- PyMCU#266's actual repro is `if not sys.implementation.name
+            // == "circuitpython":`, `not` binding looser than `==` per Python precedence, so
+            // this is a UnaryExpr wrapping the BinaryExpr, not a distinct comparison operator.
+            case UnaryExpr { Op: UnaryOp.Not } un:
+                return !EvaluateCondition(un.Operand);
             case BinaryExpr { Op: BinaryOp.Equal or BinaryOp.NotEqual } bin:
             {
                 bool leftNum = TryResolveNumber(bin.Left, out long ln);
@@ -111,6 +144,18 @@ public class CompileTimeEvaluator(DeviceConfig config)
                     _ => lv >= rv,
                 };
             }
+            // `"Linux" not in uname()` (adafruit_dht.py) -- membership over the resolved
+            // 5-tuple's string fields, matching Python's own tuple-membership semantics.
+            // Only admissible when the right side is exactly the uname() call: an arbitrary
+            // compile-time sequence is out of scope (nothing else in the survey needs it).
+            case BinaryExpr { Op: BinaryOp.In or BinaryOp.NotIn } inExpr when IsUnameCall(inExpr.Right):
+            {
+                var needle = Resolve(inExpr.Left);
+                var u = IntrospectionTable.GetUname(config);
+                bool found = needle == u.Sysname || needle == u.Nodename || needle == u.Release
+                    || needle == u.Version || needle == u.Machine;
+                return inExpr.Op == BinaryOp.In ? found : !found;
+            }
             default:
                 return expr is CallExpr { Callee: MemberAccessExpr { Member: "startswith" } mem, Args: [StringLiteral argStr] }
                     ? Resolve(mem.Object).StartsWith(argStr.Value)
@@ -141,10 +186,43 @@ public class CompileTimeEvaluator(DeviceConfig config)
                     _ => config.EepromSize,
                 };
                 return true;
+            // `sys.implementation.version[0]` (neopixel.py: `version[0] >= 7`, a feature-
+            // detection proxy -- see docs/rfcs/0007 section 3 for why the tuple this answers
+            // from is the upstream API surface version, not this layer package's own version).
+            case IndexExpr
+            {
+                Target: MemberAccessExpr
+                {
+                    Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "implementation" },
+                    Member: "version"
+                },
+                Index: IntegerLiteral idxLit
+            }:
+            {
+                var (major, minor, micro) = IntrospectionTable.ImplementationVersion(config);
+                value = idxLit.Value switch
+                {
+                    0 => major,
+                    1 => minor,
+                    2 => micro,
+                    _ => throw new Exception("sys.implementation.version has 3 elements"),
+                };
+                return true;
+            }
             default:
                 return false;
         }
     }
+
+    // Whether `e` is exactly `uname()` (bare, after `from os import uname`) or `os.uname()`
+    // (dotted) -- the two shapes the survey found (docs/rfcs/0007 section 1). No arguments,
+    // matching the real signature.
+    private static bool IsUnameCall(Expression e) => e is CallExpr
+    {
+        Args.Count: 0,
+        Callee: VariableExpr { Name: "uname" }
+            or MemberAccessExpr { Object: VariableExpr { Name: "os" }, Member: "uname" }
+    };
 
     private static void RejectMixedComparison(BinaryExpr bin, bool leftNum, bool rightNum)
     {
