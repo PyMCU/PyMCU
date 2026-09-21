@@ -51,6 +51,70 @@ public class ForOverStringConstantsTests
             .ToList();
     }
 
+    // print() lowers through the HAL writers; the stubs are all it needs to resolve here.
+    private const string PrintPrelude =
+        "def uart_write_str(s: const[str]):\n" +
+        "    pass\n" +
+        "def uart_write(c: uint8):\n" +
+        "    pass\n" +
+        "def uart_write_decimal_u8(v: uint8):\n" +
+        "    pass\n";
+
+    // Every text the program hands to a writer, in the order the writes are emitted.
+    // A loop variable bound to the interned id instead of the text reaches the decimal
+    // writer and leaves nothing here -- which is the regression the oracle caught: the
+    // probe printed 256 where "PD2" was meant (probes 009/010, folding regression).
+    private static List<string> WrittenTexts(ProgramIR ir)
+    {
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        var texts = new Dictionary<string, string>();
+        foreach (var fd in body.OfType<FlashData>())
+            texts[fd.Name] = new string(fd.Bytes.TakeWhile(b => b != 0).Select(b => (char)b).ToArray());
+
+        return body.OfType<Call>()
+            .SelectMany(c => c.Args)
+            .OfType<FlashStrAddr>()
+            .Select(a => texts.TryGetValue(a.Name, out var t) ? t : "")
+            .ToList();
+    }
+
+    private static ProgramIR GenWithPrint(string src) =>
+        new IRGenerator().Generate(
+            new Parser(new Lexer(PrintPrelude + src).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" });
+
+    [Fact]
+    public void AListOfStringLiterals_PrintsTheTextNotTheId()
+    {
+        var ir = GenWithPrint(
+            "def main():\n" +
+            "    for name in [\"PD2\", \"PD3\"]:\n" +
+            "        print(name)\n");
+        Assert.Equal(new List<string> { "PD2", "\n", "PD3", "\n" }, WrittenTexts(ir));
+    }
+
+    [Fact]
+    public void PairsOfANumberAndAStringLiteral_PrintTheTextNotTheId()
+    {
+        var ir = GenWithPrint(
+            "def main():\n" +
+            "    for pin, name in [(2, \"D2\"), (3, \"D3\")]:\n" +
+            "        print(name)\n");
+        Assert.Equal(new List<string> { "D2", "\n", "D3", "\n" }, WrittenTexts(ir));
+    }
+
+    [Fact]
+    public void ATupleOfOneCharacterStrings_PrintsCharacters()
+    {
+        // Length one binds the character code as the numeric value too -- the name has to
+        // answer 'A' as a char and as a string, the two spellings the same literal has.
+        var ir = GenWithPrint(
+            "def main():\n" +
+            "    for c in [\"A\", \"B\"]:\n" +
+            "        print(c)\n");
+        Assert.Equal(new List<string> { "A", "\n", "B", "\n" }, WrittenTexts(ir));
+    }
+
     [Fact]
     public void AListOfStringLiterals_Unrolls()
     {

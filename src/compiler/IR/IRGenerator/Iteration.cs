@@ -261,17 +261,13 @@ public partial class IRGenerator
     /// </summary>
     private bool BindUnrolledElement(string key, Expression elem)
     {
-        // Names, field reads, arithmetic and constant ternaries fold the same way a
-        // bound sequence already does (TryFoldConstElement). Literal-only evaluation
-        // refused adafruit_ssd1306's `for cmd in (SET_DISP, 0x10 if self.page_addressing
-        // else 0x00, self.height - 1, ...)`.
-        if (TryFoldConstElement(elem, out int iv))
-        {
-            constantVariables[key] = iv;
-            strConstantVariables.Remove(key);
-            return true;
-        }
-
+        // A string element -- a literal, or a name/member bound to one text -- must be
+        // asked about BEFORE the general fold: the fold reduces a string to its interned
+        // id, an integer, and `for name in ["PD2", "PD3"]: print(name)` printed the ids
+        // where the names were meant (oracle probes 009/010). The string check takes
+        // literals and bound names only, so an integer element can never be mistaken for
+        // one -- `256` in a tuple stays 256 even once "END" has interned as id 256
+        // (the genexp-all-tuple fixture), which a value-first check would not survive.
         if (TryEvalConstStrElement(elem, out var text))
         {
             strConstantVariables[key] = text;
@@ -280,6 +276,17 @@ public partial class IRGenerator
             // literal it stands for, which is the state the read path expects.
             if (text.Length == 1) constantVariables[key] = text[0];
             else constantVariables.Remove(key);
+            return true;
+        }
+
+        // Names, field reads, arithmetic and constant ternaries fold the same way a
+        // bound sequence already does (TryFoldConstElement). Literal-only evaluation
+        // refused adafruit_ssd1306's `for cmd in (SET_DISP, 0x10 if self.page_addressing
+        // else 0x00, self.height - 1, ...)`.
+        if (TryFoldConstElement(elem, out int iv))
+        {
+            constantVariables[key] = iv;
+            strConstantVariables.Remove(key);
             return true;
         }
 
