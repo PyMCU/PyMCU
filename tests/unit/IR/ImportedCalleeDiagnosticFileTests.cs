@@ -69,7 +69,10 @@ public class ImportedCalleeDiagnosticFileTests
     }
 
     // isinstance() inside an imported class's __setitem__, expanded at `pix[i] = v` in the
-    // entry file: the module's line under the entry file's name.
+    // entry file: the module's line under the entry file's name. The candidate is a user
+    // class, not a builtin: the compile-time fold answers `isinstance(index, slice)` now
+    // (index binds an int, so it is False), and only a candidate the fold cannot resolve
+    // still reaches the run-time-type-test refusal.
     [Fact]
     public void AnIsinstanceInsideAnImportedDunder_NamesTheFileThatDefinesIt()
     {
@@ -87,7 +90,7 @@ public class ImportedCalleeDiagnosticFileTests
              "    def __init__(self) -> None:\n" +
              "        self.n: uint8 = 0\n" +
              "    def __setitem__(self, index: Union[int, slice], val: uint8) -> None:\n" +
-             "        if isinstance(index, slice):\n" +
+             "        if isinstance(index, Pix):\n" +
              "            self.n = 0\n" +
              "        self.n = val\n"));
 
