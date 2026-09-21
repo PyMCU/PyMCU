@@ -3,10 +3,15 @@
 # SPDX-License-Identifier: MIT
 # -----------------------------------------------------------------------------
 #
-# There is no operating system and no filesystem on the target. listdir,
-# getenv, stat and friends are not provided. uname() is not those: it is a
-# five-field record of the part this firmware was built for, and every field
-# is a fact the compiler already has as __CHIP__.
+# There is no operating system and no filesystem on the target. getenv and the
+# process calls are not provided. uname() is not those: it is a five-field
+# record of the part this firmware was built for, and every field is a fact the
+# compiler already has as __CHIP__.
+#
+# stat() and listdir() DO exist, but only over the romfs table (RFC 0008): the
+# files the driver embedded at build time. The compiler answers them at compile
+# time -- the bodies below are never reached, they are the declaration of the
+# protocol for tools and the CPython oracle.
 #
 #   from os import uname
 #   u = uname()          # sysname, nodename, release, version, machine
@@ -17,6 +22,7 @@
 # The last of those is adafruit_dht's CircuitPython-vs-Blinka test. sysname is
 # never "Linux" here, so the CircuitPython arm is the one that remains.
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 from pymcu.types import inline, const
 
 
@@ -54,3 +60,17 @@ def uname() -> uname_result:
             return uname_result("PyMCU", "", "", "", "rp2040 RP2040")
         case _:
             return uname_result("PyMCU", "", "", "", __CHIP__.name)
+
+
+# RFC 0008: stat()/listdir() over the romfs embed table. Both are answered at
+# compile time by the compiler -- these bodies only state the shape. stat()
+# returns the CPython ten-field tuple: all zeros except size at index 6.
+
+@inline
+def stat(name: const[str]) -> tuple[uint16, uint16, uint16, uint16, uint16, uint16, uint16, uint16, uint16, uint16]:
+    raise CompileError("os.stat() over romfs is answered by the compiler")
+
+
+@inline
+def listdir(dir: const[str] = "") -> list[str]:
+    raise CompileError("os.listdir() over romfs is answered by the compiler")
