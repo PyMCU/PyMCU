@@ -555,7 +555,8 @@ def build_index(venv: Path, *, pymcu: Path, compiler_version: str,
     upstream_json: list[dict] = []
     for submission in (upstream or []):
         entry, problem = build_upstream_entry(
-            submission, pymcu=pymcu, repo_root=repo_root or Path("."), env_paths=search,
+            submission, pymcu=pymcu, repo_root=repo_root or Path("."),
+            env_paths=search, submissions=upstream,
         )
         if problem:
             problems.append(problem)

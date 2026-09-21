@@ -146,7 +146,9 @@ class UpstreamIndexEntry:
 
 def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu: Path,
                              example_source: Path, version: str = "",
-                             env_paths: list[str] | None = None) -> TargetResult:
+                             env_paths: list[str] | None = None,
+                             submissions: "list[UpstreamSubmission] | None" = None
+                             ) -> TargetResult:
     """
     Compile *submission*'s committed measurement program for *chip*.
 
@@ -159,9 +161,12 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
     upstream library onto the include path by reading PYMCU_UPSTREAM_INDEX or
     the cached library index (core.upstream_libraries). Neither exists yet
     for a submission being measured for the very first time -- that is
-    exactly what this run produces -- so a one-entry index describing just
-    this submission is written and pointed to with PYMCU_UPSTREAM_INDEX for
-    the duration of this one subprocess call.
+    exactly what this run produces -- so an index describing every submission
+    in this run is written and pointed to with PYMCU_UPSTREAM_INDEX for the
+    duration of this one subprocess call.  All submissions, not just this
+    one: a submission's own example can import another upstream entry (the
+    ssd1306 simpletest pulls in adafruit_bus_device and adafruit_framebuf),
+    and a real build stages every installed upstream entry the index lists.
     """
     if not example_source.is_file():
         return TargetResult(chip, BUILD_UNSUPPORTED,
@@ -202,12 +207,12 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
             "v": 1,
             "libraries": [{
                 "kind": "upstream",
-                "name": submission.name or submission.provides[0],
-                "distribution": submission.distribution,
-                "version": version or "0.0.0",
-                "provides": list(submission.provides),
-                "layer": submission.layer,
-            }],
+                "name": sub.name or sub.provides[0],
+                "distribution": sub.distribution,
+                "version": version if sub is submission else "0.0.0",
+                "provides": list(sub.provides),
+                "layer": sub.layer,
+            } for sub in (submissions or [submission])],
         }), encoding="utf-8")
 
         env = dict(os.environ)
@@ -235,10 +240,16 @@ def measure_upstream_example(submission: UpstreamSubmission, chip: str, *, pymcu
 
 
 def build_upstream_entry(submission: UpstreamSubmission, *, pymcu: Path, repo_root: Path,
-                         env_paths: list[str] | None = None
+                         env_paths: list[str] | None = None,
+                         submissions: "list[UpstreamSubmission] | None" = None
                          ) -> tuple[UpstreamIndexEntry | None, str]:
     """
     Measure one upstream submission across every architecture.
+
+    *submissions* is the whole upstream block of this run: the measurement
+    index names all of them, so an example that imports a sibling upstream
+    entry (a display driver importing the bus/framebuffer libraries it sits
+    on) resolves it exactly the way a project's own build would.
 
     Returns (entry, problem). A problem -- the distribution is not actually
     installed -- is reported rather than raised, the same way an invalid
@@ -258,7 +269,7 @@ def build_upstream_entry(submission: UpstreamSubmission, *, pymcu: Path, repo_ro
     for chip in chips_to_measure_upstream():
         entry.targets[chip] = measure_upstream_example(
             submission, chip, pymcu=pymcu, example_source=example_source,
-            version=version, env_paths=env_paths,
+            version=version, env_paths=env_paths, submissions=submissions,
         )
 
     return entry, ""

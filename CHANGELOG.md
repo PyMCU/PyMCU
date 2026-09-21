@@ -543,6 +543,11 @@ purpose, as opposed to bugs like these three that were silent until found.
   backend and the emulator every probe exercises. Its CI runs the suite there
   under both front ends; the `oracle` job here is retired. Probe `# doc:`
   citations still name the `docs/language/` files in this repository.
+### Library index
+- An upstream submission is measured with every other upstream submission of the same
+  `libraries.txt` in scope, so a measurement example whose imports are other upstream
+  entries -- the ssd1306 simpletest importing its bus and framebuffer libraries --
+  compiles instead of failing on an unresolved import.
 
 ### Full commit log
 
