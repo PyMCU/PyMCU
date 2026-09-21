@@ -24,6 +24,8 @@ dependencies = [
     # preferred certifi when it happened to be installed; depending on it
     # removes a whole class of errors that read like the server being down.
     "certifi>=2023.7.22",
+    # workload.yaml -> JSON translation for `pymcu profile --pgo`.
+    "pyyaml>=6.0",
     "pymcu-stdlib>=0.1.0b1",
     "pymcu-sdk>=0.1.0b1",
 ]
