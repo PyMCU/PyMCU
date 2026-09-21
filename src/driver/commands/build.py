@@ -251,7 +251,12 @@ def _detect_fstring_value_usage(sources_dir: Path) -> bool:
 # set in [tool.pymcu]. Only atmega328p is supported in phase 1 (see the RFC, "Targets").
 _ARENA_BOARD_DEFAULT_BYTES = 256
 
-_BYTEARRAY_CALL_RE = re.compile(r'bytearray\(\s*([^)]*?)\s*\)')
+# The argument capture stops at the first ')' -- except when the argument opens
+# with a balanced paren group, which is what lets the tuple-literal form
+# bytearray((1, 2)) arrive whole for _is_literal_buffer_arg. Any other argument
+# containing ')' (bytearray([f(1), 2]), bytearray(int(f(1)))) arrives truncated
+# and fails ast.parse, which the caller treats as unknown -- the safe side.
+_BYTEARRAY_CALL_RE = re.compile(r'bytearray\(\s*(\([^()]*\)|[^)]*?)\s*\)')
 
 
 def _fold_int_expr(expr: str) -> int | None:
@@ -283,8 +288,28 @@ def _fold_int_expr(expr: str) -> int | None:
     return fold(tree.body)
 
 
+def _is_literal_buffer_arg(arg: str) -> bool:
+    """True when arg is a bytearray() literal buffer form, laid out statically.
+
+    bytearray([...]), bytearray((...)), bytearray(b"...") and bytearray("...")
+    are compile-time buffers: the compiler emits their contents statically and
+    they never allocate from the arena, so they must not mark the program an
+    arena user. An argument the regex captured truncated -- it stops at the
+    first ')' unless the argument opens with a balanced group -- fails
+    ast.parse and returns False here, which is the safe side: the caller then
+    treats it like any other non-folding, possibly runtime-sized argument.
+    """
+    try:
+        node = ast.parse(arg, mode="eval").body
+    except SyntaxError:
+        return False
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (bytes, str))
+    return isinstance(node, (ast.List, ast.Tuple))
+
+
 def _detect_and_size_arena_usage(sources_dir: Path, arena_size_override: int | None) -> tuple[bool, int, bool]:
-    """Scan .py files for bytearray(n) where n is not a plain integer literal.
+    """Scan .py files for bytearray(...) calls that can allocate from the arena.
 
     Returns (used, reserved_bytes, exact):
       used           -- True if any such call was found anywhere in sources_dir.
@@ -295,11 +320,22 @@ def _detect_and_size_arena_usage(sources_dir: Path, arena_size_override: int | N
                          no fallback) -- the "zero waste" case docs/rfcs/0004-arena-allocator.md
                          describes, used only for the build-line message, not for sizing.
 
-    Over-inclusive on purpose, the same way _detect_fstring_value_usage is: a compile-time-
-    constant bytearray(N) also matches this regex and folds cleanly (contributing N to the
-    sum rather than tripping the "not exact" fallback), so a false positive here costs
-    nothing -- the compiler's own once-rule and constant-folding are what actually decide
-    whether a given call is arena-eligible; this heuristic only sizes the reservation.
+    A false positive here is not free: `used` alone injects
+    `import pymcu.arena` (see _inject_arena_preamble), and that module carries
+    two uint16 globals plus the ARENA_SIZE reservation -- on a PIC10F200
+    fixture the globals alone pushed a 16-byte-RAM program over budget, and on
+    AVR the fallback reserves 256 B of SRAM. The literal buffer forms --
+    bytearray([...]), bytearray((...)), bytearray(b"..."), bytearray("...") --
+    are laid out statically by the compiler and never allocate from the arena,
+    so _is_literal_buffer_arg excludes them before they can mark the program
+    an arena user. A compile-time-constant bytearray(N) still matches and
+    folds cleanly, contributing N to the sum.
+
+    Everything else keeps the fold-or-fallback behaviour, including arguments
+    this scan cannot even parse: the capture regex stops at the first ')'
+    unless the argument opens with a balanced group, so bytearray([f(1), 2])
+    arrives truncated as '[f(1' and fails ast.parse. Unparseable stays
+    unknown -- the safe side: `used` set, `exact` cleared.
     """
     used = False
     total = 0
@@ -313,6 +349,8 @@ def _detect_and_size_arena_usage(sources_dir: Path, arena_size_override: int | N
         for m in _BYTEARRAY_CALL_RE.finditer(code):
             arg = m.group(1).strip()
             if not arg:
+                continue
+            if _is_literal_buffer_arg(arg):
                 continue
             used = True
             n = _fold_int_expr(arg)
