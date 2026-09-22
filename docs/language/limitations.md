@@ -101,8 +101,10 @@ membership, `s == "lit"` folds, and the pure methods `s.strip()` / `lstrip()` /
 `rstrip()` (with an optional chars argument), `s.index()` / `s.find()` (a miss raises a
 catchable `ValueError` / answers -1), `s.startswith()` / `s.endswith()`, `s.count()`,
 `s.replace()`, `s.upper()`, `s.lower()` and `s.split()` (only as a `for` / `enumerate`
-iterable) all evaluate where the program is compiled (adafruit_pixelbuf `parse_byteorder`,
-adafruit_framebuf `text()`).
+iterable) all evaluate where the program is compiled, and `s[a:b]` slices and `str(x)`
+of a constant fold to new compile-time text (adafruit_pixelbuf `parse_byteorder`,
+adafruit_framebuf `text()`). A `Union[str, ...]` parameter keeps the incoming text the
+same way a `str` parameter does.
 
 ### A str that different paths bind differently
 
@@ -136,7 +138,9 @@ lowers each piece to a direct write (no heap, no format buffer) — **and as a v
 statically bounded per part (`pymcu.strfmt` lowering, auto-injected by the build). On the
 value form, `len(s)` is the formatted length, `s[i]` indexes bytes, `print(s)` /
 `uart.write_str(s)` stream it, and re-assigning `s` in a loop reuses the buffer (assign the
-longest f-string first — the buffer is sized at the first assignment). Not yet supported in
+longest f-string first — the buffer is sized at the first assignment). An int
+interpolation with a format spec (`{v:X}`, `{v:04d}`, `{v:b}`, `{v:o}`) folds to its
+text wherever the whole f-string is a compile-time constant. Not yet supported in
 the value form: `s == "lit"` comparison, and f-strings inline in
 other expression positions (assign to a name first). Streamed examples:
 
@@ -787,7 +791,7 @@ a step of 1 or -1; with constant bounds any step works.
 
 | Form | Status |
 |---|---|
-| `b = arr[1:3]` / `arr[::2]` (slice **read**) | Compile-time constant bounds only — the result is a fixed-size array sized at compile time |
+| `b = arr[1:3]` / `arr[::2]` (slice **read**) | Compile-time constant bounds only — the result is a fixed-size array sized at compile time. Bounds fold through function-local constants too, and a slice of SRAM-backed storage marshals to a `bytearray` parameter by base address |
 | `arr[a:b] = src` (slice **assignment**) | Supported, equal length, from a list / `bytes` literal / array / slice, including overlapping copies of the same array (snapshot semantics) |
 | `obj[a:b] = src` through `__setitem__` | Supported — lowers to one `__setitem__` call per byte |
 | `for x in buf[lo:hi]` (slice **iteration**) | Supported with **runtime** bounds; rewritten to a `range` loop over the backing array |
