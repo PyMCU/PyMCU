@@ -280,14 +280,39 @@ public partial class IRGenerator
         void RemoveDescendants<T>(Dictionary<string, T> map, string sep)
         {
             string dp = dst + sep;
-            foreach (var k in map.Keys.Where(k => k.StartsWith(dp, StringComparison.Ordinal)
-                         // `__ctseqN` is minted from a counter no later expansion
-                         // re-uses, so its elements can never be stale state: they
-                         // are either escaped storage (a field aliases them) or
-                         // unreferenced. Removing them broke `self.segments = [Pin..
-                         // for ..]` the moment a second __init__ shared the prefix.
-                         && !k.AsSpan(dp.Length).StartsWith("__ctseq", StringComparison.Ordinal)).ToList())
+            foreach (var k in map.Keys.Where(k =>
+                         {
+                             if (!k.StartsWith(dp, StringComparison.Ordinal)) return false;
+                             // `__ctseqN` is minted from a counter no later expansion
+                             // re-uses, so its elements can never be stale state: they
+                             // are either escaped storage (a field aliases them) or
+                             // unreferenced. Removing them broke `self.segments = [Pin..
+                             // for ..]` the moment a second __init__ shared the prefix.
+                             // Two shapes must both be recognized: `scope.__ctseqN` (the
+                             // text right after dp, or after the last '.') and the
+                             // underscore-joined super() scheme `inline4___init_____ctseqN`.
+                             // A dst ending in '_' (the discard name `_` qualifies to it)
+                             // makes dp end in "__", which ate `__ctseqN__k` one underscore
+                             // deep under the remainder-only check.
+                             if (k.AsSpan(dp.Length).StartsWith("__ctseq", StringComparison.Ordinal)
+                                 || IsCtSeqKey(k)) return false;
+                             return true;
+                         }).ToList())
                 map.Remove(k);
+        }
+
+        static bool IsCtSeqKey(string k)
+        {
+            // `scope.__ctseqN` under the dotted scheme; under the underscore scheme the
+            // element is `scope___ctseqN` -- a "__ctseq" segment split out on '_'
+            // boundaries would split inside the name itself, so look for the marker
+            // right after a '.' or '_' separator instead.
+            for (int i = 0; i <= k.Length - 7; ++i)
+            {
+                if (k[i] != '_' && k[i] != '.') continue;
+                if (k.AsSpan(i + 1).StartsWith("__ctseq", StringComparison.Ordinal)) return true;
+            }
+            return k.StartsWith("__ctseq", StringComparison.Ordinal);
         }
 
         foreach (var sep in new[] { ".", "_" })
