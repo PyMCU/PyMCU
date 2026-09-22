@@ -438,6 +438,22 @@ public partial class IRGenerator
     {
         foreach (var innerStmt in block.Statements)
         {
+            // `pwm_pins += (6, 7, 8)` in a class body: CPython concatenates the tuples
+            // at class creation. The binding below holds the first tuple; extend it the
+            // same way here (adafruit_seesaw attiny8x7 / attinyx16 spell it so).
+            if (innerStmt is AugAssignStmt { Target: VariableExpr augTgt } aug
+                && aug.Op == Frontend.AugOp.Add
+                && aug.Value is TupleExpr or ListExpr
+                && constSequenceBindings.TryGetValue(currentModulePrefix + augTgt.Name,
+                                                     out var augSeq))
+            {
+                var augElems = aug.Value is TupleExpr at ? at.Elements : ((ListExpr)aug.Value).Elements;
+                foreach (var el in augElems)
+                    augSeq.Add(TryFoldConstElement(el, out int aev)
+                        ? new IntegerLiteral(aev) { Line = el.Line } : el);
+                continue;
+            }
+
             var innerName = "";
             var innerType = "";
             Expression? innerInit = null;
@@ -482,6 +498,25 @@ public partial class IRGenerator
                 setLiteralBindings[currentModulePrefix + innerName] = setInit;
                 mutableGlobals[currentModulePrefix + innerName] =
                     DataTypeExtensions.StringToDataType(innerType);
+                continue;
+            }
+
+            // A class-level tuple/list is a compile-time sequence: it has no storage and
+            // the binding IS the whole meaning, same as a module-level one. Without this
+            // `Cls.pins[0]` folded to a bit check on a zero-initialised scalar -- the
+            // wrong answer said cleanly. Elements fold HERE, while currentModulePrefix
+            // still names the class, so a name like _ADC_INPUT_0_PIN resolves to this
+            // module's constant; a read in another module's method would not find it
+            // (adafruit_seesaw's pinmap classes are exactly this shape).
+            if (innerInit is TupleExpr or ListExpr)
+            {
+                var seqElems = innerInit is TupleExpr tq ? tq.Elements
+                    : ((ListExpr)innerInit).Elements;
+                var foldedSeq = new List<Expression>(seqElems.Count);
+                foreach (var el in seqElems)
+                    foldedSeq.Add(TryFoldConstElement(el, out int sev)
+                        ? new IntegerLiteral(sev) { Line = el.Line } : el);
+                constSequenceBindings[currentModulePrefix + innerName] = foldedSeq;
                 continue;
             }
 

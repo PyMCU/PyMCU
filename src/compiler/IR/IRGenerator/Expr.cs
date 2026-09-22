@@ -1092,9 +1092,12 @@ public partial class IRGenerator
             // flattened field is often a Variable whose interned id is not enough.
             // A class/instance dict or set (`value in cls.string`) is membership of
             // keys, not a substring: skip this path so TryGetDictFor below owns it.
+            // A compile-time SEQUENCE attribute (`Cls.pins`) is element membership the
+            // same way -- evaluating it as a value here has nothing to find.
             if (expr.Right is MemberAccessExpr or StringLiteral
                 && !(expr.Right is MemberAccessExpr
-                     && (TryGetDictFor(expr.Right, out _) || TryGetSetFor(expr.Right, out _))))
+                     && (TryGetDictFor(expr.Right, out _) || TryGetSetFor(expr.Right, out _)
+                         || ResolveConstSequenceExpr(expr.Right) != null)))
             {
                 string? hay = TryGetCompileTimeText(expr.Right)
                               ?? StringTextOfVal(VisitExpression(expr.Right));

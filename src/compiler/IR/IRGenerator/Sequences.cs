@@ -202,8 +202,31 @@ public partial class IRGenerator
             if (ResolveConstSequence(nameVe.Name) is { } byName) return byName;
         }
 
-        if (SequenceKeyOf(e) is not { } key) return null;
-        return constSequenceBindings.TryGetValue(key, out var elements) ? elements : null;
+        if (SequenceKeyOf(e) is { } key
+            && constSequenceBindings.TryGetValue(key, out var elements))
+            return elements;
+
+        // `Cls.attr` where the attribute is a class-level tuple/list: SequenceKeyOf spells
+        // the access `<recv>_<member>`, but the binding is filed under the class's own
+        // prefix (`adafruit_seesaw_samd09_SAMD09_Pinmap_analog_pins`). ClassAttrKey walks
+        // classModuleMap the same way a dict attribute already does.
+        if (e is MemberAccessExpr { Object: VariableExpr cov } cam
+            && ClassNameOf(cov) is { } camCls
+            && constSequenceBindings.TryGetValue(ClassAttrKey(camCls, cam.Member),
+                                                 out var camSeq))
+            return camSeq;
+        if (e is MemberAccessExpr { Object: MemberAccessExpr { Object: VariableExpr modV } modCls } mcm)
+        {
+            // `module.Cls.attr`: resolve the module-qualified class name, then the
+            // attribute under its own prefix.
+            string realMod = TryImportedAlias(modV.Name, out var rm) && rm != null
+                ? rm : modV.Name;
+            string mangledCls = realMod.Replace('.', '_') + "_" + modCls.Member;
+            if ((classFieldLayout.ContainsKey(mangledCls) || classDirectMethods.ContainsKey(mangledCls))
+                && constSequenceBindings.TryGetValue(mangledCls + "_" + mcm.Member, out var mcmSeq))
+                return mcmSeq;
+        }
+        return null;
     }
 
     /// <summary>
