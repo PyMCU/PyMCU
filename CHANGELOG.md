@@ -310,6 +310,20 @@ purpose, as opposed to bugs like these three that were silent until found.
   one-byte pointer, corrupting the heap header at a shadow address in low SRAM.
 
 ### Language surface
+- `-> Optional[X]` on a real subroutine is a runtime-tagged union return (RFC 0009
+  phase 1): `X | None` and `Union[X, None]` spell the same thing. A function whose
+  None-ness is decided at run time returns its payload in the ordinary result
+  registers and a one-byte member tag in the next register of the return run; the
+  caller's local stores payload and tag together. `r is None` / `r is not None` /
+  `if r:` / `r or default` read the tag, and `if r is None: return` narrows `r` to
+  `X` on the fall-through. Reading an unnarrowed runtime-tagged name is refused at
+  the line -- CPython's `TypeError` made a compile-time fact. A `return None` on a
+  reached path of a `-> X` function stays refused. When every reached path is
+  provable at compile time no tag exists and the build is byte-identical to before;
+  the AVR backend declares the capability as `--return-tags`, and a `.mir` carrying
+  tags fed to a backend without it stops the build instead of dropping the tag.
+  Optional fields, Optional parameters on real subroutines and multi-member unions
+  are phases 2 and 3.
 - `bytearray(n)` with a runtime `n` allocates from a static arena (no `free()`, AVR only)
   instead of being refused, wherever the compiler can prove the statement runs at most
   once: a module-level statement not in a loop, or an `@inline __init__` reached only

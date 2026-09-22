@@ -1,7 +1,9 @@
 # RFC 0009: Optional[T] and Union returns as a tagged union -- one tag byte, only when None-ness is a run-time fact
 
-- Status: **PROPOSED**. No compiler changes in this RFC; it fixes the representation, the
-  calling convention, the error matrix and the gate an implementation is held to.
+- Status: **IMPLEMENTED (Phase 1)**. `-> Optional[X]` / `-> Union[X, None]` on real
+  subroutines and locals carry the payload plus one tag byte as specified here; the
+  readers, narrowing and the decision-5 diagnostic are in. Fields, real-subroutine
+  parameters and multi-member unions remain phases 2 and 3.
   Measurements: `docs/rfcs/0009-measurement-2026-09-21.json`; the GAS snippets and the
   avr8sharp harness live on branch `rescue/optional-proto` under `proto/optional-tag/`
   and are never merged into this branch.

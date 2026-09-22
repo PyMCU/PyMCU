@@ -477,13 +477,29 @@ e = Dev(7)      # e.go() is the constant 7, with no test at run time
 Neither branch that cannot run is lowered, so this costs nothing: the 321-fixture corpus is
 byte-identical across the change.
 
-**Where the knowledge runs out is a `return`.** The caller asked for a number and the path
-answers `None`, which has no width, so that return is refused in one sentence at the line it
-is written on, in an `@inline` expansion and in a plain `def` compiled as a shared
-subroutine alike -- the outlined path used to leave `ret` holding whatever the register
-happened to hold. A `return None` on a path the caller cannot reach is not refused, because
-the guard that excludes it folds first. `Optional[X]` stays the spelling reserved for the
-runtime-tagged return RFC 0009 brings.
+**Where the knowledge used to run out was a `return` -- and that is what RFC 0009 phase 1
+added.** A `def` declared `-> Optional[X]` (or `-> X | None`, `-> Union[X, None]`) whose
+None-ness is decided at run time compiles as a tagged union: the payload travels in the
+ordinary return registers and a one-byte member tag in the next register of the return run
+(R25 after an 8-bit payload, R22 after a 16-bit one, R20 after a 32-bit/float one; `None`
+is always the last tag state). A local that binds the result keeps the tag byte in its own storage, and
+the readers ask it directly: `r is None` / `r is not None` / `if r:` emit the tag test, `r
+or default` picks the payload or the default on it, and `if r is None: return` narrows `r`
+to `X` on the fall-through the same way `if r is not None:` narrows inside its arm. Reading
+an unnarrowed runtime-tagged name (`r + 1` where `r` may be `None`) is refused at the line:
+CPython raises `TypeError` there, and a provable run-time type error is a compile-time
+refusal here. When every reached path is provable -- the annotation is wider than the body,
+the guard folds, the `return None` sits on a dead arm -- no tag exists and the code is
+byte-identical to a plain `-> X` return; the byte is spent only where the None-ness is a
+run-time fact.
+
+A `return None` on a reached path of a function declared `-> X` (no `None` member) stays
+refused in one sentence at the line it is written on, in an `@inline` expansion and in a
+plain `def` compiled as a shared subroutine alike -- the outlined path used to leave `ret`
+holding whatever the register happened to hold. A `return None` on a path the caller cannot
+reach is not refused, because the guard that excludes it folds first. Optional FIELDS and
+Optional PARAMETERS on real subroutines are phase 2, and `Union[A, B]` of two payload types
+on a return is phase 3; the tag machinery is the same, the storage questions are theirs.
 
 **A `Union` of two REAL types on a PARAMETER** of an `@inline`-expanded function or method
 (a constructor included -- every ZCA instance is built at its own call site) reads the same
@@ -1218,7 +1234,11 @@ lookup table. `adafruit_dps310` (13 162 bytes) and `adafruit_pca9685` (1 852 byt
 join once `[None] * n` is a fixed SRAM array that can hold a later instance.
 
 **A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
-`X | None` and `Union[X, None]` are read as `X`: see "None is a compile-time value" above.
+`X | None` and `Union[X, None]` are read as `X` in parameter and local positions, and a
+`-> Optional[X]` return carries the runtime tag described in "None is a compile-time
+value" above. A `Union` whose members are two payload types (`Union[int, float, None]`
+included) still meets the refusal on a return: the tag machinery exists but the multi-member
+readers are phase 3.
 That moved nine of the original twenty off the annotation they used to stop on, and cost nothing (the
 321-fixture corpus is byte-identical).
 

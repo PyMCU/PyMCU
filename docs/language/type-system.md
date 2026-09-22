@@ -242,7 +242,7 @@ class Sensor:
 | `int` is arbitrary precision | `int` is 16-bit (`int16`) |
 | `float` has hardware support (most CPUs) | `float` is soft-float, ~200-400 cycles/op |
 | Types are optional hints | Types are **required** annotations |
-| `None` is a runtime object | `None` is a COMPILE-TIME value (not the integer `-1`): a name bound to it is tracked, and `is None` / `== None` / `if p:` fold to the branch they select. `Optional[X]`, `X \| None` and `Union[X, None]` are read as `X`, because the width is X's and the None-ness is the compiler's |
+| `None` is a runtime object | `None` is a COMPILE-TIME value (not the integer `-1`): a name bound to it is tracked, and `is None` / `== None` / `if p:` fold to the branch they select. `Optional[X]`, `X \| None` and `Union[X, None]` are read as `X` in parameter and local positions, because the width is X's and the None-ness is the compiler's. On a `-> Optional[X]` RETURN whose None-ness is decided at run time, the result is a tagged union: payload plus a one-byte member tag (RFC 0009 phase 1), narrowed by `is None`/`is not None`/`if r`/`r or d` |
 | `bool` is a subclass of `int` | `bool` aliases `uint8` |
 | `list` is dynamic | Arrays are fixed-size at compile time |
 | `int` arithmetic never overflows | Arithmetic **promotes** to a wider type; the annotation is a fixed *storage* width (see [Integer promotion](#integer-promotion-and-overflow)) |
