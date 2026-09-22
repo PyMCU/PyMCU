@@ -1761,11 +1761,17 @@ public partial class IRGenerator
                 foreach (char c in strOpt)
                 {
                     constantVariables[varKey] = (int)c;
+                    // The loop variable IS a one-character string in Python: recording its
+                    // text is what lets `char in ":;"` (adafruit_ht16k33's _push) answer
+                    // as the substring test it is, rather than an integer membership
+                    // question a string literal cannot take.
+                    strConstantVariables[varKey] = c.ToString();
                     EmitUnrolledIteration(stmt.Body, strBrk);
                 }
                 if (strBrk.Length > 0) Emit(new Label(strBrk));
 
                 constantVariables.Remove(varKey);
+                strConstantVariables.Remove(varKey);
                 return;
             }
 
