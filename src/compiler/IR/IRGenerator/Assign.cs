@@ -488,7 +488,7 @@ public partial class IRGenerator
                             {
                                 var returnsCtor = false;
                                 if (dfunc?.Body.Statements != null)
-                                    foreach (var bs in dfunc.Body.Statements)
+                                    foreach (var bs in TypeInference.WalkStatements(dfunc.Body.Statements))
                                     {
                                         if (bs is not ReturnStmt ret || ret.Value is not CallExpr rc ||
                                             rc.Callee is not VariableExpr rv) continue;
@@ -1898,7 +1898,7 @@ public partial class IRGenerator
                 }
                 try
                 {
-                    foreach (var fbs in factoryMethod.Body.Statements)
+                    foreach (var fbs in TypeInference.WalkStatements(factoryMethod.Body.Statements))
                         if (fbs is ReturnStmt fr && fr.Value is CallExpr frcall
                             && frcall.Callee is VariableExpr frcv)
                         {
@@ -1967,7 +1967,7 @@ public partial class IRGenerator
                 currentModulePrefix = factoryPrefix;
             try
             {
-                foreach (var bs in factoryFn.Body.Statements)
+                foreach (var bs in TypeInference.WalkStatements(factoryFn.Body.Statements))
                     if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
                     {
                         var rc = ResolveCallee(rcv.Name);
