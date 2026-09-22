@@ -1515,6 +1515,35 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The method-name -> AST map <see cref="MethodMutatesField"/> needs to resolve
+    /// `self.m()` inside a method of <paramref name="cls"/>: the class's own methods plus
+    /// every inherited one, the nearest definition winning. With no map a self-call counts
+    /// as writing every field -- `_adjusted_index` calling `self._bytes_per_buffer()`
+    /// reported `_buffer_size` mutated, and the loop invalidation dropped a compile-time
+    /// field constant it then had to fold (adafruit_ht16k33's scroll/marquee).
+    /// </summary>
+    private IReadOnlyDictionary<string, FunctionDef> SiblingMethodsOf(string cls)
+    {
+        var map = new Dictionary<string, FunctionDef>();
+        for (string? cur = cls; cur != null;)
+        {
+            // classBasePrefixes values carry the trailing '_' of a mangled class prefix;
+            // OwningClassOf's answer does not. One separator, no more: 'Cls__put' strips to
+            // '_put', and two separators would eat the leading underscore of a private name.
+            string pfx = cur.EndsWith("_", StringComparison.Ordinal) ? cur : cur + "_";
+            foreach (var src in new Dictionary<string, FunctionDef>[] { instanceMethodDefs, methodAstByName })
+                foreach (var kv in src)
+                    if (kv.Key.StartsWith(pfx, StringComparison.Ordinal))
+                        map.TryAdd(kv.Key[pfx.Length..], kv.Value);
+            foreach (var kv in inlineFunctions)
+                if (kv.Key.StartsWith(pfx, StringComparison.Ordinal) && kv.Value != null)
+                    map.TryAdd(kv.Key[pfx.Length..], kv.Value!);
+            cur = classBasePrefixes.TryGetValue(cur, out var b) ? b : null;
+        }
+        return map;
+    }
+
+    /// <summary>
     /// True when `<paramref name="callee"/>` (`Class_method`) is fully resolvable AND writes no
     /// field of its receiver, directly or through a method it calls on one of its own fields.
     ///
@@ -1538,9 +1567,10 @@ public partial class IRGenerator
             && !inlineFunctions.TryGetValue(callee, out def)) return false;
         if (def == null) return false;
 
+        var sibs = SiblingMethodsOf(cls);
         foreach (var (field, type, _) in layout)
         {
-            if (MethodMutatesFieldPublic(def, field)) return false;
+            if (MethodMutatesFieldPublic(def, field, sibs)) return false;
 
             // A call on a field that holds an instance can write through it. Following that
             // is what FieldsWrittenBy does; here it is enough to refuse to answer, because
@@ -1598,11 +1628,12 @@ public partial class IRGenerator
             && !inlineFunctions.TryGetValue(callee, out def)) return;
         if (def == null) return;
 
+        var sibsN = SiblingMethodsOf(cls);
         foreach (var (field, type, _) in layout)
         {
             // Only below the first hop: at prefix "" this is the receiver's own field, which the
             // caller marks off the layout.
-            if (prefix.Length > 0 && MethodMutatesFieldPublic(def, field))
+            if (prefix.Length > 0 && MethodMutatesFieldPublic(def, field, sibsN))
                 typed.Add((prefix + field, type));
 
             if (!classFieldLayout.ContainsKey(type)) continue;
@@ -1632,9 +1663,10 @@ public partial class IRGenerator
             && !inlineFunctions.TryGetValue(callee, out def)) return;
         if (def == null) return;
 
+        var sibsW = SiblingMethodsOf(cls);
         foreach (var (field, type, _) in layout)
         {
-            if (MethodMutatesFieldPublic(def, field)) paths.Add(prefix + field);
+            if (MethodMutatesFieldPublic(def, field, sibsW)) paths.Add(prefix + field);
 
             // `self.<field>.<method>()` where <field> holds an instance: what that method
             // writes lives under the flattened `<field>_<its field>` name.

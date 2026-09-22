@@ -3939,6 +3939,10 @@ public partial class IRGenerator
     private static bool MethodMutatesFieldPublic(FunctionDef method, string field)
         => MethodMutatesField(method, field);
 
+    private static bool MethodMutatesFieldPublic(FunctionDef method, string field,
+        IReadOnlyDictionary<string, FunctionDef>? siblings)
+        => MethodMutatesField(method, field, siblings);
+
     // The mutation may also be indirect: `bump()` writing nothing itself but calling
     // `self.inc()`, which does. The field travels by value, so an indirect mutator needs the
     // same write-back as a direct one -- without it the sibling updated a copy and the
