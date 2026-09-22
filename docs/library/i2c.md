@@ -59,6 +59,7 @@ the bit-rate register is an integer. 100 kHz and 400 kHz at 16 MHz are both exac
 | Constant | Value | Meaning |
 |---|---|---|
 | `I2C.START` | `0x08` | START condition transmitted |
+| `I2C.RESTART` | `0x10` | Repeated START condition transmitted |
 | `I2C.SLA_ACK` | `0x18` | SLA+W transmitted, ACK received |
 | `I2C.SLA_NACK` | `0x20` | SLA+W transmitted, NACK received |
 | `I2C.DATA_ACK` | `0x28` | Data byte transmitted, ACK received |
@@ -73,12 +74,18 @@ the bit-rate register is an integer. 100 kHz and 400 kHz at 16 MHz are both exac
 | `stop()` | Send STOP condition |
 | `write(data: uint8) -> uint8` | Write byte, return TWI status |
 | `write_to(addr: uint8, data: uint8) -> uint8` | START + SLA+W + byte + STOP |
+| `writebyte(addr: uint8, data: uint8) -> uint8` | Same transaction as `write_to`; returns 1 on success, the failing TWI status (`0x20`/`0x30`) on a NACK, `0xFF` on a bus timeout |
 | `write_bytes(addr: uint8, buf, n: uint8)` | Multi-byte write: START + SLA+W + N bytes + STOP |
 | `read_from(addr: uint8) -> uint8` | START + SLA+R + read byte + NACK + STOP |
 | `read_ack() -> uint8` | Read byte + send ACK (more data follows) |
 | `read_nack() -> uint8` | Read byte + send NACK (last byte in transaction) |
 | `__enter__() -> uint8` | Alias for `start()` — called by `with i2c:` |
 | `__exit__()` | Alias for `stop()` — called by `with i2c:` |
+
+Every status-returning method is `@inline`: a caller that ignores the return value pays
+nothing — the status folds away — while a caller that reads it can branch on the NACK
+without a second transaction. The compatibility layers (`busio.I2C`, `machine.I2C`) read
+them to raise `OSError` the way upstream CircuitPython and MicroPython do.
 
 ---
 

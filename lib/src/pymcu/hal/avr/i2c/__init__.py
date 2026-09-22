@@ -29,6 +29,7 @@ class I2C:
     """
 
     START     = 0x08
+    RESTART   = 0x10
     SLA_ACK   = 0x18
     SLA_NACK  = 0x20
     DATA_ACK  = 0x28
@@ -120,10 +121,12 @@ class I2C:
         return 0
 
     @inline
-    def writebyte(self, addr: uint8, data: uint8):
-        # Unconditional single-byte transaction via a shared subroutine (machine.I2C.writeto).
+    def writebyte(self, addr: uint8, data: uint8) -> uint8:
+        # Single-byte transaction via a shared subroutine (machine.I2C.writeto).
+        # Returns 1 on full ACK, else the TWI status of the stage that failed.
         if self._mode == "c":
-            i2c_write_byte(addr, data)
+            return i2c_write_byte(addr, data)
+        return 0
 
     @inline
     def write_bytes(self, addr: uint8, buf, n: uint8) -> uint8:

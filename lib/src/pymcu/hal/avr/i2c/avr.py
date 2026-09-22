@@ -223,15 +223,30 @@ def i2c_write(data: uint8) -> uint8:
     return status
 
 
-def i2c_write_byte(addr: uint8, data: uint8):
-    # One unconditional single-byte transaction (START, SLA+W, data, STOP) -- exactly the
-    # sequence machine.I2C.writeto used to inline, now a shared real subroutine so callers
-    # that send many bytes (display/sensor drivers) emit one RCALL per byte, not the whole
-    # transaction inline. (Distinct from i2c_write_to, which ACK-checks and skips data on NACK.)
-    i2c_start()
-    i2c_write(addr << 1)
-    i2c_write(data)
+def i2c_write_byte(addr: uint8, data: uint8) -> uint8:
+    # One single-byte transaction (START, SLA+W, data, STOP) as a shared real
+    # subroutine, so callers that send many bytes (display/sensor drivers) emit
+    # one RCALL per byte, not the whole transaction inline. It used to send all
+    # three stages unconditionally; it now ACK-checks each stage and stops on
+    # the first failure, so a layer can raise on a NACK while a caller that
+    # ignores the result pays only the call it already paid. Returns 1 on a
+    # full ACK, else the TWI status of the stage that failed (0x20 address
+    # NACK, 0x30 data NACK, 0xFF bus timeout). The opening START also accepts
+    # 0x10: on a bus held by a stop=0 write the hardware issues a repeated
+    # START, which is a good START.
+    st: uint8 = i2c_start()
+    if st != 0x08 and st != 0x10:
+        i2c_stop()
+        return st
+    st = i2c_write(addr << 1)
+    if st != 0x18:
+        i2c_stop()
+        return st
+    st = i2c_write(data)
     i2c_stop()
+    if st != 0x28:
+        return st
+    return 1
 
 
 def i2c_read_ack() -> uint8:
