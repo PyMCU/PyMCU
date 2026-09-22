@@ -1040,7 +1040,7 @@ public partial class IRGenerator
                 return;
             }
         }
-        else value = VisitExpression(stmt.Value);
+        else value = EvalOptionalCarry(stmt.Value);
 
         // `x = f()` where f inlined `return <its local buffer>`: the call's value is a
         // Variable naming that fixed slot. Bind `x` as another NAME for the same bytes --
@@ -1653,6 +1653,15 @@ public partial class IRGenerator
             && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name)))
             Emit(new Copy(value, target));
 
+        // RFC 0009: a name that can hold a runtime optional gets its tag byte written
+        // alongside every payload write -- including `x = None`, which emits no payload
+        // copy at all. Capable-by-precompute covers the ordering hole (a definite write
+        // on the arm that lowers before the optional one); TagOfVal covers names the
+        // precompute could not see, like a result temp bound mid-expression.
+        if (target is Variable optTgt
+            && (IsOptionalCapableName(optTgt.Name, varExpr.Name) || TagOfVal(value) != null))
+            EmitOptionalTagWrite(optTgt, stmt.Value, value);
+
         // RFC 0001 Model B (register handle): `x = make()` where make is a non-@inline
         // factory returning a single-field ZCA (VisitReturn already lowers the callee's
         // body to hand back the field as a scalar; see Statements.cs). `x` IS that scalar,
@@ -2113,6 +2122,10 @@ public partial class IRGenerator
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
         RejectAssignmentToAMethod(memExpr2);
+
+        // RFC 0009: an Optional field is phase 2 -- a field store that kept only the
+        // payload would drop the tag silently, so the unnarrowed case refuses by name.
+        RefuseOptionalPayloadStore(value, stmt.Value);
 
         // Class variable write: `ClassName.attr = value` and `cls.attr = value` inside a
         // @classmethod. A dict/set literal is a compile-time lookup table (Adafruit CV:
@@ -4704,12 +4717,14 @@ public partial class IRGenerator
 
         // `x: <scalar> = None` is a type error: None is the null value, not an
         // integer. (Reference/Callable/class-typed locals defaulting to None are
-        // handled where such optionals are bound, not here.)
+        // handled where such optionals are bound, not here.) An `Optional[X]`
+        // local is the one scalar exception: it holds None through its tag byte.
         if (stmt.Init is NoneLiteral)
         {
             DataType vt = DataTypeExtensions.StringToDataType(stmt.VarType);
-            if (vt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
-                  or DataType.UINT32 or DataType.INT32 or DataType.FLOAT)
+            if (stmt.UnionMembers == null
+                && vt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                      or DataType.UINT32 or DataType.INT32 or DataType.FLOAT)
                 throw new TypeError(
                     $"None is not a value of type {stmt.VarType}; None is only valid for " +
                     "comparisons (is/== None) and optional reference parameters",
@@ -4718,6 +4733,13 @@ public partial class IRGenerator
                 ? currentInlinePrefix + stmt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
             noneValuedNames.Add(qn);
+            if (stmt.UnionMembers != null)
+            {
+                Variable tagVar = TagStorageFor(qn);
+                Emit(new Copy(new Constant(NoneIndex(stmt.UnionMembers)), tagVar));
+                optionalTagSlots[qn] = tagVar;
+                optionalMembersByName[qn] = stmt.UnionMembers;
+            }
             return;
         }
 
@@ -4993,7 +5015,7 @@ public partial class IRGenerator
                     return;
                 }
             }
-            Val val = VisitExpression(stmt.Init);
+            Val val = EvalOptionalCarry(stmt.Init);
 
             // A compile-time float result assigned to an integer variable (e.g.
             // `y: uint8 = 5 // 2.0`) is the same mistake as a bare float literal, but the
@@ -5018,6 +5040,17 @@ public partial class IRGenerator
             Val target = strSlot ?? ResolveBinding(stmt.Name);
             if (strSlot == null && target is Variable v) target = v with { Type = dt };
             Emit(new Copy(val, target));
+
+            // RFC 0009: an `Optional[X]` declaration (or a name another write can leave
+            // optional) carries the tag write beside its payload.
+            if (target is Variable optVt
+                && (stmt.UnionMembers != null || IsOptionalCapableName(optVt.Name, stmt.Name)
+                    || TagOfVal(val) != null))
+            {
+                if (stmt.UnionMembers != null)
+                    optionalMembersByName[optVt.Name] = stmt.UnionMembers;
+                EmitOptionalTagWrite(optVt, stmt.Init, val);
+            }
 
             if (string.IsNullOrEmpty(currentFunction))
             {

@@ -624,10 +624,25 @@ public partial class IRGenerator
         if (zcaFactoryClasses.TryGetValue(funcNode.ReturnType, out var handleFieldType))
             irFunc.ReturnType = DataTypeExtensions.StringToDataType(handleFieldType);
 
+        // RFC 0009: the resolve pass decided before lowering whether this function's
+        // Optional return is real (a run-time None can reach a `return`) -- only then
+        // does the .mir carry the member list and every Return a tag.
+        if (functionReturnMembers.TryGetValue(fullName, out var retMembers))
+            irFunc.ReturnMembers = retMembers;
+
         currentFunctionGlobals.Clear();
         currentInstructions.Clear();
         loopStack.Clear();
         lastLine = -1;
+
+        // Tag state is per-function: a name in one function never shares a slot with
+        // the same spelling in another (the qualified keys differ anyway, but clearing
+        // also keeps a re-lowered body from inheriting a previous one's narrowing).
+        optionalTagSlots.Clear();
+        optionalMembersByName.Clear();
+        narrowedOptionals.Clear();
+        optionalCapable.Clear();
+        CollectOptionalCapable(funcNode.Body.Statements, optionalCapable);
 
         // Width of the unannotated locals whose every assignment is an integer literal, so
         // `n = 200` costs what `n: uint8 = 200` costs. Collected BEFORE the body is visited:
@@ -749,7 +764,10 @@ public partial class IRGenerator
         // 464 programs that are perfectly well formed.
         bool emittedFallsThrough = currentInstructions.Count == 0
                                    || currentInstructions[^1] is not Return;
+        // RFC 0009: reaching the end IS the `return None` an Optional[X] declares, so
+        // the refusal only stands on a function whose return has no None member.
         if (funcNode.ReturnType is not (null or "" or "void" or "None")
+            && !functionReturnMembers.ContainsKey(fullName)
             && !funcNode.IsExtern && !funcNode.IsNaked
             && emittedFallsThrough
             && !FunctionHasYield(funcNode)
@@ -762,7 +780,7 @@ public partial class IRGenerator
 
         if (currentInstructions.Count == 0 || !(currentInstructions.Last() is Return))
         {
-            Emit(new Return(new NoneVal()));
+            Emit(new Return(new NoneVal(), TagForReturn(null, new NoneVal())));
         }
 
         // Collect unique GC_REF named locals; inject GcRoot at prologue and GcUnroot before each Return.
@@ -1123,15 +1141,11 @@ public partial class IRGenerator
 
     /// The sentence both return paths use for `return None` on a reached path of a function
     /// whose declared result has a width, so a real subroutine and an @inline expansion
-    /// refuse the same shape in the same words.
+    /// refuse the same shape in the same words (RFC 0009 decision 5).
     private static string ReturnNoneOnReachedPathText(string name, string declaredRt) =>
-        "PyMCU reads Optional[X] as X, and this return gives None at run time on a reached "
-        + $"path of '{name}', which is declared to return {declaredRt} and has no width for "
-        + $"it. `-> Optional[{declaredRt}]` is the spelling PyMCU will accept once RFC 0009 "
-        + "lands; until then, return a value on this path, or keep it from being reached -- "
-        + "a guard the compiler can fold removes the arm, and for an @inline callee the "
-        + "caller can decide before calling (the compiler folds `is None` on an argument it "
-        + "can see).";
+        $"this return gives None at run time, and '{name}' is declared to return "
+        + $"{declaredRt}. If the None is real, write `-> Optional[{declaredRt}]`; if this "
+        + "path should not be reached, guard it.";
 
     private void VisitReturn(ReturnStmt stmt)
     {
@@ -1151,7 +1165,12 @@ public partial class IRGenerator
         if (stmt.Value == null || stmt.Value is NoneLiteral)
         {
             string noneOwner = inlineStack.Count > 0 ? inlineStack[^1].CalleeName : currentFunction;
-            if (DeclaredResultType(noneOwner) is { } noneRt)
+            // RFC 0009: a function whose return carries the None member keeps the
+            // statement -- a real subroutine emits the tag byte, an @inline callee
+            // declared `-> Optional[X]` delivers it through the expansion's tag temp.
+            bool ownerIsOptional = functionReturnMembers.ContainsKey(noneOwner)
+                || (inlineFunctions.TryGetValue(noneOwner, out var noneFn) && noneFn?.ReturnMembers != null);
+            if (!ownerIsOptional && DeclaredResultType(noneOwner) is { } noneRt)
                 throw UserError(
                     ReturnNoneOnReachedPathText(CalleeShortName(noneOwner), noneRt),
                     (ASTNode?)stmt.Value ?? stmt);
@@ -1214,15 +1233,24 @@ public partial class IRGenerator
                           && classNames.Contains(ResolveCallee(ccrv.Name));
         if (finallyStack.Count > 0 && inlineStack.Count == 0 && !ctorReturn)
         {
-            Val rfv = stmt.Value != null ? VisitExpression(stmt.Value) : new NoneVal();
+            Val rfv = stmt.Value != null ? EvalOptionalCarry(stmt.Value) : new NoneVal();
+            // The tag is part of the value at the point of the `return`; a finally that
+            // rebinds the source must not change what this path reported.
+            Val? rft = TagForReturn(stmt.Value, rfv);
             if (rfv is not (Constant or NoneVal or FloatConstant))
             {
                 Temporary rt = MakeTemp(GetValType(rfv));
                 Emit(new Copy(rfv, rt));
                 rfv = rt;
             }
+            if (rft is not null and not Constant)
+            {
+                Temporary rtt = MakeTemp(DataType.UINT8);
+                Emit(new Copy(rft, rtt));
+                rft = rtt;
+            }
             EmitPendingFinally();
-            Emit(new Return(rfv));
+            Emit(new Return(rfv, rft));
             return;
         }
 
@@ -1414,7 +1442,7 @@ public partial class IRGenerator
                 Val handleVal = argIdx < facCall.Args.Count
                     ? VisitExpression(facCall.Args[argIdx])
                     : new Constant(0);
-                Emit(new Return(handleVal));
+                Emit(new Return(handleVal, TagForReturn(stmt.Value, handleVal)));
                 return;
             }
 
@@ -1443,7 +1471,8 @@ public partial class IRGenerator
                     off += DataTypeExtensions.StringToDataType(type).SizeOf();
                 }
 
-                Emit(new Return(new Variable(selfPtr, DataType.UINT16)));
+                var selfVar = new Variable(selfPtr, DataType.UINT16);
+                Emit(new Return(selfVar, TagForReturn(stmt.Value, selfVar)));
                 return;
             }
         }
@@ -1451,7 +1480,7 @@ public partial class IRGenerator
         Val val = new NoneVal();
         if (stmt.Value != null)
         {
-            val = VisitExpression(stmt.Value);
+            val = EvalOptionalCarry(stmt.Value);
         }
 
         if (inlineStack.Count > 0)
@@ -1462,6 +1491,19 @@ public partial class IRGenerator
             // the caller read None. The first value return decides the width.
             if (ctx.ResultTemp == null && ctx.ResultVars.Count == 0 && val is not NoneVal)
                 ctx.ResultTemp = MakeTemp(GetValType(val));
+            // RFC 0009: an `-> Optional[X]` callee's result is payload + member-index tag.
+            // The tag temp is minted on the first return visited so a `return None` that
+            // lowers BEFORE the first value return still gets its write in.
+            if (ctx.ResultTagTemp == null
+                && inlineFunctions.TryGetValue(ctx.CalleeName, out var optFn)
+                && optFn?.ReturnMembers != null)
+                ctx.ResultTagTemp = MakeTemp(DataType.UINT8);
+            if (ctx.ResultTagTemp != null)
+            {
+                Val tagV = InlineReturnTagVal(ctx, stmt.Value, val);
+                Emit(new Copy(tagV, ctx.ResultTagTemp));
+                if (tagV is not Constant { Value: 0 }) ctx.SawOptionalNone = true;
+            }
             if (ctx.ResultTemp != null)
             {
                 if (val is MemoryAddress m)
@@ -1585,7 +1627,7 @@ public partial class IRGenerator
         }
         else
         {
-            Emit(new Return(val));
+            Emit(new Return(val, TagForReturn(stmt.Value, val)));
         }
     }
 

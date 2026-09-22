@@ -578,7 +578,7 @@ public partial class IRGenerator
 
                             Temporary oDst = MakeTemp(DataTypeExtensions.StringToDataType(
                                 functionReturnTypes[callee]));
-                            Emit(new Call(callee, oArgs, oDst));
+                            EmitMaybeTaggedCall(callee, oArgs, oDst);
                             InvalidateFieldsWrittenByCall(callee, instName);
                             return oDst;
                         }
@@ -1481,7 +1481,7 @@ public partial class IRGenerator
             : rType != null && rType.Length > 0 ? DataTypeExtensions.StringToDataType(rType)
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
-        Emit(new Call(callee, argValuesL, dstC));
+        EmitMaybeTaggedCall(callee, argValuesL, dstC);
         return dstC;
     }
 
@@ -1888,7 +1888,7 @@ public partial class IRGenerator
                     if (TryEvalInlineBufferArg(arg) is ArrayBase inlineBuf)
                         argValues.Add(new Variable(inlineBuf.ArrayName, DataType.UINT16));
                     else
-                        argValues.Add(VisitExpression(arg));
+                        argValues.Add(EvalOptionalCarry(arg));
                     // Always restore: same reason as kwarg case above.
                     pendingConstructorTarget = savedOuterPct;
                 }
@@ -2480,6 +2480,7 @@ public partial class IRGenerator
                     floatConstantVariables.Remove(paramName);
                     variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
                     Emit(new Copy(vArg, new Variable(paramName, variableTypes[paramName])));
+                    CarryOptionalTagToParam(paramName, vArg);
                     continue;
                 }
 
@@ -2488,6 +2489,7 @@ public partial class IRGenerator
                 strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
                 variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                CarryOptionalTagToParam(paramName, vArg);
                 continue;
             }
 
@@ -2679,6 +2681,7 @@ public partial class IRGenerator
             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
             variableTypes[paramName] = paramType;
             Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
+            CarryOptionalTagToParam(paramName, argValues[i]);
         }
 
         foreach (var kvp in kwArgValues)
@@ -2804,6 +2807,7 @@ public partial class IRGenerator
                             variableAliases.Remove(paramName);
                             Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
                         }
+                        CarryOptionalTagToParam(paramName, kvp.Value);
                     }
 
                     break;
@@ -3034,6 +3038,16 @@ public partial class IRGenerator
         if (finishedCtx.ReturnedBuffer is { } retBufKey)
             return new Variable(retBufKey, arrayElemTypes.TryGetValue(retBufKey, out var retBufEt)
                 ? retBufEt : DataType.UINT8);
+
+        // RFC 0009: the expansion's tag temp is the call result's tag. Mark the result a
+        // live optional only when a reached return can actually report None -- an expansion
+        // whose None arms all folded away keeps the compile-time answer it always had.
+        if (result != null && finishedCtx.ResultTagTemp is { } resTag
+            && finishedCtx.SawOptionalNone)
+        {
+            var rMembers = (func?.ReturnMembers) ?? new List<string> { "uint8", "None" };
+            MarkOptional(result.Name, resTag, rMembers);
+        }
 
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
@@ -3700,7 +3714,7 @@ public partial class IRGenerator
             // Bound below, from whatever the declared parameters did not take.
             if (p.IsVarArg || p.IsKwArg) continue;
             if (paramIdx >= args.Count) continue;
-            var argVal = VisitExpression(args[paramIdx]);
+            var argVal = EvalOptionalCarry(args[paramIdx]);
             var paramKey = newPrefix + p.Name;
             constantVariables.Remove(paramKey);
             strConstantVariables.Remove(paramKey);
@@ -3794,6 +3808,7 @@ public partial class IRGenerator
                     DataTypeExtensions.StringToDataType(p.Type));
                 Emit(new Copy(argVal, paramVar));
                 variableTypes[paramKey] = DataTypeExtensions.StringToDataType(p.Type);
+                CarryOptionalTagToParam(paramKey, argVal);
             }
 
             paramIdx++;
@@ -4274,7 +4289,7 @@ public partial class IRGenerator
             return new NoneVal();
         }
         Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
-        Emit(new Call(iaMethod, iaArgs, iaDst));
+        EmitMaybeTaggedCall(iaMethod, iaArgs, iaDst);
         return iaDst;
     }
 
@@ -4385,7 +4400,7 @@ public partial class IRGenerator
                      || tRt == "void" || tRt == "None";
         if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(); }
         Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
-        Emit(new Call(target, fwdArgs, tDst));
+        EmitMaybeTaggedCall(target, fwdArgs, tDst);
         return tDst;
     }
 

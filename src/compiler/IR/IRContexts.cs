@@ -24,6 +24,17 @@ public class InlineContext
 
     public Temporary? ResultTemp { get; set; }
 
+    // RFC 0009: the tag byte an `-> Optional[X]` callee's result carries. Minted alongside
+    // ResultTemp when the callee's declared return members include None; each return writes
+    // the member index into it (None is the last member, a payload is index 0).
+    public Temporary? ResultTagTemp { get; set; }
+
+    // RFC 0009: set once a return on a REACHED path can leave the tag at the None index --
+    // a `return None`, or a return that forwards another live optional's runtime tag. The
+    // caller marks its result a live optional only when this is set; an expansion whose
+    // every None arm folded away keeps the compile-time answer it always had.
+    public bool SawOptionalNone { get; set; }
+
     // Multi-return tuple: each result slot is a named variable "prefix.result_K"
     public List<string> ResultVars { get; set; } = [];
 

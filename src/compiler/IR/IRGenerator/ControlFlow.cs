@@ -161,6 +161,24 @@ public partial class IRGenerator
             return 2;
         }
 
+        // RFC 0009 section 5: `if v:` on a live optional is a tag read first -- None is
+        // falsy whatever sits in the payload, and only a payload tag falls through to
+        // the payload's own truthiness. Reading the payload under a None tag is the
+        // exact garbage the tag exists to prevent.
+        if (LiveOptionalTag(cond) is { } optCond)
+        {
+            Val optPayload = EvalOptionalCarry(cond);
+            EmitOptionalTruthJump(optCond.tag, optPayload, optCond.noneIdx, targetLabel, jumpIfTrue);
+            return 1;
+        }
+        if (cond is UnaryExpr { Op: AstUnOp.Not } notOpt
+            && LiveOptionalTag(notOpt.Operand) is { } notOptTag)
+        {
+            Val notPayload = EvalOptionalCarry(notOpt.Operand);
+            EmitOptionalTruthJump(notOptTag.tag, notPayload, notOptTag.noneIdx, targetLabel, !jumpIfTrue);
+            return 1;
+        }
+
         // `not x` where x is a compile-time string: the text decides the branch --
         // `not ""` is always true, `not "GRB"` always false. Without the fold the
         // `not` lowered as a run-time test, BOTH sides compiled, and a dead side's
@@ -716,8 +734,16 @@ public partial class IRGenerator
         var branchSnapsLocals = new List<Dictionary<string, int>>();
         bool hasElse = stmt.ElseBranch != null;
 
+        // RFC 0009 narrowing: each arm lowers under the condition's effect on that arm
+        // (`v is not None` narrows the then-path, `v is None` narrows the fall-through),
+        // and the join keeps a name narrowed only when every surviving path proves it.
+        var optArmEnds = new List<OptionalSnap?>();
+        OptionalSnap inheritOpt = SnapOptionalState();
+
         if (!skipThen)
         {
+            RestoreOptionalState(inheritOpt);
+            ApplyOptionalCondEffect(stmt.Condition, true);
             if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ThenBranch);
             if (isRuntimeBranch) LeaveRuntimeBranch();
@@ -729,7 +755,11 @@ public partial class IRGenerator
             constantVariables = new Dictionary<string, int>(snapBeforeInt);
             branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
             localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+            optArmEnds.Add(AlwaysLeaves(stmt.ThenBranch) ? null : SnapOptionalState());
         }
+        RestoreOptionalState(inheritOpt);
+        ApplyOptionalCondEffect(stmt.Condition, false);
+        inheritOpt = SnapOptionalState();
 
         for (int i = 0; i < stmt.ElifBranches.Count; ++i)
         {
@@ -779,6 +809,8 @@ public partial class IRGenerator
 
             if (!skipElif)
             {
+                RestoreOptionalState(inheritOpt);
+                ApplyOptionalCondEffect(elifCond, true);
                 if (elifIsRuntime) EnterRuntimeBranch(elifUndecided);
                 VisitStatement(elifBlock);
                 if (elifIsRuntime) LeaveRuntimeBranch();
@@ -789,13 +821,18 @@ public partial class IRGenerator
                 constantVariables = new Dictionary<string, int>(snapBeforeInt);
                 branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
                 localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+                optArmEnds.Add(AlwaysLeaves(elifBlock) ? null : SnapOptionalState());
             }
+            RestoreOptionalState(inheritOpt);
+            ApplyOptionalCondEffect(elifCond, false);
+            inheritOpt = SnapOptionalState();
         }
 
         if (stmt.ElseBranch != null)
         {
             Emit(new Label(nextLabel));
             // The else branch runs when the condition was false — still runtime-guarded.
+            RestoreOptionalState(inheritOpt);
             if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ElseBranch);
             if (isRuntimeBranch) LeaveRuntimeBranch();
@@ -805,9 +842,11 @@ public partial class IRGenerator
             constantVariables = new Dictionary<string, int>(snapBeforeInt);
             branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
             localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+            optArmEnds.Add(AlwaysLeaves(stmt.ElseBranch) ? null : SnapOptionalState());
         }
 
         Emit(new Label(endLabel));
+        JoinOptionalState(optArmEnds, hasElse ? null : inheritOpt);
 
         // Past the chain, an integer constant survives only when every arm agrees on it and one
         // arm always runs, which is the rule the string constants below already follow. Every
@@ -1832,9 +1871,28 @@ public partial class IRGenerator
         // unconditional raise (FixedDict's `while ...: probe` followed by `raise KeyError`).
         if (inlineStack.Count > 0) inlineStack[^1].SawDynamicLoop = true;
 
+        // RFC 0009: the condition's narrowing holds inside the body (`while r is not
+        // None:` narrows r there). Past the loop nothing the condition proved survives:
+        // it may never have run, and a name the body rewrites answers from its new
+        // value. Tag slots gained inside DO persist -- the byte exists whichever path
+        // ran -- so the slot map is the body's, the narrowing is the pre-loop's.
+        var preLoopOpt = SnapOptionalState();
+        ApplyOptionalCondEffect(stmt.Condition, true);
         if (isRuntimeLoop) EnterRuntimeBranch(null);
         VisitStatement(stmt.Body);
         if (isRuntimeLoop) LeaveRuntimeBranch();
+        var postLoopOpt = SnapOptionalState();
+        {
+            var bodyAssigned = new HashSet<string>();
+            CollectAssignedNames(stmt.Body, bodyAssigned);
+            postLoopOpt.Narrowed.Clear();
+            postLoopOpt.Narrowed.UnionWith(preLoopOpt.Narrowed);
+            postLoopOpt.Narrowed.RemoveWhere(k => bodyAssigned.Contains(SourcePartOf(k)));
+            postLoopOpt.None.Clear();
+            postLoopOpt.None.UnionWith(preLoopOpt.None);
+            postLoopOpt.None.RemoveWhere(k => bodyAssigned.Contains(SourcePartOf(k)));
+            RestoreOptionalState(postLoopOpt);
+        }
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);

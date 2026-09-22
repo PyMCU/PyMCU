@@ -1141,6 +1141,13 @@ public partial class IRGenerator
         ForceInlineBufferReturningFunctions();
         ForceInlineClassPlainFunctionsThatReadParamMembers();
 
+        // RFC 0009 decision 2: decide which declared/inferred Optional returns can
+        // actually produce a run-time None. Only those get `ReturnMembers` on the IR
+        // function and the tag byte on the wire; a function whose None is provable at
+        // compile time keeps the exact code it had before. Runs after every scan so a
+        // call site can ask it while its own function is still being generated.
+        ResolveOptionalReturns();
+
         // Whether raises record their message for a later read. Two readers: a handler that
         // binds `except X as e` (#369), and the unhandled-exception report, which prints
         // `E:<Type>: <msg>` through __pymcu_exn_tail. The second needs a raise that actually

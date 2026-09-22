@@ -115,6 +115,19 @@ public static class TypeInference
                     f.ReturnType = rt;
                     returnTypes[f.Name] = rt;
                 }
+                else if (InferOptionalReturn(f, returnTypes) is { } opt)
+                {
+                    // RFC 0009 (6.1, N=2): an unannotated body that mixes a value
+                    // return with a None return is an inferred Optional -- the
+                    // payload is what the values join to. Provisional member list:
+                    // the IRGenerator's reachability pass keeps it only when a
+                    // run-time None can actually arrive at a return (a `return
+                    // None` behind a guard the compiler folds costs nothing and
+                    // stays tag-free).
+                    f.ReturnType = opt;
+                    returnTypes[f.Name] = opt;
+                    f.ReturnMembers = new List<string> { opt, "None" };
+                }
             }
 
             // Method returns: the same join, but nothing enters returnTypes -- a
@@ -161,6 +174,28 @@ public static class TypeInference
         {
             string? t = StaticTypeOf(r, scope, returnTypes);
             if (t == null) return null;   // any unknown -> give up
+            rt = rt == null ? t : Join(rt, t);
+        }
+        return rt;
+    }
+
+    // RFC 0009 (6.1, N=2): `return None` -- the bare `return` is the same statement to
+    // Python -- does not poison the join; a body that mixes a value return with a None
+    // return is an inferred Optional and the payload is what the values join to.
+    // Returns null when no None return exists (the plain inference answered) or when a
+    // value's type is unknown (same give-up rule as InferReturnType).
+    private static string? InferOptionalReturn(FunctionDef f, Dictionary<string, string> returnTypes)
+    {
+        if (!IsInferableReturn(f.ReturnType) || !HasValueReturn(f.Body)) return null;
+        var returns = CollectReturns(f.Body.Statements).ToList();
+        if (!returns.Any(r => r is NoneLiteral) && !HasBareReturn(f.Body)) return null;
+        var scope = ScopeTypes(f);
+        string? rt = null;
+        foreach (var r in returns)
+        {
+            if (r is NoneLiteral) continue;
+            string? t = StaticTypeOf(r, scope, returnTypes);
+            if (t == null) return null;
             rt = rt == null ? t : Join(rt, t);
         }
         return rt;
@@ -316,6 +351,14 @@ public static class TypeInference
 
     private static bool HasValueReturn(Block body)
         => CollectReturns(body.Statements).Any();
+
+    // RFC 0009: a bare `return` carries None exactly like `return None` does, but is
+    // not in CollectReturns (which yields the VALUE expressions). Falling off the end
+    // is deliberately NOT counted: an unannotated function that only reaches its end
+    // keeps the uint8-and-implicit-None it always had -- only an explicit statement
+    // is evidence the author meant Optional.
+    private static bool HasBareReturn(Block body)
+        => WalkStatements(body.Statements).OfType<ReturnStmt>().Any(r => r.Value == null);
 
     private static IEnumerable<Expression> CollectReturns(List<Statement> body)
         => WalkStatements(body).OfType<ReturnStmt>()

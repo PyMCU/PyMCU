@@ -626,7 +626,23 @@ public partial class IRGenerator
         if (ResolveRowRef(expr) != null)
             throw RowAliasNotAValue(expr);
 
-        return ResolveBinding(expr.Name, expr);
+        Val boundVal = ResolveBinding(expr.Name, expr);
+
+        // RFC 0009 section 8: reading the payload of a runtime-tagged optional outside a
+        // narrowing arm is the silent garbage the tag exists to stop. The tag-aware
+        // readers -- `is None`, `if r:`, `r or d`, `return r`, `x = r`, an inline
+        // parameter bind -- mark their reads with optionalReadAllowed; every other
+        // position (arithmetic, .field, call, subscript, print, a real-subroutine
+        // argument) refuses by name.
+        if (optionalReadAllowed == 0 && TagOfVal(boundVal) != null
+            && ValNameOf(boundVal) is { } boundName
+            && !narrowedOptionals.Contains(boundName)
+            && !noneValuedNames.Contains(boundName))
+            throw UserError(
+                $"'{expr.Name}' may be None here; narrow it first "
+                + $"(`if {expr.Name} is not None:`).", expr);
+
+        return boundVal;
     }
 
     private static string BinaryOpSymbol(AstBinOp op) => op switch
@@ -900,6 +916,12 @@ public partial class IRGenerator
         // the `+` an 8-bit op (wrap + 8-bit flags), the escape hatch from default promotion.
         DataType? widthHint = castWidthHint;
         castWidthHint = null;
+
+        // RFC 0009: `v is None` on a live runtime optional reads the tag byte. The
+        // fold below only knows compile-time None and would answer FALSE for a name
+        // whose tag says otherwise at run time -- the silent miscompile this exists for.
+        if (TryEmitOptionalNoneTest(expr) is { } noneTest)
+            return noneTest;
 
         // None comparisons resolve at compile time with real null semantics: an
         // integer or a concrete instance is never None; only a name bound to None
@@ -1238,6 +1260,44 @@ public partial class IRGenerator
             Temporary dst2 = MakeTemp(DataType.UINT8);
             Emit(new Binary(bop, lhs, rhs, dst2));
             return dst2;
+        }
+
+        if (expr.Op is AstBinOp.And or AstBinOp.Or && LiveOptionalTag(expr.Left) is { } abTag)
+        {
+            // RFC 0009 section 5: the pick between operands is the TAG first. `r or d`
+            // selects d on a None tag without the payload's truthiness being consulted;
+            // `r and d` keeps r -- tag included -- whenever r is falsy.
+            bool isOr = expr.Op == AstBinOp.Or;
+            Val optPayload = EvalOptionalCarry(expr.Left);
+            bool rightMaybeNone = ExprMayBeOptional(expr.Right);
+            // `or` with a concrete default is never None; `and` keeps the left tag on
+            // the falsy path, so its result stays optional as long as the left is.
+            bool resultOptional = !isOr || rightMaybeNone;
+            // The result holds whichever operand runs, so it is sized for both -- a
+            // wider right (`v or 500`) must not truncate to the payload width.
+            var rightT = InferExprType(expr.Right);
+            Temporary optResult = MakeTemp(rightT == DataType.UNKNOWN ? GetValType(optPayload)
+                : DataTypeExtensions.GetPromotedType(GetValType(optPayload), rightT));
+            string optEndLabel = MakeLabel();
+            Variable? resTag = resultOptional ? TagStorageFor(optResult.Name) : null;
+            Emit(new Copy(optPayload, optResult));
+            if (resTag != null) Emit(new Copy(abTag.tag, resTag));
+            EmitOptionalTruthJump(abTag.tag, optPayload, abTag.noneIdx, optEndLabel, isOr);
+            Val optRight = VisitExpression(expr.Right);
+            Emit(new Copy(optRight is NoneVal ? new Constant(0) : optRight, optResult));
+            if (resTag != null)
+            {
+                var members = isOr
+                    ? UnionMerge(UnionMembersOf(optPayload, expr.Left, null)
+                            .Where(m => m != "None").ToList(),
+                        UnionMembersOf(optRight, expr.Right, null))
+                    : UnionMerge(UnionMembersOf(optPayload, expr.Left, null),
+                        UnionMembersOf(optRight, expr.Right, null));
+                Emit(new Copy(ArmTagFor(optRight, expr.Right, null, members.IndexOf("None")), resTag));
+                MarkOptional(optResult.Name, resTag, members);
+            }
+            Emit(new Label(optEndLabel));
+            return optResult;
         }
 
         if (expr.Op == AstBinOp.And)
@@ -1809,7 +1869,9 @@ public partial class IRGenerator
         Expression truthCond = LowerInstanceTruthiness(expr.Condition);
         if (IsNoneValued(truthCond)) return VisitExpression(expr.FalseVal);
 
-        Val cond = VisitExpression(truthCond);
+        // A bare optional as the condition is a tag test, not a payload read -- the
+        // carry-eval keeps the section-8 refusal for everything inside the arms.
+        Val cond = EvalOptionalCarry(truthCond);
         if (cond is Constant c)
         {
             if (c.Value != 0) return VisitExpression(expr.TrueVal);
@@ -1824,15 +1886,48 @@ public partial class IRGenerator
         // and truncated the 16-bit false value (500 -> 244). Visit both branches to learn
         // their real types, promote, then splice the true-branch copy into the true block
         // (the false branch is emitted between the true tail and the join).
-        Emit(new JumpIfZero(cond, falseLabel));
+        // RFC 0009: a bare optional as the condition tests its tag first; `r if r is
+        // not None else d` narrows r on the true side only, and the result carries a
+        // tag only when an arm can hand back None.
+        var preTern = SnapOptionalState();
+        if (LiveOptionalTag(truthCond) is { } ternTag)
+        {
+            EmitOptionalTruthJump(ternTag.tag, cond, ternTag.noneIdx, falseLabel, false);
+        }
+        else
+        {
+            Emit(new JumpIfZero(cond, falseLabel));
+        }
+        ApplyOptionalCondEffect(truthCond, true);
         Val trueVal = VisitExpression(expr.TrueVal);
         int trueTail = currentInstructions.Count;   // where the true copy + jump belong
+        var trueEndState = SnapOptionalState();
+        RestoreOptionalState(preTern);
+        ApplyOptionalCondEffect(truthCond, false);
         Emit(new Label(falseLabel));
         Val falseVal = VisitExpression(expr.FalseVal);
+        var falseEndState = SnapOptionalState();
+        // The condition's narrowing belongs to its arm; past the expression the name
+        // is whatever it was before it.
+        RestoreOptionalState(preTern);
         Temporary result = MakeTemp(
             DataTypeExtensions.GetPromotedType(GetValType(trueVal), GetValType(falseVal)));
         Emit(new Copy(falseVal, result));
         Emit(new Label(endLabel));
+
+        var members = UnionMerge(
+            UnionMembersOf(trueVal, expr.TrueVal, trueEndState),
+            UnionMembersOf(falseVal, expr.FalseVal, falseEndState));
+        Val? resultTag = null;
+        if (members.Contains("None"))
+        {
+            int noneIdx = members.IndexOf("None");
+            resultTag = TagStorageFor(result.Name);
+            Emit(new Copy(ArmTagFor(falseVal, expr.FalseVal, falseEndState, noneIdx), resultTag));
+            currentInstructions.Insert(trueTail,
+                new Copy(ArmTagFor(trueVal, expr.TrueVal, trueEndState, noneIdx), resultTag));
+            MarkOptional(result.Name, resultTag, members);
+        }
         // Splice [Copy trueVal->result; Jump end] just after the true-branch body, ahead of
         // the false label. Insert in reverse so the first index stays valid.
         currentInstructions.Insert(trueTail, new Jump(endLabel));
@@ -1953,6 +2048,27 @@ public partial class IRGenerator
         // the same decision EmitOptimizedConditionalJump makes for `if not x:`. Without
         // this the name read as its slot, which nothing ever wrote.
         if (expr.Op == AstUnOp.Not && IsNoneValued(unaryOperand)) return new Constant(1);
+
+        // RFC 0009: `not r` on a live optional is a tag test first -- true when the tag
+        // says None, else the payload's falseness decides. The payload is never read
+        // for its value here, only tested.
+        if (expr.Op == AstUnOp.Not && LiveOptionalTag(unaryOperand) is { } notTag)
+        {
+            Val notPayload = EvalOptionalCarry(unaryOperand);
+            Temporary isNoneT = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.Equal, notTag.tag, new Constant(notTag.noneIdx), isNoneT));
+            Temporary isZeroT = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.Equal, notPayload, new Constant(0), isZeroT));
+            Temporary notResult = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.BitOr, isNoneT, isZeroT, notResult));
+            return notResult;
+        }
+        // `-r`, `~r` and friends need the payload -- an unnarrowed optional refuses.
+        if (expr.Op != AstUnOp.Not && unaryOperand is VariableExpr uv
+            && OptionalKeyOf(uv.Name) is { } unKey && !narrowedOptionals.Contains(unKey))
+            throw UserError(
+                $"'{uv.Name}' may be None here; narrow it first "
+                + $"(`if {uv.Name} is not None:`).", expr);
 
         Val operand = VisitExpression(unaryOperand);
 
