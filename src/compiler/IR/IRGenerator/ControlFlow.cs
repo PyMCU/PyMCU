@@ -250,13 +250,21 @@ public partial class IRGenerator
                 if ((!jumpIfTrue && isAnd) || (jumpIfTrue && !isAnd))
                 {
                     leftTruth = EmitSub(binExpr.Left, targetLabel, jumpIfTrue);
-                    rightTruth = EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
+                    // CPython's `and`/`or` never evaluate the right operand once the left
+                    // has decided the chain -- and the right may not even be lowerable
+                    // when it is dead: `self._chardict and char in self._chardict` guards
+                    // a membership test against the field being None (adafruit_ht16k33).
+                    rightTruth = leftTruth is { } ltv && (isAnd ? !ltv : ltv)
+                        ? leftTruth
+                        : EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
                 }
                 else
                 {
                     string skipLabel = MakeLabel();
                     leftTruth = EmitSub(binExpr.Left, skipLabel, !jumpIfTrue);
-                    rightTruth = EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
+                    rightTruth = leftTruth is { } lt2 && (isAnd ? !lt2 : lt2)
+                        ? leftTruth
+                        : EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
                     Emit(new Label(skipLabel));
                 }
 
