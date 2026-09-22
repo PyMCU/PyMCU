@@ -4183,12 +4183,6 @@ public partial class IRGenerator
                           + $"spelling. Assigned members: {recvMembers}",
                     expr);
 
-            // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries
-            // its declared width in variableTypes; read it at that width so a uint16/uint32
-            // field isn't truncated to a byte.
-            if (variableTypes.TryGetValue(flattenedName, out var ft))
-                return new Variable(flattenedName, ft);
-
             // A field of a module-level instance read inside a FUNCTION needs a real
             // global: its store ran in main, so as a plain local the optimizer
             // dead-stored it once main's own reads folded, and the function's reader
@@ -4197,14 +4191,26 @@ public partial class IRGenerator
             // global here is enough: Globals are collected after all functions lower,
             // and the store targets the same flattened name. Fields that fold never
             // reach this point, so a compile-time value keeps its zero-cost read.
+            //
+            // This must outrank the variableTypes shortcut below: that map now also
+            // carries WIDENED fields (a uint16 _duty a setter joined past its uint8
+            // init, #488), and answering from it alone hands back a Variable that was
+            // never given a home -- the field reads as a name nothing allocates.
             if (baseName != null && topLevelInstanceTargets.Contains(baseName)
                 && instanceClasses.ContainsKey(baseName)
                 && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main")
             {
-                var gft = FlattenedFieldType(baseName, expr.Member);
+                var gft = variableTypes.TryGetValue(flattenedName, out var gvt)
+                    ? gvt : FlattenedFieldType(baseName, expr.Member);
                 mutableGlobals[flattenedName] = gft;
                 return new Variable(flattenedName, gft);
             }
+
+            // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries
+            // its declared width in variableTypes; read it at that width so a uint16/uint32
+            // field isn't truncated to a byte.
+            if (variableTypes.TryGetValue(flattenedName, out var ft))
+                return new Variable(flattenedName, ft);
 
             return new Variable(flattenedName, DataType.UINT8);
         }
