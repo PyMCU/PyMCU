@@ -115,6 +115,32 @@ public class FrontendResolutionPhase(
                         moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context, imp.Symbols);
 
                     var importedModule = context.NamedModules[imp.ModuleName];
+
+                    // A module discovered here missed the optional-import marking
+                    // DependencyGraphBuilder does on dequeue, so a `try: from micropython
+                    // import const / except ImportError:` inside one (the crickit.py idiom
+                    // behind adafruit_seesaw's chip-id pinmaps) would keep its handler --
+                    // and the handler's `def const` then fails as a nested function. Mark
+                    // and resolve them the same way the graph does, so the fold the
+                    // processors run next picks the branch the loader actually found.
+                    foreach (var opt in ConditionalImportExtractor.Extract(importedModule, context.DeviceConfig))
+                    {
+                        if (!opt.IsOptional || BuiltinModuleNames.IsBuiltin(opt.ModuleName)) continue;
+                        try
+                        {
+                            moduleLoader.LoadModule(opt.ModuleName, context.Options.FilePath, context, opt.Symbols);
+                            if (!importedModule.Imports.Contains(opt))
+                                importedModule.Imports.Add(opt);
+                        }
+                        catch (CompilerError)
+                        {
+                            opt.OptionalLoadFailed = true;
+                            foreach (var fb in opt.FallbackImports)
+                                if (!importedModule.Imports.Contains(fb))
+                                    importedModule.Imports.Add(fb);
+                        }
+                    }
+
                     StarImportExpander.Expand(imp, importedModule);
                     if (processedModules.Add(imp.ModuleName))
                         newModules.Add(importedModule);
