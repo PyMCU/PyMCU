@@ -1458,7 +1458,19 @@ public partial class IRGenerator
         // Only ever WIDER. Narrowing a binding here would be a new truncation, and FLOAT is
         // not comparable by size to an integer: it is a different representation, and a store
         // into an integer slot loses the value rather than its high bytes.
-        if (vt != DataType.FLOAT && vt.SizeOf() <= tv.Type.SizeOf()) return target;
+        if (vt != DataType.FLOAT && vt.SizeOf() <= tv.Type.SizeOf())
+        {
+            // Equal width is still a truncation when the SIGN differs: `dot = s.find(".")`
+            // hands back -1, which a fresh uint8 slot would store as 255 and read back as
+            // a number that is never negative. The value's own narrowest type is the one
+            // the binding takes (adafruit_ht16k33's _number does exactly this).
+            if (value is Constant cc && !FitsInScalar(cc.Value, tv.Type.ToString().ToLower()))
+            {
+                variableTypes[key] = vt;
+                return new Variable(key, vt);
+            }
+            return target;
+        }
 
         variableTypes[key] = vt;
         return new Variable(key, vt);
