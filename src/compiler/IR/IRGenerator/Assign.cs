@@ -861,6 +861,17 @@ public partial class IRGenerator
                 }
             }
 
+            // A compile-time-shaped size that does not fold (`self._n * len(self.devs)`
+            // where `devs` is no sequence): name the operand that stopped the fold rather
+            // than take the arena path, which would refuse inside a loop saying nothing
+            // about WHY, or allocate a runtime-sized buffer the field never asked for.
+            if (baFieldCount <= 0 && baFieldSizeSource != null
+                && UnfoldableLenOperand(baFieldSizeSource) is { } badLenOperand)
+                throw UserError(
+                    "bytearray size: 'len(" + (DescribeOperand(badLenOperand) ?? "...") +
+                    ")' does not fold -- '" + (DescribeOperand(badLenOperand) ?? "the operand") +
+                    "' is not a compile-time sequence or a fixed array", badLenOperand);
+
             // docs/rfcs/0004-arena-allocator.md: `self.buf = bytearray(n)` with a runtime n,
             // once #392 (above) made the field-assignment form reach this bytearray-aware
             // code at all. Rewritten as a hidden local (which the once-rule-checked,
@@ -4917,6 +4928,15 @@ public partial class IRGenerator
 
             if (count <= 0)
             {
+                // A compile-time-shaped size that does not fold (`n * len(self.devs)` where
+                // `devs` is no sequence): name the operand that stopped the fold rather than
+                // the whole initializer -- the same diagnostic the field form gives.
+                if (sizeSource != null && UnfoldableLenOperand(sizeSource) is { } badLenOperand)
+                    throw UserError(
+                        "bytearray size: 'len(" + (DescribeOperand(badLenOperand) ?? "...") +
+                        ")' does not fold -- '" + (DescribeOperand(badLenOperand) ?? "the operand") +
+                        "' is not a compile-time sequence or a fixed array", badLenOperand);
+
                 // docs/rfcs/0004-arena-allocator.md: a runtime n (not a bytes literal, not a
                 // constant that just happened to fold to <= 0) allocates from the arena when
                 // the once rule proves the statement runs at most once. Returns false (falls
@@ -6494,6 +6514,56 @@ public partial class IRGenerator
         Logger.ArenaUsed();
         return true;
     }
+
+    /// <summary>
+    /// The operand of a `len(...)` inside a size expression that cannot fold: its argument
+    /// is neither a compile-time sequence nor a runtime sequence, so the call has no answer
+    /// at either phase -- it is the piece a `self._n * len(self.devs)` size was waiting on.
+    /// Null when the expression carries no such call, so a genuinely run-time size still
+    /// reaches the arena rather than being mistaken for a compile-time one that failed.
+    /// </summary>
+    private Expression? UnfoldableLenOperand(Expression e)
+    {
+        switch (e)
+        {
+            case BinaryExpr b:
+                return UnfoldableLenOperand(b.Left) ?? UnfoldableLenOperand(b.Right);
+            case UnaryExpr u:
+                return UnfoldableLenOperand(u.Operand);
+            case CallExpr { Callee: VariableExpr { Name: "len" }, Args: { Count: 1 } } lc:
+                if (TryConstSeqLength(lc.Args[0], out _)) return null;
+                if (IsRuntimeSequenceOperand(lc.Args[0])) return null;
+                return lc.Args[0];
+            case CallExpr c:
+                foreach (var a in c.Args) if (UnfoldableLenOperand(a) is { } f) return f;
+                return null;
+            case IndexExpr ix:
+                return UnfoldableLenOperand(ix.Target)
+                       ?? (ix.Index != null ? UnfoldableLenOperand(ix.Index) : null);
+            case TernaryExpr t:
+                return UnfoldableLenOperand(t.Condition)
+                       ?? UnfoldableLenOperand(t.TrueVal) ?? UnfoldableLenOperand(t.FalseVal);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="e"/> names a sequence with real storage -- a fixed array, an
+    /// arena buffer, a runtime string, a dict or a set -- whose len() a run-time evaluation
+    /// answers. Those are arena-sizable: not the operand a compile-time size was waiting on.
+    /// </summary>
+    private bool IsRuntimeSequenceOperand(Expression e) => e switch
+    {
+        VariableExpr ve => TryResolveArenaBuffer(ve.Name, out _)
+                           || arraySizes.ContainsKey(ResolveNameKey(ve.Name))
+                           || ResolveStrConstant(ve.Name) != null
+                           || TryGetDictBinding(ve.Name, out _) || TryGetSetBinding(ve.Name, out _),
+        MemberAccessExpr mem => ResolveMemberArrayName(mem) != null
+                                || TryResolveArenaBufferField(mem.Object, mem.Member, out _)
+                                || TryGetDictFor(mem, out _) || TryGetSetFor(mem, out _),
+        _ => false,
+    };
 
     // Membership test only: does `bareName`, resolved the same way arraySizes/bytearrayParams
     // already are (qualified-with-currentFunction, then bare), name an arena-backed

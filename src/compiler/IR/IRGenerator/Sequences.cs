@@ -142,6 +142,51 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The number of elements a compile-time sequence reachable from <paramref name="e"/>
+    /// has -- the same set of shapes <c>len()</c> already folds in an expression context,
+    /// answered here without emitting any IR so a size/address evaluator can ask for it.
+    /// An instance-sequence FIELD (<c>self.i2c_device</c>, the <c>base__k</c> slots) counts:
+    /// its length is fixed the moment the binding is recorded.
+    /// </summary>
+    private bool TryConstSeqLength(Expression e, out int count)
+    {
+        count = 0;
+        switch (e)
+        {
+            case ListExpr le: count = le.Elements.Count; return true;
+            case TupleExpr te: count = te.Elements.Count; return true;
+            case Frontend.DictExpr de: count = de.Entries.Count; return true;
+            case Frontend.SetExpr se: count = se.Elements.Count; return true;
+            case StringLiteral sl: count = sl.Value.Length; return true;
+            case MemberAccessExpr mem:
+                if (TryResolveInstanceSequence(mem, out _, out int seqN)) { count = seqN; return true; }
+                if (ResolveMemberArrayName(mem) is { } flat && arraySizes.TryGetValue(flat, out int msz))
+                { count = LogicalArrayLen(flat, msz); return true; }
+                if (ResolveConstSequenceExpr(mem) is { } mseq) { count = mseq.Count; return true; }
+                return false;
+            case VariableExpr ve:
+                if (TryResolveInstanceSequence(ve, out _, out int isn)) { count = isn; return true; }
+                if (TryGetDictBinding(ve.Name, out var db)) { count = db.Entries.Count; return true; }
+                if (TryGetSetBinding(ve.Name, out var sb)) { count = sb.Elements.Count; return true; }
+                if (ResolveListLiteralParam(ve.Name) is ListExpr lp) { count = lp.Elements.Count; return true; }
+                if (ResolveConstSequence(ve.Name) is { } vseq) { count = vseq.Count; return true; }
+                foreach (var k in new[]
+                {
+                    string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                    string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                    ve.Name,
+                })
+                {
+                    if (k != null && arraySizes.TryGetValue(k, out int sz))
+                    { count = LogicalArrayLen(k, sz); return true; }
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// The elements of a constant list/tuple reachable from <paramref name="e"/> -- through a
     /// name, through a parameter binding, or through a `self` field that was assigned one.
     /// </summary>

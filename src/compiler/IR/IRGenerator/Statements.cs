@@ -61,6 +61,21 @@ public partial class IRGenerator
                 {
                     return EvaluateConstantExpr(call.Args[0]);
                 }
+
+                // `bytearray(self._n * len(self.devs))` -- the size an Adafruit driver computes
+                // from a field and the length of a compile-time sequence field. len() has a
+                // lowering in expression position already; the constant evaluator needs the
+                // same answer without emitting IR, so a fixed-size buffer is what the field
+                // gets instead of a runtime-sized arena allocation.
+                if (varExpr.Name == "len" && call.Args.Count == 1)
+                {
+                    if (TryConstSeqLength(call.Args[0], out int seqLen)) return seqLen;
+                    throw UserError(
+                        "len() in a compile-time expression needs a compile-time sequence -- '" +
+                        (DescribeOperand(call.Args[0]) ?? "the operand") + "' is not one (not a "
+                        + "constant list/tuple, a fixed-size array, a compile-time string, or a "
+                        + "compile-time sequence field)", call.Args[0]);
+                }
             }
         }
 
