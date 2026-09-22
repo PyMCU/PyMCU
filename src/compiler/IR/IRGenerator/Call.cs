@@ -811,6 +811,7 @@ public partial class IRGenerator
         if (callee == "bin") return EmitBinBuiltin(expr);
         if (callee == "str") return EmitStrBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
+        if (callee == "round") return EmitRoundBuiltin(expr);
         if (callee == "memoryview") return EmitMemoryviewBuiltin(expr);
 
         if (callee == "divmod") return EmitDivmodBuiltin(expr);
@@ -5629,6 +5630,26 @@ public partial class IRGenerator
             new BinaryExpr(LowerInstanceTruthiness(expr.Args[0]),
                            Frontend.BinaryOp.NotEqual, new IntegerLiteral(0))
                 { Line = expr.Line });
+    }
+
+    /// <summary>
+    /// round(x): Python's round-half-even. There is no run-time float rounding routine, so the
+    /// builtin folds only where x is a compile-time constant -- adafruit_ht16k33's
+    /// `round(15 * brightness)` with the default brightness=1.0 is that shape. A run-time
+    /// argument, or the two-argument form, still gets the honest refusal from
+    /// <see cref="UnsupportedBuiltins"/>.
+    /// </summary>
+    private Val EmitRoundBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count == 1)
+        {
+            Val rv = VisitExpression(expr.Args[0]);
+            if (rv is Constant ic) return ic;
+            if (rv is FloatConstant fc)
+                return new Constant((int)Math.Round(fc.Value, MidpointRounding.ToEven));
+        }
+        throw UserError($"round() is a Python builtin that PyMCU does not provide: "
+                        + UnsupportedBuiltins["round"] + ".", expr.Callee);
     }
 
     /// <summary>
