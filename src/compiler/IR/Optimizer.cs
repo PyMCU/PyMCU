@@ -1114,6 +1114,8 @@ private static Function CloneFunction(Function f)
 
                     if (dst is Temporary tDst)
                         currentLive.Remove(tDst.Name);
+                    // Call.TagDst is a second def GetDst does not reach (RFC 0009).
+                    if (instr is Call { TagDst: Temporary td }) currentLive.Remove(td.Name);
 
                     RegisterUses(instr, val =>
                     {
@@ -1159,6 +1161,12 @@ private static Function CloneFunction(Function f)
                         currentLive.Remove(tDst.Name);
                     }
                 }
+                // The same dead-dst rule for the tag byte (RFC 0009): a tag nobody
+                // reads does not need storing, but the call still runs.
+                if (!isDead && instr is Call { TagDst: Temporary tdg } && !currentLive.Contains(tdg.Name))
+                    instr = instr is Call cl2 ? cl2 with { TagDst = new NoneVal() } : instr;
+                else if (!isDead && instr is Call { TagDst: Temporary tdg2 })
+                    currentLive.Remove(tdg2.Name);
 
                 if (isDead) continue;
                 newInstructions.Add(instr);
@@ -1309,6 +1317,8 @@ private static Function CloneFunction(Function f)
                     // g's argument to the pre-call 0 -- which silently breaks write-back
                     // mutators (`c = Counter(); c.inc(1); c.inc(1)` keeps reading 0).
                     InvalidateVar(callInstr.Dst);
+                    // The tag dst is a second result of the same call (RFC 0009).
+                    if (callInstr.TagDst != null) InvalidateVar(callInstr.TagDst);
                     // A call with ArrayBase args may modify variables through the pointer;
                     // conservatively invalidate all tracked variable constants.
                     if (callInstr.Args.Any(a => a is ArrayBase))
@@ -2049,6 +2059,7 @@ private static Function CloneFunction(Function f)
             {
                 RegisterUses(ins, Note);
                 Note(GetDst(ins));
+                if (ins is Call { TagDst: { } td }) Note(td);
                 if (ins is AugAssign aa) Note(aa.Target);
             }
 
@@ -2098,7 +2109,12 @@ private static Function CloneFunction(Function f)
     {
         switch (instr)
         {
-            case Return r: register(r.Value); break;
+            // The tag operand is a READ like the payload (RFC 0009): leaving it out
+            // lets dead-temp elimination delete the Copy that wrote it.
+            case Return r:
+                register(r.Value);
+                if (r.Tag != null) register(r.Tag);
+                break;
             case Unary u: register(u.Src); break;
             case Binary b:
                 register(b.Src1);
@@ -2237,7 +2253,7 @@ private static Function CloneFunction(Function f)
     {
         return instr switch
         {
-            Return r => r with { Value = replace(r.Value) },
+            Return r => r with { Value = replace(r.Value), Tag = r.Tag == null ? null : replace(r.Tag) },
             Unary u => u with { Src = replace(u.Src) },
             Binary b => b with { Src1 = replace(b.Src1), Src2 = replace(b.Src2) },
             Copy c => c with { Src = replace(c.Src) },
@@ -2772,6 +2788,9 @@ private static Function CloneFunction(Function f)
                     // raise reached from inside a subroutine would unwind only the
                     // subroutine and resume the caller's happy path.
                     if (body[i] is Call c && CanFail(program, c.FunctionName)) return null;
+                    // A tagged call has TWO dsts (RFC 0009) and the region machinery
+                    // has one live-out channel. Phase 1 keeps such regions whole.
+                    if (body[i] is Call { TagDst: not null }) return null;
                     raw.Add(body[i]);
                     break;
             }
@@ -2887,6 +2906,8 @@ private static Function CloneFunction(Function f)
         {
             RegisterUses(ins, See);
             See(GetDst(ins));
+            // Call.TagDst is a second dst GetDst does not reach (RFC 0009).
+            if (ins is Call { TagDst: { } td }) See(td);
         }
         // Same for labels, so two copies of the same expansion — whose labels the
         // inliner numbered differently — canonicalise to the same signature.
@@ -3103,7 +3124,8 @@ private static Function CloneFunction(Function f)
                    .Append(CanonTok(bck.Source, rename, inputs)).Append('.').Append(bck.Bit).Append(';');
                 return;
             case Return r:
-                sig.Append("ret,").Append(CanonTok(r.Value, rename, inputs)).Append(';');
+                sig.Append("ret,").Append(CanonTok(r.Value, rename, inputs))
+                   .Append(CanonTok(r.Tag, rename, inputs)).Append(';');
                 return;
         }
 
@@ -3119,7 +3141,11 @@ private static Function CloneFunction(Function f)
                 Slot(b.Src2, GetDataType(b.Dst));
                 break;
             case Call cl:
-                sig.Append("call:").Append(cl.FunctionName).Append('/').Append(cl.Args.Count).Append(',');
+                // A tagged call is a different instruction shape from an untagged
+                // call to the same callee (RFC 0009) -- the tag dst is part of the
+                // signature so the two never share an outlined body.
+                sig.Append("call:").Append(cl.FunctionName).Append('/').Append(cl.Args.Count).Append(',')
+                   .Append(CanonTok(cl.TagDst, rename, inputs)).Append(',');
                 for (int i = 0; i < cl.Args.Count; i++)
                     Slot(cl.Args[i], CalleeParamType(program, cl.FunctionName, i, paramTypeMemo));
                 break;
@@ -3336,7 +3362,7 @@ private static Function CloneFunction(Function f)
     private static int InstrCost(Instruction i)
     {
         if (i is Label) return 0;
-        int words = i is Call c ? 2 + c.Args.Count : 1;
+        int words = i is Call c ? 2 + c.Args.Count + (c.TagDst != null ? 1 : 0) : 1;
         if (GetDst(i) is MemoryAddress) words++;
         RegisterUses(i, v => { if (v is MemoryAddress) words++; });
         return words;
@@ -3534,8 +3560,9 @@ private static Function CloneFunction(Function f)
             case JumpIfBitClear j: return new JumpIfBitClear(MapName(j.Source), j.Bit, L(j.Target));
             // The MMIO source/target stays literal; only BitCheck's dst is a local.
             case BitCheck bck: return new BitCheck(bck.Source, bck.Bit, MapName(bck.Dst));
-            // The live-out Return: its operand is the region-defined local.
-            case Return r: return new Return(MapName(r.Value));
+            // The live-out Return: its operand is the region-defined local, and its
+            // tag (RFC 0009) is the same kind of operand.
+            case Return r: return new Return(MapName(r.Value), r.Tag == null ? null : MapName(r.Tag));
         }
 
         Val MapName(Val v)
@@ -3568,7 +3595,8 @@ private static Function CloneFunction(Function f)
             Bitcast bc => new Bitcast(MapSlot(bc.Src), MapName(bc.Dst)),
             Unary u => new Unary(u.Op, MapSlot(u.Src), MapName(u.Dst)),
             Binary b => new Binary(b.Op, MapSlot(b.Src1), MapSlot(b.Src2), MapName(b.Dst)),
-            Call cl => new Call(cl.FunctionName, cl.Args.Select(MapSlot).ToList(), MapName(cl.Dst)),
+            Call cl => new Call(cl.FunctionName, cl.Args.Select(MapSlot).ToList(), MapName(cl.Dst),
+                cl.TagDst == null ? null : MapName(cl.TagDst)),
             _ => ins,
         };
         ctr = hk;
