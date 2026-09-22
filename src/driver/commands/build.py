@@ -29,7 +29,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import binary_for_plugin, get_backend_for_chip, run_backend
-from ..core.compiler import PyMCUCompiler, map_line
+from ..core.compiler import PyMCUCompiler, ArenaRequiredError, map_line
 from ..core.project_config import experimental_enabled
 from ..core.boards import (
     board_frequency,
@@ -253,125 +253,13 @@ def _detect_fstring_value_usage(sources_dir: Path) -> bool:
 
 
 # docs/rfcs/0004-arena-allocator.md: the arena's default reservation when a program uses
-# runtime-sized bytearray(n) but its size cannot be folded exactly and no `arena_size` was
-# set in [tool.pymcu]. Only atmega328p is supported in phase 1 (see the RFC, "Targets").
+# runtime-sized bytearray(n) and no `arena_size` was set in [tool.pymcu]. Only
+# atmega328p is supported in phase 1 (see the RFC, "Targets"). Whether the program
+# needs the arena at all is the COMPILER's call -- it folds the size argument itself
+# and reports [NEEDS_ARENA] / [ARENA_USED] on the compile's stdout token stream (see
+# _compile_frontend below); a lexical scan of the sources cannot tell a foldable
+# bytearray(((h // 8) * w) + 1) from a genuinely runtime-sized one.
 _ARENA_BOARD_DEFAULT_BYTES = 256
-
-# The argument capture stops at the first ')' -- except when the argument opens
-# with a balanced paren group, which is what lets the tuple-literal form
-# bytearray((1, 2)) arrive whole for _is_literal_buffer_arg. Any other argument
-# containing ')' (bytearray([f(1), 2]), bytearray(int(f(1)))) arrives truncated
-# and fails ast.parse, which the caller treats as unknown -- the safe side.
-_BYTEARRAY_CALL_RE = re.compile(r'bytearray\(\s*(\([^()]*\)|[^)]*?)\s*\)')
-
-
-def _fold_int_expr(expr: str) -> int | None:
-    """Fold a bytearray() size argument that is an int literal, or +/* of such literals.
-
-    Anything else (a name, a call, subtraction, division) returns None -- not because it
-    could not be a compile-time constant (the compiler's own folding is far more capable,
-    e.g. a named module constant), but because this heuristic only has to be SAFE, never
-    complete: undercounting here only widens the fallback to the board default or an
-    explicit arena_size (see _detect_and_size_arena_usage), which is still a safe
-    reservation, never a program the compiler's own once-rule accepts sized too small.
-    """
-    try:
-        tree = ast.parse(expr, mode="eval")
-    except SyntaxError:
-        return None
-
-    def fold(node: ast.AST) -> int | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, int) \
-                and not isinstance(node.value, bool):
-            return node.value
-        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mult)):
-            left, right = fold(node.left), fold(node.right)
-            if left is None or right is None:
-                return None
-            return left + right if isinstance(node.op, ast.Add) else left * right
-        return None
-
-    return fold(tree.body)
-
-
-def _is_literal_buffer_arg(arg: str) -> bool:
-    """True when arg is a bytearray() literal buffer form, laid out statically.
-
-    bytearray([...]), bytearray((...)), bytearray(b"...") and bytearray("...")
-    are compile-time buffers: the compiler emits their contents statically and
-    they never allocate from the arena, so they must not mark the program an
-    arena user. An argument the regex captured truncated -- it stops at the
-    first ')' unless the argument opens with a balanced group -- fails
-    ast.parse and returns False here, which is the safe side: the caller then
-    treats it like any other non-folding, possibly runtime-sized argument.
-    """
-    try:
-        node = ast.parse(arg, mode="eval").body
-    except SyntaxError:
-        return False
-    if isinstance(node, ast.Constant):
-        return isinstance(node.value, (bytes, str))
-    return isinstance(node, (ast.List, ast.Tuple))
-
-
-def _detect_and_size_arena_usage(sources_dir: Path, arena_size_override: int | None) -> tuple[bool, int, bool]:
-    """Scan .py files for bytearray(...) calls that can allocate from the arena.
-
-    Returns (used, reserved_bytes, exact):
-      used           -- True if any such call was found anywhere in sources_dir.
-      reserved_bytes -- what ARENA_SIZE should be: arena_size_override if given, else the
-                         exact sum of every runtime bytearray(...) call's size argument if
-                         EVERY one of them folds (see _fold_int_expr), else the board default.
-      exact          -- True only when reserved_bytes is the exact fold sum (no override,
-                         no fallback) -- the "zero waste" case docs/rfcs/0004-arena-allocator.md
-                         describes, used only for the build-line message, not for sizing.
-
-    A false positive here is not free: `used` alone injects
-    `import pymcu.arena` (see _inject_arena_preamble), and that module carries
-    two uint16 globals plus the ARENA_SIZE reservation -- on a PIC10F200
-    fixture the globals alone pushed a 16-byte-RAM program over budget, and on
-    AVR the fallback reserves 256 B of SRAM. The literal buffer forms --
-    bytearray([...]), bytearray((...)), bytearray(b"..."), bytearray("...") --
-    are laid out statically by the compiler and never allocate from the arena,
-    so _is_literal_buffer_arg excludes them before they can mark the program
-    an arena user. A compile-time-constant bytearray(N) still matches and
-    folds cleanly, contributing N to the sum.
-
-    Everything else keeps the fold-or-fallback behaviour, including arguments
-    this scan cannot even parse: the capture regex stops at the first ')'
-    unless the argument opens with a balanced group, so bytearray([f(1), 2])
-    arrives truncated as '[f(1' and fails ast.parse. Unparseable stays
-    unknown -- the safe side: `used` set, `exact` cleared.
-    """
-    used = False
-    total = 0
-    exact = True
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-        except OSError:
-            continue
-        for m in _BYTEARRAY_CALL_RE.finditer(code):
-            arg = m.group(1).strip()
-            if not arg:
-                continue
-            if _is_literal_buffer_arg(arg):
-                continue
-            used = True
-            n = _fold_int_expr(arg)
-            if n is None:
-                exact = False
-            else:
-                total += n
-
-    if not used:
-        return False, 0, True
-    if arena_size_override is not None:
-        return True, arena_size_override, False
-    if exact:
-        return True, total, True
-    return True, _ARENA_BOARD_DEFAULT_BYTES, False
 
 
 def _inject_arena_shim(generated_dir: Path, arena_size: int) -> None:
@@ -1585,36 +1473,6 @@ def build(
             _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
                       verbose=is_verbose)
 
-        # Auto-inject the arena allocator when a runtime-sized bytearray(n) is used
-        # (docs/rfcs/0004-arena-allocator.md). ARENA_SIZE defaults to 0 (arena unused, zero
-        # bytes reserved, arena.py never linked) in the shipped module, so this whole block
-        # is a no-op -- no shim written, no import injected -- for the overwhelming majority
-        # of programs that never call it.
-        _arena_size_override = pymcu_config.get("arena_size", None)
-        _arena_used, _arena_reserved, _arena_exact = _detect_and_size_arena_usage(
-            sources_dir, _arena_size_override)
-        if _arena_used:
-            _inject_arena_shim(generated_dir, _arena_reserved)
-            entry_point, _n = _inject_arena_preamble(entry_point, generated_dir)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log("runtime-sized bytearray(n) detected — injecting pymcu.arena import "
-                      f"(reserving {_arena_reserved} B)", verbose=is_verbose)
-            if _arena_exact:
-                console.print(
-                    f"Arena: reserved {_arena_reserved} B (every allocation size folds at "
-                    "compile time)")
-            elif _arena_size_override is not None:
-                console.print(
-                    f"Arena: reserved {_arena_reserved} B (arena_size override in "
-                    "\\[tool.pymcu]); at least one allocation is runtime-sized")
-            else:
-                console.print(
-                    f"Arena: reserved {_arena_reserved} B (board default; at least one "
-                    "allocation is runtime-sized and could not be sized exactly -- set "
-                    "arena_size in \\[tool.pymcu] to reserve a precise amount)")
-
         # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
         # ATmega program uses async/await (asyncio.ticks() is the same Timer0
         # micros counter and reads a frozen 0 until the overflow ISR is armed).
@@ -1732,9 +1590,49 @@ def build(
             compiler_handler = _make_compiler_output_handler(progress, build_task, verbose)
             backend_plugin = get_backend_for_chip(target)
             blockmap_path: Path | None = None
-            try:
-                if backend_plugin is not None:
-                    ir_file = output_dir / "firmware.mir"
+
+            # docs/rfcs/0004-arena-allocator.md: whether the program allocates from the
+            # arena is the COMPILER's call, not a source-text scan's -- only the IR
+            # generator knows whether the bytearray() size argument actually folded (a
+            # foldable `bytearray(((h // 8) * w) + 1)` is a fixed SRAM array and reserves
+            # nothing). pymcuc reports on its stdout token stream:
+            #   [NEEDS_ARENA] -- a runtime-sized allocation met a missing pymcu.arena
+            #                    import; the compile fails (ArenaRequiredError)
+            #   [ARENA_USED]  -- a runtime-sized allocation lowered against an import the
+            #                    program wrote itself; the compile succeeds but ran with
+            #                    the shipped module's ARENA_SIZE of 0
+            # Either way the answer is the same: stage the shim + import and run the
+            # frontend once more. The retry re-reads entry_point / extra_includes /
+            # _diagnostic_source, which the injection updates in place.
+            _arena_size_override = pymcu_config.get("arena_size", None)
+
+            def _inject_arena() -> None:
+                nonlocal entry_point, _linemap_preamble_offset
+                nonlocal _preamble_map, _diagnostic_source
+                _reserved = _arena_size_override or _ARENA_BOARD_DEFAULT_BYTES
+                _inject_arena_shim(generated_dir, _reserved)
+                entry_point, _n = _inject_arena_preamble(entry_point, generated_dir)
+                _linemap_preamble_offset += _n
+                if str(generated_dir) not in extra_includes:
+                    extra_includes.insert(0, str(generated_dir))
+                _preamble_map = _preamble_line_map(entry_point)
+                _diagnostic_source = (
+                    str(entry_point), str(_original_entry_point), _preamble_map)
+                _diag_log(
+                    "compiler reported an arena allocation — injecting pymcu.arena "
+                    f"import (reserving {_reserved} B)", verbose=is_verbose)
+                if _arena_size_override is not None:
+                    console.print(
+                        f"Arena: reserved {_reserved} B (arena_size override in "
+                        "\\[tool.pymcu])")
+                else:
+                    console.print(
+                        f"Arena: reserved {_reserved} B (board default; at least one "
+                        "allocation is runtime-sized and could not be sized exactly -- "
+                        "set arena_size in \\[tool.pymcu] to reserve a precise amount)")
+
+            def _compile_frontend(with_ir: bool, ir_file: Path | None = None) -> None:
+                def _run() -> None:
                     compiler.compile(
                         input_file=entry_point,
                         output_file=str(output_file),
@@ -1747,13 +1645,26 @@ def build(
                         interrupt_vector=interrupt_vector,
                         extra_includes=extra_includes or None,
                         on_output=compiler_handler,
-                        emit_ir_path=str(ir_file),
-                        diagnostic_source=_diagnostic_source,
                         timebase=_timebase,
                         stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
                         embed_files=_embedded_files,
                         profile_path=profile_path,
+                        **({"emit_ir_path": str(ir_file),
+                            "diagnostic_source": _diagnostic_source} if with_ir else {}),
                     )
+                try:
+                    _run()
+                    if not compiler.last_compile_used_arena:
+                        return
+                except ArenaRequiredError:
+                    pass
+                _inject_arena()
+                _run()
+
+            try:
+                if backend_plugin is not None:
+                    ir_file = output_dir / "firmware.mir"
+                    _compile_frontend(with_ir=True, ir_file=ir_file)
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
                     linemap_path: Path | None = None
                     varmap_path: Path | None = None
@@ -1790,23 +1701,7 @@ def build(
                     if linemap_path and linemap_path.exists() and _preamble_map is not None:
                         _correct_linemap(linemap_path, "main.py", _preamble_map)
                 else:
-                    compiler.compile(
-                        input_file=entry_point,
-                        output_file=str(output_file),
-                        target=target,
-                        freq=freq,
-                        configs=config_map,
-                        search_path=sources_dir,
-                        verbose=verbose,
-                        reset_vector=reset_vector,
-                        interrupt_vector=interrupt_vector,
-                        extra_includes=extra_includes or None,
-                        on_output=compiler_handler,
-                        timebase=_timebase,
-                        stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
-                        embed_files=_embedded_files,
-                        profile_path=profile_path,
-                    )
+                    _compile_frontend(with_ir=False)
             except RuntimeError as e:
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")

@@ -1,16 +1,25 @@
 # tests/driver/test_arena_detection.py
 #
-# docs/rfcs/0004-arena-allocator.md. Two layers: the pure sizing heuristic
-# (_fold_int_expr / _detect_and_size_arena_usage), fast and exhaustive on its own, and one
-# end-to-end `pymcu build` check that the injected import, generated shim and printed build
-# line all show up together for a real (fake-compiler-backed) build. The compiler's own
-# once-rule enforcement and IR shape are covered in tests/unit/IR/ArenaAllocatorTests.cs --
-# nothing here re-tests that; this file is about what the DRIVER does before the compiler
-# ever sees the sources.
+# docs/rfcs/0004-arena-allocator.md. The driver no longer guesses from the source text:
+# the COMPILER reports on its stdout token stream whether a bytearray(n) actually
+# allocated from the arena -- [NEEDS_ARENA] when a runtime-sized allocation met a
+# missing pymcu.arena import (the compile fails), [ARENA_USED] when the allocation
+# lowered against an import the program wrote itself. Either way pymcu build stages
+# the generated shim + import and runs the frontend once more. A bytearray() size the
+# compiler folds -- bytearray(20), bytearray(((h // 8) * w) + 1) -- is a fixed SRAM
+# array: no token, no injection, no reservation.
+#
+# The compiler's own fold/once-rule enforcement and IR shape are covered in
+# tests/unit/IR/ArenaAllocatorTests.cs -- nothing here re-tests that; this file is
+# about what the DRIVER does with the tokens.
 
+import os
+import stat
+import sys
+import textwrap
 from pathlib import Path
 
-from src.driver.commands.build import _fold_int_expr, _detect_and_size_arena_usage
+import pytest
 from typer.testing import CliRunner
 from src.driver.main import app
 
@@ -22,157 +31,76 @@ def _invoke_build(*args: str):
 
 
 # ---------------------------------------------------------------------------
-# _fold_int_expr: what folds and what does not.
+# arena_aware_compiler — a fake pymcuc that speaks the arena token protocol:
+# fails with [NEEDS_ARENA] while the entry file carries no pymcu.arena import
+# (what the real frontend does to a runtime-sized bytearray(n)), emits
+# [ARENA_USED] and succeeds once the import is there -- user-written or
+# injected, the compiler cannot tell them apart either.
 # ---------------------------------------------------------------------------
 
-class TestFoldIntExpr:
-    def test_plain_literal_folds(self):
-        assert _fold_int_expr("64") == 64
+_ARENA_AWARE_SCRIPT_POSIX = textwrap.dedent("""\
+    #!/bin/sh
+    entry="$1"
+    echo "[PHASE_START] Lexer"
+    echo "[PHASE_END] Lexer 10"
+    echo "[PHASE_START] IRGen"
+    if ! grep -q "import pymcu.arena" "$entry" 2>/dev/null; then
+        echo "[NEEDS_ARENA]"
+        echo "[BUILD_FAIL] IRGen"
+        exit 1
+    fi
+    echo "[ARENA_USED]"
+    echo "[PHASE_END] IRGen 20"
+    echo "[PHASE_START] CodeGen"
+    echo "[PHASE_END] CodeGen 30"
+    output=""
+    prev=""
+    for arg in "$@"; do
+        if [ "$prev" = "-o" ]; then
+            output="$arg"
+        fi
+        prev="$arg"
+    done
+    if [ -n "$output" ]; then
+        mkdir -p "$(dirname "$output")"
+        echo "; fake asm" > "$output"
+        echo "[BUILD_OK] $output"
+    else
+        echo "[BUILD_FAIL] CodeGen"
+        exit 1
+    fi
+""")
 
-    def test_addition_of_literals_folds(self):
-        assert _fold_int_expr("4 + 60") == 64
-
-    def test_multiplication_of_literals_folds(self):
-        assert _fold_int_expr("4 * 16") == 64
-
-    def test_mixed_add_and_multiply_folds(self):
-        assert _fold_int_expr("4 * 16 + 1") == 65
-
-    def test_a_name_does_not_fold(self):
-        # The whole point: a genuinely runtime size is not a heuristic gap, it is what
-        # routes the allocation to the arena in the first place.
-        assert _fold_int_expr("n") is None
-
-    def test_a_call_does_not_fold(self):
-        assert _fold_int_expr("read_len()") is None
-
-    def test_subtraction_does_not_fold(self):
-        # Deliberately narrower than the compiler's own folding (RFC "Sizing"): under-
-        # counting here only widens the reservation, never undersizes one the compiler
-        # accepts.
-        assert _fold_int_expr("68 - 4") is None
-
-    def test_boolean_literal_does_not_count_as_an_int(self):
-        # `bool` is `int` in Python's own ast, and True/False are not a buffer size.
-        assert _fold_int_expr("True") is None
-
-
-# ---------------------------------------------------------------------------
-# _detect_and_size_arena_usage: the whole-project scan.
-# ---------------------------------------------------------------------------
-
-class TestDetectAndSizeArenaUsage:
-    def test_no_bytearray_calls_at_all(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("x: int = 1\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (False, 0, True)
-
-    def test_only_constant_sized_calls_still_fold_exactly(self, tmp_path: Path):
-        # Over-inclusive by design (matches _detect_fstring_value_usage's own doc comment):
-        # a compile-time-constant bytearray(N) is caught by the regex too, but it folds
-        # cleanly, so it costs nothing -- see ConstantSizedBytearrayIsUnaffected in the C#
-        # suite for the half of this invariant that lives in the compiler.
-        (tmp_path / "main.py").write_text("buf: bytearray = bytearray(20)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 20, True)
-
-    def test_one_runtime_sized_call_falls_back_to_the_board_default(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text(
-            "n: int = 5\nbuf: bytearray = bytearray(n)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert used is True
-        assert exact is False
-        assert reserved == 256  # _ARENA_BOARD_DEFAULT_BYTES
-
-    def test_explicit_override_wins_over_both_fold_and_default(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text(
-            "n: int = 5\nbuf: bytearray = bytearray(n)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, 512)
-        assert (used, reserved, exact) == (True, 512, False)
-
-    def test_sums_across_multiple_files_and_calls(self, tmp_path: Path):
-        (tmp_path / "a.py").write_text("x: bytearray = bytearray(10)\n")
-        (tmp_path / "b.py").write_text(
-            "y: bytearray = bytearray(6)\nz: bytearray = bytearray(4)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 20, True)
-
-    def test_a_single_non_folding_call_among_several_trips_the_fallback(self, tmp_path: Path):
-        # One genuinely runtime call is enough to give up on the exact sum entirely, even
-        # alongside calls that would have folded -- the board default has to cover ALL of
-        # them, not just the ones this heuristic could not size.
-        (tmp_path / "a.py").write_text("x: bytearray = bytearray(10)\n")
-        (tmp_path / "b.py").write_text("n: int = 5\ny: bytearray = bytearray(n)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 256, False)
-
-    def test_commented_out_call_is_ignored(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("# buf = bytearray(20)\nx: int = 1\n")
-        used, _, _ = _detect_and_size_arena_usage(tmp_path, None)
-        assert used is False
+_ARENA_AWARE_SCRIPT_WIN = textwrap.dedent("""\
+    @echo off
+    findstr /c:"import pymcu.arena" "%~1" >nul 2>&1
+    if errorlevel 1 (
+        echo [NEEDS_ARENA]
+        echo [BUILD_FAIL] IRGen
+        exit /b 1
+    )
+    echo [ARENA_USED]
+    echo [BUILD_OK] done
+""")
 
 
-# ---------------------------------------------------------------------------
-# Literal buffer forms: bytearray([...]), bytearray((...)), bytearray(b"..."),
-# bytearray("...") are laid out statically by the compiler and never allocate
-# from the arena, so they must not mark the program an arena user.
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def arena_aware_compiler(tmp_path, monkeypatch):
+    """Install the token-speaking fake pymcuc on PATH, like mock_compiler."""
+    bin_dir = tmp_path / "arena_mock_bin"
+    bin_dir.mkdir(exist_ok=True)
 
-class TestLiteralBufferArgumentsAreNotArenaUsage:
-    def test_a_list_literal_is_a_compile_time_buffer(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("buf: bytearray = bytearray([0x15, 0x2A])\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (False, 0, True)
+    if sys.platform == "win32":
+        exe = bin_dir / "pymcuc.cmd"
+        exe.write_text(_ARENA_AWARE_SCRIPT_WIN)
+    else:
+        exe = bin_dir / "pymcuc"
+        exe.write_text(_ARENA_AWARE_SCRIPT_POSIX)
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    def test_a_bytes_literal_is_a_compile_time_buffer(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text('buf: bytearray = bytearray(b"\\x15\\x2a")\n')
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (False, 0, True)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+    return exe
 
-    def test_a_str_literal_is_a_compile_time_buffer(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text('buf: bytearray = bytearray("abc")\n')
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (False, 0, True)
-
-    def test_a_tuple_literal_is_a_compile_time_buffer(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("buf: bytearray = bytearray((1, 2))\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (False, 0, True)
-
-    def test_an_int_size_still_counts_exactly(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("buf: bytearray = bytearray(16)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 16, True)
-
-    def test_a_name_still_falls_back_to_the_board_default(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text(
-            "n: int = 5\nbuf: bytearray = bytearray(n)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 256, False)
-
-    def test_a_literal_and_a_sized_call_in_one_file(self, tmp_path: Path):
-        # The literal contributes nothing; the sized call folds exactly, so the
-        # reservation is its size alone.
-        (tmp_path / "main.py").write_text(
-            "a: bytearray = bytearray([1, 2])\nb: bytearray = bytearray(16)\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 16, True)
-
-    def test_an_argument_truncated_at_an_inner_paren_lands_safe(self, tmp_path: Path):
-        # The capture regex stops at the first ')' unless the argument starts
-        # with a balanced group, so bytearray([f(1), 2]) arrives as '[f(1' and
-        # fails ast.parse. A list with a call inside is not a compile-time
-        # buffer, and an unparseable argument stays unknown: used, not exact,
-        # board default -- the safe side.
-        (tmp_path / "main.py").write_text(
-            "buf: bytearray = bytearray([f(1), 2])\n")
-        used, reserved, exact = _detect_and_size_arena_usage(tmp_path, None)
-        assert (used, reserved, exact) == (True, 256, False)
-
-
-# ---------------------------------------------------------------------------
-# End-to-end: `pymcu build` injects the import, generates the shim and prints the line.
-# ---------------------------------------------------------------------------
 
 def _project(tmp_path: Path, main_body: str, extra_keys: str = "") -> None:
     (tmp_path / "src").mkdir(exist_ok=True)
@@ -187,27 +115,83 @@ def _project(tmp_path: Path, main_body: str, extra_keys: str = "") -> None:
     )
 
 
-class TestArenaBuildIntegration:
+# ---------------------------------------------------------------------------
+# Foldable bytearray(...) -- the field report: the driver used to reserve arena
+# SRAM for any bytearray( call it could not fold with its narrow +/* heuristic.
+# The compiler folds far more (names, //, constructors' constants), and whatever
+# folds is a fixed SRAM array that never touches the arena -- so no token, no
+# Arena line, no generated shim, no injected import.
+# ---------------------------------------------------------------------------
+
+class TestFoldableBytearrayIsNotArenaUsage:
     def test_no_bytearray_call_at_all_prints_no_arena_line(
             self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
-        # Not `bytearray(8)` -- the detector is over-inclusive by design (see
-        # test_only_constant_sized_calls_still_fold_exactly above) and DOES print a line
-        # for a compile-time-constant size, correctly, since folding it costs nothing. The
-        # zero-cost gate this is actually testing is a program with no bytearray(...) call
-        # anywhere: nothing scanned, nothing generated, nothing printed.
         monkeypatch.chdir(tmp_path)
         _project(tmp_path, "x: int = 1\n")
         result = _invoke_build()
         assert "Arena:" not in result.output
         assert not (tmp_path / "dist" / "_generated" / "pymcu" / "arena.py").exists()
 
-    def test_runtime_bytearray_injects_import_shim_and_prints_the_line(
-            self, tmp_path, monkeypatch, mock_toolchain, mock_compiler, unwrapped):
+    def test_literal_sized_bytearray_prints_no_arena_line(
+            self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
+        # bytearray(20) folds to a fixed 20-byte SRAM array. The old lexical scan
+        # reserved 20 B "exactly" for it anyway -- arena SRAM on top of the array.
         monkeypatch.chdir(tmp_path)
-        _project(tmp_path, "n: int = 5\nbuf: bytearray = bytearray(n)\n")
+        _project(tmp_path, "buf: bytearray = bytearray(20)\n")
+        result = _invoke_build()
+        assert "Arena:" not in result.output
+        assert not (tmp_path / "dist" / "_generated" / "pymcu" / "arena.py").exists()
+        generated_entry = tmp_path / "dist" / "_generated" / "main.py"
+        if generated_entry.exists():
+            assert "import pymcu.arena" not in generated_entry.read_text()
+
+    def test_folded_constructor_expression_prints_no_arena_line(
+            self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
+        # The field report's shape: adafruit_ssd1306's
+        # bytearray(((height // 8) * width) + 1) -- '//' never folded under the
+        # driver's +/*-only heuristic, so 256 B was reserved for nothing. The
+        # compiler folds the whole expression (the constructor's constants in the
+        # report, plain literals here); a module-level `w: int = 128` would NOT
+        # be this case -- a mutable global is a genuinely runtime-sized read and
+        # the arena path is correct for it.
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path,
+                 "buf: bytearray = bytearray(((32 // 8) * 128) + 1)\n")
+        result = _invoke_build()
+        assert "Arena:" not in result.output
+        assert not (tmp_path / "dist" / "_generated" / "pymcu" / "arena.py").exists()
+
+
+# ---------------------------------------------------------------------------
+# Runtime-sized bytearray(n) -- the compiler emits [NEEDS_ARENA] and fails; the
+# driver injects shim + import and compiles again. The line, the shim and the
+# injected import all show up together.
+#
+# These programs read GPIOR0 for the size so the REAL pymcuc -- found ahead of
+# PATH mocks in a dev checkout -- also takes the runtime-sized path; under a
+# PATH-only environment the arena_aware_compiler fake plays the same protocol.
+# ---------------------------------------------------------------------------
+
+_RUNTIME_SIZED_MAIN = (
+    "from pymcu.chips.atmega328p import GPIOR0\n"
+    "from pymcu.types import uint16\n"
+    "n: uint16 = uint16(GPIOR0.value) + 5\n"
+    "buf: bytearray = bytearray(n)\n"
+)
+
+
+class TestRuntimeBytearrayInjectsOnCompilerRequest:
+    def test_needs_arena_retries_with_injection(
+            self, tmp_path, monkeypatch, mock_toolchain, arena_aware_compiler,
+            unwrapped):
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, _RUNTIME_SIZED_MAIN)
         result = _invoke_build()
 
         assert "Arena: reserved 256 B" in unwrapped(result.output)
+        # The transient missing-import diagnostic from the first attempt is not
+        # shown -- the retry answers it.
+        assert "needs the pymcu.arena allocator" not in unwrapped(result.output)
 
         generated_entry = tmp_path / "dist" / "_generated" / "main.py"
         assert generated_entry.exists()
@@ -218,11 +202,49 @@ class TestArenaBuildIntegration:
         assert "ARENA_SIZE: uint16 = 256" in shim.read_text()
 
     def test_arena_size_override_is_reported_and_used(
-            self, tmp_path, monkeypatch, mock_toolchain, mock_compiler, unwrapped):
+            self, tmp_path, monkeypatch, mock_toolchain, arena_aware_compiler,
+            unwrapped):
         monkeypatch.chdir(tmp_path)
-        _project(tmp_path, "n: int = 5\nbuf: bytearray = bytearray(n)\n",
+        _project(tmp_path, _RUNTIME_SIZED_MAIN,
                  extra_keys="arena_size = 400\n")
         result = _invoke_build()
         assert "Arena: reserved 400 B" in unwrapped(result.output)
         shim = tmp_path / "dist" / "_generated" / "pymcu" / "arena.py"
         assert "ARENA_SIZE: uint16 = 400" in shim.read_text()
+
+    def test_explicit_import_still_gets_the_shim(
+            self, tmp_path, monkeypatch, mock_toolchain, arena_aware_compiler,
+            unwrapped):
+        # A program that writes `import pymcu.arena` itself compiles on the first
+        # pass -- but against the shipped module's ARENA_SIZE of 0. The compiler's
+        # [ARENA_USED] token tells the driver to stage the shim and recompile.
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path,
+                 "import pymcu.arena as _arena_observe\n" + _RUNTIME_SIZED_MAIN)
+        result = _invoke_build()
+        assert "Arena: reserved 256 B" in unwrapped(result.output)
+        shim = tmp_path / "dist" / "_generated" / "pymcu" / "arena.py"
+        assert shim.exists()
+        assert "ARENA_SIZE: uint16 = 256" in shim.read_text()
+
+    def test_a_real_compile_error_is_not_retried_as_arena(
+            self, tmp_path, monkeypatch, mock_toolchain, tmp_path_factory):
+        # A compile that fails WITHOUT the token is an ordinary error: no
+        # injection, no retry, the diagnostic passes through. The PATH fake
+        # always fails; the program itself is uncompilable so the real pymcuc
+        # -- which shadows PATH in a dev checkout -- fails the same way.
+        bin_dir = tmp_path_factory.mktemp("fail_bin")
+        if sys.platform == "win32":
+            exe = bin_dir / "pymcuc.cmd"
+            exe.write_text("@echo off\necho [BUILD_FAIL] IRGen\nexit /b 1\n")
+        else:
+            exe = bin_dir / "pymcuc"
+            exe.write_text("#!/bin/sh\necho '[BUILD_FAIL] IRGen'\nexit 1\n")
+            exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, "x: int = not_a_defined_name\n")
+        result = _invoke_build()
+        assert result.exit_code != 0
+        assert "Arena:" not in result.output
+        assert not (tmp_path / "dist" / "_generated" / "pymcu" / "arena.py").exists()

@@ -126,15 +126,27 @@ def _remap_diagnostics(text: str, diagnostic_source) -> str:
     return "\n".join(out)
 
 
+class ArenaRequiredError(RuntimeError):
+    """pymcuc reported [NEEDS_ARENA]: the program has a runtime-sized bytearray(n)
+    but no pymcu.arena import. `pymcu build` answers by injecting the allocator
+    shim + import and running the frontend once more."""
+
+
 class PyMCUCompiler:
     """
     Wrapper for the core C++ build tool (pymcuc).
     Handles path resolution, stdlib detection, and binary invocation.
     """
-    
+
     def __init__(self, console: Console):
         self.console = console
         self.compiler_candidates: list[str] = []
+        # Set by the most recent compile(): True when pymcuc emitted [ARENA_USED],
+        # i.e. a runtime-sized bytearray(n) was lowered against a pymcu.arena import
+        # that resolved. The compile SUCCEEDED, but if the driver had not staged its
+        # generated shim the arena ran with the shipped module's ARENA_SIZE of 0 --
+        # the flag is how build.py knows to inject and compile once more anyway.
+        self.last_compile_used_arena = False
 
     def _get_start_path(self) -> Path:
         """Helper to allow easier mocking or inheritance if needed"""
@@ -326,6 +338,9 @@ class PyMCUCompiler:
             #   [BUILD_FAIL]  <phaseName>
             #   [INFO]        [<component>] <message>
             #   [VERBOSE]     [<component>] <message>
+            #   [NEEDS_ARENA] runtime-sized bytearray(n), pymcu.arena not imported
+            #   [ARENA_USED]  an arena allocation was lowered (see ArenaRequiredError
+            #                 and last_compile_used_arena for how build.py uses these)
             #
             # stderr is left to pass through directly so VS Code's problem matcher
             # can parse diagnostic lines (file:line:col: severity: msg).
@@ -349,13 +364,16 @@ class PyMCUCompiler:
                 # encoding is pinned to utf-8 because pymcuc always emits utf-8; without
                 # it Popen(text=True) decodes with the locale codepage (cp1252 on
                 # Windows), raising UnicodeDecodeError on non-ASCII diagnostics.
-                # stderr is captured ONLY when there is a synthetic entry to map back:
-                # the compiler sees dist/_generated/main.py and reports against it, at a
-                # line shifted by the injected preamble, which sends the reader into their
-                # own build output at a line that says something else. Rewriting the path
-                # and the number makes the problem matcher point at the real file, so this
-                # helps the editor integration rather than working against it.
-                capture_stderr = subprocess.PIPE if diagnostic_source else None
+                # stderr is always captured now: remapped when there is a synthetic
+                # entry to map back (the compiler sees dist/_generated/main.py and
+                # reports against it, at a line shifted by the injected preamble,
+                # which sends the reader into their own build output at a line that
+                # says something else -- rewriting path+number makes the problem
+                # matcher point at the real file), and held back entirely when the
+                # attempt ended in [NEEDS_ARENA]: the caller answers that token by
+                # injecting the allocator and retrying, so showing the missing-import
+                # diagnostic would be reporting an error that is about to be fixed.
+                capture_stderr = subprocess.PIPE
                 with subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -370,8 +388,11 @@ class PyMCUCompiler:
                     err_text = proc.stderr.read() if proc.stderr else ""
                     proc.wait()
 
-                if err_text:
-                    sys.stderr.write(_remap_diagnostics(err_text, diagnostic_source))
+                needs_arena = "[NEEDS_ARENA]" in buffered
+                if err_text and not needs_arena:
+                    sys.stderr.write(
+                        _remap_diagnostics(err_text, diagnostic_source)
+                        if diagnostic_source else err_text)
                     sys.stderr.flush()
 
                 if proc.returncode < 0 and attempt < max_signal_retries:
@@ -382,6 +403,8 @@ class PyMCUCompiler:
             if on_output:
                 for line in buffered:
                     on_output(line)
+
+            self.last_compile_used_arena = "[ARENA_USED]" in buffered
 
             if proc.returncode < 0:
                 # Still dead on a signal after every retry. Say what happened: the compiler
@@ -399,6 +422,9 @@ class PyMCUCompiler:
                     "projects at once, or re-run. It is not an error in your code.")
 
             if proc.returncode != 0:
+                if needs_arena:
+                    raise ArenaRequiredError(
+                        "Compilation failed (see diagnostics above)")
                 raise RuntimeError("Compilation failed (see diagnostics above)")
         except FileNotFoundError:
             raise RuntimeError(f"Compiler '{compiler}' not found.")
