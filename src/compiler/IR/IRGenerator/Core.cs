@@ -1733,7 +1733,12 @@ public partial class IRGenerator
             string localName = currentFunction + "." + name;
             if (constantVariables.TryGetValue(localName, out int localVal))
             {
-                return new Constant(localVal);
+                // Same note as the inline-prefix and finalLocalName reads: a name in both
+                // maps (a compile-time string bound as a function-scope constant, e.g. a
+                // loop variable over a literal) must carry its text, or the value arrives
+                // downstream as a bare character code / interned id and `ch.lower()`
+                // answers "an integer" (adafruit_ht16k33's _put, reached through _push).
+                return new Constant(localVal, ResolveStrConstant(localName));
             }
         }
 
