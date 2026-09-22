@@ -478,20 +478,7 @@ public partial class IRGenerator
                                         ? VisitExpression(memC.Object)
                                         : VisitExpression(new MemberAccessExpr(memC.Object, fld)));
                             }
-                            // Keyword arguments bind against the DECLARED parameter list
-                            // (everything after `self`), never the synthesized self_<field>
-                            // prefix this dispatch prepends -- `o.writeto(a, buf, start=1)`
-                            // binds `start` like the @inline path does. busio.I2C.writeto is
-                            // the shape: `writeto(addr, buf, start=s, end=e)`.
-                            var userArgs = expr.Args;
-                            if (userArgs.Any(a => a is KeywordArgExpr)
-                                && methodAstByName.TryGetValue(callee, out var declFunc))
-                            {
-                                userArgs = ReorderCallArgs(userArgs, callee, memC,
-                                    declFunc.Params.Skip(1).Select(p => p.Name).ToList(),
-                                    declFunc.Params.Skip(1).Select(p => p.DefaultValue).ToList());
-                            }
-                            foreach (var a in userArgs)
+                            foreach (var a in expr.Args)
                             {
                                 Val av = TryEvalInlineBufferArg(a)
                                     ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
@@ -944,17 +931,14 @@ public partial class IRGenerator
         return false;
     }
 
-    private List<Expression> ReorderCallArgs(List<Expression> args, string callee, ASTNode? at,
-        List<string>? paramNamesOverride = null, List<Expression?>? defaultsOverride = null)
+    private List<Expression> ReorderCallArgs(List<Expression> args, string callee, ASTNode? at)
     {
         if (!args.Any(a => a is KeywordArgExpr)) return args;
 
         // Look up the callee's parameter names, trying the module-mangled form too
-        // (a dotted "mod.fn" is stored as "mod_fn"). An outlined method's registered
-        // parameter list leads with the synthesized self_<field> slots, so that path
-        // passes the DECLARED names in instead.
-        List<string>? paramNames = paramNamesOverride;
-        if (paramNames == null && !functionParams.TryGetValue(callee, out paramNames))
+        // (a dotted "mod.fn" is stored as "mod_fn").
+        List<string>? paramNames = null;
+        if (!functionParams.TryGetValue(callee, out paramNames))
         {
             int dot = callee.IndexOf('.');
             if (dot != -1)
@@ -989,8 +973,7 @@ public partial class IRGenerator
         for (int i = 0; i < paramNames.Count; i++)
             if (byName.ContainsKey(paramNames[i])) lastIdx = Math.Max(lastIdx, i);
 
-        var defaults = defaultsOverride;
-        if (defaults == null) functionParamDefaults.TryGetValue(callee, out defaults);
+        functionParamDefaults.TryGetValue(callee, out var defaults);
         var ordered = new List<Expression>();
         for (int i = 0; i <= lastIdx; i++)
         {
