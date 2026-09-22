@@ -2704,12 +2704,14 @@ public partial class IRGenerator
             string? field = null;
             Expression? rhs = null;
             string? annotatedType = null;
+            Expression? writeTarget = null;
             if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
                 && ma.Object is VariableExpr sv && sv.Name == "self")
             {
                 field = ma.Member;
                 rhs = asg.Value;
                 annotatedType = asg.AnnotatedType;
+                writeTarget = ma;
             }
             // `self.f += v` is a write to the field too -- it counts for the join at any depth.
             else if (s is AugAssignStmt aug && aug.Target is MemberAccessExpr ama
@@ -2717,6 +2719,7 @@ public partial class IRGenerator
             {
                 field = ama.Member;
                 rhs = aug.Value;
+                writeTarget = ama;
             }
 
             if (field == null) continue;
@@ -2868,18 +2871,21 @@ public partial class IRGenerator
                 string? field = null;
                 Expression? rhs = null;
                 string? annotatedType = null;
+                Expression? writeTarget = null;
                 if (ms is AssignStmt masg && masg.Target is MemberAccessExpr mma
                     && mma.Object is VariableExpr msv && msv.Name == "self")
                 {
                     field = mma.Member;
                     rhs = masg.Value;
                     annotatedType = masg.AnnotatedType;
+                    writeTarget = mma;
                 }
                 else if (ms is AugAssignStmt maug && maug.Target is MemberAccessExpr ama
                     && ama.Object is VariableExpr asv && asv.Name == "self")
                 {
                     field = ama.Member;
                     rhs = maug.Value;
+                    writeTarget = ama;
                 }
                 if (field == null) continue;
                 // `+=` widens and kind-checks a field already introduced, but cannot be the
@@ -2921,7 +2927,7 @@ public partial class IRGenerator
                             + $"{writeKind} value in '{m.Name}' -- PyMCU lays each field out at a single "
                             + "fixed type and width, so the two writes cannot share one field. Give the "
                             + "two roles different names, or keep the assigned type consistent",
-                            ms);
+                            writeTarget);
 
                     // The same write also joins the field's width (#488): a 31-bit LCG
                     // update inside a method's nested loop is what makes a param-bound

@@ -780,12 +780,18 @@ public partial class IRGenerator
     /// at least as good as not passing one, and never invents a position that was not measured.
     private PyMCU.Common.CompilerError UserError(string message, PyMCU.Frontend.ASTNode? at)
     {
-        if (at is null || at.Column <= 0)
+        if (at is null || (at.Line <= 0 && at.Column <= 0))
             return UserError(message);
 
         int line = at.Line > 0
             ? at.Line
             : (currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1));
+        // A node the parser stamped with a line but no column (a statement, say) still
+        // knows WHICH line it is: reporting that line without a caret beats falling back
+        // to a statement counter that holds nothing during the scan and answering line 1.
+        if (at.Column <= 0)
+            return new PyMCU.Common.CompilerError("CompileError", message, line)
+                { File = LocatedFile };
         return new PyMCU.Common.CompilerError(
             "CompileError", message, line, at.Column, at.Length > 0 ? at.Length : 1)
             { File = LocatedFile };

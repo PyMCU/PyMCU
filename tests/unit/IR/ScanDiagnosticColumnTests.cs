@@ -100,6 +100,30 @@ public class ScanDiagnosticColumnTests
     }
 
     [Fact]
+    public void AFieldKindConflictPointsAtTheSecondWrite()
+    {
+        //           12345678901234
+        // line 6:  "        self.x = \"no\""  -- the member being written starts at column 14.
+        //
+        // The diagnostic runs during the SCAN, when the statement-level fallback has no line
+        // at all (currentStmtLine/lastLine are 0), so an unstamped node degraded all the way to
+        // line 1 -- "main.py:1:1" for a mistake on line 6. The write's own target node knows
+        // where it is: the `x` of `self.x`, the field the sentence names.
+        var ex = Fails(
+            "class Rec:\n" +
+            "    def __init__(self):\n" +
+            "        self.x = 1\n" +
+            "    def m(self):\n" +
+            "        self.x = \"no\"\n" +
+            "def main() -> None:\n" +
+            "    r = Rec()\n" +
+            "    r.m()\n");
+
+        Assert.Contains("first typed as numeric", ex.Message);
+        At(ex, 6, 14, 1);
+    }
+
+    [Fact]
     public void ADuplicateMethodPointsAtTheSecondDefinition()
     {
         //          12345678
