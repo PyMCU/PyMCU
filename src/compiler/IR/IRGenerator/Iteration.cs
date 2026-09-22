@@ -266,36 +266,31 @@ public partial class IRGenerator
     // they do not expand into the unroll.
     private static bool CheapBodyShape(Statement? s)
     {
-        switch (s)
+        foreach (var st in TypeInference.WalkStatements(s))
         {
-            case null: return true;
-            case ForStmt or WhileStmt: return false;
-            case Block b: return b.Statements.All(CheapBodyShape);
-            case IfStmt i:
-                return CheapExprShape(i.Condition)
-                    && CheapBodyShape(i.ThenBranch)
-                    && i.ElifBranches.All(e => CheapExprShape(e.Condition) && CheapBodyShape(e.Body))
-                    && CheapBodyShape(i.ElseBranch);
-            case MatchStmt m:
-                return CheapExprShape(m.Target)
-                    && m.Branches.All(br => CheapExprShape(br.Guard) && CheapBodyShape(br.Body));
-            case WithStmt w: return CheapExprShape(w.ContextExpr) && CheapBodyShape(w.Body);
-            case TryStmt t:
-                return t.Body.All(CheapBodyShape)
-                    && t.Handlers.All(h => h.Handler.All(CheapBodyShape))
-                    && (t.ElseBody?.All(CheapBodyShape) ?? true)
-                    && (t.Finally?.All(CheapBodyShape) ?? true);
-            case AssignStmt a: return CheapExprShape(a.Target) && CheapExprShape(a.Value);
-            case AnnAssign a: return CheapExprShape(a.Value);
-            case AugAssignStmt a: return CheapExprShape(a.Target) && CheapExprShape(a.Value);
-            case ExprStmt e: return CheapExprShape(e.Expr);
-            case ReturnStmt r: return CheapExprShape(r.Value);
-            case TupleUnpackStmt t: return CheapExprShape(t.Value);
-            case AssertStmt a: return CheapExprShape(a.Condition);
-            case RaiseStmt r: return CheapExprShape(r.MessageExpr);
-            case VarDecl v: return CheapExprShape(v.Init);
-            default: return true;   // break/continue/pass/global/nonlocal/import/def/class
+            bool cheap = st switch
+            {
+                ForStmt or WhileStmt => false,
+                IfStmt i => CheapExprShape(i.Condition)
+                    && i.ElifBranches.All(e => CheapExprShape(e.Condition)),
+                MatchStmt m => CheapExprShape(m.Target)
+                    && m.Branches.All(br => CheapExprShape(br.Guard)),
+                WithStmt w => CheapExprShape(w.ContextExpr),
+                TryStmt => true,
+                AssignStmt a => CheapExprShape(a.Target) && CheapExprShape(a.Value),
+                AnnAssign a => CheapExprShape(a.Value),
+                AugAssignStmt a => CheapExprShape(a.Target) && CheapExprShape(a.Value),
+                ExprStmt e => CheapExprShape(e.Expr),
+                ReturnStmt r => CheapExprShape(r.Value),
+                TupleUnpackStmt t => CheapExprShape(t.Value),
+                AssertStmt a => CheapExprShape(a.Condition),
+                RaiseStmt r => CheapExprShape(r.MessageExpr),
+                VarDecl v => CheapExprShape(v.Init),
+                _ => true,   // break/continue/pass/global/nonlocal/import/def/class
+            };
+            if (!cheap) return false;
         }
+        return true;
     }
 
     private static bool CheapExprShape(Expression? e)
@@ -636,36 +631,30 @@ public partial class IRGenerator
         int nodes = 0;
         try
         {
-            void Stmt(Statement? s)
+            // Per-statement count for the shared walk: each statement adds what the
+            // old recursion counted for that node; the walk supplies the children.
+            void Stmt(Statement s)
             {
                 switch (s)
                 {
-                    case null: return;
-                    case Block b: foreach (var cs in b.Statements) Stmt(cs); return;
                     case IfStmt i:
-                        nodes++; Expr(i.Condition); Stmt(i.ThenBranch);
-                        foreach (var (c, eb) in i.ElifBranches) { Expr(c); Stmt(eb); }
-                        Stmt(i.ElseBranch); return;
-                    case WhileStmt w: nodes++; Expr(w.Condition); Stmt(w.Body); return;
+                        nodes++; Expr(i.Condition);
+                        foreach (var (c, _) in i.ElifBranches) Expr(c);
+                        return;
+                    case WhileStmt w: nodes++; Expr(w.Condition); return;
                     case ForStmt f:
                         nodes++;
                         if (f.Iterable != null) Expr(f.Iterable);
                         if (f.RangeStart != null) Expr(f.RangeStart);
                         if (f.RangeStop != null) Expr(f.RangeStop);
                         if (f.RangeStep != null) Expr(f.RangeStep);
-                        Stmt(f.Body); return;
+                        return;
                     case MatchStmt m:
                         nodes++; Expr(m.Target);
-                        foreach (var br in m.Branches) { Expr(br.Guard); Stmt(br.Body); }
+                        foreach (var br in m.Branches) Expr(br.Guard);
                         return;
-                    case WithStmt w: nodes++; Expr(w.ContextExpr); Stmt(w.Body); return;
-                    case TryStmt t:
-                        nodes++;
-                        foreach (var cs in t.Body) Stmt(cs);
-                        foreach (var (_, h) in t.Handlers) foreach (var cs in h) Stmt(cs);
-                        if (t.ElseBody != null) foreach (var cs in t.ElseBody) Stmt(cs);
-                        if (t.Finally != null) foreach (var cs in t.Finally) Stmt(cs);
-                        return;
+                    case WithStmt w: nodes++; Expr(w.ContextExpr); return;
+                    case TryStmt: nodes++; return;
                     case AssignStmt a: nodes++; Expr(a.Target); Expr(a.Value); return;
                     case AnnAssign a: nodes++; Expr(a.Value); return;
                     case AugAssignStmt a: nodes++; Expr(a.Target); Expr(a.Value); return;
@@ -675,6 +664,7 @@ public partial class IRGenerator
                     case AssertStmt a: nodes++; Expr(a.Condition); return;
                     case RaiseStmt r: nodes++; Expr(r.MessageExpr); return;
                     case VarDecl v: nodes++; Expr(v.Init); return;
+                    case Block: return;
                     default: nodes++; return;
                 }
             }
@@ -716,7 +706,7 @@ public partial class IRGenerator
                     default: nodes++; return;
                 }
             }
-            Stmt(body);
+            foreach (var s in TypeInference.WalkStatements(body)) Stmt(s);
             return nodes;
         }
         finally { currentModulePrefix = savedPrefix; }
@@ -3750,33 +3740,14 @@ public partial class IRGenerator
     private static bool MethodReturnsBareSelf(FunctionDef method)
     {
         bool sawReturn = false, allSelf = true;
-        void S(Statement? st)
-        {
-            switch (st)
+        // The old recursion skipped match bodies: a `return self` in a case was
+        // never counted.
+        foreach (var st in TypeInference.WalkStatements(method.Body))
+            if (st is ReturnStmt r)
             {
-                case null: return;
-                case Block b: foreach (var cs in b.Statements) S(cs); return;
-                case ReturnStmt r:
-                    sawReturn = true;
-                    if (r.Value is not VariableExpr { Name: "self" }) allSelf = false;
-                    return;
-                case IfStmt i:
-                    S(i.ThenBranch);
-                    foreach (var (_, br) in i.ElifBranches) S(br);
-                    S(i.ElseBranch);
-                    return;
-                case WhileStmt w: S(w.Body); return;
-                case ForStmt f: S(f.Body); return;
-                case WithStmt wi: S(wi.Body); return;
-                case TryStmt t:
-                    foreach (var cs in t.Body) S(cs);
-                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
-                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
-                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
-                    return;
+                sawReturn = true;
+                if (r.Value is not VariableExpr { Name: "self" }) allSelf = false;
             }
-        }
-        S(method.Body);
         return sawReturn && allSelf;
     }
 
