@@ -4,6 +4,24 @@
 
 ### Added
 
+- **ir**: compile-time 2-D grids the way CircuitPython writes them:
+  `g = [[v] * W for _ in range(H)]`, `g = [bytearray(W) for _ in range(H)]` and
+  `self.g = <same>` in `__init__` lower to ONE flat fixed array of `W * H`
+  elements, with `g[y][x]` emitting the same `y * W + x` index arithmetic the
+  hand-flattened `bytearray(W * H)` spelling produces. Both dimensions fold
+  exactly like a fixed array's size -- literals, `const` names, module
+  constants, or a constructor argument that is a literal at every call site.
+  `len(g)` is `H`, `len(g[y])` is `W`, `for row in g` lowers to a row-index
+  loop when the body only touches `row[x]`, `for x in g[y]` iterates one row,
+  and `r = g[y]` binds a row view usable only for `r[x]` / `len(r)` /
+  `for x in r` in the same block. A row is a view, not a value: passing it,
+  returning it, storing it in a field, comparing it, `in` on it, slicing it or
+  the grid, appending to it and rebinding `g[y]` are each refused with a
+  located diagnostic on both front ends, and `[[0] * W] * H` is refused
+  outright because CPython's spelling aliases a single row. The
+  `compat-cp-life` demandant written with `self.cells[y][x]` produces a
+  byte-identical I2C stream to the hand-flattened fixture on the emulator and
+  to CircuitPython 10.3.1.
 - **ir**: void calls to the same subroutine with structurally identical constant
   arguments now share one synthesized zero-argument stub. An init sequence like the
   SSD1306's calls `writeto(addr, temp, 2)` dozens of times and re-marshaled the same

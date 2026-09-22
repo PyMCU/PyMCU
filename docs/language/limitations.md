@@ -677,6 +677,23 @@ A list of NUMBERS in a field works the same way for a constant subscript, `for` 
 `len()`. A `bytearray` or a fixed array handed to a driver keeps its storage, so
 `self._data[i] = v` writes the caller's buffer.
 
+**A 2-D grid the way CircuitPython writes it.** `g = [[0] * W for _ in range(H)]`,
+`g = [[v] * W for _ in range(H)]` with a constant `v`, `g = [bytearray(W) for _ in
+range(H)]`, and `self.g = <same>` in `__init__` all lower to ONE flat fixed array of
+`W * H` elements -- `g[y][x]` is `g[y * W + x]` with the same index arithmetic the
+hand-flattened spelling emits, so the grid costs nothing over a `bytearray(W * H)`.
+Both dimensions fold exactly like a fixed array's size: literals, `const` names,
+module constants, or a constructor argument that is a literal at every call site.
+`len(g)` is `H`, `len(g[y])` is `W`, `for row in g` runs a row-index loop when the
+body only touches `row[x]`, and `for x in g[y]` walks one row's elements. A row is a
+VIEW into the flat array, not a value: `r = g[y]` is allowed only while every later
+use of `r` in the same block is `r[x]`, `len(r)` or `for x in r`. Anything that
+needs the row to be a value -- passing it, returning it, storing it in a field,
+comparing it, `in` on it, slicing it, appending to it, rebinding `g[y]`, slicing the
+grid (`g[a:b]`) -- is refused, naming the construct. `[[0] * W] * H` is refused
+outright: in CPython that spelling makes `H` aliases of ONE row object, so
+`g[0][1] = v` would write every row -- write the comprehension instead.
+
 **A method is not a field.** `Pin.value` is an overloaded method (`value()` reads,
 `value(x)` writes), so `p.value = 1` is an assignment to a name the class does not have as
 a field. It is refused where it is written, and told to call `p.value(1)` instead. The
