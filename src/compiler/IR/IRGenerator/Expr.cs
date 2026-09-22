@@ -2695,9 +2695,24 @@ public partial class IRGenerator
                 if (arraySizes.TryGetValue(srcQ, out int srcSize))
                 {
                     DataType elemDt = arrayElemTypes[srcQ];
-                    int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
-                    int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
-                    int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+                    // The bounds decide the materialized copy's size -- a compile-time
+                    // question, so locals fold here exactly as the range unroller's trip
+                    // count does (#326). `buf = self._buffer[i*17 : i*17 + 17]` inside a
+                    // compile-time unrolled enumerate (adafruit_ht16k33's show()) is the
+                    // demandant: `i` is the unroll's constant and the offset local it
+                    // feeds sits in localConstantValues.
+                    int start, stop, step;
+                    {
+                        bool savedFoldLocals = foldLocalConstants;
+                        foldLocalConstants = true;
+                        try
+                        {
+                            start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+                            stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
+                            step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+                        }
+                        finally { foldLocalConstants = savedFoldLocals; }
+                    }
                     if (step == 0) throw UserError("Slice step cannot be zero", expr.Index);
                     if (start < 0) start += srcSize;
                     if (stop < 0) stop += srcSize;
