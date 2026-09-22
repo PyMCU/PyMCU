@@ -359,6 +359,22 @@ def run_backend(
     if uart_owned and _capable(caps, "--uart-owned"):
         cmd.append("--uart-owned")
 
+    # RFC 0009: a .mir whose functions carry return members transports a tag byte the
+    # backend must move. A backend binary that predates the flag would deserialize the
+    # file, drop the tag silently and emit a payload-only return -- the exact silent
+    # miscompile the tagged union exists to end. The flag is the capability check.
+    try:
+        mir_uses_return_tags = '"returnMembers"' in ir_file.read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        mir_uses_return_tags = False
+    if mir_uses_return_tags:
+        if not _capable(caps, "--return-tags"):
+            _refuse_unsupported(
+                backend_binary, "--return-tags",
+                "the program returns Optional[...] and the tag byte must be moved")
+        cmd.append("--return-tags")
+
     # returncode == -9 means the backend was SIGKILL'd by the OS -- on macOS the kernel
     # reclaims processes under load (jetsam) when many builds run in parallel. That is
     # never a legitimate compiler result and is transient, so retry a few times before

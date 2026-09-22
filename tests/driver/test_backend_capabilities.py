@@ -164,6 +164,54 @@ def test_a_binary_missing_a_base_flag_refuses_by_name(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# run_backend: a .mir with return tags needs --return-tags (RFC 0009)
+# ---------------------------------------------------------------------------
+
+TAGGED_MIR = '{"functions":[{"name":"read","returnMembers":["uint8","None"],' \
+    '"body":[{"$t":"return","value":{"$t":"none"},"tag":{"$t":"const","value":1}}]}]}'
+
+
+def _invoke_tagged(binary: Path, tmp_path: Path, **kwargs):
+    ir_file = tmp_path / "tagged.mir"
+    ir_file.write_text(TAGGED_MIR)
+    kwargs.setdefault("configs", {})
+    run_backend(
+        backend_binary=binary, ir_file=ir_file,
+        output_file=tmp_path / "firmware.asm",
+        target="atmega328p", freq=16_000_000, **kwargs,
+    )
+
+
+def test_a_tagged_mir_refuses_a_backend_without_return_tags(tmp_path):
+    binary = fake_backend(tmp_path, "pymcuc-pic", BASE_HELP, tmp_path / "argv")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _invoke_tagged(binary, tmp_path)
+
+    message = str(excinfo.value)
+    assert "pic" in message
+    assert "--return-tags" in message
+
+
+def test_a_tagged_mir_passes_the_flag_when_declared(tmp_path):
+    argv_log = tmp_path / "argv"
+    binary = fake_backend(tmp_path, "pymcuc-avr", BASE_HELP + "  --return-tags\n", argv_log)
+
+    _invoke_tagged(binary, tmp_path)
+
+    assert "--return-tags" in argv_log.read_text()
+
+
+def test_an_untagged_mir_never_needs_the_flag(tmp_path):
+    argv_log = tmp_path / "argv"
+    binary = fake_backend(tmp_path, "pymcuc-pic", BASE_HELP, argv_log)
+
+    invoke(binary, tmp_path)  # empty .mir: must not raise and must not pass the flag
+
+    assert "--return-tags" not in argv_log.read_text()
+
+
+# ---------------------------------------------------------------------------
 # run_backend: an unreadable --help means unknown, not unsupported
 # ---------------------------------------------------------------------------
 
