@@ -26,7 +26,7 @@ STDLIB = REPO / "lib" / "src"
 pytestmark = pytest.mark.skipif(
     not PYMCUC.exists(), reason="compiler binary not built (run `just build`)")
 
-AND, OR = 12, 13        # binary opcodes
+AND, OR = 13, 14        # binary opcodes (BinaryOp enum; Pow was inserted at 6)
 
 # pin -> (TCCRxA, OCRx, PORTx, pin bit, COM-clear mask, COM-set mask)
 # COMxA is TCCRxA bits 7:6, COMxB is bits 5:4; non-inverting is the high bit set.

@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(
     not PYMCUC.exists(), reason="compiler binary not built (run `just build`)")
 
 OCR0A, TCCR0A = 0x47, 0x44
-AND, OR = 12, 13
+AND, OR = 13, 14  # binary opcodes (BinaryOp enum; Pow was inserted at 6)
 
 
 def ir_of(tmp_path: Path, body: str):
