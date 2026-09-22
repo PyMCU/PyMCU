@@ -94,6 +94,48 @@ public static class Optimizer
         if (optimized.Functions.Any(f => f.Name == "main"))
             optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
 
+        // --- Dead FlashData elimination ---
+        // IR generation collects every materialised table -- a constant sequence an
+        // expensive loop lowered onto, an interned const[str], an embedded romfs blob --
+        // into the main body before reachability is decided. When the function that
+        // needed the table is pruned above, its FlashData stays behind with no reader
+        // left, and the backend still emits the bytes. A table is live iff a remaining
+        // body still names it.
+        {
+            var fdataNames = new HashSet<string>();
+            foreach (var func in optimized.Functions)
+            foreach (var instr in func.Body)
+                if (instr is FlashData fd) fdataNames.Add(fd.Name);
+
+            if (fdataNames.Count > 0)
+            {
+                var liveTables = new HashSet<string>();
+                foreach (var func in optimized.Functions)
+                foreach (var instr in func.Body)
+                {
+                    switch (instr)
+                    {
+                        case ArrayLoad al: liveTables.Add(al.ArrayName); break;
+                        case ArrayLoadFlash alf: liveTables.Add(alf.ArrayName); break;
+                        case ArrayStore ast: liveTables.Add(ast.ArrayName); break;
+                    }
+                    RegisterUses(instr, val =>
+                    {
+                        string? n = val switch
+                        {
+                            Variable v => v.Name,
+                            ArrayBase ab => ab.ArrayName,
+                            FlashStrAddr fsa => fsa.Name,
+                            _ => null,
+                        };
+                        if (n != null && fdataNames.Contains(n)) liveTables.Add(n);
+                    });
+                }
+                foreach (var func in optimized.Functions)
+                    func.Body.RemoveAll(i => i is FlashData fd && !liveTables.Contains(fd.Name));
+            }
+        }
+
         // --- Dead Global Elimination (DGE) ---
         // A global is live only if a Variable with that name is referenced
         // (read OR written) inside a reachable function body.  Globals that
