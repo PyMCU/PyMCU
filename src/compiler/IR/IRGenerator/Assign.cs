@@ -1565,7 +1565,35 @@ public partial class IRGenerator
             }
             else
             {
-                if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name, varExpr);
+                if (!string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    target = ResolveBinding(varExpr.Name, varExpr);
+                    // A store binds THIS expansion's local, but ResolveBinding is a READ
+                    // path: for a name the expansion has not written yet its
+                    // closure-capture walk can answer with an enclosing scope's
+                    // compile-time constant -- never a writable target. `character =
+                    // ord(char) - 48` inside ht16k33's _put resolved to the enclosing
+                    // _text loop's `character` constant, the Copy stored into a literal,
+                    // and the name stayed unbound so a later read folded the wrong
+                    // scope's value. Mint the local when the answer names no slot of
+                    // this expansion's own (a write-through alias is the one exception:
+                    // its foreign name IS the point).
+                    string localKey = currentInlinePrefix + varExpr.Name;
+                    if (target is not Variable wv
+                        || (wv.Name != localKey && !writeThroughAliases.Contains(localKey)))
+                    {
+                        DataType lt = value switch
+                        {
+                            Temporary t => t.Type,
+                            Variable v => v.Type,
+                            FloatConstant => DataType.FLOAT,
+                            Constant cc => NarrowestTypeFor(cc.Value, cc.Value),
+                            _ => DataType.UINT8,
+                        };
+                        variableTypes[localKey] = lt;
+                        target = new Variable(localKey, lt);
+                    }
+                }
                 else
                 {
                     // Check if the variable is a module-level mutable global.
