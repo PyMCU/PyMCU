@@ -175,7 +175,12 @@ def mock_toolchain(monkeypatch, tmp_path):
         hex_out.write_text(":00000001FF\n")  # minimal valid HEX EOF record
         return hex_out
 
-    import pymcu.toolchain.pic.gputils as gputils
+    # pymcu-pic is an external backend package; when it is absent the tests
+    # using this fixture skip instead of erroring in fixture setup.
+    gputils = pytest.importorskip(
+        "pymcu.toolchain.pic.gputils",
+        reason="pymcu-pic (external PIC backend) not installed",
+    )
     monkeypatch.setattr(gputils.GputilsToolchain, "is_cached", fake_is_cached)
     monkeypatch.setattr(gputils.GputilsToolchain, "install", fake_install)
     monkeypatch.setattr(gputils.GputilsToolchain, "assemble", fake_assemble)
