@@ -2225,6 +2225,26 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // `g[y][x]` on a compile-time 2-D grid: the flat load at g[y*W + x],
+        // the same arithmetic the hand-flattened spelling emits.
+        if (expr.Target is IndexExpr gIn && ResolveGridKey(gIn.Target) is { } nestGrid)
+        {
+            if (gIn.Index is SliceExpr)
+                throw UserError(
+                    "a 2-D grid cannot be sliced -- g[a:b] would have to be a window of " +
+                    "rows, and rows are views, not values. Write the loop.", gIn.Index);
+            if (gIn.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, gIn.Index);
+            if (expr.Index is SliceExpr)
+                throw UserError(
+                    "a row of a 2-D grid cannot be sliced -- a slice would be a view object. " +
+                    "Index an element (g[y][x]) or iterate the row (for x in g[y]).",
+                    expr.Index);
+            if (expr.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, expr.Index);
+            return EmitGridElemLoad(nestGrid, gIn.Index, expr.Index);
+        }
+
         // `sys.implementation.version[i]` (neopixel.py's `version[0] >= 7` feature-detect).
         // RFC 0007 folds this chain through CompileTimeEvaluator in `if`/`match`/`try`
         // conditions, but a condition the frontend cannot finish -- `version[0] >= 7 and

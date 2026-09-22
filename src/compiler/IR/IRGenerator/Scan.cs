@@ -45,6 +45,23 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// A module-level `g = [[v]*W for _ in range(H)]` / `[bytearray(W) ...]` is a
+    /// compile-time 2-D grid: one flat array of W*H elements under the bare name,
+    /// exactly like `name = bytearray(N)`. Registering dims here lets a subscript
+    /// resolve the grid before (or without) the declaration replay reaching
+    /// EmitLocalGridInit.
+    /// </summary>
+    private void TryRegisterModuleGrid(string name, Expression? initializer)
+    {
+        if (initializer is not ListCompExpr comp || !IsGridComprehension(comp)) return;
+        if (!TryFoldGridDims(comp, out var dims)) return;
+        arraySizes[name] = dims.W * dims.H;
+        arrayElemTypes[name] = GridElemTypeOf(comp);
+        gridDims[name] = dims;
+        moduleSramArrays.Add(name);
+    }
+
+    /// <summary>
     /// A buffer's size is the largest it is ever asked for (#362). Replaying
     /// <c>name = bytearray(n)</c> in module init must not undo a <c>.extend()</c>
     /// that already grew it. Class-body constructors run ahead of the module's own
@@ -593,6 +610,12 @@ public partial class IRGenerator
                     // register the fixed buffer just like the annotated form.
                     TryRegisterModuleBytearray(name, initializer);
 
+                    // `g = [[v]*W for _ in range(H)]` at module level: a compile-time
+                    // 2-D grid -- one flat array of W*H elements filed under the
+                    // bare name, so the synthesized init's replay aliases `main.g`
+                    // onto it exactly like `name = bytearray(N)`.
+                    TryRegisterModuleGrid(name, initializer);
+
                     // Unannotated module-level `NAME = "..."`, for the same reason. Only the
                     // two annotated spellings above were registered here, so the bare one
                     // reached strConstantVariables solely as a side effect of LOWERING the
@@ -710,6 +733,13 @@ public partial class IRGenerator
                             arraySizes[name] = count;
                             arrayElemTypes[name] = elemDt;
                             moduleSramArrays.Add(name);
+                            // `g: uint8[W*H] = <grid comp>`: the dims ride along
+                            // so a read before the replay still sees the grid.
+                            if (initializer is ListCompExpr annGridComp
+                                && IsGridComprehension(annGridComp)
+                                && TryFoldGridDims(annGridComp, out var annDims)
+                                && annDims.W * annDims.H == count)
+                                gridDims[name] = annDims;
                         }
                     }
                 }
@@ -2799,6 +2829,17 @@ public partial class IRGenerator
                 if (!classBufferFields.TryGetValue(classKey, out var bufSet))
                     classBufferFields[classKey] = bufSet = new HashSet<string>();
                 bufSet.Add(field);
+                continue;
+            }
+
+            // `self.cells = [[v]*W for _ in range(H)]` -- a grid FIELD: one flat
+            // per-instance array, not a scalar. Same exemption as the bytearray
+            // buffer above: kept out of `layout`, kept in `seen`.
+            if (rhs is ListCompExpr compRhs && IsGridComprehension(compRhs))
+            {
+                if (!classBufferFields.TryGetValue(classKey, out var gridSet))
+                    classBufferFields[classKey] = gridSet = new HashSet<string>();
+                gridSet.Add(field);
                 continue;
             }
 

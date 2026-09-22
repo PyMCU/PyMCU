@@ -566,6 +566,16 @@ public partial class IRGenerator
             if (TryStructUnpackSeq(stmt.Value, out var unpackElems, out var unpackTypes)
                 && TryVisitCtListAssign(listTarget, unpackElems, unpackTypes)) return;
 
+            // `g = [[v]*W for _ in range(H)]` / `g = [bytearray(W) for _ in
+            // range(H)]`: a compile-time 2-D grid, lowered to ONE flat array of
+            // W*H elements. `g[y][x]` is `g[y*W + x]` -- the same arithmetic the
+            // hand-flattened spelling emits.
+            if (stmt.Value is ListCompExpr gridComp && IsGridComprehension(gridComp))
+            {
+                EmitLocalGridInit(listTarget.Name, gridComp, listTarget);
+                return;
+            }
+
             List<Expression>? elemExprs = stmt.Value switch
             {
                 ListExpr le => le.Elements,
@@ -633,6 +643,15 @@ public partial class IRGenerator
         if (stmt.Target is MemberAccessExpr { Object: VariableExpr } seqMem
             && MemberFlatKey(seqMem) is { } seqFieldKey)
         {
+            // `self.cells = [[v]*W for _ in range(H)]` / `[bytearray(W) ...]`:
+            // a grid FIELD -- one flat `<instance>_<member>` array of W*H
+            // elements, exactly like `self.buf = bytearray(n)`.
+            if (stmt.Value is ListCompExpr gridFieldComp && IsGridComprehension(gridFieldComp))
+            {
+                EmitMemberGridInit(seqMem, gridFieldComp);
+                return;
+            }
+
             string? seqSourceBase = null;
             if (stmt.Value is ListExpr seqFieldLit && IsInstanceSequenceLiteral(seqFieldLit))
                 seqSourceBase = HoistInstanceSequence(seqFieldLit);
@@ -3551,6 +3570,29 @@ public partial class IRGenerator
         if (indexExpr.Index is TupleExpr && !SubscriptTakesAPair(indexExpr.Target, "__setitem__"))
             throw UserError(TwoIndexSubscriptRefusal, indexExpr.Index);
 
+        // `g[y][x] = v` on a compile-time 2-D grid: the flat store at
+        // g[y*W + x]. A write that would touch a ROW -- `g[y] = <new row>`,
+        // `g[a:b] = ...`, `g[y][a:b] = ...` -- has no object to land on: a row
+        // is a view, not a variable, and it cannot be rebound or sliced.
+        if (indexExpr.Target is IndexExpr gInner && ResolveGridKey(gInner.Target) != null)
+        {
+            if (gInner.Index is SliceExpr)
+                throw UserError(
+                    "a 2-D grid cannot be sliced -- g[a:b] would have to be a window of " +
+                    "rows, and rows are views, not values. Write the loop.", gInner.Index);
+            if (gInner.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, gInner.Index);
+            if (indexExpr.Index is SliceExpr)
+                throw UserError(
+                    "a row of a 2-D grid cannot be sliced -- a slice would be a view object. " +
+                    "Write the element stores one by one (g[y][x] = v, or a loop).",
+                    indexExpr.Index);
+            if (indexExpr.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, indexExpr.Index);
+            EmitGridElemStore(ResolveGridKey(gInner.Target)!, gInner.Index, indexExpr.Index, stmt.Value);
+            return;
+        }
+
         // `cls.string[k] = v` inside a @classmethod: accumulate a compile-time class dict.
         if (indexExpr.Target is MemberAccessExpr dictMem
             && ClassNameOf(dictMem.Object) is { } dictCls)
@@ -5733,6 +5775,28 @@ public partial class IRGenerator
                 memElem = DataTypeExtensions.StringToDataType(memHead);
             }
 
+            // `self.cells: uint8[W*H] = [[v]*W for _ in range(H)]` -- a grid field
+            // with the flat size written down; the comprehension's W*H must
+            // equal N. Without this check the value silently initialised all-zero.
+            if (stmt.Value is ListCompExpr memGridComp && IsGridComprehension(memGridComp))
+            {
+                var (mgw, mgh) = GridDimsOf(memGridComp, stmt.Value);
+                if (mgw * mgh != memCount)
+                    throw UserError(
+                        $"the grid comprehension is {mgw}x{mgh} = {mgw * mgh} elements but " +
+                        $"'{stmt.Target}' is declared {stmt.Annotation} = {memCount} -- they must agree",
+                        stmt.Value);
+                EmitMemberGridInit(new MemberAccessExpr(new VariableExpr(objName), member),
+                    memGridComp, memElem);
+                return;
+            }
+            if (stmt.Value is ListCompExpr)
+                throw UserError(
+                    $"the comprehension for '{stmt.Target}' is not a grid shape -- it must be " +
+                    "[[v] * W for _ in range(H)] or [bytearray(W) for _ in range(H)]; a list " +
+                    "field's other forms need a literal: `self.f: T[N] = [v0, v1, ...]`",
+                    stmt.Value);
+
             // Zero-initialise (a NeoPixel strip starts all-off), or apply a
             // literal list initialiser when one is supplied.
             var memInit = new List<int>(Enumerable.Repeat(0, memCount));
@@ -6415,6 +6479,21 @@ public partial class IRGenerator
             {
                 if (stmt.Value is ListCompExpr lc)
                 {
+                    // `g: uint8[W*H] = [[v]*W for _ in range(H)]`: a 2-D grid with
+                    // the flat size written down -- the comprehension's W*H must
+                    // equal N.
+                    if (IsGridComprehension(lc))
+                    {
+                        var (gw, gh) = GridDimsOf(lc, stmt.Value);
+                        if (gw * gh != count)
+                            throw UserError(
+                                $"the grid comprehension is {gw}x{gh} = {gw * gh} elements " +
+                                $"but '{stmt.Target}' is declared {stmt.Annotation} = {count} " +
+                                "-- they must agree", stmt.Value);
+                        RegisterGrid(qualified, gw, gh, elemDt);
+                        EmitGridFill(qualified, lc, gw, gh, elemDt);
+                        return true;
+                    }
                     VisitListComp(lc, qualified, count, elemDt);
                     return true;
                 }
@@ -7243,6 +7322,20 @@ public partial class IRGenerator
             // truncate the sum before the store-back.
             Temporary result = MakeTemp(GetValType(current));
             Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), current, operand, result));
+
+            // `g[y][x] += v` / `r[x] += v` on a 2-D grid: the store-back is the
+            // flat store at g[y*W + x].
+            if (ie.Target is IndexExpr augInner
+                && augInner.Index is not SliceExpr and not TupleExpr
+                && ie.Index is not SliceExpr and not TupleExpr
+                && ResolveGridKey(augInner.Target) is { } augGridKey)
+            {
+                var (aw, ah) = gridDims[augGridKey];
+                EmitGridElemStoreVal(augGridKey,
+                    EvalGridIndex(augInner.Index, ah, "row"),
+                    EvalGridIndex(ie.Index, aw, "column"), result);
+                return;
+            }
 
             if (ie.Target is VariableExpr ve2)
             {
