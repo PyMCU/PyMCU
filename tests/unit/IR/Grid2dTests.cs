@@ -145,7 +145,40 @@ public class Grid2dTests
         Assert.NotNull(ir);
     }
 
+    // ── len() ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Len_OfGridIsHeight_OfRowIsWidth()
+    {
+        var ir = Gen(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    h = len(g)\n" +
+            "    w = len(g[0])\n" +
+            "    y = 1\n" +
+            "    w2 = len(g[y])\n");
+
+        var consts = AllBody(ir).OfType<Copy>()
+            .Where(c => c.Src is Constant).Select(c => ((Constant)c.Src).Value).ToList();
+        Assert.Contains(3, consts);
+        Assert.Contains(4, consts);
+    }
+
     // ── iteration and aliases ───────────────────────────────────────────
+
+    [Fact]
+    public void ForRowIn_LowersToARowIndexLoop()
+    {
+        var ir = Gen(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    s = 0\n" +
+            "    for row in g:\n" +
+            "        s = s + row[0]\n");
+
+        Assert.NotNull(ir);
+        Assert.Contains(AllBody(ir).OfType<ArrayLoad>(), l => l.ArrayName == "main.g");
+    }
 
     [Fact]
     public void RowAlias_SameBlockReadsAndWrites_Compile()
@@ -156,11 +189,27 @@ public class Grid2dTests
             "    y = 2\n" +
             "    r = g[y]\n" +
             "    r[0] = 1\n" +
-            "    x = r[1]\n");
+            "    x = r[1]\n" +
+            "    n = len(r)\n");
 
         Assert.NotNull(ir);
         Assert.Contains(AllBody(ir).OfType<ArrayStore>(),
             s => s.ArrayName == "main.g" && s.Src is Constant { Value: 1 });
+    }
+
+    [Fact]
+    public void ForElementInRow_IteratesTheRow()
+    {
+        var ir = Gen(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    y = 1\n" +
+            "    s = 0\n" +
+            "    for x in g[y]:\n" +
+            "        s = s + x\n");
+
+        Assert.NotNull(ir);
+        Assert.Contains(AllBody(ir).OfType<ArrayLoad>(), l => l.ArrayName == "main.g");
     }
 
     // ── refusals ────────────────────────────────────────────────────────────

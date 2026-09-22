@@ -4478,6 +4478,18 @@ public partial class IRGenerator
         // statically known length.
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
 
+        // 2-D grid lengths: len(g) is the row count H; len(g[y]) -- and len(r)
+        // where r was bound to a row -- are the row width W. Both fold at
+        // compile time; the row is never a value.
+        if (expr.Args[0] is IndexExpr lenIx
+            && lenIx.Index is not SliceExpr and not TupleExpr
+            && ResolveGridKey(lenIx.Target) is { } lenRowGrid)
+            return new Constant(gridDims[lenRowGrid].W);
+        if (expr.Args[0] is VariableExpr lenRowVe && ResolveRowRef(lenRowVe) is { } lenRowRef)
+            return new Constant(gridDims[lenRowRef.GridKey].W);
+        if (ResolveGridKey(expr.Args[0]) is { } lenGridKey)
+            return new Constant(gridDims[lenGridKey].H);
+
         // RFC 0008: len() on a read view is its avail count; on a readline buffer the
         // line's length variable; on os.listdir()'s result the entry count. A direct
         // len(f.read(n)) mints the view and takes its avail.

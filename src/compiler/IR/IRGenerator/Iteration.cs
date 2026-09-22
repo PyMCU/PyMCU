@@ -1655,6 +1655,44 @@ public partial class IRGenerator
                 throw UserError(GenExpWhere + " -- as a `for` iterable it would have to be "
                     + "a value, and it is not one.", iter);
 
+            // A compile-time 2-D grid iterates ROWS: `for row in g` binds a row
+            // view per iteration (lowered to a row-index loop), and
+            // `for x in g[y]` / `for x in r` walk one row's elements.
+            if (iter is IndexExpr forRowIx && ResolveGridKey(forRowIx.Target) != null)
+            {
+                if (forRowIx.Index is SliceExpr)
+                    throw UserError(
+                        "a 2-D grid cannot be sliced -- g[a:b] would have to be a window " +
+                        "of rows, and rows are views, not values. Write the loop.",
+                        forRowIx.Index);
+                if (forRowIx.Index is TupleExpr)
+                    throw UserError(TwoIndexSubscriptRefusal, forRowIx.Index);
+                EmitGridRowElemLoop(stmt, forRowIx.Index, ResolveGridKey(forRowIx.Target)!);
+                return;
+            }
+            if (iter is VariableExpr forRowVe && ResolveRowRef(forRowVe) is { } forRowRef)
+            {
+                // The block scan already approved this loop over `r`; the
+                // element loads it synthesizes (`x = r[ci]`) are new nodes that
+                // were never in Uses, so the per-node gate lifts for the body.
+                var savedUses = forRowRef.Uses;
+                forRowRef.Uses = null;
+                try
+                {
+                    EmitIndexedCounterLoop(stmt, iter, 0, gridDims[forRowRef.GridKey].W, 1);
+                }
+                finally
+                {
+                    forRowRef.Uses = savedUses;
+                }
+                return;
+            }
+            if (ResolveGridKey(iter) is { } forGridKey)
+            {
+                EmitGridRowLoop(stmt, forGridKey);
+                return;
+            }
+
             string? GetStr(Expression e)
             {
                 if (e is StringLiteral lit) return lit.Value;
@@ -2164,6 +2202,15 @@ public partial class IRGenerator
                     string valKey = currentInlinePrefix + stmt.Var2Name;
                     Expression inner = call.Args[0];
                     int idx = 0;
+
+                    // enumerate() over a 2-D grid iterates (index, row): the
+                    // index is an ordinary counter and the row a view pinned to
+                    // it -- the same lowering `for row in g` gets.
+                    if (ResolveGridKey(inner) is { } enumGridKey)
+                    {
+                        EmitGridRowLoop(stmt, enumGridKey);
+                        return;
+                    }
 
                     // enumerate() over a list [..] / tuple (..) literal, or an inline
                     // parameter bound to such a literal, of compile-time constants.
