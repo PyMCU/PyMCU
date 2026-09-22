@@ -3572,8 +3572,6 @@ public partial class IRGenerator
                 }
             }
 
-            VisitStatement(stmt.Body);
-
             // CPython always calls __exit__(exc_type, exc_value, traceback); PyMCU's own HAL
             // declares it as __exit__(self) alone. Pass exactly as many placeholders as the
             // resolved method declares, so both spellings work instead of the CPython one
@@ -3581,8 +3579,17 @@ public partial class IRGenerator
             var exitArgs = new List<Expression>();
             if (TryResolveInstanceMethodAst(objName, "__exit__") is { } exitDef)
                 for (int i = 1; i < exitDef.Params.Count; i++) exitArgs.Add(new IntegerLiteral(0));
-            var exitCallee = new MemberAccessExpr(new VariableExpr(objName), "__exit__");
-            var exitCall = new CallExpr(exitCallee, exitArgs);
+            var exitCall = new CallExpr(new MemberAccessExpr(new VariableExpr(objName), "__exit__"), exitArgs);
+
+            // The body can leave early: `return` inside `with` (bmp280's `_read_register`
+            // hands back `result` from inside `with self._i2c`) jumps to the expansion's
+            // exit label, and `break`/`continue` jump to a loop's. Emitting __exit__ only
+            // after the body leaves those paths locked -- i2c_device's `try_lock` stayed
+            // held and the next `with` spun forever. Pending it like a `finally` runs it
+            // on every escape, innermost first, and the normal path still runs it below.
+            finallyStack.Add(new List<Statement> { new ExprStmt(exitCall) });
+            VisitStatement(stmt.Body);
+            finallyStack.RemoveAt(finallyStack.Count - 1);
             VisitExpression(exitCall);
         }
         else

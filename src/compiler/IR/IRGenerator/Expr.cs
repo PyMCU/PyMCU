@@ -389,7 +389,8 @@ public partial class IRGenerator
         currentModulePrefix = className + "_";
         inlineDepth = newDepth;
         var dunderCtx = new InlineContext { ExitLabel = exitLabel, ResultTemp = result, CalleeName = funcKey,
-            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath };
+            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath,
+            FinallyDepth = finallyStack.Count };
         inlineStack.Add(dunderCtx);
 
         // The dunder's body is text in the file the method is DEFINED in, which is not the

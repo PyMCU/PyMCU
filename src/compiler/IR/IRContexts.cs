@@ -85,6 +85,11 @@ public class InlineContext
     // naming the caller's file rather than falling back to the entry file. Empty means the
     // entry file, which is then a statement rather than a fallback. Issue #230.
     public string CallerSourcePath { get; set; } = "";
+
+    // finallyStack depth when this expansion started. A `return` inside the body runs the
+    // pending exits pushed since then -- a `with`'s `__exit__`, a try's `finally` -- but
+    // never the CALLER's pending finallys, which the jump to ExitLabel does not escape.
+    public int FinallyDepth { get; set; } = 0;
 }
 
 public class ModuleScope

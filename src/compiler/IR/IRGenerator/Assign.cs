@@ -1333,7 +1333,7 @@ public partial class IRGenerator
         }
 
         inlineStack.Add(new InlineContext { ExitLabel = exitLabel,
-            CallerSourcePath = savedSourcePath });
+            CallerSourcePath = savedSourcePath, FinallyDepth = finallyStack.Count });
         if (setter?.Body != null) VisitBlock(setter.Body);
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);

@@ -1213,7 +1213,7 @@ public partial class IRGenerator
                 retCtx.ResultAssigned = true;
                 if (_runtimeBranchDepth <= retCtx.EntryBranchDepth)
                     retCtx.ResultReturnedUnconditionally = true;
-                if (finallyStack.Count > 0) EmitPendingFinally();
+                EmitPendingFinally(retCtx.FinallyDepth);
                 Emit(new Jump(retCtx.ExitLabel));
                 return;
             }
@@ -1297,6 +1297,7 @@ public partial class IRGenerator
                 constSequenceBindings.Remove(seqCtx.ResultVars[k]);
             }
 
+            EmitPendingFinally(seqCtx.FinallyDepth);
             Emit(new Jump(seqCtx.ExitLabel));
             return;
         }
@@ -1395,6 +1396,7 @@ public partial class IRGenerator
                     constSequenceBindings.Remove(ctx.ResultVars[k]);
                 }
 
+                EmitPendingFinally(ctx.FinallyDepth);
                 Emit(new Jump(ctx.ExitLabel));
                 return;
             }
@@ -1528,6 +1530,7 @@ public partial class IRGenerator
                             ctx.ResultAssigned = true;
                         }
 
+                        EmitPendingFinally(ctx.FinallyDepth);
                         Emit(new Jump(ctx.ExitLabel));
                         return;
                     }
@@ -1623,6 +1626,7 @@ public partial class IRGenerator
                     ctx.ResultReturnedUnconditionally = true;
             }
 
+            EmitPendingFinally(ctx.FinallyDepth);
             Emit(new Jump(ctx.ExitLabel));
         }
         else

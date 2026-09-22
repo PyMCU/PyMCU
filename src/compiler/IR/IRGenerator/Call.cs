@@ -2126,6 +2126,7 @@ public partial class IRGenerator
             { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames,
               TupleSlotPrefix = tupleSlotPrefix, CalleeName = callee,
               Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth,
+              FinallyDepth = finallyStack.Count,
               // Recorded here because the pair has not moved yet: the switch to the callee
               // happens at the body walk. See #227 and the note on the field.
               CallerSourcePath = currentSourcePath });
@@ -3864,7 +3865,8 @@ public partial class IRGenerator
         currentModulePrefix = basePrefix;
         inlineDepth = newDepth;
         var superCtx = new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult,
-            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath };
+            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath,
+            FinallyDepth = finallyStack.Count };
         inlineStack.Add(superCtx);
 
         // The base method's body is text in the file that method is DEFINED in, which is not
