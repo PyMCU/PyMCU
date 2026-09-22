@@ -183,21 +183,44 @@ public class BufferParamTests
     }
 
     [Fact]
-    public void AFlatSequenceSliceArgument_IsNotMarshaledAsADanglingArrayBase()
+    public void AContiguousSliceArgument_MarshalsItsOwnArrayBase()
     {
-        // `b[1:3]` lowers to a flat `__slice_N__0`,`__slice_N__1`,... element sequence with
-        // no `__slice_N:` label of its own. Marshaling that argument as
-        // `ArrayBase("__slice_N")` hands the backend a base address that was never
-        // allocated -- an undefined symbol at link. Only a contiguous array (one registered
-        // in arraysWithVariableIndex/moduleSramArrays) has a base to take, so the slice must
-        // reach the callee as a value marshal instead. Materializing it into real addressable
-        // storage is the still-open PyMCU/PyMCU#487 hole the oracle corpus tracks.
+        // `b[1:3]` of a contiguous buffer materializes into real addressable storage --
+        // `__slice_N` registered in arraysWithVariableIndex, populated by ArrayStore
+        // copies -- so the argument marshals as `ArrayBase("__slice_N")`, a base that
+        // IS allocated. This is the PyMCU/PyMCU#487 hole, closed: without it the call
+        // marshaled the slice's first element as a scalar and the callee's `buf[0]`
+        // read I/O space at that number's address (adafruit_ht16k33's show() passing
+        // `self._buffer[o : o + 17]` to i2c write, which got a one-byte pointer).
         var ir = Gen(Preamble +
                      "def head(buf: bytearray) -> uint8:\n" +
                      "    return buf[0]\n" +
                      "b: uint8[4] = bytearray(4)\n" +
                      "def main():\n" +
                      "    a: uint8 = head(b[1:3])\n");
+
+        var sliceStores = Body(ir, "main").OfType<ArrayStore>()
+            .Where(s => s.ArrayName.StartsWith("__slice_")).ToList();
+        Assert.Equal(2, sliceStores.Count);
+        Assert.Contains(Body(ir, "main"),
+            i => i is Call c && c.FunctionName == "head"
+                 && c.Args.Any(a => a is ArrayBase ab && ab.ArrayName == sliceStores[0].ArrayName));
+    }
+
+    [Fact]
+    public void AFlatSequenceSliceArgument_IsNotMarshaledAsADanglingArrayBase()
+    {
+        // A slice of a flat element sequence (the `xs = [...]` literal form has no
+        // contiguous allocation of its own) still lowers to `__slice_N__k` element
+        // variables with no `__slice_N:` label. Marshaling that as
+        // `ArrayBase("__slice_N")` would hand the backend a base address that was
+        // never allocated -- an undefined symbol at link -- so the value marshal stays.
+        var ir = Gen(Preamble +
+                     "def head(buf: bytearray) -> uint8:\n" +
+                     "    return buf[0]\n" +
+                     "xs = [1, 2, 3, 4]\n" +
+                     "def main():\n" +
+                     "    a: uint8 = head(xs[1:3])\n");
 
         Assert.DoesNotContain(Body(ir, "main"),
             i => i is Call c && c.Args.Any(a => a is ArrayBase));

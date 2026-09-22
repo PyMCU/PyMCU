@@ -2724,12 +2724,17 @@ public partial class IRGenerator
                     string tmpName = "__slice_" + tempCounter++;
                     arraySizes[tmpName] = resultCount;
                     arrayElemTypes[tmpName] = elemDt;
+                    variableTypes[tmpName] = elemDt;
                     bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
+                    // A slice of a bytearray IS a bytearray, and a bytearray is what a
+                    // caller can take the address of -- `i2c_dev.write(buf[a:b])` in
+                    // adafruit_ht16k33's show() marshals ArrayBase. The flat
+                    // `tmp__0`, `tmp__1` element form has no base to take, so a slice of
+                    // contiguous storage gets contiguous storage of its own.
+                    if (srcSram) arraysWithVariableIndex.Add(tmpName);
                     int k = 0;
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step, ++k)
                     {
-                        string dstElem = tmpName + "__" + k;
-                        variableTypes[dstElem] = elemDt;
                         Val srcVal;
                         if (srcSram)
                         {
@@ -2742,7 +2747,16 @@ public partial class IRGenerator
                             srcVal = new Variable(srcQ + "__" + i, elemDt);
                         }
 
-                        Emit(new Copy(srcVal, new Variable(dstElem, elemDt)));
+                        if (srcSram)
+                        {
+                            Emit(new ArrayStore(tmpName, new Constant(k), srcVal, elemDt, resultCount));
+                        }
+                        else
+                        {
+                            string dstElem = tmpName + "__" + k;
+                            variableTypes[dstElem] = elemDt;
+                            Emit(new Copy(srcVal, new Variable(dstElem, elemDt)));
+                        }
                     }
 
                     return new Variable(tmpName, elemDt);
