@@ -7187,7 +7187,10 @@ public partial class IRGenerator
         else if (stmt.Target is IndexExpr ie)
         {
             Val current = VisitIndex(ie);
-            Temporary result = MakeTemp(DataType.UINT8);
+            // The read-modify-write result takes the ELEMENT's width, not a blanket
+            // uint8: `xs[i] += v` on a list[uint16] or a uint16 array would otherwise
+            // truncate the sum before the store-back.
+            Temporary result = MakeTemp(GetValType(current));
             Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), current, operand, result));
 
             if (ie.Target is VariableExpr ve2)
@@ -7195,6 +7198,65 @@ public partial class IRGenerator
                 string qualified = string.IsNullOrEmpty(currentFunction) ? ve2.Name : currentFunction + "." + ve2.Name;
                 if (!arraySizes.ContainsKey(qualified))
                     qualified = ModuleScopeArrayName(qualified);
+                // Same alias/inline resolution the plain `x[i] = v` store path runs:
+                // without it an augmented store on a parameter bound through an
+                // expansion missed every table and fell through to BitWrite.
+                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                    && variableAliases.ContainsKey(qualified)
+                    && TryResolveArrayStorageKey(FollowAliases(qualified), out var aliasedAugStore))
+                    qualified = aliasedAugStore;
+                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                    && !string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string inlineQ = currentInlinePrefix + ve2.Name;
+                    if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
+                        qualified = resolvedQ;
+                    else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
+                        qualified = inlineQ;
+                }
+                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified))
+                {
+                    int lastDot = qualified.LastIndexOf('.');
+                    if (lastDot >= 0)
+                    {
+                        string bare = qualified[(lastDot + 1)..];
+                        if (arraySizes.ContainsKey(bare) || bytearrayParams.Contains(bare))
+                            qualified = bare;
+                    }
+                }
+                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                    && TryResolveArrayStorageKey(qualified, out var augStoreKey))
+                    qualified = augStoreKey;
+
+                // Bytearray parameter: the store-back is an indirect store through the
+                // pointer, same as `buf[i] = v` -- an augmented assign here used to fall
+                // through to BitWrite and write a bit into the pointer itself.
+                if (bytearrayParams.Contains(qualified))
+                {
+                    Val idxVal = VisitExpression(ie.Index);
+                    Emit(new BytearrayStore(qualified, idxVal, result));
+                    return;
+                }
+
+                // list[T] store-back: `xs[i] += v` is read + op + store at heap offset
+                // 2 + i*elemSize, mirroring the plain index-assign path.
+                {
+                    string resolvedList = ResolveNameKey(ve2.Name);
+                    string listQ = listVarElemTypes.ContainsKey(resolvedList) ? resolvedList
+                                 : listVarElemTypes.ContainsKey(qualified) ? qualified
+                                 : listVarElemTypes.ContainsKey(ve2.Name) ? ve2.Name
+                                 : "";
+                    if (!string.IsNullOrEmpty(listQ))
+                    {
+                        DataType elemDt = listVarElemTypes[listQ];
+                        Val listPtr = new Variable(listQ, DataType.GC_REF);
+                        Val idxVal = VisitExpression(ie.Index);
+                        Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
+                        Emit(new StoreIndirect(result, elemAddr, elemDt));
+                        return;
+                    }
+                }
+
                 if (arraySizes.ContainsKey(qualified))
                 {
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))

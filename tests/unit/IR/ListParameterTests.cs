@@ -291,6 +291,42 @@ public class ListParameterTests
             "    b = Bar(buf)\n" +
             "    b.fill(7)\n"));
 
+    // `buf[i] += v` on a bytearray PARAMETER: the read side lowers to BytearrayLoad
+    // but the store-back dispatch missed bytearrayParams entirely and fell through
+    // to BitWrite -- with a constant index it silently wrote a BIT into the pointer
+    // register itself, and with a runtime index it refused "Bit index must be
+    // constant". Both are the plain `buf[i] = v` store's job: BytearrayStore.
+    [Fact]
+    public void ABytearrayParamAugAssign_StoresThroughThePointer()
+    {
+        var ir = Gen(
+            "def poke(buf: bytearray, i: uint8):\n" +
+            "    buf[2] += 1\n" +
+            "    buf[i] += 1\n" +
+            "def main():\n" +
+            "    b: bytearray = bytearray(8)\n" +
+            "    poke(b, 3)\n");
+        var poke = ir.Functions.Single(f => f.Name == "poke");
+        Assert.Equal(2, poke.Body.OfType<BytearrayStore>().Count());
+        Assert.DoesNotContain(poke.Body, i => i is BitWrite);
+    }
+
+    // `xs[i] += v` on a list[T] has the same store-back gap covered: read + op +
+    // StoreIndirect at heap offset 2 + i*elemSize.
+    [Fact]
+    public void AListIndexAugAssign_StoresTheElementBack()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "xs: list[uint8] = list()\n" +
+            "xs.append(4)\n" +
+            "xs[0] += 1\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is StoreIndirect si
+            && si.DstPtr is Temporary && si.Elem == DataType.UINT8);
+        Assert.DoesNotContain(main.Body, i => i is BitWrite);
+    }
+
     // ------------------------------------------------------------------ scoping
 
     // A member assignment whose receiver is a chip REGISTER is not a field: writing a byte
