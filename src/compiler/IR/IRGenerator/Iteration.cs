@@ -219,6 +219,380 @@ public partial class IRGenerator
         }
     }
 
+    // ------------------------------------------------------------------
+    // The unroll policy.
+    //
+    // A compile-time `for` -- range() with folded bounds, a fixed-size sequence,
+    // or enumerate()/reversed()/zip() over one -- copies its body once per
+    // element only when the trip count is at most ConstSequenceUnrollLimit AND
+    // the body is small. UnrolledLoopBodyIsCheap is the "small" half:
+    //
+    //   * no loop nested in the body -- a loop is already a counter, and
+    //     multiplying it is what produced eight copies of the nested Life
+    //     program's inner fill_rect;
+    //   * no call that expands an inline body bigger than
+    //     ConstSequenceUnrollBodyLimit nodes -- `display.show()` pulls in the
+    //     whole byte-at-a-time I2C walk, and N copies of that is N programs,
+    //     not a loop.
+    //
+    // Anything else lowers to the run-time counter loop the same source would
+    // have written with `while`: `for __u in range(n): v = seq[__u]; <body>`.
+    // That fallback needs a sequence the counter can subscript, which is every
+    // fixed array (contiguous SRAM, or a const table the subscript lowering
+    // materialises into flash) and every all-integer constant sequence (interned
+    // the same way). Elements that exist only as compile-time bindings with no
+    // storage form -- instances, string chunks -- still unroll.
+    // ------------------------------------------------------------------
+
+    /// <summary>The largest inline-expanded call body, in AST nodes (roughly one IR
+    /// instruction each), that a loop body may repeat per element and still
+    /// unroll.</summary>
+    internal const int ConstSequenceUnrollBodyLimit = 24;
+
+    /// <summary>
+    /// The "body is small" half of the unroll policy: true when the body holds no
+    /// loop of its own and its whole expansion -- its own nodes plus every inline
+    /// callee it reaches -- is within <see cref="ConstSequenceUnrollBodyLimit"/>.
+    /// </summary>
+    private bool UnrolledLoopBodyIsCheap(Statement? body) =>
+        CheapBodyShape(body)
+        && ExpandedNodes(body, null, null, new HashSet<FunctionDef>())
+            <= ConstSequenceUnrollBodyLimit;
+
+    // Walk one loop body; false as soon as a loop or a comprehension (lowered as
+    // a loop) appears inside it. Nested def/class bodies are not descended into:
+    // they do not expand into the unroll.
+    private static bool CheapBodyShape(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return true;
+            case ForStmt or WhileStmt: return false;
+            case Block b: return b.Statements.All(CheapBodyShape);
+            case IfStmt i:
+                return CheapExprShape(i.Condition)
+                    && CheapBodyShape(i.ThenBranch)
+                    && i.ElifBranches.All(e => CheapExprShape(e.Condition) && CheapBodyShape(e.Body))
+                    && CheapBodyShape(i.ElseBranch);
+            case MatchStmt m:
+                return CheapExprShape(m.Target)
+                    && m.Branches.All(br => CheapExprShape(br.Guard) && CheapBodyShape(br.Body));
+            case WithStmt w: return CheapExprShape(w.ContextExpr) && CheapBodyShape(w.Body);
+            case TryStmt t:
+                return t.Body.All(CheapBodyShape)
+                    && t.Handlers.All(h => h.Handler.All(CheapBodyShape))
+                    && (t.ElseBody?.All(CheapBodyShape) ?? true)
+                    && (t.Finally?.All(CheapBodyShape) ?? true);
+            case AssignStmt a: return CheapExprShape(a.Target) && CheapExprShape(a.Value);
+            case AnnAssign a: return CheapExprShape(a.Value);
+            case AugAssignStmt a: return CheapExprShape(a.Target) && CheapExprShape(a.Value);
+            case ExprStmt e: return CheapExprShape(e.Expr);
+            case ReturnStmt r: return CheapExprShape(r.Value);
+            case TupleUnpackStmt t: return CheapExprShape(t.Value);
+            case AssertStmt a: return CheapExprShape(a.Condition);
+            case RaiseStmt r: return CheapExprShape(r.MessageExpr);
+            case VarDecl v: return CheapExprShape(v.Init);
+            default: return true;   // break/continue/pass/global/nonlocal/import/def/class
+        }
+    }
+
+    private static bool CheapExprShape(Expression? e)
+    {
+        switch (e)
+        {
+            case null: return true;
+            case CallExpr c:
+                return CheapExprShape(c.Callee) && c.Args.All(CheapExprShape);
+            case ListCompExpr or GeneratorExpr: return false;   // lowered as a loop
+            case BinaryExpr b: return CheapExprShape(b.Left) && CheapExprShape(b.Right);
+            case UnaryExpr u: return CheapExprShape(u.Operand);
+            case TernaryExpr t:
+                return CheapExprShape(t.Condition)
+                    && CheapExprShape(t.TrueVal) && CheapExprShape(t.FalseVal);
+            case MemberAccessExpr m: return CheapExprShape(m.Object);
+            case IndexExpr i: return CheapExprShape(i.Target) && CheapExprShape(i.Index);
+            case SliceExpr s:
+                return CheapExprShape(s.Start) && CheapExprShape(s.Stop)
+                    && CheapExprShape(s.Step);
+            case ListExpr l: return l.Elements.All(CheapExprShape);
+            case TupleExpr t: return t.Elements.All(CheapExprShape);
+            case SetExpr s: return s.Elements.All(CheapExprShape);
+            case DictExpr d: return d.Entries.All(kv => CheapExprShape(kv.Key) && CheapExprShape(kv.Value));
+            case FStringExpr f: return f.Parts.All(p => !p.IsExpr || CheapExprShape(p.Expr));
+            case WalrusExpr w: return CheapExprShape(w.Value);
+            case StarArgExpr s: return CheapExprShape(s.Value);
+            case DoubleStarArgExpr d: return CheapExprShape(d.Value);
+            case KeywordArgExpr k: return CheapExprShape(k.Value);
+            case LambdaExpr l: return CheapExprShape(l.Body);
+            case AwaitExpr a: return CheapExprShape(a.Operand);
+            case YieldExpr y: return CheapExprShape(y.Value);
+            default: return true;   // literals and bare names
+        }
+    }
+
+    // Counts the nodes one inline body lowers to, descending into the inline
+    // calls it makes. `selfClass` is the class the body being counted belongs to,
+    // so `self.` calls inside it resolve against that class rather than the
+    // caller's context; `expanding` is the chain of callees already open, so a
+    // recursive pair cannot loop the count forever.
+    private int ExpandedNodes(Statement? body, string? selfClass, string? fnKey,
+        HashSet<FunctionDef> expanding)
+    {
+        string? savedPrefix = currentModulePrefix;
+        if (fnKey != null && functionModulePrefix.TryGetValue(fnKey, out var mp))
+            currentModulePrefix = mp;
+        int nodes = 0;
+        try
+        {
+            void Stmt(Statement? s)
+            {
+                switch (s)
+                {
+                    case null: return;
+                    case Block b: foreach (var cs in b.Statements) Stmt(cs); return;
+                    case IfStmt i:
+                        nodes++; Expr(i.Condition); Stmt(i.ThenBranch);
+                        foreach (var (c, eb) in i.ElifBranches) { Expr(c); Stmt(eb); }
+                        Stmt(i.ElseBranch); return;
+                    case WhileStmt w: nodes++; Expr(w.Condition); Stmt(w.Body); return;
+                    case ForStmt f:
+                        nodes++;
+                        if (f.Iterable != null) Expr(f.Iterable);
+                        if (f.RangeStart != null) Expr(f.RangeStart);
+                        if (f.RangeStop != null) Expr(f.RangeStop);
+                        if (f.RangeStep != null) Expr(f.RangeStep);
+                        Stmt(f.Body); return;
+                    case MatchStmt m:
+                        nodes++; Expr(m.Target);
+                        foreach (var br in m.Branches) { Expr(br.Guard); Stmt(br.Body); }
+                        return;
+                    case WithStmt w: nodes++; Expr(w.ContextExpr); Stmt(w.Body); return;
+                    case TryStmt t:
+                        nodes++;
+                        foreach (var cs in t.Body) Stmt(cs);
+                        foreach (var (_, h) in t.Handlers) foreach (var cs in h) Stmt(cs);
+                        if (t.ElseBody != null) foreach (var cs in t.ElseBody) Stmt(cs);
+                        if (t.Finally != null) foreach (var cs in t.Finally) Stmt(cs);
+                        return;
+                    case AssignStmt a: nodes++; Expr(a.Target); Expr(a.Value); return;
+                    case AnnAssign a: nodes++; Expr(a.Value); return;
+                    case AugAssignStmt a: nodes++; Expr(a.Target); Expr(a.Value); return;
+                    case ExprStmt e: nodes++; Expr(e.Expr); return;
+                    case ReturnStmt r: nodes++; Expr(r.Value); return;
+                    case TupleUnpackStmt t: nodes++; Expr(t.Value); return;
+                    case AssertStmt a: nodes++; Expr(a.Condition); return;
+                    case RaiseStmt r: nodes++; Expr(r.MessageExpr); return;
+                    case VarDecl v: nodes++; Expr(v.Init); return;
+                    default: nodes++; return;
+                }
+            }
+            void Expr(Expression? e)
+            {
+                switch (e)
+                {
+                    case null: return;
+                    case CallExpr c:
+                        nodes++; Expr(c.Callee);
+                        foreach (var a in c.Args) Expr(a);
+                        foreach (var (fn, cls, key) in ResolveInlineCallees(c, selfClass))
+                            if (expanding.Add(fn))
+                            {
+                                nodes += ExpandedNodes(fn.Body, cls, key, expanding);
+                                expanding.Remove(fn);
+                            }
+                        return;
+                    case BinaryExpr b: nodes++; Expr(b.Left); Expr(b.Right); return;
+                    case UnaryExpr u: nodes++; Expr(u.Operand); return;
+                    case TernaryExpr t: nodes++; Expr(t.Condition); Expr(t.TrueVal); Expr(t.FalseVal); return;
+                    case MemberAccessExpr m: nodes++; Expr(m.Object); return;
+                    case IndexExpr i: nodes++; Expr(i.Target); Expr(i.Index); return;
+                    case SliceExpr s: nodes++; Expr(s.Start); Expr(s.Stop); Expr(s.Step); return;
+                    case ListExpr l: nodes++; foreach (var x in l.Elements) Expr(x); return;
+                    case TupleExpr t: nodes++; foreach (var x in t.Elements) Expr(x); return;
+                    case SetExpr s: nodes++; foreach (var x in s.Elements) Expr(x); return;
+                    case DictExpr d: nodes++; foreach (var (k, v) in d.Entries) { Expr(k); Expr(v); } return;
+                    case FStringExpr f: nodes++; foreach (var p in f.Parts) if (p.IsExpr) Expr(p.Expr); return;
+                    case ListCompExpr lc: nodes++; Expr(lc.Element); Expr(lc.Iterable); Expr(lc.Iterable2); Expr(lc.Filter); return;
+                    case GeneratorExpr g: nodes++; Expr(g.Element); Expr(g.Iterable); Expr(g.Iterable2); Expr(g.Filter); return;
+                    case WalrusExpr w: nodes++; Expr(w.Value); return;
+                    case StarArgExpr s: nodes++; Expr(s.Value); return;
+                    case DoubleStarArgExpr d: nodes++; Expr(d.Value); return;
+                    case KeywordArgExpr k: nodes++; Expr(k.Value); return;
+                    case LambdaExpr l: nodes++; Expr(l.Body); return;
+                    case AwaitExpr a: nodes++; Expr(a.Operand); return;
+                    case YieldExpr y: nodes++; Expr(y.Value); return;
+                    default: nodes++; return;
+                }
+            }
+            Stmt(body);
+            return nodes;
+        }
+        finally { currentModulePrefix = savedPrefix; }
+    }
+
+    /// <summary>
+    /// The inline function(s) a call site expands to, for the unroll policy's
+    /// cost check: bare names through ResolveCallee, `obj.m(...)` and
+    /// `self.field.m(...)` through the class maps, `mod.f(...)` through the
+    /// module alias table. Yields (body, class `self` binds inside it, mangled
+    /// key); overloads yield every variant and the caller takes the largest.
+    /// </summary>
+    private IEnumerable<(FunctionDef Fn, string? SelfClass, string Key)> ResolveInlineCallees(
+        CallExpr call, string? selfClass)
+    {
+        if (call.Callee is VariableExpr ve)
+        {
+            string key = ResolveCallee(ve.Name);
+            if (inlineFunctions.TryGetValue(key, out var f) && f != null)
+                yield return (f, null, key);
+            foreach (var kv in inlineFunctions)
+                if (kv.Value != null && kv.Key.StartsWith(key + "___", StringComparison.Ordinal))
+                    yield return (kv.Value, null, kv.Key);
+            yield break;
+        }
+
+        if (call.Callee is not MemberAccessExpr mem) yield break;
+
+        string? recvCls = null;
+        switch (mem.Object)
+        {
+            case VariableExpr { Name: "self" } when selfClass != null:
+                recvCls = selfClass;
+                break;
+            case VariableExpr ov:
+                recvCls = InstanceClassOfName(ov.Name);
+                // `mod.f(...)`: f may still be an inline function re-exported
+                // through the module the name names.
+                TryImportedAlias(ov.Name, out var modAlias);
+                if (recvCls == null && (modules.ContainsKey(ov.Name) || modAlias != null))
+                {
+                    string modKey = (modAlias ?? ov.Name).Replace('.', '_') + "_" + mem.Member;
+                    if (inlineFunctions.TryGetValue(modKey, out var mf) && mf != null)
+                        yield return (mf, null, modKey);
+                    foreach (var kv in inlineFunctions)
+                        if (kv.Value != null && kv.Key.StartsWith(modKey + "___", StringComparison.Ordinal))
+                            yield return (kv.Value, null, kv.Key);
+                    yield break;
+                }
+                break;
+            case MemberAccessExpr { Object: VariableExpr { Name: "self" }, Member: var fld }
+                when selfClass != null:
+                // `self.dev.write(...)` inside a callee being measured: the field's
+                // class is filed under the class that declared it, so walk the MRO.
+                for (string? anc = selfClass; anc != null && recvCls == null;)
+                {
+                    if (fieldClasses.TryGetValue(anc + "|" + fld, out var fc))
+                        recvCls = ResolveConcreteClass(fc) ?? fc;
+                    else if (classBasePrefixes.TryGetValue(anc, out var pp) && !string.IsNullOrEmpty(pp))
+                        anc = pp.EndsWith("_") ? pp[..^1] : pp;
+                    else
+                        anc = null;
+                }
+                break;
+        }
+        if (recvCls == null) yield break;
+
+        string defCls = ResolveMROMethod(recvCls, mem.Member);
+        string mkey = defCls + "_" + mem.Member;
+        if (inlineFunctions.TryGetValue(mkey, out var mm) && mm != null)
+            yield return (mm, defCls, mkey);
+        foreach (var kv in inlineFunctions)
+            if (kv.Value != null && kv.Key.StartsWith(mkey + "___", StringComparison.Ordinal))
+                yield return (kv.Value, defCls, kv.Key);
+    }
+
+    /// <summary>
+    /// True when <paramref name="base"/> names one storage a run-time subscript can
+    /// read: contiguous SRAM, a flash table already interned, or a constant table
+    /// the subscript lowering materialises into flash on first indexed access
+    /// (which it only can when the name is never written again).
+    /// </summary>
+    private bool HasSubscriptableStorage(string @base)
+    {
+        if (arraysWithVariableIndex.Contains(@base) || moduleSramArrays.Contains(@base)
+            || flashArrays.Contains(@base))
+            return true;
+        if (!ctArrayConstElements.ContainsKey(@base)) return false;
+        int dot = @base.LastIndexOf('.');
+        string bare = dot >= 0 ? @base[(dot + 1)..] : @base;
+        // Same veto the flash-table materialisation applies: no writes beyond the
+        // annotated declaration that created the values.
+        return nameWriteCounts.GetValueOrDefault(bare)
+            <= (annAssignValueNames.Contains(bare) ? 1 : 0);
+    }
+
+    /// <summary>
+    /// Lowers the loop as the run-time counter loop the unroll policy asks for:
+    /// `for __u in range(start, stop, step): v = seq[__u]; <body>` -- for
+    /// enumerate, the index name IS the counter and `v = seq[i]` binds the value.
+    /// <paramref name="seqExpr"/> is what the body's subscript resolves through:
+    /// the array's storage name, a materialised table, or the original iterable.
+    /// </summary>
+    private void EmitIndexedCounterLoop(ForStmt stmt, Expression seqExpr,
+        int start, int stop, int step)
+    {
+        var body = new Block();
+        string counter;
+        if (!string.IsNullOrEmpty(stmt.Var2Name))
+        {
+            counter = stmt.VarName;
+            body.Statements.Add(new AssignStmt(new VariableExpr(stmt.Var2Name),
+                new IndexExpr(seqExpr, new VariableExpr(counter))));
+        }
+        else
+        {
+            counter = "__uci" + (++sliceLoopId);
+            // The counter is compared against stop as well as assigned start, so its
+            // type spans both bounds -- a descending range's negative stop needs int8.
+            variableTypes[QualifyLoopVar(counter)] =
+                NarrowestTypeFor(Math.Min(start, stop), Math.Max(start, stop));
+            body.Statements.Add(new AssignStmt(new VariableExpr(stmt.VarName),
+                new IndexExpr(seqExpr, new VariableExpr(counter))));
+        }
+        if (stmt.Body is Block ob) body.Statements.AddRange(ob.Statements);
+        else body.Statements.Add(stmt.Body);
+        var syn = new ForStmt(counter, new IntegerLiteral(start), new IntegerLiteral(stop),
+            step == 1 ? null : new IntegerLiteral(step), body) { Line = stmt.Line };
+        if (loopVarReadAfter.Contains(stmt)) loopVarReadAfter.Add(syn);
+        VisitStatement(syn);
+    }
+
+    /// <summary>
+    /// True when an element of <paramref name="base"/> is a ZCA instance: those exist
+    /// only as per-element compile-time bindings (`base__0` ...), so a counter loop
+    /// cannot read them and they still unroll whatever the policy says about the body.
+    /// </summary>
+    private bool HasInstanceElements(string @base) =>
+        instanceClasses.ContainsKey(@base + "__0")
+        || instanceClasses.Keys.Any(k => k.StartsWith(@base + "__0.", StringComparison.Ordinal));
+
+    /// <summary>
+    /// The unroll policy's fallback for a compile-time sequence of numbers -- a list
+    /// literal, a name bound to one, a `self` field, a parameter's literal, or the same
+    /// walked by reversed(): when the policy declines the unroll (more than
+    /// <see cref="ConstSequenceUnrollLimit"/> elements, or a body it rejects), the
+    /// values are materialised into a flash table and walked as a counter loop, the
+    /// same read `tab[i]` performs. False when the policy accepts the unroll, when the
+    /// loop unpacks pairs, or when an element is not a number -- instances and string
+    /// chunks have no storage form and still unroll.
+    /// </summary>
+    private bool TryConstSeqCounterLoop(ForStmt stmt, IReadOnlyList<Expression> elems,
+        string writtenName, bool reverse = false)
+    {
+        if (!string.IsNullOrEmpty(stmt.Var2Name)) return false;
+        if (elems.Count <= ConstSequenceUnrollLimit && UnrolledLoopBodyIsCheap(stmt.Body))
+            return false;
+        if (ConstValuesOf(elems) is not { } vals) return false;
+        if (reverse) vals.Reverse();
+        // writtenName tolerates the one annotated declaration that created the
+        // sequence, the same veto the array materialisation applies.
+        int decls = annAssignValueNames.Contains(writtenName) ? 1 : 0;
+        if (TryMaterialiseConstTableFromValues("__forseq_" + (++sliceLoopId), writtenName,
+                vals, bindings: decls) is not { } tab) return false;
+        EmitIndexedCounterLoop(stmt, new VariableExpr(tab), 0, vals.Count, 1);
+        return true;
+    }
+
     // Emits one unrolled-iteration body. When `breakLabel` is non-empty (the body uses
     // break/continue), a fresh continue label brackets the iteration and a shared break label
     // is active, so continue lands at the end of this iteration and break exits the loop.
@@ -490,8 +864,21 @@ public partial class IRGenerator
 
     // Unrolls `for v in <compile-time array>` over `base__0` .. `base__(size-1)`. The elements
     // are scalars, ZCA instances, or an SRAM-resident array read with an indexed load.
-    private void EmitSequenceUnroll(ForStmt stmt, string forBase, int forSize)
+    private void EmitSequenceUnroll(ForStmt stmt, string forBase, int forSize,
+        Expression seqExpr)
     {
+        // The unroll policy: when the elements live in storage a run-time subscript
+        // can read, a sequence past the trip cap -- or a body the policy rejects --
+        // walks them as the counter loop `for __u in range(n): v = seq[__u]` instead
+        // of multiplying the body. Elements with no storage form (ZCA instances
+        // bound per element) still unroll.
+        if (HasSubscriptableStorage(forBase) && !HasInstanceElements(forBase)
+            && (forSize > ConstSequenceUnrollLimit || !UnrolledLoopBodyIsCheap(stmt.Body)))
+        {
+            EmitIndexedCounterLoop(stmt, seqExpr, 0, forSize, 1);
+            return;
+        }
+
         // Qualify the loop variable the same way ResolveBinding does for a bare name,
         // so the loop body's references (e.g. a `pin.direction = ...` property setter)
         // resolve to the same key the loop binds -- including the currentFunction prefix
@@ -995,10 +1382,11 @@ public partial class IRGenerator
             {
                 // Short strings unroll (each char a compile-time constant) — smallest code
                 // and preserves bodies that need a constant loop variable. Longer strings
-                // emit a RUNTIME loop that reads each byte from a flash table, so the body
-                // is generated ONCE instead of N times. This keeps idiomatic `for c in s`
-                // from exploding when the body is heavy (e.g. an I2C/SPI write per char).
-                if (strOpt.Length > StringForLoopUnrollLimit)
+                // -- or a body the unroll policy rejects -- emit a RUNTIME loop that reads
+                // each byte from a flash table, so the body is generated ONCE instead of N
+                // times. This keeps idiomatic `for c in s` from exploding when the body is
+                // heavy (e.g. an I2C/SPI write per char).
+                if (strOpt.Length > StringForLoopUnrollLimit || !UnrolledLoopBodyIsCheap(stmt.Body))
                 {
                     string sFlash = InternStringAsFlash(strOpt);
                     var sCharVar = new Variable(varKey, DataType.UINT8);
@@ -1082,6 +1470,9 @@ public partial class IRGenerator
 
             if (GetListParam(iter) is ListExpr boundList)
             {
+                // The caller's literal has no local name to veto on -- the elements
+                // were just read, so the materialised table holds what they are now.
+                if (TryConstSeqCounterLoop(stmt, boundList.Elements, "")) return;
                 string lpBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in boundList.Elements)
                 {
@@ -1118,6 +1509,7 @@ public partial class IRGenerator
             // Pin(p) rejected it while `for p in (11, 12, 13):` compiled.
             if (iter is VariableExpr seqVar && ResolveConstSequence(seqVar.Name) is { } boundSeq)
             {
+                if (TryConstSeqCounterLoop(stmt, boundSeq, seqVar.Name)) return;
                 string sqBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in boundSeq)
                 {
@@ -1137,6 +1529,8 @@ public partial class IRGenerator
             // binds instances and a field holding numbers binds constants.
             if (iter is MemberAccessExpr && ResolveConstSequenceExpr(iter) is { } memConstSeq)
             {
+                if (TryConstSeqCounterLoop(stmt, memConstSeq, ((MemberAccessExpr)iter).Member))
+                    return;
                 string memBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in memConstSeq)
                 {
@@ -1166,10 +1560,14 @@ public partial class IRGenerator
                     if (IsInstanceSequenceLiteral(asList))
                     {
                         string seqBase = HoistInstanceSequence(asList);
-                        EmitSequenceUnroll(stmt, seqBase, elems.Count);
+                        EmitSequenceUnroll(stmt, seqBase, elems.Count, asList);
                         return;
                     }
                 }
+
+                // All-number elements have a storage form the counter loop can read;
+                // pairs and instances do not, and unpack/keep unrolling as before.
+                if (TryConstSeqCounterLoop(stmt, elems, "")) return;
 
                 // `for a, b in [(1, 2), (3, 4)]`. The unrolling is the same one the single-target
                 // form does; what the two-name form needs is the second key bound alongside the
@@ -1451,56 +1849,20 @@ public partial class IRGenerator
 
                 if (calleeVar.Name == "range")
                 {
-                    int? EvalConst(Expression e)
-                    {
-                        if (e is IntegerLiteral il) return il.Value;
-                        if (e is VariableExpr v)
-                        {
-                            string k = currentInlinePrefix + v.Name;
-                            if (constantVariables.TryGetValue(k, out int cv)) return cv;
-                        }
-
-                        return null;
-                    }
-
-                    int start = 0, stop = 0, step = 1;
-                    if (call.Args.Count == 1)
-                    {
-                        var sv = EvalConst(call.Args[0]);
-                        if (!sv.HasValue)
-                            throw UserError("for-in range() argument must be a compile-time constant.",
-                                ArgAt(call, 0));
-                        stop = sv.Value;
-                    }
-                    else if (call.Args.Count >= 2)
-                    {
-                        var sv = EvalConst(call.Args[0]);
-                        var ev = EvalConst(call.Args[1]);
-                        if (!sv.HasValue || !ev.HasValue)
-                            throw UserError("for-in range() arguments must be compile-time constants.",
-                                ArgAt(call, sv.HasValue ? 1 : 0));
-                        start = sv.Value;
-                        stop = ev.Value;
-                        if (call.Args.Count >= 3)
-                        {
-                            var stv = EvalConst(call.Args[2]);
-                            if (!stv.HasValue)
-                                throw UserError("for-in range() step must be a compile-time constant.",
-                                    ArgAt(call, 2));
-                            step = stv.Value;
-                        }
-                    }
-                    else throw UserError("for-in range() requires at least one argument.", call.Callee);
-
-                    if (step == 0)
-                        throw UserError("for-in range() step cannot be zero.", ArgAt(call, 2));
-                    for (int i = start; step > 0 ? i < stop : i > stop; i += step)
-                    {
-                        constantVariables[varKey] = i;
-                        VisitStatement(stmt.Body);
-                    }
-
-                    constantVariables.Remove(varKey);
+                    // `for i in range(*t)` is the same loop `for i in range(a, b, s)`
+                    // lowers -- hand it the spliced arguments and let the canonical
+                    // range path apply the unroll policy: short and cheap unrolls,
+                    // anything else runs as the counter loop. Before this it unrolled
+                    // unconditionally, with no trip cap and no break/continue labels.
+                    if (call.Args.Count is < 1 or > 3)
+                        throw UserError("range() takes 1 to 3 arguments", call.Callee);
+                    var starRange = new ForStmt(stmt.VarName,
+                        call.Args.Count >= 2 ? call.Args[0] : null,
+                        call.Args.Count >= 2 ? call.Args[1] : call.Args[0],
+                        call.Args.Count == 3 ? call.Args[2] : null,
+                        stmt.Body) { Line = stmt.Line };
+                    if (loopVarReadAfter.Contains(stmt)) loopVarReadAfter.Add(starRange);
+                    VisitFor(starRange);
                     return;
                 }
                 else if (calleeVar.Name == "enumerate" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 1)
@@ -1533,6 +1895,18 @@ public partial class IRGenerator
                     };
                     if (seqElems != null)
                     {
+                        // The unroll policy applies here too: a body it rejects walks
+                        // the values as a counter loop over the elements materialised
+                        // into a flash table, the same read `tab[i]` performs.
+                        if (!UnrolledLoopBodyIsCheap(stmt.Body)
+                            && ConstValuesOf(seqElems) is { } enumVals
+                            && TryMaterialiseConstTableFromValues(
+                                "__enum_" + (++sliceLoopId), "", enumVals) is { } enumTab)
+                        {
+                            EmitIndexedCounterLoop(stmt, new VariableExpr(enumTab),
+                                0, enumVals.Count, 1);
+                            return;
+                        }
                         foreach (var elem in seqElems)
                         {
                             // TryEvalElemConst, not the literal-only TryEvalConstElement:
@@ -1705,13 +2079,16 @@ public partial class IRGenerator
                             DataType elemDt = arrayElemTypes.TryGetValue(@base, out var dt) ? dt : DataType.UINT8;
                             bool useSram = arraysWithVariableIndex.Contains(@base) || moduleSramArrays.Contains(@base);
 
-                            // An SRAM-resident array past the unroll limit iterates as a
-                            // counter loop, the same rewrite `for b in buf[0:n]` takes:
+                            // A subscriptable sequence past the unroll limit -- or a body
+                            // the unroll policy rejects -- iterates as a counter loop, the
+                            // same rewrite `for b in buf[0:n]` takes:
                             // `for i in range(n): b = arr[i]; <body>`. Its elements are
                             // runtime data either way, so unrolling only multiplies the
                             // body by the array size -- a 513-byte framebuffer write did
                             // not fit in flash where the counter loop is a few instructions.
-                            if (useSram && arrSize > ConstSequenceUnrollLimit)
+                            if (HasSubscriptableStorage(@base)
+                                && (arrSize > ConstSequenceUnrollLimit
+                                    || !UnrolledLoopBodyIsCheap(stmt.Body)))
                             {
                                 string rtIdx = QualifyLoopVar(stmt.VarName);
                                 variableTypes[rtIdx] = NarrowestTypeFor(0, arrSize);
@@ -2067,6 +2444,9 @@ public partial class IRGenerator
                     // offered reversed() as a supported form and refused the name it was given.
                     if (inner is VariableExpr rve && ResolveConstSequence(rve.Name) is { } rseq)
                     {
+                        // Reversed values materialised in walk order read the same
+                        // elements the descending index would.
+                        if (TryConstSeqCounterLoop(stmt, rseq, rve.Name, reverse: true)) return;
                         for (int k = rseq.Count - 1; k >= 0; --k)
                         {
                             if (!TryEvalConstElement(rseq[k], out int rv))
@@ -2083,6 +2463,7 @@ public partial class IRGenerator
 
                     if (inner is ListExpr le3)
                     {
+                        if (TryConstSeqCounterLoop(stmt, le3.Elements, "", reverse: true)) return;
                         for (int k = le3.Elements.Count - 1; k >= 0; --k)
                         {
                             if (le3.Elements[k] is IntegerLiteral il) constantVariables[valKey] = il.Value;
@@ -2135,6 +2516,18 @@ public partial class IRGenerator
 
                         if (arrSize > 0)
                         {
+                            // The unroll policy: a subscriptable array the policy declines
+                            // walks descending as `for __u in range(n-1, -1, -1)` -- the
+                            // same elements the unroll would have read backwards.
+                            if (HasSubscriptableStorage(@base) && !HasInstanceElements(@base)
+                                && (arrSize > ConstSequenceUnrollLimit
+                                    || !UnrolledLoopBodyIsCheap(stmt.Body)))
+                            {
+                                EmitIndexedCounterLoop(stmt, new VariableExpr(v.Name),
+                                    arrSize - 1, -1, -1);
+                                return;
+                            }
+
                             DataType elemDt = arrayElemTypes.TryGetValue(@base, out var edt) ? edt : DataType.UINT8;
                             // Use the fully-qualified key so the optimizer's copy-propagation
                             // maps "main.v" correctly when the body resolves the loop variable.
@@ -2263,7 +2656,7 @@ public partial class IRGenerator
 
                 if (forSize > 0)
                 {
-                    EmitSequenceUnroll(stmt, forBase, forSize);
+                    EmitSequenceUnroll(stmt, forBase, forSize, iter);
                     return;
                 }
             }
@@ -2337,6 +2730,21 @@ public partial class IRGenerator
                     if (stop < 0) stop += slSize;
                     start = Math.Max(0, Math.Min(start, slSize));
                     stop = Math.Max(0, Math.Min(stop, slSize));
+
+                    // The unroll policy: constant bounds used to unroll however long
+                    // the slice was. A slice the policy declines walks the same indices
+                    // as the counter loop the runtime-bounds branch above rewrites to.
+                    int slTrips = step > 0
+                        ? Math.Max(0, (stop - start + step - 1) / step)
+                        : Math.Max(0, (start - stop + (-step) - 1) / -step);
+                    if ((slTrips > ConstSequenceUnrollLimit
+                            || !UnrolledLoopBodyIsCheap(stmt.Body))
+                        && HasSubscriptableStorage(slBase) && !HasInstanceElements(slBase))
+                    {
+                        EmitIndexedCounterLoop(stmt, new VariableExpr(sliceVar.Name),
+                            start, stop, step);
+                        return;
+                    }
 
                     DataType slElem = arrayElemTypes.TryGetValue(slBase, out var sdt) ? sdt : DataType.UINT8;
                     bool slSram = arraysWithVariableIndex.Contains(slBase) || moduleSramArrays.Contains(slBase);
@@ -2431,7 +2839,7 @@ public partial class IRGenerator
                 && TryResolveArrayStorageKey(callRet.Name, out var callBase)
                 && arraySizes.TryGetValue(callBase, out int callSize) && callSize > 0)
             {
-                EmitSequenceUnroll(stmt, callBase, callSize);
+                EmitSequenceUnroll(stmt, callBase, callSize, new VariableExpr(callRet.Name));
                 return;
             }
 
@@ -2532,7 +2940,7 @@ public partial class IRGenerator
             return;
         }
 
-        if (RangeUnrollBounds(stmt) is { } unroll)
+        if (RangeUnrollBounds(stmt) is { } unroll && UnrolledLoopBodyIsCheap(stmt.Body))
         {
             (int unrollStart, int unrollStop, int unrollStep) = unroll;
             string unrollKey = !string.IsNullOrEmpty(currentInlinePrefix)

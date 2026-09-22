@@ -76,17 +76,23 @@ public class NamedTupleStorageTests
         Assert.Contains(body, i => i is Binary { Src2: Constant { Value: 49 }, Dst: Temporary });
     }
 
+    // The unroll policy caps compile-time loops at ConstSequenceUnrollLimit = 8: a
+    // nine-element tuple is one element past it, so instead of nine copies of the
+    // body the loop walks a materialised flash table -- the same values, read by
+    // the counter the policy emits.
     [Fact]
-    public void AnInlineTupleOfNineConstants_StillUnrolls()
+    public void AnInlineTupleOfNineConstants_RunsAFlashTableCounterLoop()
     {
-        var body = Main(Prelude +
+        var ir = Gen(Prelude +
             "def main():\n" +
             $"    acc: uint16 = {RuntimeSeed}\n" +
             $"    for d in ({Nine}):\n" +
             "        acc = acc + d\n\n" +
             "main()\n");
+        var body = ir.Functions.Single(f => f.Name == "main").Body;
         Assert.DoesNotContain(body, i => i is Copy { Dst: Variable { Name: "main.T__0" } });
-        Assert.Contains(body, i => i is Binary { Src2: Constant { Value: 56 }, Dst: Temporary });
+        var table = Assert.Single(body.OfType<FlashData>());
+        Assert.Equal(new List<int> { 0, 7, 14, 21, 28, 35, 42, 49, 56 }, table.Bytes);
     }
 
     // ---- #298: the element width comes from the widest element, not from uint8 ----

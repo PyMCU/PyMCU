@@ -225,17 +225,34 @@ public class CircuitPythonCompatTests
     }
 
     [Fact]
-    public void RangeSplicedWithARuntimeTupleIsRefused()
+    public void RangeSplicedWithATupleCallRunsAsACounterLoop()
     {
-        var ex = Assert.ThrowsAny<CompilerError>(() => Gen(
+        // `for i in range(*t())` used to refuse: the dedicated unroller needed
+        // compile-time bounds, and the splice delivers the call's tuple result
+        // slots as pre-evaluated values, not literals. Routed through the
+        // canonical range path it is the same loop `for i in range(a, b)` over
+        // variables is -- a runtime counter bounded by the evaluated elements.
+        var ir = Gen(
             Regs +
             "def t():\n" +
             "    return (0, 3)\n" +
             "def main():\n" +
             "    for i in range(*t()):\n" +
-            "        GPIOR0.value = i\n"));
-        // Whatever the refusal names, it must not read as though `*` were misparsed.
-        Assert.False(string.IsNullOrEmpty(ex.Message));
+            "        GPIOR0.value = i\n");
+        var body = Main(ir);
+        // The call's result slots carry the bounds (0, 3), written once.
+        body.Any(i => i is Copy { Src: Constant { Value: 0 }, Dst: Variable { Name: var n } }
+                      && n.Contains("iret_", StringComparison.Ordinal))
+            .Should().BeTrue("the spliced start is evaluated once into a slot");
+        body.Any(i => i is Copy { Src: Constant { Value: 3 }, Dst: Variable { Name: var n } }
+                      && n.Contains("iret_", StringComparison.Ordinal))
+            .Should().BeTrue("the spliced stop is evaluated once into a slot");
+        // One counter loop over those slots, not three copies of the body.
+        body.OfType<JumpIfGreaterOrEqual>().Should().HaveCount(1,
+            "a runtime-bounded range lowers to a single counter loop");
+        body.Count(i => i is Copy { Dst: Variable { Name: var n } }
+                        && n.EndsWith("GPIOR0", StringComparison.Ordinal))
+            .Should().Be(1, "the loop body is emitted once, not unrolled");
     }
 
     // ── raise inside an exception handler ─────────────────────────────────────────

@@ -6490,6 +6490,18 @@ public partial class IRGenerator
                     variableTypes[elemName] = elemDt;
                     Emit(new Copy(ElemInit(k), elemVar));
                 }
+
+                // The all-constant initialiser doubles as a flash table in waiting: a
+                // run-time subscript -- including the one the unroll policy's counter
+                // loop emits for a wide array -- materialises it through
+                // TryMaterialiseConstTable. initVals only holds the real elements when
+                // the initialiser was a literal or a literal repeat; anything else left
+                // them at zero and must not pretend otherwise.
+                bool allInitConst = runtimeElems.Count == 0
+                    && stmt.Value is null or ListExpr
+                        or BinaryExpr { Op: Frontend.BinaryOp.Mul, Left: ListExpr };
+                if (allInitConst)
+                    ctArrayConstElements[qualified] = initVals;
             }
 
             return true;

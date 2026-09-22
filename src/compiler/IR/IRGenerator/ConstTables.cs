@@ -56,6 +56,27 @@ public partial class IRGenerator
     // a real element store could contradict the table (PyMCU#258).
     private readonly Dictionary<string, int> nameStoreCounts = new();
 
+    // Names whose declaration is an annotated binding with a value -- `t: uint8[16] = [...]`.
+    // That one AnnAssign is counted in nameWriteCounts like every other write, but it is the
+    // binding that CREATES the constant elements, so a name in this set may show one more
+    // "write" than a table veto allows.
+    private readonly HashSet<string> annAssignValueNames = new();
+
+    // Builtins that read an iterable argument without ever storing into it --
+    // `enumerate`, `reversed`, `len` and friends. The broad call-arg count treats
+    // every argument as a potential store target, which is right for a user
+    // function (an @inline callee's `param[i] = v` lands on the caller's array)
+    // but vetoed the flash table a const sequence needs for its counter loop.
+    private static readonly HashSet<string> ReadOnlyBuiltins = new(StringComparer.Ordinal)
+    {
+        "abs", "all", "any", "bin", "bool", "bytearray", "bytes", "callable", "chr",
+        "dict", "divmod", "enumerate", "filter", "float", "format", "frozenset",
+        "getattr", "hasattr", "hash", "hex", "id", "int", "isinstance", "issubclass",
+        "iter", "len", "list", "map", "max", "memoryview", "min", "next", "oct",
+        "ord", "pow", "print", "range", "repr", "reversed", "round", "set", "slice",
+        "sorted", "str", "sum", "tuple", "type", "zip",
+    };
+
     // Flash tables already materialised, keyed by the array they came from.
     private readonly Dictionary<string, string> materialisedConstTables = new();
 
@@ -79,10 +100,19 @@ public partial class IRGenerator
     {
         nameWriteCounts.Clear();
         nameStoreCounts.Clear();
+        annAssignValueNames.Clear();
         materialisedConstTables.Clear();
         ctArrayConstElements.Clear();
         moduleConstLists.Clear();
         _constTableCounter = 0;
+
+        // Every function the program defines, so the call-arg count below can tell a
+        // builtin (`enumerate(xs)` reads; it cannot store) from a user function whose
+        // inline expansion could write the sequence it is handed.
+        var programFunctions = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var prog in importedModules.Prepend(mainAst))
+        foreach (var node in AstNodes(prog, descendIntoFunctions: true))
+            if (node is FunctionDef fdef) programFunctions.Add(fdef.Name);
 
         void Note(string? name)
         {
@@ -143,12 +173,23 @@ public partial class IRGenerator
                 case AssignStmt { Target: IndexExpr } asgIdx: NoteTarget(asgIdx.Target); break;
                 case AssignStmt: break;
                 case AugAssignStmt aug: NoteTarget(aug.Target); break;
-                case AnnAssign ann: Note(ann.Target); break;
+                case AnnAssign ann:
+                    Note(ann.Target);
+                    if (ann.Value != null) annAssignValueNames.Add(ann.Target);
+                    break;
                 case ForStmt fs: Note(fs.VarName); break;
                 case CallExpr call:
                     // A table handed to a function could be stored through there, and such a
                     // write lands on the element variables rather than on the table in flash.
                     // Declining costs nothing: the program keeps the behaviour it has today.
+                    // The exception is a bare call to a builtin that only reads -- an
+                    // `enumerate(buf)` or `reversed(tab)` never stores into the sequence,
+                    // and counting it vetoed the counter loop the unroll policy asks for.
+                    // A user function named like a builtin still counts.
+                    if (call.Callee is VariableExpr calleeBare
+                        && ReadOnlyBuiltins.Contains(calleeBare.Name)
+                        && !programFunctions.Contains(calleeBare.Name))
+                        break;
                     foreach (var arg in call.Args)
                     {
                         if (arg is VariableExpr av) Note(av.Name);
@@ -227,7 +268,11 @@ public partial class IRGenerator
 
         int dot = key.LastIndexOf('.');
         string bare = dot >= 0 ? key[(dot + 1)..] : key;
-        if (nameWriteCounts.GetValueOrDefault(bare) != 0) return null;
+        // An annotated declaration (`t: uint8[16] = [...]`) counts as one write -- it IS
+        // the binding that created these values -- so the veto allows it on top of the
+        // zero a plain `t = [...]` would show.
+        if (nameWriteCounts.GetValueOrDefault(bare)
+                > (annAssignValueNames.Contains(bare) ? 1 : 0)) return null;
 
         DataType elemDt = arrayElemTypes.TryGetValue(key, out var dt) && dt != DataType.UNKNOWN
             ? dt : WidestElemType(values);
