@@ -334,13 +334,20 @@ public partial class IRGenerator
                     if (memC.Member == "extend" && ResolveBufferKey(memC.Object) is { } bufKey)
                         return EmitBufferExtend(bufKey, expr, memC);
 
-                    // list[T] method dispatch
-                    if (listVarElemTypes.ContainsKey(vObj.Name))
+                    // list[T] method dispatch. The receiver's storage key is the resolved
+                    // name (a bound `list[T]` parameter aliases the caller's list), and
+                    // the emitted variable must be typed GC_REF: ResolveBinding hands a
+                    // module-level list back as UNKNOWN, and a 1-byte pointer operand
+                    // makes LoadIntoReg drop the pointer's high byte -- the header ops
+                    // then hit a shadow address in low SRAM instead of the list.
+                    string listRecvKey = ResolveNameKey(vObj.Name);
+                    if (listVarElemTypes.ContainsKey(listRecvKey))
                     {
+                        Variable listVar = new Variable(listRecvKey, DataType.GC_REF);
                         switch (memC.Member)
                         {
                             case "append" when expr.Args.Count == 1:
-                                return EmitListAppend(vObj, expr.Args[0]);
+                                return EmitListAppend(listVar, expr.Args[0]);
                             default:
                                 throw UserError($"list.{memC.Member}(): method not supported", memC);
                         }

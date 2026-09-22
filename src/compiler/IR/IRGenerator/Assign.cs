@@ -3632,7 +3632,12 @@ public partial class IRGenerator
 
             // list[T] index assignment: x[i] = val → store at GC heap offset 2 + i*elemSize
             {
-                string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                // Same resolution as the read path: ResolveNameKey follows the alias a
+                // bound parameter carries, so `xs[i] = v` inside an expansion writes the
+                // caller's list rather than a same-named dead slot.
+                string resolvedList = ResolveNameKey(ve.Name);
+                string listQ = listVarElemTypes.ContainsKey(resolvedList) ? resolvedList
+                             : listVarElemTypes.ContainsKey(qualified) ? qualified
                              : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
                              : "";
                 if (!string.IsNullOrEmpty(listQ))
@@ -5992,6 +5997,19 @@ public partial class IRGenerator
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
+
+        // A module-level list is a GLOBAL, and every other path that names it spells it
+        // bare (`xs`), the way `seed: uint16` is `seed` and never `main.seed`:
+        // ResolveBinding, groot/gunroot, gc_list_fixup, `xs[i]` reads. Filing the
+        // declaration under `main.xs` grew a second slot -- the pointer lived there
+        // while appends and reads used `xs`, so `xs[i]` always read an empty list.
+        // This is the same global-name rule the scalar AnnAssign path applies above.
+        if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            string listGlobalKey = currentModulePrefix + stmt.Target;
+            if (mutableGlobals.ContainsKey(listGlobalKey))
+                qualified = listGlobalKey;
+        }
 
         listVarElemTypes[qualified] = elemDt;
         variableTypes[qualified] = DataType.GC_REF;

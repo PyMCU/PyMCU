@@ -2826,7 +2826,12 @@ public partial class IRGenerator
 
             // list[T] indexing: x[i] → load element from GC heap list at offset 2 + i*elemSize
             {
-                string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                // ResolveNameKey walks the inline-prefix/function/module candidates and
+                // follows the alias a bound parameter carries, so `xs[i]` inside an
+                // expansion reads the caller's list, not a same-named dead slot.
+                string resolvedList = ResolveNameKey(ve.Name);
+                string listQ = listVarElemTypes.ContainsKey(resolvedList) ? resolvedList
+                             : listVarElemTypes.ContainsKey(qualified) ? qualified
                              : !localShadowsModule && listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
                              : "";
                 if (!string.IsNullOrEmpty(listQ))

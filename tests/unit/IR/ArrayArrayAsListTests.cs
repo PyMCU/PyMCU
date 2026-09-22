@@ -60,6 +60,71 @@ public class ArrayArrayAsListTests
         => Assert.Contains("B, b, H, h, I, L, i or l", Refusal(
             "import array\n\ndef main() -> int:\n    pulses = array.array(\"Z\")\n    return 0\n"));
 
+    // ── module-level `xs: list[T]` method dispatch ───────────────────────────────────────
+
+    [Fact]
+    public void AModuleLevelListAppendUsesTheDeclaredSlot()
+    {
+        // Module-level statements replay inside the synthesized `main`; the list
+        // declaration used to register `main.xs` while every other path that names
+        // the global spells it bare (`xs`) -- ResolveBinding, groot/gunroot,
+        // gc_list_fixup, `xs[i]` reads. Two slots grew: the pointer lived in one
+        // and the appends/readers used the other, so the list the program saw
+        // stayed empty. The declaration now files the global's bare name.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "xs: list[uint8] = list()\n" +
+            "xs.append(4)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        var fixups = main.Body.OfType<Call>()
+            .Where(c => c.FunctionName == "gc_list_fixup").ToList();
+        Assert.NotEmpty(fixups);
+        foreach (var c in fixups)
+            Assert.Equal("xs", Assert.IsType<Variable>(c.Args[0]).Name);
+
+        Assert.Contains(main.Body,
+            i => i is LoadIndirect li && li.SrcPtr is Variable v && v.Name == "xs");
+        Assert.DoesNotContain(main.Body, i =>
+            (i is LoadIndirect li2 && li2.SrcPtr is Variable lv && lv.Name == "main.xs") ||
+            (i is StoreIndirect si && si.DstPtr is Variable sv && sv.Name == "main.xs") ||
+            (i is Copy cp2 && cp2.Dst is Variable dv && dv.Name == "main.xs"));
+
+        // The pointer operand must be typed GC_REF, not the UNKNOWN ResolveBinding
+        // reports for a module-level list: a 1-byte operand makes the backend load
+        // only the pointer's low byte and dereference a shadow address in low SRAM.
+        Assert.All(main.Body.OfType<LoadIndirect>()
+                .Where(li => li.SrcPtr is Variable lv && lv.Name == "xs"),
+            li => Assert.Equal(DataType.GC_REF, ((Variable)li.SrcPtr).Type));
+        Assert.All(main.Body.OfType<StoreIndirect>()
+                .Where(si => si.DstPtr is Variable sv && sv.Name == "xs"),
+            si => Assert.Equal(DataType.GC_REF, ((Variable)si.DstPtr).Type));
+    }
+
+    [Fact]
+    public void AListParameterAppendInsideAnExpansionWritesTheCallersList()
+    {
+        // `grow(xs, v)` binds `ys` to the caller's list through variableAliases; the
+        // append inside the expansion must read and update THAT list's header, not a
+        // same-named dead slot.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "def grow(ys: list[uint8], v: uint8) -> None:\n" +
+            "    ys.append(v)\n\n" +
+            "xs: list[uint8] = list()\n" +
+            "grow(xs, 9)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        // The expansion's header ops must address the caller's list slot, GC_REF-typed.
+        Assert.Contains(main.Body, i => i is LoadIndirect li
+            && li.SrcPtr is Variable v && v.Name == "xs" && v.Type == DataType.GC_REF);
+        Assert.Contains(main.Body, i => i is StoreIndirect si
+            && si.DstPtr is Variable v && v.Name == "xs" && v.Type == DataType.GC_REF);
+        Assert.DoesNotContain(main.Body, i =>
+            (i is LoadIndirect li2 && li2.SrcPtr is Variable lv && lv.Name.EndsWith(".ys")) ||
+            (i is StoreIndirect si2 && si2.DstPtr is Variable sv && sv.Name.EndsWith(".ys")));
+    }
+
     // ── `list[T]` parameter on a REGULAR (non-@inline) function ──────────────────────────
 
     [Fact]
