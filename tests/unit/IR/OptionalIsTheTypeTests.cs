@@ -185,19 +185,20 @@ public class OptionalIsTheTypeTests
     // ── The one position where the knowledge runs out ────────────────────────────────────
 
     [Fact]
-    public void AReturnOfNoneThatTheCallerReachesIsRefused()
+    public void AnInlineOptionalReturnWithAProvableArgStillFolds()
     {
-        string msg = Refusal(Hdr +
+        // `f(0)`: `a == 0` folds inside the expansion, so the result is a compile-time
+        // None and storing it into a port is the ordinary "None is not a value" error --
+        // no tag exists for a None the compiler can see (RFC 0009 decision 2).
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Hdr +
             "@inline\n" +
             "def f(a: uint8) -> Optional[uint8]:\n" +
             "    if a == 0:\n" +
             "        return None\n" +
             "    return a\n\n" +
             "def main():\n" +
-            "    GPIOR0.value = f(0)\n");
-        Assert.Contains("PyMCU reads Optional[X] as X", msg);
-        Assert.Contains("this return gives None at run time", msg);
-        Assert.Contains("'f'", msg);
+            "    GPIOR0.value = f(0)\n"));
+        Assert.DoesNotContain("PyMCU reads Optional", ex.Message);
     }
 
     [Fact]
@@ -251,7 +252,6 @@ public class OptionalIsTheTypeTests
             "    return a\n\n" +
             "x: uint8 = read(GPIOR0.value)\n"));
 
-        Assert.Contains("PyMCU reads Optional[X] as X", ex.Message);
         Assert.Contains("this return gives None at run time", ex.Message);
         Assert.Contains("'read'", ex.Message);
         Assert.Contains("declared to return uint8", ex.Message);
@@ -346,26 +346,168 @@ public class OptionalIsTheTypeTests
     }
 
     [Fact]
-    public void AnUnannotatedMixedReturnKeepsTodaysVoidSemantics()
+    public void AnUnannotatedMixedReturnIsAnInferredOptional()
     {
-        // Measured, not endorsed: `read` files as void -- return-type inference gives up the
-        // moment a `return None` is in the mix -- so the call asks for no result and `x` is
-        // a copy of None; the value return never reaches it. That is the same hole as the
-        // declared case, but refusing it would refuse the unannotated get/set pattern
-        // unmodified CircuitPython code uses (FrameBuffer.pixel answers a value only on the
-        // getter path). The pin stands until the language decides what an unannotated mixed
-        // return means.
+        // RFC 0009 section 6.1, N=2: `return a` mixed with `return None` on an
+        // unannotated def is an inferred Optional[uint8] -- the payload joins to the
+        // value type and the None ride-along is the tag.
         var ir = Gen(Hdr +
             "def read(a: uint8):\n" +
             "    if a == 0:\n" +
             "        return None\n" +
             "    return a\n\n" +
-            "x: uint8 = read(GPIOR0.value)\n");
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    if v is not None:\n" +
+            "        GPIOR1.value = v\n");
 
         var f = ir.Functions.Single(fn => fn.Name == "read");
-        Assert.Equal(DataType.VOID, f.ReturnType);
+        Assert.Equal(new List<string> { "uint8", "None" }, f.ReturnMembers);
+        Assert.Contains(f.Body, i => i is Return { Tag: not null });
         var call = ir.Functions.SelectMany(fn => fn.Body).OfType<Call>()
             .Single(c => c.FunctionName == "read");
-        Assert.IsType<NoneVal>(call.Dst);
+        Assert.NotNull(call.TagDst);
+    }
+
+    // ══ RFC 0009 phase 1: the tag byte on the wire and in locals ════════════════════════
+    //
+    // A `-> Optional[X]` subroutine whose None can arrive at run time transports a
+    // member-index tag next to the payload: the Return carries it, the Call receives
+    // it, `is None` reads it, `or` picks on it. A compile-time-provable None keeps
+    // byte-identical code -- the tag exists only where the run time can produce one.
+
+    private const string OptRead =
+        Hdr +
+        "def read(a: uint8) -> Optional[uint8]:\n" +
+        "    if a == 0:\n" +
+        "        return None\n" +
+        "    return a\n\n";
+
+    [Fact]
+    public void ARealSubroutineOptionalReturnCarriesATag()
+    {
+        var ir = Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    if v is None:\n" +
+            "        GPIOR1.value = 0\n" +
+            "    else:\n" +
+            "        GPIOR1.value = v\n");
+
+        var f = ir.Functions.Single(fn => fn.Name == "read");
+        Assert.Equal(new List<string> { "uint8", "None" }, f.ReturnMembers);
+        Assert.Contains(f.Body, i => i is Return { Tag: Constant { Value: 1 } });
+        Assert.Contains(f.Body, i => i is Return { Tag: Constant { Value: 0 } });
+
+        var call = ir.Functions.SelectMany(fn => fn.Body).OfType<Call>()
+            .Single(c => c.FunctionName == "read");
+        Assert.NotNull(call.TagDst);
+    }
+
+    [Fact]
+    public void IsNoneOnALiveOptionalReadsTheTag()
+    {
+        var ir = Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    if v is None:\n" +
+            "        GPIOR1.value = 1\n");
+
+        // `v is None` is a tag compare against the None member index, not a payload test.
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Binary>(),
+            b => b.Op == PyMCU.IR.BinaryOp.Equal && b.Src2 is Constant { Value: 1 });
+    }
+
+    [Fact]
+    public void OrDefaultSelectsOnTheTag()
+    {
+        var ir = Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    GPIOR1.value = v or 0\n");
+
+        var main = ir.Functions.Single(fn => fn.Name == "main");
+        // tag == None jumps to the default; otherwise the payload is kept.
+        Assert.Contains(main.Body, i => i is JumpIfEqual { Src2: Constant { Value: 1 } });
+        Assert.Contains(main.Body, i => i is JumpIfNotZero);
+        // `v or 0` is never None, so its result temp carries no tag onward -- only
+        // v's own `v$tag` slot exists.
+        Assert.DoesNotContain(main.Body.OfType<Copy>(),
+            c => c.Dst is Variable v && v.Name.Contains("tmp_") && v.Name.Contains("$tag"));
+    }
+
+    [Fact]
+    public void APayloadReadOutsideNarrowingIsRefused()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    GPIOR1.value = v + 1\n"));
+        Assert.Contains("'v' may be None here", ex.Message);
+        Assert.Contains("is not None", ex.Message);
+    }
+
+    [Fact]
+    public void APayloadReadInsideANarrowingArmCompiles()
+    {
+        var ir = Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    if v is not None:\n" +
+            "        GPIOR1.value = v + 1\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Binary>(),
+            b => b.Op == PyMCU.IR.BinaryOp.Add);
+    }
+
+    [Fact]
+    public void AnEarlyReturnNarrowsTheFallThrough()
+    {
+        var ir = Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    if v is None:\n" +
+            "        return\n" +
+            "    GPIOR1.value = v + 1\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Binary>(),
+            b => b.Op == PyMCU.IR.BinaryOp.Add);
+    }
+
+    [Fact]
+    public void AJoinWhereOneArmLeftItNoneStaysOptional()
+    {
+        // `if v is None: <arm>` -- the arm ran with v None and the fall-through ran
+        // with v present, so past the join v is optional again and the read refuses.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(OptRead +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    if v is None:\n" +
+            "        GPIOR1.value = 0\n" +
+            "    GPIOR1.value = v + 1\n"));
+        Assert.Contains("'v' may be None here", ex.Message);
+    }
+
+    [Fact]
+    public void AProvableOptionalKeepsByteIdenticalCode()
+    {
+        // `return None` behind a guard that folds: decision 2 says no tag anywhere --
+        // the function is an ordinary `return a` to its caller.
+        var ir = Gen(Hdr +
+            "MODE: const = 1\n" +
+            "def read(a: uint8) -> Optional[uint8]:\n" +
+            "    if MODE == 0:\n" +
+            "        return None\n" +
+            "    return a\n\n" +
+            "def main():\n" +
+            "    v = read(GPIOR0.value)\n" +
+            "    GPIOR1.value = v\n");
+
+        var f = ir.Functions.Single(fn => fn.Name == "read");
+        Assert.Null(f.ReturnMembers);
+        Assert.DoesNotContain(f.Body, i => i is Return { Tag: not null });
+        var call = ir.Functions.SelectMany(fn => fn.Body).OfType<Call>()
+            .Single(c => c.FunctionName == "read");
+        Assert.Null(call.TagDst);
+        Assert.DoesNotContain(ir.Functions.SelectMany(fn => fn.Body).OfType<Copy>(),
+            c => c.Dst is Variable v && v.Name.Contains("$tag"));
     }
 }
