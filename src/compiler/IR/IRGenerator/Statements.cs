@@ -1316,6 +1316,9 @@ public partial class IRGenerator
                 variableTypes[seqCtx.ResultVars[k]] = seqDt;
                 Emit(new Copy(seqElem, new Variable(seqCtx.ResultVars[k], seqDt)));
                 if (seqElem is Constant sc) constantVariables[seqCtx.ResultVars[k]] = sc.Value;
+                else if (seqElem is Variable seqV
+                         && localConstantValues.TryGetValue(seqV.Name, out int seqVc))
+                    constantVariables[seqCtx.ResultVars[k]] = seqVc;
                 else constantVariables.Remove(seqCtx.ResultVars[k]);
                 if (seqElem is FloatConstant sfc) floatConstantVariables[seqCtx.ResultVars[k]] = sfc.Value;
                 else floatConstantVariables.Remove(seqCtx.ResultVars[k]);
@@ -1414,7 +1417,13 @@ public partial class IRGenerator
                     // depth: a slot a previous call filled with a constant keeps that
                     // entry unless it is cleared here, and a later `x = t__k` read
                     // would fold to the OTHER call's value.
+                    // The element may fold through a local the mint-local store bound in
+                    // this expansion (`bpp = len(byteorder)` in pixelbuf's parse_byteorder):
+                    // its value sits in localConstantValues, not in a Constant Val.
                     if (elemVal is Constant c) constantVariables[ctx.ResultVars[k]] = c.Value;
+                    else if (elemVal is Variable ev
+                             && localConstantValues.TryGetValue(ev.Name, out int evc))
+                        constantVariables[ctx.ResultVars[k]] = evc;
                     else constantVariables.Remove(ctx.ResultVars[k]);
                     if (elemVal is FloatConstant fc) floatConstantVariables[ctx.ResultVars[k]] = fc.Value;
                     else floatConstantVariables.Remove(ctx.ResultVars[k]);
