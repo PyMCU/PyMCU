@@ -97,38 +97,9 @@ public partial class IRGenerator
     {
         if (func == null) return 0;
         int arity = 0;
-        void Walk(Statement? s)
-        {
-            switch (s)
-            {
-                case null: break;
-                case ReturnStmt { Value: TupleExpr t }:
-                    arity = Math.Max(arity, t.Elements.Count);
-                    break;
-                case Block b:
-                    foreach (var inner in b.Statements) Walk(inner);
-                    break;
-                case IfStmt i:
-                    Walk(i.ThenBranch);
-                    foreach (var (_, eb) in i.ElifBranches) Walk(eb);
-                    Walk(i.ElseBranch);
-                    break;
-                case WhileStmt w: Walk(w.Body); break;
-                case ForStmt f: Walk(f.Body); break;
-                case WithStmt w: Walk(w.Body); break;
-                case MatchStmt m:
-                    foreach (var br in m.Branches) Walk(br.Body);
-                    break;
-                case TryStmt t:
-                    foreach (var inner in t.Body) Walk(inner);
-                    foreach (var (_, handler) in t.Handlers)
-                        foreach (var inner in handler) Walk(inner);
-                    if (t.Finally != null) foreach (var inner in t.Finally) Walk(inner);
-                    if (t.ElseBody != null) foreach (var inner in t.ElseBody) Walk(inner);
-                    break;
-            }
-        }
-        Walk(func.Body);
+        foreach (var s in TypeInference.WalkStatements(func.Body))
+            if (s is ReturnStmt { Value: TupleExpr t })
+                arity = Math.Max(arity, t.Elements.Count);
         return arity;
     }
 
