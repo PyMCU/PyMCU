@@ -17,8 +17,11 @@
 // empty (the historical uint8 default) so existing code keeps compiling unchanged.
 //
 // Deliberately OUT of scope: @inline functions (their untyped params are compile-time
-// polymorphic by design -- the HAL relies on it), class methods, overloaded names
-// (inference would fight overload-by-type resolution), @extern/@interrupt/@naked.
+// polymorphic by design -- the HAL relies on it), overloaded names (inference would
+// fight overload-by-type resolution), @extern/@interrupt/@naked. Class methods join
+// the RETURN side only (PyMCU#489): their params are never reached by bare-name
+// call-site evidence -- `self.<m>(...)` is a member call -- but an unannotated
+// `return 300` must land on the FunctionDef exactly as a declared `-> uint16` does.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -41,6 +44,16 @@ public static class TypeInference
 
         // Candidate functions per program (top-level, outlined, not overloaded).
         var candidates = new List<FunctionDef>();
+        // Class methods are return-inference candidates only (#489). prog.Functions
+        // never listed them, so `def _read(self): return 300` kept the void default:
+        // `self.v = self._read()` laid the field out as uint8 and the outlined callee
+        // truncated its own return. The join mutates the FunctionDef's ReturnType,
+        // which is what the scan reads through methodsByName (InferAssignedFieldType)
+        // and writes into functionReturnTypes under the Class_method key -- the
+        // inferred type is seen precisely as a declared one. No name-count guard is
+        // needed for methods: each FunctionDef keeps its own ReturnType and nothing
+        // here keys a method by bare name.
+        var methodCandidates = new List<FunctionDef>();
         foreach (var prog in programs)
         {
             var counts = prog.Functions.GroupBy(f => f.Name).ToDictionary(g => g.Key, g => g.Count());
@@ -52,8 +65,14 @@ public static class TypeInference
                     || (IsInferableReturn(f.ReturnType) && HasValueReturn(f.Body)))
                     candidates.Add(f);
             }
+            foreach (var m in ClassMethods(prog))
+            {
+                if (m.IsInline || m.IsExtern || m.IsInterrupt || m.IsNaked) continue;
+                if (IsInferableReturn(m.ReturnType) && HasValueReturn(m.Body))
+                    methodCandidates.Add(m);
+            }
         }
-        if (candidates.Count == 0) return;
+        if (candidates.Count == 0 && methodCandidates.Count == 0) return;
 
         // Known (annotated or already-inferred) return types by bare function name.
         var returnTypes = new Dictionary<string, string>();
@@ -91,26 +110,60 @@ public static class TypeInference
                     if (f.Params[i].Type.Length == 0 && ev[i] != null)
                         f.Params[i].Type = ev[i]!;
 
-                // Return type: join the static types of all value returns, using the
-                // (possibly just-inferred) param types as the local scope.
-                if (IsInferableReturn(f.ReturnType) && HasValueReturn(f.Body))
+                if (InferReturnType(f, returnTypes) is { } rt)
                 {
-                    var scope = ScopeTypes(f);
-                    string? rt = null;
-                    foreach (var r in CollectReturns(f.Body.Statements))
-                    {
-                        string? t = StaticTypeOf(r, scope, returnTypes);
-                        if (t == null) { rt = null; break; }   // any unknown -> give up
-                        rt = rt == null ? t : Join(rt, t);
-                    }
-                    if (rt != null)
-                    {
-                        f.ReturnType = rt;
-                        returnTypes[f.Name] = rt;
-                    }
+                    f.ReturnType = rt;
+                    returnTypes[f.Name] = rt;
                 }
             }
+
+            // Method returns: the same join, but nothing enters returnTypes -- a
+            // bare-name entry would alias a module-level function of the same name,
+            // and member calls never resolve through that table anyway.
+            foreach (var m in methodCandidates)
+                if (InferReturnType(m, returnTypes) is { } mrt)
+                    m.ReturnType = mrt;
         }
+    }
+
+    // Every method FunctionDef a module's classes declare: the classes at the top level
+    // of GlobalStatements, and nested classes inside them -- the same universe the scan
+    // registers under Class_method keys.
+    private static IEnumerable<FunctionDef> ClassMethods(ProgramNode prog)
+    {
+        foreach (var s in prog.GlobalStatements)
+            foreach (var m in MethodsOf(s))
+                yield return m;
+    }
+
+    private static IEnumerable<FunctionDef> MethodsOf(Statement st)
+    {
+        if (st is not ClassDef cls || cls.Body is not Block body) yield break;
+        foreach (var member in body.Statements)
+        {
+            if (member is FunctionDef fn) yield return fn;
+            // Nested classes declare methods of their own.
+            foreach (var m in MethodsOf(member)) yield return m;
+        }
+    }
+
+    // Return type: join the static types of all value returns, using the (possibly
+    // just-inferred) param types as the local scope. One return whose type is unknown
+    // -- a member read, a subscript, a `return None`, a call this table does not
+    // cover -- gives up and leaves the declaration empty; that is what keeps the
+    // RFC 0009 `return None` shape compiling exactly as it did.
+    private static string? InferReturnType(FunctionDef f, Dictionary<string, string> returnTypes)
+    {
+        if (!IsInferableReturn(f.ReturnType) || !HasValueReturn(f.Body)) return null;
+        var scope = ScopeTypes(f);
+        string? rt = null;
+        foreach (var r in CollectReturns(f.Body.Statements))
+        {
+            string? t = StaticTypeOf(r, scope, returnTypes);
+            if (t == null) return null;   // any unknown -> give up
+            rt = rt == null ? t : Join(rt, t);
+        }
+        return rt;
     }
 
     // ── evidence collection ─────────────────────────────────────────────────────
