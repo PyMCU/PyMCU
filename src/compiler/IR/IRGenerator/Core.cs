@@ -298,6 +298,13 @@ public partial class IRGenerator
             RemoveDescendants(variableAliases, sep);
             RemoveDescendants(constantAddressVariables, sep);
             RemoveDescendants(instanceClasses, sep);
+            // The "different texts on different paths" mark is callee-local state
+            // too: an earlier expansion at this depth filed it under this same
+            // prefix, and a str parameter freshly bound here must not refuse a
+            // run-time argument on texts the dead scope saw (draw_char(char)
+            // marked inline2.draw_char.char once per unrolled iteration, then a
+            // later expansion handing a run-time char code refused ord(char)).
+            RemoveDescendants(multiStrVariables, sep);
         }
     }
 
