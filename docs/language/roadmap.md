@@ -107,7 +107,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict — open addressing over per-instance fixed arrays, no heap and no GC |
 | f-string as a **value** | `s = f"t={t} C"` builds into a compiler-managed fixed `bytearray`; `len(s)`, `s[i]`, `print(s)`, buffer reuse on re-assignment. Float format specs (`{v:.2f}`) work here too |
 | `async def` / `await`, generators (`yield`) | Lowered to a zero-cost state-machine class with `poll()`; `await asyncio.sleep/sleep_ms` anywhere in the body; executors `asyncio.run` / `asyncio.gather`; `for x in gen(...)` desugars to a poll loop |
-| Type inference for unannotated `def` params/returns | Outlined functions join call-site evidence, defaults and return expressions (safe integer widening) instead of defaulting to `uint8` |
+| Type inference for unannotated `def` params/returns | Outlined functions join call-site evidence, defaults and return expressions (safe integer widening) instead of defaulting to `uint8`; class methods join the return side, so `self.x = self._m()` reads `_m`'s inferred return type as field-width evidence (#489) |
 | Value-returning methods on nested ZCA fields | `self.pin.read()` on a class-typed field dispatches through facade re-exports and single-level inheritance — the shape the compat layers are built on |
 | `def f(): return C(...)` returning a multi-field ZCA | A plain function whose return is a ZCA construction force-inlines at the call site, the same rule as a ZCA-typed parameter: `board.I2C()` -> `_board_i2c(SCL, SDA)` keeps every field store the constructor emits (adafruit_ssd1306). A single-field class still returns its register-packed handle; a declared `-> C` still lowers sret |
 

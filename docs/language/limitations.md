@@ -397,9 +397,10 @@ or a loop can change is not one, and neither is anything read from a register.
 
 An unannotated field takes its width from the widest value the constructor assigns — a
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic
-expression its widest operand, and `self.x = self._m()` the declared return type of `_m`
-(a method with no return annotation is not inferred — its field keeps the uint8 default).
-An explicit `self.x: T = ...` still wins.
+expression its widest operand, and `self.x = self._m()` the return type of `_m` -- declared,
+or inferred from the method's own return expressions the way an unannotated function's is
+(a `return None`, a member read or anything else the join cannot type leaves the field at
+the uint8 default). An explicit `self.x: T = ...` still wins.
 
 A field's layout is derived from every `self.x = ...` in the class body, not from `__init__`
 alone — a property setter (`@x.setter`) or a helper method `__init__` reaches through

@@ -57,6 +57,13 @@
   `start` correctly — and a `bytes`/`b"..."` literal written inline as a call argument
   gets an addressable buffer, so the `I2CDevice` probe `writeto(addr, b"")` reaches the
   subroutine.
+- **ir**: an unannotated class method's return type is inferred by the same
+  return-join pass module-level functions already had, so `self.v = self._read()`
+  with `def _read(self): return 300` lays `v` out as `uint16` and the outlined
+  callee returns both bytes instead of truncating to `LDI R24,44; RET`
+  (PyMCU#489). A return the pass cannot type -- a member read, a subscript,
+  `return None` on a reached path -- still leaves the method unannotated, the
+  RFC 0009 case unchanged.
 
 ## 0.1.0b1 (Unreleased, prepared 2026-09-15)
 
