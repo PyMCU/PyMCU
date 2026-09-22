@@ -180,10 +180,33 @@ _UART_RE     = re.compile(r'\bUART\s*\(')
 _TICKS_MS_RE = re.compile(r'\b(?:ticks_ms|monotonic|monotonic_ns|ticks_us|micros)\s*\(')
 _INPUT_RE    = re.compile(r'\binput\s*\(')
 _ASYNC_DEF_RE = re.compile(r'^\s*async\s+def\s', re.MULTILINE)
+# `raise Name(<anything>)` -- an exception raised with a message. The unhandled
+# report prints it through the console string writers, which nothing links in
+# unless print() (or this) pulled them in.
+_RAISE_MSG_RE = re.compile(r'\braise\s+[A-Za-z_]\w*\s*\(\s*[^)\s]')
 # `board` is a CircuitPython concept (board.LED, board.GP25). MicroPython code
 # addresses pins through machine.Pin and never imports it.
 _IMPORT_BOARD_RE = re.compile(r'^\s*(?:import\s+board\b|from\s+board\s+import\b)',
                               re.MULTILINE)
+
+
+def _detect_raise_with_message(sources_dir: Path) -> bool:
+    """Return True if any .py file raises an exception with an argument.
+
+    Same over-inclusive-on-purpose shape as the print() scan: matching `raise X(...)`
+    in dead code only links console writers DCE would remove anyway; missing a real
+    one just means the unhandled report is `E:<Type>` without the message, the way it
+    was before.
+    """
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+            if _RAISE_MSG_RE.search(code):
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def _imports_board(sources_dir: Path) -> bool:
@@ -1462,6 +1485,19 @@ def build(
                 extra_includes.insert(0, str(generated_dir))
             _diag_log("print() + user UART() — injecting console functions (no init)",
                       verbose=is_verbose)
+        elif _detect_raise_with_message(sources_dir):
+            # No print()/input() anywhere, but some raise carries a message: the
+            # unhandled report prints `E:<Type>: <msg>` through the same console
+            # string writers, so they must be linked even though nothing calls
+            # print. No UART init -- the exception runtime programs the
+            # transmitter itself when the program does not own it (uart_owned
+            # stays false), and must not reprogram a live one when it does.
+            entry_point, _n = _inject_print_imports_only(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("raise with message detected — injecting console functions "
+                      "(no init)", verbose=is_verbose)
 
         # Auto-inject the strfmt helpers when an f-string is assigned to a variable
         # (f-string-as-value lowering resolves pymcu.strfmt by import alias).
