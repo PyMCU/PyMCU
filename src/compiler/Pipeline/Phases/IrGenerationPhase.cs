@@ -52,6 +52,7 @@ public class IrGenerationPhase : CompilerPhaseBase
         // One width per variable name, whether or not the optimizer runs: the backend sizes a
         // name once, so two widths for one name is a miscompile, not a missed optimisation.
         Optimizer.UnifyVariableWidths(ir);
+        Verifier.Check(ir, "unify-widths");
 
         // PGO: a --profile JSON is advisory input to the optimizer. A file that
         // does not parse degrades to an ordinary build with a warning -- the
@@ -71,6 +72,7 @@ public class IrGenerationPhase : CompilerPhaseBase
         var optimized = Environment.GetEnvironmentVariable("PYMCU_NO_OPT") == "1"
             ? ir
             : Optimizer.Optimize(ir, pgoProfile);
+        Verifier.Check(optimized, "optimize");
 
         // CanFail analysis runs after optimization so that dead-code-eliminated
         // functions and cloned bodies are the final IR seen by the backend.
@@ -79,6 +81,7 @@ public class IrGenerationPhase : CompilerPhaseBase
         // Guard every unguarded CanFail call so an uncaught error halts (top-level) or re-raises
         // to the caller, instead of being silently swallowed by the next happy-path CLT.
         CanFailAnalyzer.InsertUncaughtPropagation(optimized);
+        Verifier.Check(optimized, "canfail");
 
         context.IntermediateRepresentation = optimized;
     }

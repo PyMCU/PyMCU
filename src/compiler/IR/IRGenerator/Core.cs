@@ -1425,6 +1425,10 @@ public partial class IRGenerator
         // @inline body, already expanded into its callers, cannot be flagged.
         CheckReentrancy(irProgram);
 
+        // Between-passes verifier (PYMCU_VERIFY_IR): the raw generator output is the
+        // stage every later pass trusts, so it is the first thing worth checking.
+        Verifier.Check(irProgram, "generate");
+
         return irProgram;
     }
 
