@@ -1,7 +1,9 @@
 """A diagnostic about an inlined body names the file and line of THAT body.
 
-A `for`-in over a parameter annotated `str` rather than `const[str]` was reported against the
-caller. Two shapes, both wrong in different ways:
+A `for`-in over a parameter that cannot be iterated was reported against the
+caller (originally reproduced with a `str` parameter; since a `str` parameter
+keeps its compile-time text, the probe now iterates a `uint8`). Two shapes,
+both wrong in different ways:
 
     @inline METHOD in another module    main.py:6    the call site, correct code, and the file
                                                      that needs the edit never named
@@ -83,7 +85,7 @@ PANEL_METHOD = (
     "    def __init__(self, addr: uint8):\n"           # 7
     "        self._addr = addr\n\n"                    # 8-9
     "    @inline\n"                                    # 10
-    "    def print_str(self, s: str):\n"               # 11
+    "    def print_str(self, s: uint8):\n"             # 11
     "        for c in s:\n"                            # 12
     "            pass\n"                               # 13
 )
@@ -92,15 +94,15 @@ MAIN_METHOD = (
     "from panel import Panel\n\n\n"
     "def main():\n"
     "    p = Panel(0x3C)\n"
-    '    p.print_str("Hi!")\n'
+    "    p.print_str(60)\n"
     "    while True:\n"
     "        pass\n"
 )
 
 PANEL_FUNCTION = (
-    "from pymcu.types import inline\n\n\n"             # 1-3
+    "from pymcu.types import uint8, inline\n\n\n"      # 1-3
     "@inline\n"                                        # 4
-    "def shout(s: str):\n"                             # 5
+    "def shout(s: uint8):\n"                           # 5
     "    for c in s:\n"                                # 6
     "        pass\n"                                   # 7
 )
@@ -108,7 +110,7 @@ PANEL_FUNCTION = (
 MAIN_FUNCTION = (
     "from panel import shout\n\n\n"
     "def main():\n"
-    '    shout("Hi!")\n'
+    "    shout(60)\n"
     "    while True:\n"
     "        pass\n"
 )
