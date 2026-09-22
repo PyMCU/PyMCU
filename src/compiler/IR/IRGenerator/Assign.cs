@@ -6171,10 +6171,17 @@ public partial class IRGenerator
         foreach (var kv in importedAliases)
             if (kv.Value == "pymcu.arena") { arenaMod = kv.Key; break; }
         if (arenaMod == null)
+        {
+            // The driver reads this token off stdout and answers it by injecting the
+            // allocator import + shim, then running the frontend again (build.py,
+            // _compile_frontend). Emitted before the diagnostic so the token is on
+            // the stream even though the compile is about to fail.
+            Logger.NeedsArena();
             throw UserError(
                 "a runtime-sized bytearray(n) needs the pymcu.arena allocator; `pymcu build` " +
                 "injects it automatically -- if invoking the compiler by hand, add " +
                 "`import pymcu.arena as _pymcu_arena` to the entry file.", sizeSource);
+        }
 
         Val offVal = VisitExpression(new CallExpr(
             new MemberAccessExpr(new VariableExpr(arenaMod), "alloc"),
@@ -6190,6 +6197,11 @@ public partial class IRGenerator
 
         arenaBufferNames.Add(qualified);
         arenaBufferLenVar[qualified] = lenQualified;
+        // The import resolved, so this compile can finish -- but it is running against
+        // the SHIPPED pymcu.arena (ARENA_SIZE = 0) unless the driver staged its shim,
+        // which it only does once it knows the arena is in play. The token is how it
+        // knows: on seeing it the driver injects and recompiles (build.py).
+        Logger.ArenaUsed();
         return true;
     }
 

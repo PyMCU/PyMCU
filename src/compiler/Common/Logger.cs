@@ -30,6 +30,12 @@ namespace PyMCU.Common;
 //       [BUILD_FAIL]  <phaseName>
 //       [INFO]        [<component>] <message>
 //       [VERBOSE]     [<component>] <message>
+//       [NEEDS_ARENA]                -- a runtime-sized bytearray(n) met a missing
+//                                       pymcu.arena import; the driver injects the
+//                                       allocator and compiles again
+//       [ARENA_USED]                 -- an arena allocation was lowered (the import
+//                                       resolved); the driver still stages the shim
+//                                       that carries the real ARENA_SIZE
 //     All warnings/errors go to stderr (never pollute the token stream).
 //
 //   Interactive mode (stdout is a real TTY)
@@ -106,6 +112,25 @@ public static class Logger
         if (_isDriverMode)
             Console.WriteLine($"[BUILD_FAIL] {phase}");
         // interactive: Diagnostic already printed the error on stderr
+    }
+
+    // docs/rfcs/0004-arena-allocator.md: the driver cannot tell a runtime-sized
+    // bytearray(n) from a foldable one by reading the sources, so the arena decision
+    // is reported from here -- the only place the size has actually been folded.
+    // NEEDS_ARENA precedes the missing-import UserError (the compile then fails);
+    // ARENA_USED marks a successful arena lowering, which matters when the program
+    // imported pymcu.arena itself: the compile succeeds, but the shipped module's
+    // ARENA_SIZE is 0 until the driver stages the generated shim over it.
+    public static void NeedsArena()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[NEEDS_ARENA]");
+    }
+
+    public static void ArenaUsed()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[ARENA_USED]");
     }
 
     // ── General logging ──────────────────────────────────────────────────────
