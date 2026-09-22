@@ -51,6 +51,26 @@ purpose, as opposed to bugs like these three that were silent until found.
   The compiler now reports on its own output whether an arena allocation actually lowered,
   and the driver stages the allocator only then; a foldable size reserves nothing, and a
   genuinely runtime-sized `bytearray(n)` keeps its reservation and the arena shim.
+- A constant `for` loop now weighs its body before unrolling. Any constant iterable of at
+  most eight elements expanded unconditionally before -- `range`, a list, tuple or string
+  literal, a named sequence, `enumerate`, `reversed`, a slice, a returned fixed array --
+  so `for y in range(8): for x in range(32):` wrote the inner loop out eight times, and a
+  small loop over calls like the SSD1306 `init_display` command table copied the helper
+  for every step. An unroll now happens only while the body is cheap; an expensive body
+  lowers to a counter loop, and the constant sequence it iterates is materialized once in
+  flash instead of being inlined per step. A loop variable that must stay a compile-time
+  constant -- one passed to a `const` parameter, say `Pin(n, Pin.OUT)` -- still unrolls
+  whatever the body costs, and a flash table no surviving function references is swept
+  after dead-function elimination rather than emitted. Measured on the unmodified
+  Adafruit SSD1306 driver: 664 bytes smaller; the 32x8 Conway's Life program builds for
+  the Uno with SRAM to spare.
+- A member array made by an inlined constructor was allocated twice: the mark that says
+  `self.buffer = bytearray(513)` lives as one contiguous array was cleared between
+  functions, so `enumerate(self.buffer)` in a later method fell back to 513 slot variables
+  (`display_buffer__0..512`) no instruction ever wrote -- a second, phantom framebuffer.
+  On the Life program that put static data past the ATmega328P's 2048 bytes of SRAM.
+  Residency marks now accumulate for the whole program: the storage outlives the function
+  that created it, so the mark does too.
 
 ### Silent wrong code
 - A `return None` on a path the program can reach, in a function declared `-> X` and

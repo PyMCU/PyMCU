@@ -614,11 +614,18 @@ and `for pin in (reset_dio, enable_dio, ...)` over already-constructed instances
 and `for x in t` where `t` is a bound tuple-return result.
 
 A `range()` bound is folded before the loop is lowered, whatever shape it is written in: a
-literal, a name, or an expression over either. A count of at most eight unrolls, an empty
-range emits nothing, and anything the program really decides at run time stays a loop.
+literal, a name, or an expression over either. A count of at most eight unrolls while the
+body is cheap, an empty range emits nothing, and anything the program really decides at run
+time stays a loop. An expensive body -- a nested loop, a call -- lowers even a short
+constant loop to a counter loop, since unrolling it costs more flash than looping costs.
+The exception is a loop variable that must stay a compile-time constant: one passed to a
+`const` parameter (`Pin(n, Pin.OUT)`), used to index a name with no runtime storage, and
+the like unrolls whatever the body costs, because a counter would leave a run-time value
+where the callee needs a number.
 
-A `for` over a short constant list unrolls, and the loop variable is a compile-time constant
-in each iteration, so a `const` parameter receiving it resolves as it would from a literal.
+A `for` over a short constant list unrolls by the same cost rule, and the loop variable is a
+compile-time constant in each iteration, so a `const` parameter receiving it resolves as it
+would from a literal.
 The elements may be numbers or STRINGS, which is what a row of board pins is:
 `for pin in (board.D2, board.D3, board.D4)` works, and so does the pair form
 `for pin, name in [(board.D2, "D2"), (board.D3, "D3")]`. A tuple or list of
@@ -708,7 +715,9 @@ STORES into: flash cannot be written, so that one is told to declare its storage
 
 **A sequence bound to a name.** `DUTIES = [256, 383, ...]` and `DUTIES = (256, 383, ...)`
 are the same thing to iterate over, at any length: up to eight constant elements the `for`
-unrolls against the literal, and past that the name gets a fixed array the loop walks.
+unrolls against the literal while the body is cheap, and past that -- or at any length with
+an expensive body -- the name gets a fixed array a counter loop walks, the elements read
+from flash.
 Without an annotation the element width comes from the widest element, so a 16-bit table
 stays 16-bit. Being the same storage, a write through the name (`DUTIES[0] = 1`) is not
 refused on the tuple the way CPython refuses it.
