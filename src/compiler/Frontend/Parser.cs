@@ -2955,6 +2955,17 @@ public class Parser
             string joined = first.Value;
             Token last = first;
             while (Check(TokenType.String)) { last = Advance(); joined += last.Value; }
+
+            // `"a" f"{x}b"` is a JoinedStr under CPython, not a str: once an f-string
+            // joins the run the literal pieces become its text parts.
+            if (Check(TokenType.FString))
+            {
+                var mixed = new List<FStringPart>();
+                AppendFStringText(mixed, joined);
+                AppendAdjacentFStringPieces(mixed);
+                return new FStringExpr(mixed);
+            }
+
             int span = last.Line == first.Line && last.Column >= first.Column
                 ? (last.Column - first.Column) + last.Length
                 : first.Length;
@@ -2965,6 +2976,20 @@ public class Parser
         if (Match(TokenType.FString))
         {
             Token fstr = Previous();
+            var parts = new List<FStringPart>();
+            AppendFStringParts(parts, fstr);
+            // Adjacent pieces concatenate: `f"a{x} " "b"` is one JoinedStr under CPython
+            // (a raise message built that way is how the seesaw driver's chip-id raise is
+            // spelled). The lexer suppresses the newlines between pieces inside parens.
+            AppendAdjacentFStringPieces(parts);
+            return new FStringExpr(parts);
+        }
+
+        // Append one f-string token's pieces -- literal text and replacement fields -- to
+        // `parts`. Called for the token that opened the f-string and again for every FString
+        // token in an adjacent-literal run, which is why it appends rather than returning.
+        void AppendFStringParts(List<FStringPart> parts, Token fstr)
+        {
             string raw = fstr.Value;
 
             // Everything wrong with an f-string is wrong inside the literal, and the parser has
@@ -2972,7 +2997,6 @@ public class Parser
             void FStringError(string message) =>
                 throw new SyntaxError(message, fstr.Line, fstr.Column, fstr.Length);
 
-            var parts = new List<FStringPart>();
             int i = 0;
             while (i < raw.Length)
             {
@@ -3042,7 +3066,7 @@ public class Parser
                     {
                         if (exprSrc.Substring(eq + 1).Trim().Length != 0)
                             FStringError("Unexpected text after '=' in f-string");
-                        parts.Add(new FStringPart { IsExpr = false, Text = exprSrc });
+                        AppendFStringText(parts, exprSrc);
                         exprSrc = exprSrc.Substring(0, eq);
                     }
 
@@ -3106,13 +3130,34 @@ public class Parser
                     }
 
                     if (!string.IsNullOrEmpty(text))
-                    {
-                        parts.Add(new FStringPart { IsExpr = false, Text = text });
-                    }
+                        AppendFStringText(parts, text);
                 }
             }
+        }
 
-            return new FStringExpr(parts);
+        // Literal text between fields: CPython's JoinedStr keeps ONE Constant per run of
+        // literal text, so a run of plain literals -- or literal text where two f-strings
+        // or literals meet -- folds into the trailing text part instead of adding another.
+        void AppendFStringText(List<FStringPart> parts, string text)
+        {
+            if (text.Length == 0) return;
+            if (parts.Count > 0 && !parts[^1].IsExpr)
+                parts[^1].Text += text;
+            else
+                parts.Add(new FStringPart { IsExpr = false, Text = text });
+        }
+
+        // f".." joined to a run of "..." / f"..." pieces: implicit concatenation folds the
+        // whole run into one JoinedStr under CPython. Newlines between the pieces inside
+        // parens never reach the token stream (the lexer suppresses them).
+        void AppendAdjacentFStringPieces(List<FStringPart> parts)
+        {
+            while (true)
+            {
+                if (Check(TokenType.String)) { AppendFStringText(parts, Advance().Value); continue; }
+                if (Check(TokenType.FString)) { AppendFStringParts(parts, Advance()); continue; }
+                return;
+            }
         }
 
         if (Match(TokenType.Number))

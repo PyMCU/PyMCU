@@ -671,3 +671,92 @@ public class ParserImportTests
         Assert.Equal(3, prog.Functions[0].Line);
     }
 }
+
+/// <summary>
+/// Implicit concatenation when an f-string is one of the pieces. CPython folds a run of
+/// adjacent literals into ONE JoinedStr the moment any piece is an f-string, merging each
+/// run of literal text into a single Constant (so `"a" "b" f"{x}c"` is
+/// JoinedStr["ab", x, "c"]). The C# front end must build the same part list, because the
+/// Python front end gets exactly that shape from CPython's own parser and the two have to
+/// produce the same image.
+/// </summary>
+public class AdjacentFStringConcatTests
+{
+    private static ProgramNode Parse(string source)
+    {
+        var lexer = new Lexer(source);
+        var tokens = lexer.Tokenize();
+        var parser = new Parser(tokens);
+        return parser.ParseProgram();
+    }
+
+    private static FStringExpr AssignedFString(ProgramNode prog)
+    {
+        var assign = Assert.IsType<AssignStmt>(prog.GlobalStatements[0]);
+        return Assert.IsType<FStringExpr>(assign.Value);
+    }
+
+    [Fact]
+    public void FStringThenLiteral_Concatenates()
+    {
+        // f"a{n} " "b" -> JoinedStr["a", n, " b"]
+        var fs = AssignedFString(Parse("x = f\"a{n} \" \"b\"\n"));
+        Assert.Equal(3, fs.Parts.Count);
+        Assert.False(fs.Parts[0].IsExpr);
+        Assert.Equal("a", fs.Parts[0].Text);
+        Assert.True(fs.Parts[1].IsExpr);
+        Assert.False(fs.Parts[2].IsExpr);
+        Assert.Equal(" b", fs.Parts[2].Text);
+    }
+
+    [Fact]
+    public void LiteralThenFString_Concatenates()
+    {
+        // "a" f"{n}b" -> JoinedStr["a", n, "b"]
+        var fs = AssignedFString(Parse("x = \"a\" f\"{n}b\"\n"));
+        Assert.Equal(3, fs.Parts.Count);
+        Assert.Equal("a", fs.Parts[0].Text);
+        Assert.True(fs.Parts[1].IsExpr);
+        Assert.Equal("b", fs.Parts[2].Text);
+    }
+
+    [Fact]
+    public void LiteralRuns_MergeIntoOnePartEach()
+    {
+        // "a" "b" f"{n}c" "d" "e" -> JoinedStr["ab", n, "cde"]
+        var fs = AssignedFString(Parse("x = \"a\" \"b\" f\"{n}c\" \"d\" \"e\"\n"));
+        Assert.Equal(3, fs.Parts.Count);
+        Assert.Equal("ab", fs.Parts[0].Text);
+        Assert.True(fs.Parts[1].IsExpr);
+        Assert.Equal("cde", fs.Parts[2].Text);
+    }
+
+    [Fact]
+    public void TwoFStrings_ConcatenateWithoutLiteral()
+    {
+        // f"{a}" f"{b}" -> JoinedStr[a, b] -- no empty constants between fields
+        var fs = AssignedFString(Parse("x = f\"{a}\" f\"{b}\"\n"));
+        Assert.Equal(2, fs.Parts.Count);
+        Assert.All(fs.Parts, p => Assert.True(p.IsExpr));
+    }
+
+    [Fact]
+    public void RaiseMessage_FStringThenLiteralAcrossLines()
+    {
+        // The seesaw shape: `raise RuntimeError(f"...{x:x} is not " "correct! ...")`
+        // inside parens, pieces on separate lines.
+        var prog = Parse(
+            "def f():\n" +
+            "    raise RuntimeError(\n" +
+            "        f\"bad 0x{n:x} is not \"\n" +
+            "        \"correct\"\n" +
+            "    )\n");
+        var raise = Assert.IsType<RaiseStmt>(prog.Functions[0].Body.Statements[0]);
+        var fs = Assert.IsType<FStringExpr>(raise.MessageExpr);
+        Assert.Equal(3, fs.Parts.Count);
+        Assert.Equal("bad 0x", fs.Parts[0].Text);
+        Assert.True(fs.Parts[1].IsExpr);
+        Assert.Equal("x", fs.Parts[1].FormatSpec);
+        Assert.Equal(" is not correct", fs.Parts[2].Text);
+    }
+}
