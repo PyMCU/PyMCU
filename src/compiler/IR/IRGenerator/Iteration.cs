@@ -2273,6 +2273,39 @@ public partial class IRGenerator
                         return;
                     }
 
+                    // enumerate() over a compile-time sequence of INSTANCES held in a field:
+                    // `for i, _ in enumerate(self.i2c_device)` (the HT16K33 shape -- one
+                    // wrapped I2CDevice, or a list literal of them). The elements live as
+                    // `base__k` instance keys, so the value var binds to each element slot
+                    // exactly as `for x in self.seq` already does, and the index is the
+                    // ordinary constant the counter loop above also produces.
+                    if (inner is MemberAccessExpr
+                        && TryResolveInstanceSequence(inner, out var enSeqBase, out int enSeqN))
+                    {
+                        string enQVal = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? currentInlinePrefix + stmt.Var2Name
+                            : (!string.IsNullOrEmpty(currentFunction)
+                                ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
+                        bool enSeqBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                        string enSeqBreakLabel = enSeqBrk ? MakeLabel() : "";
+                        for (int k = 0; k < enSeqN; ++k)
+                        {
+                            string enSeqCont = enSeqBrk ? MakeLabel() : "";
+                            if (enSeqBrk)
+                                loopStack.Add(new LoopLabels { ContinueLabel = enSeqCont,
+                                    BreakLabel = enSeqBreakLabel, FinallyDepth = finallyStack.Count });
+                            constantVariables[idxKey] = k;
+                            BindInstanceForIteration(enSeqBase + "__" + k, enQVal);
+                            VisitStatement(stmt.Body);
+                            if (enSeqBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(enSeqCont)); }
+                            CleanCtState(enQVal);
+                            constantVariables.Remove(enQVal);
+                        }
+                        if (enSeqBrk) Emit(new Label(enSeqBreakLabel));
+                        constantVariables.Remove(idxKey);
+                        return;
+                    }
+
                     // enumerate() over a compile-time string: (index, char) pairs. At or
                     // below the unroll cap each iteration binds the same one-character
                     // string constant `for c in s` makes; past it the loop runs at run
