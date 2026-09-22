@@ -150,12 +150,16 @@ def test_a_class_with_no_base_is_unaffected(tmp_path, py_parser):
 
 
 @pytest.mark.parametrize("py_parser", FRONTENDS)
-def test_the_no_init_message_still_fires_for_its_own_cause(tmp_path, py_parser):
-    """Steps 2 and 3 are unreachable for THIS cause, not removed.
+def test_a_class_with_no_init_constructs_via_the_synthesized_default(tmp_path, py_parser):
+    """Steps 2 and 3 are unreachable for THIS cause -- because the cause is gone.
 
-    A class that genuinely has no `__init__` and no base must still be told so. Without this,
-    a fix that silenced the message entirely would look identical to one that made it
-    unreachable only where it was wrong.
+    CPython synthesizes a trivial no-op constructor for a class that declares
+    none, and since PyMCU#391 the compiler does the same: `C()` below expands
+    the synthesized `__init__` away and the instance dispatches `hello()`
+    normally. The old refusal -- "class 'C' cannot be constructed: it has no
+    __init__ method" -- was the diagnostic the typo'd-base sequence fell into;
+    with the base check naming `Basse` directly, and this construction legal,
+    neither step of that sequence exists any more.
     """
     ok, out = compile_(
         tmp_path,
@@ -163,8 +167,8 @@ def test_the_no_init_message_still_fires_for_its_own_cause(tmp_path, py_parser):
         "    def hello(self) -> uint8:\n"
         "        return 1\n\n\n"
         "def main() -> None:\n"
-        "    c: C = C()\n",
+        "    c: C = C()\n"
+        "    x: uint8 = c.hello()\n",
         py_parser,
     )
-    assert not ok, out
-    assert "has no __init__ method" in out, out
+    assert ok, out
