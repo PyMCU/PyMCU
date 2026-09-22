@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- **ir**: void calls to the same subroutine with structurally identical constant
+  arguments now share one synthesized zero-argument stub. An init sequence like the
+  SSD1306's calls `writeto(addr, temp, 2)` dozens of times and re-marshaled the same
+  immediates at every site (~10 bytes of LDI before each RCALL); the sites now
+  collapse to a bare `RCALL __pymcu_callstub_N` and the stub holds the
+  constant-bearing call once. The stub forwards the T flag through the ordinary
+  error-propagation protocol, so a failing callee still reports to the original
+  site. Measured across the AVR corpus: 26 programs shrink by 4–194 bytes
+  (`adafruit-ssd1306-unmodified` 4626 → 4432), `examples/lcd` is size-neutral, and
+  nothing grows. Per-call the stub costs one extra CALL/RET pair — a character
+  write on `examples/lcd` is +17 cycles (+0.7%), a 513-byte SSD1306 frame write is
+  +9 cycles (+0.02%).
+
 ### Fixed
 
 - **hal/avr**: `I2C.writebyte()` returned nothing, so a NACKed transaction was invisible

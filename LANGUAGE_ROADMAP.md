@@ -468,6 +468,12 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 |---------|-------|
 | Arena allocator for runtime-sized `bytearray(n)` | Allocates from a static arena (no `free()`) instead of being refused, wherever the compiler can prove the statement runs at most once: a module-level statement not in a loop, or an `@inline __init__` reached only through inlining from one. Refused elsewhere, naming the reason. `x[i]`, `x[i] = v`, `len(x)`; `for b in x` iterates the bytes when the buffer reaches the loop through an `@inline` parameter binding or a field (`self._post_brightness_buffer` into `neopixel_write`). New `MemoryError` on overflow; `pymcu build` reports the reservation. AVR only. See `docs/rfcs/0004-arena-allocator.md` |
 
+### Compiler
+
+| Feature | Notes |
+|---------|-------|
+| Constant-argument call deduplication | The IR optimizer groups void calls to the same subroutine whose arguments are all compile-time constants (`Constant`, `ArrayBase`, `MemoryAddress`) into one synthesized zero-argument `__pymcu_callstub_N` function; each original site becomes a bare `RCALL`. The stub is `CanFail` when the callee is, so the T-flag error protocol propagates unchanged. A per-site marshal-cost estimate skips groups that would not shrink |
+
 ---
 
 ## v0.12 — Implemented
