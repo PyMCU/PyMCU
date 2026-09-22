@@ -249,12 +249,10 @@ public partial class IRGenerator
             dropped.Add(name);
         }
 
-        void Walk(Statement? st)
+        void Walk(Statement st)
         {
             switch (st)
             {
-                case null: return;
-                case Block b: foreach (var s2 in b.Statements) Walk(s2); return;
                 case AssignStmt a when a.Target is VariableExpr av: Bind(av.Name, a.Value); return;
                 case AnnAssign an: dropped.Add(an.Target); return;
                 // An unannotated module-level `b = 5` parses as a VarDecl with an empty type,
@@ -267,37 +265,24 @@ public partial class IRGenerator
                 case ForStmt f:
                     dropped.Add(f.VarName);
                     if (!string.IsNullOrEmpty(f.Var2Name)) dropped.Add(f.Var2Name);
-                    Walk(f.Body);
                     return;
-                case WhileStmt w: Walk(w.Body); return;
                 case WithStmt wi:
                     if (!string.IsNullOrEmpty(wi.AsName)) dropped.Add(wi.AsName);
-                    Walk(wi.Body);
-                    return;
-                case IfStmt i:
-                    Walk(i.ThenBranch);
-                    foreach (var (_, body) in i.ElifBranches) Walk(body);
-                    Walk(i.ElseBranch);
                     return;
                 case MatchStmt m:
                     foreach (var br in m.Branches)
-                    {
                         if (!string.IsNullOrEmpty(br.CaptureName)) dropped.Add(br.CaptureName);
-                        Walk(br.Body);
-                    }
                     return;
-                case TryStmt t2:
-                    foreach (var s2 in t2.Body) Walk(s2);
-                    foreach (var (_, handler) in t2.Handlers) foreach (var s2 in handler) Walk(s2);
-                    if (t2.ElseBody != null) foreach (var s2 in t2.ElseBody) Walk(s2);
-                    if (t2.Finally != null) foreach (var s2 in t2.Finally) Walk(s2);
+                case FunctionDef nested:
+                    // The shared walk does not descend into a nested def; its bindings
+                    // disqualify the same outer names they always did.
+                    foreach (var s2 in TypeInference.WalkStatements(nested.Body)) Walk(s2);
                     return;
-                case FunctionDef nested: Walk(nested.Body); return;
                 default: return;
             }
         }
 
-        foreach (var st in body) Walk(st);
+        foreach (var st in TypeInference.WalkStatements(body)) Walk(st);
 
         foreach (var kv in bounds)
         {
@@ -316,45 +301,32 @@ public partial class IRGenerator
     /// </summary>
     private static void CollectAssignedNames(Statement? st, HashSet<string> into)
     {
-        switch (st)
+        foreach (var s2 in TypeInference.WalkStatements(st))
         {
-            case null: return;
-            case Block b: foreach (var s2 in b.Statements) CollectAssignedNames(s2, into); return;
-            case AssignStmt a when a.Target is VariableExpr av: into.Add(av.Name); return;
-            case AnnAssign an: into.Add(an.Target); return;
-            case VarDecl vd: into.Add(vd.Name); return;
-            case AugAssignStmt aug when aug.Target is VariableExpr augv: into.Add(augv.Name); return;
-            case TupleUnpackStmt tu: foreach (var t in tu.Targets) into.Add(t); return;
-            case ForStmt f:
-                into.Add(f.VarName);
-                if (!string.IsNullOrEmpty(f.Var2Name)) into.Add(f.Var2Name);
-                CollectAssignedNames(f.Body, into);
-                return;
-            case WhileStmt w: CollectAssignedNames(w.Body, into); return;
-            case WithStmt wi:
-                if (!string.IsNullOrEmpty(wi.AsName)) into.Add(wi.AsName);
-                CollectAssignedNames(wi.Body, into);
-                return;
-            case IfStmt i:
-                CollectAssignedNames(i.ThenBranch, into);
-                foreach (var (_, bodyStmt) in i.ElifBranches) CollectAssignedNames(bodyStmt, into);
-                CollectAssignedNames(i.ElseBranch, into);
-                return;
-            case MatchStmt m:
-                foreach (var br in m.Branches)
-                {
-                    if (!string.IsNullOrEmpty(br.CaptureName)) into.Add(br.CaptureName);
-                    CollectAssignedNames(br.Body, into);
-                }
-                return;
-            case TryStmt t2:
-                foreach (var s2 in t2.Body) CollectAssignedNames(s2, into);
-                foreach (var (_, handler) in t2.Handlers) foreach (var s2 in handler) CollectAssignedNames(s2, into);
-                if (t2.ElseBody != null) foreach (var s2 in t2.ElseBody) CollectAssignedNames(s2, into);
-                if (t2.Finally != null) foreach (var s2 in t2.Finally) CollectAssignedNames(s2, into);
-                return;
-            case FunctionDef nested: CollectAssignedNames(nested.Body, into); return;
-            default: return;
+            switch (s2)
+            {
+                case AssignStmt a when a.Target is VariableExpr av: into.Add(av.Name); break;
+                case AnnAssign an: into.Add(an.Target); break;
+                case VarDecl vd: into.Add(vd.Name); break;
+                case AugAssignStmt aug when aug.Target is VariableExpr augv: into.Add(augv.Name); break;
+                case TupleUnpackStmt tu: foreach (var t in tu.Targets) into.Add(t); break;
+                case ForStmt f:
+                    into.Add(f.VarName);
+                    if (!string.IsNullOrEmpty(f.Var2Name)) into.Add(f.Var2Name);
+                    break;
+                case WithStmt wi:
+                    if (!string.IsNullOrEmpty(wi.AsName)) into.Add(wi.AsName);
+                    break;
+                case MatchStmt m:
+                    foreach (var br in m.Branches)
+                        if (!string.IsNullOrEmpty(br.CaptureName)) into.Add(br.CaptureName);
+                    break;
+                case FunctionDef nested:
+                    // The shared walk does not descend into a nested def; its bindings
+                    // disqualify the same outer names they always did.
+                    CollectAssignedNames(nested.Body, into);
+                    break;
+            }
         }
     }
 
@@ -391,35 +363,15 @@ public partial class IRGenerator
             if (!vals.Contains(sl.Value)) vals.Add(sl.Value);
         }
 
-        void Walk(Statement? st)
+        foreach (var st in TypeInference.WalkStatements(body))
         {
             switch (st)
             {
-                case null: return;
-                case Block b: foreach (var s2 in b.Statements) Walk(s2); return;
-                case AssignStmt a when a.Target is VariableExpr av: Bind(av.Name, a.Value); return;
-                case AnnAssign an: Bind(an.Target, an.Value); return;
-                case VarDecl vd: Bind(vd.Name, vd.Init); return;
-                case ForStmt f: Walk(f.Body); return;
-                case WhileStmt w: Walk(w.Body); return;
-                case WithStmt wi: Walk(wi.Body); return;
-                case IfStmt i:
-                    Walk(i.ThenBranch);
-                    foreach (var (_, bodyStmt) in i.ElifBranches) Walk(bodyStmt);
-                    Walk(i.ElseBranch);
-                    return;
-                case MatchStmt m: foreach (var br in m.Branches) Walk(br.Body); return;
-                case TryStmt t2:
-                    foreach (var s2 in t2.Body) Walk(s2);
-                    foreach (var (_, handler) in t2.Handlers) foreach (var s2 in handler) Walk(s2);
-                    if (t2.ElseBody != null) foreach (var s2 in t2.ElseBody) Walk(s2);
-                    if (t2.Finally != null) foreach (var s2 in t2.Finally) Walk(s2);
-                    return;
-                default: return;
+                case AssignStmt a when a.Target is VariableExpr av: Bind(av.Name, a.Value); break;
+                case AnnAssign an: Bind(an.Target, an.Value); break;
+                case VarDecl vd: Bind(vd.Name, vd.Init); break;
             }
         }
-
-        foreach (var st in body) Walk(st);
         return seen;
     }
 
@@ -461,12 +413,10 @@ public partial class IRGenerator
             var localTypes = new Dictionary<string, DataType>();
             bool isMain = fn.Name == "main";
 
-            void Scan(Statement? st)
+            void Scan(Statement st)
             {
                 switch (st)
                 {
-                    case null: return;
-                    case Block b: foreach (var s in b.Statements) Scan(s); return;
                     case GlobalStmt g: foreach (var n in g.Names) declaredGlobal.Add(n); return;
                     case AnnAssign an:
                         localTypes[an.Target] = DataTypeExtensions.StringToDataType(an.Annotation);
@@ -482,12 +432,6 @@ public partial class IRGenerator
                                                && (declaredGlobal.Contains(agv.Name) || isMain):
                         Note(agv.Name, WidthOf(ag.Value, localTypes, agv.Name));
                         return;
-                    case IfStmt i:
-                        Scan(i.ThenBranch);
-                        foreach (var (_, br) in i.ElifBranches) Scan(br);
-                        Scan(i.ElseBranch);
-                        return;
-                    case WhileStmt w: Scan(w.Body); return;
                     case ForStmt f:
                         // The loop variable of a constant range is evidence too: `s = s + i`
                         // over range(300) needs sixteen bits for i and thirty-two for s. Only
@@ -495,20 +439,11 @@ public partial class IRGenerator
                         // contributes no widening, as before.
                         if (f.Iterable == null && RangeLiteralBounds(f) is { } rb)
                             localTypes[f.VarName] = NarrowestTypeFor(rb.Lo, rb.Hi);
-                        Scan(f.Body);
                         return;
-                    case WithStmt wi: Scan(wi.Body); return;
-                    case TryStmt t:
-                        foreach (var s in t.Body) Scan(s);
-                        foreach (var (_, h) in t.Handlers) foreach (var s in h) Scan(s);
-                        if (t.ElseBody != null) foreach (var s in t.ElseBody) Scan(s);
-                        if (t.Finally != null) foreach (var s in t.Finally) Scan(s);
-                        return;
-                    case MatchStmt m: foreach (var br in m.Branches) Scan(br.Body); return;
                 }
             }
 
-            Scan(fn.Body);
+            foreach (var st in TypeInference.WalkStatements(fn.Body)) Scan(st);
         }
 
         return widths;
@@ -1732,36 +1667,24 @@ public partial class IRGenerator
                 case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
             }
         }
-        void S(Statement? st)
+        void S(Statement st)
         {
-            if (found || st == null) return;
+            if (found) return;
             switch (st)
             {
-                case Block b: foreach (var cs in b.Statements) S(cs); return;
                 case ExprStmt es: E(es.Expr); return;
                 case AssignStmt a: E(a.Value); return;
                 case AugAssignStmt aug: E(aug.Value); return;
                 case AnnAssign an: E(an.Value); return;
                 case VarDecl vd: E(vd.Init); return;
                 case ReturnStmt r: E(r.Value); return;
-                case IfStmt i:
-                    S(i.ThenBranch);
-                    foreach (var (_, br) in i.ElifBranches) S(br);
-                    S(i.ElseBranch);
-                    return;
-                case WhileStmt w: S(w.Body); return;
-                case ForStmt f: S(f.Body); return;
-                case WithStmt wi: S(wi.Body); return;
-                case TryStmt t:
-                    foreach (var cs in t.Body) S(cs);
-                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
-                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
-                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
-                    return;
-                case MatchStmt m: foreach (var br in m.Branches) S(br.Body); return;
             }
         }
-        S(func.Body);
+        foreach (var st in TypeInference.WalkStatements(func.Body))
+        {
+            if (found) break;
+            S(st);
+        }
         return found;
     }
 
@@ -1773,33 +1696,10 @@ public partial class IRGenerator
     /// </summary>
     private static bool FunctionUsesInlineAsm(FunctionDef func)
     {
-        bool found = false;
-        void S(Statement? st)
-        {
-            if (found || st == null) return;
-            switch (st)
-            {
-                case Block b: foreach (var cs in b.Statements) S(cs); return;
-                case ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "asm" } } }: found = true; return;
-                case IfStmt i:
-                    S(i.ThenBranch);
-                    foreach (var (_, br) in i.ElifBranches) S(br);
-                    S(i.ElseBranch);
-                    return;
-                case WhileStmt w: S(w.Body); return;
-                case ForStmt f: S(f.Body); return;
-                case WithStmt wi: S(wi.Body); return;
-                case TryStmt t:
-                    foreach (var cs in t.Body) S(cs);
-                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
-                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
-                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
-                    return;
-                case MatchStmt m: foreach (var br in m.Branches) S(br.Body); return;
-            }
-        }
-        S(func.Body);
-        return found;
+        foreach (var st in TypeInference.WalkStatements(func.Body))
+            if (st is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "asm" } } })
+                return true;
+        return false;
     }
 
 }
