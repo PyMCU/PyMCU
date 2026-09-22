@@ -2182,6 +2182,17 @@ private static Function CloneFunction(Function f)
             case GcAlloc ga:
                 register(ga.Size);
                 break;
+            // GcRoot/GcUnroot read the variable's SLOT (the collector rewrites it on a
+            // move), so a rooted name must count as read: without these cases the
+            // dead-store pass deleted the Copy that planted the pointer in the slot,
+            // and the backend rooted a frame slot that no instruction had initialised
+            // ("GcRoot: variable 'main.xs' not found in stack layout").
+            case GcRoot gr:
+                register(gr.Var);
+                break;
+            case GcUnroot gu:
+                register(gu.Var);
+                break;
         }
     }
 
