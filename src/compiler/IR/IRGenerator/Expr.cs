@@ -3125,8 +3125,12 @@ public partial class IRGenerator
             return tmp;
         }
 
+        // One evaluation of the target feeds both the __getitem__ probe here and the
+        // register-bit tail below -- a CallExpr target (`self._read_register(reg, 1)[0]`,
+        // adafruit_bmp280's register read) runs an inline expansion whose I2C traffic must
+        // happen exactly once, and re-evaluating it would send every transaction twice.
+        Val tgtVal = VisitExpression(expr.Target);
         {
-            Val tgtVal = VisitExpression(expr.Target);
             string cls = GetValClass(tgtVal);
             if (!string.IsNullOrEmpty(cls))
             {
@@ -3228,7 +3232,10 @@ public partial class IRGenerator
                 $"x in {setVe.Name}, len({setVe.Name}). For a collection you index, use a " +
                 "fixed-size list or a bytearray.", setVe);
 
-        Val target = VisitExpression(expr.Target);
+        // The target already evaluated once above (tgtVal): evaluating again here would
+        // replay a call's side effects -- `_read_register(reg, 1)[0]` sent its I2C
+        // register-pointer write and read a second time before the subscript ran.
+        Val target = tgtVal;
         Val indexVal2 = VisitExpression(expr.Index);
 
         Val ResolveAddr(Val val)
