@@ -403,6 +403,7 @@ private static Function CloneFunction(Function f)
         CanFail = f.CanFail,
         IsExtern = f.IsExtern,
         IsExportC = f.IsExportC,
+        ReturnMembers = f.ReturnMembers,
     };
 }
 
