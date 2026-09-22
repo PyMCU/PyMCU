@@ -18,16 +18,19 @@
 #     unpack_from(fmt, buf)[k]          the same, starting at an optional literal offset;
 #                                       also indexed ON THE SPOT, one scalar out
 #     pack_into(fmt, buf, off, v)       one scalar into a buffer you already own
+#     pack(fmt, v...)                   bound to a name: a fixed bytearray of calcsize
+#                                       bytes, or a slice-assign source
+#                                       (`buf[off:] = struct.pack(fmt, v)`)
 #
-#     type codes    B b H h
+#     type codes    B b H h I i L l
 #     byte order    '<' little, '>' big; no prefix only for a single one-byte field,
 #                   because native alignment is not something this can invent
 #
 # WHAT IS NOT HERE, deliberately: a result used without being bound (the tuple CPython
 # builds has no heap to live on, so a bare unpack(...) in a value position is refused),
-# `pack_into(..., *values)`, and any format code outside B b H h. Every one of them is
-# refused at the call with a message naming which it was -- never a plausible-looking
-# wrong answer.
+# `pack_into(..., *values)`, and any format code outside B b H h I i L l. Every one of
+# them is refused at the call with a message naming which it was -- never a
+# plausible-looking wrong answer.
 
 
 def calcsize(fmt):
@@ -45,3 +48,8 @@ def unpack_from(fmt, buf, offset=0):
 
 def pack_into(fmt, buf, offset, value):
     """Write `value` into `buf` at `offset`, in the layout `fmt` describes."""
+
+
+def pack(fmt, *values):
+    """A fixed bytearray of calcsize(fmt) bytes holding `values` in fmt's layout.
+    Bind it to a name, or use it as a slice-assign source: `buf[off:] = pack(...)`."""

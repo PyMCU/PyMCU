@@ -28,7 +28,8 @@ public class StructSubsetTests
     private const string Shim =
         "def calcsize(fmt):\n    pass\n" +
         "def unpack_from(fmt, buf, offset=0):\n    pass\n" +
-        "def pack_into(fmt, buf, offset, value):\n    pass\n";
+        "def pack_into(fmt, buf, offset, value):\n    pass\n" +
+        "def pack(fmt, *values):\n    pass\n";
 
     private static ProgramIR Gen(string mainSrc) =>
         new IRGenerator().Generate(
@@ -167,6 +168,150 @@ public class StructSubsetTests
         var ir = Gen(Head + "    t = struct.unpack_from(\"<HH\", buf, 1)\n    return t[1] & 0xFF\n");
 
         Assert.Equal(new[] { 2, 1, 4, 3 }, BytesRead(ir));
+    }
+
+    // ---- four-byte fields: I, i, L, l. The seesaw driver's get_version is `>I`. ----
+
+    [Theory]
+    [InlineData("\">I\"", 4)]
+    [InlineData("\"<l\"", 4)]
+    [InlineData("\"<IHH\"", 8)]
+    [InlineData("\">BBI\"", 6)]
+    public void CalcsizeFoldsTheFourByteCodesToo(string fmt, int expected)
+    {
+        var ir = Gen(Head + $"    return struct.calcsize({fmt})\n");
+
+        var returned = ir.Functions.SelectMany(f => f.Body).OfType<Return>()
+            .Select(r => r.Value).OfType<Constant>().Select(c => c.Value).ToList();
+        Assert.Contains(expected, returned);
+    }
+
+    // Same endianness pair as the 16-bit tests: the shifted byte is loaded first,
+    // so the load order IS the byte order.
+    [Fact]
+    public void BigEndian32ReadsTheMostSignificantByteFirst()
+    {
+        var ir = Gen(Head + "    return struct.unpack_from(\">I\", buf, 1)[0] & 0xFF\n");
+
+        Assert.Equal(new[] { 1, 2, 3, 4 }, BytesRead(ir));
+    }
+
+    [Fact]
+    public void LittleEndian32ReadsTheMostSignificantByteFirst()
+    {
+        var ir = Gen(Head + "    return struct.unpack_from(\"<I\", buf, 1)[0] & 0xFF\n");
+
+        Assert.Equal(new[] { 4, 3, 2, 1 }, BytesRead(ir));
+    }
+
+    // `b << 24` on a uint8 promotes only one storage step, to uint16, and the top byte
+    // would be lost there. Every byte of a 4-byte field is widened to uint32 before
+    // it shifts, so the shifts' operands are 32-bit values.
+    [Fact]
+    public void AFourByteFieldShiftsInThirtyTwoBits()
+    {
+        var ir = Gen(Head + "    return struct.unpack_from(\">I\", buf, 0)[0] & 0xFF\n");
+
+        var shifts = ir.Functions.SelectMany(f => f.Body).OfType<Binary>()
+            .Where(b => b.Op == PyMCU.IR.BinaryOp.LShift).ToList();
+        Assert.Contains(shifts, s => s.Src2 is Constant { Value: 24 });
+        Assert.All(shifts, s => Assert.True(
+            s.Src1 is Temporary { Type: DataType.UINT32 } or Variable { Type: DataType.UINT32 },
+            "a byte shifted into a 4-byte field must be widened to uint32 first"));
+    }
+
+    [Fact]
+    public void ASigned32CodeProducesASignedValue()
+    {
+        Assert.Contains(DataType.INT32,
+            CopyTargetTypes(Gen(Head + "    return struct.unpack_from(\"<i\", buf, 0)[0] & 0xFF\n")));
+        Assert.DoesNotContain(DataType.INT32,
+            CopyTargetTypes(Gen(Head + "    return struct.unpack_from(\"<I\", buf, 0)[0] & 0xFF\n")));
+    }
+
+    // pack_into stores the least significant byte first, so the write order is the
+    // byte order: '>' puts it at the field's last address, '<' at its first.
+    [Fact]
+    public void PackInto32WritesBigEndianLowByteLast()
+    {
+        var ir = Gen(Head + "    struct.pack_into(\">I\", buf, 1, 0x12345678)\n    return buf[0]\n");
+
+        Assert.Equal(new[] { 4, 3, 2, 1 }, BytesWritten(ir, 8));
+    }
+
+    [Fact]
+    public void PackInto32WritesLittleEndianLowByteFirst()
+    {
+        var ir = Gen(Head + "    struct.pack_into(\"<I\", buf, 1, 0x12345678)\n    return buf[0]\n");
+
+        Assert.Equal(new[] { 1, 2, 3, 4 }, BytesWritten(ir, 8));
+    }
+
+    // ---- `struct.pack(fmt, v...)`: a fixed buffer, bound or written through a slice. ----
+    // seesaw writes both spellings: `cmd = struct.pack(">I", pins)` and
+    // `cmd[offset:] = struct.pack(">I", pins)`.
+
+    // The bound form declares a fresh bytearray(calcsize) then stores each field's
+    // bytes -- pack_into's writes onto a new name. `pbuf` ends in "buf" so the helper
+    // sees its stores; its own four-byte zero-fill comes after the Head's eight.
+    [Fact]
+    public void PackBoundToANameDeclaresTheBufferAndStoresTheBytes()
+    {
+        var ir = Gen(Head + "    pbuf = struct.pack(\">I\", 0x12345678)\n    return pbuf[0] & 0xFF\n");
+
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Where(a => a.ArrayName.EndsWith("pbuf", StringComparison.Ordinal))
+            .Skip(4)
+            .Select(a => (((Constant)a.Index).Value, ((Constant)a.Src).Value)).ToList();
+        Assert.Equal(new[] { (3, 0x78), (2, 0x56), (1, 0x34), (0, 0x12) }, stores);
+    }
+
+    // `dst[4:] = pack(">I", v)` on a compile-time start: the tail is dst[4..7] and the
+    // four packed bytes land there in buffer order.
+    [Fact]
+    public void PackAsASliceSourceStoresInBufferOrder()
+    {
+        var ir = Gen(Head + "    buf[4:] = struct.pack(\">I\", 0x12345678)\n    return buf[0]\n");
+
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Where(a => a.ArrayName.EndsWith("buf", StringComparison.Ordinal)).Skip(8)
+            .Select(a => (((Constant)a.Index).Value, ((Constant)a.Src).Value)).ToList();
+        Assert.Equal(new[] { (4, 0x12), (5, 0x34), (6, 0x56), (7, 0x78) }, stores);
+    }
+
+    // `cmd[offset:] = pack(">I", v)` with a run-time offset (seesaw's
+    // _pin_mode_bulk_x, which first sizes `cmd` itself): one store per packed byte
+    // at `offset + k`.
+    [Fact]
+    public void PackAsASliceSourceAtARuntimeStart()
+    {
+        var ir = Gen(
+            "def poke(off: uint8, v: uint32):\n" +
+            "    cmd = bytearray(8)\n" +
+            "    cmd[off:] = struct.pack(\">I\", v)\n" +
+            "    return cmd[0]\n" +
+            Head + "    poke(4, 0x12345678)\n    return buf[0]\n");
+
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Where(a => a.ArrayName.EndsWith("cmd", StringComparison.Ordinal)).Skip(8).ToList();
+        Assert.Equal(4, stores.Count);
+        Assert.All(stores, s => Assert.False(s.Index is Constant,
+            "the store index is offset + k -- run-time, not folded"));
+        // A byte that folded from the runtime value must not exist here: the stores'
+        // sources come from v's shifts, not from constants.
+        var shiftAmounts = ir.Functions.SelectMany(f => f.Body).OfType<Binary>()
+            .Where(b => b.Op == PyMCU.IR.BinaryOp.RShift && b.Src2 is Constant)
+            .Select(b => ((Constant)b.Src2).Value).ToList();
+        Assert.Contains(24, shiftAmounts);
+        Assert.Contains(8, shiftAmounts);
+    }
+
+    [Fact]
+    public void PackInAnUnhandledPosition_IsRefused()
+    {
+        var ex = Fails(Head + "    return struct.pack(\">I\", 0)[0]\n");
+
+        Assert.Contains("produces a fixed buffer", ex.Message);
     }
 
     // ---- `return struct.unpack_from(...)`: the call's value is the tuple itself. ----

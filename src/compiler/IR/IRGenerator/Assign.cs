@@ -314,6 +314,16 @@ public partial class IRGenerator
             return;
         }
 
+        // `name = struct.pack(fmt, v...)`: a fixed bytearray of calcsize bytes with the
+        // fields stored into it -- pack_into's writes onto a fresh name, which is all a
+        // heap-free `pack` can mean (seesaw: `cmd = struct.pack(">I", pins)`).
+        if (stmt.Target is VariableExpr packTgt
+            && stmt.Value is CallExpr packCall && IsStructCall(packCall, "pack"))
+        {
+            EmitStructPackToName(packTgt.Name, packCall, stmt.Line, stmt.Column);
+            return;
+        }
+
         // Unannotated `name = array.array(typecode[, initializer])`: the same MicroPython
         // shape as the bytearray case above, mapped onto the heap-bounded list[T] the
         // compiler already has, with T decided by the typecode.
@@ -3289,6 +3299,22 @@ public partial class IRGenerator
             count = dstIdx.Count;
         else if (TryStartPlusNSlice(sl, out runtimeStart, out count))
             { }
+        else if (sl.Stop == null && (sl.Step == null || sl.Step is IntegerLiteral { Value: 1 })
+                 && SliceSourceLength(srcExpr) is { } openCount)
+        {
+            // `dst[start:] = src` -- open end. The tail's length is the source's, which
+            // every supported source knows at compile time; the start may still be
+            // run-time (seesaw's `cmd[offset:] = struct.pack(">I", pins)`), and each
+            // store lands at `dst[start + k]`. When both the start and the dest size are
+            // compile-time the tail length is checkable; a run-time start cannot be
+            // checked, so it writes the source's count and a caller that overflows is on
+            // its own, the same risk `i:i+n` already takes.
+            runtimeStart = sl.Start ?? new IntegerLiteral(0);
+            if (runtimeStart is IntegerLiteral st
+                && (st.Value < 0 || st.Value + openCount > dstSize))
+                return false;
+            count = openCount;
+        }
         else
             return false;
 
@@ -3386,7 +3412,7 @@ public partial class IRGenerator
     private static bool SameSliceStart(Expression a, Expression b)
         => a is VariableExpr va && b is VariableExpr vb && va.Name == vb.Name;
 
-    private bool TrySliceAssignSource(Expression src, int count, SliceExpr sl,
+    private bool TrySliceAssignSource(Expression src, int count, ASTNode? at,
         out List<Expression>? elems, out VariableExpr? arr, out List<int>? arrIdx)
     {
         elems = null;
@@ -3398,14 +3424,14 @@ public partial class IRGenerator
                 if (le.Elements.Count != count)
                     throw UserError(
                         $"slice assignment length mismatch: target selects {count} " +
-                        $"element(s), source list has {le.Elements.Count}", sl);
+                        $"element(s), source list has {le.Elements.Count}", at);
                 elems = le.Elements;
                 return true;
             case TupleExpr te:
                 if (te.Elements.Count != count)
                     throw UserError(
                         $"slice assignment length mismatch: target selects {count} " +
-                        $"element(s), source tuple has {te.Elements.Count}", sl);
+                        $"element(s), source tuple has {te.Elements.Count}", at);
                 elems = te.Elements;
                 return true;
             case VariableExpr srcVe when ResolveArrayVar(srcVe.Name) is { } srcWhole:
@@ -3437,8 +3463,72 @@ public partial class IRGenerator
                 arrIdx = srcIdx;
                 return true;
             }
+            // `dst[a:b] = struct.pack(fmt, v...)`: the fields' bytes are the source
+            // elements -- the same per-byte stores pack_into writes, in buffer order.
+            case CallExpr packCall when IsStructCall(packCall, "pack"):
+            {
+                const string who = "struct.pack()";
+                var fields = ParseStructFormat(StructFormatArg(packCall, who), who, packCall.Callee);
+                if (packCall.Args.Count != 1 + fields.Count)
+                    throw UserError(
+                        $"{who} writes one value per field: '{StructFormatArg(packCall, who)}' "
+                        + $"describes {fields.Count} field{(fields.Count == 1 ? "" : "s")} and "
+                        + $"{Math.Max(packCall.Args.Count - 1, 0)} value"
+                        + $"{(packCall.Args.Count - 1 == 1 ? " was" : "s were")} given.",
+                        packCall.Callee);
+                var packElems = new List<Expression>();
+                for (int fi = 0; fi < fields.Count; fi++)
+                {
+                    var f = fields[fi];
+                    Expression value = packCall.Args[1 + fi];
+                    for (int n = 0; n < f.Width; n++)
+                    {
+                        int shift = f.LittleEndian ? 8 * n : 8 * (f.Width - 1 - n);
+                        packElems.Add(shift == 0
+                            ? new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF))
+                            : new BinaryExpr(
+                                new BinaryExpr(value, PyMCU.Frontend.BinaryOp.RShift, new IntegerLiteral(shift)),
+                                PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF)));
+                    }
+                }
+                if (packElems.Count != count)
+                    throw UserError(
+                        $"slice assignment length mismatch: target selects {count} " +
+                        $"element(s), struct.pack source packs {packElems.Count}", packCall);
+                elems = packElems;
+                return true;
+            }
             default:
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// The compile-time length of a slice-assign source, when it has one. `dst[a:]`
+    /// consults this because an open-ended slice has no bounds to count from.
+    /// </summary>
+    private int? SliceSourceLength(Expression src)
+    {
+        switch (src)
+        {
+            case ListExpr le: return le.Elements.Count;
+            case TupleExpr te: return te.Elements.Count;
+            case VariableExpr ve:
+                if (ResolveArrayVar(ve.Name) is { } a) return a.Size;
+                if (ResolveConstSequence(ve.Name) is { } s) return s.Count;
+                return null;
+            case IndexExpr { Index: SliceExpr s2, Target: VariableExpr ve2 }:
+                if (ResolveArrayVar(ve2.Name) is { } a2)
+                {
+                    try { return SliceIndices(s2, a2.Size).Count; }
+                    catch (Exception) { return null; }
+                }
+                return null;
+            case CallExpr pc when IsStructCall(pc, "pack"):
+                var pf = ParseStructFormat(StructFormatArg(pc, "struct.pack()"), "struct.pack()", pc.Callee);
+                return pf[^1].Offset + pf[^1].Width;
+            default:
+                return null;
         }
     }
 

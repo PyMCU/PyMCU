@@ -777,6 +777,15 @@ public partial class IRGenerator
         if (callee == "struct_unpack") return EmitStructUnpackFrom(expr, "struct.unpack()");
         if (callee == "struct_unpack_from") return EmitStructUnpackFrom(expr);
         if (callee == "struct_pack_into") return EmitStructPackInto(expr);
+        if (callee == "struct_pack")
+            // The value positions are intercepted where the buffer can be bound: the
+            // assignment target (`cmd = struct.pack(...)`) or a slice-assign source
+            // (`cmd[off:] = ...`). Anywhere else there is nowhere to put the bytes.
+            throw UserError(
+                "struct.pack() produces a fixed buffer: bind it to a name "
+                + "(`cmd = struct.pack(fmt, v)`) or write it through a slice "
+                + "(`cmd[off:] = struct.pack(fmt, v)`). It has no value in this position.",
+                expr.Callee);
         if (callee == "abs") return EmitAbsBuiltin(expr);
         if (callee == "min") return EmitMinBuiltin(expr);
         if (callee == "max") return EmitMaxBuiltin(expr);
@@ -4696,7 +4705,7 @@ public partial class IRGenerator
     // the chip, and there is no run-time `struct` object.
     //
     // OUT OF SCOPE, each refused by name and never guessed at: a non-literal format,
-    // a non-literal index, and any code outside B/b/H/h. A width read from the wrong
+    // a non-literal index, and any code outside B/b/H/h/I/i/L/l. A width read from the wrong
     // code is a silent wrong value on a sensor reading, which is the failure this whole
     // surface has to not have.
 
@@ -4721,7 +4730,7 @@ public partial class IRGenerator
     /// <summary>One field of a struct format: where it starts, how wide it is, how it is read.</summary>
     private readonly record struct StructField(int Offset, int Width, bool Signed, bool LittleEndian);
 
-    private const string StructCodes = "B, b, H, h";
+    private const string StructCodes = "B, b, H, h, I, i, L, l";
 
     /// <summary>
     /// The fields of a struct format string, or a located refusal naming what was unsupported.
@@ -4754,7 +4763,15 @@ public partial class IRGenerator
         for (; i < fmt.Length; i++)
         {
             char c = fmt[i];
-            int width = c switch { 'B' or 'b' => 1, 'H' or 'h' => 2, _ => 0 };
+            // I and L are both 4 bytes under a '<'/'>'/'!' prefix (standard sizes), which is
+            // the only spelling this parser accepts for anything wider than a byte anyway.
+            int width = c switch
+            {
+                'B' or 'b' => 1,
+                'H' or 'h' => 2,
+                'I' or 'i' or 'L' or 'l' => 4,
+                _ => 0,
+            };
             if (width == 0)
             {
                 string extra = char.IsDigit(c)
@@ -4774,13 +4791,36 @@ public partial class IRGenerator
                     $"{who}: '{fmt}' gives no byte order, and a {width}-byte field needs one. "
                     + "Write '<' for little-endian or '>' for big-endian.", at);
 
-            fields.Add(new StructField(offset, width, c is 'b' or 'h', little));
+            fields.Add(new StructField(offset, width, c is 'b' or 'h' or 'i' or 'l', little));
             offset += width;
         }
 
         if (fields.Count == 0)
             throw UserError($"{who}: '{fmt}' declares no fields", at);
         return fields;
+    }
+
+    /// <summary>
+    /// The read for one field as an expression over `byteAt(n)` -- the field's n-th buffer
+    /// byte. Multi-byte fields assemble most-significant byte first, so the emitted load
+    /// order IS the byte order. A 4-byte field widens each byte to uint32 before it shifts:
+    /// a uint8 shift promotes only one storage step (to uint16), where a 24-bit shift would
+    /// lose the byte it is there to read.
+    /// </summary>
+    private static Expression AssembleStructField(StructField f, Func<int, Expression> byteAt)
+    {
+        Expression? acc = null;
+        for (int n = 0; n < f.Width; n++)
+        {
+            Expression term = byteAt(f.LittleEndian ? f.Width - 1 - n : n);
+            int shift = 8 * (f.Width - 1 - n);
+            if (f.Width == 4)
+                term = new CallExpr(new VariableExpr("uint32"), new List<Expression> { term });
+            if (shift > 0)
+                term = new BinaryExpr(term, PyMCU.Frontend.BinaryOp.LShift, new IntegerLiteral(shift));
+            acc = acc == null ? term : new BinaryExpr(acc, PyMCU.Frontend.BinaryOp.BitOr, term);
+        }
+        return acc!;
     }
 
     /// <summary>
@@ -4882,20 +4922,7 @@ public partial class IRGenerator
         Expression buf = NormalizeUnpackBuffer(call.Args[1], ref at);
 
         Expression Byte(int n) => new IndexExpr(buf, AddByteOffset(at, n));
-
-        Expression assembled;
-        if (f.Width == 1)
-        {
-            assembled = Byte(0);
-        }
-        else
-        {
-            Expression lo = Byte(f.LittleEndian ? 0 : 1);
-            Expression hi = Byte(f.LittleEndian ? 1 : 0);
-            assembled = new BinaryExpr(
-                new BinaryExpr(hi, PyMCU.Frontend.BinaryOp.LShift, new IntegerLiteral(8)),
-                PyMCU.Frontend.BinaryOp.BitOr, lo);
-        }
+        Expression assembled = AssembleStructField(f, Byte);
 
         Val v = VisitExpression(assembled);
 
@@ -4906,7 +4933,9 @@ public partial class IRGenerator
             (1, false) => DataType.UINT8,
             (1, true) => DataType.INT8,
             (2, false) => DataType.UINT16,
-            _ => DataType.INT16,
+            (2, true) => DataType.INT16,
+            (4, false) => DataType.UINT32,
+            _ => DataType.INT32,
         };
         if (GetValType(v) == want) return v;
         Temporary typed = MakeTemp(want);
@@ -4962,18 +4991,15 @@ public partial class IRGenerator
             foreach (var f in fields)
             {
                 Expression Byte(int n) => new IndexExpr(buf, AddByteOffset(baseOff, f.Offset + n));
-                Expression assembled = f.Width == 1
-                    ? Byte(0)
-                    : new BinaryExpr(
-                        new BinaryExpr(Byte(f.LittleEndian ? 1 : 0),
-                                       PyMCU.Frontend.BinaryOp.LShift, new IntegerLiteral(8)),
-                        PyMCU.Frontend.BinaryOp.BitOr, Byte(f.LittleEndian ? 0 : 1));
+                Expression assembled = AssembleStructField(f, Byte);
                 (DataType dt, string? cast) = (f.Width, f.Signed) switch
                 {
                     (1, false) => (DataType.UINT8, (string?)null),
                     (1, true) => (DataType.INT8, "int8"),
                     (2, false) => (DataType.UINT16, "uint16"),
-                    _ => (DataType.INT16, "int16"),
+                    (2, true) => (DataType.INT16, "int16"),
+                    (4, false) => (DataType.UINT32, "uint32"),
+                    _ => (DataType.INT32, "int32"),
                 };
                 if (cast != null)
                     assembled = new CallExpr(new VariableExpr(cast), new List<Expression> { assembled });
@@ -5045,14 +5071,56 @@ public partial class IRGenerator
         int at = StructOffsetArg(expr, 2, who);
         Expression buf = expr.Args[1];
 
+        EmitPackFields(fields, buf, at, expr.Args.GetRange(3, nValues), expr.Line, expr.Column);
+
+        // pack_into returns None. A caller that uses the value gets the ordinary void-in-an-
+        // expression diagnostic rather than a zero.
+        return new Constant(0);
+    }
+
+    /// <summary>
+    /// `name = struct.pack(fmt, v...)` -- the value form. On a heap-free target the result is
+    /// a fixed bytearray of calcsize bytes with the fields' bytes stored into it, the same
+    /// writes pack_into makes onto a fresh name.
+    /// </summary>
+    private void EmitStructPackToName(string name, CallExpr expr, int line, int column)
+    {
+        const string who = "struct.pack()";
+        string fmt = StructFormatArg(expr, who);
+        var fields = ParseStructFormat(fmt, who, expr.Callee);
+        int size = fields[^1].Offset + fields[^1].Width;
+
+        int nValues = expr.Args.Count - 1;
+        if (nValues != fields.Count)
+            throw UserError(
+                $"{who} writes one value per field: '{fmt}' describes {fields.Count} field"
+                + (fields.Count == 1 ? "" : "s")
+                + $" and {Math.Max(nValues, 0)} value{(nValues == 1 ? "" : "s")} "
+                + (nValues == 1 ? "was" : "were") + " given.", expr.Callee);
+
+        VisitStatement(new VarDecl(name, "bytearray",
+            new CallExpr(new VariableExpr("bytearray"),
+                         new List<Expression> { new IntegerLiteral(size) })
+        ) { Line = line, Column = column });
+
+        EmitPackFields(fields, new VariableExpr(name), 0, expr.Args.GetRange(1, nValues), line, column);
+    }
+
+    /// <summary>
+    /// The per-field byte stores pack() and pack_into() share: least significant byte of
+    /// each field first, so the store order is the byte order.
+    /// </summary>
+    private void EmitPackFields(List<StructField> fields, Expression buf, int at,
+        List<Expression> values, int line, int column)
+    {
         for (int k = 0; k < fields.Count; ++k)
         {
             var f = fields[k];
-            Expression value = expr.Args[3 + k];
+            Expression value = values[k];
 
             void Store(int n, Expression e) =>
                 VisitStatement(new AssignStmt(new IndexExpr(buf, new IntegerLiteral(at + f.Offset + n)), e)
-                    { Line = expr.Line, Column = expr.Column });
+                    { Line = line, Column = column });
 
             if (f.Width == 1)
             {
@@ -5060,18 +5128,15 @@ public partial class IRGenerator
             }
             else
             {
-                Expression lo = new BinaryExpr(value, PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
-                Expression hi = new BinaryExpr(
-                    new BinaryExpr(value, PyMCU.Frontend.BinaryOp.RShift, new IntegerLiteral(8)),
-                    PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
-                Store(f.LittleEndian ? 0 : 1, lo);
-                Store(f.LittleEndian ? 1 : 0, hi);
+                for (int n = 0; n < f.Width; n++)
+                {
+                    Expression piece = new BinaryExpr(
+                        new BinaryExpr(value, PyMCU.Frontend.BinaryOp.RShift, new IntegerLiteral(8 * n)),
+                        PyMCU.Frontend.BinaryOp.BitAnd, new IntegerLiteral(0xFF));
+                    Store(f.LittleEndian ? n : f.Width - 1 - n, piece);
+                }
             }
         }
-
-        // pack_into returns None. A caller that uses the value gets the ordinary void-in-an-
-        // expression diagnostic rather than a zero.
-        return new Constant(0);
     }
 
     // abs(x): compile-time fold for constants, else a branchless-ish negate-if-negative.
