@@ -82,6 +82,11 @@ public static class Optimizer
             if (!preOutline.Contains(func.Name))
                 OptimizeFunction(func, globalNames, isrShared);
 
+        // Identical constant-argument calls share one marshalling subroutine.
+        // Runs after outlining so calls inside freshly lifted regions count too;
+        // before reachability so the synthesized stubs are walked by DFE/DGE.
+        DeduplicateConstantCalls(optimized);
+
         // Dead Function Elimination (DFE): remove functions that are never reachable
         // from main or any ISR.
         var reachable = ComputeReachableFunctions(optimized);
@@ -3205,6 +3210,123 @@ private static Function CloneFunction(Function f)
         memo[key] = result;
         return result;
     }
+
+    // ── Constant-argument call dedup ────────────────────────────────────────────────
+    // A void call whose arguments are all compile-time constants marshals those
+    // constants at every site -- an init sequence like the SSD1306's calls
+    // writeto(addr, temp, 2) dozens of times, each copy loading the same five
+    // bytes of immediates (~10 bytes of LDI) before the RCALL. When two or more
+    // sites call the same callee with structurally identical constant arguments,
+    // the marshalling is shared: one synthesized zero-arg subroutine holds the
+    // single constant-bearing call and each site collapses to a bare RCALL.
+    //
+    // The stub is an ordinary CanFail function when the callee can fail, so the
+    // T-flag protocol survives intact: the stub's own BranchOnError re-signals T
+    // to the caller, and the site's original BranchOnError still reads it. Nothing
+    // about the call's semantics changes -- the sites still execute the call, they
+    // just no longer each carry the argument loads.
+    private static bool IsConstCallArg(Val v) =>
+        v is Constant or ArrayBase or MemoryAddress;
+
+    private static string ConstArgKey(Val v) => v switch
+    {
+        Constant c        => "c" + c.Value,
+        ArrayBase ab      => "a" + ab.ArrayName,
+        MemoryAddress mem => "m" + mem.Address,
+        _                 => "?",
+    };
+
+    // Bytes a constant argument costs to marshal at a call site: one LDI per
+    // register byte. Used only as the dedup win estimate -- small enough that a
+    // single-byte argument repeated a few times is not worth a stub.
+    private static int ArgMarshalBytes(Val v) => v switch
+    {
+        Constant c        => c.Value is >= 0 and <= 255 ? 2
+                           : c.Value is >= -32768 and <= 65535 ? 4 : 8,
+        ArrayBase         => 4,
+        MemoryAddress     => 4,
+        _                 => 4,
+    };
+
+    private static void DeduplicateConstantCalls(ProgramIR program)
+    {
+        var canFail = program.Functions
+            .GroupBy(f => f.Name)
+            .ToDictionary(g => g.Key, g => g.Any(f => f.CanFail));
+
+        // Key = callee + serialized constant args. Sites grouped program-wide so
+        // identical calls in different functions still share one stub.
+        var groups = new Dictionary<string, (Call proto, List<(Function fn, int idx)> sites)>();
+        foreach (var fn in program.Functions)
+        {
+            for (int i = 0; i < fn.Body.Count; i++)
+            {
+                if (fn.Body[i] is not Call c) continue;
+                if (c.Dst is not NoneVal) continue;            // void calls only
+                if (c.Args.Count == 0) continue;
+                if (!c.Args.All(IsConstCallArg)) continue;
+                if (!canFail.ContainsKey(c.FunctionName)) continue; // unknown callee
+                string key = c.FunctionName + "\x1f"
+                    + string.Join("\x1f", c.Args.Select(ConstArgKey));
+                if (!groups.TryGetValue(key, out var g))
+                    groups[key] = g = (c, new List<(Function, int)>());
+                g.sites.Add((fn, i));
+            }
+        }
+
+        int counter = 0;
+        foreach (var (proto, sites) in groups.Values)
+        {
+            int marshal = proto.Args.Sum(ArgMarshalBytes);
+            bool calleeFails = canFail[proto.FunctionName];
+            // Net win = marshal saved at every site minus the stub's own
+            // marshal + RCALL + RET (+ the propagation edge when it can fail).
+            int stubCost = marshal + 4 + (calleeFails ? 8 : 0);
+            if ((long)sites.Count * marshal - stubCost <= 4) continue;
+
+            string stubName = $"__pymcu_callstub_{counter++}";
+            var body = new List<Instruction>
+            {
+                new Call(proto.FunctionName,
+                         proto.Args.Select(CloneValForStub).ToList(),
+                         new NoneVal()),
+            };
+            if (calleeFails)
+            {
+                string prop = $"__exn_prop_{stubName}";
+                body.Add(new BranchOnError(prop));
+                body.Add(new Return(new NoneVal()));
+                body.Add(new Label(prop));
+                body.Add(new SignalError(new Constant(0)));
+            }
+            else
+            {
+                body.Add(new Return(new NoneVal()));
+            }
+            program.Functions.Add(new Function
+            {
+                Name = stubName,
+                Params = new List<string>(),
+                ReturnType = DataType.VOID,
+                Body = body,
+                IsInline = false,
+                CanFail = calleeFails,
+            });
+            foreach (var (fn, idx) in sites)
+                fn.Body[idx] = new Call(stubName, new List<Val>(), new NoneVal());
+        }
+    }
+
+    // Clone a constant Val for reuse inside the synthesized stub body. Records are
+    // immutable so sharing is safe, but a copy keeps the IR's one-node-one-site
+    // convention and guards against a later pass mutating an operand in place.
+    private static Val CloneValForStub(Val v) => v switch
+    {
+        Constant c        => new Constant(c.Value, c.Text),
+        ArrayBase ab      => new ArrayBase(ab.ArrayName),
+        MemoryAddress mem => new MemoryAddress(mem.Address, mem.Type),
+        _                 => v,
+    };
 
     // Target-agnostic word-cost proxy for the size guard. A call is a long
     // (2-word) instruction plus one setup instruction per argument, and every
