@@ -52,8 +52,12 @@ public class DynamicStackAllocator(int wordSize = 4, int reservedTop = 8)
                 case Call cl:
                     foreach (var a in cl.Args) CheckVal(a);
                     CheckVal(cl.Dst);
+                    if (cl.TagDst != null) CheckVal(cl.TagDst);
                     break;
-                case Return r: CheckVal(r.Value); break;
+                case Return r:
+                    CheckVal(r.Value);
+                    if (r.Tag != null) CheckVal(r.Tag);
+                    break;
                 case JumpIfZero jz: CheckVal(jz.Condition); break;
                 case JumpIfNotZero jnz: CheckVal(jnz.Condition); break;
                 case BitSet bs: CheckVal(bs.Target); break;

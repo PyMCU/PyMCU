@@ -185,9 +185,14 @@ public class StackAllocator
                         // recorded no size, leaving a call-result-only variable at a stale
                         // or default width).
                         RegisterVar(cl.Dst);
+                        // RFC 0009: the Optional tag byte is a second destination.
+                        if (cl.TagDst != null) RegisterVar(cl.TagDst);
                         foreach (var ca in cl.Args) RegisterVar(ca);
                         break;
-                    case Return r: RegisterVar(r.Value); break;
+                    case Return r:
+                        RegisterVar(r.Value);
+                        if (r.Tag != null) RegisterVar(r.Tag);
+                        break;
                     case JumpIfZero jz: RegisterVar(jz.Condition); break;
                     case JumpIfNotZero jnz: RegisterVar(jnz.Condition); break;
                     case JumpIfBitSet jbs: RegisterVar(jbs.Source); break;
