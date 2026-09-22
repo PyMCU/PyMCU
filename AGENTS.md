@@ -102,6 +102,11 @@ just test-stdlib    # = .venv/bin/python -m pytest tests/stdlib -q
 # Driver tests
 pytest tests/driver
 
+# 15 driver tests use the mock_toolchain fixture, which needs the external PIC
+# backend; without it they skip with "pymcu-pic (external PIC backend) not
+# installed". Install it with:
+uv pip install --pre --no-deps pymcu-pic
+
 # The AVR8Sharp integration suite and the language oracle corpus live in the
 # pymcu-avr repo -- run them there when you touch codegen:
 #   dotnet test tests/integration   # in the pymcu-avr checkout
@@ -110,6 +115,12 @@ pytest tests/driver
 # Install the stdlib editable once; lib/src edits are then picked up live.
 # Do NOT rsync a copy into site-packages/pymcu/ — it shadows the editable .pth.
 just sync-stdlib   # = uv pip install --no-deps -e lib/
+
+# tests/stdlib/test_hal_parity.py also scans the two compat layers. Each
+# layer's src dir resolves via $PYMCU_COMPAT_CIRCUITPYTHON /
+# $PYMCU_COMPAT_MICROPYTHON first, then the installed pymcu_circuitpython /
+# pymcu_micropython package, then the ~/Repos/<name>/src sibling checkout.
+# A layer that resolves nowhere skips with the list of what was tried.
 ```
 
 Add a test for every new compiler or HAL feature in `tests/unit/` (compiler
