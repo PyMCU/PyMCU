@@ -96,13 +96,14 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install pytest
+          # Compat layers for the universality half of the parity scan; only
+          # prereleases exist on PyPI, and --no-deps keeps the in-tree
+          # lib/src/pymcu the only stdlib the scan sees.
+          pip install --pre --no-deps pymcu-circuitpython pymcu-micropython
 
       # Pure ast/tomllib over lib/src/pymcu, no compiler and no stdlib install
-      # needed. hal_parity.py also cross-checks the circuitpython/micropython
-      # compat layers, but only when those sibling repos are checked out at
-      # the maintainer's local absolute paths (LAYERS in hal_parity.py); on a
-      # CI runner those paths never exist, so that half of the check is
-      # skipped here and this job only covers the in-tree HAL surface.
+      # needed. The compat layers installed above let the universality half of
+      # hal_parity.py run against the pinned PyPI releases instead of skipping.
       - name: Run HAL parity tests
         run: pytest tests/stdlib/test_hal_parity.py tests/stdlib/test_inline_host_overloads.py -v --tb=short
 
@@ -130,6 +131,9 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install pytest
+          # Compat layers for the HAL parity universality check in
+          # tests/stdlib/test_hal_parity.py (see the stdlib-parity job).
+          pip install --pre --no-deps pymcu-circuitpython pymcu-micropython
 
       # The suite drives build/bin/pymcuc with --emit-ir, which replaces the
       # backend phase with the IR serializer, so no backend binary is needed.
