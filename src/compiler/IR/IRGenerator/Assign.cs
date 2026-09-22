@@ -2306,12 +2306,11 @@ public partial class IRGenerator
             // nothing can be said; outside it, a `self.<name>` that no __init__ introduced is either
             // a typo or a field that should have been declared, and the fix is the same for both.
             //
-            // That scoping is also what makes this safe. classFieldLayout only collects TOP-LEVEL
-            // assignments in __init__, so a class assigning its fields inside a `match` (the HAL's
-            // _PinRegs does) has fields the layout never learned. Asking the layout about those
-            // rejected the stdlib outright. Skipping __init__ entirely puts every such assignment
-            // out of scope, so the gap in the map cannot be reached from here. The gap itself is
-            // still real and is recorded in #170.
+            // That scoping is also what keeps this independent of how complete the layout is:
+            // inside __init__ an assignment DEFINES a field (at any depth now -- #488 made the
+            // layout walk nested blocks), so asking it about a constructor write could never
+            // have told a typo from a new field anyway. Outside __init__ the map is the
+            // authority this check needs.
             // A class attribute whose class defines __set__ is a DESCRIPTOR, and writing it is
             // calling that method rather than creating a field (#360). Asked here, where the
             // receiver's name is resolved and both it and the value are already lowered, so the

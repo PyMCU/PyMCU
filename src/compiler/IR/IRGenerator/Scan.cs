@@ -2654,14 +2654,47 @@ public partial class IRGenerator
         // was laid out as a byte, and every later store, the runtime ones included,
         // truncated into it: a uint16 duty read back 0 (PyMCU#294).
         var localTypes = new Dictionary<string, string>();
-        foreach (var s in init.Body.Statements)
+        foreach (var s in TypeInference.WalkStatements(init.Body.Statements))
             switch (s)
             {
                 case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): localTypes[vd.Name] = vd.VarType; break;
                 case AnnAssign an when !string.IsNullOrEmpty(an.Annotation): localTypes[an.Target] = an.Annotation; break;
             }
 
-        foreach (var s in init.Body.Statements)
+        // Index into layout for every field that has one, so a write ANYWHERE in the body --
+        // inside a loop, a branch, a try, a with -- can widen the entry the first write
+        // introduced (#488). The layout used to rescan only the TOP-LEVEL statements of
+        // __init__ for that join, so a 31-bit LCG update nested in `for x: for y:` never
+        // reached it and the param-seeded field stayed a byte.
+        var layoutIndex = new Dictionary<string, int>();
+        // An explicit `self.f: T = ...` is the reader's own declaration: it pins the field's
+        // type against anything a later write might infer.
+        var pinnedTypes = new HashSet<string>();
+        // Kind by field, for the categorical-mismatch diagnostic in the method scan below.
+        var fieldKind = new Dictionary<string, string>();
+
+        // The width an assignment's right-hand side evidences: an explicit annotation is the
+        // writer's own declaration, anything else is inferred from the value.
+        string? WriteEvidence(string? annotated, Expression? value,
+            Dictionary<string, string> pt, Dictionary<string, string> lt) =>
+            annotated != null
+                ? (annotated.StartsWith("const[") && annotated.EndsWith("]")
+                    ? annotated.Substring(6, annotated.Length - 7) : annotated)
+                : InferAssignedFieldType(value, pt, lt);
+
+        void WidenField(string field, string? evidence)
+        {
+            if (evidence == null || pinnedTypes.Contains(field)
+                || !layoutIndex.TryGetValue(field, out var wi)) return;
+            var cur = layout[wi];
+            string t = cur.Item2;
+            ApplyInferredFieldType(ref t, evidence);
+            if (t == cur.Item2) return;
+            layout[wi] = (cur.Item1, t, cur.Item3);
+            fieldKind[field] = ClassifyFieldKind(t);
+        }
+
+        foreach (var s in TypeInference.WalkStatements(init.Body.Statements))
         {
             string? field = null;
             Expression? rhs = null;
@@ -2673,8 +2706,26 @@ public partial class IRGenerator
                 rhs = asg.Value;
                 annotatedType = asg.AnnotatedType;
             }
+            // `self.f += v` is a write to the field too -- it counts for the join at any depth.
+            else if (s is AugAssignStmt aug && aug.Target is MemberAccessExpr ama
+                && ama.Object is VariableExpr asv && asv.Name == "self")
+            {
+                field = ama.Member;
+                rhs = aug.Value;
+            }
 
-            if (field == null || !seen.Add(field)) continue;
+            if (field == null) continue;
+            // But `+=` cannot be the write that INTRODUCES the field: it reads the member
+            // it augments, so a `self.f += v` to a name no assignment has declared is the
+            // same AttributeError CPython raises -- not a declaration. Leaving it out of
+            // `seen` keeps the field for a real assignment to claim, or for the read-side
+            // refusal to name.
+            if (s is AugAssignStmt && !seen.Contains(field)) continue;
+            if (!seen.Add(field))
+            {
+                WidenField(field, WriteEvidence(annotatedType, rhs, paramTypes, localTypes));
+                continue;
+            }
 
             // `self.buf = [0, 0, 0]` / `self.scale = (524288, ...)` declares an ARRAY field,
             // not a scalar one -- the same thing `self.buf: uint8[3] = [...]` declares, and
@@ -2718,10 +2769,13 @@ public partial class IRGenerator
                 type = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
                     ? annotatedType.Substring(6, annotatedType.Length - 7)
                     : annotatedType;
+                pinnedTypes.Add(field);
             }
             if (rhs is VariableExpr rv && paramTypes.TryGetValue(rv.Name, out var pt))
             {
-                srcParam = rv.Name;
+                // An augmented write (`self.x += p`) is not the field's initial value, so it
+                // cannot claim p as the constructor argument that fills it.
+                if (s is AssignStmt) srcParam = rv.Name;
                 if (annotatedType == null)
                     type = pt.StartsWith("const[") && pt.EndsWith("]")
                         ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
@@ -2744,18 +2798,12 @@ public partial class IRGenerator
             // was said, and a servo driven from such a field ran at a fraction of the pulse it
             // was asked for (PyMCU#322). An explicit annotation still wins -- that is the
             // reader's declaration -- and everything else takes the widest value assigned.
+            // Every later write to this field (at any depth, in any method) joins through
+            // WidenField when the walk reaches it.
             if (annotatedType == null)
-            {
                 ApplyInferredFieldType(ref type, InferAssignedFieldType(rhs, paramTypes, localTypes));
-                foreach (var s2 in init.Body.Statements)
-                {
-                    if (s2 is not AssignStmt a2 || a2.Target is not MemberAccessExpr m2
-                        || m2.Object is not VariableExpr sv2 || sv2.Name != "self"
-                        || m2.Member != field) continue;
-                    ApplyInferredFieldType(ref type, InferAssignedFieldType(a2.Value, paramTypes, localTypes));
-                }
-            }
 
+            layoutIndex[field] = layout.Count;
             layout.Add((field, type, srcParam));
         }
 
@@ -2769,11 +2817,11 @@ public partial class IRGenerator
         // MicroPython and CircuitPython (issue #397): a plain method assigning `self.x = ...`
         // makes `x` exactly as real a field as one set in __init__.
         //
-        // Scoped to TOP-LEVEL statements of each method, the same way __init__ itself is scoped
-        // above: a nested assignment (inside `if`/`for`/`while`) is the sibling gap #170 already
-        // has for __init__, and is left alone here -- walking nested blocks is a separate, larger
-        // change with its own risk.
-        var fieldKind = new Dictionary<string, string>();
+        // Writes are collected at ANY depth of the method body (#488): a `self.f = ...`
+        // inside a `for`/`while`/`if`/`try`/`with` is the same write for layout purposes,
+        // so it joins the field's width and answers the kind-conflict diagnostic exactly
+        // as a top-level one does. Nested `def` bodies keep being skipped -- a function
+        // closing over `self` is not this method's evidence.
         foreach (var f0 in layout) fieldKind[f0.Item1] = ClassifyFieldKind(f0.Item2);
 
         foreach (var s in classBody.Statements)
@@ -2782,7 +2830,7 @@ public partial class IRGenerator
 
             // A method may INTRODUCE a field only when it is a property setter (the shape
             // adafruit_tcs34725's `integration_time.setter` uses for `self._integration_time`)
-            // or is called directly, at the top level, from __init__ (the shape
+            // or is called directly from __init__ (the shape
             // adafruit_motor.servo's `__init__` uses, calling `set_pulse_width_range` which sets
             // `self._min_duty`). Both are the constructor's own initialization logic, just
             // factored out of its body.
@@ -2803,27 +2851,55 @@ public partial class IRGenerator
             var mParamTypes = new Dictionary<string, string>();
             foreach (var p in m.Params) mParamTypes[p.Name] = p.Type;
             var mLocalTypes = new Dictionary<string, string>();
-            foreach (var ls in m.Body.Statements)
+            foreach (var ls in TypeInference.WalkStatements(m.Body.Statements))
                 switch (ls)
                 {
                     case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): mLocalTypes[vd.Name] = vd.VarType; break;
                     case AnnAssign an when !string.IsNullOrEmpty(an.Annotation): mLocalTypes[an.Target] = an.Annotation; break;
                 }
 
-            foreach (var ms in m.Body.Statements)
+            foreach (var ms in TypeInference.WalkStatements(m.Body.Statements))
             {
-                if (ms is not AssignStmt masg || masg.Target is not MemberAccessExpr mma
-                    || mma.Object is not VariableExpr msv || msv.Name != "self") continue;
-
-                var field = mma.Member;
-                var rhs = masg.Value;
-                var annotatedType = masg.AnnotatedType;
+                string? field = null;
+                Expression? rhs = null;
+                string? annotatedType = null;
+                if (ms is AssignStmt masg && masg.Target is MemberAccessExpr mma
+                    && mma.Object is VariableExpr msv && msv.Name == "self")
+                {
+                    field = mma.Member;
+                    rhs = masg.Value;
+                    annotatedType = masg.AnnotatedType;
+                }
+                else if (ms is AugAssignStmt maug && maug.Target is MemberAccessExpr ama
+                    && ama.Object is VariableExpr asv && asv.Name == "self")
+                {
+                    field = ama.Member;
+                    rhs = maug.Value;
+                }
+                if (field == null) continue;
+                // `+=` widens and kind-checks a field already introduced, but cannot be the
+                // write that declares one (same reasoning as the __init__ loop above).
+                if (ms is AugAssignStmt && !seen.Contains(field)) continue;
 
                 // Same array-field exemption as the __init__ scan above: a field whose value is
                 // a literal list or tuple of compile-time constants is an array field, handled
                 // by its own lowering, not a scalar the layout should claim.
-                if (IsCompileTimeNumberSequence(rhs))
+                if (rhs != null && IsCompileTimeNumberSequence(rhs))
                     continue;
+
+                // `self.f = bytearray(n)` is a BUFFER write wherever it appears -- codegen
+                // lowers it from the call's own shape, so it must not feed the scalar kind
+                // check: a None-seeded field later handed a buffer is the lazy-allocation
+                // idiom (adafruit_pixelbuf's `_pre_brightness_buffer`, assigned inside the
+                // brightness setter's `if`), not a numeric-vs-other conflict.
+                if (rhs is CallExpr { Callee: VariableExpr mbc } && mbc.Name is "bytearray" or "bytes")
+                {
+                    if (!classBufferFields.TryGetValue(classKey, out var mBufSet))
+                        classBufferFields[classKey] = mBufSet = new HashSet<string>();
+                    mBufSet.Add(field);
+                    if (mayIntroduceFields) seen.Add(field);
+                    continue;
+                }
 
                 string writeKind = ClassifyWriteKind(rhs, annotatedType, mParamTypes, mLocalTypes);
 
@@ -2840,7 +2916,12 @@ public partial class IRGenerator
                             + $"{writeKind} value in '{m.Name}' -- PyMCU lays each field out at a single "
                             + "fixed type and width, so the two writes cannot share one field. Give the "
                             + "two roles different names, or keep the assigned type consistent",
-                            masg);
+                            ms);
+
+                    // The same write also joins the field's width (#488): a 31-bit LCG
+                    // update inside a method's nested loop is what makes a param-bound
+                    // field uint32, not the byte its __init__ seed happened to fit in.
+                    WidenField(field, WriteEvidence(annotatedType, rhs, mParamTypes, mLocalTypes));
                     continue;
                 }
 
@@ -2854,6 +2935,7 @@ public partial class IRGenerator
                     mType = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
                         ? annotatedType.Substring(6, annotatedType.Length - 7)
                         : annotatedType;
+                    pinnedTypes.Add(field);
                 }
                 else
                 {
@@ -2861,6 +2943,7 @@ public partial class IRGenerator
                     if (w != null) mType = w;
                 }
 
+                layoutIndex[field] = layout.Count;
                 layout.Add((field, mType, mSrcParam));
                 fieldKind[field] = ClassifyFieldKind(mType);
             }
@@ -2896,14 +2979,15 @@ public partial class IRGenerator
         if (ScalarWidthRank(w) > ScalarWidthRank(type)) type = w;
     }
 
-    // True when __init__ calls `self.<methodName>(...)` as a bare, top-level statement of its
-    // own body -- the shape of a constructor factoring its own setup into a helper method.
-    // Deliberately narrow (top level only, direct call only, no transitive chasing): a helper
-    // that only ANOTHER helper calls is one hop further from evidence that it is really part of
-    // construction, and nothing measured needed that reach.
+    // True when __init__ calls `self.<methodName>(...)` anywhere in its own body -- the shape
+    // of a constructor factoring its own setup into a helper method. Deliberately narrow
+    // (direct call only, no transitive chasing): a helper that only ANOTHER helper calls is
+    // one hop further from evidence that it is really part of construction, and nothing
+    // measured needed that reach. The call's DEPTH is not the evidence, though: a helper
+    // invoked inside the constructor's own `for`/`if` is invoked by the constructor (#488).
     private static bool IsCalledDirectlyFromInit(FunctionDef init, string methodName)
     {
-        foreach (var s in init.Body.Statements)
+        foreach (var s in TypeInference.WalkStatements(init.Body.Statements))
             if (s is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr { Member: var callee } ma } }
                 && callee == methodName && ma.Object is VariableExpr { Name: "self" })
                 return true;
@@ -2914,8 +2998,14 @@ public partial class IRGenerator
     // categorically across write sites (numeric <-> str <-> anything else) -- NOT to reject
     // normal scalar widening (uint8 -> uint16 stays "numeric" and is always allowed, matching
     // the widening DeriveFieldLayout already does across multiple writes within __init__).
+    // An EMPTY type is "unknown", not "other": it is what an unannotated parameter leaves
+    // (`self.rng = seed`), a field whose kind nothing has yet stated -- filing it "other"
+    // refused its first evidenced write as a conflict (#488). A bare `const` is numeric:
+    // the parameter is a compile-time integer placeholder by construction.
     private static string ClassifyFieldKind(string type) =>
-        ScalarWidthRank(type) > 0 ? "numeric" : type is "str" or "const[str]" ? "str" : "other";
+        type.Length == 0 ? "unknown"
+        : type == "const" || ScalarWidthRank(type) > 0 ? "numeric"
+        : type is "str" or "const[str]" ? "str" : "other";
 
     // The kind an assignment's right-hand side settles a field to, or "unknown" when nothing
     // here has enough evidence to say (a call, a field/index read, an unrecognized expression,

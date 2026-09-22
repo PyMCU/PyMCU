@@ -269,7 +269,10 @@ public static class TypeInference
             .Where(r => r.Value != null && r.Value is not Frontend.TupleExpr)
             .Select(r => r.Value!);
 
-    private static IEnumerable<Statement> WalkStatements(List<Statement> body)
+    // The shared statement walk: every statement in a body at ANY nesting depth
+    // (for/while/if/try/with/match), in source order. DeriveFieldLayout uses it too --
+    // a field write inside a loop is the same write for layout purposes (#488).
+    internal static IEnumerable<Statement> WalkStatements(List<Statement> body)
     {
         foreach (var s in body)
             foreach (var inner in WalkStatement(s))
