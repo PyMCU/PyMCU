@@ -286,6 +286,53 @@ public class FieldWidthNestedWriteTests
     }
 
     [Fact]
+    public void FieldFromSelfCall_TakesTheInferredReturnWidth()
+    {
+        // PyMCU#489: the unannotated twin of the case above. `return 300` is the same
+        // width evidence `-> uint16` declares -- the return-join pass runs over class
+        // methods too, so the field and the outlined callee are both uint16.
+        var ir = Gen(
+            "class Dev:\n" +
+            "    def __init__(self):\n" +
+            "        self.vread = self._read()\n" +
+            "    def _read(self):\n" +
+            "        return 300\n" +
+            "def main():\n" +
+            "    d = Dev()\n" +
+            "    out = d.vread\n" +
+            "main()\n");
+        Optimizer.UnifyVariableWidths(ir);
+        var vars = Field(ir, "vread");
+        Assert.NotEmpty(vars);
+        Assert.All(vars, v => Assert.Equal(DataType.UINT16, v.Type));
+    }
+
+    [Fact]
+    public void FieldFromSelfCall_JoinsAcrossReturnStatements()
+    {
+        // The join is over EVERY value return, exactly as for module-level
+        // functions: `return 5` and `return 300` meet at uint16, not the first
+        // one's uint8. The `if` on a parameter keeps the branches unfolded so
+        // the field has to exist as storage.
+        var ir = Gen(
+            "class Dev:\n" +
+            "    def __init__(self):\n" +
+            "        self.vread = self._read(1)\n" +
+            "    def _read(self, k):\n" +
+            "        if k:\n" +
+            "            return 5\n" +
+            "        return 300\n" +
+            "def main():\n" +
+            "    d = Dev()\n" +
+            "    out = d.vread\n" +
+            "main()\n");
+        Optimizer.UnifyVariableWidths(ir);
+        var vars = Field(ir, "vread");
+        Assert.NotEmpty(vars);
+        Assert.All(vars, v => Assert.Equal(DataType.UINT16, v.Type));
+    }
+
+    [Fact]
     public void HelperCalledFromInit_IntroducesAFieldInsideALoop()
     {
         // set_pulse_width_range's shape (adafruit_motor.servo): the constructor factors
