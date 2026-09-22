@@ -3281,6 +3281,23 @@ public partial class IRGenerator
                 return;
             }
 
+            // `for p in self.pin_mapping.analog_pins`: the field holds a class OBJECT --
+            // the iterable is a different compile-time tuple per candidate, and a `for`
+            // has no tag dispatch to unroll through. With ONE candidate the sequence
+            // already resolved above; more than one is refused here by name.
+            if (stmt.Iterable is MemberAccessExpr coForOuter
+                && coForOuter.Object is MemberAccessExpr coForInner
+                && ClassObjectFieldClasses(coForInner) is { } coForCands)
+            {
+                throw UserError(
+                    $"for-in over '{coForOuter.Member}' of class-object field "
+                    + $"'{coForInner.Member}': the field can hold "
+                    + string.Join(", ", coForCands.Select(ShortClassName))
+                    + ", whose tuples differ, and a for-in has no tag dispatch -- "
+                    + "test membership (`in`), index (`.index()`) or a constant subscript",
+                    stmt.Iterable);
+            }
+
             throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.",
                 stmt.Iterable);

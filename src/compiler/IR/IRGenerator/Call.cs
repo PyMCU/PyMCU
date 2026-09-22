@@ -299,6 +299,15 @@ public partial class IRGenerator
 
             if (!resolvedAsModule)
             {
+                // `self.pin_mapping.analog_pins.index(pin)`: the field holds a class
+                // OBJECT, so the sequence lives on each candidate class and the field's
+                // tag byte picks which one's index applies at run time.
+                if (memC.Member == "index" && memC.Object is MemberAccessExpr coIdxOuter
+                    && coIdxOuter.Object is MemberAccessExpr coIdxInner
+                    && ClassObjectFieldClasses(coIdxInner) is { } idxCands)
+                    return EmitClassObjectAttrIndex(expr, memC, coIdxInner,
+                                                    coIdxOuter.Member, idxCands);
+
                 // `seq.index(x)` on a tuple/list literal or a name bound to one: the
                 // elements are compile-time expressions, so the call resolves to a
                 // constant when x folds and a compare chain when it does not -- either
@@ -4635,6 +4644,24 @@ public partial class IRGenerator
             if (ResolveMemberArrayName(lenMem) is { } lenFlat) return new Constant(LogicalArrayLen(lenFlat, arraySizes[lenFlat]));
             if (ResolveConstSequenceExpr(lenMem) is { } lenConstSeq)
                 return new Constant(lenConstSeq.Count);
+            // `len(self.pin_mapping.analog_pins)`: a class-object field's sequence
+            // attribute -- each candidate's count, selected on the field's tag.
+            if (lenMem.Object is MemberAccessExpr coLenInner
+                && ClassObjectFieldClasses(coLenInner) is { } coLenCands)
+            {
+                var lenVals = new List<Val>(coLenCands.Count);
+                foreach (var cand in coLenCands)
+                {
+                    if (!constSequenceBindings.TryGetValue(ClassAttrKey(cand, lenMem.Member),
+                                                           out var ce))
+                        throw UserError(
+                            $"field '{coLenInner.Member}' can hold class {ShortClassName(cand)}, "
+                            + $"which has no compile-time sequence attribute '{lenMem.Member}' "
+                            + "to measure", lenMem);
+                    lenVals.Add(new Constant(ce.Count));
+                }
+                return EmitClassObjectSelect(coLenInner, coLenCands, lenVals);
+            }
         }
 
         // A name bound to a short constant list keeps its elements, not an array: `len(xs)`
@@ -7097,6 +7124,41 @@ public partial class IRGenerator
         }
         finally { LeaveRuntimeBranch(); }
         Emit(new Label(endLabel));
+        return result;
+    }
+
+    /// <summary>
+    /// `self.pin_mapping.analog_pins.index(pin)`: the field holds a class OBJECT, so the
+    /// sequence is a compile-time tuple on each candidate class and the field's tag byte
+    /// picks which candidate's index applies. Each arm runs the ordinary const-seq index
+    /// (with its own miss-raises-ValueError path); one candidate needs no tag at all.
+    /// </summary>
+    private Val EmitClassObjectAttrIndex(CallExpr expr, MemberAccessExpr memC,
+                                         MemberAccessExpr fieldAccess, string attr,
+                                         List<string> cands)
+    {
+        var perClass = new List<List<Expression>>(cands.Count);
+        foreach (var cand in cands)
+        {
+            if (!constSequenceBindings.TryGetValue(ClassAttrKey(cand, attr), out var e))
+                throw UserError(
+                    $"field '{fieldAccess.Member}' can hold class {ShortClassName(cand)}, which has "
+                    + $"no compile-time sequence attribute '{attr}' to index into", memC.Object);
+            perClass.Add(e);
+        }
+        if (cands.Count == 1)
+            return EmitConstSeqIndex(expr, memC, perClass[0]);
+        Val tag = VisitExpression(fieldAccess);
+        Temporary result = MakeTemp(DataType.UINT8);
+        string done = MakeLabel();
+        for (int k = 0; k < cands.Count; k++)
+        {
+            string? next = k < cands.Count - 1 ? MakeLabel() : null;
+            if (next != null) Emit(new JumpIfNotEqual(tag, new Constant(k), next));
+            Emit(new Copy(EmitConstSeqIndex(expr, memC, perClass[k]), result));
+            if (next != null) { Emit(new Jump(done)); Emit(new Label(next)); }
+        }
+        Emit(new Label(done));
         return result;
     }
 

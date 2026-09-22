@@ -1047,6 +1047,14 @@ public partial class IRGenerator
 
             Val lhs = VisitExpression(expr.Left);
 
+            // `pin not in self.pin_mapping.analog_pins`: a field bound to a class OBJECT
+            // reaches a compile-time tuple through the field's tag byte. Before the string
+            // paths below try to evaluate the attribute as a value (there is none -- it is
+            // a sequence), dispatch membership per candidate class.
+            if (expr.Right is MemberAccessExpr coInOuter
+                && TryClassObjectAttrIn(coInOuter, lhs, negate, expr.Left) is { } coInRes)
+                return coInRes;
+
             // A call that RETURNS an instance with __contains__ (`"Linux" not in uname()`,
             // the Adafruit DHT spelling) used to skip the dunder path because that path
             // only asked about a VariableExpr. Evaluate the call once, then dispatch the
@@ -1150,98 +1158,7 @@ public partial class IRGenerator
                     "'in' / 'not in' requires a list, tuple, set or dict literal (or a name " +
                     "bound to one) on the right-hand side", expr.Right)
             };
-            if (rhsElems.Count == 0) return new Constant(negate ? 1 : 0);
-
-            var elems = new List<Val>();
-            bool allConst = true;
-            if (lhs is Constant lc)
-            {
-                foreach (var e in rhsElems)
-                {
-                    Val ev = VisitExpression(e);
-                    if (ev is Constant ec)
-                    {
-                        // Two Constants standing for STRINGS match on their text, not their
-                        // value: the same one-character string is its character code in
-                        // expression position and an interned id through a name, so
-                        // `c in ("a", "b")` compared two spellings of "a" and answered false
-                        // (#211). Both sides or neither, so a pair without text is compared
-                        // exactly as before.
-                        bool hit = lc.Text != null && ec.Text != null
-                            ? lc.Text == ec.Text
-                            : lc.Value == ec.Value;
-                        if (hit) return new Constant(negate ? 0 : 1);
-                    }
-                    else allConst = false;
-
-                    elems.Add(ev);
-                }
-
-                if (allConst) return new Constant(negate ? 1 : 0);
-            }
-            else if (TryGetCompileTimeText(expr.Left) is { } lhsStrText)
-            {
-                // `ORDER in {neopixel.RGB, neopixel.GRB}` -- a name bound to a
-                // compile-time string reads back as a Variable over the interned
-                // id, so the Constant fold above never saw it and emitted a
-                // run-time compare chain for a question the compiler can answer
-                // (wheel()'s conditional tuple return then refused on it). The
-                // text is what membership compares: a str matches a str element
-                // iff the texts match, and never matches a non-str constant --
-                // drop both from the chain and let only genuinely run-time
-                // elements keep a compare.
-                foreach (var e in rhsElems)
-                {
-                    Val ev = VisitExpression(e);
-                    string? eText = (ev as Constant)?.Text ?? TryGetCompileTimeText(e);
-                    if (eText != null)
-                    {
-                        if (eText == lhsStrText) return new Constant(negate ? 0 : 1);
-                        continue;   // a different compile-time string: never equal
-                    }
-                    if (ev is Constant) continue;   // a non-str constant: never equal
-                    elems.Add(ev);                  // run-time value: keep the compare
-                }
-                if (elems.Count == 0) return new Constant(negate ? 1 : 0);
-            }
-            else
-            {
-                foreach (var e in rhsElems) elems.Add(VisitExpression(e));
-            }
-
-            Temporary result = MakeTemp(DataType.UINT8);
-            if (negate)
-            {
-                Temporary cmp = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, lhs, elems[0], cmp));
-                Emit(new Copy(cmp, result));
-                for (int i = 1; i < elems.Count; ++i)
-                {
-                    Temporary ci = MakeTemp(DataType.UINT8);
-                    Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, lhs, elems[i], ci));
-                    string endLbl = MakeLabel();
-                    Emit(new JumpIfZero(result, endLbl));
-                    Emit(new Copy(ci, result));
-                    Emit(new Label(endLbl));
-                }
-            }
-            else
-            {
-                Temporary cmp = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, lhs, elems[0], cmp));
-                Emit(new Copy(cmp, result));
-                for (int i = 1; i < elems.Count; ++i)
-                {
-                    Temporary ci = MakeTemp(DataType.UINT8);
-                    Emit(new Binary(PyMCU.IR.BinaryOp.Equal, lhs, elems[i], ci));
-                    string endLbl = MakeLabel();
-                    Emit(new JumpIfNotZero(result, endLbl));
-                    Emit(new Copy(ci, result));
-                    Emit(new Label(endLbl));
-                }
-            }
-
-            return result;
+            return EmitConstSeqMembership(lhs, rhsElems, negate, expr.Left);
         }
 
         if (expr.Op == AstBinOp.Is || expr.Op == AstBinOp.IsNot)
@@ -2812,6 +2729,48 @@ public partial class IRGenerator
             return new Variable(seqBase + "__" + seqIdx, DataType.UINT8);
         }
 
+        // `self.pin_mapping.analog_pins[0]`: a class-object field's sequence attribute.
+        // A constant index folds per candidate and the tag selects; a run-time index would
+        // need every candidate's tuple in storage, which is refused.
+        if (expr.Target is MemberAccessExpr coSubOuter
+            && coSubOuter.Object is MemberAccessExpr coSubInner
+            && ClassObjectFieldClasses(coSubInner) is { } coSubCands)
+        {
+            var subElems = new List<List<Frontend.Expression>>(coSubCands.Count);
+            foreach (var cand in coSubCands)
+            {
+                if (!constSequenceBindings.TryGetValue(ClassAttrKey(cand, coSubOuter.Member),
+                                                       out var se))
+                    throw UserError(
+                        $"field '{coSubInner.Member}' can hold class {ShortClassName(cand)}, which "
+                        + $"has no compile-time sequence attribute '{coSubOuter.Member}' to index",
+                        expr.Target);
+                subElems.Add(se);
+            }
+            if (VisitExpression(expr.Index) is not Constant coIdxC)
+                throw UserError(
+                    $"indexing field '{coSubInner.Member}' attribute '{coSubOuter.Member}' at run "
+                    + "time would need every candidate class's tuple in storage -- use a "
+                    + "constant index, `in` or `.index()`", expr.Index);
+            int coIdx = coIdxC.Value;
+            if (coIdx < 0)
+                throw UserError(
+                    "a negative index into a class-object field's attribute cannot fold -- "
+                    + "candidates' tuples differ in length, so there is no one answer",
+                    expr.Index);
+            var subVals = new List<Val>(coSubCands.Count);
+            for (int k = 0; k < coSubCands.Count; k++)
+            {
+                if (coIdx >= subElems[k].Count)
+                    throw UserError(
+                        $"index {coIdx} is past the end of attribute '{coSubOuter.Member}' on "
+                        + $"class {ShortClassName(coSubCands[k])} ({subElems[k].Count} elements) "
+                        + $"-- field '{coSubInner.Member}' can hold it", expr.Index);
+                subVals.Add(VisitExpression(subElems[k][coIdx]));
+            }
+            return EmitClassObjectSelect(coSubInner, coSubCands, subVals);
+        }
+
         // `self._levels[0]`: an element of a list of NUMBERS held in a field. The elements are
         // compile-time values, so a constant subscript folds to one of them.
         if (expr.Target is MemberAccessExpr constSeqMem
@@ -3886,6 +3845,229 @@ public partial class IRGenerator
         return inlineFunctions.TryGetValue(sym, out var fd2) ? fd2 : null;
     }
 
+    /// <summary>
+    /// The compare-chain half of `x in seq` / `x not in seq`, given the element list. Folds
+    /// to a constant when the left side and every element are compile-time-known; otherwise
+    /// emits the short-circuit compare chain and returns its bool temp.
+    /// </summary>
+    private Val EmitConstSeqMembership(Val lhs, List<Frontend.Expression> rhsElems,
+                                       bool negate, Frontend.Expression lhsExpr)
+    {
+        if (rhsElems.Count == 0) return new Constant(negate ? 1 : 0);
+
+        var elems = new List<Val>();
+        bool allConst = true;
+        if (lhs is Constant lc)
+        {
+            foreach (var e in rhsElems)
+            {
+                Val ev = VisitExpression(e);
+                if (ev is Constant ec)
+                {
+                    // Two Constants standing for STRINGS match on their text, not their
+                    // value: the same one-character string is its character code in
+                    // expression position and an interned id through a name, so
+                    // `c in ("a", "b")` compared two spellings of "a" and answered false
+                    // (#211). Both sides or neither, so a pair without text is compared
+                    // exactly as before.
+                    bool hit = lc.Text != null && ec.Text != null
+                        ? lc.Text == ec.Text
+                        : lc.Value == ec.Value;
+                    if (hit) return new Constant(negate ? 0 : 1);
+                }
+                else allConst = false;
+
+                elems.Add(ev);
+            }
+
+            if (allConst) return new Constant(negate ? 1 : 0);
+        }
+        else if (TryGetCompileTimeText(lhsExpr) is { } lhsStrText)
+        {
+            // `ORDER in {neopixel.RGB, neopixel.GRB}` -- a name bound to a
+            // compile-time string reads back as a Variable over the interned
+            // id, so the Constant fold above never saw it and emitted a
+            // run-time compare chain for a question the compiler can answer
+            // (wheel()'s conditional tuple return then refused on it). The
+            // text is what membership compares: a str matches a str element
+            // iff the texts match, and never matches a non-str constant --
+            // drop both from the chain and let only genuinely run-time
+            // elements keep a compare.
+            foreach (var e in rhsElems)
+            {
+                Val ev = VisitExpression(e);
+                string? eText = (ev as Constant)?.Text ?? TryGetCompileTimeText(e);
+                if (eText != null)
+                {
+                    if (eText == lhsStrText) return new Constant(negate ? 0 : 1);
+                    continue;   // a different compile-time string: never equal
+                }
+                if (ev is Constant) continue;   // a non-str constant: never equal
+                elems.Add(ev);                  // run-time value: keep the compare
+            }
+            if (elems.Count == 0) return new Constant(negate ? 1 : 0);
+        }
+        else
+        {
+            foreach (var e in rhsElems) elems.Add(VisitExpression(e));
+        }
+
+        Temporary result = MakeTemp(DataType.UINT8);
+        if (negate)
+        {
+            Temporary cmp = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, lhs, elems[0], cmp));
+            Emit(new Copy(cmp, result));
+            for (int i = 1; i < elems.Count; ++i)
+            {
+                Temporary ci = MakeTemp(DataType.UINT8);
+                Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, lhs, elems[i], ci));
+                string endLbl = MakeLabel();
+                Emit(new JumpIfZero(result, endLbl));
+                Emit(new Copy(ci, result));
+                Emit(new Label(endLbl));
+            }
+        }
+        else
+        {
+            Temporary cmp = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, lhs, elems[0], cmp));
+            Emit(new Copy(cmp, result));
+            for (int i = 1; i < elems.Count; ++i)
+            {
+                Temporary ci = MakeTemp(DataType.UINT8);
+                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, lhs, elems[i], ci));
+                string endLbl = MakeLabel();
+                Emit(new JumpIfNotZero(result, endLbl));
+                Emit(new Copy(ci, result));
+                Emit(new Label(endLbl));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// `pin not in self.pin_mapping.analog_pins`: the field is a class OBJECT, so the
+    /// attribute is a compile-time tuple on every class it can hold and the field's tag
+    /// byte picks which one applies at run time. One candidate folds with no tag at all.
+    /// Returns null when <paramref name="outer"/> is not a class-object-field attribute.
+    /// </summary>
+    private Val? TryClassObjectAttrIn(MemberAccessExpr outer, Val lhs, bool negate,
+                                      Frontend.Expression lhsExpr)
+    {
+        if (outer.Object is not MemberAccessExpr inner) return null;
+        if (ClassObjectFieldClasses(inner) is not { } cands) return null;
+        var perClass = new List<List<Frontend.Expression>>(cands.Count);
+        foreach (var cand in cands)
+        {
+            if (!constSequenceBindings.TryGetValue(ClassAttrKey(cand, outer.Member), out var e))
+                throw UserError(
+                    $"field '{inner.Member}' can hold class {ShortClassName(cand)}, which has no "
+                    + $"compile-time sequence attribute '{outer.Member}' to test membership in", outer);
+            perClass.Add(e);
+        }
+        if (cands.Count == 1)
+            return EmitConstSeqMembership(lhs, perClass[0], negate, lhsExpr);
+        Val tag = VisitExpression(inner);
+        Temporary acc = MakeTemp(DataType.UINT8);
+        Emit(new Copy(new Constant(0), acc));
+        for (int k = 0; k < cands.Count; k++)
+        {
+            Val mk = EmitConstSeqMembership(lhs, perClass[k], negate, lhsExpr);
+            // acc |= (tag == k) && mk -- a folded mk contributes its arm's compare or nothing.
+            if (mk is Constant cmk)
+            {
+                if (cmk.Value == 0) continue;
+                Temporary condOnly = MakeTemp(DataType.UINT8);
+                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, tag, new Constant(k), condOnly));
+                Emit(new Binary(PyMCU.IR.BinaryOp.BitOr, acc, condOnly, acc));
+                continue;
+            }
+            Temporary ck = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, tag, new Constant(k), ck));
+            Temporary both = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.BitAnd, ck, mk, both));
+            Emit(new Binary(PyMCU.IR.BinaryOp.BitOr, acc, both, acc));
+        }
+        return acc;
+    }
+
+    /// <summary>
+    /// Select between per-candidate values on the field's tag byte: `vals[k]` is what the
+    /// expression means when the field holds `cands[k]`. The last arm is the fall-through --
+    /// the tag is one of the candidates by construction.
+    /// </summary>
+    private Val EmitClassObjectSelect(MemberAccessExpr fieldAccess, List<string> cands,
+                                      List<Val> vals)
+    {
+        if (cands.Count == 1) return vals[0];
+        Val tag = VisitExpression(fieldAccess);
+        DataType dt = DataType.UINT8;
+        foreach (var v in vals)
+        {
+            if (v is Constant cv && cv.Value > 255) dt = DataType.UINT16;
+            if (v is Variable { Type: DataType.UINT16 or DataType.UINT32 }
+                     or Temporary { Type: DataType.UINT16 or DataType.UINT32 })
+                dt = DataType.UINT16;
+        }
+        Temporary result = MakeTemp(dt);
+        string done = MakeLabel();
+        for (int k = 0; k < cands.Count; k++)
+        {
+            string? next = k < cands.Count - 1 ? MakeLabel() : null;
+            if (next != null) Emit(new JumpIfNotEqual(tag, new Constant(k), next));
+            Emit(new Copy(vals[k], result));
+            if (next != null) { Emit(new Jump(done)); Emit(new Label(next)); }
+        }
+        Emit(new Label(done));
+        return result;
+    }
+
+    /// <summary>
+    /// `self.pin_mapping.pwm_width` as a VALUE: the per-candidate attribute, selected on the
+    /// tag byte when more than one class can be bound. A sequence attribute in this position
+    /// and an attribute missing on a candidate are both located refusals -- the field's tag
+    /// cannot carry a tuple, and a class without the attribute is what CPython would raise on.
+    /// </summary>
+    private Val ClassObjectAttrValue(MemberAccessExpr expr, MemberAccessExpr inner,
+                                     List<string> cands)
+    {
+        var vals = new List<Val>(cands.Count);
+        foreach (var cand in cands)
+        {
+            string akey = ClassAttrKey(cand, expr.Member);
+            if (globals.TryGetValue(akey, out var g))
+                vals.Add(new Constant(g.Value));
+            else if (mutableGlobals.TryGetValue(akey, out var mgt))
+                vals.Add(new Variable(akey, mgt));
+            else if (constSequenceBindings.ContainsKey(akey))
+                throw UserError(
+                    $"attribute '{expr.Member}' of field '{inner.Member}' is a compile-time "
+                    + $"sequence on class {ShortClassName(cand)} -- use `x in`, `.index()` or a "
+                    + "subscript to read it; the field's tag cannot carry a tuple", expr);
+            else
+                throw UserError(
+                    $"field '{inner.Member}' can hold class {ShortClassName(cand)}, which has "
+                    + $"no attribute '{expr.Member}'", expr);
+        }
+        if (vals[0] is Constant first && vals.All(v => v is Constant c && c.Value == first.Value))
+            return first;
+        return EmitClassObjectSelect(inner, cands, vals);
+    }
+
+    /// A candidate class's name for diagnostics: strip the module prefix a mangled key
+    /// carries, keep a bare name (which may itself contain underscores) whole.
+    private string ShortClassName(string clsKey)
+    {
+        if (classNames.Contains(clsKey)) return clsKey;
+        foreach (var (bare, pfx) in classModuleMap)
+            if (string.Equals((pfx ?? "") + bare, clsKey, StringComparison.Ordinal))
+                return bare;
+        int i = clsKey.LastIndexOf('_');
+        return i < 0 ? clsKey : clsKey[(i + 1)..];
+    }
+
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
         // `cls.string` inside a @classmethod: cls is the receiver class.
@@ -3909,6 +4091,14 @@ public partial class IRGenerator
         // prefix, so the whole dotted path IS the name (#319). It is how CircuitPython spells
         // the UART parity: `busio.UART.Parity.ODD`, which adds a module hop in front.
         if (TryDottedClassConstant(expr) is { } dottedConst) return dottedConst;
+
+        // `self.pin_mapping.pwm_width`: the field holds a class OBJECT, so the attribute is
+        // the one each candidate class declares. A sequence attribute has no scalar value --
+        // `in` / `.index()` / a subscript handle it; reaching for it as a value is refused
+        // here, where the refusal can name the field and the class.
+        if (expr.Object is MemberAccessExpr coInner
+            && ClassObjectFieldClasses(coInner) is { } coCands)
+            return ClassObjectAttrValue(expr, coInner, coCands);
 
         // `e.__cause__` / `e.__context__` (#434). The chain is not recorded, because
         // `raise X() from Y` compiles as `raise X()` -- there is nothing for either

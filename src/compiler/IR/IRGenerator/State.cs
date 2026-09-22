@@ -405,6 +405,14 @@ public partial class IRGenerator
     // time_pulse_us's pin._pin.pulse_in() resolves on the single-field Pin chains (arm) too.
     private Dictionary<string, string> fieldClasses = new();
 
+    // `self.f = SomeClass` -- a field bound to a class OBJECT, not an instance. The field's
+    // layout byte carries a tag: the index into this ordered, distinct candidate list. A read
+    // like `self.f.ATTR` resolves the attribute on each candidate and selects on the tag.
+    // adafruit_seesaw's `self.pin_mapping = SAMD09_Pinmap` (one of five pinmaps chosen by
+    // chip id) is the demandant: the pinmap class's `analog_pins`/`pwm_pins` tuples are
+    // compile-time data, so membership and .index() answer through the tag.
+    private readonly Dictionary<string, List<string>> classObjectFields = new();
+
     // RFC 0001 Model B (register-packed handle): a non-@inline factory returning a ZCA
     // returns the instance's single packed field as a scalar. Instances bound from such
     // a factory are "handle instances": their field value IS the variable itself, so an

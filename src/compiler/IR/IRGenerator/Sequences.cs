@@ -125,6 +125,97 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The class key that owns the receiver of `recv.field` -- `self` inside a method (inlined
+    /// or outlined), or a named instance at module level. Null when the receiver has no class.
+    /// </summary>
+    private string? ClassObjectFieldOwner(MemberAccessExpr fieldAccess)
+    {
+        if (fieldAccess.Object is not VariableExpr recv) return null;
+        string? recvCls = InstanceClassOfName(recv.Name);
+        if (string.IsNullOrEmpty(recvCls))
+            foreach (string? key in new[]
+                     {
+                         string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + recv.Name,
+                         string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + recv.Name,
+                         recv.Name,
+                     })
+            {
+                if (key == null) continue;
+                recvCls = ReceiverClassThroughAliases(key);
+                if (!string.IsNullOrEmpty(recvCls)) break;
+            }
+        if (string.IsNullOrEmpty(recvCls) && recv.Name == "self")
+        {
+            // An outlined body has no inline self binding: ask the method's declared class.
+            if (!string.IsNullOrEmpty(currentFunction)
+                && methodInstanceTypes.TryGetValue(currentFunction, out var mt)) recvCls = mt;
+            if (string.IsNullOrEmpty(recvCls) && inlineStack.Count > 0
+                && !string.IsNullOrEmpty(inlineStack[^1].CalleeName)
+                && methodInstanceTypes.TryGetValue(inlineStack[^1].CalleeName, out var mt2))
+                recvCls = mt2;
+            // Last resort: any recorded owner whose methods this function belongs to.
+            if (string.IsNullOrEmpty(recvCls) && !string.IsNullOrEmpty(currentFunction))
+                foreach (var kv in classObjectFields)
+                {
+                    int bar = kv.Key.IndexOf('|');
+                    if (bar <= 0 || kv.Key[(bar + 1)..] != fieldAccess.Member) continue;
+                    string ownerKey = kv.Key[..bar];
+                    if (currentFunction.StartsWith(ownerKey + "_", StringComparison.Ordinal))
+                    { recvCls = ownerKey; break; }
+                }
+        }
+        return string.IsNullOrEmpty(recvCls) ? null : recvCls;
+    }
+
+    /// <summary>
+    /// The candidate classes `recv.field` can hold as a class OBJECT, in the order its writes
+    /// were scanned -- the index IS the tag stored in the field's layout byte. Null when the
+    /// field is not a class-object field of the receiver's class.
+    /// </summary>
+    private List<string>? ClassObjectFieldClasses(MemberAccessExpr fieldAccess)
+    {
+        if (classObjectFields.Count == 0) return null;
+        if (ClassObjectFieldOwner(fieldAccess) is not { } owner) return null;
+        if (classObjectFields.TryGetValue(owner + "|" + fieldAccess.Member, out var cands)
+            && cands.Count > 0)
+            return cands;
+        string resolved = ResolveCallee(owner);
+        if (resolved != owner
+            && classObjectFields.TryGetValue(resolved + "|" + fieldAccess.Member, out var cands2)
+            && cands2.Count > 0)
+            return cands2;
+        return null;
+    }
+
+    /// <summary>
+    /// `self.f = SomeClass`: record the bound class (scan may have missed a name that only
+    /// resolves at lower time) and store its tag in the field's layout byte. A right side
+    /// that is NOT a compile-time-known class is the spec'd refusal -- the field name and
+    /// what it holds are both said, because silently compiling a scalar is how this bug
+    /// looked before.
+    /// </summary>
+    private void EmitClassObjectFieldStore(MemberAccessExpr target, string flatKey,
+                                           Expression rhs, string ownerCls)
+    {
+        string key = ownerCls + "|" + target.Member;
+        if (ClassObjectExprClass(rhs) is not { } boundCls)
+        {
+            string held = classObjectFields.TryGetValue(key, out var heldCands)
+                ? string.Join(", ", heldCands)
+                : "a class object";
+            throw UserError(
+                $"field '{target.Member}' is bound to a class object ({held}) elsewhere; "
+                + "this assignment is not a class known at compile time. Every write to a "
+                + "class-object field must name a class.", rhs);
+        }
+        if (!classObjectFields.TryGetValue(key, out var cands))
+            classObjectFields[key] = cands = new List<string>();
+        int tag = cands.IndexOf(boundCls);
+        if (tag < 0) { cands.Add(boundCls); tag = cands.Count - 1; }
+        Emit(new Copy(new Constant(tag), new Variable(flatKey, DataType.UINT8)));
+    }
+
+    /// <summary>
     /// A compile-time sequence of ZCA instances reachable from <paramref name="e"/>: the base
     /// key and how many elements it has. The elements are `base__0`.., each registered in
     /// instanceClasses, which is what the `for` unroll and the constant subscript both index.

@@ -718,6 +718,20 @@ public partial class IRGenerator
                 return;
             }
 
+            // `self.pin_mapping = SAMD09_Pinmap`: the field holds a CLASS OBJECT, not an
+            // instance. Its layout byte stores a tag -- the bound class's index in the
+            // candidate list the scan recorded -- and a read like
+            // `self.pin_mapping.analog_pins` resolves the attribute on each candidate and
+            // selects on the tag. Every write to such a field must name a class known at
+            // compile time; anything else is a located error, never a silent scalar.
+            if (ClassObjectFieldOwner(seqMem) is { } coOwner
+                && (classObjectFields.ContainsKey(coOwner + "|" + seqMem.Member)
+                    || ClassObjectExprClass(stmt.Value) != null))
+            {
+                EmitClassObjectFieldStore(seqMem, seqFieldKey, stmt.Value, coOwner);
+                return;
+            }
+
             // `self._data = data`: a field handed a bytearray or a fixed array. It keeps the
             // storage it was given -- before this the address went into a scalar field and
             // `self._data[i]` was read as a bit index into that scalar.
@@ -7833,6 +7847,15 @@ public partial class IRGenerator
         }
         else if (stmt.Target is MemberAccessExpr mfield)
         {
+            // `self.f += v` where f holds a class OBJECT: the field's byte is a dispatch
+            // tag, not a number -- an augmented write is an assignment that is not a class
+            // name, refused like every other non-class write to the field.
+            if (ClassObjectFieldClasses(mfield) is { } augCoCands)
+                throw UserError(
+                    $"field '{mfield.Member}' holds a class object "
+                    + $"({string.Join(", ", augCoCands.Select(ShortClassName))}); "
+                    + "an augmented write is not a class known at compile time", stmt.Target);
+
             // `obj.field OP= v` for a ZCA field (slot, scalar, or flattened): read-modify-write.
             // Only `.value` had a case, so an augmented assignment to any other member was
             // silently dropped (e.g. `box.x += 3` left box.x unchanged). Reuse the field read and

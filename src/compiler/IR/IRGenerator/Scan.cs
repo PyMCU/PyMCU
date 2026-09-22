@@ -369,6 +369,66 @@ public partial class IRGenerator
         }
     }
 
+    /// Record every `self.<field> = <class object>` this statement reaches, at any depth, in
+    /// source order. Unlike the constructed-instance map above, ALL candidates matter: the
+    /// field's layout byte carries a tag (the candidate's index here) that reads dispatch on,
+    /// so a branch choosing between two classes records both. adafruit_seesaw's pin_mapping
+    /// elif-chain is the shape this exists for.
+    private void RecordClassObjectFieldBindings(Statement? s, string classKey)
+    {
+        switch (s)
+        {
+            case null: return;
+            case Block b: foreach (var st in b.Statements) RecordClassObjectFieldBindings(st, classKey); return;
+            case IfStmt iff:
+                RecordClassObjectFieldBindings(iff.ThenBranch, classKey);
+                foreach (var br in iff.ElifBranches) RecordClassObjectFieldBindings(br.Body, classKey);
+                RecordClassObjectFieldBindings(iff.ElseBranch, classKey);
+                return;
+            case WhileStmt w: RecordClassObjectFieldBindings(w.Body, classKey); return;
+            case ForStmt f: RecordClassObjectFieldBindings(f.Body, classKey); return;
+            case WithStmt wi: RecordClassObjectFieldBindings(wi.Body, classKey); return;
+            case MatchStmt m: foreach (var br in m.Branches) RecordClassObjectFieldBindings(br.Body, classKey); return;
+            case TryStmt t:
+                foreach (var st in t.Body) RecordClassObjectFieldBindings(st, classKey);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) RecordClassObjectFieldBindings(st, classKey);
+                if (t.ElseBody != null) foreach (var st in t.ElseBody) RecordClassObjectFieldBindings(st, classKey);
+                if (t.Finally != null) foreach (var st in t.Finally) RecordClassObjectFieldBindings(st, classKey);
+                return;
+            case AssignStmt { Target: MemberAccessExpr { Object: VariableExpr sv } m2, Value: var rhs }
+                when sv.Name == "self" && ClassObjectExprClass(rhs) is { } boundCls:
+                string coKey = classKey + "|" + m2.Member;
+                if (!classObjectFields.TryGetValue(coKey, out var coList))
+                    classObjectFields[coKey] = coList = new List<string>();
+                if (!coList.Contains(boundCls)) coList.Add(boundCls);
+                return;
+        }
+    }
+
+    /// The class an expression names when used as a VALUE -- `self.f = SAMD09_Pinmap` or the
+    /// dotted `self.f = seesaw.SAMD09_Pinmap`. Null when the expression is an instance, a
+    /// scalar, or anything that is not a class known at compile time.
+    private string? ClassObjectExprClass(Expression e)
+    {
+        switch (e)
+        {
+            case VariableExpr ve:
+                return ClassNameOf(ve);
+            case MemberAccessExpr { Object: VariableExpr mv } mm:
+            {
+                string realMod = TryImportedAlias(mv.Name, out var rm) && rm != null ? rm : mv.Name;
+                string mangled = realMod.Replace('.', '_') + "_" + mm.Member;
+                if (classFieldLayout.ContainsKey(mangled) || classDirectMethods.ContainsKey(mangled))
+                    return mangled;
+                string bare = ResolveCallee(mm.Member);
+                return classFieldLayout.ContainsKey(bare) || classDirectMethods.ContainsKey(bare)
+                    ? bare : null;
+            }
+            default:
+                return null;
+        }
+    }
+
     private void RecordClassAttrWriteTarget(Expression target)
     {
         switch (target)
@@ -1863,6 +1923,12 @@ public partial class IRGenerator
                         foreach (var s0 in block.Statements)
                             if (s0 is FunctionDef fdI && fdI.Name == "__init__")
                                 RecordConstructedFieldClasses(fdI.Body, classKey);
+                        // `self.f = SomeClass` (a class OBJECT, not `SomeClass()`) is the
+                        // same family but a different record: every method, every arm,
+                        // because the field's tag byte has to name each class it can hold.
+                        foreach (var s0 in block.Statements)
+                            if (s0 is FunctionDef fdC)
+                                RecordClassObjectFieldBindings(fdC.Body, classKey);
                         if (InitCallsSuperInit(block, classDef.Bases)) classInitCallsSuper.Add(classKey);
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
