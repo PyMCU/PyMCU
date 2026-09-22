@@ -2398,16 +2398,25 @@ public partial class IRGenerator
                         arenaBufferLenVar[paramName] = arenaArgLen;
                 }
 
-                if (func.Params[paramIdx].Type is "const[str]" or "str")
+                string varArgDecl = func.Params[paramIdx].Type ?? "";
+                bool varStrCapable = varArgDecl is "const[str]" or "str"
+                    || varArgDecl.StartsWith("Union[") || varArgDecl.StartsWith("Optional[")
+                    || IsAnyAnnotation(varArgDecl) || IsTypingOnlyName(varArgDecl);
+                if (varStrCapable)
                 {
                     string? strVal = ResolveStrConstant(vArg.Name);
-                    if (strVal == null && TryArgumentConstant(vArg.Name, out int sid)
+                    // The interned-id fallback stays gated on a definite `str`
+                    // declaration: a Union param can just as legitimately receive the
+                    // int 300, and 300 can be a string id -- that collision is a real
+                    // value, not a tag.
+                    if (strVal == null && varArgDecl is "const[str]" or "str"
+                        && TryArgumentConstant(vArg.Name, out int sid)
                         && stringIdToStr.TryGetValue(sid, out var internedFromVar))
                         strVal = internedFromVar;
                     if (strVal != null)
                     {
                         strConstantVariables[paramName] = strVal;
-                        if (func.Params[paramIdx].Type == "const[str]")
+                        if (varArgDecl == "const[str]")
                             constantVariables.Remove(paramName);
                         else if (TryArgumentConstant(vArg.Name, out int n))
                             constantVariables[paramName] = n;
@@ -2654,7 +2663,18 @@ public partial class IRGenerator
                 // (`StructArray(0x06, "<HH", 16)` in adafruit_pca9685). The declared type
                 // is still the discriminator: `uart.write('\n')` is a `uint8`, and giving
                 // that parameter a text made the UART HAL refuse itself.
-                if (func.Params[paramIdx].Type is "str" or "")
+                //
+                // A Union/Optional/typing-only annotation names a CHOICE the call site
+                // already validated (CheckUnionArgumentMatchesAMember), not a width to
+                // store: `value: Union[str, float]` receiving "FF23" has to keep the text
+                // or `isinstance(value, str)` in the body folds False and the call sinks
+                // into the number arm, where str(value) then printed the interned id --
+                // adafruit_ht16k33's print_hex showed the id, not the string.
+                string constArgDecl = func.Params[paramIdx].Type ?? "";
+                bool keepsStrText = constArgDecl is "str" or ""
+                    || constArgDecl.StartsWith("Union[") || constArgDecl.StartsWith("Optional[")
+                    || IsAnyAnnotation(constArgDecl) || IsTypingOnlyName(constArgDecl);
+                if (keepsStrText)
                 {
                     string? text = i < rawStrArgs.Count ? rawStrArgs[i]?.Value : null;
                     if (text == null && !string.IsNullOrEmpty(cArg3.Text)) text = cArg3.Text;
@@ -4579,6 +4599,11 @@ public partial class IRGenerator
         // A compile-time string constant (literal or a str / const[str] variable) has a
         // statically known length.
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
+        // So does any expression whose text the compiler holds -- `len(stnum[:dot])`,
+        // `len(str(n) + "x")`: a slice or concatenation of constants is still a
+        // compile-time string (adafruit_ht16k33's _number measures stnum this way).
+        if (expr.Args[0] is not StringLiteral && StaticStringOf(expr.Args[0]) is { } lenText)
+            return new Constant(lenText.Length);
 
         // 2-D grid lengths: len(g) is the row count H; len(g[y]) -- and len(r)
         // where r was bound to a row -- are the row width W. Both fold at
@@ -5783,12 +5808,15 @@ public partial class IRGenerator
     }
 
     // str(const): intern the decimal form as a flash string literal (compile-time only).
+    // A constant that already IS a string carries its text in .Text -- `str(s)` is `s`,
+    // not the decimal of its interned id (adafruit_ht16k33's _number does
+    // `str(number)` on whatever the Union[str, float] parameter bound).
     private Val EmitStrBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("str() expects exactly one argument", expr.Callee);
         Val v = VisitExpression(expr.Args[0]);
         if (!(v is Constant c)) throw UserError("str() argument must be a compile-time constant integer", ArgAt(expr, 0));
-        string decstr = c.Value.ToString();
+        string decstr = c.Text ?? c.Value.ToString();
         if (!stringLiteralIds.ContainsKey(decstr))
         {
             stringLiteralIds[decstr] = nextStringId;
@@ -6959,6 +6987,18 @@ public partial class IRGenerator
             && StaticStringOf(ab.Right) is { } rText)
             return lText + rText;
 
+        // `stnum = str(number)` where number is a compile-time int: the text the name
+        // holds is the decimal spelling, which is all the string methods a driver calls
+        // on it (find/len/slices) ever ask (adafruit_ht16k33's _number). str() of a
+        // compile-time string is itself.
+        if (e is CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } strCall)
+        {
+            if (StaticStringOf(strCall.Args[0]) is { } inner) return inner;
+            if (TryEvalElemConst(strCall.Args[0], out int strInt))
+                return strInt.ToString();
+            return null;
+        }
+
         // `po = "GRB" if bpp == 3 else "GRBW"` (adafruit_pixelbuf's pixel_order, then
         // NeoPixel's byteorder= argument): when the condition is a compile-time
         // expression the name holds whichever branch it selects, so the text is the
@@ -6977,7 +7017,82 @@ public partial class IRGenerator
                 return null;
             }
         }
+
+        // `txt = stnum[:places]`: a slice of a compile-time string is compile-time text.
+        // Bounds that do not fold leave the name unbound rather than guessed at.
+        if (e is IndexExpr { Index: SliceExpr idxSlice } idxExpr
+            && StaticStringOf(idxExpr.Target) is { } sliceSrc
+            && TrySliceStaticText(sliceSrc, idxSlice, out var slicedText))
+            return slicedText;
+
+        // `char = char.lower()`: a str method over a receiver whose text is known
+        // produces text the compiler knows -- the same answer TryEmitConstStrMethod
+        // folds when the call is lowered. Without this the assign path clears the
+        // name's binding BEFORE the call is evaluated, so the receiver's own text
+        // is gone by the time .lower() asks for it (adafruit_ht16k33's _put).
+        if (e is CallExpr { Callee: MemberAccessExpr strMethod } strMCall
+            && strMCall.Args.Count == 0
+            && StaticStringOf(strMethod.Object) is { } mRecv)
+            return strMethod.Member switch
+            {
+                "lower" => mRecv.ToLowerInvariant(),
+                "upper" => mRecv.ToUpperInvariant(),
+                "strip" => mRecv.Trim(" \t\n\r\v\f".ToCharArray()),
+                "lstrip" => mRecv.TrimStart(" \t\n\r\v\f".ToCharArray()),
+                "rstrip" => mRecv.TrimEnd(" \t\n\r\v\f".ToCharArray()),
+                _ => null,
+            };
         return null;
+    }
+
+    /// <summary>
+    /// Python slice semantics on a compile-time string: bounds fold through the same
+    /// constant evaluator the array-slice path uses, locals included (`stnum[:dot]`
+    /// where `dot = stnum.find(".")` sits in localConstantValues). False when a bound
+    /// is not compile-time known; the caller decides whether that is an error (a slice
+    /// READ must produce a string, and there is no storage for a run-time one).
+    /// </summary>
+    private bool TrySliceStaticText(string text, SliceExpr sl, out string result)
+    {
+        result = "";
+        int len = text.Length;
+        int start, stop, step;
+        bool savedFoldLocals = foldLocalConstants;
+        foldLocalConstants = true;
+        try
+        {
+            step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+            if (step > 0)
+            {
+                start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+                stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : len;
+                if (start < 0) start += len;
+                if (stop < 0) stop += len;
+                start = Math.Clamp(start, 0, len);
+                stop = Math.Clamp(stop, 0, len);
+            }
+            else
+            {
+                start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : len - 1;
+                stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : -1;
+                if (start < 0) start += len;
+                if (sl.Stop != null && stop < 0) stop += len;
+                start = Math.Clamp(start, -1, len - 1);
+                stop = Math.Clamp(stop, -1, len - 1);
+            }
+        }
+        catch (CompilerError)
+        {
+            return false;
+        }
+        finally { foldLocalConstants = savedFoldLocals; }
+
+        if (step == 0) throw UserError("slice step cannot be zero", sl);
+        var sb = new System.Text.StringBuilder();
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step)
+            sb.Append(text[i]);
+        result = sb.ToString();
+        return true;
     }
 
     /// <summary>

@@ -2661,6 +2661,20 @@ public partial class IRGenerator
 
         if (expr.Index is SliceExpr sl)
         {
+            // `stnum[:dot]`: a slice of a compile-time string is itself a compile-time
+            // string -- the answer is text the compiler already holds, so it folds to a
+            // new interned constant and no string object is ever built (adafruit_ht16k33's
+            // _number pads and cuts stnum this way).
+            if (StaticStringOf(expr.Target) is { } strSliceSrc)
+            {
+                if (!TrySliceStaticText(strSliceSrc, sl, out var strSliced))
+                    throw UserError(
+                        "a slice of a compile-time string needs compile-time bounds: the "
+                        + "result's length is decided while compiling, and there is no "
+                        + "allocator to size one at run time.", expr.Index);
+                return InternConstString(strSliced);
+            }
+
             // `self._buffer[0:2]`: a field bytearray is the same named array as `buf[0:2]`.
             // The slice path only accepted a VariableExpr, so adafruit_sht4x's
             // `temp_data = self._buffer[0:2]` was refused after measurements[0] compiled.
