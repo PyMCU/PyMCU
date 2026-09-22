@@ -865,8 +865,16 @@ public partial class IRGenerator
             bool isinstAllResolved = isinstCandidates.Count > 0;
             foreach (var cand in isinstCandidates)
             {
-                if (cand is VariableExpr candVe
-                    && ResolveCallee(candVe.Name) is { } candCls
+                // A module-qualified candidate (`segments.Seg7x4`) spells its class
+                // name dotted; ResolveCallee mangles it the same way a call does.
+                string? candName = cand switch
+                {
+                    VariableExpr candVe => candVe.Name,
+                    MemberAccessExpr candMa => FormatMemberTarget(candMa),
+                    _ => null,
+                };
+                if (candName != null
+                    && ResolveCallee(candName) is { } candCls
                     && (classNames.Contains(candCls) || classFieldLayout.ContainsKey(candCls)))
                     isinstResolved.Add(candCls);
                 else { isinstAllResolved = false; break; }
