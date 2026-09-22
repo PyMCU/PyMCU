@@ -230,6 +230,7 @@ public partial class IRGenerator
                     new VariableExpr(instSeqTgt.Name + "__" + k), instSeqList.Elements[k]));
 
             arraySizes[instSeqKey] = instSeqList.Elements.Count;
+            bufferLogicalLen[instSeqKey] = instSeqList.Elements.Count;
             arrayElemTypes[instSeqKey] = DataType.UINT8;
             return;
         }
@@ -1095,6 +1096,7 @@ public partial class IRGenerator
         int total = off;
         string slot = qn + "__slot";
         arraySizes[slot] = total;
+        bufferLogicalLen[slot] = total;
         arrayElemTypes[slot] = DataType.UINT8;
         moduleSramArrays.Add(slot);
 
@@ -2923,6 +2925,7 @@ public partial class IRGenerator
         for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++count;
 
         arraySizes[qualified] = count;
+        bufferLogicalLen[qualified] = count;
         arrayElemTypes[qualified] = srcEdt;
         variableTypes[qualified] = srcEdt;
 
@@ -5083,6 +5086,7 @@ public partial class IRGenerator
         string flat = baseName + "_" + member;
 
         arraySizes[flat] = count;
+        bufferLogicalLen[flat] = count;
         arrayElemTypes[flat] = elem;
         variableTypes[flat] = elem;
         arraysWithVariableIndex.Add(flat);
@@ -5199,6 +5203,7 @@ public partial class IRGenerator
         int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
 
         arraySizes[slot] = total;
+        bufferLogicalLen[slot] = total;
         arrayElemTypes[slot] = DataType.UINT8;
         moduleSramArrays.Add(slot);
 
@@ -5236,6 +5241,7 @@ public partial class IRGenerator
         var layout = classFieldLayout[cls];
         int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
         arraySizes[slot] = total;
+        bufferLogicalLen[slot] = total;
         arrayElemTypes[slot] = DataType.UINT8;
         moduleSramArrays.Add(slot);
 
@@ -6006,6 +6012,7 @@ public partial class IRGenerator
                         if (!flashArrays.Contains(qualified) && flashArrays.Contains(stmt.Target))
                             qualified = stmt.Target;
                         arraySizes[qualified] = count;
+                        bufferLogicalLen[qualified] = count;
                         arrayElemTypes[qualified] = elemDt;
                         variableTypes[qualified] = elemDt;
                         flashArrays.Add(qualified);
@@ -6573,6 +6580,7 @@ public partial class IRGenerator
             string arrQ = string.IsNullOrEmpty(currentFunction)
                 ? stmt.Target : currentFunction + "." + stmt.Target;
             arraySizes[arrQ] = n * stride;
+            bufferLogicalLen[arrQ] = n * stride;
             arrayElemTypes[arrQ] = DataType.UINT8;
             variableTypes[arrQ] = DataType.UINT8;
             arraysWithVariableIndex.Add(arrQ);
@@ -6609,6 +6617,7 @@ public partial class IRGenerator
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;
             arraySizes[qualified] = count;
+            bufferLogicalLen[qualified] = count;
             arrayElemTypes[qualified] = elemDt;
             variableTypes[qualified] = elemDt;
 
@@ -7178,6 +7187,7 @@ public partial class IRGenerator
         bool useSram = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
 
         arraySizes[qualified] = count;
+        bufferLogicalLen[qualified] = count;
         arrayElemTypes[qualified] = elemTypes?[0] ?? elemDt;
         variableTypes[qualified] = elemDt;
 
@@ -8048,6 +8058,7 @@ public partial class IRGenerator
 
                 string starName = QualifyTarget(stmt.Targets[starIdx]);
                 arraySizes[starName] = starCount;
+                bufferLogicalLen[starName] = starCount;
                 arrayElemTypes[starName] = DataType.UINT8;
                 for (int k = 0; k < starCount; ++k)
                 {

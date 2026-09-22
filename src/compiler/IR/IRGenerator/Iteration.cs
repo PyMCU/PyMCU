@@ -39,7 +39,7 @@ public partial class IRGenerator
         {
             if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
             else break;
-            if (TryResolveArrayStorageKey(key, out var stored)) { baseKey = stored; return arraySizes[stored]; }
+            if (TryResolveArrayStorageKey(key, out var stored)) { baseKey = stored; return LogicalArrayLen(stored, arraySizes[stored]); }
         }
         return -1;
     }
@@ -108,8 +108,10 @@ public partial class IRGenerator
 
         if (!arraySizes.ContainsKey(storage) && TryResolveArrayStorageKey(storage, out var sk))
             storage = sk;
-        if (!arraySizes.TryGetValue(storage, out totalSize))
-            totalSize = arraySizes.TryGetValue(n, out var vs) ? vs : 0;
+        if (arraySizes.TryGetValue(storage, out totalSize))
+            totalSize = LogicalArrayLen(storage, totalSize);
+        else
+            totalSize = arraySizes.TryGetValue(n, out var vs) ? LogicalArrayLen(n, vs) : 0;
         elemDt = arrayElemTypes.TryGetValue(storage, out var edt)
             ? edt
             : (arrayElemTypes.TryGetValue(n, out var vedt) ? vedt : DataType.UINT8);
@@ -1138,14 +1140,14 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentInlinePrefix))
         {
             string key = currentInlinePrefix + name;
-            if (arraySizes.TryGetValue(key, out int s)) { size = s; baseKey = key; }
+            if (arraySizes.TryGetValue(key, out int s)) { size = LogicalArrayLen(key, s); baseKey = key; }
         }
         if (size < 0 && !string.IsNullOrEmpty(currentFunction))
         {
             string key = currentFunction + "." + name;
-            if (arraySizes.TryGetValue(key, out int s)) { size = s; baseKey = key; }
+            if (arraySizes.TryGetValue(key, out int s)) { size = LogicalArrayLen(key, s); baseKey = key; }
         }
-        if (size < 0 && arraySizes.TryGetValue(name, out int s2)) { size = s2; baseKey = name; }
+        if (size < 0 && arraySizes.TryGetValue(name, out int s2)) { size = LogicalArrayLen(name, s2); baseKey = name; }
         if (size < 0)
         {
             int s3 = ResolveAliasedArraySize(name, out var b3);
@@ -2377,7 +2379,7 @@ public partial class IRGenerator
                             && ResolveMemberArrayName(enMem) is { } enArr
                             && arraySizes.TryGetValue(enArr, out int enArrSz))
                         {
-                            arrSize = enArrSz;
+                            arrSize = LogicalArrayLen(enArr, enArrSz);
                             @base = enArr;
                         }
                         else if (inner is VariableExpr vE)
@@ -2387,7 +2389,7 @@ public partial class IRGenerator
                                 string k = currentInlinePrefix + vE.Name;
                                 if (arraySizes.TryGetValue(k, out int s))
                                 {
-                                    arrSize = s;
+                                    arrSize = LogicalArrayLen(k, s);
                                     @base = k;
                                 }
                             }
@@ -2397,14 +2399,14 @@ public partial class IRGenerator
                                 string k = currentFunction + "." + vE.Name;
                                 if (arraySizes.TryGetValue(k, out int s))
                                 {
-                                    arrSize = s;
+                                    arrSize = LogicalArrayLen(k, s);
                                     @base = k;
                                 }
                             }
 
                             if (arrSize < 0 && arraySizes.TryGetValue(vE.Name, out int s2))
                             {
-                                arrSize = s2;
+                                arrSize = LogicalArrayLen(vE.Name, s2);
                                 @base = vE.Name;
                             }
 
@@ -2532,7 +2534,7 @@ public partial class IRGenerator
                         })
                         {
                             if (k != null && arraySizes.TryGetValue(k, out int sz))
-                                return (k, sz, arrayElemTypes.TryGetValue(k, out var dt) ? dt : DataType.UINT8);
+                                return (k, LogicalArrayLen(k, sz), arrayElemTypes.TryGetValue(k, out var dt) ? dt : DataType.UINT8);
                         }
                         int sz2 = ResolveAliasedArraySize(ve.Name, out var b2);
                         if (sz2 > 0) return (b2, sz2, arrayElemTypes.TryGetValue(b2, out var dt2) ? dt2 : DataType.UINT8);
@@ -2652,7 +2654,7 @@ public partial class IRGenerator
                                 string k = currentInlinePrefix + v.Name;
                                 if (arraySizes.TryGetValue(k, out int s))
                                 {
-                                    arrSize = s;
+                                    arrSize = LogicalArrayLen(k, s);
                                     @base = k;
                                 }
                             }
@@ -2662,14 +2664,14 @@ public partial class IRGenerator
                                 string k = currentFunction + "." + v.Name;
                                 if (arraySizes.TryGetValue(k, out int s))
                                 {
-                                    arrSize = s;
+                                    arrSize = LogicalArrayLen(k, s);
                                     @base = k;
                                 }
                             }
 
                             if (arrSize < 0 && arraySizes.TryGetValue(v.Name, out int s2))
                             {
-                                arrSize = s2;
+                                arrSize = LogicalArrayLen(v.Name, s2);
                                 @base = v.Name;
                             }
 
@@ -2829,7 +2831,7 @@ public partial class IRGenerator
                             string k = currentInlinePrefix + v.Name;
                             if (arraySizes.TryGetValue(k, out int s))
                             {
-                                arrSize = s;
+                                arrSize = LogicalArrayLen(k, s);
                                 @base = k;
                             }
                         }
@@ -2839,14 +2841,14 @@ public partial class IRGenerator
                             string k = currentFunction + "." + v.Name;
                             if (arraySizes.TryGetValue(k, out int s))
                             {
-                                arrSize = s;
+                                arrSize = LogicalArrayLen(k, s);
                                 @base = k;
                             }
                         }
 
                         if (arrSize < 0 && arraySizes.TryGetValue(v.Name, out int s2))
                         {
-                            arrSize = s2;
+                            arrSize = LogicalArrayLen(v.Name, s2);
                             @base = v.Name;
                         }
 
@@ -2992,7 +2994,7 @@ public partial class IRGenerator
                     // it through the same helper; the iterable only had to ask.
                     else if (ResolveMemberArrayName((MemberAccessExpr)iter) is { } forMemArr
                              && arraySizes.TryGetValue(forMemArr, out int forMemArrSize))
-                    { forSize = forMemArrSize; forBase = forMemArr; }
+                    { forSize = LogicalArrayLen(forMemArr, forMemArrSize); forBase = forMemArr; }
                 }
                 if (forSize < 0 && iter is VariableExpr forVarExpr2)
                     ResolveForBase(forVarExpr2.Name, out forBase, out forSize);
@@ -3011,12 +3013,12 @@ public partial class IRGenerator
                 int slSize = -1;
                 if (!string.IsNullOrEmpty(currentInlinePrefix)
                     && arraySizes.TryGetValue(currentInlinePrefix + sliceVar.Name, out int ss0))
-                { slSize = ss0; slBase = currentInlinePrefix + sliceVar.Name; }
+                { slSize = LogicalArrayLen(currentInlinePrefix + sliceVar.Name, ss0); slBase = currentInlinePrefix + sliceVar.Name; }
                 if (slSize < 0 && !string.IsNullOrEmpty(currentFunction)
                     && arraySizes.TryGetValue(currentFunction + "." + sliceVar.Name, out int ss1))
-                { slSize = ss1; slBase = currentFunction + "." + sliceVar.Name; }
+                { slSize = LogicalArrayLen(currentFunction + "." + sliceVar.Name, ss1); slBase = currentFunction + "." + sliceVar.Name; }
                 if (slSize < 0 && arraySizes.TryGetValue(sliceVar.Name, out int ss2))
-                { slSize = ss2; slBase = sliceVar.Name; }
+                { slSize = LogicalArrayLen(sliceVar.Name, ss2); slBase = sliceVar.Name; }
                 if (slSize < 0)
                 {
                     int ss3 = ResolveAliasedArraySize(sliceVar.Name, out var sb3);
@@ -3183,7 +3185,7 @@ public partial class IRGenerator
                 && TryResolveArrayStorageKey(callRet.Name, out var callBase)
                 && arraySizes.TryGetValue(callBase, out int callSize) && callSize > 0)
             {
-                EmitSequenceUnroll(stmt, callBase, callSize, new VariableExpr(callRet.Name));
+                EmitSequenceUnroll(stmt, callBase, LogicalArrayLen(callBase, callSize), new VariableExpr(callRet.Name));
                 return;
             }
 

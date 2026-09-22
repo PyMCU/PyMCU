@@ -2621,6 +2621,7 @@ public partial class IRGenerator
         _pendingFlashData.Add(new FlashData(name, bytes));
         flashArrays.Add(name);
         arraySizes[name] = bytes.Count;
+        bufferLogicalLen[name] = bytes.Count;
         arrayElemTypes[name] = DataType.UINT8;
 
         _flashStrCache[value] = name;

@@ -258,6 +258,7 @@ public partial class IRGenerator
         pendingFlashData.Add(new FlashData(name, bytes));
         flashArrays.Add(name);
         arraySizes[name] = values.Count;
+        bufferLogicalLen[name] = values.Count;
         arrayElemTypes[name] = elemDt;
 
         materialisedConstTables[cacheKey] = name;
@@ -299,6 +300,7 @@ public partial class IRGenerator
         pendingFlashData.Add(new FlashData(name, bytes));
         flashArrays.Add(name);
         arraySizes[name] = values.Count;
+        bufferLogicalLen[name] = values.Count;
         arrayElemTypes[name] = elemDt;
 
         materialisedConstTables[key] = name;

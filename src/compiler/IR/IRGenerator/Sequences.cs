@@ -390,6 +390,7 @@ public partial class IRGenerator
         pendingConstructorTarget = savedCtorTarget;
 
         arraySizes[baseKey] = values.Count;
+        bufferLogicalLen[baseKey] = values.Count;
         arrayElemTypes[baseKey] = DataType.UINT8;
         return baseKey;
     }
@@ -457,6 +458,7 @@ public partial class IRGenerator
 
         pendingConstructorTarget = savedCtorTarget;
         arraySizes[baseKey] = lit.Elements.Count;
+        bufferLogicalLen[baseKey] = lit.Elements.Count;
         arrayElemTypes[baseKey] = DataType.UINT8;
         return baseKey;
     }
@@ -488,6 +490,7 @@ public partial class IRGenerator
         // somewhere.
         int size = Math.Max(values.Count, 1);
         arraySizes[key] = values.Count;
+        bufferLogicalLen[key] = values.Count;
         arrayElemTypes[key] = DataType.UINT8;
         variableTypes[key] = DataType.UINT8;
         arraysWithVariableIndex.Add(key);
@@ -528,6 +531,7 @@ public partial class IRGenerator
         BindSequenceAlias(targetKey, src);
         if (!arraySizes.TryGetValue(src, out int n)) return;
         arraySizes[targetKey] = n;
+        bufferLogicalLen[targetKey] = LogicalArrayLen(src, n);
         if (arrayElemTypes.TryGetValue(src, out var dt))
             arrayElemTypes[targetKey] = dt;
         if (arrayViewBase.TryGetValue(src, out var vb))
@@ -604,6 +608,7 @@ public partial class IRGenerator
         }
         namedTupleElements[key] = elems;
         arraySizes[key] = elems.Count;
+        bufferLogicalLen[key] = elems.Count;
         arrayElemTypes[key] = widest;
     }
 

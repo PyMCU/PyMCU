@@ -4354,6 +4354,7 @@ public partial class IRGenerator
             arrayElemTypes[emptyQ] = DataType.UINT8;
             variableTypes[emptyQ] = DataType.UINT8;
             arraySizes[emptyQ] = 0;
+            bufferLogicalLen[emptyQ] = 0;
             Emit(new ArrayStore(emptyQ, new Constant(0), new Constant(0), DataType.UINT8, 1));
             return new ArrayBase(emptyQ);
         }
@@ -4631,7 +4632,7 @@ public partial class IRGenerator
             if (TryGetSetFor(lenMem, out var lenSet)) return new Constant(lenSet.Elements.Count);
             if (TryResolveInstanceSequence(lenMem, out _, out int lenSeqCount))
                 return new Constant(lenSeqCount);
-            if (ResolveMemberArrayName(lenMem) is { } lenFlat) return new Constant(arraySizes[lenFlat]);
+            if (ResolveMemberArrayName(lenMem) is { } lenFlat) return new Constant(LogicalArrayLen(lenFlat, arraySizes[lenFlat]));
             if (ResolveConstSequenceExpr(lenMem) is { } lenConstSeq)
                 return new Constant(lenConstSeq.Count);
         }

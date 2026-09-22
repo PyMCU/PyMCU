@@ -709,6 +709,7 @@ public partial class IRGenerator
                                 // read a wide one too.
                                 int elemSize = elemDt.SizeOf();
                                 arraySizes[name] = count;
+                                bufferLogicalLen[name] = count;
                                 arrayElemTypes[name] = elemDt;
                                 flashArrays.Add(name);
 
@@ -750,6 +751,7 @@ public partial class IRGenerator
                             int count = int.Parse(inner);
                             DataType elemDt = DataTypeExtensions.StringToDataType(type.Substring(0, bracket));
                             arraySizes[name] = count;
+                            bufferLogicalLen[name] = count;
                             arrayElemTypes[name] = elemDt;
                             moduleSramArrays.Add(name);
                             // `g: uint8[W*H] = <grid comp>`: the dims ride along
@@ -1194,6 +1196,7 @@ public partial class IRGenerator
                 string key = currentModulePrefix + instance + "_" + field;
                 int lb = ftype!.IndexOf('[');
                 arraySizes[key] = int.Parse(ftype.Substring(lb + 1, ftype.Length - lb - 2));
+                bufferLogicalLen[key] = arraySizes[key];
                 arrayElemTypes[key] = DataTypeExtensions.StringToDataType(ftype.Substring(0, lb));
                 moduleSramArrays.Add(key);
             }

@@ -285,6 +285,7 @@ public partial class IRGenerator
     private void RegisterGrid(string key, int w, int h, DataType elemDt, bool moduleLevel = false)
     {
         arraySizes[key] = w * h;
+        bufferLogicalLen[key] = w * h;
         gridDims[key] = (w, h);
         arrayElemTypes[key] = elemDt;
         variableTypes[key] = elemDt;
