@@ -3742,6 +3742,7 @@ public partial class IRGenerator
             var paramKey = newPrefix + p.Name;
             constantVariables.Remove(paramKey);
             strConstantVariables.Remove(paramKey);
+            floatConstantVariables.Remove(paramKey);
             variableAliases.Remove(paramKey);
             // A None argument (literal, or a caller name already tracked as None) has
             // no runtime value. The ordinary @inline binder records that on the
@@ -3788,6 +3789,20 @@ public partial class IRGenerator
                         text = interned;
                     if (text != null) strConstantVariables[paramKey] = text;
                 }
+            }
+            else if (argVal is FloatConstant fArg)
+            {
+                // A float through super().__init__ binds the way the ordinary @inline
+                // binder and the property setter bind it: a compile-time float, or an
+                // int when the parameter is declared an integer type. Falling to the
+                // Copy arm materialized it into a run-time float slot, so `round()`,
+                // `if x:` and friends could no longer fold it (HT16K33's brightness
+                // default 1.0 reached the setter as a Temporary).
+                if (p.Type is "uint8" or "uint16" or "uint32" or "int8" or "int16"
+                    or "int32" or "int")
+                    constantVariables[paramKey] = (int)fArg.Value;
+                else
+                    floatConstantVariables[paramKey] = fArg.Value;
             }
             else if (argVal is Variable vStrArg
                      && p.Type is "str" or "const[str]"
