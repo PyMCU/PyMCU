@@ -1703,10 +1703,23 @@ public partial class IRGenerator
                                 }
                                 if (baseLayout == null) continue;
 
-                                var ownFields = new HashSet<string>(clsLayout.Select(f => f.Field));
+                                // A field the subclass ALSO writes itself is the same slot the
+                                // base constructor fills (try: super().__init__() / except:
+                                // self.v = 0 writes v on both paths). Keep ONE entry at the
+                                // base's slot position, joined wide enough for both writes --
+                                // the same join DeriveFieldLayout applies within one body.
+                                // Skipping the base's entry left the field at the subclass
+                                // write's width and truncated the base's wider value.
                                 var merged = new List<(string Field, string Type, string SourceParam)>();
                                 foreach (var bf in baseLayout)
-                                    if (!ownFields.Contains(bf.Field)) merged.Add(bf);
+                                {
+                                    int ownIdx = clsLayout.FindIndex(f => f.Field == bf.Field);
+                                    if (ownIdx < 0) { merged.Add(bf); continue; }
+                                    string joined = bf.Type;
+                                    ApplyInferredFieldType(ref joined, clsLayout[ownIdx].Type);
+                                    merged.Add((bf.Field, joined, bf.SourceParam));
+                                    clsLayout.RemoveAt(ownIdx);
+                                }
                                 merged.AddRange(clsLayout);
                                 clsLayout = merged;
                                 break;
@@ -2566,7 +2579,11 @@ public partial class IRGenerator
         foreach (var s in classBody.Statements)
             if (s is FunctionDef f && f.Name == "__init__") { init = f; break; }
         if (init == null) return false;
-        foreach (var st in init.Body.Statements)
+        // Nested counts the same as top-level: `if external_vcc: super().__init__()`
+        // and a `try:`-wrapped one still run the base constructor on the same self, so the
+        // base's fields belong in the subclass layout either way. Nested defs are skipped
+        // by the walk -- a closure calling super().__init__ is not the constructor running.
+        foreach (var st in TypeInference.WalkStatements(init.Body.Statements))
         {
             if (st is not ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr {
                     Member: "__init__" } recv } }) continue;
@@ -2654,6 +2671,13 @@ public partial class IRGenerator
         var paramTypes = new Dictionary<string, string>();
         foreach (var p in init.Params) paramTypes[p.Name] = p.Type;
 
+        // The class's own methods by name: `self.v = self._read()` is as wide as _read's
+        // declared return type (used by InferAssignedFieldType below), and the transitive
+        // construction-reachability walk follows `self.<m>()` edges through this table.
+        var methodsByName = new Dictionary<string, FunctionDef>();
+        foreach (var s in classBody.Statements)
+            if (s is FunctionDef mf) methodsByName[mf.Name] = mf;
+
         // The annotated locals of __init__: a field first stored from `w: uint16 = v` is as
         // wide as w says, the way one stored from a `v: uint16` parameter already was. It
         // was laid out as a byte, and every later store, the runtime ones included,
@@ -2685,7 +2709,7 @@ public partial class IRGenerator
             annotated != null
                 ? (annotated.StartsWith("const[") && annotated.EndsWith("]")
                     ? annotated.Substring(6, annotated.Length - 7) : annotated)
-                : InferAssignedFieldType(value, pt, lt);
+                : InferAssignedFieldType(value, pt, lt, methodsByName);
 
         void WidenField(string field, string? evidence)
         {
@@ -2731,6 +2755,23 @@ public partial class IRGenerator
             if (s is AugAssignStmt && !seen.Contains(field)) continue;
             if (!seen.Add(field))
             {
+                // The categorical-mismatch check the method scan below runs applies inside
+                // __init__ too: `self.x = 5` then `self.x = "s"` is the same two writes
+                // whether the second sits in a helper or three lines down in the same
+                // constructor. Only evidenced kinds fire -- "unknown" stays silent, exactly
+                // as it does between methods.
+                string initWriteKind = ClassifyWriteKind(rhs, annotatedType, paramTypes, localTypes,
+                    methodsByName);
+                if (initWriteKind != "unknown"
+                    && fieldKind.TryGetValue(field, out var initKind)
+                    && initKind != "unknown" && initKind != initWriteKind)
+                    throw UserError(
+                        $"field '{field}' is first typed as {initKind} and is later given a "
+                        + $"{initWriteKind} value in '__init__' -- PyMCU lays each field out at a "
+                        + "single fixed type and width, so the two writes cannot share one field. "
+                        + "Give the two roles different names, or keep the assigned type consistent",
+                        writeTarget);
+
                 WidenField(field, WriteEvidence(annotatedType, rhs, paramTypes, localTypes));
                 continue;
             }
@@ -2809,10 +2850,20 @@ public partial class IRGenerator
             // Every later write to this field (at any depth, in any method) joins through
             // WidenField when the walk reaches it.
             if (annotatedType == null)
-                ApplyInferredFieldType(ref type, InferAssignedFieldType(rhs, paramTypes, localTypes));
+                ApplyInferredFieldType(ref type,
+                    InferAssignedFieldType(rhs, paramTypes, localTypes, methodsByName));
 
             layoutIndex[field] = layout.Count;
             layout.Add((field, type, srcParam));
+            // Tracked from the first write so a LATER write inside this same __init__ can
+            // be judged against it -- the kind-conflict check above needs the established
+            // kind populated here, not only after the loop. The kind is what the WRITE
+            // evidences, not `type`: an unevidenced write (`self._cs = cs.name`, a member
+            // read of a `const`-typed field) still lands on the uint8 default in `layout`,
+            // but filing that default as "numeric" made the stdlib's own sentinel
+            // (`self._cs = cs.name` / `self._cs = ""`, softspi) read as a conflict.
+            fieldKind[field] = ClassifyWriteKind(rhs, annotatedType, paramTypes, localTypes,
+                methodsByName);
         }
 
         // Every OTHER method of the class (property setters, and plain helper methods called
@@ -2830,7 +2881,21 @@ public partial class IRGenerator
         // so it joins the field's width and answers the kind-conflict diagnostic exactly
         // as a top-level one does. Nested `def` bodies keep being skipped -- a function
         // closing over `self` is not this method's evidence.
-        foreach (var f0 in layout) fieldKind[f0.Item1] = ClassifyFieldKind(f0.Item2);
+        //
+        // Which of this class's methods run during construction: every `self.<m>()` call
+        // __init__ can reach, chased TRANSITIVELY through the helpers themselves --
+        // `__init__` -> `_setup` -> `_reset` puts all three inside the constructor's own
+        // call graph, so a field `_reset` first writes is still a construction-time field.
+        // A method no such path reaches (called only from user code after construction)
+        // keeps the typo-safety refusal below, exactly as before.
+        var ctorReachable = new HashSet<string>();
+        var pendingMethods = new Queue<FunctionDef>();
+        pendingMethods.Enqueue(init);
+        while (pendingMethods.Count > 0)
+            foreach (var callee in SelfMethodCalls(pendingMethods.Dequeue()))
+                if (ctorReachable.Add(callee)
+                    && methodsByName.TryGetValue(callee, out var calleeDef))
+                    pendingMethods.Enqueue(calleeDef);
 
         foreach (var s in classBody.Statements)
         {
@@ -2854,7 +2919,7 @@ public partial class IRGenerator
             // both). Restricting to the constructor's own call graph is what keeps that
             // typo-safety net for the code it always protected, without also blocking the two
             // real, measured shapes it was never meant to catch.
-            bool mayIntroduceFields = m.IsPropertySetter || IsCalledDirectlyFromInit(init, m.Name);
+            bool mayIntroduceFields = m.IsPropertySetter || ctorReachable.Contains(m.Name);
 
             var mParamTypes = new Dictionary<string, string>();
             foreach (var p in m.Params) mParamTypes[p.Name] = p.Type;
@@ -2912,7 +2977,8 @@ public partial class IRGenerator
                     continue;
                 }
 
-                string writeKind = ClassifyWriteKind(rhs, annotatedType, mParamTypes, mLocalTypes);
+                string writeKind = ClassifyWriteKind(rhs, annotatedType, mParamTypes, mLocalTypes,
+                    methodsByName);
 
                 if (seen.Contains(field))
                 {
@@ -2950,13 +3016,16 @@ public partial class IRGenerator
                 }
                 else
                 {
-                    string? w = InferAssignedFieldType(rhs, mParamTypes, mLocalTypes);
+                    string? w = InferAssignedFieldType(rhs, mParamTypes, mLocalTypes, methodsByName);
                     if (w != null) mType = w;
                 }
 
                 layoutIndex[field] = layout.Count;
                 layout.Add((field, mType, mSrcParam));
-                fieldKind[field] = ClassifyFieldKind(mType);
+                // Same rule as the __init__ introduction above: the recorded kind is the
+                // write's own evidence (`writeKind`), not `mType` -- the uint8 default is a
+                // layout fallback, not proof the field is numeric.
+                fieldKind[field] = writeKind;
             }
         }
 
@@ -2990,19 +3059,18 @@ public partial class IRGenerator
         if (ScalarWidthRank(w) > ScalarWidthRank(type)) type = w;
     }
 
-    // True when __init__ calls `self.<methodName>(...)` anywhere in its own body -- the shape
-    // of a constructor factoring its own setup into a helper method. Deliberately narrow
-    // (direct call only, no transitive chasing): a helper that only ANOTHER helper calls is
-    // one hop further from evidence that it is really part of construction, and nothing
-    // measured needed that reach. The call's DEPTH is not the evidence, though: a helper
-    // invoked inside the constructor's own `for`/`if` is invoked by the constructor (#488).
-    private static bool IsCalledDirectlyFromInit(FunctionDef init, string methodName)
+    // The `self.<m>(...)` calls a method's body makes, at any statement depth -- a helper
+    // invoked inside the caller's own `for`/`if`/`try` is still invoked by the caller (#488).
+    // DeriveFieldLayout walks these edges from __init__ outward to find every method that
+    // runs during construction. Only bare call STATEMENTS count, the same shape
+    // IsCalledDirectlyFromInit recognised: a `self.<m>()` buried in an expression is no less
+    // a call, but widening what counts as construction reach is its own change.
+    private static IEnumerable<string> SelfMethodCalls(FunctionDef fn)
     {
-        foreach (var s in TypeInference.WalkStatements(init.Body.Statements))
+        foreach (var s in TypeInference.WalkStatements(fn.Body.Statements))
             if (s is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr { Member: var callee } ma } }
-                && callee == methodName && ma.Object is VariableExpr { Name: "self" })
-                return true;
-        return false;
+                && ma.Object is VariableExpr { Name: "self" })
+                yield return callee;
     }
 
     // Coarse type "kind" used ONLY to catch a field whose declared/inferred type changes
@@ -3024,22 +3092,36 @@ public partial class IRGenerator
     // diagnostic in DeriveFieldLayout, so this only fires on a REAL, evidenced mismatch (e.g.
     // Phase 1 probe C: a field first assigned an int literal, later assigned a string literal).
     private string ClassifyWriteKind(Expression? rhs, string? annotatedType,
-        Dictionary<string, string> paramTypes, Dictionary<string, string> localTypes)
+        Dictionary<string, string> paramTypes, Dictionary<string, string> localTypes,
+        Dictionary<string, FunctionDef>? selfMethods = null)
     {
         if (annotatedType != null)
         {
             if (annotatedType == "const") return "unknown";
             var t = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
                 ? annotatedType.Substring(6, annotatedType.Length - 7) : annotatedType;
+            // Same reasoning as the parameter branch below: a Union/Optional annotation is
+            // a per-call-site choice of types, not one kind a field layout can contradict.
+            if (t.StartsWith("Union[") || t.StartsWith("Optional[")) return "unknown";
             return ClassifyFieldKind(t);
         }
         if (rhs is StringLiteral) return "str";
+        // A numeric literal is categorical evidence even when it is too small to widen the
+        // field's type (InferAssignedFieldType answers null for a value that fits uint8 --
+        // "no wider width needed", not "no kind"): `self.x = "s"` then `self.x = 5` is the
+        // same conflict as `= 70000`, which the width path already catches.
+        if (rhs is IntegerLiteral or FloatLiteral) return "numeric";
         if (rhs is VariableExpr ve)
         {
             string? d = paramTypes.TryGetValue(ve.Name, out var pv) ? pv
                       : localTypes.TryGetValue(ve.Name, out var lv) ? lv : null;
             if (!string.IsNullOrEmpty(d))
             {
+                // A `Union[...]`/`Optional[...]` annotation is a per-call-site CHOICE, not a
+                // kind this scan can file: `address: Union[uint8, List[uint8]]` bound to a
+                // field reads "other" here and collided with the uint8 its index-extraction
+                // write implied. Like bare `const`, it states no single kind.
+                if (d.StartsWith("Union[") || d.StartsWith("Optional[")) return "unknown";
                 // A bare `const` parameter (e.g. `pull_mode: const`) is PyMCU's own
                 // compile-time-constant placeholder -- its real value type is whatever the
                 // call site passes, not a fixed kind this scan can see. Real case: AVR's Pin
@@ -3053,7 +3135,7 @@ public partial class IRGenerator
                 return ClassifyFieldKind(d);
             }
         }
-        var inferred = InferAssignedFieldType(rhs, paramTypes, localTypes);
+        var inferred = InferAssignedFieldType(rhs, paramTypes, localTypes, selfMethods);
         return inferred != null ? ClassifyFieldKind(inferred) : "unknown";
     }
 
@@ -3067,7 +3149,8 @@ public partial class IRGenerator
     /// </summary>
     private string? InferAssignedFieldType(Expression? e,
                                            Dictionary<string, string> paramTypes,
-                                           Dictionary<string, string> localTypes)
+                                           Dictionary<string, string> localTypes,
+                                           Dictionary<string, FunctionDef>? selfMethods = null)
     {
         switch (e)
         {
@@ -3076,6 +3159,23 @@ public partial class IRGenerator
 
             case CallExpr { Callee: VariableExpr cv } when ScalarWidthRank(cv.Name) > 0:
                 return cv.Name;
+
+            // `self.v = self._read()` is as wide as `_read`'s DECLARED return type -- the
+            // callee's own contract, the same evidence an explicit `self.v: uint16 = ...`
+            // annotation would give. Only a numeric scalar declaration answers here: a
+            // `-> str`/buffer/class return is not a width this scalar layout holds (the
+            // write's kind simply stays "unknown", exactly as before), and an unannotated
+            // helper has no declared type at all -- inferring it is return-inference's job,
+            // which does not see class methods.
+            case CallExpr { Callee: MemberAccessExpr { Member: var mname,
+                    Object: VariableExpr { Name: "self" } } }
+                when selfMethods != null && selfMethods.TryGetValue(mname, out var calleeFn):
+            {
+                var rt = calleeFn.ReturnType ?? "";
+                if (rt.StartsWith("const[") && rt.EndsWith("]"))
+                    rt = rt.Substring(6, rt.Length - 7);
+                return ScalarWidthRank(rt) > 0 ? rt : null;
+            }
 
             // `self._message = ""` is a string field, not a uint8 that a later
             // `self._message = message` (str) then contradicts. adafruit_character_lcd.
@@ -3106,12 +3206,12 @@ public partial class IRGenerator
             }
 
             case UnaryExpr ue:
-                return InferAssignedFieldType(ue.Operand, paramTypes, localTypes);
+                return InferAssignedFieldType(ue.Operand, paramTypes, localTypes, selfMethods);
 
             case BinaryExpr be:
             {
-                string? l = InferAssignedFieldType(be.Left, paramTypes, localTypes);
-                string? r = InferAssignedFieldType(be.Right, paramTypes, localTypes);
+                string? l = InferAssignedFieldType(be.Left, paramTypes, localTypes, selfMethods);
+                string? r = InferAssignedFieldType(be.Right, paramTypes, localTypes, selfMethods);
                 if (l == null) return r;
                 if (r == null) return l;
                 return ScalarWidthRank(l) >= ScalarWidthRank(r) ? l : r;

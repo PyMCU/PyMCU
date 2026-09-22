@@ -121,6 +121,68 @@ public class FieldWidthNestedWriteTests
     }
 
     [Fact]
+    public void KindConflictInsideInit_IsDiagnosed()
+    {
+        // The cross-method check refuses a field whose kind changes between write sites;
+        // two writes inside __init__ itself must answer the same way. Without the check the
+        // second write silently retyped the field to str.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self._x = 1\n" +
+            "        self._x = \"no\"\n" +
+            "def main():\n" +
+            "    b = Box()\n"));
+        Assert.Contains("first typed as numeric", ex.Message);
+        Assert.Contains("__init__", ex.Message);
+    }
+
+    [Fact]
+    public void KindConflictNestedInsideInit_IsDiagnosed()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self._x = 1\n" +
+            "        for i in range(2):\n" +
+            "            self._x = \"no\"\n" +
+            "def main():\n" +
+            "    b = Box()\n"));
+        Assert.Contains("first typed as numeric", ex.Message);
+    }
+
+    [Fact]
+    public void KindConflictInsideInit_StrThenNumeric_IsDiagnosed()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self._x = \"a\"\n" +
+            "        self._x = 70000\n" +
+            "def main():\n" +
+            "    b = Box()\n"));
+        Assert.Contains("first typed as str", ex.Message);
+    }
+
+    [Fact]
+    public void SameKindWritesInsideInit_StillWiden()
+    {
+        // numeric -> numeric is the widening the layout always allowed: no diagnostic.
+        var ir = Gen(
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self._x = 1\n" +
+            "        if True:\n" +
+            "            self._x = 70000\n" +
+            "b = Box()\n" +
+            "out = b._x\n");
+        Optimizer.UnifyVariableWidths(ir);
+        var vars = Field(ir, "_x");
+        Assert.NotEmpty(vars);
+        Assert.All(vars, v => Assert.Equal(DataType.UINT32, v.Type));
+    }
+
+    [Fact]
     public void AugAssignInsideNestedLoop_WidensTheField()
     {
         // `self._x += 70000` is the same write for the width join as `=`.
@@ -157,6 +219,70 @@ public class FieldWidthNestedWriteTests
             "        for i in range(2):\n" +
             "            self._y += 1\n" +
             "b = Box()\n"));
+    }
+
+    [Fact]
+    public void HelperCalledThroughAnotherHelper_IntroducesItsField()
+    {
+        // __init__ -> _setup -> _reset are all inside the constructor's own call graph,
+        // so the field only `_reset` writes is still a construction-time field.
+        var ir = Gen(
+            "class Dev:\n" +
+            "    def __init__(self):\n" +
+            "        self._setup()\n" +
+            "    def _setup(self):\n" +
+            "        self._reset()\n" +
+            "    def _reset(self):\n" +
+            "        self.state = 0x12345678\n" +
+            "def main():\n" +
+            "    d = Dev()\n" +
+            "    out = d.state\n" +
+            "main()\n");
+        Optimizer.UnifyVariableWidths(ir);
+        var vars = Field(ir, "state");
+        Assert.NotEmpty(vars);
+        Assert.All(vars, v => Assert.Equal(DataType.UINT32, v.Type));
+    }
+
+    [Fact]
+    public void HelperUnreachableFromInit_StillCannotIntroduceAField()
+    {
+        // The typo-safety net: a method no `self.<m>()` path from __init__ reaches is
+        // post-construction code, and a novel `self.<name>` write there stays the same
+        // refusal it always was.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self._x = 0\n" +
+            "    def update(self):\n" +
+            "        self._y = 1\n" +
+            "def main():\n" +
+            "    b = Box()\n" +
+            "    b.update()\n" +
+            "main()\n"));
+        Assert.Contains("_y", ex.Message);
+    }
+
+    [Fact]
+    public void FieldFromAnnotatedSelfCall_TakesTheDeclaredReturnWidth()
+    {
+        // `self.v = self._read()` with `-> uint16` declares the same width an explicit
+        // `self.v: uint16 = ...` would: the callee's contract is the evidence.
+        var ir = Gen(
+            "from pymcu.types import uint16\n" +
+            "class Dev:\n" +
+            "    def __init__(self):\n" +
+            "        self.vread = self._read()\n" +
+            "    def _read(self) -> uint16:\n" +
+            "        return 300\n" +
+            "def main():\n" +
+            "    d = Dev()\n" +
+            "    out = d.vread\n" +
+            "main()\n");
+        Optimizer.UnifyVariableWidths(ir);
+        var vars = Field(ir, "vread");
+        Assert.NotEmpty(vars);
+        Assert.All(vars, v => Assert.Equal(DataType.UINT16, v.Type));
     }
 
     [Fact]

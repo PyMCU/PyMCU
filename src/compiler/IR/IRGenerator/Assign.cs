@@ -2648,6 +2648,22 @@ public partial class IRGenerator
             else break;
         }
 
+        // `self.<f>` inside an outlined (shared-subroutine) method: the body's `self` has no
+        // instanceClasses entry -- the class it is the self OF is the one the method belongs
+        // to, kept in methodInstanceTypes. A helper that introduces a field under transitive
+        // construction reach (DeriveFieldLayout now follows `self.<m>()` chains out of
+        // __init__) otherwise wrote it through a uint8-typed var while the layout -- and the
+        // synthesized self_<f> param the write lands in -- carried the real width.
+        if (baseName == "self" || (baseName != null && baseName.EndsWith(".self")))
+        {
+            string? frameMethod = inlineStack.Count > 0 && !string.IsNullOrEmpty(inlineStack[^1].CalleeName)
+                ? inlineStack[^1].CalleeName : currentFunction;
+            if (frameMethod != null && methodInstanceTypes.TryGetValue(frameMethod, out var selfCls)
+                && classFieldLayout.TryGetValue(selfCls, out var selfLay))
+                foreach (var (f, t, _) in selfLay)
+                    if (f == member) return DataTypeExtensions.StringToDataType(t);
+        }
+
         return DataType.UINT8;
     }
 
