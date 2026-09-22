@@ -172,4 +172,35 @@ public class ArrayPassedToAnInlineTests
         Assert.DoesNotContain("has no declared array type", ex.Message);
         Assert.Contains("field of the class", ex.Message);
     }
+
+    /// The array stores whose INDEX is a variable, same property as the loads above.
+    private static List<ArrayStore> RuntimeIndexedStores(ProgramIR p) =>
+        p.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+         .Where(s => s.Index is not Constant).ToList();
+
+    [Fact]
+    public void ABufferParamIndexedInsideAForLoopStaysAddressable()
+    {
+        // uart-echo-cp: busio.UART.readinto is `@inline` and walks its buffer inside a
+        // `for` loop (`for i, _ in enumerate(buf): buf[i] = ...`). The scan that
+        // propagates "this inline callee needs its buffer parameter addressable" had
+        // no ForStmt case, so `rx` was scalarised to rx__0 and the emitted image
+        // stored the byte flat. With a compile-time bound the for unrolls to constant
+        // indices and the case disappears -- `n` is the runtime seed, same role as
+        // GPIOR0 in the while-based tests above.
+        var ir = Compile(
+            "class Port:\n" +
+            "    def __init__(self) -> None:\n        self._n: uint32 = 0\n\n" +
+            "    @inline\n" +
+            "    def fill(self, buf, n: uint8) -> None:\n" +
+            "        for i in range(n):\n" +
+            "            buf[i] = GPIOR0.value\n\n" +
+            "def main() -> None:\n" +
+            "    p = Port()\n" +
+            "    rx: uint8[8] = [0] * 8\n" +
+            "    p.fill(rx, uint8(GPIOR1.value))\n" +
+            "    GPIOR1.value = rx[0]\n");
+
+        Assert.Single(RuntimeIndexedStores(ir));
+    }
 }
