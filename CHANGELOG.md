@@ -21,6 +21,27 @@
 - **driver**: the UART preamble is injected when the program reports a raise with a
   message, not only when it calls `print()` — an unhandled raise reports on UART0 even in
   a program that never prints.
+- **ir**: a `bytearray` field passed to a real subroutine now hands over the array's base
+  address, not its first byte. The arg reached the marshal as a `Variable` naming the
+  field's flat storage — `self.temp` through an inline binding — and a `Variable` copies
+  contents where a pointer is needed. Member-held arrays and array variables evaluated to
+  a `Variable` now marshal as `ArrayBase`, and the outliner types a live-in that the body
+  dereferences (or forwards to a pointer parameter) pointer-wide even when its declared
+  tag is the element type. Seen as `i2c.writeto` writing `0x00 0x00` for the SSD1306
+  init stream.
+- **ir**: a `raise` no longer forces its function to expand inline at every call site —
+  the exception propagates through the ordinary T-flag protocol like any other call, so a
+  raise-bearing subroutine can be shared. `raise CompileError` stays inline-only, since it
+  is a lowering-time refusal that must not fire for a program that merely imports the
+  module.
+- **ir**: an exception message's bare `{x:x}`/`{x:X}` piece uses a minimal hex writer
+  (~200 bytes) instead of the generic `{fmt}` machinery and its 32-bit division helpers
+  (~900 bytes). Padded widths and other radixes still take the full formatter.
+- **ir**: keyword arguments to an outlined method bind against the declared parameter
+  list, not the synthesized `self_<field>` prefix — `o.writeto(a, buf, start=1)` binds
+  `start` correctly — and a `bytes`/`b"..."` literal written inline as a call argument
+  gets an addressable buffer, so the `I2CDevice` probe `writeto(addr, b"")` reaches the
+  subroutine.
 
 ## 0.1.0b1 (Unreleased, prepared 2026-09-15)
 
