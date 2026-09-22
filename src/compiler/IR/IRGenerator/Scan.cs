@@ -68,12 +68,31 @@ public partial class IRGenerator
     /// statements (#270), so adafruit_register's <c>_BUFFER = bytearray(1)</c> was
     /// rewriting size 3 back to 1 after <c>RWBits.__init__</c> called <c>_fit(2)</c>.
     /// </summary>
-    private int KeepGrownArraySize(string key, int declared)
+    private int KeepGrownArraySize(string key, int declared, bool isModuleReplay = false)
     {
         int size = arraySizes.TryGetValue(key, out int already) ? Math.Max(already, declared) : declared;
         arraySizes[key] = size;
+        // The run-time branch context this declaration runs under. `buf += src`
+        // (VisitAugAssign) reads it to refuse a growth whose executions are not
+        // one-for-one with this declaration's.
+        bufferDeclBranchTokens[key] = new List<int>(_runtimeBranchTokens);
+        // ...and the LOGICAL length re-bases: this statement is a fresh buffer here
+        // even where a sibling expansion's growth already sized the shared storage.
+        // Except the module-init replay, which lowers the same statement a second
+        // time -- a buffer grown between the two (#270's _fit) keeps its grown
+        // length there, the same reason `size` above keeps the max.
+        if (!isModuleReplay || !bufferLogicalLen.ContainsKey(key))
+            bufferLogicalLen[key] = declared;
         return size;
     }
+
+    /// <summary>
+    /// The length len()/writeto/`+=` should answer for <paramref name="key"/> -- the
+    /// declaration's count plus any appends on this path, when the buffer went
+    /// through a declaration that records one; the storage size otherwise.
+    /// </summary>
+    private int LogicalArrayLen(string key, int storageSize) =>
+        bufferLogicalLen.TryGetValue(key, out int logical) ? logical : storageSize;
 
     // Module-level names that are WRITTEN beyond their initializer: a second top-level
     // assignment, any assignment nested in a loop/branch/try, an augmented assignment,

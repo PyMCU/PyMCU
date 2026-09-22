@@ -4557,10 +4557,13 @@ public partial class IRGenerator
             if (ResolveListLiteralParam(vLen.Name) is ListExpr boundLen)
                 return new Constant(boundLen.Elements.Count);
             if (!string.IsNullOrEmpty(currentInlinePrefix) &&
-                arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1)) return new Constant(s1);
+                arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1))
+                return new Constant(LogicalArrayLen(currentInlinePrefix + vLen.Name, s1));
             if (!string.IsNullOrEmpty(currentFunction) &&
-                arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2)) return new Constant(s2);
-            if (arraySizes.TryGetValue(vLen.Name, out int s3)) return new Constant(s3);
+                arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2))
+                return new Constant(LogicalArrayLen(currentFunction + "." + vLen.Name, s2));
+            if (arraySizes.TryGetValue(vLen.Name, out int s3))
+                return new Constant(LogicalArrayLen(vLen.Name, s3));
 
             string lenStrKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + vLen.Name
@@ -4578,7 +4581,7 @@ public partial class IRGenerator
                 if (!variableAliases.TryGetValue(lenResolved, out string lenNext)) break;
                 lenResolved = lenNext;
                 if (TryResolveArrayStorageKey(lenResolved, out var lenStored))
-                    return new Constant(arraySizes[lenStored]);
+                    return new Constant(LogicalArrayLen(lenStored, arraySizes[lenStored]));
             }
         }
 
@@ -8783,12 +8786,15 @@ public partial class IRGenerator
             throw UserError($"{bufKey}.extend() takes exactly one argument", memC);
 
         int added = BufferExtendCount(expr.Args[0], bufKey);
-        int current = arraySizes[bufKey];
+        // The tail goes at the LOGICAL end: sibling inline expansions share the
+        // storage key, and another expansion's extend/+= must not move this one's.
+        int current = LogicalArrayLen(bufKey, arraySizes[bufKey]);
         int grown = Math.Max(current, current + added);
 
         if (grown > current)
         {
-            arraySizes[bufKey] = grown;
+            arraySizes[bufKey] = Math.Max(arraySizes[bufKey], grown);
+            bufferLogicalLen[bufKey] = grown;
             var elem = arrayElemTypes.TryGetValue(bufKey, out var et) ? et : DataType.UINT8;
             // Below the threshold, an unrolled store per slot is smaller: the loop's own code
             // (a compare, a branch, an index increment, a jump back) is a fixed cost that N

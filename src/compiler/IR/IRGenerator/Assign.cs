@@ -3229,17 +3229,20 @@ public partial class IRGenerator
     }
 
     // Qualified array name + size for a variable, or null when it is not a known array.
+    // The size is the buffer's LOGICAL length when one is recorded: arraySizes keeps
+    // the storage max across expansions sharing a key, while slice-assign, += and
+    // len() need the count this code path's declarations and appends produce.
     private (string Name, int Size)? ResolveArrayVar(string name)
     {
         string term = TerminalAliasOf(name);
-        if (arraySizes.TryGetValue(term, out int aliasedSz)) return (term, aliasedSz);
+        if (arraySizes.TryGetValue(term, out int aliasedSz)) return (term, LogicalArrayLen(term, aliasedSz));
 
         foreach (var k in new[]
         {
             string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
             string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
         })
-            if (k != null && arraySizes.TryGetValue(k, out int sz)) return (k, sz);
+            if (k != null && arraySizes.TryGetValue(k, out int sz)) return (k, LogicalArrayLen(k, sz));
 
         // The bare name is the MODULE-level slot. A local binding of the same name shadows
         // it for every question this lookup answers: `return data` inside a function whose
@@ -3247,7 +3250,7 @@ public partial class IRGenerator
         // `data[i] = v` must not write the global's storage through the local's name either.
         if (LocalScopeBinds(name)) return null;
 
-        if (arraySizes.TryGetValue(name, out int bareSz)) return (name, bareSz);
+        if (arraySizes.TryGetValue(name, out int bareSz)) return (name, LogicalArrayLen(name, bareSz));
 
         // A module-level tuple/array (`fill = 17, 34, 51`) is filed as `main.fill`.
         // Slice assign from another function (`buf[i:i+3] = bytes(fill)` in blit)
@@ -3256,7 +3259,7 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentFunction))
         {
             string mod = ModuleScopeArrayName(currentFunction + "." + name);
-            if (arraySizes.TryGetValue(mod, out int modSz)) return (mod, modSz);
+            if (arraySizes.TryGetValue(mod, out int modSz)) return (mod, LogicalArrayLen(mod, modSz));
         }
         return null;
     }
@@ -4898,7 +4901,7 @@ public partial class IRGenerator
                                 sizeSource);
             }
 
-            int grown = KeepGrownArraySize(qualified, count);
+            int grown = KeepGrownArraySize(qualified, count, replayingModuleLevel);
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
             arraysWithVariableIndex.Add(qualified);
@@ -6057,7 +6060,11 @@ public partial class IRGenerator
             if (replayingModuleLevel
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;
-            int grown = KeepGrownArraySize(qualified, count);
+            // An inlined expansion is never the module-init replay this flag names
+            // (the flag above predates the distinction and skips the prefix check);
+            // inside one the declaration is a fresh local buffer each expansion.
+            int grown = KeepGrownArraySize(qualified, count,
+                replayingModuleLevel && string.IsNullOrEmpty(currentInlinePrefix));
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
             arraysWithVariableIndex.Add(qualified);
@@ -7419,6 +7426,65 @@ public partial class IRGenerator
                         : $"an in-place dunder on {zcls}")
                     + " (or the matching binary dunder) defined", zve);
             }
+        }
+
+        // `buf += src` on a fixed buffer is the in-place concat CPython gives the
+        // spelling: grow the buffer's compile-time size by the source's length and
+        // write the source's bytes into the new tail -- the same stores the slice
+        // spelling `buf[len(buf):] = src` emits (adafruit_seesaw.write builds its
+        // command buffer exactly this way: `full_buffer = bytearray([reg_base,
+        // reg])` then `full_buffer += buf`). Without this the statement lowered as
+        // a scalar AugAssign on the array's name and the payload never landed.
+        if (stmt.Op == AugOp.Add && stmt.Target is VariableExpr bufVe
+            && ResolveBufferKey(bufVe) is { } augBufKey)
+        {
+            // The bump below happens once, when the statement lowers, so it is only
+            // correct when every execution of the += is preceded by the buffer's
+            // declaration re-running -- the same run-time branch context, recorded
+            // against the buffer key when its declaration lowered. `+=` inside a
+            // loop on a buffer declared outside it would have to grow per
+            // iteration; `+=` under an `if` whose condition is not folded can be
+            // skipped while the size stays bumped. Seesaw's `full_buffer += buf`
+            // is legal: `write` inlines into the caller's loop, but the
+            // `bytearray([reg_base, reg])` declaration sits in that same loop
+            // body, and `if buf is not None:` folds per call site.
+            var augDeclTokens = bufferDeclBranchTokens.TryGetValue(augBufKey, out var declT)
+                ? declT : new List<int>();
+            if (!augDeclTokens.SequenceEqual(_runtimeBranchTokens))
+                throw UserError(
+                    $"{bufVe.Name} += <src> runs in a different context than where "
+                    + $"'{bufVe.Name}' was declared -- inside a loop or conditional it "
+                    + "would grow the buffer a different number of times than the "
+                    + "declaration runs, but a buffer's size is fixed while compiling. "
+                    + "Build it at its final size and slice-assign into it, or keep a "
+                    + "write index and store at it.", stmt.Value);
+            Expression augSrc = UnwrapBytesSliceSource(stmt.Value);
+            if (SliceSourceLength(augSrc) is not { } augCount
+                || !TrySliceAssignSource(augSrc, augCount, stmt.Value,
+                    out List<Expression>? augElems, out VariableExpr? augArr,
+                    out List<int>? augArrIdx))
+                throw UserError(
+                    $"{bufVe.Name} += <src>: the source's byte count decides the buffer's "
+                    + $"size, and '{bufVe.Name}'s size is fixed while compiling -- this "
+                    + "source's is only known at run time. Declare the buffer at its final "
+                    + "size and slice-assign into it instead.", stmt.Value);
+            // The tail starts at the LOGICAL length: this expansion's declaration
+            // count plus appends already lowered on this path. arraySizes holds the
+            // shared storage max -- an earlier sibling expansion's += must not move
+            // this one's tail, which is exactly the leak that put a third byte on
+            // seesaw's buf=None `write(reg_base, reg)` write.
+            int augOldLen = LogicalArrayLen(augBufKey, arraySizes[augBufKey]);
+            arraySizes[augBufKey] = Math.Max(arraySizes[augBufKey], augOldLen + augCount);
+            bufferLogicalLen[augBufKey] = augOldLen + augCount;
+            for (int k = 0; k < augCount; k++)
+            {
+                Expression augElem = augElems != null
+                    ? augElems[k]
+                    : new IndexExpr(augArr!, new IntegerLiteral(augArrIdx![k]));
+                VisitStatement(new AssignStmt(
+                    new IndexExpr(bufVe, new IntegerLiteral(augOldLen + k)), augElem));
+            }
+            return;
         }
 
         Val operand = VisitExpression(stmt.Value);

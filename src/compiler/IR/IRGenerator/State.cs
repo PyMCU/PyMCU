@@ -916,6 +916,31 @@ public partial class IRGenerator
     // the compilation would be a false positive.
     private int _runtimeBranchDepth = 0;
 
+    // One fresh token per open run-time branch, pushed/popped by EnterRuntimeBranch /
+    // LeaveRuntimeBranch. Depth alone cannot tell two sibling branches apart (`if a:` then
+    // `if b:` both sit at depth 1); the token path can. A buffer records the path in effect
+    // at its declaration, and `buf += src` (Assign.cs) lowers only when the statement's own
+    // path equals it -- the bump happens once while compiling, so it is only correct when
+    // every execution of the += is preceded by the declaration re-running.
+    private readonly List<int> _runtimeBranchTokens = new();
+    private int _nextBranchToken;
+
+    // Buffer key -> the run-time branch token path at its declaration (empty when the
+    // declaration sits outside every run-time branch). Written by KeepGrownArraySize,
+    // the chokepoint fresh bytearray/bytes buffers register through.
+    private readonly Dictionary<string, List<int>> bufferDeclBranchTokens = new();
+
+    // Buffer key -> its current LOGICAL element count: what the most recent
+    // declaration statement gave it, plus whatever `+=` / `.extend()` appended on
+    // this code path. arraySizes holds the storage MAX across every expansion that
+    // shares the key -- sibling @inline expansions of `write` reuse
+    // `inline4.write.full_buffer` -- while len(), writeto and the += tail offset
+    // need the count for the expansion being lowered right now. A declaration
+    // re-bases it: `full_buffer = bytearray([reg_base, reg])` in the buf=None
+    // expansion means a fresh two-byte buffer even though a sibling expansion's
+    // += grew the shared storage to 3.
+    private readonly Dictionary<string, int> bufferLogicalLen = new();
+
     // compile_isr() registrations: bare function name -> interrupt vector.
     private Dictionary<string, int> pendingIsrRegistrations = new();
     private Dictionary<string, (string Function, int Line, string Module)> pendingIsrOrigins = new();

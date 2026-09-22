@@ -118,12 +118,14 @@ public partial class IRGenerator
     {
         _runtimeBranchDepth++;
         _undecidedByBranchDepth[_runtimeBranchDepth] = undecided;
+        _runtimeBranchTokens.Add(_nextBranchToken++);
     }
 
     private void LeaveRuntimeBranch()
     {
         _undecidedByBranchDepth.Remove(_runtimeBranchDepth);
         _runtimeBranchDepth--;
+        _runtimeBranchTokens.RemoveAt(_runtimeBranchTokens.Count - 1);
     }
 
     private int EmitOptimizedConditionalJump(Expression cond, string targetLabel, bool jumpIfTrue = false)
