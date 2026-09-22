@@ -123,6 +123,59 @@ public class RaiseMessageDeferredPrintTests
     }
 
     [Fact]
+    public void AnFStringRaiseWithAdjacentLiteralsStoresTheSiteAndTheValue()
+    {
+        // seesaw's `raise RuntimeError(f"...0x{chip_id:x} is not " "correct! ...")`:
+        // CPython concatenates the f-string and the plain literal into one JoinedStr,
+        // and the deferred print must carry the runtime piece through both front ends.
+        var ir = Gen(
+            "def boom(n: uint8) -> uint8:\n" +
+            "    raise ValueError(\n" +
+            "        f\"bad 0x{n:x} is not \"\n" +
+            "        \"correct\"\n" +
+            "    )\n" +
+            "def main() -> uint8:\n" +
+            "    try:\n" +
+            "        return boom(7)\n" +
+            "    except ValueError as e:\n" +
+            "        return 1\n");
+
+        StoresPositiveSite(Boom(ir).Body).Should().BeTrue(
+            because: "the message is an f-string once the adjacent literal folds in");
+        CopiesTo(Boom(ir).Body, "__exn_arg0").Should().BeTrue(
+            because: "the interpolated n parks in the args record for print(e) to replay");
+    }
+
+    [Fact]
+    public void AnIntPieceUnderAnFSpecParksInAFloatSlot()
+    {
+        // print(f"{n:.1f}") converts an int to float like CPython ("5.0"); the deferred
+        // print must park it in a float slot so the replayed text matches.
+        var ir = new IRGenerator().Generate(
+            new Parser(new Lexer(Prelude +
+                "def uart_write_float_fmt(v: float, prec: uint8, width: uint8, flags: uint8):\n" +
+                "    pass\n" +
+                "def boom(n: uint8) -> uint8:\n" +
+                "    raise ValueError(f\"bad {n:.1f}\")\n" +
+                "def main() -> uint8:\n" +
+                "    try:\n" +
+                "        return boom(7)\n" +
+                "    except ValueError as e:\n" +
+                "        return 1\n").Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" });
+
+        CopiesTo(Boom(ir).Body, "__exn_farg0").Should().BeTrue(
+            because: "an int under an f spec converts to float, exactly as print() does");
+        CopiesTo(Boom(ir).Body, "__exn_arg0").Should().BeFalse(
+            because: "parking the int would make the replay print '5' where print wrote '5.0'");
+        ir.Functions.Single(f => f.Name == "__pymcu_print_exn_msg").Body
+            .Any(i => i is Call { FunctionName: var n } && n.EndsWith("uart_write_float_fmt"))
+            .Should().BeTrue(
+                because: "the replay emits the spec'd float through the same writer print uses");
+    }
+
+    [Fact]
     public void CompileErrorStillNeedsACompileTimeString()
     {
         var act = () => Gen(

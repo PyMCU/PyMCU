@@ -2543,13 +2543,23 @@ public partial class IRGenerator
             DataType vt = GetValType(v);
             var rec = new RaiseMessagePiece { FormatSpec = p.FormatSpec ?? "" };
 
-            if (vt == DataType.FLOAT || v is FloatConstant)
+            if (vt == DataType.FLOAT || v is FloatConstant
+                || (p.FormatSpec ?? "").EndsWith("f", StringComparison.Ordinal))
             {
+                // A float piece, or an int under an f spec -- print converts it the same
+                // way (`f"{5:.1f}"` -> "5.0"), so the slot is a float either way.
                 int slot = floatUsed++;
                 string name = ExceptionFloatArgVar(slot);
                 variableTypes[name] = DataType.FLOAT;
                 mutableGlobals[name] = DataType.FLOAT;
-                Emit(new Copy(v, new Variable(name, DataType.FLOAT)));
+                Val farg = v is Constant icv ? new FloatConstant(icv.Value) : v;
+                if (farg is not FloatConstant && GetValType(farg) != DataType.FLOAT)
+                {
+                    Temporary ftmp = MakeTemp(DataType.FLOAT);
+                    Emit(new Copy(farg, ftmp));
+                    farg = ftmp;
+                }
+                Emit(new Copy(farg, new Variable(name, DataType.FLOAT)));
                 rec.FloatSlot = slot;
                 rec.PrintAs = DataType.FLOAT;
             }
@@ -2750,7 +2760,22 @@ public partial class IRGenerator
 
         if (piece.FloatSlot >= 0)
         {
-            EmitStreamVal(floatFn, new Variable(ExceptionFloatArgVar(piece.FloatSlot), DataType.FLOAT));
+            var fvar = new Variable(ExceptionFloatArgVar(piece.FloatSlot), DataType.FLOAT);
+            if (!string.IsNullOrEmpty(piece.FormatSpec))
+            {
+                // Same call print() emits for f"{v:W.Nf}" -- the spec was captured at the
+                // raise, so the replayed text matches what print would have written.
+                var (fwidth, prec, fpad) = ParseFloatFormatSpec(piece.FormatSpec);
+                Emit(new Call(ResolveFloatFmtFn(), new List<Val>
+                {
+                    fvar,
+                    new Constant(prec),
+                    new Constant(fwidth),
+                    new Constant(fpad == '0' ? 1 : 0),
+                }, MakeTemp(DataType.UINT8)));
+                return;
+            }
+            EmitStreamVal(floatFn, fvar);
             return;
         }
 
