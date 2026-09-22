@@ -38,11 +38,17 @@ public partial class IRGenerator
         // this: an unannotated `x = f()` files no type anywhere, and without the record a later
         // read of `x` would look exactly like a typo.
         if (stmt.Target is VariableExpr bindTgt)
+        {
             boundNames.Add(!string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + bindTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction)
                     ? currentFunction + "." + bindTgt.Name
                     : bindTgt.Name));
+            // `r = <not a row>` ends a row alias bound earlier in the block --
+            // the scan stopped at this statement, and what binds now is an
+            // ordinary value.
+            KillRowAlias(bindTgt.Name);
+        }
 
         // Rebinding the name of a module-level `def`. The name is bound at compile time and
         // every call through it lowers to a direct CALL, so the assignment cannot change what
@@ -3590,6 +3596,22 @@ public partial class IRGenerator
             if (indexExpr.Index is TupleExpr)
                 throw UserError(TwoIndexSubscriptRefusal, indexExpr.Index);
             EmitGridElemStore(ResolveGridKey(gInner.Target)!, gInner.Index, indexExpr.Index, stmt.Value);
+            return;
+        }
+        // `r[x] = v` where r was bound to a row by `r = g[y]` or `for r in g`.
+        if (indexExpr.Target is VariableExpr rowStoreVe
+            && ResolveRowRef(rowStoreVe) is { } rowStoreRef)
+        {
+            if (indexExpr.Index is SliceExpr)
+                throw UserError(
+                    "a row of a 2-D grid cannot be sliced -- a slice would be a view object. " +
+                    "Write the element stores one by one (r[x] = v, or a loop).",
+                    indexExpr.Index);
+            if (indexExpr.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, indexExpr.Index);
+            if (rowStoreRef.Uses != null && !rowStoreRef.Uses.Contains(indexExpr))
+                throw RowAliasNotAValue(indexExpr);
+            EmitRowElemStore(rowStoreRef, indexExpr.Index, VisitExpression(stmt.Value));
             return;
         }
 
@@ -7334,6 +7356,15 @@ public partial class IRGenerator
                 EmitGridElemStoreVal(augGridKey,
                     EvalGridIndex(augInner.Index, ah, "row"),
                     EvalGridIndex(ie.Index, aw, "column"), result);
+                return;
+            }
+            if (ie.Target is VariableExpr augRowVe
+                && ie.Index is not SliceExpr and not TupleExpr
+                && ResolveRowRef(augRowVe) is { } augRowRef)
+            {
+                if (augRowRef.Uses != null && !augRowRef.Uses.Contains(ie))
+                    throw RowAliasNotAValue(ie);
+                EmitRowElemStore(augRowRef, ie.Index, result);
                 return;
             }
 

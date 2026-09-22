@@ -2245,6 +2245,20 @@ public partial class IRGenerator
             return EmitGridElemLoad(nestGrid, gIn.Index, expr.Index);
         }
 
+        // `r[x]` where `r` is bound to a row by `r = g[y]` or `for row in g`.
+        if (expr.Target is VariableExpr rowVe && ResolveRowRef(rowVe) is { } rowRef)
+        {
+            if (expr.Index is SliceExpr)
+                throw UserError(
+                    "a row of a 2-D grid cannot be sliced -- a slice would be a view object. " +
+                    "Index an element (r[x]) or iterate the row (for x in r).", expr.Index);
+            if (expr.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, expr.Index);
+            if (rowRef.Uses != null && !rowRef.Uses.Contains(expr))
+                throw RowAliasNotAValue(expr);
+            return EmitRowElemLoad(rowRef, expr.Index);
+        }
+
         // `sys.implementation.version[i]` (neopixel.py's `version[0] >= 7` feature-detect).
         // RFC 0007 folds this chain through CompileTimeEvaluator in `if`/`match`/`try`
         // conditions, but a condition the frontend cannot finish -- `version[0] >= 7 and

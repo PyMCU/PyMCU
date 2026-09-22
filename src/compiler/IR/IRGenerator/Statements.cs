@@ -802,8 +802,18 @@ public partial class IRGenerator
 
     private void VisitBlock(Block block)
     {
-        foreach (var stmt in block.Statements)
+        var stmts = block.Statements;
+        for (int i = 0; i < stmts.Count; i++)
         {
+            var stmt = stmts[i];
+            // `r = g[y]` binds a row view -- legal only while every later use of
+            // `r` in this block is an element access, len(r) or `for x in r`;
+            // TryBindRowAlias proves it before the binding exists.
+            if (stmt is AssignStmt { Target: VariableExpr av, Value: IndexExpr aix }
+                && aix.Index is not SliceExpr and not TupleExpr
+                && ResolveGridKey(aix.Target) is { } aliasGridKey
+                && TryBindRowAlias(av, aix.Index, aliasGridKey, stmts, i))
+                continue;
             VisitStatement(stmt);
         }
     }

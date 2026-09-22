@@ -145,6 +145,24 @@ public class Grid2dTests
         Assert.NotNull(ir);
     }
 
+    // ── iteration and aliases ───────────────────────────────────────────
+
+    [Fact]
+    public void RowAlias_SameBlockReadsAndWrites_Compile()
+    {
+        var ir = Gen(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    y = 2\n" +
+            "    r = g[y]\n" +
+            "    r[0] = 1\n" +
+            "    x = r[1]\n");
+
+        Assert.NotNull(ir);
+        Assert.Contains(AllBody(ir).OfType<ArrayStore>(),
+            s => s.ArrayName == "main.g" && s.Src is Constant { Value: 1 });
+    }
+
     // ── refusals ────────────────────────────────────────────────────────────
 
     [Fact]
