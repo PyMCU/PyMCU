@@ -397,21 +397,27 @@ or a loop can change is not one, and neither is anything read from a register.
 
 An unannotated field takes its width from the widest value the constructor assigns — a
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic
-expression its widest operand. An explicit `self.x: T = ...` still wins.
+expression its widest operand, and `self.x = self._m()` the declared return type of `_m`
+(a method with no return annotation is not inferred — its field keeps the uint8 default).
+An explicit `self.x: T = ...` still wins.
 
 A field's layout is derived from every `self.x = ...` in the class body, not from `__init__`
-alone — a property setter (`@x.setter`) or a plain method `__init__` calls directly at the top
-level of its own body also introduces a field, exactly as `__init__` itself does (PyMCU#441).
-A method reachable only from outside construction does not: a name novel to such a method is
+alone — a property setter (`@x.setter`) or a helper method `__init__` reaches through
+`self.<m>()` calls at any depth also introduces a field, exactly as `__init__` itself does
+(PyMCU#441), and the same is true of a `super().__init__()` nested in an `if` or `try`:
+the base constructor's fields still merge into the layout. A method reachable only from
+outside construction does not: a name novel to such a method is
 refused as a typo rather than silently becoming a field of its own, since nothing here can
 tell the two apart the way `__init__` and a setter can be told apart from an arbitrary helper.
 
 A field's type is fixed at the first site that writes it (scalar widening across sites stays
-allowed, as it already was for multiple writes within `__init__`); a **later** write of a
-categorically different kind (numeric vs. `str` vs. anything else) is a located compile error.
-This is a PyMCU design choice, not an attempt to track what CPython, MicroPython or
-CircuitPython actually do — measured (PyMCU#441): all three let a field change type freely
-across writes, with no error or warning at all.
+allowed); a **later** write of a categorically different kind (numeric vs. `str` vs.
+anything else) is a compile error reported at that write's own file, line and column — in
+`__init__` itself exactly as in any other method. Writes whose value's kind the scan cannot
+see carry no kind and never trigger it: a `const` parameter, a `Union[...]`/`Optional[...]`
+annotation, a member read like `cs.name`. This is a PyMCU design choice, not an attempt to
+track what CPython, MicroPython or CircuitPython actually do — measured (PyMCU#441): all
+three let a field change type freely across writes, with no error or warning at all.
 
 **Divergence** (PyMCU#441): a field read somewhere and never written anywhere reachable in the
 class is refused at compile time, worded like the `AttributeError` every one of CPython,
