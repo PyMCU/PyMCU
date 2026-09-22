@@ -2494,29 +2494,19 @@ public partial class IRGenerator
 
         void Walk(PyMCU.Frontend.Statement? s)
         {
-            if (found || s == null) return;
-            switch (s)
+            // The shared walk does not descend into defs/classes; the old recursion
+            // did, and it did not descend into `with` bodies at all.
+            foreach (var st in TypeInference.WalkStatements(s))
             {
-                case PyMCU.Frontend.TryStmt t:
-                    if (t.HandlerNames.Any(n => n != null)) { found = true; return; }
-                    foreach (var st in t.Body) Walk(st);
-                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
-                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
-                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
-                    return;
-                case PyMCU.Frontend.Block b: foreach (var st in b.Statements) Walk(st); return;
-                case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); return;
-                case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); return;
-                case PyMCU.Frontend.IfStmt i:
-                    Walk(i.ThenBranch);
-                    foreach (var br in i.ElifBranches) Walk(br.Item2);
-                    Walk(i.ElseBranch);
-                    return;
-                case PyMCU.Frontend.WhileStmt w: Walk(w.Body); return;
-                case PyMCU.Frontend.ForStmt fo: Walk(fo.Body); return;
-                case PyMCU.Frontend.MatchStmt m:
-                    foreach (var br in m.Branches) Walk(br.Body);
-                    return;
+                if (found) return;
+                switch (st)
+                {
+                    case PyMCU.Frontend.TryStmt t:
+                        if (t.HandlerNames.Any(n => n != null)) { found = true; return; }
+                        break;
+                    case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); break;
+                    case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); break;
+                }
             }
         }
 
@@ -2542,32 +2532,18 @@ public partial class IRGenerator
 
         void Walk(PyMCU.Frontend.Statement? s)
         {
-            if (found || s == null) return;
-            switch (s)
+            foreach (var st in TypeInference.WalkStatements(s))
             {
-                case PyMCU.Frontend.RaiseStmt r:
-                    if (r.MessageExpr != null || !string.IsNullOrEmpty(r.MessageName))
-                    { found = true; return; }
-                    return;
-                case PyMCU.Frontend.TryStmt t:
-                    foreach (var st in t.Body) Walk(st);
-                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
-                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
-                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
-                    return;
-                case PyMCU.Frontend.Block b: foreach (var st in b.Statements) Walk(st); return;
-                case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); return;
-                case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); return;
-                case PyMCU.Frontend.IfStmt i:
-                    Walk(i.ThenBranch);
-                    foreach (var br in i.ElifBranches) Walk(br.Item2);
-                    Walk(i.ElseBranch);
-                    return;
-                case PyMCU.Frontend.WhileStmt w: Walk(w.Body); return;
-                case PyMCU.Frontend.ForStmt fo: Walk(fo.Body); return;
-                case PyMCU.Frontend.MatchStmt m:
-                    foreach (var br in m.Branches) Walk(br.Body);
-                    return;
+                if (found) return;
+                switch (st)
+                {
+                    case PyMCU.Frontend.RaiseStmt r:
+                        if (r.MessageExpr != null || !string.IsNullOrEmpty(r.MessageName))
+                        { found = true; return; }
+                        break;
+                    case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); break;
+                    case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); break;
+                }
             }
         }
 
@@ -2593,33 +2569,19 @@ public partial class IRGenerator
 
         void Walk(PyMCU.Frontend.Statement? s)
         {
-            if (found || s == null) return;
-            switch (s)
+            foreach (var st in TypeInference.WalkStatements(s))
             {
-                case PyMCU.Frontend.RaiseStmt r:
-                    if (!string.IsNullOrEmpty(r.Message) || r.MessageExpr != null
-                        || !string.IsNullOrEmpty(r.MessageName))
-                    { found = true; return; }
-                    return;
-                case PyMCU.Frontend.TryStmt t:
-                    foreach (var st in t.Body) Walk(st);
-                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
-                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
-                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
-                    return;
-                case PyMCU.Frontend.Block b: foreach (var st in b.Statements) Walk(st); return;
-                case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); return;
-                case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); return;
-                case PyMCU.Frontend.IfStmt i:
-                    Walk(i.ThenBranch);
-                    foreach (var br in i.ElifBranches) Walk(br.Item2);
-                    Walk(i.ElseBranch);
-                    return;
-                case PyMCU.Frontend.WhileStmt w: Walk(w.Body); return;
-                case PyMCU.Frontend.ForStmt fo: Walk(fo.Body); return;
-                case PyMCU.Frontend.MatchStmt m:
-                    foreach (var br in m.Branches) Walk(br.Body);
-                    return;
+                if (found) return;
+                switch (st)
+                {
+                    case PyMCU.Frontend.RaiseStmt r:
+                        if (!string.IsNullOrEmpty(r.Message) || r.MessageExpr != null
+                            || !string.IsNullOrEmpty(r.MessageName))
+                        { found = true; return; }
+                        break;
+                    case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); break;
+                    case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); break;
+                }
             }
         }
 
@@ -3002,15 +2964,24 @@ public partial class IRGenerator
             // reports "'c' is a module-level global; to assign it inside
             // 'counter___module_init' add a 'global c'" -- naming a function nobody wrote.
             var globalNames = new List<string>();
-            foreach (var st in body.Statements)
+            // Top-level-only was wrong: `if cond: x = 1` at module level still assigns
+            // the module global, and without the declaration the synthesized function
+            // demanded a `global x` in a function nobody wrote.
+            foreach (var st in TypeInference.WalkStatements(body.Statements))
             {
-                string? target = st switch
+                var targets = st switch
                 {
-                    AnnAssign aa => aa.Target,
-                    AssignStmt { Target: VariableExpr tv } => tv.Name,
-                    _ => null,
+                    AnnAssign aa => new[] { aa.Target },
+                    AssignStmt { Target: VariableExpr tv } => new[] { tv.Name },
+                    AugAssignStmt { Target: VariableExpr av } => new[] { av.Name },
+                    ForStmt f => new[] { f.VarName, f.Var2Name },
+                    TupleUnpackStmt tu => tu.Targets.ToArray(),
+                    _ => Array.Empty<string?>(),
                 };
-                if (target != null && !globalNames.Contains(target)) globalNames.Add(target);
+                foreach (var target in targets)
+                    if (!string.IsNullOrEmpty(target) && !target.Contains('.')
+                        && !globalNames.Contains(target))
+                        globalNames.Add(target);
             }
             if (globalNames.Count > 0)
                 body.Statements.Insert(0, new GlobalStmt(globalNames));
@@ -3158,60 +3129,34 @@ public partial class IRGenerator
     private bool StmtReturnsUnrepresentedZca(Statement? st, Dictionary<string, string> bound,
         string rawRt, HashSet<string> visiting)
     {
-        switch (st)
+        // The shared walk yields statements in source order, so `bound` is updated
+        // in the same sequence the old recursion built it -- including across arms.
+        foreach (var s in TypeInference.WalkStatements(st))
         {
-            case null: return false;
-            case Block b:
-                foreach (var s in b.Statements)
-                    if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
-                return false;
-            case AssignStmt { Target: VariableExpr tv } a:
-                if (ClassReturnedByExpr(a.Value, bound, visiting) is { } ac) bound[tv.Name] = ac;
-                return false;
-            case AnnAssign an:
-                if (ClassReturnedByExpr(an.Value, bound, visiting) is { } nc) bound[an.Target] = nc;
-                return false;
-            case VarDecl vd:
-                if (ClassReturnedByExpr(vd.Init, bound, visiting) is { } vc) bound[vd.Name] = vc;
-                return false;
-            case ReturnStmt r:
-                foreach (var (key, direct) in ReturnedZcaClasses(r.Value, bound, visiting))
-                {
-                    if (key == rawRt
-                        && (zcaFactoryClasses.ContainsKey(key)
-                            || (direct && slotClasses.Contains(key))))
-                        continue;
-                    return true;
-                }
-                return false;
-            case IfStmt i:
-                if (StmtReturnsUnrepresentedZca(i.ThenBranch, bound, rawRt, visiting)) return true;
-                foreach (var (_, eb) in i.ElifBranches)
-                    if (StmtReturnsUnrepresentedZca(eb, bound, rawRt, visiting)) return true;
-                return StmtReturnsUnrepresentedZca(i.ElseBranch, bound, rawRt, visiting);
-            case WhileStmt w: return StmtReturnsUnrepresentedZca(w.Body, bound, rawRt, visiting);
-            case ForStmt f: return StmtReturnsUnrepresentedZca(f.Body, bound, rawRt, visiting);
-            case MatchStmt m:
-                foreach (var br in m.Branches)
-                    if (StmtReturnsUnrepresentedZca(br.Body, bound, rawRt, visiting)) return true;
-                return false;
-            case WithStmt wi: return StmtReturnsUnrepresentedZca(wi.Body, bound, rawRt, visiting);
-            case TryStmt t:
-                foreach (var s in t.Body)
-                    if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
-                foreach (var (_, h) in t.Handlers)
-                    foreach (var s in h)
-                        if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
-                if (t.ElseBody != null)
-                    foreach (var s in t.ElseBody)
-                        if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
-                if (t.Finally != null)
-                    foreach (var s in t.Finally)
-                        if (StmtReturnsUnrepresentedZca(s, bound, rawRt, visiting)) return true;
-                return false;
-            // Nested defs and class bodies have their own returns; do not descend.
-            default: return false;
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr tv } a:
+                    if (ClassReturnedByExpr(a.Value, bound, visiting) is { } ac) bound[tv.Name] = ac;
+                    break;
+                case AnnAssign an:
+                    if (ClassReturnedByExpr(an.Value, bound, visiting) is { } nc) bound[an.Target] = nc;
+                    break;
+                case VarDecl vd:
+                    if (ClassReturnedByExpr(vd.Init, bound, visiting) is { } vc) bound[vd.Name] = vc;
+                    break;
+                case ReturnStmt r:
+                    foreach (var (key, direct) in ReturnedZcaClasses(r.Value, bound, visiting))
+                    {
+                        if (key == rawRt
+                            && (zcaFactoryClasses.ContainsKey(key)
+                                || (direct && slotClasses.Contains(key))))
+                            continue;
+                        return true;
+                    }
+                    break;
+            }
         }
+        return false;
     }
 
     /// <summary>
@@ -3332,53 +3277,28 @@ public partial class IRGenerator
     private string? FirstReturnedZcaClass(Statement? st, Dictionary<string, string> bound,
         HashSet<string> visiting)
     {
-        switch (st)
+        // Source order keeps `bound` updates in the same sequence the old recursion
+        // built them, and the first ReturnStmt it yields is the first return it saw.
+        foreach (var s in TypeInference.WalkStatements(st))
         {
-            case null: return null;
-            case Block b:
-                foreach (var s in b.Statements)
-                    if (FirstReturnedZcaClass(s, bound, visiting) is { } k) return k;
-                return null;
-            case AssignStmt { Target: VariableExpr tv } a:
-                if (ClassReturnedByExpr(a.Value, bound, visiting) is { } ac) bound[tv.Name] = ac;
-                return null;
-            case AnnAssign an:
-                if (ClassReturnedByExpr(an.Value, bound, visiting) is { } nc) bound[an.Target] = nc;
-                return null;
-            case VarDecl vd:
-                if (ClassReturnedByExpr(vd.Init, bound, visiting) is { } vc) bound[vd.Name] = vc;
-                return null;
-            case ReturnStmt r:
-                foreach (var (key, _) in ReturnedZcaClasses(r.Value, bound, visiting))
-                    return key;
-                return null;
-            case IfStmt i:
-                if (FirstReturnedZcaClass(i.ThenBranch, bound, visiting) is { } kt) return kt;
-                foreach (var (_, eb) in i.ElifBranches)
-                    if (FirstReturnedZcaClass(eb, bound, visiting) is { } ke) return ke;
-                return FirstReturnedZcaClass(i.ElseBranch, bound, visiting);
-            case WhileStmt w: return FirstReturnedZcaClass(w.Body, bound, visiting);
-            case ForStmt f: return FirstReturnedZcaClass(f.Body, bound, visiting);
-            case MatchStmt m:
-                foreach (var br in m.Branches)
-                    if (FirstReturnedZcaClass(br.Body, bound, visiting) is { } km) return km;
-                return null;
-            case WithStmt wi: return FirstReturnedZcaClass(wi.Body, bound, visiting);
-            case TryStmt t:
-                foreach (var s in t.Body)
-                    if (FirstReturnedZcaClass(s, bound, visiting) is { } kb) return kb;
-                foreach (var (_, h) in t.Handlers)
-                    foreach (var s in h)
-                        if (FirstReturnedZcaClass(s, bound, visiting) is { } kh) return kh;
-                if (t.ElseBody != null)
-                    foreach (var s in t.ElseBody)
-                        if (FirstReturnedZcaClass(s, bound, visiting) is { } kl) return kl;
-                if (t.Finally != null)
-                    foreach (var s in t.Finally)
-                        if (FirstReturnedZcaClass(s, bound, visiting) is { } kf) return kf;
-                return null;
-            default: return null;
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr tv } a:
+                    if (ClassReturnedByExpr(a.Value, bound, visiting) is { } ac) bound[tv.Name] = ac;
+                    break;
+                case AnnAssign an:
+                    if (ClassReturnedByExpr(an.Value, bound, visiting) is { } nc) bound[an.Target] = nc;
+                    break;
+                case VarDecl vd:
+                    if (ClassReturnedByExpr(vd.Init, bound, visiting) is { } vc) bound[vd.Name] = vc;
+                    break;
+                case ReturnStmt r:
+                    foreach (var (key, _) in ReturnedZcaClasses(r.Value, bound, visiting))
+                        return key;
+                    return null;
+            }
         }
+        return null;
     }
 
     /// <summary>
@@ -3421,44 +3341,17 @@ public partial class IRGenerator
     private bool BodyReturnsStructUnpack(FunctionDef func)
     {
         bool found = false;
-        void S(Statement? s)
+        foreach (var s in TypeInference.WalkStatements(func.Body))
         {
-            switch (s)
-            {
-                case null: break;
-                case ReturnStmt { Value: { } rv }:
-                    Expression inner = rv;
-                    if (inner is CallExpr { Callee: VariableExpr { Name: "list" or "tuple" } } wrap
-                        && wrap.Args.Count == 1)
-                        inner = wrap.Args[0];
-                    if (inner is CallExpr uc
-                        && (IsStructCall(uc, "unpack") || IsStructCall(uc, "unpack_from")))
-                        found = true;
-                    break;
-                case Block b:
-                    foreach (var innerStmt in b.Statements) S(innerStmt);
-                    break;
-                case IfStmt i:
-                    S(i.ThenBranch);
-                    foreach (var (_, eb) in i.ElifBranches) S(eb);
-                    S(i.ElseBranch);
-                    break;
-                case WhileStmt w: S(w.Body); break;
-                case ForStmt f: S(f.Body); break;
-                case WithStmt w: S(w.Body); break;
-                case MatchStmt m:
-                    foreach (var br in m.Branches) S(br.Body);
-                    break;
-                case TryStmt t:
-                    foreach (var innerStmt in t.Body) S(innerStmt);
-                    foreach (var (_, handler) in t.Handlers)
-                        foreach (var innerStmt in handler) S(innerStmt);
-                    if (t.Finally != null) foreach (var innerStmt in t.Finally) S(innerStmt);
-                    if (t.ElseBody != null) foreach (var innerStmt in t.ElseBody) S(innerStmt);
-                    break;
-            }
+            if (s is not ReturnStmt { Value: { } rv }) continue;
+            Expression inner = rv;
+            if (inner is CallExpr { Callee: VariableExpr { Name: "list" or "tuple" } } wrap
+                && wrap.Args.Count == 1)
+                inner = wrap.Args[0];
+            if (inner is CallExpr uc
+                && (IsStructCall(uc, "unpack") || IsStructCall(uc, "unpack_from")))
+                found = true;
         }
-        S(func.Body);
         return found;
     }
 
@@ -3472,41 +3365,11 @@ public partial class IRGenerator
     /// </summary>
     private static bool BodyReturnsConditionalTuple(FunctionDef func)
     {
-        bool found = false;
-        void S(Statement? s)
-        {
-            switch (s)
-            {
-                case null: break;
-                case ReturnStmt { Value: TernaryExpr t }
-                    when t.TrueVal is TupleExpr || t.FalseVal is TupleExpr:
-                    found = true;
-                    break;
-                case Block b:
-                    foreach (var inner in b.Statements) S(inner);
-                    break;
-                case IfStmt i:
-                    S(i.ThenBranch);
-                    foreach (var (_, eb) in i.ElifBranches) S(eb);
-                    S(i.ElseBranch);
-                    break;
-                case WhileStmt w: S(w.Body); break;
-                case ForStmt f: S(f.Body); break;
-                case WithStmt w: S(w.Body); break;
-                case MatchStmt m:
-                    foreach (var br in m.Branches) S(br.Body);
-                    break;
-                case TryStmt t:
-                    foreach (var inner in t.Body) S(inner);
-                    foreach (var (_, handler) in t.Handlers)
-                        foreach (var inner in handler) S(inner);
-                    if (t.Finally != null) foreach (var inner in t.Finally) S(inner);
-                    if (t.ElseBody != null) foreach (var inner in t.ElseBody) S(inner);
-                    break;
-            }
-        }
-        S(func.Body);
-        return found;
+        foreach (var s in TypeInference.WalkStatements(func.Body))
+            if (s is ReturnStmt { Value: TernaryExpr t }
+                && (t.TrueVal is TupleExpr || t.FalseVal is TupleExpr))
+                return true;
+        return false;
     }
 
     /// <summary>
@@ -3577,60 +3440,61 @@ public partial class IRGenerator
 
     private static bool StatementReadsParamMember(Statement? st, HashSet<string> names)
     {
-        switch (st)
+        // The shared walk yields the container itself and its children, so the
+        // parent's own expressions (condition, iterable, target, patterns, guard,
+        // context expression) are checked here and the children arrive separately.
+        foreach (var s in TypeInference.WalkStatements(st))
         {
-            case null: return false;
-            case Block b:
-                foreach (var s in b.Statements)
-                    if (StatementReadsParamMember(s, names)) return true;
-                return false;
-            case AssignStmt a:
-                return ExprReadsParamMember(a.Target, names) || ExprReadsParamMember(a.Value, names);
-            case AugAssignStmt aug:
-                return ExprReadsParamMember(aug.Target, names) || ExprReadsParamMember(aug.Value, names);
-            case AnnAssign an: return ExprReadsParamMember(an.Value, names);
-            case VarDecl vd: return ExprReadsParamMember(vd.Init, names);
-            case TupleUnpackStmt tu: return ExprReadsParamMember(tu.Value, names);
-            case ExprStmt es: return ExprReadsParamMember(es.Expr, names);
-            case ReturnStmt r: return ExprReadsParamMember(r.Value, names);
-            case ForStmt f:
-                return ExprReadsParamMember(f.Iterable, names)
-                    || StatementReadsParamMember(f.Body, names);
-            case WhileStmt w:
-                return ExprReadsParamMember(w.Condition, names)
-                    || StatementReadsParamMember(w.Body, names);
-            case IfStmt i:
-                if (ExprReadsParamMember(i.Condition, names)
-                    || StatementReadsParamMember(i.ThenBranch, names)
-                    || StatementReadsParamMember(i.ElseBranch, names))
-                    return true;
-                foreach (var (cond, br) in i.ElifBranches)
-                    if (ExprReadsParamMember(cond, names) || StatementReadsParamMember(br, names))
+            switch (s)
+            {
+                case AssignStmt a:
+                    if (ExprReadsParamMember(a.Target, names) || ExprReadsParamMember(a.Value, names))
                         return true;
-                return false;
-            case WithStmt wi:
-                return ExprReadsParamMember(wi.ContextExpr, names)
-                    || StatementReadsParamMember(wi.Body, names);
-            case MatchStmt m:
-                if (ExprReadsParamMember(m.Target, names)) return true;
-                foreach (var br in m.Branches)
-                    if (StatementReadsParamMember(br.Body, names)) return true;
-                return false;
-            case TryStmt t:
-                foreach (var s in t.Body)
-                    if (StatementReadsParamMember(s, names)) return true;
-                foreach (var (_, h) in t.Handlers)
-                    foreach (var s in h)
-                        if (StatementReadsParamMember(s, names)) return true;
-                if (t.ElseBody != null)
-                    foreach (var s in t.ElseBody)
-                        if (StatementReadsParamMember(s, names)) return true;
-                if (t.Finally != null)
-                    foreach (var s in t.Finally)
-                        if (StatementReadsParamMember(s, names)) return true;
-                return false;
-            default: return false;
+                    break;
+                case AugAssignStmt aug:
+                    if (ExprReadsParamMember(aug.Target, names) || ExprReadsParamMember(aug.Value, names))
+                        return true;
+                    break;
+                case AnnAssign an:
+                    if (ExprReadsParamMember(an.Value, names)) return true;
+                    break;
+                case VarDecl vd:
+                    if (ExprReadsParamMember(vd.Init, names)) return true;
+                    break;
+                case TupleUnpackStmt tu:
+                    if (ExprReadsParamMember(tu.Value, names)) return true;
+                    break;
+                case ExprStmt es:
+                    if (ExprReadsParamMember(es.Expr, names)) return true;
+                    break;
+                case ReturnStmt r:
+                    if (ExprReadsParamMember(r.Value, names)) return true;
+                    break;
+                case ForStmt f:
+                    if (ExprReadsParamMember(f.Iterable, names)) return true;
+                    break;
+                case WhileStmt w:
+                    if (ExprReadsParamMember(w.Condition, names)) return true;
+                    break;
+                case IfStmt i:
+                    if (ExprReadsParamMember(i.Condition, names)) return true;
+                    foreach (var (cond, _) in i.ElifBranches)
+                        if (ExprReadsParamMember(cond, names)) return true;
+                    break;
+                case WithStmt wi:
+                    if (ExprReadsParamMember(wi.ContextExpr, names)) return true;
+                    break;
+                case MatchStmt m:
+                    if (ExprReadsParamMember(m.Target, names)) return true;
+                    foreach (var br in m.Branches)
+                    {
+                        if (ExprReadsParamMember(br.Pattern, names)) return true;
+                        if (br.Guard != null && ExprReadsParamMember(br.Guard, names)) return true;
+                    }
+                    break;
+            }
         }
+        return false;
     }
 
     private static bool ExprReadsParamMember(Expression? e, HashSet<string> names)
@@ -3702,53 +3566,28 @@ public partial class IRGenerator
 
     private static bool StatementReturnsFixedBuffer(Statement? stmt, HashSet<string> bufLocals)
     {
-        switch (stmt)
+        // Source order keeps `bufLocals` updates in the same sequence the old
+        // recursion built them.
+        foreach (var s in TypeInference.WalkStatements(stmt))
         {
-            case null: return false;
-            case Block b:
-                foreach (var s in b.Statements)
-                    if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
-                return false;
-            case VarDecl v when IsBufferTypeName(v.VarType) || IsBufferCtor(v.Init):
-                bufLocals.Add(v.Name);
-                return false;
-            case AnnAssign a when IsBufferTypeName(a.Annotation) || IsBufferCtor(a.Value):
-                bufLocals.Add(a.Target);
-                return false;
-            case AssignStmt { Target: VariableExpr t } a when IsBufferCtor(a.Value):
-                bufLocals.Add(t.Name);
-                return false;
-            case ReturnStmt { Value: VariableExpr rv } when bufLocals.Contains(rv.Name):
-                return true;
-            case ReturnStmt { Value: ListExpr }:
-                return true;
-            case IfStmt i:
-                if (StatementReturnsFixedBuffer(i.ThenBranch, bufLocals)) return true;
-                foreach (var elif in i.ElifBranches)
-                    if (StatementReturnsFixedBuffer(elif.Body, bufLocals)) return true;
-                return StatementReturnsFixedBuffer(i.ElseBranch, bufLocals);
-            case WhileStmt w: return StatementReturnsFixedBuffer(w.Body, bufLocals);
-            case ForStmt f: return StatementReturnsFixedBuffer(f.Body, bufLocals);
-            case MatchStmt m:
-                foreach (var c in m.Branches)
-                    if (StatementReturnsFixedBuffer(c.Body, bufLocals)) return true;
-                return false;
-            case TryStmt t:
-                foreach (var s in t.Body)
-                    if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
-                foreach (var h in t.Handlers)
-                    foreach (var s in h.Handler)
-                        if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
-                if (t.Finally != null)
-                    foreach (var s in t.Finally)
-                        if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
-                if (t.ElseBody != null)
-                    foreach (var s in t.ElseBody)
-                        if (StatementReturnsFixedBuffer(s, bufLocals)) return true;
-                return false;
-            case WithStmt w: return StatementReturnsFixedBuffer(w.Body, bufLocals);
-            default: return false;
+            switch (s)
+            {
+                case VarDecl v when IsBufferTypeName(v.VarType) || IsBufferCtor(v.Init):
+                    bufLocals.Add(v.Name);
+                    break;
+                case AnnAssign a when IsBufferTypeName(a.Annotation) || IsBufferCtor(a.Value):
+                    bufLocals.Add(a.Target);
+                    break;
+                case AssignStmt { Target: VariableExpr t } a when IsBufferCtor(a.Value):
+                    bufLocals.Add(t.Name);
+                    break;
+                case ReturnStmt { Value: VariableExpr rv } when bufLocals.Contains(rv.Name):
+                    return true;
+                case ReturnStmt { Value: ListExpr }:
+                    return true;
+            }
         }
+        return false;
     }
 
     /// <summary>
