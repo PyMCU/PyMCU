@@ -12,7 +12,8 @@ supported. That is the reported half.
 
     a == b  over two bytes names   ->  a one-byte `jne` between the two array NAMES
     return x  where x is bytes     ->  the array came back as a scalar; the caller's y[0]
-                                       lowered to a bit test on it
+                                       lowered to a bit test on it (now legal: the
+                                       callee is force-inlined, so y aliases x)
 
 `test_a_comparison_of_two_names_does_not_answer_without_reading_them` is the one that pins the
 first, and it is written as a differential rather than as a message check: before the fix,
@@ -152,16 +153,23 @@ def test_a_comparison_of_two_names_does_not_answer_without_reading_them(tmp_path
         assert "cannot be compared" in out, out
 
 
-def test_a_return_through_a_name_is_refused_like_the_literal(tmp_path):
+def test_a_return_through_a_name_reaches_the_caller_s_buffer(tmp_path):
     """This compiled and returned the array as a scalar, after which the caller's `y[0]`
     lowered to a `bchk` -- a bit test -- instead of an array load. Where the literal form
-    crashed, this one gave an answer."""
-    ok, out, _ = compile_(
+    crashed, this one gave an answer.
+
+    The refusal is gone because the cause is: a function that returns a local buffer is
+    force-inlined, so `x` is the callee's array and `y` aliases that same storage. `y[0]`
+    is then an element read -- here folded to 97, `b"ab"[0]` -- and no bit test survives.
+    """
+    ok, out, mir = compile_(
         tmp_path,
         prog("    y = f()\n    print(y[0])\n",
              extra='def f() -> bytes:\n    x = b"ab"\n    return x\n\n\n'))
-    assert not ok, "returning a bytes name compiled"
-    assert "cannot be returned" in out, out
+    assert ok, out
+    body = main_body(mir)
+    assert not [i for i in body if '"bchk"' in i], body
+    assert [i for i in body if '"value": 97' in i], body
 
 
 # --- the positions that work, and must go on working ----------------------------------------
