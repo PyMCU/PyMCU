@@ -56,6 +56,7 @@ Every commit you create must:
 5. **Each commit must leave the test suites green.** Run before committing:
    ```bash
    just test-unit        # compiler unit tests
+   just test-stdlib      # stdlib suite (tests/stdlib, both front ends)
    pytest tests/driver   # driver tests
    ```
    The AVR integration suite and the language oracle corpus (`just test-oracle`,
@@ -94,6 +95,9 @@ Violations of these rules cause compile errors in the PyMCU compiler itself:
 ```bash
 # Compiler unit tests (must stay green)
 just test-unit
+
+# Stdlib suite: whole programs through both front ends (must stay green)
+just test-stdlib    # = .venv/bin/python -m pytest tests/stdlib -q
 
 # Driver tests
 pytest tests/driver

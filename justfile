@@ -98,6 +98,13 @@ test-driver-ci:
     "{{repo_root}}/.venv-ci/bin/pip" -q install --pre --no-deps pymcu-pic
     cd "{{repo_root}}" && "{{repo_root}}/.venv-ci/bin/python" -m pytest tests/driver/ -q
 
+# ─── test-stdlib ────────────────────────────────────────────────────────────
+# Run the stdlib suite: ~2,000 programs compiled by the in-tree pymcuc against
+# lib/src, through both front ends. Each test drives pymcuc with --emit-ir, so
+# no backend binary is needed -- but the compiler must be built first.
+test-stdlib: build
+    "{{repo_root}}/.venv/bin/python" -m pytest "{{repo_root}}/tests/stdlib" -q
+
 # ─── build-stdlib ───────────────────────────────────────────────────────────
 # Build the pymcu-stdlib wheel into lib/dist/.
 build-stdlib:

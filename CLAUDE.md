@@ -21,7 +21,8 @@ docs: mark @extern as implemented in roadmap and limitations
 ```
 
 Each commit must leave the test suites that exist in this repo green: `just test-unit`
-for the compiler and `pytest tests/driver` for the driver. The AVR integration suite
+for the compiler, `just test-stdlib` for the stdlib suite (`tests/stdlib`, both front
+ends), and `pytest tests/driver` for the driver. The AVR integration suite
 and the language oracle corpus (`just test-oracle`, both front ends) live in the
 `pymcu-avr` repo since the split — run them there when you touch codegen.
 
@@ -47,7 +48,7 @@ and the language oracle corpus (`just test-oracle`, both front ends) live in the
 3. Implement in small commits (one logical change each).
 4. After each compiler change: `dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo`.
 5. Install the stdlib editable once: `just sync-stdlib` (`uv pip install --no-deps -e lib/`). After that, `lib/src/pymcu/` edits are picked up live — no per-change copy. Do NOT rsync a copy of `lib/src/pymcu/` into `site-packages/pymcu/`: a physical copy there shadows the editable `.pth` and your edits silently stop taking effect.
-6. Run the tests: `just test-unit` and `pytest tests/driver`.
+6. Run the tests: `just test-unit`, `just test-stdlib` and `pytest tests/driver`.
 7. Update `LANGUAGE_ROADMAP.md`, `docs/language/roadmap.md`, and `docs/language/limitations.md`.
 
 ---
