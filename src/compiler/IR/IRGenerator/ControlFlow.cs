@@ -1018,8 +1018,10 @@ public partial class IRGenerator
     /// fails half way leaves nothing behind.
     /// </summary>
     private bool VisitClassPattern(MatchStmt stmt, CaseBranch branch, CallExpr pattern,
-                                   Val targetVal, string nextCaseLabel, string endLabel)
+                                   Val targetVal, string nextCaseLabel, string endLabel,
+                                   out bool bodyLowered)
     {
+        bodyLowered = false;
         if (pattern.Callee is not VariableExpr patName)
             throw UserError("match/case: a call is not a pattern; `case Cls(...)` matches a "
                           + "class, and its callee has to be a class name", pattern);
@@ -1124,6 +1126,7 @@ public partial class IRGenerator
         if (branch.Body != null) VisitBlock((Block)branch.Body);
         LeaveRuntimeBranch();
         _seqTerminated = false;
+        bodyLowered = true;
 
         Emit(new Jump(endLabel));
         Emit(new Label(nextCaseLabel));
@@ -1163,6 +1166,32 @@ public partial class IRGenerator
         Val targetVal = subjectIsNone ? new NoneVal() : VisitExpression(stmt.Target);
         bool ctAlreadyMatched = false;
         string endLabel = MakeLabel();
+
+        // Match arms are sibling paths, like the if/elif chain's: a compile-time binding
+        // recorded while lowering one arm must not answer reads in the next arm's body,
+        // and what survives the match is what every reachable path agrees on -- the arm
+        // states plus the pre-match state when no arm catches the fall-through.
+        var snapBeforeInt = new Dictionary<string, int>(constantVariables);
+        var snapBeforeStr = new Dictionary<string, string>(strConstantVariables);
+        var snapBeforeLocals = new Dictionary<string, int>(localConstantValues);
+        var armSnapsInt = new List<Dictionary<string, int>>();
+        var armSnapsStr = new List<Dictionary<string, string>>();
+        var armSnapsLocals = new List<Dictionary<string, int>>();
+        // The first arm whose body runs unconditionally (a compile-time-matched pattern, or
+        // an unguarded wildcard under a decided subject) decides the state after the match.
+        int firstUncondArm = -1;
+        // An unguarded wildcard answers every path no earlier arm took: nothing falls past it.
+        bool wildcardCoversAll = false;
+
+        void CloseArmLocals()
+        {
+            armSnapsInt.Add(new Dictionary<string, int>(constantVariables));
+            armSnapsStr.Add(new Dictionary<string, string>(strConstantVariables));
+            armSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
+            constantVariables = new Dictionary<string, int>(snapBeforeInt);
+            strConstantVariables = new Dictionary<string, string>(snapBeforeStr);
+            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+        }
 
         foreach (var branch in stmt.Branches)
         {
@@ -1244,6 +1273,7 @@ public partial class IRGenerator
 
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
                     _seqTerminated = false;
+                    CloseArmLocals();
                     Emit(new Jump(endLabel));
                     Emit(new Label(nextCaseLabel));
                     continue;
@@ -1261,8 +1291,14 @@ public partial class IRGenerator
                 // sub-patterns cost anything, or it is not, and the case is dead.
                 if (branch.Pattern is CallExpr classPat)
                 {
-                    if (VisitClassPattern(stmt, branch, classPat, targetVal, nextCaseLabel, endLabel))
+                    if (VisitClassPattern(stmt, branch, classPat, targetVal, nextCaseLabel, endLabel,
+                                          out bool classArmLowered))
+                    {
+                        // The class-pattern arm's body is always lowered behind run-time
+                        // compares -- a sibling path, never the unconditional one.
+                        if (classArmLowered) CloseArmLocals();
                         continue;
+                    }
                 }
 
                 var alts = new List<Expression>();
@@ -1418,6 +1454,9 @@ public partial class IRGenerator
                     // A compile-time-decided subject makes the matched arm unconditional,
                     // so its termination propagates; a run-time match keeps it conditional.
                     if (matchBodyIsRuntime) _seqTerminated = false;
+                    if (!matchBodyIsRuntime && firstUncondArm < 0)
+                        firstUncondArm = armSnapsLocals.Count;
+                    CloseArmLocals();
                     Emit(new Jump(endLabel));
                 }
             }
@@ -1453,11 +1492,81 @@ public partial class IRGenerator
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
                     if (wildcardIsRuntime) LeaveRuntimeBranch();
                     if (wildcardIsRuntime) _seqTerminated = false;
+                    if (!wildcardIsRuntime && firstUncondArm < 0)
+                        firstUncondArm = armSnapsLocals.Count;
+                    if (branch.Guard == null) wildcardCoversAll = true;
+                    CloseArmLocals();
                     Emit(new Jump(endLabel));
                 }
             }
 
             Emit(new Label(nextCaseLabel));
+        }
+
+        // Reconcile the per-arm states the way the if/elif chain does. An arm that ran
+        // unconditionally is the state after the match; otherwise a name keeps its
+        // compile-time value only where every reachable path -- each lowered arm, plus the
+        // pre-match state when no arm catches the fall-through -- agrees on it.
+        if (firstUncondArm >= 0)
+        {
+            constantVariables = armSnapsInt[firstUncondArm];
+            strConstantVariables = armSnapsStr[firstUncondArm];
+            localConstantValues = armSnapsLocals[firstUncondArm];
+        }
+        else if (armSnapsLocals.Count > 0)
+        {
+            var pathsInt = new List<Dictionary<string, int>>(armSnapsInt);
+            var pathsStr = new List<Dictionary<string, string>>(armSnapsStr);
+            var pathsLocals = new List<Dictionary<string, int>>(armSnapsLocals);
+            if (!wildcardCoversAll)
+            {
+                pathsInt.Add(snapBeforeInt);
+                pathsStr.Add(snapBeforeStr);
+                pathsLocals.Add(snapBeforeLocals);
+            }
+
+            var agreedInt = new Dictionary<string, int>();
+            foreach (var kvp in pathsInt[0])
+            {
+                bool allAgree = true;
+                for (int pi = 1; pi < pathsInt.Count; ++pi)
+                    if (!pathsInt[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
+                    {
+                        allAgree = false;
+                        break;
+                    }
+                if (allAgree) agreedInt[kvp.Key] = kvp.Value;
+            }
+            constantVariables = agreedInt;
+
+            var agreedStr = new Dictionary<string, string>();
+            foreach (var kvp in pathsStr[0])
+            {
+                bool allAgree = true;
+                for (int pi = 1; pi < pathsStr.Count; ++pi)
+                    if (!pathsStr[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
+                    {
+                        allAgree = false;
+                        break;
+                    }
+                if (allAgree) agreedStr[kvp.Key] = kvp.Value;
+            }
+            strConstantVariables = agreedStr;
+
+            var agreedLocals = new Dictionary<string, int>();
+            foreach (var kvp in pathsLocals[0])
+            {
+                if (killedConstants.Contains(kvp.Key)) continue;
+                bool allAgree = true;
+                for (int pi = 1; pi < pathsLocals.Count; ++pi)
+                    if (!pathsLocals[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
+                    {
+                        allAgree = false;
+                        break;
+                    }
+                if (allAgree) agreedLocals[kvp.Key] = kvp.Value;
+            }
+            localConstantValues = agreedLocals;
         }
 
         Emit(new Label(endLabel));
