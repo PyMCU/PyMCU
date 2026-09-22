@@ -1556,16 +1556,53 @@ public partial class IRGenerator
                         return;
                     }
 
-                    // enumerate() over a compile-time string: (index, char) pairs, the same
-                    // one-character-string binding `for c in s` makes for the value. A string
-                    // longer than the unroll cap refuses rather than multiplies the body.
+                    // enumerate() over a compile-time string: (index, char) pairs. At or
+                    // below the unroll cap each iteration binds the same one-character
+                    // string constant `for c in s` makes; past it the loop runs at run
+                    // time over the interned flash copy, the same lowering `for c in s`
+                    // itself takes past its own cap -- except the counter is the user's
+                    // index variable and `char` is a run-time uint8 char code, which is
+                    // what ord(char) and font-table arithmetic consume either way.
                     if (StaticStringOf(inner) is { } enumStr)
                     {
                         if (enumStr.Length > ConstSequenceUnrollLimit)
-                            throw UserError(
-                                $"enumerate() over a string unrolls it at compile time; this one is "
-                                + $"{enumStr.Length} characters, past the {ConstSequenceUnrollLimit} "
-                                + "cap. Loop over range(len(s)) and index instead.", inner);
+                        {
+                            string enumFlash = InternStringAsFlash(enumStr);
+                            string enumIdxQ = QualifyLoopVar(stmt.VarName);
+                            string enumValQ = QualifyLoopVar(stmt.Var2Name);
+                            DataType enumIdxType = NarrowestTypeFor(0, enumStr.Length);
+                            variableTypes[enumIdxQ] = enumIdxType;
+                            variableTypes[enumValQ] = DataType.UINT8;
+                            // The loop rebinds both names at run time, so a constant or a
+                            // text either held on the way in is not what the body sees.
+                            constantVariables.Remove(idxKey);
+                            constantVariables.Remove(valKey);
+                            strConstantVariables.Remove(valKey);
+                            constantVariables.Remove(enumIdxQ);
+                            constantVariables.Remove(enumValQ);
+                            strConstantVariables.Remove(enumValQ);
+                            var enumStrIdx = new Variable(enumIdxQ, enumIdxType);
+                            var enumStrChar = new Variable(enumValQ, DataType.UINT8);
+
+                            Emit(new Copy(new Constant(0), enumStrIdx));
+                            string enumStart = MakeLabel();
+                            string enumCont = MakeLabel();
+                            string enumEnd = MakeLabel();
+                            // A RUN-TIME loop, lowered once and run many times: nothing the
+                            // body writes may fold from the value it held on the way in.
+                            InvalidateConstantsAssignedIn(stmt.Body);
+                            loopStack.Add(new LoopLabels { ContinueLabel = enumCont, BreakLabel = enumEnd, FinallyDepth = finallyStack.Count });
+                            Emit(new Label(enumStart));
+                            Emit(new JumpIfGreaterOrEqual(enumStrIdx, new Constant(enumStr.Length), enumEnd));
+                            Emit(new ArrayLoadFlash(enumFlash, enumStrIdx, enumStrChar));
+                            VisitStatement(stmt.Body);
+                            Emit(new Label(enumCont));
+                            Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, enumStrIdx, new Constant(1)));
+                            Emit(new Jump(enumStart));
+                            Emit(new Label(enumEnd));
+                            loopStack.RemoveAt(loopStack.Count - 1);
+                            return;
+                        }
                         for (int k = 0; k < enumStr.Length; k++)
                         {
                             constantVariables[idxKey] = k;
@@ -1750,7 +1787,8 @@ public partial class IRGenerator
                     }
 
                     throw UserError(
-                        "enumerate() argument must be a constant list literal, range(N), or a fixed-size array.",
+                        "enumerate() argument must be a constant list/tuple literal, a compile-time "
+                        + "string, a compile-time s.split(sep), range(N), or a fixed-size array.",
                         ArgAt(call, 0));
                 }
                 else if (calleeVar.Name == "zip" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 2)
