@@ -192,6 +192,24 @@ public partial class IRGenerator
         {
             bool resolvedAsModule = false;
 
+            // Methods on a 2-D grid or one of its rows: the grid is a flat fixed
+            // array and a row is a view -- neither has methods. Refused before
+            // module/instance dispatch can read the receiver and report an
+            // unrelated problem (`g[y].append` used to land in list dispatch).
+            if (memC.Object is IndexExpr { Index: not SliceExpr and not TupleExpr } methRowIx
+                && ResolveGridKey(methRowIx.Target) != null)
+                throw UserError(
+                    $"a row of a 2-D grid is not a list -- it has no '{memC.Member}()' " +
+                    "method. Index its elements (g[y][x]) or write the loop.", memC);
+            if (memC.Object is VariableExpr methRowVe && ResolveRowRef(methRowVe) != null)
+                throw UserError(
+                    $"a row of a 2-D grid is not a list -- it has no '{memC.Member}()' " +
+                    "method. Index its elements (r[x]) or write the loop.", memC);
+            if (ResolveGridKey(memC.Object) != null)
+                throw UserError(
+                    $"a 2-D grid is a flat fixed array -- it has no '{memC.Member}()'; " +
+                    "its size and rows are fixed at compile time", memC);
+
             // RFC 0001 Model B (Class[N]): arr[i].method() dispatch.
             if (TryEmitInstanceArrayMethodCall(expr, memC) is { } iaResult) return iaResult;
 
@@ -480,6 +498,7 @@ public partial class IRGenerator
                             }
                             foreach (var a in expr.Args)
                             {
+                                RefuseGridArgument(a);
                                 Val av = TryEvalInlineBufferArg(a)
                                     ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
                                 if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
@@ -1208,6 +1227,7 @@ public partial class IRGenerator
         var argValuesL = new List<Val>();
         foreach (var arg in callArgs)
         {
+            RefuseGridArgument(arg);
             // const[str] argument to a non-@inline function: intern the string and pass its
             // flash address by reference (FlashStrAddr). The callee walks it with FlashLoadPtr,
             // so the byte-loop lives in a single shared subroutine instead of being inlined at

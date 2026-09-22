@@ -414,9 +414,17 @@ public partial class IRGenerator
         // length and copy its elements (Python needs no annotation). Without this the slice built
         // element temps that were never bound to `b`, so a later `b[i]` silently read 0.
         if (stmt.Target is VariableExpr sliceTgt
-            && stmt.Value is IndexExpr { Index: SliceExpr sliceIdx, Target: VariableExpr sliceSrc }
-            && TryEmitInferredSliceArray(sliceTgt, sliceSrc, sliceIdx))
-            return;
+            && stmt.Value is IndexExpr { Index: SliceExpr sliceIdx, Target: VariableExpr sliceSrc })
+        {
+            // A grid row window has no storage of its own -- refuse before the
+            // slice copies a span of the flat array into a real one.
+            if (ResolveGridKey(sliceSrc) != null)
+                throw UserError(
+                    "a 2-D grid cannot be sliced -- g[a:b] would have to be a window of " +
+                    "rows, and rows are views, not values. Write the loop.", sliceIdx);
+            if (TryEmitInferredSliceArray(sliceTgt, sliceSrc, sliceIdx))
+                return;
+        }
 
         if (stmt.Target is IndexExpr indexExpr) { EmitIndexAssign(stmt, indexExpr); return; }
 
@@ -3622,6 +3630,17 @@ public partial class IRGenerator
                 throw RowAliasNotAValue(indexExpr);
             EmitRowElemStore(rowStoreRef, indexExpr.Index, VisitExpression(stmt.Value));
             return;
+        }
+        // `g[y] = <new row>` / `g[a:b] = ...`: the row is a fixed view.
+        if (ResolveGridKey(indexExpr.Target) != null)
+        {
+            if (indexExpr.Index is SliceExpr)
+                throw UserError(
+                    "a 2-D grid cannot be sliced -- g[a:b] would have to be a window of " +
+                    "rows, and rows are views, not values. Write the loop.", indexExpr.Index);
+            throw UserError(
+                "a row of a 2-D grid is a view into the flat array, not a variable that " +
+                "can be rebound -- write to its elements instead (g[y][x] = v)", indexExpr);
         }
 
         // `cls.string[k] = v` inside a @classmethod: accumulate a compile-time class dict.

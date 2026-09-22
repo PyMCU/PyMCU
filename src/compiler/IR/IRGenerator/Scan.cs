@@ -1886,6 +1886,12 @@ public partial class IRGenerator
                                 var paramTypes = new List<DataType>();
                                 foreach (var p in func.Params)
                                 {
+                                    // Same rule as top-level functions (above): an
+                                    // unannotated parameter the body subscripts is a
+                                    // buffer passed by reference, not a register.
+                                    if (!func.IsInline && p.Type.Length == 0
+                                        && IsSubscriptedInBody(func.Body, p.Name))
+                                        bytearrayParams.Add(fullName + "." + p.Name);
                                     @params.Add(p.Name);
                                     paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
                                 }

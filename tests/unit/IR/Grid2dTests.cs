@@ -164,7 +164,7 @@ public class Grid2dTests
         Assert.Contains(4, consts);
     }
 
-    // ── iteration and aliases ───────────────────────────────────────────
+    // ── iteration and aliases ───────────────────────────────────────────────
 
     [Fact]
     public void ForRowIn_LowersToARowIndexLoop()
@@ -233,5 +233,140 @@ public class Grid2dTests
             "def main() -> None:\n" +
             "    f(4)\n");
         Assert.Contains("compile-time constant", ex.Message);
+    }
+
+    [Fact]
+    public void GridAppend_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    g.append([0] * 4)\n");
+        Assert.Contains("append", ex.Message);
+    }
+
+    [Fact]
+    public void RowRebind_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    g[1] = [9] * 4\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void RowPassedToAFunction_EscapesAndIsRefused()
+    {
+        var ex = Refused(
+            "def f(r):\n" +
+            "    return r[0]\n" +
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    f(g[1])\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void RowAliasPassedToAFunction_EscapesAndIsRefused()
+    {
+        var ex = Refused(
+            "def f(r):\n" +
+            "    return r[0]\n" +
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    r = g[1]\n" +
+            "    f(r)\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void RowReturned_EscapesAndIsRefused()
+    {
+        var ex = Refused(
+            "def pick(g, y):\n" +
+            "    return g[y]\n" +
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    r = pick(g, 1)\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void RowStoredInAField_EscapesAndIsRefused()
+    {
+        var ex = Refused(
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self.f = 0\n" +
+            "    def grab(self, g, y):\n" +
+            "        self.f = g[y]\n" +
+            "b = Box()\n" +
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    b.grab(g, 1)\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void RowAppend_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    g[1].append(9)\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void RowSlice_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    s = g[1][0:2]\n");
+        Assert.Contains("slice", ex.Message);
+    }
+
+    [Fact]
+    public void GridSlice_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    s = g[0:2]\n");
+        Assert.Contains("slice", ex.Message);
+    }
+
+    [Fact]
+    public void RowComparison_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    if g[0] == g[1]:\n" +
+            "        x = 1\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void MembershipOnARow_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    if 0 in g[0]:\n" +
+            "        x = 1\n");
+        Assert.Contains("row", ex.Message);
+    }
+
+    [Fact]
+    public void BareRowRead_IsRefused()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    x = g[1]\n");
+        Assert.Contains("row", ex.Message);
     }
 }

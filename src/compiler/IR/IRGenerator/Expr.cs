@@ -620,6 +620,12 @@ public partial class IRGenerator
                 + $"it as the iterable of a for loop or of reversed(), which is what it is for; "
                 + "to pass the numbers around, write them as a list.", expr);
 
+        // A name bound to a row of a 2-D grid (`r = g[y]`, `for r in g`) is a
+        // view, not a value -- every legal use (r[x], len(r), for x in r) is
+        // intercepted before this, so reaching here IS the escape.
+        if (ResolveRowRef(expr) != null)
+            throw RowAliasNotAValue(expr);
+
         return ResolveBinding(expr.Name, expr);
     }
 
@@ -991,6 +997,30 @@ public partial class IRGenerator
             // it is evaluated exactly once by the rewrite (PyMCU#288).
             if (expr.Right is CallExpr { Callee: VariableExpr { Name: "range" } } rangeIn)
                 return VisitExpression(RangeMembershipAst(expr.Left, rangeIn, negate, expr));
+
+            // `v in g[y]` / `v in r` / `v in g` on a 2-D grid. On a row it is an
+            // element test over a view that has no value; on the whole grid it
+            // tests ROW membership, and there is no row object to compare.
+            if (expr.Right is IndexExpr inIx && ResolveGridKey(inIx.Target) != null)
+            {
+                if (inIx.Index is SliceExpr)
+                    throw UserError(
+                        "a 2-D grid cannot be sliced -- g[a:b] would have to be a window " +
+                        "of rows, and rows are views, not values. Write the loop.", inIx.Index);
+                throw UserError(
+                    "'in' on a row of a 2-D grid asks whether v is one of its elements, " +
+                    "but a row is a view, not an iterable value -- test an element " +
+                    "(v == g[y][x]) or write the loop", inIx);
+            }
+            if (expr.Right is VariableExpr inVe && ResolveRowRef(inVe) != null)
+                throw UserError(
+                    "'in' on a row of a 2-D grid asks whether v is one of its elements, " +
+                    "but a row is a view, not an iterable value -- test an element " +
+                    "(v == r[x]) or write the loop", inVe);
+            if (ResolveGridKey(expr.Right) != null)
+                throw UserError(
+                    "'in' on a 2-D grid tests row membership, and a row is a view, not a " +
+                    "value -- test elements (v == g[y][x]) or write the loop", expr.Right);
 
             Val lhs = VisitExpression(expr.Left);
 
@@ -2226,7 +2256,9 @@ public partial class IRGenerator
     private Val VisitIndex(IndexExpr expr)
     {
         // `g[y][x]` on a compile-time 2-D grid: the flat load at g[y*W + x],
-        // the same arithmetic the hand-flattened spelling emits.
+        // the same arithmetic the hand-flattened spelling emits. A single index
+        // `g[y]` names a ROW -- a view, not a value -- and only `g[y][x]`,
+        // `len(g[y])` and `for x in g[y]` may use it.
         if (expr.Target is IndexExpr gIn && ResolveGridKey(gIn.Target) is { } nestGrid)
         {
             if (gIn.Index is SliceExpr)
@@ -2257,6 +2289,22 @@ public partial class IRGenerator
             if (rowRef.Uses != null && !rowRef.Uses.Contains(expr))
                 throw RowAliasNotAValue(expr);
             return EmitRowElemLoad(rowRef, expr.Index);
+        }
+
+        // `g[y]` / `g[a:b]` read bare: the row is a view with no value.
+        if (ResolveGridKey(expr.Target) is { } singleGrid)
+        {
+            if (expr.Index is SliceExpr)
+                throw UserError(
+                    "a 2-D grid cannot be sliced -- g[a:b] would have to be a window of " +
+                    "rows, and rows are views, not values. Write the loop.", expr.Index);
+            if (expr.Index is TupleExpr)
+                throw UserError(TwoIndexSubscriptRefusal, expr.Index);
+            throw UserError(
+                "g[y] names a row of a 2-D grid -- a view into the flat array, not a " +
+                "list value. Index an element (g[y][x]), take its width (len(g[y])), " +
+                "or iterate it (for x in g[y]); there is no row object to read, pass, " +
+                "return or store.", expr);
         }
 
         // `sys.implementation.version[i]` (neopixel.py's `version[0] >= 7` feature-detect).
