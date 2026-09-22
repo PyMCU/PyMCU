@@ -1082,6 +1082,27 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void AComputedConstTableInitializer_PopulatesFlash()
+    {
+        // `const[uint8[N]] = [0]*256 + [...] + [0]*40` had the right LENGTH but zeroed
+        // contents: only a literal ListExpr populated the bytes, so every read of a
+        // computed initializer came back 0. Repeats, concats and range() are all
+        // compile-time sequences and must land in the table.
+        const string src =
+            "T: const[uint8[300]] = [0] * 256 + [11, 22, 33, 44] + [0] * 40\n" +
+            "def main():\n" +
+            "    y: uint8 = T[257]\n";
+        var ir = GenerateIR(src);
+        var table = ir.Functions.SelectMany(f => f.Body).OfType<FlashData>()
+            .Single(t => t.Name.EndsWith("T"));
+        Assert.Equal(300, table.Bytes.Count);
+        Assert.Equal(11, table.Bytes[256]);
+        Assert.Equal(22, table.Bytes[257]);
+        Assert.Equal(44, table.Bytes[259]);
+        Assert.Equal(0, table.Bytes[299]);
+    }
+
+    [Fact]
     public void ConstAugmentedAssignment_RaisesCompileError()
     {
         // `K += 1` mutates a const-declared name just like `K = ...`; both must be rejected.

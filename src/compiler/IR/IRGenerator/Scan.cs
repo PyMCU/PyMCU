@@ -672,11 +672,16 @@ public partial class IRGenerator
 
                                 // Collect FlashData so Generate() can inject it into the
                                 // main function body; ScanGlobals runs before VisitFunction.
+                                // The same computed-sequence forms the function-scope path
+                                // takes: a literal, `[x]*n`, concat, range() -- a missed
+                                // one emitted a right-sized table of zeros.
                                 var bytes = new List<int>(Enumerable.Repeat(0, count * elemSize));
-                                if (initializer is ListExpr le)
+                                var constElems = initializer != null
+                                    ? TryConstElementSequence(initializer) : null;
+                                if (constElems != null)
                                 {
-                                    for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
-                                        if (TryEvalElemConst(le.Elements[k], out int v))
+                                    for (int k = 0; k < Math.Min(count, constElems.Count); k++)
+                                        if (TryEvalElemConst(constElems[k], out int v))
                                             for (int b = 0; b < elemSize; b++)
                                                 bytes[k * elemSize + b] = (v >> (8 * b)) & 0xFF;
                                 }

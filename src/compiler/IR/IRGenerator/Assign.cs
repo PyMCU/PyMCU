@@ -5755,10 +5755,16 @@ public partial class IRGenerator
                         flashArrays.Add(qualified);
 
                         var bytes = new List<int>(Enumerable.Repeat(0, count));
-                        if (stmt.Value is ListExpr le)
+                        // Not only a literal list: `[0]*256 + [11,22] + [...]` and
+                        // `range(N)` are compile-time sequences too, and leaving them
+                        // out emitted a correctly-SIZED table of zeros -- the table
+                        // length was right and every read came back 0.
+                        var constElems = stmt.Value != null
+                            ? TryConstElementSequence(stmt.Value) : null;
+                        if (constElems != null)
                         {
-                            for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
-                                if (TryEvalElemConst(le.Elements[k], out int v)) bytes[k] = v;
+                            for (int k = 0; k < Math.Min(count, constElems.Count); k++)
+                                if (TryEvalElemConst(constElems[k], out int v)) bytes[k] = v;
                         }
                         Emit(new FlashData(qualified, bytes));
                         return;
@@ -6743,6 +6749,35 @@ public partial class IRGenerator
             }
         }
         return true;
+    }
+
+    /// <summary>
+    /// Evaluate an initializer expression to a constant element list for a fixed
+    /// sequence: a literal list or tuple, a `[x] * n` repeat, a `a + b` concat of
+    /// constant sequences, or `range(...)`. Returns null for anything that is not
+    /// compile-time constant, so callers keep their zero-fill / refusal fallback.
+    /// </summary>
+    private List<Expression>? TryConstElementSequence(Expression e)
+    {
+        switch (e)
+        {
+            case ListExpr le: return le.Elements;
+            case TupleExpr te: return te.Elements;
+            case BinaryExpr { Op: Frontend.BinaryOp.Add } add:
+            {
+                var l = TryConstElementSequence(add.Left);
+                var r = TryConstElementSequence(add.Right);
+                if (l == null || r == null) return null;
+                var both = new List<Expression>(l.Count + r.Count);
+                both.AddRange(l);
+                both.AddRange(r);
+                return both;
+            }
+            case BinaryExpr { Op: Frontend.BinaryOp.Mul }:
+                return TryExpandRepeatedList(e, out var rep) ? rep : null;
+            default:
+                return ConstSequenceFromRange(e);
+        }
     }
 
     private bool TryRepeatCount(Expression e, out int n)
