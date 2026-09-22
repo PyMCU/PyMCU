@@ -580,7 +580,10 @@ public partial class IRGenerator
                 Val val = VisitExpression(part.Expr!);
                 if (val is Constant c)
                 {
-                    if (stringIdToStr.TryGetValue(c.Value, out var s)) result += s;
+                    string? cText = c.Text ?? (stringIdToStr.TryGetValue(c.Value, out var s) ? s : null);
+                    if (cText != null) result += cText;
+                    else if (!string.IsNullOrEmpty(part.FormatSpec))
+                        result += FormatFStringInt(c.Value, part.FormatSpec);
                     else result += c.Value.ToString();
                 }
                 else throw new TypeError(
@@ -601,6 +604,31 @@ public partial class IRGenerator
         }
 
         return new Constant(stringLiteralIds[result], result);
+    }
+
+    // Fold an int interpolation under a format spec -- the same [0][width][d|x|X|b|o]
+    // subset ParseFormatSpec accepts (which throws for anything else) -- into its text,
+    // instead of dropping the spec and emitting the decimal digits. `f"{value:X}"` is
+    // how adafruit_ht16k33's print_hex renders its digits.
+    private string FormatFStringInt(int value, string spec)
+    {
+        var (width, radix, pad, upper) = ParseFormatSpec(spec);
+        bool neg = value < 0;
+        ulong mag = neg ? (ulong)(-(long)value) : (ulong)value;
+        string digits = radix switch
+        {
+            16 => mag.ToString(upper ? "X" : "x"),
+            2 => Convert.ToString((long)mag, 2),
+            8 => Convert.ToString((long)mag, 8),
+            _ => mag.ToString(),
+        };
+        string signed = neg ? "-" + digits : digits;
+        int padn = width - signed.Length;
+        if (padn > 0)
+            signed = pad == '0' && neg
+                ? "-" + new string('0', padn) + digits
+                : new string(pad, padn) + signed;
+        return signed;
     }
 
     private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
