@@ -106,7 +106,9 @@ def test_both_front_ends_answer_the_same(tmp_path, src):
 # --- the neighbours this matches, asserted so a regression in one is visible here -----------
 
 @pytest.mark.parametrize("src,needle", [
-    ('def main():\n    t = "ab"\n    t.upper()\n', "not supported on a string"),
+    # zfill is a method this compiler does not fold; str.upper() used to stand here and is
+    # now folded at compile time, which is support rather than the diagnostic being lost.
+    ('def main():\n    t = "ab"\n    t.zfill(4)\n', "not supported on a string"),
     ('def main():\n    d = {1: 2}\n    d.frob()\n', "'d' is a compile-time lookup table"),
     ('def main():\n    s = {1, 2}\n    s.frob()\n', "'s' is a compile-time set literal"),
 ], ids=["str", "dict", "set"])
