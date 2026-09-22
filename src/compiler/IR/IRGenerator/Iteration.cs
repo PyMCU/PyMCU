@@ -330,6 +330,133 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Maps a callable's lookup names to the ARGUMENT positions that must bind a
+    /// compile-time constant: `Pin(pin_id: const[uint8], ...)` records position 0
+    /// under "Pin" (from its `__init__`) and under the member name. Built once per
+    /// program, on first use -- every scan table is populated by then.
+    /// </summary>
+    private Dictionary<string, HashSet<int>>? constArgPositions;
+
+    private Dictionary<string, HashSet<int>> ConstArgPositions()
+    {
+        if (constArgPositions != null) return constArgPositions;
+        var map = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+
+        void Note(string? key, int pos)
+        {
+            if (string.IsNullOrEmpty(key) || pos < 0) return;
+            if (!map.TryGetValue(key!, out var s)) map[key!] = s = new HashSet<int>();
+            s.Add(pos);
+        }
+
+        void NoteFunc(string? key, FunctionDef f)
+        {
+            int self = f.Params.Count > 0 && f.Params[0].Name is "self" or "cls" ? 1 : 0;
+            for (int j = self; j < f.Params.Count; j++)
+            {
+                if (!IsConstType(f.Params[j].Type ?? "")) continue;
+                int pos = j - self;
+                Note(f.Name, pos);
+                Note(key, pos);
+                // A constructor answers to the class name at the call site --
+                // `Pin(n)` reaches `Pin.__init__` -- so record it there too.
+                if (f.Name == "__init__" && key != null
+                    && key.EndsWith("___init__", StringComparison.Ordinal))
+                {
+                    string cls = key[..^9];
+                    Note(cls, pos);
+                    int us = cls.LastIndexOf('_');
+                    if (us >= 0) Note(cls[(us + 1)..], pos);
+                }
+            }
+        }
+
+        foreach (var fe in functionsToCompile)
+            NoteFunc((fe.Prefix ?? "") + fe.Func.Name, fe.Func);
+        foreach (var kv in inlineFunctions) if (kv.Value != null) NoteFunc(kv.Key, kv.Value);
+        foreach (var kv in methodAstByName) NoteFunc(kv.Key, kv.Value);
+        foreach (var kv in instanceMethodDefs) NoteFunc(kv.Key, kv.Value);
+        foreach (var kv in zcaHandlerAstNodes) NoteFunc(kv.Key, kv.Value.Func);
+        constArgPositions = map;
+        return map;
+    }
+
+    // True when the loop variable -- or a name the body copies it into -- reaches a
+    // position only a compile-time constant can fill: a `const[...]` call argument
+    // (`Pin(n, Pin.OUT)` needs `n` unrolled to bind) or the index of storage that has
+    // no run-time form (`GPIOR0[n]`). The counter-loop fallback lowers the variable
+    // to a table read, which these positions refuse -- so the loop must unroll
+    // whatever the body costs.
+    private bool LoopVarNeedsConst(ForStmt stmt)
+    {
+        var names = new HashSet<string> { stmt.VarName };
+        if (!string.IsNullOrEmpty(stmt.Var2Name)) names.Add(stmt.Var2Name!);
+        if (stmt.Body == null) return false;
+
+        var nodes = AstNodes(stmt.Body, descendIntoFunctions: true).ToList();
+
+        bool Mentions(Expression? e) =>
+            e != null && AstNodes(e, descendIntoFunctions: true)
+                .OfType<VariableExpr>().Any(v => names.Contains(v.Name));
+
+        // A value the loop variable flows through carries the same requirement:
+        // `p = n; Pin(p)` folds `p` to the constant only when the loop unrolls.
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (var node in nodes)
+            {
+                switch (node)
+                {
+                    case AssignStmt { Target: VariableExpr tv, Value: { } vv } when Mentions(vv):
+                        grew |= names.Add(tv.Name); break;
+                    case AnnAssign { Value: { } av } aa when Mentions(av):
+                        grew |= names.Add(aa.Target); break;
+                    case VarDecl { Init: { } iv } vd when Mentions(iv):
+                        grew |= names.Add(vd.Name); break;
+                    case TupleUnpackStmt { Value: { } tv } tu when Mentions(tv):
+                        foreach (var t in tu.Targets) grew |= names.Add(t);
+                        break;
+                }
+            }
+        }
+
+        var positions = ConstArgPositions();
+        foreach (var node in nodes)
+        {
+            if (node is CallExpr call)
+            {
+                string? key = call.Callee switch
+                {
+                    VariableExpr ve => ve.Name,
+                    MemberAccessExpr ma => ma.Member,
+                    _ => null,
+                };
+                if (key == null || !positions.TryGetValue(key, out var posSet)) continue;
+                for (int i = 0; i < call.Args.Count; i++)
+                {
+                    if (!Mentions(call.Args[i])) continue;
+                    if (posSet.Contains(i)) return true;
+                    // A keyword/star argument names its parameter rather than its
+                    // position, so position matching cannot see it; any const
+                    // position on the callee is suspect.
+                    if (call.Args[i] is KeywordArgExpr or StarArgExpr or DoubleStarArgExpr)
+                        return true;
+                }
+            }
+            else if (node is IndexExpr ix
+                     && ix.Target is VariableExpr baseVe
+                     && Mentions(ix.Index)
+                     && !HasSubscriptableStorage(baseVe.Name))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Counts the nodes one inline body lowers to, descending into the inline
     // calls it makes. `selfClass` is the class the body being counted belongs to,
     // so `self.` calls inside it resolve against that class rather than the
@@ -580,6 +707,7 @@ public partial class IRGenerator
         string writtenName, bool reverse = false)
     {
         if (!string.IsNullOrEmpty(stmt.Var2Name)) return false;
+        if (LoopVarNeedsConst(stmt)) return false;
         if (elems.Count <= ConstSequenceUnrollLimit && UnrolledLoopBodyIsCheap(stmt.Body))
             return false;
         if (ConstValuesOf(elems) is not { } vals) return false;
@@ -873,6 +1001,7 @@ public partial class IRGenerator
         // of multiplying the body. Elements with no storage form (ZCA instances
         // bound per element) still unroll.
         if (HasSubscriptableStorage(forBase) && !HasInstanceElements(forBase)
+            && !LoopVarNeedsConst(stmt)
             && (forSize > ConstSequenceUnrollLimit || !UnrolledLoopBodyIsCheap(stmt.Body)))
         {
             EmitIndexedCounterLoop(stmt, seqExpr, 0, forSize, 1);
@@ -1386,7 +1515,8 @@ public partial class IRGenerator
                 // each byte from a flash table, so the body is generated ONCE instead of N
                 // times. This keeps idiomatic `for c in s` from exploding when the body is
                 // heavy (e.g. an I2C/SPI write per char).
-                if (strOpt.Length > StringForLoopUnrollLimit || !UnrolledLoopBodyIsCheap(stmt.Body))
+                if ((strOpt.Length > StringForLoopUnrollLimit || !UnrolledLoopBodyIsCheap(stmt.Body))
+                    && !LoopVarNeedsConst(stmt))
                 {
                     string sFlash = InternStringAsFlash(strOpt);
                     var sCharVar = new Variable(varKey, DataType.UINT8);
@@ -1899,6 +2029,7 @@ public partial class IRGenerator
                         // the values as a counter loop over the elements materialised
                         // into a flash table, the same read `tab[i]` performs.
                         if (!UnrolledLoopBodyIsCheap(stmt.Body)
+                            && !LoopVarNeedsConst(stmt)
                             && ConstValuesOf(seqElems) is { } enumVals
                             && TryMaterialiseConstTableFromValues(
                                 "__enum_" + (++sliceLoopId), "", enumVals) is { } enumTab)
@@ -2087,6 +2218,7 @@ public partial class IRGenerator
                             // body by the array size -- a 513-byte framebuffer write did
                             // not fit in flash where the counter loop is a few instructions.
                             if (HasSubscriptableStorage(@base)
+                                && !LoopVarNeedsConst(stmt)
                                 && (arrSize > ConstSequenceUnrollLimit
                                     || !UnrolledLoopBodyIsCheap(stmt.Body)))
                             {
@@ -2520,6 +2652,7 @@ public partial class IRGenerator
                             // walks descending as `for __u in range(n-1, -1, -1)` -- the
                             // same elements the unroll would have read backwards.
                             if (HasSubscriptableStorage(@base) && !HasInstanceElements(@base)
+                                && !LoopVarNeedsConst(stmt)
                                 && (arrSize > ConstSequenceUnrollLimit
                                     || !UnrolledLoopBodyIsCheap(stmt.Body)))
                             {
@@ -2739,6 +2872,7 @@ public partial class IRGenerator
                         : Math.Max(0, (start - stop + (-step) - 1) / -step);
                     if ((slTrips > ConstSequenceUnrollLimit
                             || !UnrolledLoopBodyIsCheap(stmt.Body))
+                        && !LoopVarNeedsConst(stmt)
                         && HasSubscriptableStorage(slBase) && !HasInstanceElements(slBase))
                     {
                         EmitIndexedCounterLoop(stmt, new VariableExpr(sliceVar.Name),
@@ -2940,7 +3074,8 @@ public partial class IRGenerator
             return;
         }
 
-        if (RangeUnrollBounds(stmt) is { } unroll && UnrolledLoopBodyIsCheap(stmt.Body))
+        if (RangeUnrollBounds(stmt) is { } unroll
+            && (UnrolledLoopBodyIsCheap(stmt.Body) || LoopVarNeedsConst(stmt)))
         {
             (int unrollStart, int unrollStop, int unrollStep) = unroll;
             string unrollKey = !string.IsNullOrEmpty(currentInlinePrefix)
