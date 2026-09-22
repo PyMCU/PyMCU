@@ -2077,7 +2077,7 @@ public partial class IRGenerator
         // A bare re-raise writes nothing: the word still holds the message of the exception
         // being handled, which is the one being re-raised.
         bool dynamicStored = false;
-        if (dynamicMessage != null && programBindsExceptionObject && !string.IsNullOrEmpty(stmt.ErrorType))
+        if (dynamicMessage != null && programRecordsRaiseMessages && !string.IsNullOrEmpty(stmt.ErrorType))
         {
             EmitDynamicRaiseMessage(dynamicMessage, stmt);
             dynamicStored = true;
@@ -2090,12 +2090,23 @@ public partial class IRGenerator
             Emit(new Copy(new Constant(0), new Variable(ExceptionSiteVar, DataType.UINT8)));
         }
 
-        if (programBindsExceptionObject && !string.IsNullOrEmpty(stmt.ErrorType)
+        if (programRecordsRaiseMessages && !string.IsNullOrEmpty(stmt.ErrorType)
             && !string.IsNullOrEmpty(resolvedMessage) && !dynamicStored)
         {
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(resolvedMessage!)),
                           new Variable(ExceptionMessageVar, DataType.UINT16)));
+            sawRaiseMessageStore = true;
+        }
+        else if (programRecordsRaiseMessages && programReportsRaiseMessage
+                 && !string.IsNullOrEmpty(stmt.ErrorType)
+                 && string.IsNullOrEmpty(resolvedMessage) && dynamicMessage == null)
+        {
+            // A typed raise with no message must not leave the previous raise's message
+            // behind: the unhandled report would print `E:<Type>: <stale>` for an
+            // exception that said nothing.
+            DeclareExceptionMessageVar();
+            Emit(new Copy(new Constant(0), new Variable(ExceptionMessageVar, DataType.UINT16)));
         }
 
         // Inside a try body in the same function -> deliver to the local catch
@@ -2562,6 +2573,7 @@ public partial class IRGenerator
         DeclareExceptionSiteVar();
         Emit(new Copy(new Constant(site.Id), new Variable(ExceptionSiteVar, DataType.UINT8)));
         raiseMessageSites.Add(site);
+        sawRaiseMessageStore = true;
     }
 
     /// <summary>
@@ -2600,25 +2612,37 @@ public partial class IRGenerator
         string after = MakeLabel();
         string litPath = MakeLabel();
 
-        DeclareExceptionSiteVar();
         DeclareExceptionMessageVar();
-        var siteVar = new Variable(ExceptionSiteVar, DataType.UINT8);
-        Emit(new JumpIfZero(siteVar, litPath));
+        var msgVar = new Variable(ExceptionMessageVar, DataType.UINT16);
 
-        foreach (var site in raiseMessageSites)
+        // The site dispatch exists only while some raise stores one -- a program whose
+        // raises are all literals never declares __exn_site, so reading it would
+        // dispatch on an unwritten word.
+        if (raiseMessageSites.Count > 0)
         {
-            string next = MakeLabel();
-            Emit(new JumpIfNotEqual(siteVar, new Constant(site.Id), next));
-            foreach (var piece in site.Pieces)
-                EmitRaiseMessagePiece(piece, writeStrFn, floatFn);
+            DeclareExceptionSiteVar();
+            var siteVar = new Variable(ExceptionSiteVar, DataType.UINT8);
+            Emit(new JumpIfZero(siteVar, litPath));
+
+            foreach (var site in raiseMessageSites)
+            {
+                string next = MakeLabel();
+                Emit(new JumpIfNotEqual(siteVar, new Constant(site.Id), next));
+                foreach (var piece in site.Pieces)
+                    EmitRaiseMessagePiece(piece, writeStrFn, floatFn);
+                Emit(new Jump(after));
+                Emit(new Label(next));
+            }
+
             Emit(new Jump(after));
-            Emit(new Label(next));
         }
 
-        Emit(new Jump(after));
         Emit(new Label(litPath));
+        // A raise that carried no message leaves the word at zero; printing through it
+        // would stream flash from address 0, so a cleared message prints nothing.
+        Emit(new JumpIfZero(msgVar, after));
         Emit(new Call(ResolveRuntimeWriteStrFn(),
-            new List<Val> { new Variable(ExceptionMessageVar, DataType.UINT16) },
+            new List<Val> { msgVar },
             new NoneVal()));
         Emit(new Label(after));
         Emit(new Return(new NoneVal()));
@@ -2626,6 +2650,79 @@ public partial class IRGenerator
         var fn = new Function
         {
             Name = ExceptionMessagePrinter,
+            ReturnType = DataType.VOID,
+            Body = new List<Instruction>(currentInstructions),
+            CanFail = false,
+        };
+
+        currentInstructions = savedInstructions;
+        currentFunction = savedFunction;
+        currentModulePrefix = savedModulePrefix;
+        currentInlinePrefix = savedInlinePrefix;
+        inlineDepth = savedInlineDepth;
+        loopStack = savedLoopStack;
+        inlineStack = savedInlineStack;
+        lastLine = savedLastLine;
+        currentFunctionGlobals = savedFunctionGlobals;
+        return fn;
+    }
+
+    /// <summary>
+    /// The tail the unhandled-exception runtime calls after printing `E:<Type>`:
+    /// ": " and the recorded message when one exists, then the CRLF the type table
+    /// leaves off when this function is linked. Reached from raw asm only.
+    /// </summary>
+    internal Function SynthesizeExceptionMessageTail()
+    {
+        var savedInstructions = currentInstructions;
+        var savedFunction = currentFunction;
+        var savedModulePrefix = currentModulePrefix;
+        var savedInlinePrefix = currentInlinePrefix;
+        int savedInlineDepth = inlineDepth;
+        var savedLoopStack = loopStack;
+        var savedInlineStack = inlineStack;
+        int savedLastLine = lastLine;
+        var savedFunctionGlobals = currentFunctionGlobals;
+
+        currentInstructions = new List<Instruction>();
+        currentFunction = ExceptionMessageTail;
+        currentModulePrefix = "";
+        currentInlinePrefix = "";
+        inlineDepth = 0;
+        loopStack = new List<LoopLabels>();
+        inlineStack = new List<InlineContext>();
+        lastLine = -1;
+        currentFunctionGlobals = new HashSet<string>();
+
+        string writeStrFn = ResolveRuntimeWriteStrFn();
+        string printMsg = MakeLabel();
+        string done = MakeLabel();
+
+        DeclareExceptionMessageVar();
+        var msgVar = new Variable(ExceptionMessageVar, DataType.UINT16);
+
+        // A deferred-print raise marks the site id; a literal one marks the word.
+        // Either means "there is a message" and earns the ": " ahead of it.
+        if (raiseMessageSites.Count > 0)
+        {
+            DeclareExceptionSiteVar();
+            Emit(new JumpIfNotZero(new Variable(ExceptionSiteVar, DataType.UINT8), printMsg));
+        }
+        Emit(new JumpIfZero(msgVar, done));
+        Emit(new Label(printMsg));
+        Emit(new Call(writeStrFn,
+            new List<Val> { new FlashStrAddr(InternStringAsFlash(": ")) },
+            new NoneVal()));
+        Emit(new Call(ExceptionMessagePrinter, new List<Val>(), new NoneVal()));
+        Emit(new Label(done));
+        Emit(new Call(writeStrFn,
+            new List<Val> { new FlashStrAddr(InternStringAsFlash("\r\n")) },
+            new NoneVal()));
+        Emit(new Return(new NoneVal()));
+
+        var fn = new Function
+        {
+            Name = ExceptionMessageTail,
             ReturnType = DataType.VOID,
             Body = new List<Instruction>(currentInstructions),
             CanFail = false,

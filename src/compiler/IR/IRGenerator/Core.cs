@@ -525,8 +525,6 @@ public partial class IRGenerator
         // bytes it always did. The answer is whole-program and has to be settled before the
         // first raise is lowered, which is why it is taken here and not at each raise (#369).
         programBindsExceptionObject = ProgramBindsExceptionObject(mainAst, importedModules.Values);
-        programHasDynamicRaiseMessage = programBindsExceptionObject
-            && ProgramHasDynamicRaiseMessage(mainAst, importedModules.Values);
 
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes.
@@ -1143,6 +1141,21 @@ public partial class IRGenerator
         ForceInlineBufferReturningFunctions();
         ForceInlineClassPlainFunctionsThatReadParamMembers();
 
+        // Whether raises record their message for a later read. Two readers: a handler that
+        // binds `except X as e` (#369), and the unhandled-exception report, which prints
+        // `E:<Type>: <msg>` through __pymcu_exn_tail. The second needs a raise that actually
+        // carries a message AND the UART string writer the printer calls already in the
+        // image -- which is why this is computed after the module scan filled
+        // functionParams/functionReturnTypes, but before the first raise is lowered.
+        // A program that raises messages without any writer linked keeps the raise and
+        // drops the report, exactly as before.
+        bool programRaisesWithMessage = ProgramRaisesWithMessage(mainAst, importedModules.Values);
+        programReportsRaiseMessage = programRaisesWithMessage
+            && ResolveRuntimeWriteStrFn() != "uart_write_str";
+        programRecordsRaiseMessages = programBindsExceptionObject || programReportsRaiseMessage;
+        programHasDynamicRaiseMessage = programRecordsRaiseMessages
+            && ProgramHasDynamicRaiseMessage(mainAst, importedModules.Values);
+
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
         //
         // Lowering the module level is what BINDS a module-level instance's fields: a Pin's
@@ -1200,8 +1213,32 @@ public partial class IRGenerator
             if (fn != null)
                 irProgram.Functions.Add(fn);
 
-        if (programHasDynamicRaiseMessage)
+        // The report flags are AST-level: a raise with a message inside an imported but
+        // never-called function sets them even though nothing reachable can record one.
+        // In that case the messageless-raise clear stores lowered under the flag are
+        // dead, and so is the report tail -- strip the clears and skip the synthesis so
+        // the image stays byte-identical to one built without the machinery.
+        if (!sawRaiseMessageStore)
+        {
+            foreach (var fn in irProgram.Functions)
+                fn.Body.RemoveAll(i => i is Copy c
+                    && c.Dst is Variable { Name: ExceptionMessageVar }
+                    && c.Src is Constant { Value: 0 });
+            if (raiseMessageSites.Count == 0)
+                foreach (var fn in irProgram.Functions)
+                    fn.Body.RemoveAll(i => i is Copy c
+                        && c.Dst is Variable { Name: ExceptionSiteVar }
+                        && c.Src is Constant { Value: 0 });
+        }
+
+        if (programHasDynamicRaiseMessage || (programReportsRaiseMessage && sawRaiseMessageStore))
             irProgram.Functions.Add(SynthesizeExceptionMessagePrinter());
+        // The unhandled path in the backend calls __pymcu_exn_tail from raw asm after
+        // printing `E:<Type>` -- it appends ": <msg>" + CRLF when a message was recorded
+        // and just the CRLF when it was not. Only emitted when a raise can carry a
+        // message and the string writer is in the image to print it.
+        if (programReportsRaiseMessage && sawRaiseMessageStore)
+            irProgram.Functions.Add(SynthesizeExceptionMessageTail());
         LowerCalledRuntimeHelpers(irProgram);
 
         // Inject FlashData instructions (global const[uint8[N]] arrays) into the
@@ -2458,6 +2495,58 @@ public partial class IRGenerator
             {
                 case PyMCU.Frontend.RaiseStmt r:
                     if (r.MessageExpr != null || !string.IsNullOrEmpty(r.MessageName))
+                    { found = true; return; }
+                    return;
+                case PyMCU.Frontend.TryStmt t:
+                    foreach (var st in t.Body) Walk(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
+                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
+                    return;
+                case PyMCU.Frontend.Block b: foreach (var st in b.Statements) Walk(st); return;
+                case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); return;
+                case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); return;
+                case PyMCU.Frontend.IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var br in i.ElifBranches) Walk(br.Item2);
+                    Walk(i.ElseBranch);
+                    return;
+                case PyMCU.Frontend.WhileStmt w: Walk(w.Body); return;
+                case PyMCU.Frontend.ForStmt fo: Walk(fo.Body); return;
+                case PyMCU.Frontend.MatchStmt m:
+                    foreach (var br in m.Branches) Walk(br.Body);
+                    return;
+            }
+        }
+
+        void WalkProgram(PyMCU.Frontend.ProgramNode p)
+        {
+            foreach (var st in p.GlobalStatements) Walk(st);
+            foreach (var fn in p.Functions) Walk(fn.Body);
+        }
+
+        WalkProgram(main);
+        foreach (var m in imported) WalkProgram(m);
+        return found;
+    }
+
+    /// Whether any raise in the program carries a message at all -- a literal
+    /// (`raise ValueError("x")`), a named constant, or a deferred-print expression.
+    /// The unhandled-exception report only pays for the tail when one exists.
+    private static bool ProgramRaisesWithMessage(
+        PyMCU.Frontend.ProgramNode main,
+        IEnumerable<PyMCU.Frontend.ProgramNode> imported)
+    {
+        bool found = false;
+
+        void Walk(PyMCU.Frontend.Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case PyMCU.Frontend.RaiseStmt r:
+                    if (!string.IsNullOrEmpty(r.Message) || r.MessageExpr != null
+                        || !string.IsNullOrEmpty(r.MessageName))
                     { found = true; return; }
                     return;
                 case PyMCU.Frontend.TryStmt t:

@@ -304,6 +304,11 @@ public static class Optimizer
         Enqueue("main");
         foreach (var func in program.Functions.Where(f => f.IsInterrupt || f.IsExportC))
             Enqueue(func.Name);
+        // __pymcu_exn_tail is reached only from raw asm the backend emits on the
+        // unhandled-exception path -- no IR instruction calls it, so without this
+        // root the report's ": <msg>" would be pruned here before codegen sees it.
+        foreach (var func in program.Functions.Where(f => f.Name == "__pymcu_exn_tail"))
+            Enqueue(func.Name);
 
         while (worklist.Count > 0)
         {

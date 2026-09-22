@@ -520,11 +520,28 @@ public partial class IRGenerator
     // an object without allocating one. The object is two static facts: the type code the
     // dispatcher already holds, and the flash address of a string-literal message.
 
-    /// Whether ANY handler in the program binds a name. The message store at each raise is
-    /// emitted only when it does, so a program with no `as e` compiles to the bytes it always
-    /// did -- the whole zero-cost claim rests on this being a whole-program answer, decided
-    /// before the first raise is lowered rather than at each one.
+    /// Whether ANY handler in the program binds a name. Kept as one input to
+    /// <see cref="programRecordsRaiseMessages"/> -- the store itself is gated on that.
     private bool programBindsExceptionObject;
+
+    /// Whether raises record their message for a later read: a handler that binds
+    /// `except X as e` (#369), or an unhandled-exception report that can carry it to
+    /// UART. The second form needs the string writer in the image, so the answer is
+    /// taken after the module scan -- before the first raise is lowered, which is what
+    /// the whole zero-cost claim rests on.
+    private bool programRecordsRaiseMessages;
+
+    /// Whether the unhandled-exception report can carry a message at all: some raise
+    /// in the program has one AND the UART string writer the printer calls resolved.
+    /// Gates the emission of <see cref="ExceptionMessageTail"/>.
+    private bool programReportsRaiseMessage;
+
+    /// Set when a raise that actually got lowered recorded a message (literal word,
+    /// deferred-print site, or dynamic store). <c>programReportsRaiseMessage</c> is
+    /// computed from the AST of every imported module, so it is true the moment an
+    /// imported-but-uncalled function raises with a message; this flag is what keeps
+    /// the report machinery out of images whose reachable code never raises one.
+    private bool sawRaiseMessageStore;
 
     /// The module-level word holding the flash address of the live exception's message.
     /// One word, because one exception is live at a time.
@@ -536,6 +553,12 @@ public partial class IRGenerator
 
     /// Synthetic function that replays the live exception's print sequence.
     internal const string ExceptionMessagePrinter = "__pymcu_print_exn_msg";
+
+    /// Synthetic function the unhandled-exception runtime calls after printing
+    /// `E:<Type>`: emits ": " plus the recorded message and the CRLF, or just the CRLF
+    /// when the raise carried no message. Reached only from raw asm, which is why the
+    /// backend adds it to the reference graph by name.
+    internal const string ExceptionMessageTail = "__pymcu_exn_tail";
 
     internal static string ExceptionArgVar(int i) => "__exn_arg" + i;
     internal static string ExceptionFloatArgVar(int i) => "__exn_farg" + i;
