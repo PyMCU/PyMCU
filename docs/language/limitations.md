@@ -1008,7 +1008,7 @@ Measured on 2026-09-17 against an Arduino Uno (atmega328p), with each library's 
 that constructs the object and calls its methods. The harness is 37 libraries (the original
 twenty plus I2C sensors and expanders that sit next to them on Adafruit's list).
 
-**Nineteen of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
+**Twenty of the thirty-seven build unmodified**: `adafruit_hcsr04` (3 430 bytes),
 `adafruit_motor`'s servo (2 332 bytes), `adafruit_pcf8574` (1 442 bytes),
 `adafruit_bus_device` (800 bytes; its own example now builds too -- the
 `bytearray([...])` inline argument and the generator expression in `join` are
@@ -1019,7 +1019,9 @@ supported spellings),
 `adafruit_mlx90614` (3 846 bytes), `adafruit_bmp280` (25 006 bytes),
 `adafruit_tcs34725` (28 414 bytes), `adafruit_ina219` (7 294 bytes),
 `adafruit_aw9523` (2 294 bytes), `adafruit_veml7700` (10 614 bytes),
-`adafruit_dps310` (13 162 bytes), `adafruit_pca9685` (1 852 bytes)
+`adafruit_dps310` (13 162 bytes), `adafruit_pca9685` (1 852 bytes),
+`adafruit_seesaw` (3 706 bytes, its I2C stream verified against a CPython oracle
+on the emulated Uno)
 and `neopixel` -- the real CircuitPython `neopixel.py` plus its `adafruit_pixelbuf`
 base, `pixels[i] = (r, g, b)` included, verified on the wire on the emulated Uno.
 
@@ -1052,7 +1054,7 @@ base, `pixels[i] = (r, g, b)` included, verified on the wire on the emulated Uno
 | `adafruit_pca9685` | **builds unmodified, 1 852 bytes** | (moved off `[None] * len(self)` and storing a `PWMChannel` in that cache) |
 | `adafruit_pcf8523` | `from time import struct_time` | same as `adafruit_ds3231` |
 | `adafruit_pcf8574` | **builds unmodified, 1 442 bytes** | (moved off `-> Pull.UP`; the `pull` property compiles) |
-| `adafruit_seesaw` | f-string raise with `self.chip_id` | a raise message must be adjacent string literals or a module-level string constant |
+| `adafruit_seesaw` | **builds unmodified, 3 706 bytes; its I2C stream matches the CPython oracle byte for byte on the emulated Uno** | (moved off: a raise message mixing an f-string and a literal (`f"...{self.chip_id:x}..." "..."`), `try/except ImportError` inside a module reached by a function-scope import, `struct.pack` as a value and as a slice-assign source, the `I`/`i`/`L`/`l` codes, `cmd[off:] =` open-ended slice assign, and `full_buffer += buf` buffer concatenation) |
 | `adafruit_sht31d` | (moved off `word[i*2], crc[i*2], ... = struct.unpack(...)`) | an IndexExpr unpack binds the RHS to a name then stores t[k]; a struct.unpack buffer slice may start at a run-time offset; next construct after that is measured after this landing |
 | `adafruit_sht4x` | (moved off `temp_data = self._buffer[0:2]`) | a field bytearray slices like a named `buf[a:b]`; next is `for byte in buffer` in `@staticmethod _crc8` (`for-in loop iterable must be a compile-time string constant...`) |
 | `adafruit_si7021` | (moved off `obj: "adafruit_si7021.SI7021"`) | a quoted dotted class is the same type as unquoted `mod.Cls`; next construct after that is measured after this landing |

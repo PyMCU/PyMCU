@@ -22,6 +22,39 @@
   `compat-cp-life` demandant written with `self.cells[y][x]` produces a
   byte-identical I2C stream to the hand-flattened fixture on the emulator and
   to CircuitPython 10.3.1.
+- **parser**: an f-string adjacent to plain string literals now folds into one
+  `JoinedStr`, the same merge CPython's parser makes — `f"...{x:x} is not "
+  "correct! ..."` keeps the literal pieces as text parts instead of refusing the
+  adjacency. This is the spelling `adafruit_seesaw` uses for its chip-id raise, and
+  a raise message built that way replays its runtime pieces like `print` does
+  (format specs included — an int under an `f` spec prints `5.0`, matching CPython).
+- **ir**: `buf += src` on a fixed `bytearray` is the in-place concat CPython gives
+  the spelling: the buffer's compile-time size grows by the source's length and the
+  source's bytes store into the new tail — the same lowering as
+  `buf[len(buf):] = src`. This is how `adafruit_seesaw.write` builds its command
+  buffer (`full_buffer = bytearray([reg_base, reg])` then `full_buffer += buf`).
+  The bump happens once while compiling, so the `+=` is accepted only when it sits
+  in the same run-time branch context as the buffer's declaration — appending
+  inside a loop or a non-folded conditional the declaration does not share would
+  grow the buffer a different number of times than the declaration runs, and is
+  refused with that explanation. Per-callsite inlining keeps `len()` correct when
+  one call site appends and another does not: the `buf=None` expansion of
+  `adafruit_seesaw.write` still writes a two-byte transaction while a sibling
+  expansion appends.
+- **ir**: `struct.pack(fmt, v...)` bound to a name produces a fixed `bytearray` of
+  `calcsize` bytes with the fields stored into it — `pack_into`'s writes onto a
+  fresh name — and the same call works as a slice-assign source
+  (`cmd[offset:] = struct.pack(">I", pins)`). An open-ended slice assign
+  `buf[a:] = src` takes its length from the source's compile-time length, so the
+  start may be run-time. `struct` also covers the 4-byte codes `I`/`i`/`L`/`l`
+  under `<`/`>`/`!`, widening each byte to `uint32` before it shifts so a 24-bit
+  shift cannot truncate. A `struct.pack` call in any other value position is
+  refused: on a heap-free target there is nowhere to put the bytes.
+- **ir**: a module discovered through a function-scope import now gets the same
+  optional-import marking the dependency graph applies at top level, so a
+  `try: from micropython import const / except ImportError:` inside one — the
+  pinmap idiom inside `adafruit_seesaw` — folds to the found branch instead of
+  failing on the stub handler's nested `def`.
 - **ir**: void calls to the same subroutine with structurally identical constant
   arguments now share one synthesized zero-argument stub. An init sequence like the
   SSD1306's calls `writeto(addr, temp, 2)` dozens of times and re-marshaled the same
