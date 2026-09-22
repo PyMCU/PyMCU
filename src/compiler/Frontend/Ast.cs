@@ -366,6 +366,11 @@ public class VarDecl : Statement
     public string VarType { get; }
     public Expression? Init { get; }
 
+    // RFC 0009: the union-member list when the annotation was Optional[X] /
+    // Union[X, None] / X|None -- [payload, "None"], None always last. Null for a
+    // plain annotation. VarType already holds the payload type either way.
+    public List<string>? UnionMembers { get; set; }
+
     public VarDecl(string name, string varType, Expression? init)
     {
         Name = name;
@@ -379,6 +384,9 @@ public class AnnAssign : Statement
     public string Target { get; }
     public string Annotation { get; }
     public Expression? Value { get; }
+
+    // RFC 0009: same contract as VarDecl.UnionMembers.
+    public List<string>? UnionMembers { get; set; }
 
     public AnnAssign(string target, string annotation, Expression? value)
     {
@@ -727,6 +735,11 @@ public class FunctionDef : Statement
     public string Name { get; }
     public List<Param> Params { get; }
     public string ReturnType { get; set; }   // settable: TypeInference fills empty returns in
+
+    // RFC 0009: the union-member list of the return annotation -- [payload,"None"]
+    // for Optional[X] (None always last), or the inferred member set TypeInference
+    // fills when reachable returns mix values and None. Null = ordinary return.
+    public List<string>? ReturnMembers { get; set; }
     public Block Body { get; }
     public bool IsInline { get; set; }
     public bool IsClassMethod { get; set; } = false;

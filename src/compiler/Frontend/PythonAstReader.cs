@@ -214,6 +214,10 @@ public static class PythonAstReader
                 PyMCU.Common.AnnotationText.Normalize(Str(e, "returnType")), body,
             Flag(e, "isInline"), Flag(e, "isInterrupt"), Int(e, "vector"))
         {
+            // RFC 0009: the union-member list of `-> Optional[X]` and friends, read
+            // from the same raw annotation text Normalize just collapsed (the Python
+            // side hands the spelling over unjudged).
+            ReturnMembers = PyMCU.Common.AnnotationText.UnionMembers(Str(e, "returnType")),
             IsClassMethod = Flag(e, "isClassMethod"),
             IsPropertyGetter = Flag(e, "isPropertyGetter"),
             IsPropertySetter = Flag(e, "isPropertySetter"),
@@ -269,10 +273,12 @@ public static class PythonAstReader
             }
             case "VarDecl":
                 return Located(new VarDecl(Str(e, "name"), PyMCU.Common.AnnotationText.Normalize(Str(e, "varType")),
-                    Has(e, "init") ? ReadExpr(e.GetProperty("init")) : null), e);
+                    Has(e, "init") ? ReadExpr(e.GetProperty("init")) : null)
+                { UnionMembers = PyMCU.Common.AnnotationText.UnionMembers(Str(e, "varType")) }, e);
             case "AnnAssign":
                 return Located(new AnnAssign(Str(e, "target"), PyMCU.Common.AnnotationText.Normalize(Str(e, "annotation")),
-                    Has(e, "value") ? ReadExpr(e.GetProperty("value")) : null), e);
+                    Has(e, "value") ? ReadExpr(e.GetProperty("value")) : null)
+                { UnionMembers = PyMCU.Common.AnnotationText.UnionMembers(Str(e, "annotation")) }, e);
             case "Assign":
             {
                 var assign = new AssignStmt(ReadExpr(e.GetProperty("target"))!,

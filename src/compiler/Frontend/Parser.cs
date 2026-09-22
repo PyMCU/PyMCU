@@ -449,6 +449,7 @@ public class Parser
                 Advance();
                 typeStr += "|" + ParseTypeAnnotation();
             }
+            _lastAnnotationRaw = typeStr;
             return PyMCU.Common.AnnotationText.Normalize(typeStr);
         }
         if (Check(TokenType.String))
@@ -507,7 +508,26 @@ public class Parser
         // The spellings that mean something this compiler already has, rewritten to the
         // spelling the rest of it reads (#356, #357). The CPython bridge's reader calls the
         // same function on the same text, so the two front ends cannot drift here.
+        _lastAnnotationRaw = typeStr;
         return PyMCU.Common.AnnotationText.Normalize(typeStr);
+    }
+
+    // The raw text of the most recently parsed annotation, set by ParseTypeAnnotation's
+    // outermost return (nested union members overwrite it mid-parse, then the outer call
+    // puts the whole annotation back). Read for the union-member list Normalize erases
+    // (RFC 0009: `-> Optional[X]` returns "X" but the tag byte needs the members).
+    private string _lastAnnotationRaw = "";
+
+    /// <summary>
+    /// The union-member list of the annotation just parsed, or null when it spelled
+    /// no runtime-None union. Read-once: the raw text is cleared so a following
+    /// unannotated position cannot inherit it.
+    /// </summary>
+    private List<string>? ConsumeLastUnionMembers()
+    {
+        var members = PyMCU.Common.AnnotationText.UnionMembers(_lastAnnotationRaw);
+        _lastAnnotationRaw = "";
+        return members;
     }
 
     // Return position also accepts the parenthesized multi-value form
@@ -517,7 +537,23 @@ public class Parser
     // As in Python, `(T)` is just a parenthesized T; only a comma makes it a tuple.
     private string ParseReturnTypeAnnotation()
     {
-        if (Match(TokenType.None)) return "void";
+        // `-> None` is the void spelling. `-> None | uint8` is the same union as
+        // `uint8 | None` written the other way round (CPython accepts both), so a
+        // pipe after the None keeps reading as an annotation; without this the
+        // `|` was left on the stream and the ':' diagnostic blamed the wrong token.
+        if (Check(TokenType.None))
+        {
+            Advance();
+            if (!Check(TokenType.Pipe)) return "void";
+            string typeStr = "None";
+            while (Check(TokenType.Pipe))
+            {
+                Advance();
+                typeStr += "|" + ParseTypeAnnotation();
+            }
+            _lastAnnotationRaw = typeStr;
+            return PyMCU.Common.AnnotationText.Normalize(typeStr);
+        }
 
         if (!Check(TokenType.LParen)) return ParseTypeAnnotation();
 
@@ -537,7 +573,11 @@ public class Parser
 
         Consume(TokenType.RParen, "Expected ')' to close the return type annotation");
 
+        // `(X)` is X, so a one-element parenthesised annotation keeps the member's
+        // raw text -- `-> (Optional[int])` IS a runtime-optional return. A real
+        // tuple's member text is not the function's, and must not be.
         if (elements.Count == 1 && !sawComma) return elements[0];
+        _lastAnnotationRaw = "";
         return "tuple[" + string.Join(",", elements) + "]";
     }
 
@@ -734,9 +774,13 @@ public class Parser
         Consume(TokenType.RParen, "Expected ')' after parameters");
 
         string returnType = "void";
+        List<string>? returnMembers = null;
         if (Match(TokenType.Arrow))
         {
             returnType = ParseReturnTypeAnnotation();
+            // The member list of `-> Optional[X]` / `-> Union[X, None]` / `-> X | None`;
+            // null for a plain return annotation (RFC 0009).
+            returnMembers = ConsumeLastUnionMembers();
         }
 
         Consume(TokenType.Colon, "Expected ':' before function body");
@@ -752,6 +796,7 @@ public class Parser
 
         var func = new FunctionDef(name, parameters, returnType, body, isInline, isInterrupt, vector)
         {
+            ReturnMembers = returnMembers,
             IsClassMethod = isClassMethod,
             IsPropertyGetter = isPropertyGetter,
             IsPropertySetter = isPropertySetter,
@@ -2038,6 +2083,7 @@ public class Parser
             }
 
             string type = ParseTypeAnnotation();
+            var unionMembers = ConsumeLastUnionMembers();
 
             Expression? init = null;
             if (Match(TokenType.Equal))
@@ -2049,7 +2095,7 @@ public class Parser
 
             if (type.Contains('['))
             {
-                return new AnnAssign(name, type, init) { Line = line };
+                return new AnnAssign(name, type, init) { Line = line, UnionMembers = unionMembers };
             }
 
             // `self.field: T = value` -- a scalar type annotation on an instance
@@ -2064,7 +2110,7 @@ public class Parser
                 return new AssignStmt(expr, init!) { Line = line, AnnotatedType = type };
             }
 
-            return new VarDecl(name, type, init) { Line = line };
+            return new VarDecl(name, type, init) { Line = line, UnionMembers = unionMembers };
         }
 
         if (Match(TokenType.Equal))

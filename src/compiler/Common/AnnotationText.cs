@@ -115,6 +115,47 @@ public static class AnnotationText
         return BufferNames.Contains(bare) ? "bytearray" : annotation;
     }
 
+    /// <summary>
+    /// The member list when <paramref name="annotation"/> spells a union that can
+    /// hold None at run time: the real members in written order, normalized, with
+    /// "None" appended last -- [payload, "None"] for `Optional[X]`, `Union[X, None]`
+    /// and `X | None` in any order. Null for a plain annotation, for a union of real
+    /// types only (which keeps the refusal it has), and for `Optional[None]`
+    /// (degenerate -- no payload member). RFC 0009: Normalize keeps answering the
+    /// payload type while this answers the members the tag byte encodes.
+    /// </summary>
+    public static List<string>? UnionMembers(string? annotation)
+    {
+        if (string.IsNullOrEmpty(annotation)) return null;
+
+        if (TopLevelPipeMembers(annotation) is { } pipeMembers)
+        {
+            var pipeKept = pipeMembers.Where(m => !IsNoneName(m))
+                .Select(m => Normalize(m.Trim())).ToList();
+            if (pipeKept.Count == 0 || pipeKept.Count == pipeMembers.Count) return null;
+            pipeKept.Add("None");
+            return pipeKept;
+        }
+
+        int lb = annotation.IndexOf('[');
+        if (lb < 0 || !annotation.EndsWith("]", StringComparison.Ordinal)) return null;
+        string head = annotation[..lb];
+        string bare = head[(head.LastIndexOf('.') + 1)..];
+        if (bare is not ("Optional" or "Union")) return null;
+
+        var members = SplitTopLevel(annotation[(lb + 1)..^1])
+            .Select(m => m.Trim()).Where(m => m.Length > 0).ToList();
+        var kept = members.Where(m => !IsNoneName(m)).Select(Normalize).ToList();
+        // `Optional[X]` carries its None implicitly -- the name IS the union -- so no
+        // member has to be dropped for it to be one. `Union[...]` has to spell the
+        // None, and a Union of real types only keeps its refusal.
+        if (kept.Count == 0) return null;
+        if (bare == "Union" && kept.Count == members.Count) return null;
+        if (bare == "Optional" && kept.Count != 1) return null;
+        kept.Add("None");
+        return kept;
+    }
+
     /// <summary>Whether an annotation member names None (or the void spelling of it).</summary>
     private static bool IsNoneName(string member)
     {
