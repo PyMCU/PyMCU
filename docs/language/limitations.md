@@ -89,7 +89,9 @@ except a `bytearray(n)` that the compiler can prove allocates at most once, abov
 | `str[i]` on a runtime string | No runtime string object | Use `const[str]` parameters |
 
 **Supported:** String literals in flash, raw strings `r"\n"`, `uart.println("literal")`,
-`for ch in "ABC":` (compile-time unroll), `const[str]` runtime subscript (reads byte from
+`for ch in "ABC":` and `for i, ch in enumerate("ABC")` (eight characters or fewer unroll
+at compile time; a longer string runs a counter loop over its flash copy and `ch` is a
+runtime `uint8` `ord()` accepts), `const[str]` runtime subscript (reads byte from
 flash), and **runtime f-strings streamed directly to a sink** — see below.
 
 A name bound to one compile-time text — a literal, a module constant, or a parameter that
@@ -883,7 +885,7 @@ never parks.
 | `abs(x)` | ✅ Supported | Intrinsic |
 | `min(a, b)` / `max(a, b)` | ✅ Supported | Intrinsic. Also over a fixed-size array, and with `key=f`: the key is called once per operand and the winner is the original value, not its key |
 | `sum(iterable)` | ✅ Supported | Compile-time fold or unrolled additions |
-| `enumerate(iterable)` | ✅ Supported | Compile-time index counter over constant sequences, `range()`, and fixed-size arrays -- including a buffer reached through inline parameter bindings or a `bytes([expr])` argument whose elements are run-time |
+| `enumerate(iterable)` | ✅ Supported | Compile-time index counter over constant sequences, `range()`, and fixed-size arrays -- including a buffer reached through inline parameter bindings or a `bytes([expr])` argument whose elements are run-time. Over a compile-time string it iterates the characters: eight or fewer unroll, a longer string runs a counter loop over the flash copy |
 | `zip(a, b)` | ✅ Supported | Compile-time unroll over constant lists |
 | `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
 | `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold; a generator expression argument unrolls the same way (`all(0 <= c <= 255 for c in val)`, adafruit_pixelbuf) and short-circuits like CPython -- the iterable's length must be compile-time known |

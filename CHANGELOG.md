@@ -43,6 +43,14 @@ purpose, as opposed to bugs like these three that were silent until found.
   for `__mod32` too, because the build splices whole assembly files and both lived in
   `div32.S`; the modulo wrapper now sits in its own `mod32.S`. Measured on the HC-SR04
   probe (`us * 17 // 100`): 952 bytes before, 888 after (#408).
+- A `bytearray(...)` whose size folds at compile time no longer reserves the arena. The
+  driver used to scan the source text for a `bytearray(` call and reserve the board-default
+  256 bytes of SRAM whenever the argument did not look literal, so
+  `adafruit_ssd1306`'s `self.buffer = bytearray(((height // 8) * width) + 1)` -- which folds
+  to a fixed 513-byte array -- printed `Arena: reserved 256 B` and paid it on a 2 KB part.
+  The compiler now reports on its own output whether an arena allocation actually lowered,
+  and the driver stages the allocator only then; a foldable size reserves nothing, and a
+  genuinely runtime-sized `bytearray(n)` keeps its reservation and the arena shim.
 
 ### Silent wrong code
 - A `return None` on a path the program can reach, in a function declared `-> X` and
@@ -352,6 +360,14 @@ purpose, as opposed to bugs like these three that were silent until found.
   refused naming the reason, because a runtime split needs a heap to hold the pieces.
   `split()` in a value position is refused: there is no list to hand back. This is the
   loop `adafruit_framebuf.FrameBuffer.text()` wraps each line in.
+- `for i, ch in enumerate(s)` over one compile-time string iterates its characters at
+  any length. Eight or fewer still unroll to the same compile-time `(index, char)`
+  pairs as before; a longer string used to refuse with "past the 8 cap" and now runs a
+  counter loop over the string's interned flash copy, the same lowering `for ch in s`
+  already took past its own cap. `ch` arrives as a runtime `uint8` char code that
+  `ord()` and font-table arithmetic accept unchanged, and `len(s)` / `s[i]` inside the
+  body still fold. This is the inner loop `text()` runs per line, so a
+  `display.text()` line longer than eight characters compiles unmodified.
 - The pure methods on a compile-time string fold where the program is compiled:
   `s.strip()` / `lstrip()` / `rstrip()` (optional chars argument), `s.index()` /
   `s.find()` (a miss raises a catchable `ValueError` / answers -1),
@@ -811,6 +827,8 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **compiler**: a buffer parameter carries its own length in library mode
 - **driver**: `pymcu monitor` is a serial console -- UART to stdout, stdin to the board, no pyserial on POSIX
 - **pic14**: IEEE-754 soft-float -- the eight __fp_* routines PIC14CodeGen emits calls into
+- **ir**: enumerate() past the unroll cap iterates a compile-time string's flash copy
+- **ir**: the compile's stdout reports whether the arena is needed and used
 
 ### Fixed
 
@@ -1186,6 +1204,9 @@ purpose, as opposed to bugs like these three that were silent until found.
   bytearray((1, 2)) tripped the runtime-size scan into injecting pymcu.arena
   (two uint16 globals plus the SRAM reservation) for a program that never
   allocates at run time; the false positive dates to 91c57e5b
+- **ir**: a same-depth expansion's multi-text mark is callee-local too
+- **driver**: the compiler says whether the program uses the arena, so a
+  foldable bytearray size reserves nothing
 
 ### Performance
 
@@ -1284,6 +1305,8 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **oracle**: document the language-surface sweep (probes 121-178, new bugs, frontend-scoped headers)
 - **driver**: the dropped-export refusal cites the defect it most often means
 - document `pymcu natmod` in the driver CLI reference
+- enumerate() over a compile-time string past the unroll cap, in the roadmaps,
+  limitations and changelog
 
 ### Tests
 
@@ -1424,6 +1447,7 @@ purpose, as opposed to bugs like these three that were silent until found.
 - **ir**: pin --library rooting and the hidden buffer length
 - **ir**: pin the library-export boundary sentence, both spellings
 - **driver**: the natmod signature conversion and generated adapter
+- **ir**: pin enumerate() over a long string reading the flash copy
 
 ### CI
 
