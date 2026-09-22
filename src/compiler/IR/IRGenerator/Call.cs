@@ -478,9 +478,23 @@ public partial class IRGenerator
                                         ? VisitExpression(memC.Object)
                                         : VisitExpression(new MemberAccessExpr(memC.Object, fld)));
                             }
-                            foreach (var a in expr.Args)
+                            // Keyword arguments bind against the DECLARED parameter list
+                            // (everything after `self`), never the synthesized self_<field>
+                            // prefix this dispatch prepends -- `o.writeto(a, buf, start=1)`
+                            // binds `start` like the @inline path does. busio.I2C.writeto is
+                            // the shape: `writeto(addr, buf, start=s, end=e)`.
+                            var userArgs = expr.Args;
+                            if (userArgs.Any(a => a is KeywordArgExpr)
+                                && methodAstByName.TryGetValue(callee, out var declFunc))
                             {
-                                Val av = TryEvalInlineBufferArg(a) ?? VisitExpression(a);
+                                userArgs = ReorderCallArgs(userArgs, callee, memC,
+                                    declFunc.Params.Skip(1).Select(p => p.Name).ToList(),
+                                    declFunc.Params.Skip(1).Select(p => p.DefaultValue).ToList());
+                            }
+                            foreach (var a in userArgs)
+                            {
+                                Val av = TryEvalInlineBufferArg(a)
+                                    ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
                                 if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
                                 oArgs.Add(av);
                             }
@@ -930,14 +944,17 @@ public partial class IRGenerator
         return false;
     }
 
-    private List<Expression> ReorderCallArgs(List<Expression> args, string callee, ASTNode? at)
+    private List<Expression> ReorderCallArgs(List<Expression> args, string callee, ASTNode? at,
+        List<string>? paramNamesOverride = null, List<Expression?>? defaultsOverride = null)
     {
         if (!args.Any(a => a is KeywordArgExpr)) return args;
 
         // Look up the callee's parameter names, trying the module-mangled form too
-        // (a dotted "mod.fn" is stored as "mod_fn").
-        List<string>? paramNames = null;
-        if (!functionParams.TryGetValue(callee, out paramNames))
+        // (a dotted "mod.fn" is stored as "mod_fn"). An outlined method's registered
+        // parameter list leads with the synthesized self_<field> slots, so that path
+        // passes the DECLARED names in instead.
+        List<string>? paramNames = paramNamesOverride;
+        if (paramNames == null && !functionParams.TryGetValue(callee, out paramNames))
         {
             int dot = callee.IndexOf('.');
             if (dot != -1)
@@ -972,7 +989,8 @@ public partial class IRGenerator
         for (int i = 0; i < paramNames.Count; i++)
             if (byName.ContainsKey(paramNames[i])) lastIdx = Math.Max(lastIdx, i);
 
-        functionParamDefaults.TryGetValue(callee, out var defaults);
+        var defaults = defaultsOverride;
+        if (defaults == null) functionParamDefaults.TryGetValue(callee, out defaults);
         var ordered = new List<Expression>();
         for (int i = 0; i <= lastIdx; i++)
         {
@@ -1258,8 +1276,20 @@ public partial class IRGenerator
                 argValuesL.Add(bufferArg);
                 continue;
             }
+            if (TryEvalLiteralBufferArg(arg) is { } literalArg)
+            {
+                argValuesL.Add(literalArg);
+                continue;
+            }
 
-            argValuesL.Add(VisitExpression(arg));
+            Val argEvaluated = VisitExpression(arg);
+            // A field holding a fixed array reaches here through an inline binding as a
+            // Variable naming the storage (`self.temp` -> `buf` -> the array's flat var).
+            // Copying that Variable hands the callee the array's first byte where it needs
+            // the base address, so marshal the base -- exactly like the bare-name branch.
+            if (argEvaluated is Variable argArrayVar && arraySizes.ContainsKey(argArrayVar.Name))
+                argEvaluated = new ArrayBase(argArrayVar.Name);
+            argValuesL.Add(argEvaluated);
         }
 
         int dotPos2 = callee.IndexOf('.');
@@ -4202,7 +4232,8 @@ public partial class IRGenerator
         Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr)); // base + i*stride
 
         var iaArgs = new List<Val> { elemAddr };
-        foreach (var a in expr.Args) iaArgs.Add(TryEvalInlineBufferArg(a) ?? VisitExpression(a));
+        foreach (var a in expr.Args)
+            iaArgs.Add(TryEvalInlineBufferArg(a) ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a));
 
         bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
                       || iaRt == "void" || iaRt == "None";
@@ -4239,6 +4270,47 @@ public partial class IRGenerator
         return new ArrayBase(hiddenQualified);
     }
 
+    // `f(b"ab")` / `o.m(b"")`: a bytes literal (which parses to a ListExpr) written
+    // INLINE as a call argument to a real subroutine -- the same hole #380 closed for
+    // `bytearray(...)`, one spelling earlier. A literal bound by name keeps its
+    // compile-time sequence, but a subroutine needs an addressable buffer, so give the
+    // argument the same hidden `bytes(...)` binding a named local gets and pass its
+    // base. Inline callees bind the literal's elements by name and never reach this
+    // path, so their `enumerate(param)` unrolling is untouched.
+    private Val? TryEvalLiteralBufferArg(Expression arg)
+    {
+        if (arg is not ListExpr lit) return null;
+        string hiddenName = $"__inline_bytes_arg{tempCounter++}";
+        if (lit.Elements.Count == 0)
+        {
+            // b"": no elements means no storage through the VarDecl path, but the
+            // callee still needs a base address it never dereferences -- one byte of
+            // placeholder storage so the label exists.
+            string emptyQ = (!string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix
+                : currentFunction + ".") + hiddenName;
+            arrayElemTypes[emptyQ] = DataType.UINT8;
+            variableTypes[emptyQ] = DataType.UINT8;
+            arraySizes[emptyQ] = 0;
+            Emit(new ArrayStore(emptyQ, new Constant(0), new Constant(0), DataType.UINT8, 1));
+            return new ArrayBase(emptyQ);
+        }
+        VisitVarDecl(new VarDecl(hiddenName, "bytes",
+            new CallExpr(new VariableExpr("bytes"), new List<Expression> { lit })
+                { Line = lit.Line })
+            { Line = lit.Line });
+        string hiddenQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix
+            : currentFunction + ".") + hiddenName;
+        if (!arraySizes.ContainsKey(hiddenQualified))
+        {
+            string altHQ = currentModulePrefix + hiddenName;
+            if (arraySizes.ContainsKey(altHQ)) hiddenQualified = altHQ;
+            else if (arraySizes.ContainsKey(hiddenName)) hiddenQualified = hiddenName;
+        }
+        return new ArrayBase(hiddenQualified);
+    }
+
     // `self.method(args)` inside an outlined method: call the sibling outlined method,
     // forwarding this method's own self — the slot pointer (Model B) or the field params
     // (Model A). Keeps the call a shared subroutine instead of force-inlining the whole
@@ -4261,7 +4333,8 @@ public partial class IRGenerator
             foreach (var (fld, ty, _) in outlineFieldLayout[currentFunction])
                 fwdArgs.Add(new Variable(currentFunction + ".self_" + fld,
                     DataTypeExtensions.StringToDataType(ty)));
-        foreach (var a in expr.Args) fwdArgs.Add(TryEvalInlineBufferArg(a) ?? VisitExpression(a));
+        foreach (var a in expr.Args)
+            fwdArgs.Add(TryEvalInlineBufferArg(a) ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a));
 
         // RFC 0001 (write-back), sibling case: the callee is a mutator that returns its
         // updated field because Model A passes the field BY VALUE. This method's own copy
@@ -7048,6 +7121,21 @@ public partial class IRGenerator
             foreach (var k in functionReturnTypes.Keys)
                 if (k.EndsWith("uart_write_float_fmt", StringComparison.Ordinal)) { fn = k; break; }
         return fn;
+    }
+
+    /// The minimal hex writer behind a bare `{x:x}` raise-message piece. uart_write_fmt
+    /// answers the same spec but carries the generic radix loop and the 32-bit division
+    /// helpers (~900 bytes on AVR); the exception line is the wrong place to spend that.
+    /// Returns null when the console module was never imported (no writer to call).
+    private string? ResolveHexFn()
+    {
+        string fn = ResolveCallee("uart_write_hex");
+        if (fn != "uart_write_hex") return fn;
+        foreach (var k in functionReturnTypes.Keys)
+            if (k.EndsWith("uart_write_hex", StringComparison.Ordinal)) return k;
+        foreach (var k in functionParams.Keys)
+            if (k.EndsWith("uart_write_hex", StringComparison.Ordinal)) return k;
+        return null;
     }
 
     // Parse the supported f-string format-spec subset: [0][width][type], type in d/x/X/b/o (c is

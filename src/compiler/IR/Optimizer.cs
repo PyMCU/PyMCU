@@ -3163,6 +3163,49 @@ private static Function CloneFunction(Function f)
         return idx < types.Count ? types[idx] : DataType.UNKNOWN;
     }
 
+    // Is the parameter at position `idx` of `callee` an address -- used as a
+    // bytearray load/store base or an indirect pointer, directly or by being
+    // forwarded to another pointer parameter? The declared Variable tag cannot
+    // answer this: a bytearray field's flat var records the element type (u8),
+    // not the address width, so the only truthful signal is how the body uses it.
+    // `memo` memoizes by callee/index; `visiting` guards the forwarding recursion.
+    private static bool CalleeParamIsPointer(
+        ProgramIR program, string callee, int idx, Dictionary<string, bool> memo,
+        HashSet<string>? visiting = null)
+    {
+        string key = callee + "/" + idx;
+        if (memo.TryGetValue(key, out bool memoized)) return memoized;
+        var f = program.Functions.FirstOrDefault(x => x.Name == callee);
+        if (f == null || idx >= f.Params.Count) { memo[key] = false; return false; }
+        string pn = f.Params[idx];
+        visiting ??= new HashSet<string>();
+        if (!visiting.Add(key)) return false;              // cycle: not provably a pointer
+        bool result = false;
+        foreach (var ins in f.Body)
+        {
+            bool direct = ins switch
+            {
+                BytearrayLoad bl => bl.PtrName == pn,
+                BytearrayStore bs => bs.PtrName == pn,
+                LoadIndirect li => NameOf(li.SrcPtr) == pn,
+                StoreIndirect si => NameOf(si.DstPtr) == pn,
+                _ => false,
+            };
+            if (direct) { result = true; break; }
+            // Forwarded: the param is passed positionally to another callee whose
+            // matching parameter is itself a pointer.
+            if (ins is Call cl)
+                for (int a = 0; a < cl.Args.Count; a++)
+                    if (NameOf(cl.Args[a]) == pn
+                        && CalleeParamIsPointer(program, cl.FunctionName, a, memo, visiting))
+                    { result = true; break; }
+            if (result) break;
+        }
+        visiting.Remove(key);
+        memo[key] = result;
+        return result;
+    }
+
     // Target-agnostic word-cost proxy for the size guard. A call is a long
     // (2-word) instruction plus one setup instruction per argument, and every
     // absolute-address memory operand costs an extra word (LDS/STS on AVR, a
@@ -3258,6 +3301,36 @@ private static Function CloneFunction(Function f)
             if (n == null) return false;
             inputParamIndex[n] = i;
         }
+        // Each input's parameter width. A live-in that carries an address -- used as a
+        // bytearray/indirect pointer base, or passed on to a pointer-typed callee
+        // parameter -- must stay pointer-wide even when its own Variable tag says u8:
+        // a bytearray instance field's flat var records the element type, and typing the
+        // parameter u8 made the call site marshal only the low address byte, so the
+        // subroutine dereferenced 0x00xx. Seen as `i2c.writeto` writing 0x00 0x00 for a
+        // bytearray field's real contents (the SSD1306 init stream).
+        var inputTypes = new DataType[nInputs];
+        var ptrMemo = new Dictionary<string, bool>();
+        for (int i = 0; i < nInputs; i++)
+        {
+            inputTypes[i] = GetDataType(r0.InputVals[i]);
+            string? n = inputNames[i];
+            if (n == null) continue;
+            foreach (var ins in r0.Core)
+            {
+                bool ptr = ins switch
+                {
+                    BytearrayLoad bl => bl.PtrName == n,
+                    BytearrayStore bs => bs.PtrName == n,
+                    LoadIndirect li => NameOf(li.SrcPtr) == n,
+                    StoreIndirect si => NameOf(si.DstPtr) == n,
+                    Call cl => cl.Args.Select((a, ai) => (a, ai))
+                        .Any(x => NameOf(x.a) == n
+                                  && CalleeParamIsPointer(program, cl.FunctionName, x.ai, ptrMemo)),
+                    _ => false,
+                };
+                if (ptr) { inputTypes[i] = DataTypeExtensions.StringToDataType("bytearray"); break; }
+            }
+        }
         var variantParamIndexOf = new Dictionary<int, int>();
         var finalHoleTypes = new DataType[nHoles];
         for (int k = 0; k < nHoles; k++) finalHoleTypes[k] = r0.HoleTypes[k];
@@ -3290,7 +3363,7 @@ private static Function CloneFunction(Function f)
         int ctr = 0;
         foreach (var ins in r0.Core)
             g.Body.Add(RebuildOutlined(ins, gName, r0.Rename, r0.LabelRename,
-                inputParamIndex, nInputs,
+                inputParamIndex, nInputs, inputTypes,
                 variantSet, variantParamIndexOf, finalHoleTypes, ref ctr));
         if (retVal == null) g.Body.Add(new Return(new NoneVal()));
         program.Functions.Add(g);
@@ -3316,7 +3389,7 @@ private static Function CloneFunction(Function f)
     private static Instruction RebuildOutlined(
         Instruction ins, string gName, Dictionary<string, int> rename,
         Dictionary<string, int> labelRename,
-        Dictionary<string, int> inputParamIndex, int nInputs,
+        Dictionary<string, int> inputParamIndex, int nInputs, DataType[] inputTypes,
         HashSet<int> variantSet, Dictionary<int, int> variantParamIndexOf,
         DataType[] holeTypes, ref int ctr)
     {
@@ -3349,7 +3422,7 @@ private static Function CloneFunction(Function f)
             if (n == null || !rename.ContainsKey(n)) return v;             // global / none / mem
             DataType ty = GetDataType(v);
             if (inputParamIndex.TryGetValue(n, out int pi))
-                return new Variable(gName + ".p" + pi, ty);                // live-in parameter
+                return new Variable(gName + ".p" + pi, pi < inputTypes.Length ? inputTypes[pi] : ty);
             return v is Temporary ? new Temporary(gName + ".v" + rename[n], ty)
                                   : new Variable(gName + ".v" + rename[n], ty);
         }
