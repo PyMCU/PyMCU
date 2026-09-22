@@ -1,5 +1,27 @@
 # Changelog — pymcu-compiler / pymcu-stdlib
 
+## Unreleased
+
+### Fixed
+
+- **hal/avr**: `I2C.writebyte()` returned nothing, so a NACKed transaction was invisible
+  to the caller. It now returns `1` on success, the failing TWI status (`0x20`/`0x30`) on
+  a NACK and `0xFF` on a bus timeout, with an early STOP — the same contract
+  `write_to()` already had. Every status-returning I2C method is `@inline`, so a caller
+  that ignores the result compiles to the same bytes as before; only a caller that reads
+  the status pays for the check.
+- **ir/avr**: an unhandled exception reported `E:<TypeName>` on UART0 and dropped the
+  message the raise carried. The report is now `E:<TypeName>: <message>` when the raise
+  had one — literal messages and deferred ones (f-string, concatenation, call) alike —
+  so `machine.I2C`'s `OSError("[Errno 5] EIO")` and `adafruit_bus_device`'s
+  `ValueError("No I2C device at address: 0x3c")` are visible when they kill a program.
+  The message printer and its tail are emitted only when a *reachable* raise stores a
+  message: a program that merely imports a module containing `raise X("...")` — say
+  `busio` — does not grow, and a program with no message raise at all is byte-identical.
+- **driver**: the UART preamble is injected when the program reports a raise with a
+  message, not only when it calls `print()` — an unhandled raise reports on UART0 even in
+  a program that never prints.
+
 ## 0.1.0b1 (Unreleased, prepared 2026-09-15)
 
 Beta 1 covers the frontend (parser, IR, diagnostics) and the AVR backend as a

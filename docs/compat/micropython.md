@@ -405,7 +405,11 @@ n: uint8 = i2c.readfrom_into(0x48, buf)  # read len(buf) bytes; returns 1=ok, 0=
 | `writeto(addr, data)` | `(addr: uint8, data: uint8)` | Write one byte to address |
 | `writeto(addr, buf)` | `(addr: uint8, buf: bytearray)` | Write `len(buf)` bytes from buffer to address |
 | `readfrom(addr)` | `(addr: uint8) -> uint8` | Read one byte from address |
-| `readfrom_into(addr, buf)` | `(addr: uint8, buf: bytearray) -> uint8` | Read `len(buf)` bytes into buffer; returns 1 on ACK, 0 on NACK |
+| `readfrom_into(addr, buf)` | `(addr: uint8, buf: bytearray) -> uint8` | Read `len(buf)` bytes into buffer |
+
+A transaction that is NACKed — a failed START, an unanswered address or a refused data
+byte — raises `OSError("[Errno 5] EIO")`, the message the MicroPython ports print. The bus
+is stopped before the raise. `machine.SoftI2C` raises the same way on its bit-banged bus.
 
 :::{note}
 `scan()` returns a device *count* rather than a list of addresses — returning a `list[uint8]`

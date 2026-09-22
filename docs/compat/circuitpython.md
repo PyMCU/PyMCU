@@ -241,12 +241,18 @@ It used to compile to nothing, so the scan found nothing and said nothing.
 | Method | Behaviour |
 |---|---|
 | `probe(addr) -> int` | 1 if a device acknowledges at `addr` |
-| `writeto(addr, buf, start, end)` | Write the slice |
-| `readfrom_into(addr, buf, start, end)` | Read into the slice, NACK on the last byte |
-| `writeto_then_readfrom(addr, out, in, ...)` | Repeated-start write then read |
+| `writeto(addr, buf, start, end)` | Write the slice; `OSError` on a NACK |
+| `readfrom_into(addr, buf, start, end)` | Read into the slice, NACK on the last byte; `OSError` on a NACK |
+| `writeto_then_readfrom(addr, out, in, ...)` | Repeated-start write then read; `OSError` on a NACK |
 | `frequency` | The SCL rate actually clocked |
 | `try_lock()` / `unlock()` | Bus locking (single controller on AVR) |
 | `scan()` | Refused at build time, naming `probe` |
+
+A failed transaction raises `OSError` with upstream's messages: `[Errno 19] No such device`
+when the address is NACKed, `[Errno 5] Input/output error` when START or a data byte fails.
+STOP is sent before the raise. This is what `adafruit_bus_device.I2CDevice` expects — it
+catches the `OSError`, retries once, and converts a missing device into
+`ValueError("No I2C device at address: 0x3c")`. `bitbangio.I2C` follows the same contract.
 
 :::{note}
 Hardware I2C on the ATmega328P uses fixed pins: SCL = PC5 (A5), SDA = PC4 (A4).
