@@ -49,14 +49,17 @@ public class NoneBoundLocalWidenTests
             "def main():\n" +
             "    write(buf)\n");
 
-        ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
-            .Where(c => c.Src is Constant k && k.Value == 513)
-            .Select(c => c.Dst).OfType<Variable>()
-            .Should().Contain(v => v.Name.EndsWith(".end") && v.Type == DataType.UINT16,
-                because: "513 does not fit in a byte; the copy must land in a widened variable");
-        ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
-            .Where(c => c.Dst is Variable v
-                    && v.Name.EndsWith(".end") && c.Src is Constant k && k.Value == 1)
+        // `end` provably holds 513 at the loop, so FoldedOperand folds the comparison
+        // operand and the store is dead code the optimizer strips. What the test still
+        // pins is the VALUE the loop compares against: the wrap the widening fixed would
+        // show up here as a bound of 1 (513 & 0xFF).
+        ir.Functions.SelectMany(f => f.Body).OfType<JumpIfGreaterOrEqual>()
+            .Where(j => j.Src2 is Constant)
+            .Select(j => ((Constant)j.Src2).Value)
+            .Should().Contain(513,
+                because: "513 does not fit in a byte; the folded loop bound must keep its width");
+        ir.Functions.SelectMany(f => f.Body).OfType<JumpIfGreaterOrEqual>()
+            .Where(j => j.Src2 is Constant k && k.Value == 1)
             .Should().BeEmpty(
                 because: "513 & 0xFF == 1 is the wrap this fix removes");
     }
@@ -73,10 +76,12 @@ public class NoneBoundLocalWidenTests
             "        GPIOR0.value = i\n" +
             "        i = i + 1\n");
 
-        ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
-            .Where(c => c.Src is Constant k && k.Value == 513)
-            .Select(c => c.Dst).OfType<Variable>()
-            .Should().Contain(v => v.Type == DataType.UINT16,
+        // Same here: the fold makes the widened store dead, so the assertion is on the
+        // folded comparison operand, which must be the full 513 -- not its low byte.
+        ir.Functions.SelectMany(f => f.Body).OfType<JumpIfGreaterOrEqual>()
+            .Where(j => j.Src2 is Constant)
+            .Select(j => ((Constant)j.Src2).Value)
+            .Should().Contain(513,
                 because: "the plain none-valued rebinding path had the same UNKNOWN-width gap");
     }
 }

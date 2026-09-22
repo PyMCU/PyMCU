@@ -83,6 +83,14 @@ public partial class IRGenerator
     /// </summary>
     private Val FoldedOperand(Val v)
     {
+        // A function-local last assigned a compile-time value -- `dot = s.find(".")`
+        // binds -1 -- reaches here as its storage Variable, and the comparison has to
+        // be decided on the value the name provably holds. localConstantValues is
+        // reconciled at every join to the entry all arms agree on, so a hit IS the
+        // run-time value; a miss answers as before (adafruit_ht16k33's `if dot < 0`,
+        // where the unfollowed arm slices a compile-time string by dot).
+        if (v is Variable fv && localConstantValues.TryGetValue(fv.Name, out int lcv))
+            return new Constant(lcv);
         if (v is not Temporary t) return v;
         if (!TryFoldedConstant(t, out int value)) return v;
         strConstantVariables.TryGetValue(t.Name, out string? text);
