@@ -63,6 +63,20 @@ public class InlineContext
     // by a trailing `return "PD2"` still a compile-time "PB5" when n is 13.
     public bool ResultReturnedUnconditionally { get; set; }
 
+    // The body's deciding return produced None (`return None` or a bare `return`, no value
+    // return on any reachable path before it). The call's value is then a compile-time None:
+    // the typed ResultTemp is only a formality of the declared `Optional[float]`, and the
+    // `Copy(NoneVal)` into it leaves the slot holding whatever a previous temp left behind --
+    // `print(s.angle)` on a disabled servo read that residue and wrote 180.0. A value return
+    // under a run-time condition keeps the slot instead: the union has no tag.
+    public bool ResultIsNone { get; set; }
+
+    // The deciding return produced a live call result (`return f()` where f is a
+    // void-declared real call whose value is in the return register). The expansion's
+    // result is that same channel: `print(g())` for `def g(): return f()` reads f's
+    // R24:R25, which is still live -- nothing ran between the two calls.
+    public bool ResultIsLiveCall { get; set; }
+
     // The inline name-prefix active inside this expansion's body (e.g. "inline1.outer.").
     // Used to resolve a free variable captured from an enclosing INLINE scope.
     public string Prefix { get; set; } = "";

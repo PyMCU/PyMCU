@@ -1368,6 +1368,30 @@ public partial class IRGenerator
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
 
+        // `obj.prop = None` is the disable idiom these properties use, and a later read --
+        // or a dependent getter's `self.prop is None` -- must see it. The setter body can
+        // write the backing field through a call that makes it runtime (killedConstants),
+        // after which the getter's `field == 0` is a real branch and its result a union
+        // the result slot cannot tag: the mark is the only compile-time record that the
+        // property now holds None. Recorded only after the body completes, so a `raise`
+        // inside the setter unwinds past this point and keeps the property's prior state.
+        //
+        // A non-None write clears the mark of EVERY property on the instance, not just the
+        // one written: siblings derive from shared state (`s.fraction = 0.5` re-derives
+        // `s.angle`), and the write may have changed what any getter returns. Field marks
+        // stay -- a field read is the field's storage, not a computation over it.
+        string propNoneKey = @base + "_" + memTarget.Member;
+        if (argVal is NoneVal)
+        {
+            noneValuedNames.Add(propNoneKey);
+        }
+        else
+        {
+            foreach (string pm in PropertyMembersOf(cls))
+                noneValuedNames.Remove(@base + "_" + pm);
+            noneValuedNames.Remove(propNoneKey);
+        }
+
         inlineDepth--;
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedModulePrefix;
@@ -1399,6 +1423,29 @@ public partial class IRGenerator
             current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Every member name registered as a @property (getter or setter) on
+    /// <paramref name="cls"/> or an ancestor. A write to one can re-derive what the
+    /// others read (`s.fraction` and `s.angle` share the duty-cycle state), which is
+    /// what a successful non-None setter call invalidates against.
+    /// </summary>
+    private IEnumerable<string> PropertyMembersOf(string cls)
+    {
+        string? current = cls;
+        for (int depth = 0; current != null && depth < 32; depth++)
+        {
+            string prefix = current + ".";
+            foreach (var key in propertyGetters)
+                if (key.StartsWith(prefix)) yield return key[prefix.Length..];
+            foreach (var key in propertySetters.Keys)
+                if (key.StartsWith(prefix)) yield return key[prefix.Length..];
+            if (!classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                || string.IsNullOrEmpty(parentPrefix))
+                break;
+            current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+        }
     }
 
     // `x = value` to a plain (scalar) variable target: type/alias resolution, constant

@@ -573,7 +573,7 @@ public partial class IRGenerator
                                 killedConstants.Add(fieldVar);
                                 variableTypes[fieldVar] = wb.Type;
                                 InvalidateFieldsWrittenByCall(callee, instName);
-                                return new NoneVal();
+                                return new NoneVal(LiveCallResult: true);
                             }
 
                             bool rVoid = !functionReturnTypes.TryGetValue(callee, out var rt)
@@ -582,7 +582,7 @@ public partial class IRGenerator
                             {
                                 Emit(new Call(callee, oArgs, new NoneVal()));
                                 InvalidateFieldsWrittenByCall(callee, instName);
-                                return new NoneVal();
+                                return new NoneVal(LiveCallResult: true);
                             }
 
                             Temporary oDst = MakeTemp(DataTypeExtensions.StringToDataType(
@@ -1541,7 +1541,7 @@ public partial class IRGenerator
         if (returnsVoidEnd)
         {
             Emit(new Call(callee, argValuesL, new NoneVal()));
-            return new NoneVal();
+            return new NoneVal(LiveCallResult: true);
         }
 
         // Type the result temp with the callee's declared return type. Defaulting to uint8 lost
@@ -3165,6 +3165,18 @@ public partial class IRGenerator
             return new Variable(retBufKey, arrayElemTypes.TryGetValue(retBufKey, out var retBufEt)
                 ? retBufEt : DataType.UINT8);
 
+        // Every reachable return produced None (`duty_cycle == 0` folded and `return None`
+        // ended the getter, the `return <expr>` under it dead): hand back NoneVal, not the
+        // declared-type slot -- `x.prop is None` and `print(x.prop)` must see the None, and
+        // the slot only holds residue from whatever temporary used it last. A `return f()`
+        // on a void-declared call propagates the live return-register channel instead.
+        // An Optional-annotated callee is exempt: its answer lives in the tag temp the
+        // MarkOptional below reads, and a bare NoneVal here would skip the tag and let a
+        // provable-None result store into an untagged slot without the narrow-it refusal.
+        if (finishedCtx.ResultTagTemp == null && finishedCtx.ResultIsNone) return new NoneVal();
+        if (finishedCtx.ResultTagTemp == null && finishedCtx.ResultIsLiveCall)
+            return new NoneVal(LiveCallResult: true);
+
         // RFC 0009: the expansion's tag temp is the call result's tag. Mark the result a
         // live optional only when a reached return can actually report None -- an expansion
         // whose None arms all folded away keeps the compile-time answer it always had.
@@ -4043,7 +4055,10 @@ public partial class IRGenerator
         // to its own now-stale `null` copy instead. `super().describe() + self.extra` read
         // None for the base call on every instance, constant-argument or not: `describe()`
         // has no annotation regardless of what built the receiver (#430).
-        return superCtx.ResultTemp ?? (Val)new NoneVal();
+        return superCtx.ResultTagTemp == null && superCtx.ResultIsNone ? new NoneVal()
+            : superCtx.ResultTagTemp == null && superCtx.ResultIsLiveCall
+                ? new NoneVal(LiveCallResult: true)
+            : superCtx.ResultTemp ?? (Val)new NoneVal();
     }
 
     // RFC 0001 Model B (Class[N]): `arr[i].method(args)` — compute the element address
@@ -4431,7 +4446,7 @@ public partial class IRGenerator
         if (iaVoid)
         {
             Emit(new Call(iaMethod, iaArgs, new NoneVal()));
-            return new NoneVal();
+            return new NoneVal(LiveCallResult: true);
         }
         Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
         EmitMaybeTaggedCall(iaMethod, iaArgs, iaDst);
@@ -4539,12 +4554,12 @@ public partial class IRGenerator
             Temporary swDst = MakeTemp(swb.Type);
             Emit(new Call(target, fwdArgs, swDst));
             Emit(new Copy(swDst, new Variable(currentFunction + ".self_" + swb.Field, swb.Type)));
-            return new NoneVal();
+            return new NoneVal(LiveCallResult: true);
         }
 
         bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
                      || tRt == "void" || tRt == "None";
-        if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(); }
+        if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(LiveCallResult: true); }
         Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
         EmitMaybeTaggedCall(target, fwdArgs, tDst);
         return tDst;
@@ -4646,7 +4661,7 @@ public partial class IRGenerator
             var indArgs = new List<Val>();
             foreach (var a in expr.Args)
                 indArgs.Add(VisitExpression(a));
-            Val indDst = new NoneVal();
+            Val indDst = new NoneVal(LiveCallResult: true);
             Emit(new IndirectCall(tmpFn, indArgs, indDst));
             return indDst;
         }
@@ -7010,6 +7025,18 @@ public partial class IRGenerator
     /// </param>
     private void EmitStreamVal(string floatFn, Val val, DataType? declared = null)
     {
+        // None has no runtime representation, but it is still a value print() must
+        // spell: CPython writes "None" and so does this -- falling through to the
+        // number writer sent 0 (or 0.0 through an Optional[float] getter), which a
+        // reader cannot tell from a real zero. `print(servo.angle)` on a disabled
+        // servo is the case that surfaced it. A LiveCallResult NoneVal is different:
+        // it stands for the return register a void-declared call just filled, and the
+        // number writer below is what reads it.
+        if (val is NoneVal { LiveCallResult: false })
+        {
+            EmitStreamStr(ResolveWriteStrFn(), "None");
+            return;
+        }
         bool isFloat = val is FloatConstant ||
                        (val is Variable vf && vf.Type == DataType.FLOAT) ||
                        (val is Temporary tf && tf.Type == DataType.FLOAT);
@@ -8839,7 +8866,7 @@ public partial class IRGenerator
         if (returnsVoid)
         {
             Emit(new Call(cSym, extArgs, new NoneVal()));
-            return new NoneVal();
+            return new NoneVal(LiveCallResult: true);
         }
 
         Temporary extDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[callee]));

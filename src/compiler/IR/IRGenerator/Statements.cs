@@ -1464,6 +1464,14 @@ public partial class IRGenerator
         if (inlineStack.Count > 0)
         {
             var ctx = inlineStack.Last();
+            // A return no run-time condition inside this expansion guards ends the body:
+            // every return after it is dead code. This used to be marked only inside the
+            // ResultTemp block below, so a `return None` -- NoneVal never allocates a
+            // result slot -- never ended the live region, and a dead `return <expr>`
+            // that followed still claimed the result and its tracking.
+            bool afterUnconditionalReturn = ctx.ResultReturnedUnconditionally;
+            bool endsBody = _runtimeBranchDepth <= ctx.EntryBranchDepth;
+            bool hadResult = ctx.ResultAssigned;
             // An unannotated def is "void" to the parser and return-type inference skips class
             // methods, so a method's `return self.value` had no result temporary to land in and
             // the caller read None. The first value return decides the width.
@@ -1542,11 +1550,6 @@ public partial class IRGenerator
                     variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
                 }
 
-                // A return already visited at this expansion's own branch depth ends control
-                // flow: everything after it is dead code and must not change what the result
-                // is tracked as.
-                bool afterUnconditionalReturn = ctx.ResultReturnedUnconditionally;
-
                 if (val is Constant c && !afterUnconditionalReturn)
                 {
                     if (!wasAlreadyAssigned)
@@ -1595,12 +1598,22 @@ public partial class IRGenerator
                     if (strConstantVariables.TryGetValue(t.Name, out string? tsv))
                         strConstantVariables[ctx.ResultTemp.Name] = tsv;
                 }
-
-                // No run-time condition opened inside this expansion guards this return, so it
-                // ends the body: mark it, and later returns are treated as the dead code they are.
-                if (_runtimeBranchDepth <= ctx.EntryBranchDepth)
-                    ctx.ResultReturnedUnconditionally = true;
             }
+
+            // The deciding return produced None (`return None` or a bare `return`, with no
+            // value return on a reachable path before it): the expansion's result is a
+            // compile-time None, not the typed ResultTemp -- which a `Copy(NoneVal)` leaves
+            // holding whatever an earlier temporary stored there. A value return already
+            // visited under a run-time branch keeps the slot: that union has no tag. A
+            // `return f()` on a void-declared call is not None either -- it is the live
+            // return-register channel, and the flag carries it to the caller.
+            if (endsBody && !afterUnconditionalReturn && !hadResult)
+            {
+                ctx.ResultIsNone = val is NoneVal { LiveCallResult: false };
+                ctx.ResultIsLiveCall = val is NoneVal { LiveCallResult: true };
+            }
+            if (endsBody)
+                ctx.ResultReturnedUnconditionally = true;
 
             EmitPendingFinally(ctx.FinallyDepth);
             Emit(new Jump(ctx.ExitLabel));

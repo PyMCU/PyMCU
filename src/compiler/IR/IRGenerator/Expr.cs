@@ -973,8 +973,18 @@ public partial class IRGenerator
             if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
             {
                 bool isEq = expr.Op is AstBinOp.Equal or AstBinOp.Is;
+                Expression otherExpr = leftNone ? expr.Right : expr.Left;
+                // IsNoneValued reads the name tables, so a call or a property read it
+                // cannot classify answered "not None" without the callee ever running:
+                // `self.fraction is None` folded FALSE even when the getter's only
+                // reachable return was `return None`, and the value arm then computed
+                // on a result slot that never received one. Lower those operands and
+                // read the result -- an expansion whose returns all produced NoneVal
+                // is the None the source is testing for.
                 bool otherIsNone = leftNone && rightNone
-                    || IsNoneValued(leftNone ? expr.Right : expr.Left);
+                    || (otherExpr is CallExpr or MemberAccessExpr
+                        ? VisitExpression(otherExpr) is NoneVal { LiveCallResult: false }
+                        : IsNoneValued(otherExpr));
                 return new Constant(otherIsNone == isEq ? 1 : 0);
             }
             // A None LITERAL in arithmetic is a program error. A NAME bound to None can only
@@ -4529,6 +4539,18 @@ public partial class IRGenerator
             if (next != null && next.StartsWith("tmp_")) break;
             baseName = next;
         }
+
+        // `obj.prop = None` marked this member None-valued at the write: a read answers
+        // the mark. Expanding the getter anyway would hand back the declared-type result
+        // slot, which a `Copy(NoneVal)` leaves holding whatever was there before -- the
+        // disabled `s.angle` read back as 180.0 of residue. Properties only: a marked
+        // FIELD (`self._font = None` in __init__) still reads as its storage -- member
+        // access off it (`self._font.font_name`) resolves through the field's class.
+        if (baseName != null && noneValuedNames.Contains(baseName + "_" + expr.Member)
+            && instanceClasses.TryGetValue(baseName, out var markedCls) && markedCls != null
+            && ResolveMROPropertyClass(markedCls, expr.Member) is { } markedPropCls
+            && propertyGetters.Contains(markedPropCls + "." + expr.Member))
+            return new NoneVal();
 
         // @property getter: a bare `obj.prop` read where `prop` is a registered getter on the
         // instance's class is desugared into a call to the getter method. Without this it would

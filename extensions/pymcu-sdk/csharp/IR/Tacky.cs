@@ -52,7 +52,14 @@ public record Temporary(string Name, DataType Type = DataType.UINT8) : Val;
 // Represents a physical memory address (MMIO or Static Global)
 public record MemoryAddress(int Address, DataType Type = DataType.UINT8) : Val;
 
-public record NoneVal() : Val;
+// None has no bytes: a compile-time "no value". One exception -- a call to a callee
+// declared `void` that still leaves a result in the return register (an unannotated
+// `def f(): return expr`) emits with Dst=none and hands this Val to the consumer; a
+// numeric consumer then reads the callee's R24:R25, which is how `print(scale(3))`
+// prints 12. LiveCallResult marks that case so a text consumer writes "None" only for
+// the compile-time kind. [JsonIgnore] keeps the flag out of the .mir -- backends see
+// the same `{"$t":"none"}` they always did.
+public record NoneVal([property: JsonIgnore] bool LiveCallResult = false) : Val;
 
 // Address-of a local or module-level array (passed as pointer to a bytearray param).
 public record ArrayBase(string ArrayName) : Val;
