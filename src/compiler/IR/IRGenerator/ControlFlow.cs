@@ -2768,6 +2768,18 @@ public partial class IRGenerator
             int flags = (upper ? 0x01 : 0) | (signed ? 0x02 : 0) | (pad == '0' ? 0x04 : 0);
             Temporary valArg = MakeTemp(DataType.INT32);
             Emit(new Copy(stored, valArg));
+            // A bare :x/:X (no field width, no zero pad) takes the minimal hex writer;
+            // the generic formatter stays for everything with padding or another radix.
+            if (radix == 16 && width == 0 && pad != '0')
+            {
+                string? hexFn = ResolveHexFn();
+                if (hexFn != null)
+                {
+                    Emit(new Call(hexFn, new List<Val> { valArg, new Constant(flags) },
+                        MakeTemp(DataType.UINT8)));
+                    return;
+                }
+            }
             Emit(new Call(ResolveFmtFn(), new List<Val>
             {
                 valArg,

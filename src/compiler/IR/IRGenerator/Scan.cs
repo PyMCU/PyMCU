@@ -3620,6 +3620,19 @@ public partial class IRGenerator
                     return;
                 case WhileStmt wh: E(wh.Condition); S(wh.Body); return;
                 case BreakStmt: case ContinueStmt: case PassStmt: return;
+                // A raise carries no self access of its own -- the SignalError it lowers to
+                // propagates out of the shared body through the ordinary T-flag protocol, the
+                // same way it escapes any other called function (CanFailAnalyzer marks the
+                // subroutine CanFail and every caller emits BranchOnError). busio.I2C.writeto
+                // is the shape that needs this: a NACK raises OSError, and a per-site expansion
+                // of the check multiplied a display driver by three. Only the dynamic-message
+                // expression can hold a `self` reference, so it is the one part to validate.
+                // The exception is `raise CompileError(...)`: a refusal stub that exists to
+                // fire at LOWERING time, and outlined bodies are lowered whether or not anyone
+                // calls them -- a safe one would refuse every program that merely imports the
+                // module (busio.UART.read is one). It stays inline-only, dormant until called.
+                case RaiseStmt r when r.ErrorType == "CompileError": safe = false; return;
+                case RaiseStmt r: E(r.MessageExpr); return;
                 default: safe = false; return; // conservative
             }
         }

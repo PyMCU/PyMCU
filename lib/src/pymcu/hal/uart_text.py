@@ -126,6 +126,38 @@ def uart_write_decimal_i32(value: int32):
         uart_write_decimal_u32(uint32(value))
 
 
+def uart_write_hex(value: int32, flags: uint8):
+    # Minimal hex for the exception report's `{x:x}` pieces: one nibble at a
+    # time off the top of the word, no field width and no leading zeros --
+    # the same text format(60, 'x') gives. uart_write_fmt covers the padded
+    # forms already, but it carries the generic radix loop and the 32-bit
+    # division helpers with it (~900 bytes on AVR); printing one address in
+    # an unhandled-exception line is not worth that. flags packs bit0 =
+    # upper-case digits, bit1 = the source type is signed (a negative value
+    # prints '-' then its magnitude, matching CPython).
+    digit_base: uint8 = 87              # 'a' - 10
+    if flags & 1:
+        digit_base = 55                 # 'A' - 10
+    v: uint32 = uint32(value)
+    if (flags & 2) and uint8(value >> 24) >= 128:
+        uart_write(45)                  # '-'
+        v = uint32(0 - value)
+    started: uint8 = 0
+    shift: uint8 = 28
+    while True:
+        digit: uint8 = uint8(v >> shift) & 15
+        if digit != 0 or started != 0 or shift == 0:
+            started = 1
+            if digit < 10:
+                digit = digit + 48
+            else:
+                digit = digit + digit_base
+            uart_write(digit)
+        if shift == 0:
+            break
+        shift = shift - 4
+
+
 def uart_write_float(value: float):
     # Two decimals, rounded, on every architecture. The one-decimal truncating
     # variants that used to live in three of these files disagreed with this one
