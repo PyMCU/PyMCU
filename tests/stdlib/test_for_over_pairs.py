@@ -13,9 +13,11 @@ The AST already carried the second name (`ForStmt.Var2Name`, used by `enumerate`
 so the loop binds it alongside the first from the element's second component and unrolls
 exactly as the single-name form does.
 
-WHAT DISCRIMINATES. The acceptance tests and the three refusal-wording tests fail against
+WHAT DISCRIMINATES. The acceptance tests and the two refusal-wording tests fail against
 the unfixed compiler: the accepting ones because it refuses, and the wording ones because
-the sentence it produced said "must be compile-time integer constants" in all cases.
+the sentence it produced said "must be compile-time integer constants" in all cases. The
+single-name form is no longer refused at all: the element binds as a compile-time
+sequence, so `p[0]` folds and `a, b = p` unpacks (the shape Adafruit CV.add_values uses).
 
 WHAT IS INVARIANT, and here on purpose. The single-name form over a flat list, which worked
 before and must keep working, and the run-time-value refusal, which was correct before and
@@ -105,14 +107,30 @@ def test_the_body_runs_once_per_pair(tmp_path):
     assert 7 in folded_constants(ir), folded_constants(ir)
 
 
-# --- what the refusals say now -------------------------------------------------
+# --- the single name binds the pair itself -------------------------------------
 
-def test_one_name_over_pairs_says_the_second_value_has_nowhere_to_go(tmp_path):
+def test_one_name_over_pairs_binds_the_pair_which_indexes(tmp_path):
+    """`p` IS the pair: a compile-time sequence, not a scalar the second value misses.
+
+    The "nowhere to put the second value" refusal assumed the element had to fit one
+    scalar slot. Since the loop binds a nested tuple/list element as a compile-time
+    sequence -- the same binding `a, b = p` unpacks through -- `p[0]` and `p[1]` fold
+    to its components. This asserts the fold rather than the acceptance alone: the
+    shape used to compile to a `bchk` on a slot nothing wrote.
+    """
     out, ir = build(tmp_path, "    for p in [(1, 2), (3, 4)]:\n"
-                              "        total = total + 1\n")
-    assert ir is None
-    assert "nowhere to put the second value" in out, out
-    assert "must be compile-time integer constants" not in out, out
+                              "        total = total + p[0] * p[1]\n")
+    assert ir is not None, out
+    assert 14 in folded_constants(ir), folded_constants(ir)
+
+
+def test_one_name_over_pairs_unpacks_in_the_body(tmp_path):
+    """The idiom the binding was added for: `a, b = p` inside the loop."""
+    out, ir = build(tmp_path, "    for p in [(1, 2), (3, 4)]:\n"
+                              "        a, b = p\n"
+                              "        total = total + a * b\n")
+    assert ir is not None, out
+    assert 14 in folded_constants(ir), folded_constants(ir)
 
 
 def test_two_names_over_flat_elements_says_the_element_is_not_a_pair(tmp_path):

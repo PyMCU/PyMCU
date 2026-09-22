@@ -62,6 +62,14 @@ public partial class IRGenerator
     // "write" than a table veto allows.
     private readonly HashSet<string> annAssignValueNames = new();
 
+    // Names that appear as a `for` loop's target somewhere in the program. The target is
+    // counted in nameWriteCounts like every other write, but for a compile-time-unrolled
+    // loop that "write" IS the binding the const-sequence fold resolves through -- `for p in
+    // [(1, 2), (3, 4)]` binds `p` to each pair in turn, so `p[0]` in the body must read the
+    // binding, not be vetoed by it. A real store or a second counted use still pushes the
+    // name past its allowance and keeps the veto.
+    private readonly HashSet<string> forLoopVarNames = new();
+
     // Builtins that read an iterable argument without ever storing into it --
     // `enumerate`, `reversed`, `len` and friends. The broad call-arg count treats
     // every argument as a potential store target, which is right for a user
@@ -101,6 +109,7 @@ public partial class IRGenerator
         nameWriteCounts.Clear();
         nameStoreCounts.Clear();
         annAssignValueNames.Clear();
+        forLoopVarNames.Clear();
         materialisedConstTables.Clear();
         ctArrayConstElements.Clear();
         moduleConstLists.Clear();
@@ -177,7 +186,7 @@ public partial class IRGenerator
                     Note(ann.Target);
                     if (ann.Value != null) annAssignValueNames.Add(ann.Target);
                     break;
-                case ForStmt fs: Note(fs.VarName); break;
+                case ForStmt fs: Note(fs.VarName); forLoopVarNames.Add(fs.VarName); break;
                 case CallExpr call:
                     // A table handed to a function could be stored through there, and such a
                     // write lands on the element variables rather than on the table in flash.

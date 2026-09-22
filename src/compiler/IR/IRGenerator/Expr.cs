@@ -2678,8 +2678,14 @@ public partial class IRGenerator
                 Val seqIdxVal = expr.Index is IntegerLiteral nlit0
                     ? new Constant(nlit0.Value)
                     : VisitExpression(expr.Index);
+                // A for-loop target reads as written once under the broad count, but for a
+                // compile-time-unrolled loop that write IS the binding being resolved here
+                // (`for p in [(1, 2), ...]` binds p to each pair) -- discount it, or p[k]
+                // falls through to the register-bit path and emits a bit check on a slot
+                // nothing ever wrote.
                 if (seqIdxVal is Constant seqIdxConst
-                    && nameWriteCounts.GetValueOrDefault(ve.Name) == 0)
+                    && nameWriteCounts.GetValueOrDefault(ve.Name)
+                        <= (forLoopVarNames.Contains(ve.Name) ? 1 : 0))
                 {
                     int ni = seqIdxConst.Value;
                     if (ni < 0) ni += nameSeq.Count;
