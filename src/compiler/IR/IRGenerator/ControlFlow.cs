@@ -728,6 +728,12 @@ public partial class IRGenerator
             }
         }
 
+        // True once any arm of the chain ran under a run-time guard: it decides whether an
+        // arm that ends the sequence (return/raise) kills the statements after the chain
+        // too. With no run-time arm, a compile-time-taken arm is the chain's whole story,
+        // so its termination propagates; with one, the chain's end is reachable through it.
+        bool anyRuntimeArm = isRuntimeBranch;
+
         var snapBefore = new Dictionary<string, string>(strConstantVariables);
         var branchSnaps = new List<Dictionary<string, string>>();
         // The same bookkeeping for integer constants. Arms are mutually exclusive, so a value
@@ -758,6 +764,8 @@ public partial class IRGenerator
             if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ThenBranch);
             if (isRuntimeBranch) LeaveRuntimeBranch();
+            // A run-time-guarded arm's termination is conditional on its guard.
+            if (isRuntimeBranch) _seqTerminated = false;
             if (stmt.ElifBranches.Count > 0 || stmt.ElseBranch != null)
                 Emit(new Jump(endLabel));
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
@@ -796,6 +804,8 @@ public partial class IRGenerator
                 // `if` above -- the condition may have jumped to nextLabel before folding.
                 bool elifNextIsTargeted = ConditionJumpedTo(nextLabel, elifCondStart);
                 VisitStatement(elifBlock);
+                // Unconditional only when nothing earlier ran under a run-time guard.
+                if (anyRuntimeArm) _seqTerminated = false;
                 if (elifNextIsTargeted) Emit(new Label(nextLabel));
                 Emit(new Label(endLabel));
                 return;
@@ -809,6 +819,16 @@ public partial class IRGenerator
                     {
                         skipElif = true;
                         Emit(new Jump(nextLabel));
+                    }
+                    else
+                    {
+                        // A constant-true elif is the chain's answer, same as elifOpt == 2
+                        // folded inline: lower the arm and stop, or the `else:` below it is
+                        // lowered too and its `raise` aborts a build that never reaches it.
+                        VisitStatement(elifBlock);
+                        if (anyRuntimeArm) _seqTerminated = false;
+                        Emit(new Label(endLabel));
+                        return;
                     }
                 }
                 else
@@ -825,6 +845,7 @@ public partial class IRGenerator
                 if (elifIsRuntime) EnterRuntimeBranch(elifUndecided);
                 VisitStatement(elifBlock);
                 if (elifIsRuntime) LeaveRuntimeBranch();
+                if (elifIsRuntime) { anyRuntimeArm = true; _seqTerminated = false; }
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
                 branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
                 strConstantVariables = new Dictionary<string, string>(snapBefore);
@@ -842,11 +863,15 @@ public partial class IRGenerator
         if (stmt.ElseBranch != null)
         {
             Emit(new Label(nextLabel));
-            // The else branch runs when the condition was false — still runtime-guarded.
+            // The else runs when every earlier condition failed, so it is guarded by ANY
+            // run-time arm in the chain, not only the `if`'s own condition.
             RestoreOptionalState(inheritOpt);
-            if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
+            if (anyRuntimeArm) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ElseBranch);
-            if (isRuntimeBranch) LeaveRuntimeBranch();
+            if (anyRuntimeArm) LeaveRuntimeBranch();
+            // With a run-time arm before it the else is conditional; without one it is the
+            // chain's unconditional continuation and its termination stands.
+            if (anyRuntimeArm) _seqTerminated = false;
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
             strConstantVariables = new Dictionary<string, string>(snapBefore);
             branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
@@ -1090,6 +1115,7 @@ public partial class IRGenerator
         EnterRuntimeBranch(null);
         if (branch.Body != null) VisitBlock((Block)branch.Body);
         LeaveRuntimeBranch();
+        _seqTerminated = false;
 
         Emit(new Jump(endLabel));
         Emit(new Label(nextCaseLabel));
@@ -1209,6 +1235,7 @@ public partial class IRGenerator
                     }
 
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
+                    _seqTerminated = false;
                     Emit(new Jump(endLabel));
                     Emit(new Label(nextCaseLabel));
                     continue;
@@ -1380,6 +1407,9 @@ public partial class IRGenerator
                     if (matchBodyIsRuntime) EnterRuntimeBranch(null);
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
                     if (matchBodyIsRuntime) LeaveRuntimeBranch();
+                    // A compile-time-decided subject makes the matched arm unconditional,
+                    // so its termination propagates; a run-time match keeps it conditional.
+                    if (matchBodyIsRuntime) _seqTerminated = false;
                     Emit(new Jump(endLabel));
                 }
             }
@@ -1414,6 +1444,7 @@ public partial class IRGenerator
                     if (wildcardIsRuntime) EnterRuntimeBranch(null);
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
                     if (wildcardIsRuntime) LeaveRuntimeBranch();
+                    if (wildcardIsRuntime) _seqTerminated = false;
                     Emit(new Jump(endLabel));
                 }
             }
@@ -2284,7 +2315,13 @@ public partial class IRGenerator
         if (pushedFinally) finallyStack.Add(stmt.Finally!);
         tryCatchStack.Add(catchDispatch);
         foreach (var s in stmt.Body)
+        {
+            if (_seqTerminated) break;
             VisitStatement(s);
+        }
+        // A return/raise inside the body ended only the body's own sequence; the handlers
+        // and the statements after the try stay reachable.
+        _seqTerminated = false;
         tryCatchStack.RemoveAt(tryCatchStack.Count - 1);
 
         // Post-process: find every Call emitted inside the try body and insert a
@@ -2301,8 +2338,14 @@ public partial class IRGenerator
         // emitted here, after the body's BranchOnError guards were inserted above, so a raise in
         // `else` is NOT caught by this try (it propagates), matching Python. Then the finally.
         if (stmt.ElseBody != null)
+        {
             foreach (var s in stmt.ElseBody)
+            {
+                if (_seqTerminated) break;
                 VisitStatement(s);
+            }
+            _seqTerminated = false;
+        }
         // Pop the pending finally now: the remaining exits (happy, handlers, unmatched) emit it
         // explicitly, and a `return` inside the finally itself must not re-trigger it.
         if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
@@ -2388,7 +2431,11 @@ public partial class IRGenerator
             if (bound != null) exceptionBindings[boundKey] = (exnCodeVar, exnType);
 
             foreach (var s in handlerBody)
+            {
+                if (_seqTerminated) break;
                 VisitStatement(s);
+            }
+            _seqTerminated = false;
 
             if (bound != null)
             {
@@ -2924,8 +2971,14 @@ public partial class IRGenerator
     private void EmitFinallyBody(TryStmt stmt)
     {
         if (stmt.Finally == null) return;
+        // Emitted once per exit path, so a return inside one emission must not bleed into
+        // the lowering of the next.
         foreach (var s in stmt.Finally)
+        {
+            if (_seqTerminated) break;
             VisitStatement(s);
+        }
+        _seqTerminated = false;
     }
 
     // Run the pending finally blocks above `floor` (innermost first) on a control-flow exit that
@@ -2939,8 +2992,17 @@ public partial class IRGenerator
         var saved = finallyStack;
         finallyStack = finallyStack.GetRange(0, floor);
         for (int k = slice.Count - 1; k >= 0; k--)
+        {
+            // Every pending finally must emit even when an inner one ends in `return`:
+            // the terminated flag is per-sequence state, and each finally is its own.
+            _seqTerminated = false;
             foreach (var s in slice[k])
+            {
+                if (_seqTerminated) break;
                 VisitStatement(s);
+            }
+        }
+        _seqTerminated = false;
         finallyStack = saved;
     }
 }

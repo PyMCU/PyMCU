@@ -2995,9 +2995,15 @@ public partial class IRGenerator
 
         int savedLastLine = lastLine;
         lastLine = -1;
+        // The body's own termination stays in the body: a `return` ended the expansion,
+        // not the caller's sequence -- and the caller's state must not leak in either,
+        // or a `return` in a `with` body would leave `__exit__`'s expansion unlowered.
+        bool savedSeqTerminated = _seqTerminated;
+        _seqTerminated = false;
         try
         {
             VisitBlock(func.Body);
+            _seqTerminated = savedSeqTerminated;
         }
         catch (CompilerError)
         {
@@ -3923,7 +3929,10 @@ public partial class IRGenerator
 
         int savedLastLine = lastLine;
         lastLine = -1;
+        bool savedSeqTerminated = _seqTerminated;
+        _seqTerminated = false;
         VisitBlock(funcSuper.Body);
+        _seqTerminated = savedSeqTerminated;
         lastLine = savedLastLine;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
@@ -9341,7 +9350,10 @@ public partial class IRGenerator
             instanceClasses[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
 
         // Compile the handler body with ZCA constants in scope
+        bool savedSeqTerminated = _seqTerminated;
+        _seqTerminated = false;
         VisitBlock(funcDef.Body);
+        _seqTerminated = savedSeqTerminated;
         if (currentInstructions.Count == 0 || currentInstructions[^1] is not Return)
             Emit(new Return(new NoneVal()));
 

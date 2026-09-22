@@ -414,7 +414,10 @@ public partial class IRGenerator
 
         int savedLastLine = lastLine;
         lastLine = -1;
+        bool savedSeqTerminated = _seqTerminated;
+        _seqTerminated = false;
         VisitBlock(func.Body);
+        _seqTerminated = savedSeqTerminated;
         lastLine = savedLastLine;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);

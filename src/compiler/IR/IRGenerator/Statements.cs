@@ -767,7 +767,10 @@ public partial class IRGenerator
         // locals; marks from earlier functions keep answering for arrays they created.
         ScanForVariableIndexedArrays(funcNode.Body.Statements, fullName + ".");
 
+        bool savedSeqTerminated = _seqTerminated;
+        _seqTerminated = false;
         VisitBlock(funcNode.Body);
+        _seqTerminated = savedSeqTerminated;
 
         // A function that promises a value must produce one on every path. Falling off the end
         // emitted `ret` with nothing in the return register, and the caller printed whatever
@@ -838,6 +841,9 @@ public partial class IRGenerator
         var stmts = block.Statements;
         for (int i = 0; i < stmts.Count; i++)
         {
+            // Dead after an unconditional exit: lowering it would surface errors from
+            // statements that can never run.
+            if (_seqTerminated) break;
             var stmt = stmts[i];
             // `r = g[y]` binds a row view -- legal only while every later use of
             // `r` in this block is an element access, len(r) or `for x in r`;
@@ -848,6 +854,7 @@ public partial class IRGenerator
                 && TryBindRowAlias(av, aix.Index, aliasGridKey, stmts, i))
                 continue;
             VisitStatement(stmt);
+            if (AlwaysLeaves(stmt)) _seqTerminated = true;
         }
     }
 
@@ -938,6 +945,7 @@ public partial class IRGenerator
         if (stmt is ReturnStmt ret)
         {
             VisitReturn(ret);
+            _seqTerminated = true;
             return;
         }
 
@@ -961,14 +969,16 @@ public partial class IRGenerator
             // VisitWhile/VisitFor, which have several/many body-visitation call sites each)
             // so every path through either is covered by one increment/decrement.
             loopDepth++;
-            try { VisitWhile(whileStmt); } finally { loopDepth--; }
+            // A `return` inside the body ends the body's own sequence, but the loop can
+            // run zero times, so the position after it stays reachable.
+            try { VisitWhile(whileStmt); } finally { loopDepth--; _seqTerminated = false; }
             return;
         }
 
         if (stmt is ForStmt forStmt)
         {
             loopDepth++;
-            try { VisitFor(forStmt); } finally { loopDepth--; }
+            try { VisitFor(forStmt); } finally { loopDepth--; _seqTerminated = false; }
             return;
         }
 
@@ -1094,6 +1104,7 @@ public partial class IRGenerator
         else if (stmt is RaiseStmt raiseStmt)
         {
             VisitRaise(raiseStmt);
+            _seqTerminated = true;
         }
         else if (stmt is TryStmt tryStmt)
         {

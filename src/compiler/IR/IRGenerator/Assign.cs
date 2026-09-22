@@ -1361,7 +1361,10 @@ public partial class IRGenerator
 
         inlineStack.Add(new InlineContext { ExitLabel = exitLabel,
             CallerSourcePath = savedSourcePath, FinallyDepth = finallyStack.Count });
+        bool savedSeqTerminated = _seqTerminated;
+        _seqTerminated = false;
         if (setter?.Body != null) VisitBlock(setter.Body);
+        _seqTerminated = savedSeqTerminated;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
 

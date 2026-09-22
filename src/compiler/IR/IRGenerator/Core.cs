@@ -995,6 +995,17 @@ public partial class IRGenerator
                 while (at < body.Count && IsInjectedPreamble(body[at])) at++;
                 for (int i = moduleInit.Count - 1; i >= 0; i--)
                     body.Insert(at, moduleInit[i]);
+                // A trailing `return` ahead of the spliced tail is Python's main() handing
+                // control back to the module level: the tail still runs. Emitted as a Return
+                // it would sit mid-body and cut the tail off at run time; as a terminated
+                // sequence it would keep the tail from lowering at all. BodyCanReturnEarly
+                // above already guaranteed this is the only `return` the spliced body holds.
+                if (moduleTail.Count > 0 && body.Count > 0 && body[^1] is ReturnStmt trailing)
+                {
+                    body.RemoveAt(body.Count - 1);
+                    if (trailing.Value != null)
+                        body.Add(new ExprStmt(trailing.Value));
+                }
                 body.AddRange(moduleTail);
 
                 // An import runs before the file that imports it, so this goes in AFTER the

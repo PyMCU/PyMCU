@@ -924,6 +924,15 @@ public partial class IRGenerator
     // the compilation would be a false positive.
     private int _runtimeBranchDepth = 0;
 
+    // The position in the enclosing statement sequence is unreachable: a `return`/`raise`
+    // lowered unconditionally at this level, or a statement AlwaysLeaves proves cannot fall
+    // through, ended it. VisitBlock stops at it, so a statement after a compile-time-taken
+    // arm that returns is never lowered -- its errors would be dead-code fictions (the
+    // `NUMBERS[character]` after `_put`'s elif chain read an unbound `character`). Branch
+    // arms and function bodies reset it: a runtime arm's termination is conditional, and a
+    // callee's return only ends the callee's sequence.
+    private bool _seqTerminated;
+
     // One fresh token per open run-time branch, pushed/popped by EnterRuntimeBranch /
     // LeaveRuntimeBranch. Depth alone cannot tell two sibling branches apart (`if a:` then
     // `if b:` both sit at depth 1); the token path can. A buffer records the path in effect
