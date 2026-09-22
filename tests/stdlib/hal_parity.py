@@ -1,5 +1,9 @@
 import ast
+import importlib.metadata
+import importlib.util
+import os
 import re
+import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,9 +14,12 @@ STDLIB = REPO / "lib" / "src" / "pymcu"
 HAL = STDLIB / "hal"
 ALLOWLIST = Path(__file__).with_name("hal_parity_allowlist.toml")
 
-LAYERS = {
-    "circuitpython": Path("/Users/begeistert/Repos/pymcu-circuitpython/src"),
-    "micropython": Path("/Users/begeistert/Repos/pymcu-micropython/src"),
+# layer name -> (import package, env override, dist/sibling-checkout name).
+# The env var points at the layer's src directory; the sibling fallback is
+# ~/Repos/<name>/src.
+LAYER_SPECS = {
+    "circuitpython": ("pymcu_circuitpython", "PYMCU_COMPAT_CIRCUITPYTHON", "pymcu-circuitpython"),
+    "micropython": ("pymcu_micropython", "PYMCU_COMPAT_MICROPYTHON", "pymcu-micropython"),
 }
 
 ARCH_COLUMNS = ("avr", "pic12", "pic14", "pic18", "riscv", "rp2040", "rp2350")
@@ -75,6 +82,82 @@ class UniversalityViolation:
     line: int
     kinds: tuple[str, ...]
     detail: str
+    source: str = ""
+
+
+@dataclass(frozen=True)
+class LayerResolution:
+    layer: str
+    root: Path | None         # the layer's src dir; violation paths are relative to it
+    origin: str               # "env PYMCU_COMPAT_*", "installed <dist>", "sibling checkout"
+    reference: str            # git "branch@commit" or "version X.Y", "" if unknown
+    attempts: tuple[str, ...] # every resolution source tried, with its outcome
+
+    def describe(self) -> str:
+        ref = f" ({self.reference})" if self.reference else ""
+        return f"{self.origin}: {self.root}{ref}"
+
+
+def _git_reference(path: Path) -> str:
+    def git(*args: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(path), *args],
+                capture_output=True, text=True, timeout=15,
+            )
+        except OSError:
+            return ""
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    commit = git("rev-parse", "--short", "HEAD")
+    if branch and branch != "HEAD":
+        return f"{branch}@{commit}" if commit else branch
+    return f"detached@{commit}" if commit else ""
+
+
+def _resolve_layer(layer: str) -> LayerResolution:
+    package, env_var, dist = LAYER_SPECS[layer]
+    attempts = []
+
+    env = os.environ.get(env_var, "").strip()
+    if env:
+        src = Path(env).expanduser()
+        if (src / package).is_dir():
+            return LayerResolution(layer, src, f"env {env_var}",
+                                   _git_reference(src) or "not a git checkout",
+                                   (f"{env_var}={src}",))
+        attempts.append(f"{env_var}={src} (no {package}/ inside)")
+    else:
+        attempts.append(f"{env_var} (unset)")
+
+    spec = importlib.util.find_spec(package)
+    if spec is not None and spec.submodule_search_locations:
+        package_dir = Path(spec.submodule_search_locations[0])
+        root = package_dir.parent
+        reference = _git_reference(package_dir)
+        if not reference:
+            try:
+                reference = f"version {importlib.metadata.version(dist)}"
+            except importlib.metadata.PackageNotFoundError:
+                pass
+        return LayerResolution(layer, root, f"installed {package}", reference,
+                               (*attempts, f"installed {package} at {root}"))
+    attempts.append(f"installed {package} (not installed)")
+
+    src = Path.home() / "Repos" / dist / "src"
+    if (src / package).is_dir():
+        return LayerResolution(layer, src, "sibling checkout",
+                               _git_reference(src) or "not a git checkout",
+                               (*attempts, f"{src}"))
+    attempts.append(f"{src} (missing)")
+
+    return LayerResolution(layer, None, "", "", tuple(attempts))
+
+
+LAYER_RESOLUTIONS = {layer: _resolve_layer(layer) for layer in LAYER_SPECS}
+LAYERS = {layer: res.root for layer, res in LAYER_RESOLUTIONS.items()
+          if res.root is not None}
 
 
 def parse_source(path: Path) -> ast.Module:
@@ -389,9 +472,12 @@ def universality_violations() -> list[UniversalityViolation]:
     registers = _register_names()
     violations = []
     for layer, root in LAYERS.items():
-        if not root.exists():
+        package_dir = root / LAYER_SPECS[layer][0]
+        if not package_dir.is_dir():
             continue
-        for path in sorted(root.rglob("*.py")):
+        res = LAYER_RESOLUTIONS.get(layer)
+        source = res.describe() if res is not None and res.root == root else str(root)
+        for path in sorted(package_dir.rglob("*.py")):
             if "boards" in path.relative_to(root).parts:
                 # board.D5 mapping to PD5 on the Uno IS the design: a board
                 # module's whole job is naming a chip's pins for a specific
@@ -430,6 +516,7 @@ def universality_violations() -> list[UniversalityViolation]:
                     line=line,
                     kinds=kinds,
                     detail=detail,
+                    source=source,
                 ))
     return violations
 

@@ -6,6 +6,8 @@ import pytest
 
 from hal_parity import (
     LAYERS,
+    LAYER_RESOLUTIONS,
+    LAYER_SPECS,
     api_violations,
     allowlist,
     facade_claims,
@@ -43,6 +45,18 @@ def _params(cases, prefix):
 
 API_CASES = _params(api_violations(), "api")
 UNIVERSALITY_CASES = _params(universality_violations(), "universality")
+for _layer, _res in LAYER_RESOLUTIONS.items():
+    if _res.root is None:
+        _env_var, _dist = LAYER_SPECS[_layer][1:]
+        UNIVERSALITY_CASES.append(pytest.param(
+            None,
+            id=f"universality:compat.{_layer} (layer not found)",
+            marks=pytest.mark.skip(reason=(
+                f"{_layer} compat layer not found; tried: {'; '.join(_res.attempts)}. "
+                f"Set {_env_var} to the layer's src directory or "
+                f"pip install --pre {_dist}."
+            )),
+        ))
 
 
 @pytest.mark.parametrize("violation", API_CASES)
@@ -54,7 +68,8 @@ def test_hal_facade_claims_keep_the_same_api(violation):
 def test_compat_layers_do_not_contain_chip_particulars(violation):
     assert False, (
         f"{violation.layer}:{violation.path}:{violation.line}: "
-        f"{', '.join(violation.kinds)} ({violation.detail}) belongs in the native HAL"
+        f"{', '.join(violation.kinds)} ({violation.detail}) belongs in the native HAL "
+        f"[{violation.source}]"
     )
 
 
@@ -72,7 +87,9 @@ def test_hal_parity_allowlist_entries_are_used_and_tracked(missing_layers, monke
     # Only require usage for layers that were scanned; still validate every
     # entry's tracking metadata, including those for absent sibling repos.
     missing_prefixes = tuple(
-        f"compat.{layer}." for layer, root in LAYERS.items() if not root.exists()
+        f"compat.{layer}."
+        for layer, (package, _, _) in LAYER_SPECS.items()
+        if not (LAYERS.get(layer) and (LAYERS[layer] / package).is_dir())
     )
     unused = []
     malformed = []
