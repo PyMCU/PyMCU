@@ -105,3 +105,36 @@ jobs:
       # skipped here and this job only covers the in-tree HAL surface.
       - name: Run HAL parity tests
         run: pytest tests/stdlib/test_hal_parity.py tests/stdlib/test_inline_host_overloads.py -v --tb=short
+
+  stdlib:
+    name: Stdlib Suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest
+
+      # The suite drives build/bin/pymcuc with --emit-ir, which replaces the
+      # backend phase with the IR serializer, so no backend binary is needed.
+      - name: Build the compiler
+        run: dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
+
+      - name: Run stdlib tests
+        run: python -m pytest tests/stdlib -q
