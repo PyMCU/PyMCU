@@ -181,4 +181,25 @@ public class BufferParamTests
 
         Assert.Contains(Body(ir, "main"), i => i is BitSet);
     }
+
+    [Fact]
+    public void AFlatSequenceSliceArgument_IsNotMarshaledAsADanglingArrayBase()
+    {
+        // `b[1:3]` lowers to a flat `__slice_N__0`,`__slice_N__1`,... element sequence with
+        // no `__slice_N:` label of its own. Marshaling that argument as
+        // `ArrayBase("__slice_N")` hands the backend a base address that was never
+        // allocated -- an undefined symbol at link. Only a contiguous array (one registered
+        // in arraysWithVariableIndex/moduleSramArrays) has a base to take, so the slice must
+        // reach the callee as a value marshal instead. Materializing it into real addressable
+        // storage is the still-open PyMCU/PyMCU#487 hole the oracle corpus tracks.
+        var ir = Gen(Preamble +
+                     "def head(buf: bytearray) -> uint8:\n" +
+                     "    return buf[0]\n" +
+                     "b: uint8[4] = bytearray(4)\n" +
+                     "def main():\n" +
+                     "    a: uint8 = head(b[1:3])\n");
+
+        Assert.DoesNotContain(Body(ir, "main"),
+            i => i is Call c && c.Args.Any(a => a is ArrayBase));
+    }
 }

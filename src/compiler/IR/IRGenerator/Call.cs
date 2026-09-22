@@ -483,6 +483,16 @@ public partial class IRGenerator
                                 Val av = TryEvalInlineBufferArg(a)
                                     ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
                                 if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
+                                // An array var / field (`self.temp` -> `d_temp`) marshals as
+                                // its base, same as the bare-name path in argValuesL -- a
+                                // Variable copies the first byte where a pointer is needed.
+                                // Only a contiguous array has a base label; a flat sequence
+                                // (slice temp) is in arraySizes too but has no `s:` storage.
+                                if (av is Variable oArrayVar
+                                    && TryResolveArrayStorageKey(oArrayVar.Name, out var oStorage)
+                                    && (arraysWithVariableIndex.Contains(oStorage)
+                                        || moduleSramArrays.Contains(oStorage)))
+                                    av = new ArrayBase(oStorage);
                                 oArgs.Add(av);
                             }
 
@@ -1270,8 +1280,17 @@ public partial class IRGenerator
             // Variable naming the storage (`self.temp` -> `buf` -> the array's flat var).
             // Copying that Variable hands the callee the array's first byte where it needs
             // the base address, so marshal the base -- exactly like the bare-name branch.
-            if (argEvaluated is Variable argArrayVar && arraySizes.ContainsKey(argArrayVar.Name))
-                argEvaluated = new ArrayBase(argArrayVar.Name);
+            // TryResolveArrayStorageKey maps the function-qualified spelling (`main.b`) back
+            // to the storage key the array was registered under (`b`), which a bare
+            // arraySizes lookup misses. Only a contiguous array (registered in
+            // arraysWithVariableIndex/moduleSramArrays) has a base label to take --
+            // a flat sequence (slice temp, `s__0`,`s__1`) is in arraySizes too but has
+            // no `s:` storage, so marshaling its base would dangle.
+            if (argEvaluated is Variable argArrayVar
+                && TryResolveArrayStorageKey(argArrayVar.Name, out var argStorage)
+                && (arraysWithVariableIndex.Contains(argStorage)
+                    || moduleSramArrays.Contains(argStorage)))
+                argEvaluated = new ArrayBase(argStorage);
             argValuesL.Add(argEvaluated);
         }
 
