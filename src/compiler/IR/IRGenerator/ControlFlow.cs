@@ -1857,12 +1857,10 @@ public partial class IRGenerator
                 case ListExpr le: foreach (var el in le.Elements) E(el); return;
             }
         }
-        void S(Statement? st)
+        void S(Statement st)
         {
             switch (st)
             {
-                case null: return;
-                case Block bl: foreach (var cs in bl.Statements) S(cs); return;
                 case AssignStmt a: E(a.Value); return;
                 case AugAssignStmt aug: E(aug.Value); return;
                 case AnnAssign an: E(an.Value); return;
@@ -1870,22 +1868,25 @@ public partial class IRGenerator
                 case ExprStmt es: E(es.Expr); return;
                 case ReturnStmt r: E(r.Value); return;
                 case IfStmt i:
-                    E(i.Condition); S(i.ThenBranch);
-                    foreach (var (c, br) in i.ElifBranches) { E(c); S(br); }
-                    S(i.ElseBranch);
+                    E(i.Condition);
+                    foreach (var (c, _) in i.ElifBranches) E(c);
                     return;
-                case WhileStmt w: E(w.Condition); S(w.Body); return;
-                case ForStmt f: S(f.Body); return;
-                case WithStmt wi: S(wi.Body); return;
-                case TryStmt t:
-                    foreach (var cs in t.Body) S(cs);
-                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
-                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
-                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
+                case WhileStmt w: E(w.Condition); return;
+                // The old recursion skipped the for-iterable and every match arm's
+                // target/pattern/guard -- calls inside them were invisible.
+                case ForStmt f: E(f.Iterable); return;
+                case WithStmt wi: E(wi.ContextExpr); return;
+                case MatchStmt m:
+                    E(m.Target);
+                    foreach (var br in m.Branches)
+                    {
+                        E(br.Pattern);
+                        if (br.Guard != null) E(br.Guard);
+                    }
                     return;
             }
         }
-        S(method.Body);
+        foreach (var st in TypeInference.WalkStatements(method.Body)) S(st);
         return found;
     }
 
@@ -1916,52 +1917,45 @@ public partial class IRGenerator
     /// </summary>
     private static void CollectMutatedNames(Statement? st, HashSet<string> names, HashSet<(string, string)> receivers)
     {
-        switch (st)
+        foreach (var s in TypeInference.WalkStatements(st))
         {
-            case null: return;
-            case Block b: foreach (var s in b.Statements) CollectMutatedNames(s, names, receivers); return;
-            case AssignStmt a: CollectTarget(a.Target, names, receivers); CollectCalls(a.Value, receivers); return;
-            case AugAssignStmt aug: CollectTarget(aug.Target, names, receivers); CollectCalls(aug.Value, receivers); return;
-            case AnnAssign an: names.Add(an.Target); CollectCalls(an.Value, receivers); return;
-            case VarDecl vd: names.Add(vd.Name); CollectCalls(vd.Init, receivers); return;
-            case TupleUnpackStmt tu: foreach (var t in tu.Targets) names.Add(t); CollectCalls(tu.Value, receivers); return;
-            case ExprStmt es: CollectCalls(es.Expr, receivers); return;
-            case ReturnStmt r: CollectCalls(r.Value, receivers); return;
-            case ForStmt f:
-                names.Add(f.VarName);
-                if (!string.IsNullOrEmpty(f.Var2Name)) names.Add(f.Var2Name);
-                CollectMutatedNames(f.Body, names, receivers);
-                return;
-            case WhileStmt w: CollectCalls(w.Condition, receivers); CollectMutatedNames(w.Body, names, receivers); return;
-            case IfStmt i:
-                CollectCalls(i.Condition, receivers);
-                CollectMutatedNames(i.ThenBranch, names, receivers);
-                foreach (var (cond, br) in i.ElifBranches)
-                {
-                    CollectCalls(cond, receivers);
-                    CollectMutatedNames(br, names, receivers);
-                }
-                CollectMutatedNames(i.ElseBranch, names, receivers);
-                return;
-            case WithStmt wi:
-                if (!string.IsNullOrEmpty(wi.AsName)) names.Add(wi.AsName);
-                CollectMutatedNames(wi.Body, names, receivers);
-                return;
-            case MatchStmt m:
-                CollectCalls(m.Target, receivers);
-                foreach (var br in m.Branches)
-                {
-                    if (!string.IsNullOrEmpty(br.CaptureName)) names.Add(br.CaptureName);
-                    CollectMutatedNames(br.Body, names, receivers);
-                }
-                return;
-            case TryStmt t:
-                foreach (var s in t.Body) CollectMutatedNames(s, names, receivers);
-                foreach (var (_, h) in t.Handlers) foreach (var s in h) CollectMutatedNames(s, names, receivers);
-                if (t.ElseBody != null) foreach (var s in t.ElseBody) CollectMutatedNames(s, names, receivers);
-                if (t.Finally != null) foreach (var s in t.Finally) CollectMutatedNames(s, names, receivers);
-                return;
-            default: return;
+            switch (s)
+            {
+                case AssignStmt a: CollectTarget(a.Target, names, receivers); CollectCalls(a.Value, receivers); break;
+                case AugAssignStmt aug: CollectTarget(aug.Target, names, receivers); CollectCalls(aug.Value, receivers); break;
+                case AnnAssign an: names.Add(an.Target); CollectCalls(an.Value, receivers); break;
+                case VarDecl vd: names.Add(vd.Name); CollectCalls(vd.Init, receivers); break;
+                case TupleUnpackStmt tu: foreach (var t in tu.Targets) names.Add(t); CollectCalls(tu.Value, receivers); break;
+                case ExprStmt es: CollectCalls(es.Expr, receivers); break;
+                case ReturnStmt r: CollectCalls(r.Value, receivers); break;
+                case ForStmt f:
+                    names.Add(f.VarName);
+                    if (!string.IsNullOrEmpty(f.Var2Name)) names.Add(f.Var2Name);
+                    // A call in the iterable or the range bounds runs too.
+                    CollectCalls(f.Iterable, receivers);
+                    CollectCalls(f.RangeStart, receivers);
+                    CollectCalls(f.RangeStop, receivers);
+                    CollectCalls(f.RangeStep, receivers);
+                    break;
+                case WhileStmt w: CollectCalls(w.Condition, receivers); break;
+                case IfStmt i:
+                    CollectCalls(i.Condition, receivers);
+                    foreach (var (cond, _) in i.ElifBranches) CollectCalls(cond, receivers);
+                    break;
+                case WithStmt wi:
+                    if (!string.IsNullOrEmpty(wi.AsName)) names.Add(wi.AsName);
+                    CollectCalls(wi.ContextExpr, receivers);
+                    break;
+                case MatchStmt m:
+                    CollectCalls(m.Target, receivers);
+                    foreach (var br in m.Branches)
+                    {
+                        if (!string.IsNullOrEmpty(br.CaptureName)) names.Add(br.CaptureName);
+                        CollectCalls(br.Pattern, receivers);
+                        CollectCalls(br.Guard, receivers);
+                    }
+                    break;
+            }
         }
     }
 
