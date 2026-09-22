@@ -355,4 +355,48 @@ public class UnrollPolicyTests
         GpioWrites(Main(ir)).Should().Be(25);
         HasLoopBackEdge(Main(ir)).Should().BeTrue();
     }
+
+    // ── the loop variable must stay a compile-time constant ────────────────
+
+    [Fact]
+    public void ALoopVarFeedingAConstParamStillUnrolls()
+    {
+        // `emit(v)` takes const[uint8]: a counter would leave a run-time value
+        // where the callee needs a number, so the loop unrolls whatever the
+        // body costs (fx-named-sequence-loop's Pin(p, Pin.OUT) is this shape).
+        var ir = Gen(
+            Regs +
+            "def emit(v: const[uint8]):\n" +
+            "    GPIOR0.value = v\n" +
+            "def main():\n" +
+            "    for v in [10, 20, 30]:\n" +
+            "        emit(v)\n");
+        // Compiling at all is the assertion's first half: a counter would hand
+        // the const[uint8] parameter a run-time value and be refused.
+        HasLoopBackEdge(Main(ir)).Should().BeFalse(
+            "the loop must unroll so each emit(v) binds a compile-time constant");
+    }
+
+    [Fact]
+    public void ALoopVarFeedingAConstDictLookupStillUnrolls()
+    {
+        // Transitively: ch reaches `self.chars[ch]` through show()'s parameter.
+        // The dict literal is a compile-time table -- a run-time key pays a
+        // compare chain per character -- so the loop keeps unrolling.
+        var ir = Gen(
+            Regs +
+            "class Seg:\n" +
+            "    def __init__(self):\n" +
+            "        self.chars = {\"a\": 1, \"b\": 2}\n" +
+            "    def show(self, ch):\n" +
+            "        if ch in self.chars:\n" +
+            "            GPIOR0.value = self.chars[ch]\n" +
+            "d = Seg()\n" +
+            "def main():\n" +
+            "    for ch in \"ab\":\n" +
+            "        d.show(ch)\n");
+        GpioWrites(Main(ir)).Should().Be(2,
+            "each unrolled call folds self.chars[ch] to a constant store");
+        HasLoopBackEdge(Main(ir)).Should().BeFalse();
+    }
 }

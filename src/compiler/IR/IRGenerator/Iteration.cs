@@ -384,10 +384,13 @@ public partial class IRGenerator
 
     // True when the loop variable -- or a name the body copies it into -- reaches a
     // position only a compile-time constant can fill: a `const[...]` call argument
-    // (`Pin(n, Pin.OUT)` needs `n` unrolled to bind) or the index of storage that has
-    // no run-time form (`GPIOR0[n]`). The counter-loop fallback lowers the variable
-    // to a table read, which these positions refuse -- so the loop must unroll
-    // whatever the body costs.
+    // (`Pin(n, Pin.OUT)` needs `n` unrolled to bind), the index of storage that has
+    // no run-time form (`GPIOR0[n]`), or -- transitively -- a callee's parameter that
+    // itself indexes a compile-time table (`for ch in "Cb-": d.show(ch)` unrolls
+    // because `self.chars[ch]` folds per character; a counter would pay a compare
+    // chain per character instead). The counter-loop fallback lowers the variable
+    // to a run-time value, which these positions refuse or pessimize -- so the loop
+    // must unroll whatever the body costs.
     private bool LoopVarNeedsConst(ForStmt stmt)
     {
         var names = new HashSet<string> { stmt.VarName };
@@ -395,35 +398,10 @@ public partial class IRGenerator
         if (stmt.Body == null) return false;
 
         var nodes = AstNodes(stmt.Body, descendIntoFunctions: true).ToList();
-
-        bool Mentions(Expression? e) =>
-            e != null && AstNodes(e, descendIntoFunctions: true)
-                .OfType<VariableExpr>().Any(v => names.Contains(v.Name));
-
-        // A value the loop variable flows through carries the same requirement:
-        // `p = n; Pin(p)` folds `p` to the constant only when the loop unrolls.
-        bool grew = true;
-        while (grew)
-        {
-            grew = false;
-            foreach (var node in nodes)
-            {
-                switch (node)
-                {
-                    case AssignStmt { Target: VariableExpr tv, Value: { } vv } when Mentions(vv):
-                        grew |= names.Add(tv.Name); break;
-                    case AnnAssign { Value: { } av } aa when Mentions(av):
-                        grew |= names.Add(aa.Target); break;
-                    case VarDecl { Init: { } iv } vd when Mentions(iv):
-                        grew |= names.Add(vd.Name); break;
-                    case TupleUnpackStmt { Value: { } tv } tu when Mentions(tv):
-                        foreach (var t in tu.Targets) grew |= names.Add(t);
-                        break;
-                }
-            }
-        }
+        GrowNamesThroughCopies(nodes, names);
 
         var positions = ConstArgPositions();
+        var visiting = new HashSet<(FunctionDef, int)>();
         foreach (var node in nodes)
         {
             if (node is CallExpr call)
@@ -434,27 +412,212 @@ public partial class IRGenerator
                     MemberAccessExpr ma => ma.Member,
                     _ => null,
                 };
-                if (key == null || !positions.TryGetValue(key, out var posSet)) continue;
-                for (int i = 0; i < call.Args.Count; i++)
-                {
-                    if (!Mentions(call.Args[i])) continue;
-                    if (posSet.Contains(i)) return true;
-                    // A keyword/star argument names its parameter rather than its
-                    // position, so position matching cannot see it; any const
-                    // position on the callee is suspect.
-                    if (call.Args[i] is KeywordArgExpr or StarArgExpr or DoubleStarArgExpr)
-                        return true;
-                }
+                if (key != null && positions.TryGetValue(key, out var posSet))
+                    for (int i = 0; i < call.Args.Count; i++)
+                    {
+                        if (!MentionsAny(call.Args[i], names)) continue;
+                        if (posSet.Contains(i)) return true;
+                        // A keyword/star argument names its parameter rather than its
+                        // position, so position matching cannot see it; any const
+                        // position on the callee is suspect.
+                        if (call.Args[i] is KeywordArgExpr or StarArgExpr or DoubleStarArgExpr)
+                            return true;
+                    }
+                if (ResolveCallFunc(call, null) is { } resolved)
+                    for (int i = 0; i < call.Args.Count; i++)
+                        if (MentionsAny(call.Args[i], names)
+                            && CalleeArgPos(call.Args[i], i, resolved.Func) is { } ap
+                            && CalleeParamNeedsConst(resolved.Func, ap, resolved.RecvKey, visiting))
+                            return true;
             }
             else if (node is IndexExpr ix
-                     && ix.Target is VariableExpr baseVe
-                     && Mentions(ix.Index)
-                     && !HasSubscriptableStorage(baseVe.Name))
+                     && MentionsAny(ix.Index, names)
+                     && ConstTableBase(ix.Target, null))
+            {
+                return true;
+            }
+            else if (node is BinaryExpr { Op: Frontend.BinaryOp.In or Frontend.BinaryOp.NotIn } bx
+                     && MentionsAny(bx.Left, names)
+                     && ConstTableBase(bx.Right, null))
             {
                 return true;
             }
         }
         return false;
+    }
+
+    // A value a tracked name flows through carries the same requirement:
+    // `p = n; Pin(p)` folds `p` to the constant only when the loop unrolls.
+    private static void GrowNamesThroughCopies(List<ASTNode> nodes, HashSet<string> names)
+    {
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (var node in nodes)
+            {
+                switch (node)
+                {
+                    case AssignStmt { Target: VariableExpr tv, Value: { } vv } when MentionsAny(vv, names):
+                        grew |= names.Add(tv.Name); break;
+                    case AnnAssign { Value: { } av } aa when MentionsAny(av, names):
+                        grew |= names.Add(aa.Target); break;
+                    case VarDecl { Init: { } iv } vd when MentionsAny(iv, names):
+                        grew |= names.Add(vd.Name); break;
+                    case TupleUnpackStmt { Value: { } tv } tu when MentionsAny(tv, names):
+                        foreach (var t in tu.Targets) grew |= names.Add(t);
+                        break;
+                }
+            }
+        }
+    }
+
+    private static bool MentionsAny(Expression? e, HashSet<string> names) =>
+        e != null && AstNodes(e, descendIntoFunctions: true)
+            .OfType<VariableExpr>().Any(v => names.Contains(v.Name));
+
+    // The base of a subscript or `in` test that a run-time key cannot reach
+    // cheaply: a dict/set literal binding (`self.chars`, a named table) whose
+    // run-time form is a per-key compare chain, or a name with no subscriptable
+    // storage at all. `recvKey` is the instance a scanned method body's `self`
+    // stands for.
+    private bool ConstTableBase(Expression t, string? recvKey)
+    {
+        switch (t)
+        {
+            case VariableExpr v:
+                if (dictLiteralBindings.ContainsKey(ResolveNameKey(v.Name))
+                    || setLiteralBindings.ContainsKey(ResolveNameKey(v.Name)))
+                    return true;
+                return !HasSubscriptableStorage(v.Name);
+            case MemberAccessExpr { Object: VariableExpr ov } ma:
+                string owner = ov.Name == "self" && recvKey != null
+                    ? recvKey
+                    : ResolveNameKey(ov.Name);
+                return dictLiteralBindings.ContainsKey(owner + "_" + ma.Member)
+                    || setLiteralBindings.ContainsKey(owner + "_" + ma.Member);
+            default:
+                return false;
+        }
+    }
+
+    // The FunctionDef a call reaches, best-effort, for the needs-const scan only:
+    // `inst.m(...)` through instanceClasses and the MRO walk the emitter uses,
+    // `self.m(...)` through the receiver key the scan is running under, a bare
+    // `f(...)` through the function tables. Null for anything else -- an
+    // unresolved callee simply does not force an unroll.
+    private (FunctionDef Func, string? RecvKey)? ResolveCallFunc(CallExpr call, string? selfKey)
+    {
+        string? key = null;
+        string? recvKey = null;
+        if (call.Callee is MemberAccessExpr { Object: VariableExpr recv } mem)
+        {
+            string? cls = null;
+            if (recv.Name == "self")
+            {
+                recvKey = selfKey;
+                if (recvKey != null) instanceClasses.TryGetValue(recvKey, out cls);
+                cls ??= methodInstanceTypes.TryGetValue(currentFunction, out var mc) ? mc : null;
+            }
+            else
+            {
+                string rk = recv.Name;
+                if (!instanceClasses.TryGetValue(rk, out cls) || cls == null)
+                {
+                    if (AliasedInstanceName(rk) is { } al
+                        && instanceClasses.TryGetValue(al, out cls))
+                        rk = al;
+                }
+                if (cls != null) recvKey = rk;
+            }
+            if (cls == null) return null;
+            key = ResolveMROMethod(cls, mem.Member) + "_" + mem.Member;
+        }
+        else if (call.Callee is VariableExpr ve)
+        {
+            key = ve.Name;
+        }
+        if (key == null) return null;
+        if (!inlineFunctions.TryGetValue(key, out var f)
+            && !instanceMethodDefs.TryGetValue(key, out f)
+            && !methodAstByName.TryGetValue(key, out f))
+            return null;
+        return f == null ? null : (f, recvKey);
+    }
+
+    // The callee parameter index a call argument binds: its position among the
+    // user arguments, or the position of the parameter a keyword names. Null for
+    // a *args/** splat, which binds a shape this scan cannot name.
+    private static int? CalleeArgPos(Expression arg, int pos, FunctionDef func)
+    {
+        if (arg is not KeywordArgExpr kw) return arg is StarArgExpr or DoubleStarArgExpr ? null : pos;
+        int self = func.Params.Count > 0 && IsReceiverParamName(func.Params[0].Name) ? 1 : 0;
+        for (int j = self; j < func.Params.Count; j++)
+            if (func.Params[j].Name == kw.Key) return j - self;
+        return null;
+    }
+
+    // True when the parameter at `argPos` of `func` is used inside the function
+    // body in a position only a compile-time constant fills: indexing a
+    // compile-time table (`self.chars[ch]`, `ch in self.chars`), a const[...]
+    // argument onward, or another callee's parameter that needs the same. The
+    // `visiting` set bounds the recursion through mutually recursive callees.
+    private bool CalleeParamNeedsConst(FunctionDef func, int argPos, string? recvKey,
+                                     HashSet<(FunctionDef, int)> visiting)
+    {
+        int self = func.Params.Count > 0 && IsReceiverParamName(func.Params[0].Name) ? 1 : 0;
+        int pi = argPos + self;
+        if (pi >= func.Params.Count) return false;
+        if (!visiting.Add((func, argPos))) return false;
+        try
+        {
+            var nodes = AstNodes(func.Body, descendIntoFunctions: true).ToList();
+            var names = new HashSet<string> { func.Params[pi].Name };
+            GrowNamesThroughCopies(nodes, names);
+
+            var positions = ConstArgPositions();
+            foreach (var node in nodes)
+            {
+                switch (node)
+                {
+                    case IndexExpr ix when MentionsAny(ix.Index, names)
+                                          && ConstTableBase(ix.Target, recvKey):
+                        return true;
+                    case BinaryExpr { Op: Frontend.BinaryOp.In or Frontend.BinaryOp.NotIn } bx
+                        when MentionsAny(bx.Left, names) && ConstTableBase(bx.Right, recvKey):
+                        return true;
+                    case CallExpr call:
+                    {
+                        string? key = call.Callee switch
+                        {
+                            VariableExpr ve => ve.Name,
+                            MemberAccessExpr ma => ma.Member,
+                            _ => null,
+                        };
+                        if (key != null && positions.TryGetValue(key, out var posSet))
+                            for (int i = 0; i < call.Args.Count; i++)
+                            {
+                                if (!MentionsAny(call.Args[i], names)) continue;
+                                if (posSet.Contains(i)) return true;
+                                if (call.Args[i] is KeywordArgExpr or StarArgExpr or DoubleStarArgExpr)
+                                    return true;
+                            }
+                        if (ResolveCallFunc(call, recvKey) is { } next)
+                            for (int i = 0; i < call.Args.Count; i++)
+                                if (MentionsAny(call.Args[i], names)
+                                    && CalleeArgPos(call.Args[i], i, next.Func) is { } ap
+                                    && CalleeParamNeedsConst(next.Func, ap, next.RecvKey, visiting))
+                                    return true;
+                        break;
+                    }
+                }
+            }
+            return false;
+        }
+        finally
+        {
+            visiting.Remove((func, argPos));
+        }
     }
 
     // Counts the nodes one inline body lowers to, descending into the inline
