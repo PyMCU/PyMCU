@@ -1319,7 +1319,21 @@ public partial class IRGenerator
                 && TryResolveArrayStorageKey(argArrayVar.Name, out var argStorage)
                 && (arraysWithVariableIndex.Contains(argStorage)
                     || moduleSramArrays.Contains(argStorage)))
+            {
                 argEvaluated = new ArrayBase(argStorage);
+            }
+            // A parameter bound to a compile-time sequence has no storage at all: the
+            // Variable it resolves to names a slot nobody writes (`write(buf)` ->
+            // `writeto(addr, buf)` -> `_i2c_writeto(addr, buffer, n)` hands a real
+            // subroutine the unbacked name). Give the elements a hidden buffer and
+            // pass its base.
+            else if (argEvaluated is Variable
+                     && arg is VariableExpr seqArgV
+                     && ResolveConstSequenceExpr(seqArgV) is { } seqElems
+                     && MaterializeSequenceArg(seqElems) is { } seqBuf)
+            {
+                argEvaluated = seqBuf;
+            }
             argValuesL.Add(argEvaluated);
         }
 

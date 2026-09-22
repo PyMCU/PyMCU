@@ -462,6 +462,42 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// A compile-time sequence bound to a parameter has no storage of its own: the binding
+    /// exists so `for x in p`, `p[k]` and `len(p)` fold without a buffer. A real subroutine
+    /// indexes SRAM at the address it is handed, so handing it the bare name passed whatever
+    /// the slot happened to hold -- `i2c.write(bytes([register & 0xFF]))` in adafruit_bmp280
+    /// sent 0x00 as the register pointer because `register` had folded to a constant and the
+    /// sequence bound without a buffer behind it. Lay the elements out under a hidden name
+    /// and answer its base.
+    /// </summary>
+    private ArrayBase? MaterializeSequenceArg(List<Expression> elements)
+    {
+        var values = new List<int>(elements.Count);
+        foreach (var e in elements)
+        {
+            if (!TryEvalElemConst(e, out int v)) return null;
+            values.Add(v);
+        }
+
+        string name = "__seqarg" + (++ctSequenceCounter);
+        string key = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        // An empty sequence still needs a base to hand the callee -- `writeto(addr, b"")`
+        // probes with a zero-length buffer that is never read but must still address
+        // somewhere.
+        int size = Math.Max(values.Count, 1);
+        arraySizes[key] = values.Count;
+        arrayElemTypes[key] = DataType.UINT8;
+        variableTypes[key] = DataType.UINT8;
+        arraysWithVariableIndex.Add(key);
+        for (int k = 0; k < size; ++k)
+            Emit(new ArrayStore(key, new Constant(k), new Constant(k < values.Count ? values[k] : 0),
+                DataType.UINT8, size));
+        return new ArrayBase(key);
+    }
+
+    /// <summary>
     /// Points <paramref name="targetKey"/> at the compile-time sequence <paramref name="baseKey"/>,
     /// clearing the scalar bindings a previous call at the same key may have left. The sequence
     /// itself is not copied: a field and a parameter are two names for the same elements.
