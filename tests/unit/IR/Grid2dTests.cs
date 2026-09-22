@@ -215,6 +215,16 @@ public class Grid2dTests
     // ── refusals ────────────────────────────────────────────────────────────
 
     [Fact]
+    public void RepeatedListOfLists_IsAnAliasingRefusal()
+    {
+        var ex = Refused(
+            "def main() -> None:\n" +
+            "    g = [[0] * 4] * 3\n");
+        Assert.Contains("alias", ex.Message);
+        Assert.Contains("for _ in range(", ex.Message);
+    }
+
+    [Fact]
     public void NonConstantDims_AreRefused()
     {
         var ex = Refused(

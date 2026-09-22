@@ -149,6 +149,15 @@ public partial class IRGenerator
         if (EnumMemberAssignTarget(stmt.Target) is { } enumTgt)
             throw UserError(EnumMemberAssignMessage(enumTgt.Cls, enumTgt.Member), enumTgt.At);
 
+        // `g = [[0]*W] * H`: CPython makes H aliases of ONE row object, so
+        // g[0][1] = v writes every row -- refused with the comprehension
+        // spelling, never lowered as if the rows were independent.
+        if (IsAliasedRowRepeat(stmt.Value))
+            // The outer `* H` BinaryExpr's span differs between the two front
+            // ends; the statement's does not -- point at it so file:line:col
+            // is identical on both.
+            throw AliasedRowRepeatError(stmt);
+
         // `s = f"..."` with runtime interpolations: expand into a fixed buffer + strfmt calls.
         if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
             return;
