@@ -368,11 +368,19 @@ public static class TypeInference
     // The shared statement walk: every statement in a body at ANY nesting depth
     // (for/while/if/try/with/match), in source order. DeriveFieldLayout uses it too --
     // a field write inside a loop is the same write for layout purposes (#488).
-    internal static IEnumerable<Statement> WalkStatements(List<Statement> body)
+    internal static IEnumerable<Statement> WalkStatements(IEnumerable<Statement> body)
     {
         foreach (var s in body)
             foreach (var inner in WalkStatement(s))
                 yield return inner;
+    }
+
+    // Same walk for a body held as a single statement (an arm, a loop body).
+    internal static IEnumerable<Statement> WalkStatements(Statement? body)
+    {
+        if (body == null) yield break;
+        foreach (var inner in WalkStatement(body))
+            yield return inner;
     }
 
     private static IEnumerable<Statement> WalkStatement(Statement s)
