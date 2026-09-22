@@ -4,6 +4,10 @@
 # `status` follows the compatibility parity allowlist schema:
 #   - "documented": intentional behavior described in docs.
 #   - "tracked:#N": a real gap filed in the repository that owns it.
+#
+# `text` (compat.* entries only) is the offending source line, whitespace-
+# normalised. A pinned release can shift line numbers, so an entry matches a
+# violation on file + line number OR on file + line text.
 
 # -- native HAL API parity ---------------------------------------------------
 
@@ -411,76 +415,91 @@ reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/adafruit_minimqtt/adafruit_minimqtt.py:2"
+text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/adafruit_minimqtt/adafruit_minimqtt.py:20"
+text = 'if __CHIP__.name != "rp2040" and __CHIP__.name != "rp2350":'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/busio.py:45"
+text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/busio.py:49"
+text = 'if __CHIP__.arch == "avr":'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:13"
+text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:16"
+text = 'if __CHIP__.arch == "avr":'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:128"
+text = 'MCUSR: ptr[uint8] = ptr(0x54)'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:129"
+text = 'if MCUSR[3]: # WDRF -- watchdog system reset'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:131"
+text = 'if MCUSR[2]: # BORF -- brown-out reset'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:133"
+text = 'if MCUSR[1]: # EXTRF -- external reset pin'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:135"
+text = 'if MCUSR[0]: # PORF -- power-on reset'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not read chip registers directly."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/pwmio.py:16"
+text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/pwmio.py:19"
+text = 'if __CHIP__.arch == "avr":'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/socketpool.py:2"
+text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
 
 [[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/socketpool.py:20"
+text = 'if __CHIP__.name != "rp2040" and __CHIP__.name != "rp2350":'
 status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 

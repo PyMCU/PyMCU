@@ -66,6 +66,10 @@ class Deviation:
     status: str
     reason: str
     quote: str = ""
+    # For "compat.*" entries: the offending source line, whitespace-normalised.
+    # Line numbers shift between pinned releases, so a compat entry also
+    # matches a violation whose file and line text are the same.
+    text: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,7 @@ class UniversalityViolation:
     line: int
     kinds: tuple[str, ...]
     detail: str
+    text: str = ""
     source: str = ""
 
 
@@ -447,6 +452,7 @@ def allowlist() -> dict[str, Deviation]:
             status=item["status"],
             reason=item.get("reason", ""),
             quote=item.get("quote", ""),
+            text=" ".join(item.get("text", "").split()),
         )
         for item in data.get("deviation", [])
     }
@@ -485,7 +491,8 @@ def universality_violations() -> list[UniversalityViolation]:
                 # layer's own modules (digitalio, busio, pwmio, ...), not
                 # about the board pin tables they are handed.
                 continue
-            tree = parse_source(path)
+            src_lines = path.read_text().splitlines()
+            tree = ast.parse("\n".join(src_lines), filename=str(path))
             by_line: dict[int, list[tuple[str, str]]] = {}
 
             def add(node: ast.AST, kind: str, detail: str) -> None:
@@ -509,6 +516,7 @@ def universality_violations() -> list[UniversalityViolation]:
             for line, items in sorted(by_line.items()):
                 kinds = tuple(sorted({kind for kind, _ in items}))
                 detail = ", ".join(sorted({detail for _, detail in items}))
+                text = " ".join(src_lines[line - 1].split()) if line <= len(src_lines) else ""
                 violations.append(UniversalityViolation(
                     symbol=f"compat.{layer}.{rel}:{line}",
                     layer=layer,
@@ -516,6 +524,7 @@ def universality_violations() -> list[UniversalityViolation]:
                     line=line,
                     kinds=kinds,
                     detail=detail,
+                    text=text,
                     source=source,
                 ))
     return violations

@@ -15,7 +15,7 @@ from hal_parity import (
 )
 
 
-def _allowed(symbol):
+def _allowed(symbol, text=""):
     allowed = allowlist()
     if symbol in allowed:
         return allowed[symbol]
@@ -29,13 +29,22 @@ def _allowed(symbol):
             if wildcard in allowed:
                 return allowed[wildcard]
             parts.pop()
+        if text:
+            # A pinned release can shift line numbers: a compat entry whose
+            # symbol names the same file also matches on the offending line's
+            # text, so the entry survives a renumbering.
+            path = symbol.rsplit(":", 1)[0]
+            for allowed_symbol, item in allowed.items():
+                if (item.text and item.text == text
+                        and allowed_symbol.rsplit(":", 1)[0] == path):
+                    return item
     return None
 
 
 def _params(cases, prefix):
     params = []
     for case in cases:
-        allowed = _allowed(case.symbol)
+        allowed = _allowed(case.symbol, getattr(case, "text", ""))
         marks = []
         if allowed is not None:
             marks.append(pytest.mark.xfail(strict=True, reason=f"{allowed.status}: {allowed.reason}"))
@@ -68,8 +77,8 @@ def test_hal_facade_claims_keep_the_same_api(violation):
 def test_compat_layers_do_not_contain_chip_particulars(violation):
     assert False, (
         f"{violation.layer}:{violation.path}:{violation.line}: "
-        f"{', '.join(violation.kinds)} ({violation.detail}) belongs in the native HAL "
-        f"[{violation.source}]"
+        f"{', '.join(violation.kinds)} ({violation.detail}) belongs in the native HAL; "
+        f"line {violation.line} reads {violation.text!r} in {violation.source}"
     )
 
 
@@ -83,7 +92,9 @@ def test_hal_parity_allowlist_entries_are_used_and_tracked(missing_layers, monke
     for layer in missing_layers:
         monkeypatch.setitem(LAYERS, layer, tmp_path / layer)
     seen = {v.symbol for v in api_violations()}
-    seen.update(v.symbol for v in universality_violations())
+    uni = universality_violations()
+    seen.update(v.symbol for v in uni)
+    seen_texts = {(v.symbol.rsplit(":", 1)[0], v.text) for v in uni if v.text}
     # Only require usage for layers that were scanned; still validate every
     # entry's tracking metadata, including those for absent sibling repos.
     missing_prefixes = tuple(
@@ -100,7 +111,12 @@ def test_hal_parity_allowlist_entries_are_used_and_tracked(missing_layers, monke
                 if not any(v.startswith(prefix) for v in seen):
                     unused.append(symbol)
             elif symbol not in seen:
-                unused.append(symbol)
+                # A compat entry whose line number shifted under a pinned
+                # release still counts as used when its file and line text
+                # match a violation that was seen.
+                if not (item.text
+                        and (symbol.rsplit(":", 1)[0], item.text) in seen_texts):
+                    unused.append(symbol)
         if item.status != "documented" and not re.fullmatch(r"tracked:#\d+", item.status):
             malformed.append(f"{symbol} has status {item.status!r}")
         if item.status == "documented" and not item.quote:
