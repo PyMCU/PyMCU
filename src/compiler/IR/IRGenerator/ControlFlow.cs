@@ -260,6 +260,17 @@ public partial class IRGenerator
                 binExpr.Op == Frontend.BinaryOp.Is || binExpr.Op == Frontend.BinaryOp.IsNot)
                 return 0;
 
+            // A binary operator that is not a comparison can never be decided here -- only
+            // the six comparisons have cases below. Evaluating the operands anyway and then
+            // returning 0 replays their side effects when the caller lowers the whole
+            // expression itself: `while self._get_status() & 0x08:` in adafruit_bmp280's
+            // conversion poll sent the status-register write+read twice per iteration.
+            // VisitBinary applies the same register-operand rejection on that path.
+            if (binExpr.Op is not (Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                                   or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
+                                   or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq))
+                return 0;
+
             RejectBareRegisterOperands(binExpr);
 
             // `if s == "running":` where s holds one of several texts. Interning gives equal
