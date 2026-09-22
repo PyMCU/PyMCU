@@ -143,7 +143,12 @@ public enum BinaryOp
 [JsonDerivedType(typeof(InlineExpansionMarker), "imarker")]
 public abstract record Instruction;
 
-public record Return(Val Value) : Instruction;
+// RFC 0009: `Tag` carries the union-member byte when the enclosing Function's
+// ReturnMembers lists a None (or multi-member) return -- 0 = payload member,
+// members.Count-1 = None. Null on every return of an ordinary function, and
+// WhenWritingNull keeps it out of the .mir entirely, so a program with no
+// run-time Optional serializes byte-identical to before.
+public record Return(Val Value, Val? Tag = null) : Instruction;
 
 public record Unary(UnaryOp Op, Val Src, Val Dst) : Instruction;
 
@@ -181,7 +186,11 @@ public record JumpIfGreaterOrEqual(Val Src1, Val Src2, string Target) : Instruct
 
 public record Label(string Name) : Instruction;
 
-public record Call(string FunctionName, List<Val> Args, Val Dst) : Instruction;
+// RFC 0009: `TagDst` receives the callee's union-member tag byte when the callee's
+// ReturnMembers is non-empty (the register after the payload in the return run --
+// R25 for an 8-bit payload, R22 for 16-bit, R20 for 32-bit/float on AVR). Null on
+// every call to an ordinary function.
+public record Call(string FunctionName, List<Val> Args, Val Dst, Val? TagDst = null) : Instruction;
 
 // Indirect call through a function pointer (ICALL on AVR)
 public record IndirectCall(Val FuncAddr, List<Val> Args, Val Dst) : Instruction;
@@ -307,6 +316,14 @@ public class Function
 
     // True for @export_c functions — FFI outbound, must be CanFail = false.
     public bool IsExportC { get; set; } = false;
+
+    // RFC 0009: the union-member list of the declared or inferred return type when
+    // the return can carry more than one state at run time -- ["uint8","None"] for
+    // `-> Optional[uint8]`, with None always last. Null (absent from the .mir, so a
+    // tag-free program's file is byte-identical) means an ordinary single-state
+    // return. When set, every Return in Body carries Tag and every Call that names
+    // this function carries TagDst.
+    public List<string>? ReturnMembers { get; set; }
 }
 
 // One slot in a class's flash-resident vtable.
