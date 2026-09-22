@@ -174,6 +174,24 @@ purpose, as opposed to bugs like these three that were silent until found.
   constant read the range check as failed and `Servo.fraction`'s setter raised on a
   legal value. Comparison operators now fold to `0`/`1` while arithmetic keeps its
   float result.
+- `buf[i] += v` on a `bytearray` parameter stores through the pointer like
+  `buf[i] = v` already did. The store-back dispatch for an augmented index
+  assignment never checked the buffer-parameter table and fell through to the bit
+  writer: `buf[2] += 1` wrote a bit into the pointer register itself -- the buffer
+  byte never changed -- and a runtime index refused `Bit index must be constant`
+  on a legal statement. `xs[i] += v` on a `list[T]` took the same wrong exit; both
+  now lower to the indirect store, and the read-modify-write keeps the element's
+  width, so a `list[uint16]` no longer truncates the sum to a byte.
+- A `const[T[N]]` table whose initializer is computed -- `[0]*256 + [11,22] +
+  [0]*40`, `range(N)`, a concat of constants -- carries its real bytes instead of
+  a table of zeros. Only a literal `[...]` populated the table before, so the
+  flash image had the right length with every read answering 0.
+- A `list[T]` declared at module level is one slot under the global's bare name.
+  The declaration filed it as `main.xs` while everything else that names a module
+  global -- appends, `xs[i]` reads and writes, `len(xs)`, the GC root -- spelled
+  it `xs`, so the pointer lived in a slot nobody read and the list the program saw
+  stayed empty; inside an `@inline` expansion the receiver was also loaded as a
+  one-byte pointer, corrupting the heap header at a shadow address in low SRAM.
 
 ### Language surface
 - `bytearray(n)` with a runtime `n` allocates from a static arena (no `free()`, AVR only)
