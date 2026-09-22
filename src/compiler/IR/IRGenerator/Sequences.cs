@@ -306,6 +306,30 @@ public partial class IRGenerator
             && constSequenceBindings.TryGetValue(ClassAttrKey(camCls, cam.Member),
                                                  out var camSeq))
             return camSeq;
+        // `self.POSITIONS[i]` on a subclass: the tuple is filed under the class that
+        // DECLARED it (`_AbstractSeg7x4.POSITIONS` on Seg7x4's base), so the receiver's
+        // own prefix misses it. Walk the MRO exactly as TryGetDictFor does.
+        if (e is MemberAccessExpr { Object: VariableExpr seqOv } seqMa
+            && (ReceiverNameForLookup(seqOv) ?? ResolveNameKey(seqOv.Name)) is { } seqBase
+            && ReceiverClassThroughAliases(seqBase) is { } seqCls)
+        {
+            string? seqCur = seqCls;
+            for (int depth = 0; seqCur != null && depth < 20; depth++)
+            {
+                foreach (var cand in new[]
+                {
+                    classModuleMap.TryGetValue(seqCur, out var seqPfx)
+                        ? seqPfx + seqCur + "_" + seqMa.Member : null,
+                    seqCur + "_" + seqMa.Member,
+                    ClassAttrKey(seqCur, seqMa.Member),
+                })
+                {
+                    if (cand != null && constSequenceBindings.TryGetValue(cand, out var seqFound))
+                        return seqFound;
+                }
+                seqCur = BaseClassOf(seqCur);
+            }
+        }
         if (e is MemberAccessExpr { Object: MemberAccessExpr { Object: VariableExpr modV } modCls } mcm)
         {
             // `module.Cls.attr`: resolve the module-qualified class name, then the
