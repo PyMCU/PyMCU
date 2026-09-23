@@ -664,6 +664,11 @@ public partial class IRGenerator
     // Module name to the file it was loaded from, handed over by the module loader.
     private Dictionary<string, string> modulePaths = new();
 
+    // Module name to its parsed AST, kept from Generate's parameter so late alias
+    // registration (imports inside inlined bodies) can chase re-exports the same way the
+    // entry-file pass does.
+    private Dictionary<string, ProgramNode> importedModuleAsts = new();
+
     /// The file a module was loaded from, or empty when it is not known. Tries the qualified
     /// name first, then the trailing segment, because a module reaches IR generation under
     /// whichever name imported it and the loader records every name it was requested under.

@@ -461,6 +461,7 @@ public partial class IRGenerator
         // the field, so every later use of the bare name saw the caller's null.
         projectModules ??= new HashSet<string>();
         this.projectModules = projectModules;
+        this.importedModuleAsts = importedModules;
         this.deviceConfig = config;
         this.sourceLines = sourceLines ?? new List<string>();
         this.moduleSourceLines = moduleSourceLines ?? new Dictionary<string, List<string>>();
@@ -642,8 +643,13 @@ public partial class IRGenerator
                 foreach (var sym in imp.Symbols)
                 {
                     string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
+                    // A sub-module's `from X import S` can name a symbol X only re-exports;
+                    // chase it to the defining module the same way the entry file's imports
+                    // are chased, or `pulse_delay_us` inside helper.py binds to the facade
+                    // `pymcu.hal.pulse` and mangles to a function that was never compiled.
+                    string resolvedMod = ResolveReExport(importedModules, imp.ModuleName, sym);
                     // This module's OWN binding, which no other module can take from it.
-                    RegisterModuleAlias(ownPrefix, key, imp.ModuleName,
+                    RegisterModuleAlias(ownPrefix, key, resolvedMod,
                                         imp.Aliases.ContainsKey(sym) ? sym : null);
                     // Don't overwrite aliases established by the main file — sub-module
                     // imports use the same flat dictionary and would otherwise shadow the
@@ -651,7 +657,7 @@ public partial class IRGenerator
                     // `from pymcu.hal.gpio import Pin` that lives in e.g. hal/__init__.py.
                     if (!importedAliases.ContainsKey(key))
                     {
-                        importedAliases[key] = imp.ModuleName;
+                        importedAliases[key] = resolvedMod;
                         if (imp.Aliases.ContainsKey(sym))
                             aliasToOriginal[key] = sym;
                     }

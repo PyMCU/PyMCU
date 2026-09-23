@@ -851,11 +851,12 @@ public partial class IRGenerator
                 foreach (var sym in imp.Symbols)
                 {
                     string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
-                    importedAliases[key] = imp.ModuleName;
+                    string resolvedMod = ResolveReExport(importedModuleAsts, imp.ModuleName, sym);
+                    importedAliases[key] = resolvedMod;
                     // The inlined body belongs to the module that wrote the import, so its
                     // own table has to carry it too or the module-scoped lookup (#320) would
                     // keep answering with that module's top-level binding of the same name.
-                    RegisterModuleAlias(OwningModulePrefix(), key, imp.ModuleName,
+                    RegisterModuleAlias(OwningModulePrefix(), key, resolvedMod,
                                         imp.Aliases.ContainsKey(sym) ? sym : null);
                     if (imp.Aliases.ContainsKey(sym))
                         aliasToOriginal[key] = sym;
