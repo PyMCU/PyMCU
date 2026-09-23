@@ -1753,8 +1753,21 @@ public partial class IRGenerator
         if (names.Count == 0 && receivers.Count == 0) return;
 
         foreach (var name in names)
+        {
+            // A name the loop can read ahead of its first write still needs the value it
+            // carried in. When that value is a compile-time constant with no runtime
+            // storage of its own -- the binding an expansion gives a literal argument --
+            // dropping it leaves the read to fail "not defined". Give the name real
+            // storage initialized to that constant instead: the same binding a
+            // reassigned parameter takes when the caller passes a variable. Names the
+            // loop rebinds before any read (the `for` variable) and `const[...]` names
+            // are skipped: the first needs no pre-loop value and writing the second is
+            // the user's error, not a missing binding.
+            bool readsFirst = LoopReadsBeforeWrite(name, body, condition);
             foreach (var key in CandidateKeys(name))
             {
+                if (readsFirst && !declaredConstants.Contains(key) && !HasRuntimeBinding(key))
+                    MaterializeConstantBinding(key);
                 constantVariables.Remove(key);
                 strConstantVariables.Remove(key);
                 // A loop body is lowered once and runs many times, so what the name held on the
@@ -1766,7 +1779,9 @@ public partial class IRGenerator
                 // capable name answers the test through its tag byte instead.
                 noneValuedNames.Remove(key);
                 narrowedOptionals.Remove(key);
+                floatConstantVariables.Remove(key);
             }
+        }
 
         // `obj.method()` writes only the fields that method assigns to. Dropping every field
         // of the receiver instead was too much: a Pin's `_bit` is written once in __init__ and
@@ -1825,6 +1840,164 @@ public partial class IRGenerator
     /// </summary>
     private bool ForeignFlowRead(string name) =>
         currentFunction is not ("" or "main") && reassignedGlobals.Contains(name);
+
+    /// <summary>
+    /// True when <paramref name="key"/> already resolves to runtime storage: a variable, a
+    /// mutable global, a live-optional slot, or an alias that reaches one. Only a name with
+    /// NONE of those loses every binding when its constant is dropped.
+    /// </summary>
+    private bool HasRuntimeBinding(string key)
+    {
+        if (variableTypes.ContainsKey(key) || mutableGlobals.ContainsKey(key)
+            || optionalMembersByName.ContainsKey(key)) return true;
+        string? cur = key;
+        for (int d = 0; d < 10 && cur != null && variableAliases.TryGetValue(cur, out var next); d++)
+        {
+            cur = next;
+            if (cur != null
+                && (variableTypes.ContainsKey(cur) || mutableGlobals.ContainsKey(cur)
+                    || optionalMembersByName.ContainsKey(cur))) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> can be read before a write to it is guaranteed inside
+    /// the loop: the while condition reads it first, or the body reads it on a path a same-level
+    /// write does not dominate. Writes nested in an `if`/`try`/inner loop never dominate --
+    /// their arm may not run -- so only reads up to the first TOP-LEVEL write count.
+    /// </summary>
+    private static bool LoopReadsBeforeWrite(string name, Statement body, Expression? condition)
+    {
+        if (condition != null && ExprReadsName(condition, name)) return true;
+        foreach (var s in body is Block b ? b.Statements : new List<Statement> { body })
+        {
+            if (StatementSubtreeReads(s, name)) return true;
+            if (IsDominatingWrite(s, name)) return false;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Every read of <paramref name="name"/> inside <paramref name="s"/>, nested statements
+    /// included -- a read inside an `if` arm still needs the binding on the paths that reach it.
+    /// A plain assignment's target is a write, not a read (`x = 1` does not read x), but every
+    /// other position reads, including an augmented-assign target (`x += 1` reads x first).
+    /// </summary>
+    private static bool StatementSubtreeReads(Statement s, string name)
+        => TypeInference.WalkStatements(s).Any(inner => StatementOwnExprsRead(inner, name));
+
+    private static bool StatementOwnExprsRead(Statement s, string name) => s switch
+    {
+        AssignStmt a => ExprReadsName(a.Value, name)
+            || (a.Target is not VariableExpr && ExprReadsName(a.Target, name)),
+        AugAssignStmt aug => ExprReadsName(aug.Value, name) || ExprReadsName(aug.Target, name),
+        AnnAssign an => ExprReadsName(an.Value, name),
+        VarDecl vd => ExprReadsName(vd.Init, name),
+        TupleUnpackStmt tu => ExprReadsName(tu.Value, name),
+        ReturnStmt r => ExprReadsName(r.Value, name),
+        ExprStmt es => ExprReadsName(es.Expr, name),
+        IfStmt i => ExprReadsName(i.Condition, name)
+            || i.ElifBranches.Any(b => ExprReadsName(b.Condition, name)),
+        WhileStmt w => ExprReadsName(w.Condition, name),
+        ForStmt f => ExprReadsName(f.Iterable, name) || ExprReadsName(f.RangeStart, name)
+            || ExprReadsName(f.RangeStop, name) || ExprReadsName(f.RangeStep, name),
+        WithStmt wi => ExprReadsName(wi.ContextExpr, name),
+        MatchStmt m => ExprReadsName(m.Target, name)
+            || m.Branches.Any(br => ExprReadsName(br.Pattern, name) || ExprReadsName(br.Guard, name)),
+        AssertStmt a => ExprReadsName(a.Condition, name),
+        RaiseStmt r => ExprReadsName(r.MessageExpr, name),
+        _ => false,
+    };
+
+    /// <summary>A same-level statement that binds <paramref name="name"/> unconditionally:
+    /// plain/annotated/declared assignment, tuple unpack, `with ... as`, and the `for` variable
+    /// (rebound on every iteration before the body reads it). Augmented assignment reads first,
+    /// so it never reaches here -- the read check fires on it earlier.</summary>
+    private static bool IsDominatingWrite(Statement s, string name) => s switch
+    {
+        AssignStmt { Target: VariableExpr { Name: var t } } => t == name,
+        AnnAssign a => a.Target == name,
+        VarDecl vd => vd.Name == name,
+        TupleUnpackStmt tu => tu.Targets.Contains(name),
+        WithStmt w => w.AsName == name,
+        ForStmt f => f.VarName == name || f.Var2Name == name,
+        _ => false,
+    };
+
+    private static bool ExprReadsName(Expression? e, string name) => e switch
+    {
+        null => false,
+        VariableExpr v => v.Name == name,
+        BinaryExpr b => ExprReadsName(b.Left, name) || ExprReadsName(b.Right, name),
+        UnaryExpr u => ExprReadsName(u.Operand, name),
+        CallExpr c => ExprReadsName(c.Callee, name) || c.Args.Any(a => ExprReadsName(a, name)),
+        KeywordArgExpr k => ExprReadsName(k.Value, name),
+        StarArgExpr s => ExprReadsName(s.Value, name),
+        DoubleStarArgExpr d => ExprReadsName(d.Value, name),
+        MemberAccessExpr m => ExprReadsName(m.Object, name),
+        IndexExpr i => ExprReadsName(i.Target, name) || ExprReadsName(i.Index, name),
+        SliceExpr s => ExprReadsName(s.Start, name) || ExprReadsName(s.Stop, name)
+            || ExprReadsName(s.Step, name),
+        TernaryExpr t => ExprReadsName(t.Condition, name) || ExprReadsName(t.TrueVal, name)
+            || ExprReadsName(t.FalseVal, name),
+        TupleExpr t => t.Elements.Any(x => ExprReadsName(x, name)),
+        ListExpr l => l.Elements.Any(x => ExprReadsName(x, name)),
+        SetExpr s => s.Elements.Any(x => ExprReadsName(x, name)),
+        DictExpr d => d.Entries.Any(kv => ExprReadsName(kv.Key, name) || ExprReadsName(kv.Value, name)),
+        FStringExpr f => f.Parts.Any(p => p.IsExpr && ExprReadsName(p.Expr, name)),
+        ListCompExpr lc => ExprReadsName(lc.Element, name) || ExprReadsName(lc.Iterable, name)
+            || ExprReadsName(lc.Iterable2, name) || ExprReadsName(lc.Filter, name),
+        GeneratorExpr g => ExprReadsName(g.Element, name) || ExprReadsName(g.Iterable, name)
+            || ExprReadsName(g.Iterable2, name) || ExprReadsName(g.Filter, name),
+        WalrusExpr w => ExprReadsName(w.Value, name),
+        YieldExpr y => ExprReadsName(y.Value, name),
+        AwaitExpr a => ExprReadsName(a.Operand, name),
+        LambdaExpr l => ExprReadsName(l.Body, name),
+        _ => false,
+    };
+
+    /// <summary>
+    /// Emit the store that turns a compile-time-only binding into a runtime local holding the
+    /// same value, so a loop that rebinds the name keeps answering its earlier reads.
+    /// </summary>
+    private void MaterializeConstantBinding(string key)
+    {
+        if (constantVariables.TryGetValue(key, out int iv)
+            || localConstantValues.TryGetValue(key, out iv))
+        {
+            var dt = MaterializedIntType(key);
+            variableTypes[key] = dt;
+            Emit(new Copy(new Constant(iv), new Variable(key, dt)));
+            return;
+        }
+        if (floatConstantVariables.TryGetValue(key, out double fv))
+        {
+            variableTypes[key] = DataType.FLOAT;
+            Emit(new Copy(new FloatConstant(fv), new Variable(key, DataType.FLOAT)));
+        }
+    }
+
+    /// <summary>
+    /// The width a materialized int takes: the parameter's declared type when the binding is an
+    /// expansion's (`inline<i>.param`), else INT16 -- the same `int` default a bare literal
+    /// assignment would widen to.
+    /// </summary>
+    private DataType MaterializedIntType(string key)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && key.StartsWith(currentInlinePrefix, StringComparison.Ordinal)
+            && inlineStack.Count > 0
+            && inlineStack[^1].CalleeName is { Length: > 0 } callee
+            && functionParams.TryGetValue(callee, out var ps)
+            && functionParamTypes.TryGetValue(callee, out var pts))
+        {
+            int idx = ps.IndexOf(key[currentInlinePrefix.Length..]);
+            if (idx >= 0 && idx < pts.Count && pts[idx] != DataType.UNKNOWN)
+                return pts[idx];
+        }
+        return DataType.INT16;
+    }
 
     /// <summary>
     /// Every storage name <paramref name="name"/> can stand for: the qualified spellings, plus
