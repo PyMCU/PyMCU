@@ -3132,6 +3132,24 @@ public partial class IRGenerator
                 continue;
             }
 
+            // `raise X(obj)` where obj is an instance: the message word carries
+            // strings, not objects -- there is no __str__ to render one. The
+            // payload's class name is the message: `except X` still dispatches
+            // on the type, and a handler that prints it sees what was raised
+            // rather than a meaningless field value (unmodified
+            // adafruit_irremote raises FailedToDecode(msg) with a namedtuple).
+            if (piece is VariableExpr pieceVar
+                && InstanceClassOfName(pieceVar.Name) is { } pieceCls)
+            {
+                site.Pieces.Add(new RaiseMessagePiece
+                {
+                    Literal = pieceCls.Contains('_')
+                        ? pieceCls[(pieceCls.LastIndexOf('_') + 1)..]
+                        : pieceCls,
+                });
+                continue;
+            }
+
             RejectInstanceInterpolation(piece);
             Val v = VisitExpression(piece);
             DataType vt = GetValType(v);

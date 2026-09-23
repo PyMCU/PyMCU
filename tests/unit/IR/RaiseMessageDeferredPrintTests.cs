@@ -189,3 +189,75 @@ public class RaiseMessageDeferredPrintTests
                 because: "CompileError is a diagnostic; RFC 0005 does not defer it");
     }
 }
+
+public class RaiseInstanceMessageTests
+{
+    private const string Prelude =
+        "from pymcu.types import uint8, uint16, int32\n" +
+        "def uart_write_str(s: const[str]):\n" +
+        "    pass\n" +
+        "def uart_write_decimal_u8(v: uint8):\n" +
+        "    pass\n" +
+        "def uart_write_decimal_u16(v: uint16):\n" +
+        "    pass\n" +
+        "def uart_write_decimal_i32(v: int32):\n" +
+        "    pass\n";
+
+    private static ProgramIR Gen(string src) =>
+        new IRGenerator().Generate(
+            new Parser(new Lexer(Prelude + src).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" });
+
+    // Unmodified adafruit_irremote writes `raise FailedToDecode(msg)` where msg is
+    // an UnparseableIRMessage namedtuple -- a payload that exists to be caught and
+    // re-raised (`raise IRDecodeException from err`), never read. The message word
+    // carries strings, so the payload's class name becomes the message: the type
+    // dispatch is untouched and a handler that prints it sees what was raised.
+    [Fact]
+    public void AnInstanceRaiseMessageCompilesWithTheClassName()
+    {
+        var ir = Gen(
+            "class Msg:\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v = v\n" +
+            "def boom() -> uint8:\n" +
+            "    m = Msg(3)\n" +
+            "    raise ValueError(m)\n" +
+            "def main() -> uint8:\n" +
+            "    try:\n" +
+            "        return boom()\n" +
+            "    except ValueError as e:\n" +
+            "        return 1\n");
+
+        ir.Functions.Select(f => f.Name).Should().Contain(
+            "__pymcu_print_exn_msg",
+            because: "the handler binds as e, so the deferred printer still exists");
+        BoomBody(ir).Any(
+            i => i is Copy { Src: Constant { Value: > 0 }, Dst: Variable { Name: "__exn_site" } })
+            .Should().BeTrue(
+                because: "the raise records a site the printer can dispatch on");
+    }
+
+    [Fact]
+    public void AnInstanceRaiseWithoutABoundHandlerCompiles()
+    {
+        var ir = Gen(
+            "class Msg:\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v = v\n" +
+            "def boom() -> uint8:\n" +
+            "    m = Msg(3)\n" +
+            "    raise ValueError(m)\n" +
+            "def main() -> uint8:\n" +
+            "    try:\n" +
+            "        return boom()\n" +
+            "    except ValueError:\n" +
+            "        return 1\n");
+
+        ir.Functions.Select(f => f.Name).Should().Contain("boom");
+    }
+
+    private static IEnumerable<Instruction> BoomBody(ProgramIR ir) =>
+        ir.Functions.Single(f => f.Name == "boom").Body;
+}
