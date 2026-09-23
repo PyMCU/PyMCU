@@ -156,7 +156,11 @@ public partial class IRGenerator
         {
             if (s is GlobalStmt g) foreach (var n in g.Names) result.Add(n);
         }
-        foreach (var fn in ast.Functions)
+        // A `global` inside a METHOD declares the same module write: methods are ClassDef
+        // bodies in GlobalStatements, not entries of prog.Functions, and skipping them left
+        // the name a foldable constant whose method write went nowhere (the #220 defect
+        // with a class in front of it).
+        foreach (var fn in ast.Functions.Concat(TypeInference.ClassMethods(ast)))
             foreach (var s in TypeInference.WalkStatements(fn.Body)) WalkGlobals(s);
 
         return result;
@@ -1019,7 +1023,10 @@ public partial class IRGenerator
     /// </summary>
     private void MarkStrGlobalsRebound(ProgramNode ast)
     {
-        foreach (var fn in ast.Functions)
+        // Methods are in the same scope-rule universe as functions for `global`: a str
+        // binding a method rebinds under the declaration is a run-time name, the same as a
+        // rebind inside a plain function.
+        foreach (var fn in ast.Functions.Concat(TypeInference.ClassMethods(ast)))
         {
             var declaredGlobal = new HashSet<string>();
             CollectGlobalDeclarations(fn.Body, declaredGlobal);
@@ -1056,9 +1063,11 @@ public partial class IRGenerator
     private void NarrowLiteralOnlyGlobals(ProgramNode ast)
     {
         // A global written from inside a function is not literal-only: those assignments are not
-        // in this scan's reach, so the name keeps whatever width it had.
+        // in this scan's reach, so the name keeps whatever width it had. A method's body is
+        // one of those functions: the name stays out of literal-only narrowing there too.
         var assignedInFunctions = new HashSet<string>();
-        foreach (var fn in ast.Functions) CollectAssignedNames(fn.Body, assignedInFunctions);
+        foreach (var fn in ast.Functions.Concat(TypeInference.ClassMethods(ast)))
+            CollectAssignedNames(fn.Body, assignedInFunctions);
 
         var widths = CollectLiteralOnlyWidths(ast.GlobalStatements, assignedInFunctions);
         foreach (var kv in widths)
@@ -1096,7 +1105,10 @@ public partial class IRGenerator
         var moduleAsMain = new FunctionDef("main", new List<Param>(), "",
             new Block { Statements = { } });
         moduleAsMain.Body.Statements.AddRange(ast.GlobalStatements);
-        var fromFunctions = CollectGlobalWidthsFromFunctions(ast.Functions.Append(moduleAsMain));
+        // Methods count as functions for `global`: a method that widens a global under a
+        // declaration is the same evidence the walk reads in a plain def (#205).
+        var fromFunctions = CollectGlobalWidthsFromFunctions(
+            ast.Functions.Concat(TypeInference.ClassMethods(ast)).Append(moduleAsMain));
 
         // A written annotation is the user's choice of storage width and outranks anything
         // inferred here: `presses: uint8 = 0` fed by `presses = presses + 1` in an ISR stays a

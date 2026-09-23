@@ -118,4 +118,44 @@ public class GlobalRebindStorageTests
 
         Assert.False(HasStorage(ir, "LIMIT"));
     }
+
+    // --- the same declaration inside a METHOD --------------------------------------
+    //
+    // `global` scans walked prog.Functions, and a class's methods are not in it: they are
+    // ClassDef bodies in GlobalStatements. `global N` inside a method declared nothing, the
+    // name stayed a foldable constant, and the write produced `copy 20 -> const 10` exactly
+    // like #220 -- the method silently did nothing.
+
+    private static string WrittenByMethod(string name) =>
+        Preamble +
+        $"{name} = 10\n\n\n" +
+        "class C:\n" +
+        "    def bump(self):\n" +
+        $"        global {name}\n" +
+        $"        {name} = 20\n\n\n" +
+        "def main():\n" +
+        "    c = C()\n" +
+        "    c.bump()\n" +
+        $"    GPIOR1.value = {name}\n";
+
+    [Fact]
+    public void AGlobalDeclaredInAMethodGetsStorage()
+    {
+        Assert.True(HasStorage(Gen(WrittenByMethod("N")), "N"),
+            "a `global` declaration inside a method marks the name mutable the same as one "
+            + "inside a function");
+    }
+
+    [Fact]
+    public void AMethodGlobalWriteLandsInStorageNotALiteral()
+    {
+        Assert.DoesNotContain(Copies(Gen(WrittenByMethod("N"))), c => c.Dst is Constant);
+    }
+
+    [Fact]
+    public void TheReadAfterAMethodGlobalWriteIsNotFolded()
+    {
+        var main = Gen(WrittenByMethod("N")).Functions.Single(f => f.Name == "main");
+        Assert.Contains(main.Body.OfType<Copy>(), c => c.Src is Variable v && v.Name == "N");
+    }
 }

@@ -155,7 +155,7 @@ public static class TypeInference
     // Every method FunctionDef a module's classes declare: the classes at the top level
     // of GlobalStatements, and nested classes inside them -- the same universe the scan
     // registers under Class_method keys.
-    private static IEnumerable<FunctionDef> ClassMethods(ProgramNode prog)
+    internal static IEnumerable<FunctionDef> ClassMethods(ProgramNode prog)
     {
         foreach (var s in prog.GlobalStatements)
             foreach (var m in MethodsOf(s))
