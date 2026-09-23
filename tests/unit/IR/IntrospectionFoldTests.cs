@@ -223,4 +223,69 @@ public class IntrospectionFoldTests
         var ex = Record.Exception(act);
         Assert.True(ex == null || !ex.Message.Contains("placeholder"));
     }
+
+    // `sys.version_info[i]` -- upstream's Python language version, (3, 4, 0) on
+    // both flavors. Only the indexed read folds; the bare attribute refuses
+    // through member resolution (a tuple global cannot materialize honestly).
+
+    [Fact]
+    public void SysVersionInfoIndex_AsAValue_SubstitutesTheLanguageVersion()
+    {
+        var ir = Gen("import sys\nbuf = bytearray(3)\nbuf[0] = sys.version_info[0]\nbuf[1] = sys.version_info[1]\nbuf[2] = sys.version_info[2]\n");
+        Assert.True(EmitsInt(ir, 3));
+        Assert.True(EmitsInt(ir, 4));
+        Assert.True(EmitsInt(ir, 0));
+    }
+
+    [Fact]
+    public void UsysVersionInfoIndex_AsAValue_SubstitutesTheLanguageVersion()
+    {
+        var ir = Gen("import usys\nbuf = bytearray(1)\nbuf[0] = usys.version_info[0]\n");
+        Assert.True(EmitsInt(ir, 3));
+    }
+
+    [Fact]
+    public void SysVersionInfoIndex_Aliased_SubstitutesTheLanguageVersion()
+    {
+        var ir = Gen("import sys as s\nbuf = bytearray(1)\nbuf[0] = s.version_info[1]\n");
+        Assert.True(EmitsInt(ir, 4));
+    }
+
+    [Fact]
+    public void SysVersionInfoIndex_CircuitPython_AnswersTheSameLanguageVersion()
+    {
+        // Both flavors report the language version (3, 4, 0), not the
+        // distribution version -- that lives in sys.implementation.version.
+        var ir = Gen("import sys\nbuf = bytearray(1)\nbuf[0] = sys.version_info[0]\n", stdlib: "circuitpython");
+        Assert.True(EmitsInt(ir, 3));
+    }
+
+    [Fact]
+    public void SysVersionInfoIndex_InAnIfStatement_Folds()
+    {
+        var ir = Gen(
+            "import sys\n" +
+            "buf = bytearray(1)\n" +
+            "if sys.version_info[0] == 3:\n" +
+            "    buf[0] = 1\n" +
+            "else:\n" +
+            "    buf[0] = 0\n");
+        Assert.True(EmitsInt(ir, 1));
+    }
+
+    [Fact]
+    public void SysVersionInfo_NonLiteralIndex_IsRefusedWithTheIndexingRule()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() =>
+            Gen("import sys\ni = 0\nbuf = bytearray(1)\nbuf[0] = sys.version_info[i]\n"));
+        Assert.Contains("integer literal", ex.Message);
+    }
+
+    [Fact]
+    public void SysVersionInfoIndex_NoStdlib_IsRefusedAsNoShim()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() =>
+            Gen("import sys\nbuf = bytearray(1)\nbuf[0] = sys.version_info[0]\n", stdlib: ""));
+        Assert.Contains("compat layer", ex.Message);
+    }
 }

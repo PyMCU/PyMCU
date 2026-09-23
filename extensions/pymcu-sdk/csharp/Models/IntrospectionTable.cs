@@ -97,6 +97,20 @@ public static class IntrospectionTable
             $"CircuitPython/MicroPython compat layer selected (--stdlib), stdlib='{config.Stdlib}'"),
     };
 
+    /// `sys.version_info[i]`. Upstream reports the PYTHON LANGUAGE VERSION here, not the
+    /// distribution version: (3, 4, 0) on both CircuitPython 10.3.1 and MicroPython 1.21
+    /// (measured on firmware) -- the distribution version lives in
+    /// `sys.implementation.version`. There is no honest module-level form for the tuple
+    /// itself (a tuple attribute cannot materialize under pymcuc), so only the indexed
+    /// read folds; the bare attribute refuses, exactly like `sys.implementation.version`.
+    public static (int Major, int Minor, int Micro) SysVersionInfo(DeviceConfig config) => config.Stdlib switch
+    {
+        CircuitPython or MicroPython => (3, 4, 0),
+        _ => throw new InvalidOperationException(
+            $"no compile-time answer for sys.version_info: project has no " +
+            $"CircuitPython/MicroPython compat layer selected (--stdlib), stdlib='{config.Stdlib}'"),
+    };
+
     /// `sys.platform`. Upstream CircuitPython's raspberrypi port and MicroPython's rp2 port
     /// answer this with DIFFERENT strings for the same board ("RP2040" vs "rp2"), and
     /// CircuitPython's own sys.platform ("RP2040") disagrees in case with its own

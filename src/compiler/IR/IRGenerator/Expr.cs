@@ -2530,6 +2530,34 @@ public partial class IRGenerator
             });
         }
 
+        // `sys.version_info[i]` -- the Python language version upstream reports
+        // ((3, 4, 0) on both flavors). Same shape as sys.implementation.version[i]:
+        // only the indexed read folds; the bare tuple attribute cannot materialize
+        // honestly under pymcuc and refuses through member resolution.
+        if (expr.Target is MemberAccessExpr { Member: "version_info" } viTargetObj
+            && IsModuleAlias(viTargetObj.Object, "sys", "usys"))
+        {
+            if (!IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib))
+                throw UserError(
+                    "'sys.version_info' is answered by the compat layer: this project "
+                    + "has no CircuitPython/MicroPython stdlib layer selected (stdlib = [...] "
+                    + "in pyproject.toml), so 'sys' is not the shim that carries it", expr);
+            if (expr.Index is not IntegerLiteral viIdx)
+                throw UserError(
+                    "'sys.version_info' is a compile-time (major, minor, micro) tuple -- "
+                    + "index it with an integer literal (sys.version_info[0])", expr);
+            var (viMajor, viMinor, viMicro) = IntrospectionTable.SysVersionInfo(deviceConfig);
+            return new Constant(viIdx.Value switch
+            {
+                0 => viMajor,
+                1 => viMinor,
+                2 => viMicro,
+                _ => throw UserError(
+                    "'sys.version_info' has 3 elements: [0] major, [1] minor, [2] micro",
+                    expr),
+            });
+        }
+
         // docs/rfcs/0004-arena-allocator.md: `buf[i]` on an arena-allocated runtime-sized
         // bytearray -- see the matching write-side comment in Assign.cs EmitIndexAssign.
         if (expr.Target is VariableExpr arenaReadVe && TryResolveArenaBuffer(arenaReadVe.Name, out _))

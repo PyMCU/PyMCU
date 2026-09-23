@@ -216,6 +216,24 @@ public class CompileTimeEvaluator(DeviceConfig config)
                 };
                 return true;
             }
+            // `sys.version_info[0]` -- upstream's Python language version, (3, 4, 0) on
+            // both flavors. Only the indexed read folds: the tuple has no honest
+            // module-level form, so the bare attribute refuses (same contract as
+            // sys.implementation.version).
+            case IndexExpr { Index: IntegerLiteral viIdx } viExpr
+                when viExpr.Target is MemberAccessExpr { Member: "version_info" } viObj
+                     && IsModuleName(viObj.Object, "sys", "usys"):
+            {
+                var (vMajor, vMinor, vMicro) = IntrospectionTable.SysVersionInfo(config);
+                value = viIdx.Value switch
+                {
+                    0 => vMajor,
+                    1 => vMinor,
+                    2 => vMicro,
+                    _ => throw new Exception("sys.version_info has 3 elements"),
+                };
+                return true;
+            }
             default:
                 return false;
         }
