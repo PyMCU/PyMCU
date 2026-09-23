@@ -7068,8 +7068,39 @@ public partial class IRGenerator
     {
         BooleanLiteral => true,
         VariableExpr ve => IsBoolName(ve.Name),
+        // Comparisons are bools too: `print(dev.i2c is not None)` went to the decimal
+        // writer and sent 1/0 where CPython and CircuitPython spell True/False.
+        BinaryExpr be => be.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+            or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
+            or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq
+            or Frontend.BinaryOp.Is or Frontend.BinaryOp.IsNot
+            or Frontend.BinaryOp.In or Frontend.BinaryOp.NotIn,
+        UnaryExpr { Op: Frontend.UnaryOp.Not } => true,
+        // A call or property whose declared return is bool -- `print(d.value)`
+        // where `value` is `@property -> bool`, `print(pred())`, the same
+        // spelling CPython gives the result.
+        CallExpr { Callee: var bc } => CalleeDeclaresBool(bc),
+        MemberAccessExpr bm => PropertyReadDeclaresBool(bm),
         _ => false,
     };
+
+    private bool CalleeDeclaresBool(Expression callee) => callee switch
+    {
+        VariableExpr cv =>
+            functionReturnTypes.GetValueOrDefault(ResolveCallee(cv.Name)) == "bool",
+        MemberAccessExpr cm =>
+            cm.Object is VariableExpr cobj
+            && InstanceClassOfName(cobj.Name) is { } ccls
+            && ResolveMROMethod(ccls, cm.Member) is { } mcls
+            && functionReturnTypes.GetValueOrDefault(mcls + "_" + cm.Member) == "bool",
+        _ => false,
+    };
+
+    private bool PropertyReadDeclaresBool(MemberAccessExpr mem)
+        => mem.Object is VariableExpr recv
+           && InstanceClassOfName(recv.Name) is { } cls
+           && ResolveMROPropertyClass(cls, mem.Member) is { } propCls
+           && functionReturnTypes.GetValueOrDefault(propCls + "_" + mem.Member) == "bool";
 
     // Stream a runtime bool as Python spells it: the two words live in flash and the
     // branch picks one, so nothing is formatted at runtime.
