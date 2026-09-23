@@ -4604,6 +4604,29 @@ public partial class IRGenerator
                 ? realModName.Replace('.', '_') : varExpr.Name;
             string mangledName = moduleBase + "_" + expr.Member;
 
+            // A bare name inside a body binds in the DEFINING module's namespace
+            // first: machine.py's own `Pin.IN` is machine_Pin_IN, however the
+            // caller spelled the import. The flat globals below are the entry
+            // module's ("" prefix), importedAliases answers for the CALLER's
+            // `from machine import Pin`, and classModuleMap keeps whichever
+            // module scanned the bare class name last (Pin, I2C, SPI, UART all
+            // exist in HAL, compat and board modules). Under `import machine`
+            // every fallback sent `Pin.IN` inside machine.Pin.__init__ to the
+            // HAL's Pin, which answers 1, and inverted every translated mode.
+            string ownPfx = OwningModulePrefix();
+            if (ownPfx.Length > 0 && !modules.ContainsKey(varExpr.Name))
+            {
+                string ownMangled = ownPfx + varExpr.Name + "_" + expr.Member;
+                if (globals.TryGetValue(ownMangled, out var sym0))
+                {
+                    if (sym0.IsMemoryAddress) return new MemoryAddress(sym0.Value, sym0.Type);
+                    return new Constant(sym0.Value);
+                }
+
+                if (mutableGlobals.TryGetValue(ownMangled, out var t0))
+                    return new Variable(ownMangled, t0);
+            }
+
             // A module's own `from other import name` re-export -- the compat shims'
             // `from .sys import maxsize` inside usys.py: the name binds to the DEFINING
             // module in the re-exporting module's own import table, so no `usys_maxsize`
