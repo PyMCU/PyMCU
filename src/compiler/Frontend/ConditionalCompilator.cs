@@ -40,6 +40,9 @@ public class ConditionalCompilator(DeviceConfig config)
     {
         var newGlobals = new List<Statement>();
         _inFunctionBody = false;
+        // `import x as y` binds in the importing file's namespace only: one compilator
+        // instance walks every module, so the alias map starts empty per file.
+        _evaluator.ModuleAliases.Clear();
 
         foreach (var stmt in program.GlobalStatements)
         {
@@ -74,10 +77,21 @@ public class ConditionalCompilator(DeviceConfig config)
         foreach (var inner in block.Statements)
         {
             if (inner is ImportStmt imp)
-                prog.Imports.Add(CloneImport(imp));
+                RecordImport(imp, prog);
             else if (!ProcessStatement(inner, prog, newStmts))
                 newStmts.Add(inner);
         }
+    }
+
+    // Registers an import the walk has reached -- prog.Imports for the loader, and the
+    // evaluator's alias map for `import usys as s` so a later `if s.platform == ...`
+    // answers the table for the alias too. Aliases bound inside a function body do not
+    // record: the map is module-scoped and a function-local name must not fold elsewhere.
+    private void RecordImport(ImportStmt imp, ProgramNode prog)
+    {
+        prog.Imports.Add(CloneImport(imp));
+        if (!_inFunctionBody && !string.IsNullOrEmpty(imp.ModuleAlias))
+            _evaluator.ModuleAliases[imp.ModuleAlias!] = imp.ModuleName;
     }
 
     private void ProcessBlock(Statement? stmt, ProgramNode prog)
@@ -370,7 +384,7 @@ public class ConditionalCompilator(DeviceConfig config)
         switch (stmt)
         {
             case ImportStmt imp:
-                prog.Imports.Add(CloneImport(imp));
+                RecordImport(imp, prog);
                 return true;
             // A `try` holding an optional import is a COMPILE-TIME branch, like `if __CHIP__`
             // above it (#351). Whether the module is there is decided by the loader and by
@@ -406,7 +420,7 @@ public class ConditionalCompilator(DeviceConfig config)
                 }
                 foreach (var inner in chosen)
                 {
-                    if (inner is ImportStmt nested) prog.Imports.Add(CloneImport(nested));
+                    if (inner is ImportStmt nested) RecordImport(nested, prog);
                     else if (!ProcessStatement(inner, prog, newStmts)) newStmts.Add(inner);
                 }
                 return true;

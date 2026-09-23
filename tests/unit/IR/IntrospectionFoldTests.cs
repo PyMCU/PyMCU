@@ -108,4 +108,49 @@ public class IntrospectionFoldTests
             "    buf[0] = 0\n");
         Assert.True(EmitsInt(ir, 1));
     }
+
+    // `import X as Y` -- the folds read the binding importedAliases recorded, so an
+    // alias answers the same table the literal module name does.
+
+    [Fact]
+    public void UsysAliased_Platform_AsAValue_SubstitutesTheTable()
+    {
+        var ir = Gen("import usys as s\np = s.platform\n");
+        Assert.True(EmitsString(ir, "atmega328p"));
+        Assert.False(EmitsString(ir, "rp2"));
+    }
+
+    [Fact]
+    public void UsysAliased_ImplementationName_AsAValue_SubstitutesTheTable()
+    {
+        var ir = Gen("import usys as s\nn = s.implementation.name\n");
+        Assert.True(EmitsString(ir, "micropython"));
+    }
+
+    [Fact]
+    public void UosAliased_UnameField_AsAValue_SubstitutesTheTable()
+    {
+        var ir = Gen("import uos as o\nm = o.uname().machine\n");
+        Assert.True(EmitsString(ir, "atmega328p"));
+    }
+
+    [Fact]
+    public void UsysAliased_Platform_InAnIfStatement_FoldsTrue()
+    {
+        var ir = Gen(
+            "import usys as s\n" +
+            "buf = bytearray(1)\n" +
+            "if s.platform == \"atmega328p\":\n" +
+            "    buf[0] = 1\n" +
+            "else:\n" +
+            "    buf[0] = 0\n");
+        Assert.True(EmitsInt(ir, 1));
+    }
+
+    [Fact]
+    public void UsysAliased_VersionIndex_AsAValue_SubstitutesTheTable()
+    {
+        var ir = Gen("import usys as s\nbuf = bytearray(1)\nbuf[0] = s.implementation.version[1]\n");
+        Assert.True(EmitsInt(ir, 29));
+    }
 }

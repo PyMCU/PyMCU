@@ -51,6 +51,10 @@ internal static class ConditionalImportExtractor
         switch (stmt)
         {
             case ImportStmt imp:
+                // `import usys as s` before an `if s.platform == ...:` -- the evaluator folds
+                // the alias to the same table once the binding is recorded.
+                if (!string.IsNullOrEmpty(imp.ModuleAlias))
+                    eval.ModuleAliases[imp.ModuleAlias!] = imp.ModuleName;
                 yield return imp;
                 break;
 

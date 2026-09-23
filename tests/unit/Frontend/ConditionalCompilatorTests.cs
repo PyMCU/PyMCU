@@ -809,4 +809,48 @@ public class CompileTimeEvaluatorTests
         var cond = new BinaryExpr(new StringLiteral("Linux"), BinaryOp.NotIn, UosDottedUnameCall());
         new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
     }
+
+    // -------------------------------------------------------------------------
+    // `import X as Y` -- ModuleAliases maps the used name to the real module, so
+    // `s.platform` after `import usys as s` folds the way `usys.platform` does.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Resolve_UsysAliasedAsS_Platform_AnswersTheTable()
+    {
+        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
+        ev.ModuleAliases["s"] = "usys";
+        ev.Resolve(new MemberAccessExpr(new VariableExpr("s"), "platform")).Should().Be("rp2");
+    }
+
+    [Fact]
+    public void Resolve_UosAliasedAsO_UnameMachine_AnswersTheTable()
+    {
+        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
+        ev.ModuleAliases["o"] = "uos";
+        var call = new CallExpr(new MemberAccessExpr(new VariableExpr("o"), "uname"), new List<Expression>());
+        ev.Resolve(new MemberAccessExpr(call, "machine")).Should().Be("raspberry_pi_pico with RP2040");
+    }
+
+    [Fact]
+    public void Resolve_UsysAliasedAsS_VersionIndex_Answers129()
+    {
+        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
+        ev.ModuleAliases["s"] = "usys";
+        var versionIndex = new IndexExpr(
+            new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("s"), "implementation"), "version"),
+            new IntegerLiteral(2));
+        var cond = new BinaryExpr(versionIndex, BinaryOp.Equal, new IntegerLiteral(0));
+        ev.EvaluateCondition(cond).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_AnUnrelatedAlias_DoesNotFold()
+    {
+        // `import time as s` must not turn s.platform into the sys table.
+        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
+        ev.ModuleAliases["s"] = "time";
+        var act = () => ev.Resolve(new MemberAccessExpr(new VariableExpr("s"), "platform"));
+        act.Should().Throw<Exception>();
+    }
 }

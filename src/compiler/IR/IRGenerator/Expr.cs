@@ -2488,11 +2488,8 @@ public partial class IRGenerator
         // here, where the compat layer's sys.py carries no `version` field at all. Same
         // syntactic match, same table: the shim file's tuple is a placeholder for IDEs,
         // and the compiler substitutes the real answer (docs/rfcs/0007 sections 0.1, 4.2).
-        if (expr.Target is MemberAccessExpr
-            {
-                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "implementation" },
-                Member: "version"
-            })
+        if (expr.Target is MemberAccessExpr { Member: "version", Object: MemberAccessExpr { Member: "implementation" } verImplObj }
+            && IsModuleAlias(verImplObj.Object, "sys", "usys"))
         {
             if (!IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib))
                 throw UserError(
@@ -4342,6 +4339,24 @@ public partial class IRGenerator
         return i < 0 ? clsKey : clsKey[(i + 1)..];
     }
 
+    /// <summary>
+    /// Whether <paramref name="e"/> is a bare name denoting one of <paramref name="mods"/> --
+    /// the literal module name or an alias bound to it by `import &lt;mod&gt; as &lt;name&gt;`
+    /// (importedAliases maps the used name to the real module). `import usys as s` then
+    /// `s.platform` must fold to the same table `usys.platform` does.
+    /// </summary>
+    private bool IsModuleAlias(Expression? e, params string[] mods) =>
+        e is VariableExpr { Name: var n }
+        && (mods.Contains(n) || (importedAliases.TryGetValue(n, out var real) && mods.Contains(real)));
+
+    /// <summary>The callee shapes `uname()` / `os.uname()` / `uos.uname()` take.</summary>
+    private bool IsUnameCallee(Expression callee) => callee switch
+    {
+        VariableExpr { Name: "uname" } => true,
+        MemberAccessExpr { Member: "uname" } mem => IsModuleAlias(mem.Object, "os", "uos"),
+        _ => false,
+    };
+
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
         // `cls.string` inside a @classmethod: cls is the receiver class.
@@ -4371,62 +4386,38 @@ public partial class IRGenerator
         // member must resolve normally, not to a table meant for another module.
         if (IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib))
         {
-            if (expr.Object is VariableExpr { Name: "sys" or "usys" }
-                && expr.Member == "platform")
-                return InternedStringConstant(IntrospectionTable.SysPlatform(deviceConfig));
-
-            if (expr is MemberAccessExpr
-                {
-                    Object: MemberAccessExpr
-                    {
-                        Object: VariableExpr { Name: "sys" or "usys" },
-                        Member: "implementation"
-                    },
-                    Member: "name"
-                })
+            if (expr is MemberAccessExpr { Member: "name", Object: MemberAccessExpr { Member: "implementation" } implObj }
+                && IsModuleAlias(implObj.Object, "sys", "usys"))
                 return InternedStringConstant(IntrospectionTable.ImplementationName(deviceConfig));
+
+            if (expr is MemberAccessExpr { Member: "platform" }
+                && IsModuleAlias(expr.Object, "sys", "usys"))
+                return InternedStringConstant(IntrospectionTable.SysPlatform(deviceConfig));
 
             // `sys.implementation.version` bare: the (major, minor, micro) tuple has no
             // runtime object, so a read that is not `version[i]` cannot be answered --
             // index it (this is the member-access half of the IndexExpr rule below).
-            if (expr is MemberAccessExpr
-                {
-                    Object: MemberAccessExpr
-                    {
-                        Object: VariableExpr { Name: "sys" or "usys" },
-                        Member: "implementation"
-                    },
-                    Member: "version"
-                })
+            if (expr is MemberAccessExpr { Member: "version", Object: MemberAccessExpr { Member: "implementation" } verObj }
+                && IsModuleAlias(verObj.Object, "sys", "usys"))
                 throw UserError(
                     "'sys.implementation.version' is a compile-time (major, minor, micro) tuple -- "
                     + "index it with an integer literal (sys.implementation.version[0])", expr);
 
-            // `os.uname().machine` / `uos.uname().sysname` -- the five fields are the
-            // record a board answers, spelled here the way the evaluator already folds.
-            if (expr.Object is CallExpr
-                {
-                    Args.Count: 0,
-                    Callee: VariableExpr { Name: "uname" }
-                        or MemberAccessExpr
-                        {
-                            Object: VariableExpr { Name: "os" or "uos" },
-                            Member: "uname"
-                        }
-                })
+            if (expr is { Object: CallExpr { Args.Count: 0 } unameCall, Member: var unameField }
+                && IsUnameCallee(unameCall.Callee))
             {
                 var u = IntrospectionTable.GetUname(deviceConfig);
-                return InternedStringConstant(expr.Member switch
+                return unameField switch
                 {
-                    "sysname" => u.Sysname,
-                    "nodename" => u.Nodename,
-                    "release" => u.Release,
-                    "version" => u.Version,
-                    "machine" => u.Machine,
+                    "sysname" => InternedStringConstant(u.Sysname),
+                    "nodename" => InternedStringConstant(u.Nodename),
+                    "release" => InternedStringConstant(u.Release),
+                    "version" => InternedStringConstant(u.Version),
+                    "machine" => InternedStringConstant(u.Machine),
                     _ => throw UserError(
-                        $"uname() has no field '{expr.Member}' -- valid fields: "
-                        + "sysname, nodename, release, version, machine", expr)
-                });
+                        $"'uname()' has no field '{unameField}' -- the fields are sysname, " +
+                        "nodename, release, version, machine", expr),
+                };
             }
         }
 
@@ -4595,15 +4586,6 @@ public partial class IRGenerator
 
             if (modules.ContainsKey(varExpr.Name))
             {
-                // `alarm.time` where `time` is a submodule file of package `alarm`:
-                // the import registered the dotted module under its full name, not
-                // as a member symbol of `alarm`. The placeholder keeps
-                // `alarm.time.TimeAlarm` resolving to alarm_time_TimeAlarm.
-                if (modules.ContainsKey(varExpr.Name + "." + expr.Member))
-                {
-                    return new Variable(mangledName, DataType.UINT8);
-                }
-
                 if (functionParams.ContainsKey(mangledName) || functionReturnTypes.ContainsKey(mangledName))
                 {
                     return new Variable(mangledName, DataType.UINT8);
@@ -4622,6 +4604,13 @@ public partial class IRGenerator
                     || classFieldLayout.ContainsKey(mangledName)
                     || inlineFunctions.ContainsKey(mangledName + "___init__")
                     || overloadedFunctions.Contains(mangledName + "___init__"))
+                    return new Variable(mangledName, DataType.UINT8);
+
+                // `alarm.time` where `time` is a submodule file of package `alarm`:
+                // the import registered the dotted module under its full name, not
+                // as a member symbol of `alarm`. The placeholder keeps
+                // `alarm.time.TimeAlarm` resolving to alarm_time_TimeAlarm.
+                if (modules.ContainsKey(varExpr.Name + "." + expr.Member))
                     return new Variable(mangledName, DataType.UINT8);
 
                 throw UserError("Unknown module member: " + mangledName, expr);

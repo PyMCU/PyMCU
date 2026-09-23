@@ -26,6 +26,17 @@ public class CompileTimeEvaluator(DeviceConfig config)
     // Current module name — "__main__" for the entry file, dotted name for libraries.
     public string ModuleName { get; set; } = "__main__";
 
+    // `import usys as s` / `import uos as o` -- the local name stands for the module.
+    // ConditionalCompilator and ConditionalImportExtractor record it as they walk each
+    // module's imports, so the folds below answer the table for any spelling of it.
+    public Dictionary<string, string> ModuleAliases { get; } = new();
+
+    // Whether `e` is a bare name denoting one of `mods` -- the literal module name or an
+    // alias bound to it by `import <mod> as <name>` earlier in this module.
+    private bool IsModuleName(Expression? e, params string[] mods) =>
+        e is VariableExpr { Name: var n }
+        && (mods.Contains(n) || (ModuleAliases.TryGetValue(n, out var real) && mods.Contains(real)));
+
     // Resolves a compile-time expression to its string representation.
     // Throws if the expression is not a known compile-time constant.
     public string Resolve(Expression e)
@@ -60,14 +71,12 @@ public class CompileTimeEvaluator(DeviceConfig config)
             // __CHIP__ is (docs/rfcs/0007): a per-(stdlib) table, never the compat layer's own
             // sys.py parsed as source. `sys` here means "whatever the project's --stdlib names",
             // a single build-wide fact, exactly like __CHIP__ names a single chip.
-            case MemberAccessExpr
-            {
-                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "implementation" },
-                Member: "name"
-            }:
+            case MemberAccessExpr { Member: "name", Object: MemberAccessExpr { Member: "implementation" } implObj }
+                when IsModuleName(implObj.Object, "sys", "usys"):
                 return IntrospectionTable.ImplementationName(config);
             // `sys.platform`.
-            case MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "platform" }:
+            case MemberAccessExpr { Member: "platform" } memExpr
+                when IsModuleName(memExpr.Object, "sys", "usys"):
                 return IntrospectionTable.SysPlatform(config);
             // `uname().<field>` / `os.uname().<field>` -- `from os import uname; uname()` and
             // `import os; os.uname()` are both written in the survey (docs/rfcs/0007 section 1).
@@ -189,15 +198,13 @@ public class CompileTimeEvaluator(DeviceConfig config)
             // `sys.implementation.version[0]` (neopixel.py: `version[0] >= 7`, a feature-
             // detection proxy -- see docs/rfcs/0007 section 3 for why the tuple this answers
             // from is the upstream API surface version, not this layer package's own version).
-            case IndexExpr
-            {
-                Target: MemberAccessExpr
-                {
-                    Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "implementation" },
-                    Member: "version"
-                },
-                Index: IntegerLiteral idxLit
-            }:
+            case IndexExpr { Index: IntegerLiteral idxLit } ixExpr
+                when ixExpr.Target is MemberAccessExpr
+                     {
+                         Member: "version",
+                         Object: MemberAccessExpr { Member: "implementation" } implObj
+                     }
+                     && IsModuleName(implObj.Object, "sys", "usys"):
             {
                 var (major, minor, micro) = IntrospectionTable.ImplementationVersion(config);
                 value = idxLit.Value switch
@@ -214,16 +221,17 @@ public class CompileTimeEvaluator(DeviceConfig config)
         }
     }
 
-    // Whether `e` is exactly `uname()` (bare, after `from os import uname`) or
-    // `os.uname()`/`uos.uname()` (dotted) -- the shapes the survey found plus
-    // MicroPython's u-spelling (docs/rfcs/0007 section 1). No arguments, matching
-    // the real signature.
-    private static bool IsUnameCall(Expression e) => e is CallExpr
-    {
-        Args.Count: 0,
-        Callee: VariableExpr { Name: "uname" }
-            or MemberAccessExpr { Object: VariableExpr { Name: "os" or "uos" }, Member: "uname" }
-    };
+    // Whether `e` is exactly `uname()` (bare, after `from os import uname`) or `os.uname()`
+    // / `uos.uname()` (dotted) -- the shapes the survey found (docs/rfcs/0007 section 1)
+    // plus MicroPython's own u-spelling of the same module. No arguments, matching the
+    // real signature.
+    private bool IsUnameCall(Expression e) => e is CallExpr { Args.Count: 0 } call
+        && call.Callee switch
+        {
+            VariableExpr { Name: "uname" } => true,
+            MemberAccessExpr { Member: "uname" } mem => IsModuleName(mem.Object, "os", "uos"),
+            _ => false,
+        };
 
     private static void RejectMixedComparison(BinaryExpr bin, bool leftNum, bool rightNum)
     {
