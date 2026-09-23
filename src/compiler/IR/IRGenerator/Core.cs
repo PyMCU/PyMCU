@@ -3039,8 +3039,18 @@ public partial class IRGenerator
             // `C(5)` resolved to the bare `C`, found no `C___init__`, and was reported as a
             // class with no __init__ on a file that defines one -- from the importing file AND
             // from a plain function inside the module that defines the class.
-            if (inlineFunctions.ContainsKey(candidate) || functionParams.ContainsKey(candidate)
-                || classFieldLayout.ContainsKey(candidate) || classDirectMethods.ContainsKey(candidate))
+            //
+            // A class prefix is not a scope for bare names, though: `decode_bits(...)`
+            // inside GenericDecode_decode_bits names the MODULE function, never the
+            // sibling method (Python spells sibling methods `self.decode_bits`). Without
+            // this, a compat wrapper calling the module function it wraps was reported
+            // as recursive.
+            bool prefixIsClass = prefixTry.Length > 1
+                && (classFieldLayout.ContainsKey(prefixTry[..^1])
+                    || classDirectMethods.ContainsKey(prefixTry[..^1]));
+            if (!prefixIsClass
+                && (inlineFunctions.ContainsKey(candidate) || functionParams.ContainsKey(candidate)
+                    || classFieldLayout.ContainsKey(candidate) || classDirectMethods.ContainsKey(candidate)))
             {
                 return candidate;
             }
