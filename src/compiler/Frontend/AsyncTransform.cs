@@ -29,7 +29,8 @@ namespace PyMCU.Frontend;
 // is raised so the limitation is explicit, never miscompiled.
 public static class AsyncTransform
 {
-    public static void TransformProgram(ProgramNode prog)
+    public static void TransformProgram(ProgramNode prog, GenUse? shared = null,
+        string modulePrefix = "")
     {
         RejectCoroutineMethods(prog);
         RejectInlineGenerators(prog);
@@ -63,7 +64,12 @@ public static class AsyncTransform
                                       stray.At?.Column ?? 0, stray.At?.Length ?? 1);
         }
 
-        if (asyncFns.Count == 0 && genFns.Count == 0 && !hasGenMethods) return;
+        // A module with nothing of its own still needs the `for` desugar when a shared
+        // catalog hands it machines to consume: `for v in d.read()` in main.py rewrites
+        // to `Decoder_read(d)` only if the walk runs at all.
+        if (asyncFns.Count == 0 && genFns.Count == 0 && !hasGenMethods
+            && (shared == null || (shared.Machines.Count == 0 && shared.Methods.Count == 0)))
+            return;
 
         string? alias = null;
         if (asyncFns.Count > 0)
@@ -129,15 +135,15 @@ public static class AsyncTransform
                     throw new SyntaxError(where.Message, where.Line,
                                           where.At?.Column ?? 0, where.At?.Length ?? 1);
         }
-        var genNames = new HashSet<string>();
+        var genNames = shared?.Machines ?? new HashSet<string>();
         // Generator METHODS become machine classes of their own (`C.read` -> `C_read`,
         // receiver kept as the first field). They run before the function transform so a
         // name collision is diagnosed against the functions that still exist, and their
         // machine names join genNames for the `for` desugar below.
-        var genMethods = new Dictionary<string, string>();
-        var genNeedsRecv = new HashSet<string>();
+        var genMethods = shared?.Methods ?? new Dictionary<string, string>();
+        var genNeedsRecv = shared?.NeedsRecv ?? new HashSet<string>();
         TransformGeneratorMethods(prog, genByName, ref yfCounter, genMethods, genNeedsRecv,
-            genNames);
+            genNames, modulePrefix);
         foreach (var fn in genFns)
         {
             prog.Functions.Remove(fn);
@@ -162,8 +168,9 @@ public static class AsyncTransform
             // function, because the walk removes a name on any other assignment to it.
             var moduleBound = new Dictionary<string, string>();
             var moduleRecv = new Dictionary<string, string>();
-            var classNames = new HashSet<string>(
-                prog.GlobalStatements.OfType<ClassDef>().Select(c => c.Name));
+            var classNames = shared?.ClassNames ?? new HashSet<string>();
+            foreach (var cn in prog.GlobalStatements.OfType<ClassDef>().Select(c => c.Name))
+                classNames.Add(cn);
             foreach (var gs in prog.GlobalStatements)
                 if (gs is AssignStmt { Target: VariableExpr gt } ga
                     && ga.Value is CallExpr { Callee: VariableExpr callee })
@@ -230,7 +237,7 @@ public static class AsyncTransform
     private static void TransformGeneratorMethods(ProgramNode prog,
         Dictionary<string, FunctionDef> genByName, ref int yfCounter,
         Dictionary<string, string> genMethods, HashSet<string> needsRecv,
-        HashSet<string> genNames)
+        HashSet<string> genNames, string modulePrefix)
     {
         // ToList: the transform appends machine classes to GlobalStatements as it walks it.
         foreach (var cls in prog.GlobalStatements.OfType<ClassDef>().ToList())
@@ -317,7 +324,7 @@ public static class AsyncTransform
                     newBody = new Block();
                     foreach (var st in m.Body.Statements)
                         newBody.Statements.Add(RenameReceiver.Rename(st, recvName));
-                    needsRecv.Add(machine);
+                    needsRecv.Add(modulePrefix + machine);
                 }
                 else newParams.AddRange(m.Params);
 
@@ -330,8 +337,13 @@ public static class AsyncTransform
                 genClass.IsGenerator = true;
                 prog.GlobalStatements.Add(genClass);
                 body.Statements.RemoveAt(i);
-                genMethods[cls.Name + "." + m.Name] = machine;
+                // The catalog carries the name the machine emits under -- prefixed for an
+                // imported module, so a `Decoder_read(d)` call desugared in the ENTRY file
+                // resolves `gen_Decoder_read` directly instead of asking the import tables
+                // for a name no `import` statement ever spelled.
+                genMethods[cls.Name + "." + m.Name] = modulePrefix + machine;
                 genNames.Add(machine);
+                if (modulePrefix.Length > 0) genNames.Add(modulePrefix + machine);
             }
         }
     }
@@ -753,7 +765,13 @@ public static class AsyncTransform
     /// (`"C.read" -> "C_read"`), which machines take the receiver as their first argument,
     /// and which names are classes (so `obj = C(...)` can bind `obj` for `obj.read()`).
     /// </summary>
-    private sealed class GenUse
+    /// The machine catalog one transform pass knows: the generator classes created so far
+    /// (`C.read` -&gt; `C_read` among them), the method-to-machine map, the machines that take
+    /// a receiver, and every class name seen. Shared across modules by GenerateCore -- each
+    /// imported module transforms first and contributes its entries, so the entry module's
+    /// `for v in obj.read()` can resolve `obj`'s class and its machine even when both live
+    /// in a different file (adafruit_irremote's NonblockingGenericDecode.read).
+    public sealed class GenUse
     {
         public readonly HashSet<string> Machines;
         public readonly Dictionary<string, string> Methods;

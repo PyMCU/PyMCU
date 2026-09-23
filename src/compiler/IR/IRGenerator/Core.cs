@@ -553,10 +553,21 @@ public partial class IRGenerator
         programBindsExceptionObject = ProgramBindsExceptionObject(mainAst, importedModules.Values);
 
         // Desugar `async def` coroutines into ZCA state-machine classes before any
-        // scanning, so the rest of the pipeline sees ordinary classes.
-        PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst);
+        // scanning, so the rest of the pipeline sees ordinary classes. Imported modules
+        // transform first into a SHARED catalog of machine classes: a generator method
+        // defined in a library (`Decoder.read` -> class `Decoder_read`) is consumed in
+        // the entry file's `for v in d.read()`, which rewrites to `Decoder_read(d)` only
+        // if the method-to-machine map and the class names reach the entry transform.
+        var genUse = new PyMCU.Frontend.AsyncTransform.GenUse(
+            new HashSet<string>(), new Dictionary<string, string>(),
+            new HashSet<string>(), new HashSet<string>());
         foreach (var m in importedModules)
-            TransformModule(m.Key, m.Value, PyMCU.Frontend.AsyncTransform.TransformProgram);
+        {
+            string modPrefix = m.Key.Replace('.', '_') + "_";
+            TransformModule(m.Key, m.Value,
+                ast => PyMCU.Frontend.AsyncTransform.TransformProgram(ast, genUse, modPrefix));
+        }
+        PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst, genUse);
 
         // `Name = namedtuple("Name", ("a", "b"))` is a ZCA class, not a heap type. Rewrite
         // every module before TypeInference / scan see the assignment as a call.

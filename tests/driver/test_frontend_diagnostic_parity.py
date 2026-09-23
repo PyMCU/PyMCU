@@ -816,10 +816,12 @@ def test_an_isinstance_in_an_imported_dunder_names_the_module_file(tmp_path):
         assert "main.py:" not in header, header
 
 
-def test_a_yield_in_an_imported_method_names_the_module_file(tmp_path):
-    """A method with `yield` is refused before any scanning exists, on a bare AST that
-    carries no file: the module's line under the entry file's name (adafruit_irremote.py's
-    `def read` reported as main.py:226, then clamped to a line main.py does have)."""
+def test_a_yield_in_an_imported_method_compiles_under_both_front_ends(tmp_path):
+    """A generator method defined in an imported module lowers to its machine class there
+    (`Decoder.read` -> `gen_Decoder_read`), and the entry file's `for v in d.read(...)`
+    desugars to constructing it with the receiver -- the transform once refused to see the
+    method-to-machine map across module boundaries, so the call died as a constructor with
+    an argument missing."""
     (tmp_path / "gen.py").write_text(
         "from pymcu.types import uint8\n"
         "class Decoder:\n"
@@ -828,11 +830,25 @@ def test_a_yield_in_an_imported_method_names_the_module_file(tmp_path):
     src = _program(tmp_path,
                    "from pymcu.types import uint8\n"
                    "from gen import Decoder\n"
-                   "d = Decoder()\n")
+                   "d = Decoder()\n"
+                   "for v in d.read(5):\n"
+                   "    pass\n")
 
-    assert _where(src, py_parser=False) == (3, 5, 3)
-    assert _where(src, py_parser=True) == (3, 5, 3)
     for py in (False, True):
-        header = _header(src, py_parser=py)
-        assert "gen.py:3:5:" in header, header
-        assert "main.py:" not in header, header
+        env = dict(os.environ)
+        if py:
+            env["PYMCU_PY_PARSER"] = "1"
+            env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+        else:
+            env.pop("PYMCU_PY_PARSER", None)
+        mir = src.parent / ("out_py.mir" if py else "out_cs.mir")
+        proc = subprocess.run(
+            [str(PYMCUC), str(src), "--target", "atmega328p",
+             "--emit-ir", str(mir), "-o", os.devnull,
+             "-I", str(STDLIB), "-I", str(src.parent)],
+            capture_output=True, text=True, env=env,
+        )
+        assert proc.returncode == 0, f"py_parser={py} failed:\n{proc.stderr}"
+        # The desugared machine construction carries the receiver: __init__ binds the
+        # instance `d` plus the argument `5`.
+        assert "gen_Decoder_read" in mir.read_text(), mir.read_text()
