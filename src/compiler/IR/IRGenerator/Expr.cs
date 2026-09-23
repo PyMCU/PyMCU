@@ -2952,6 +2952,12 @@ public partial class IRGenerator
 
                     return new Variable(tmpName, elemDt);
                 }
+
+                // `pulses[1:end:2]` on a runtime heap list: a fresh list object holding
+                // every step-th element of [start, stop). Unmodified adafruit_irremote
+                // bins a captured frame this way in decode_bits.
+                if (ResolveListVarQualified(srcVe.Name) is { Length: > 0 } sliceSrcKey)
+                    return EmitRuntimeListSlice(sliceSrcKey, srcVe, sl, expr);
             }
 
             // An OBJECT with __getitem__ is not a fixed-size array, and telling its author about
@@ -3534,6 +3540,142 @@ public partial class IRGenerator
         Temporary dst = MakeTemp();
         Emit(new BitCheck(target, bit, dst));
         return dst;
+    }
+
+    /// <summary>
+    /// `src[start:stop:step]` on a runtime heap list: a fresh GC object holding every
+    /// step-th element of the clamped range. Unmodified adafruit_irremote bins a
+    /// captured frame with `pulses[1:pulses_end:2]` in decode_bits.
+    ///
+    /// Bounds are evaluated in signed arithmetic and clamped to [0, len] the way
+    /// CPython clamps them: a negative value adds len first, and anything past len
+    /// pins at len. The step is a positive compile-time integer -- a computed or
+    /// negative step has no heap-cheap lowering and reports honestly. The copy is
+    /// an exact fit (capacity = count) and keeps the source's element type, so
+    /// reads, len() and append on the result resolve as they did on the source.
+    /// </summary>
+    private Val EmitRuntimeListSlice(string srcKey, VariableExpr srcVe, SliceExpr sl, IndexExpr expr)
+    {
+        DataType elemDt = listVarElemTypes[srcKey];
+        if (elemDt == DataType.UNKNOWN)
+            throw UserError(
+                $"cannot infer the element type of '{srcVe.Name}' yet; append an element " +
+                "first or declare it like `x: list[uint8] = []`", expr);
+        int elemSize = elemDt.SizeOf();
+
+        int step = 1;
+        if (sl.Step != null)
+        {
+            if (!TryFoldConstElement(sl.Step, out step))
+                throw UserError(
+                    "a slice on a list needs a step the compiler can see (`x[a:b:2]`); " +
+                    "a computed step has no lowering on this target", sl.Step);
+            if (step <= 0)
+                throw UserError(
+                    "a slice on a list needs a positive step; a reversed slice (`x[::-1]`) " +
+                    "has no lowering on this target", sl.Step);
+        }
+
+        Variable srcVar = new Variable(srcKey, DataType.GC_REF);
+        Temporary lenTmp = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(srcVar, lenTmp));
+
+        // One bound, evaluated then clamped into [0, len] in signed arithmetic.
+        Temporary ClampBound(Expression? boundExpr, Val defaultVal)
+        {
+            Val raw = boundExpr == null ? defaultVal : VisitExpression(boundExpr);
+            Temporary t = MakeTemp(DataType.INT32);
+            Emit(new Copy(raw, t));
+            string pastNeg = MakeLabel();
+            Emit(new JumpIfGreaterOrEqual(t, new Constant(0), pastNeg));
+            Emit(new AugAssign(BinaryOp.Add, t, lenTmp));
+            Emit(new Label(pastNeg));
+            string pastFloor = MakeLabel();
+            Emit(new JumpIfGreaterOrEqual(t, new Constant(0), pastFloor));
+            Emit(new Copy(new Constant(0), t));
+            Emit(new Label(pastFloor));
+            string pastCap = MakeLabel();
+            Emit(new JumpIfLessOrEqual(t, lenTmp, pastCap));
+            Emit(new Copy(lenTmp, t));
+            Emit(new Label(pastCap));
+            return t;
+        }
+
+        Temporary lo = ClampBound(sl.Start, new Constant(0));
+        Temporary hi = ClampBound(sl.Stop, lenTmp);
+
+        // count = hi <= lo ? 0 : (hi - lo + step - 1) / step   (ceil division)
+        Temporary span = MakeTemp(DataType.INT32);
+        Emit(new Binary(BinaryOp.Sub, hi, lo, span));
+        Temporary count32 = MakeTemp(DataType.INT32);
+        Emit(new Copy(new Constant(0), count32));
+        string countedLabel = MakeLabel();
+        Emit(new JumpIfLessOrEqual(span, new Constant(0), countedLabel));
+        Temporary spanPlus = MakeTemp(DataType.INT32);
+        Emit(new Binary(BinaryOp.Add, span, new Constant(step - 1), spanPlus));
+        Emit(new Binary(BinaryOp.Div, spanPlus, new Constant(step), count32));
+        Emit(new Label(countedLabel));
+
+        Temporary countBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, count32, new Constant(elemSize), countBytes));
+        Temporary allocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, countBytes, new Constant(2), allocSize));
+
+        // GcAlloc may collect and relocate the source; the base pointer below is
+        // re-derived from the (possibly updated) variable afterwards. A null
+        // return is real heap exhaustion -- refuse rather than write the header
+        // through SRAM[0] (the register file).
+        Temporary dstPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(allocSize, dstPtr, elemDt == DataType.GC_REF));
+        string okLabel = MakeLabel();
+        Emit(new JumpIfNotZero(dstPtr with { Type = DataType.UINT16 }, okLabel));
+        EnterRuntimeBranch($"slicing '{srcVe.Name}'");
+        try
+        {
+            VisitRaise(new RaiseStmt("MemoryError",
+                "list slice ran out of heap on this target"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(okLabel));
+
+        EmitListStore(dstPtr, 0, count32);
+        EmitListStore(dstPtr, 1, count32);
+
+        Temporary srcIdx = MakeTemp(DataType.UINT16);
+        Emit(new Copy(lo, srcIdx));
+        Temporary dstIdx = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), dstIdx));
+        Temporary count16 = MakeTemp(DataType.UINT16);
+        Emit(new Copy(count32, count16));
+
+        string sliceLoopLabel = MakeLabel();
+        string sliceLoopEnd = MakeLabel();
+        Emit(new Label(sliceLoopLabel));
+        Temporary sliceDone = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterEqual, dstIdx, count16, sliceDone));
+        Emit(new JumpIfNotZero(sliceDone, sliceLoopEnd));
+        Temporary srcOff = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, srcIdx, new Constant(elemSize), srcOff));
+        Temporary srcAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, srcVar with { Type = DataType.UINT16 }, srcOff, srcAddr));
+        Emit(new AugAssign(BinaryOp.Add, srcAddr, new Constant(2)));
+        Temporary dstOff = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, dstIdx, new Constant(elemSize), dstOff));
+        Temporary dstAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, dstPtr with { Type = DataType.UINT16 }, dstOff, dstAddr));
+        Emit(new AugAssign(BinaryOp.Add, dstAddr, new Constant(2)));
+        Temporary elemTmp = MakeTemp(elemDt);
+        Emit(new LoadIndirect(srcAddr, elemTmp, elemDt));
+        Emit(new StoreIndirect(elemTmp, dstAddr, elemDt));
+        Emit(new AugAssign(BinaryOp.Add, srcIdx, new Constant(step)));
+        Emit(new AugAssign(BinaryOp.Add, dstIdx, new Constant(1)));
+        Emit(new Jump(sliceLoopLabel));
+        Emit(new Label(sliceLoopEnd));
+
+        listVarElemTypes[dstPtr.Name] = elemDt;
+        if (listInnerElemTypes.TryGetValue(srcKey, out var innerElem))
+            listInnerElemTypes[dstPtr.Name] = innerElem;
+        return dstPtr;
     }
 
     // A just-loaded slot field whose declared type is itself a class: re-tag the loaded value
