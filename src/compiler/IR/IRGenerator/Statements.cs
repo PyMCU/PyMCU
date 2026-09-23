@@ -1476,7 +1476,19 @@ public partial class IRGenerator
             // methods, so a method's `return self.value` had no result temporary to land in and
             // the caller read None. The first value return decides the width.
             if (ctx.ResultTemp == null && ctx.ResultVars.Count == 0 && val is not NoneVal)
-                ctx.ResultTemp = MakeTemp(GetValType(val));
+            {
+                // Except the first return does not see the whole picture: a getter that
+                // answers `table[i]` (uint8) on one path and `return -1` on another
+                // truncated the -1 into the byte its first return picked, and the caller
+                // printed 255 (adafruit_tcs34725's cycles getter). Every integer-literal
+                // return in the body joins the width, the same evidence join the field
+                // layout applies to its writes.
+                DataType rt = GetValType(val);
+                if (!string.IsNullOrEmpty(ctx.CalleeName)
+                    && inlineFunctions.TryGetValue(ctx.CalleeName, out var retScan))
+                    rt = JoinInlineResultLiteralEvidence(retScan, rt);
+                ctx.ResultTemp = MakeTemp(rt);
+            }
             // RFC 0009: an `-> Optional[X]` callee's result is payload + member-index tag.
             // The tag temp is minted on the first return visited so a `return None` that
             // lowers BEFORE the first value return still gets its write in.
@@ -1625,6 +1637,50 @@ public partial class IRGenerator
         {
             Emit(new Return(val, TagForReturn(stmt.Value, val)));
         }
+    }
+
+    /// <summary>
+    /// The smallest integer type covering both the established result type and the literal
+    /// a return statement hands it: sign-aware, so `return -1` into a uint8-typed slot
+    /// answers int16 rather than truncating to 255. The established type wins whenever the
+    /// literal already fits it.
+    /// </summary>
+    private static DataType JoinLiteralResultType(DataType t, long v)
+    {
+        var (tMin, tMax) = RangeOfType(t);
+        if (v >= tMin && v <= tMax) return t;
+        long lo = Math.Min(tMin, v), hi = Math.Max(tMax, v);
+        if (lo < 0)
+        {
+            if (lo >= sbyte.MinValue && hi <= sbyte.MaxValue) return DataType.INT8;
+            if (lo >= short.MinValue && hi <= short.MaxValue) return DataType.INT16;
+            return DataType.INT32;
+        }
+        if (hi <= byte.MaxValue) return t;
+        if (hi <= ushort.MaxValue) return DataType.UINT16;
+        return DataType.UINT32;
+    }
+
+    /// <summary>
+    /// <see cref="JoinLiteralResultType"/> over every integer-literal return in a function
+    /// body: the value the slot must hold, joined one literal at a time. Negative literals
+    /// arrive as a UnaryExpr around a positive IntegerLiteral -- the parser's shape for
+    /// `-1` -- so both spellings count.
+    /// </summary>
+    private static DataType JoinInlineResultLiteralEvidence(FunctionDef func, DataType t)
+    {
+        foreach (var rs in TypeInference.WalkStatements(func.Body.Statements))
+        {
+            if (rs is not ReturnStmt { Value: { } rv }) continue;
+            long? litV = rv switch
+            {
+                IntegerLiteral il => il.Value,
+                UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral nl } => -(long)nl.Value,
+                _ => null,
+            };
+            if (litV is { } lv) t = JoinLiteralResultType(t, lv);
+        }
+        return t;
     }
 
     /// <summary>
