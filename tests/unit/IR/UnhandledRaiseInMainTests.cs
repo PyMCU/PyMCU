@@ -124,4 +124,59 @@ public class UnhandledRaiseInMainTests
 
         Assert.Contains(Main(ir).Body.OfType<SignalError>(), s => s.CatchLabel != null);
     }
+
+    [Fact]
+    public void ACalleeThatReturnsOrRaises_DoesNotEatTheCallersTail()
+    {
+        // `probe` searches a table: `return` on a hit, `raise` only when the dynamic
+        // loop runs out -- the raise propagates through the call, but so does the
+        // return. The flag leaked through the boundary unconditionally, so the
+        // statement after the call was lowered as unreachable -- oracle probe 086's
+        // `print(d.get(3, 5))` and END marker never emitted.
+        var ir = Gen(Prelude +
+            "@inline\n" +
+            "def probe(k: uint8) -> uint8:\n" +
+            "    n: uint8 = 0\n" +
+            "    while n < 4:\n" +
+            "        if n == k:\n" +
+            "            return n\n" +
+            "        n = n + 1\n" +
+            "    raise KeyError\n" +
+            "\n" +
+            "def main():\n" +
+            "    GPIOR0.value = probe(GPIOR0.value)\n" +
+            "    GPIOR0.value = 42\n" +
+            "    while True:\n" +
+            "        pass\n");
+
+        Assert.Contains(Main(ir).Body.OfType<Copy>(),
+            c => c.Dst is Variable { Name: var n } && n.EndsWith("GPIOR0")
+                 && c.Src is Constant { Value: 42 });
+    }
+
+    [Fact]
+    public void ACalleeThatOnlyRaises_StillEatsTheCallersTail()
+    {
+        // The control the same test needs: a callee with NO normal exit propagates
+        // the flag, and the statement after the call really is dead. A bare
+        // `raise`-only body would take the compile-time abort instead, so the shape
+        // is a dynamic loop followed by the raise -- reached, and always raising.
+        var ir = Gen(Prelude +
+            "@inline\n" +
+            "def probe_all(k: uint8) -> None:\n" +
+            "    n: uint8 = 0\n" +
+            "    while n < 4:\n" +
+            "        n = n + 1\n" +
+            "    raise KeyError\n" +
+            "\n" +
+            "def main():\n" +
+            "    probe_all(GPIOR0.value)\n" +
+            "    GPIOR0.value = 42\n" +
+            "    while True:\n" +
+            "        pass\n");
+
+        Assert.DoesNotContain(Main(ir).Body.OfType<Copy>(),
+            c => c.Dst is Variable { Name: var n } && n.EndsWith("GPIOR0")
+                 && c.Src is Constant { Value: 42 });
+    }
 }

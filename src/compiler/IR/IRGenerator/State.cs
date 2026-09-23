@@ -954,6 +954,20 @@ public partial class IRGenerator
     private readonly List<int> _runtimeBranchTokens = new();
     private int _nextBranchToken;
 
+    // A callee that emitted no Jump to its exit label has no normal exit: every path
+    // through it left unconditionally, so its _seqTerminated belongs to the caller's
+    // sequence -- the statements after the call cannot run. A callee that also returns
+    // on another path leaves the caller's tail reachable, and the flag drops back to
+    // what it was before the call (`d[k]` probes the table and returns on a hit,
+    // raising KeyError only on a miss -- the miss's termination used to leak through
+    // the boundary and eat `d.get()` and everything below it, probe 086).
+    private void RestoreSeqTerminatedAfterExpansion(bool saved, string exitLabel)
+    {
+        bool calleeNeverReturns = _seqTerminated
+            && !currentInstructions.Any(i => i is Jump { Target: var jt } && jt == exitLabel);
+        _seqTerminated = saved || calleeNeverReturns;
+    }
+
     // Buffer key -> the run-time branch token path at its declaration (empty when the
     // declaration sits outside every run-time branch). Written by KeepGrownArraySize,
     // the chokepoint fresh bytearray/bytes buffers register through.

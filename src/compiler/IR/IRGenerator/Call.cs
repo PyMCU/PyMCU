@@ -3114,7 +3114,7 @@ public partial class IRGenerator
         try
         {
             VisitBlock(func.Body);
-            _seqTerminated = savedSeqTerminated;
+            RestoreSeqTerminatedAfterExpansion(savedSeqTerminated, exitLabel);
         }
         catch (CompilerError)
         {
@@ -4072,7 +4072,7 @@ public partial class IRGenerator
         bool savedSeqTerminated = _seqTerminated;
         _seqTerminated = false;
         VisitBlock(funcSuper.Body);
-        _seqTerminated = savedSeqTerminated;
+        RestoreSeqTerminatedAfterExpansion(savedSeqTerminated, exitLabel);
         lastLine = savedLastLine;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
