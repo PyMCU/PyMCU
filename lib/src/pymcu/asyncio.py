@@ -51,14 +51,14 @@ def ticks() -> uint32:
         raise CompileError("async needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so every await would block forever. Use pymcu.time.delay_ms() instead.")
 
 
-def sleep(seconds: uint32):
-    """`await asyncio.sleep(seconds)` -- suspend the coroutine for `seconds`.
+def sleep(t: uint32):
+    """`await asyncio.sleep(t)` -- suspend the coroutine for `t` seconds.
     Marker only; the async transform emits the non-blocking wait."""
     pass
 
 
-def sleep_ms(ms: uint32):
-    """`await asyncio.sleep_ms(ms)` -- suspend the coroutine for `ms` milliseconds.
+def sleep_ms(t: uint32):
+    """`await asyncio.sleep_ms(t)` -- suspend the coroutine for `t` milliseconds.
     Marker only; the async transform emits the non-blocking wait."""
     pass
 
