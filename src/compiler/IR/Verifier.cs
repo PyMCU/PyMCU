@@ -31,6 +31,9 @@ namespace PyMCU.IR;
 ///   write-exceeds-slot     -- a field's declared width was not the join of every
 ///                             write to it, at any nesting depth (PyMCU#488).
 ///   read-never-written     -- a BitCheck on a slot no path ever wrote.
+///   storage-width          -- a name written at a width narrower than the
+///                             widest width it is used at; the backend homes
+///                             a name once (union3 register homes, PyMCU#488).
 ///   index-width            -- an index operand narrower than the addressing mode the
 ///                             storage extent requires (pymcu-avr#32).
 ///   tag-contract           -- an Optional/tagged return whose tag is dropped between
@@ -140,6 +143,8 @@ public static class Verifier
                     violations.Add(new Violation("jump-target", f.Name,
                         $"{kind} -> '{target}', a label no instruction defines"));
         }
+
+        CheckStorageWidth(program, violations);
 
         return violations;
     }
@@ -690,6 +695,51 @@ public static class Verifier
             case SignalError x when x.CatchLabel != null:
                 jumps.Add(("sigerr", x.CatchLabel!)); break;
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // (i) a name's storage is at least as wide as every value stored into it
+    // ---------------------------------------------------------------------
+
+    /// The backend sizes each name once, so the width a name is WRITTEN at
+    /// must cover every width the name is ever used at: a name homed 2 bytes
+    /// while a 4-byte use exists elsewhere is the shape behind the union3
+    /// register-home fix and the PyMCU#488 field layout. A write narrower
+    /// than the widest occurrence is the one that overflows. UNKNOWN and
+    /// VOID carry no width information and are ignored.
+    private static void CheckStorageWidth(ProgramIR program,
+        List<Violation> violations)
+    {
+        var widest = new Dictionary<string, (int Width, DataType Type)>();
+        var narrowestWrite = new Dictionary<string, (int Width, DataType Type, string Fn)>();
+
+        foreach (var f in program.Functions)
+            foreach (var ins in f.Body)
+            {
+                foreach (var v in ReadVals(ins)) Track(v, f.Name, false);
+                foreach (var v in DstVals(ins)) Track(v, f.Name, true);
+            }
+
+        void Track(Val v, string fn, bool isWrite)
+        {
+            var t = ValType(v);
+            var name = ValName(v);
+            if (name == null || t == null
+                || t == DataType.UNKNOWN || t == DataType.VOID)
+                return;
+            int w = t.Value.SizeOf();
+            if (!widest.TryGetValue(name, out var mw) || w > mw.Width)
+                widest[name] = (w, t.Value);
+            if (isWrite && (!narrowestWrite.TryGetValue(name, out var nw) || w < nw.Width))
+                narrowestWrite[name] = (w, t.Value, fn);
+        }
+
+        foreach (var (name, nw) in narrowestWrite)
+            if (nw.Width < widest[name].Width)
+                violations.Add(new Violation("storage-width", nw.Fn,
+                    $"'{name}' is written at {nw.Type} but used at " +
+                    $"{widest[name].Type} elsewhere -- the backend homes a " +
+                    "name once, so the wider use overflows its slot"));
     }
 
     // ---------------------------------------------------------------------
