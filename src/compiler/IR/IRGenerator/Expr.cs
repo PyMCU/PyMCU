@@ -3645,7 +3645,26 @@ public partial class IRGenerator
         // One bound, evaluated then clamped into [0, len] in signed arithmetic.
         Temporary ClampBound(Expression? boundExpr, Val defaultVal)
         {
-            Val raw = boundExpr == null ? defaultVal : VisitExpression(boundExpr);
+            Val raw;
+            // `s[1:opt:2]` where opt is `int | None` at run time (`pulses_end = -1`
+            // else `pulses_end = None` in decode_bits): a None bound is the open
+            // end, the payload otherwise -- select on the tag instead of reading
+            // the payload unconditionally.
+            if (boundExpr is VariableExpr boundVar
+                && LiveOptionalTag(boundVar) is { } boundTag)
+            {
+                Temporary sel = MakeTemp(DataType.INT32);
+                Emit(new Copy(defaultVal, sel));
+                string selDone = MakeLabel();
+                Emit(new JumpIfEqual(boundTag.tag, new Constant(boundTag.noneIdx), selDone));
+                Emit(new Copy(EvalOptionalCarry(boundVar), sel));
+                Emit(new Label(selDone));
+                raw = sel;
+            }
+            else
+            {
+                raw = boundExpr == null ? defaultVal : VisitExpression(boundExpr);
+            }
             Temporary t = MakeTemp(DataType.INT32);
             Emit(new Copy(raw, t));
             string pastNeg = MakeLabel();
