@@ -88,4 +88,27 @@ public class ListCopyCtorTests
             "def main():\n" +
             "    f(1)\n"));
     }
+
+    [Fact]
+    public void TupleCopy_OfTupleBoundName_AliasesWithoutAllocating()
+    {
+        // `tuple(t)` on a value already produced by tuple(...) is the same
+        // object in CPython (`tuple(t) is t` -- tuples are immutable, so a
+        // copy would be unobservable). decode_bits ends with
+        // `IRMessage(tuple(input_pulses), ...)`: copying the 66-element tuple
+        // again asks for ~140 bytes of heap the AVR target does not have.
+        var ir = Gen(
+            "def f(src: list[uint16]) -> uint16:\n" +
+            "    t = tuple(src)\n" +
+            "    u = tuple(t)\n" +
+            "    return u[0]\n" +
+            "def main():\n" +
+            "    a: list[uint16] = [1, 2]\n" +
+            "    f(a)\n");
+        // Two heap objects across the program: the [1, 2] literal and the
+        // first tuple(src). The second tuple() call must alias the reference,
+        // not allocate a copy. (f may be inlined into main, so count over
+        // every function.)
+        Assert.Equal(2, ir.Functions.SelectMany(f2 => f2.Body).Count(i => i is GcAlloc));
+    }
 }

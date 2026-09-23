@@ -835,10 +835,19 @@ public partial class IRGenerator
         // fresh heap object: unmodified adafruit_irremote writes `list(pulses)`
         // and `tuple(input_pulses)` in decode_bits. A list-literal or fixed-array
         // argument, or a list whose element type is still pending, reports below.
+        // Exception: `tuple(t)` where t is already tuple-bound IS t in CPython
+        // (`tuple(t) is t` -- an immutable sequence has nothing to defend against
+        // by copying). Aliasing the reference saves the allocation, which on a
+        // heap of a few hundred bytes is the difference between decode_bits
+        // finishing and a MemoryError on the return path.
         if ((callee == "list" || callee == "tuple") && expr.Args.Count == 1
             && expr.Args[0] is VariableExpr copySrc
             && ResolveListVarQualified(copySrc.Name) is { Length: > 0 } copySrcKey)
+        {
+            if (callee == "tuple" && IsTupleBound(copySrc.Name))
+                return new Variable(copySrcKey, DataType.GC_REF);
             return EmitListCopyCtor(copySrcKey, copySrc, expr);
+        }
 
         if (callee == "divmod") return EmitDivmodBuiltin(expr);
         if (CastTypes.ContainsKey(callee)) return EmitNumericCastBuiltin(expr, callee);
