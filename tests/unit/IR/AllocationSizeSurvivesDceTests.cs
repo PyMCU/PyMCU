@@ -112,16 +112,21 @@ public class AllocationSizeSurvivesDceTests
     public void ARootedSlotKeepsTheStoreThatInitialisesIt()
     {
         // `xs: list[uint8]` allocates into a temp, copies it into the rooted slot
-        // `main.xs`, and registers that slot with GcRoot. RegisterUses had cases
+        // `f.xs`, and registers that slot with GcRoot. RegisterUses had cases
         // for every instruction that reads a variable EXCEPT GcRoot/GcUnroot, so
         // EliminateDeadVariableStores saw a store nothing read and deleted it:
         // the backend then laid out a frame whose rooted slot held no pointer
-        // ("GcRoot: variable 'main.xs' not found in stack layout" when the slot
+        // ("GcRoot: variable 'f.xs' not found in stack layout" when the slot
         // vanished entirely), and PYMCU_NO_OPT=1 -- the oracle -- was correct.
+        // The shape is function-local on purpose: a module-level list is a
+        // global, and globals are permanent roots the backend seeds at startup
+        // rather than per-function GcRoot/GcUnroot pairs.
         var ir = Optimized(
             "from pymcu.types import uint8\n\n" +
-            "xs: list[uint8] = list()\n" +
-            "xs.append(4)\n");
+            "def f() -> None:\n" +
+            "    xs: list[uint8] = list()\n" +
+            "    xs.append(4)\n\n" +
+            "f()\n");
 
         var roots = AllBody(ir).OfType<GcRoot>().ToList();
         Assert.NotEmpty(roots);

@@ -744,11 +744,18 @@ public partial class IRGenerator
         // Only track named Variables (not Temporaries): gc_alloc returns a Temporary that is immediately
         // Copy'd to a named Variable, and that Variable is what needs shadow-stack tracking.
         // Temporaries may live only in registers (_tmpRegLayout) and have no SRAM slot for GetGcRefSramAddr.
+        // Module globals are excluded: their slots are permanent roots seeded once at startup
+        // (the backend pushes every GC_REF global right after gc_init). Rooting one inside a
+        // function scoped its liveness to that call -- __module_init unrooted each global it
+        // initialised on the way out, so the first collection freed or moved the object while
+        // the global still pointed at it, and a `global g` bound inside a function would leak
+        // one shadow-stack entry per call.
         var gcRefs = new List<Val>();
         var gcRefNames = new HashSet<string>();
         foreach (var instr in currentInstructions)
         {
-            if (instr is Copy cp && cp.Dst is Variable vd && vd.Type == DataType.GC_REF)
+            if (instr is Copy cp && cp.Dst is Variable vd && vd.Type == DataType.GC_REF
+                && !mutableGlobals.ContainsKey(vd.Name))
             {
                 if (gcRefNames.Add(vd.Name)) gcRefs.Add(vd);
             }
