@@ -153,4 +153,21 @@ public class IntrospectionFoldTests
         var ir = Gen("import usys as s\nbuf = bytearray(1)\nbuf[0] = s.implementation.version[1]\n");
         Assert.True(EmitsInt(ir, 29));
     }
+
+    // `"x" in uname()` bound as a VALUE -- never a condition the frontend folded,
+    // so the same table answers it here.
+
+    [Fact]
+    public void Rp2InOsUname_AsAValue_FoldsFalseOnAvr()
+    {
+        var ir = Gen("import os\nbuf = bytearray(1)\nbuf[0] = 1 if \"rp2\" in os.uname() else 0\n");
+        Assert.True(EmitsInt(ir, 0));
+    }
+
+    [Fact]
+    public void LinuxNotInUosUname_AsAValue_FoldsTrue()
+    {
+        var ir = Gen("import uos\nbuf = bytearray(1)\nbuf[0] = 1 if \"Linux\" not in uos.uname() else 0\n");
+        Assert.True(EmitsInt(ir, 1));
+    }
 }

@@ -1115,6 +1115,24 @@ public partial class IRGenerator
 
             Val lhs = VisitExpression(expr.Left);
 
+            // `"rp2" in uname()` bound as a VALUE -- a condition the frontend folded
+            // never reaches here, but an `x = "rp2" in uname()` does. The call has no
+            // runtime object (evaluating it below would refuse), so the same table the
+            // frontend consults answers the membership. Only when the needle is a
+            // compile-time string; anything else falls through to the call, which
+            // refuses the way a bare `u = uname()` does.
+            if (expr.Right is CallExpr { Args.Count: 0 } unameInCall
+                && IsUnameCallee(unameInCall.Callee)
+                && IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib)
+                && (StringTextOfVal(lhs) ?? TryGetCompileTimeText(expr.Left)) is { } unameNeedle)
+            {
+                var uIn = IntrospectionTable.GetUname(deviceConfig);
+                bool inTuple = unameNeedle == uIn.Sysname || unameNeedle == uIn.Nodename
+                               || unameNeedle == uIn.Release || unameNeedle == uIn.Version
+                               || unameNeedle == uIn.Machine;
+                return new Constant((negate ? !inTuple : inTuple) ? 1 : 0);
+            }
+
             // `pin not in self.pin_mapping.analog_pins`: a field bound to a class OBJECT
             // reaches a compile-time tuple through the field's tag byte. Before the string
             // paths below try to evaluate the attribute as a value (there is none -- it is
