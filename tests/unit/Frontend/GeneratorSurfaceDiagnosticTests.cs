@@ -220,6 +220,32 @@ public class GeneratorSurfaceDiagnosticTests
         msg.Should().Contain("method").And.Contain("A");
     }
 
+    [Fact]
+    public void AReturnInsideAKeptIfEndsTheGenerator()
+    {
+        // `if k: return` contains no yield, so it was kept whole inside the state -- and
+        // its bare `return` then reached the IR as `poll -> uint8` returning None, a
+        // diagnostic about a function the reader never wrote. A return is a state
+        // transition: the splitter takes it wherever a yield could be.
+        var ast = new Parser(new Lexer("""
+            from pymcu.chips.atmega328p import GPIOR1
+            def g(k):
+                yield 1
+                if k:
+                    return
+                yield 2
+            def main():
+                for v in g(1):
+                    GPIOR1.value = v
+            """).Tokenize()).ParseProgram();
+        AsyncTransform.TransformProgram(ast);
+        var act = () => new IRGenerator().Generate(
+            ast, new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" });
+
+        act.Should().NotThrow();
+    }
+
     // ── a generator expression ───────────────────────────────────────────────────
     // `(x for x in ...)` PARSES now: as the argument of all()/any()/sum()/min()/max() it
     // unrolls over a compile-time sequence. Everywhere else the IR generator refuses it --

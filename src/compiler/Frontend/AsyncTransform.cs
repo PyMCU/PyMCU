@@ -826,12 +826,15 @@ public static class AsyncTransform
                     || iff.ElifBranches.Any(e => ContainsReturn(e.Item2));
             case WhileStmt w: return ContainsReturn(w.Body);
             case ForStmt f: return ContainsReturn(f.Body);
+            case MatchStmt m: return m.Branches.Any(br => br.Body != null && ContainsReturn(br.Body));
             case TryStmt t:
                 return t.Body.Any(ContainsReturn)
                     || t.Handlers.Any(h => h.Handler.Any(ContainsReturn))
                     || (t.Finally != null && t.Finally.Any(ContainsReturn))
                     || (t.ElseBody != null && t.ElseBody.Any(ContainsReturn));
             case WithStmt ws: return ContainsReturn(ws.Body);
+            // A nested `def`/`class` opens a scope of its own: its `return` ends THAT
+            // function, never the enclosing machine, so it is no reason to split.
             default: return false;
         }
     }
@@ -1245,7 +1248,7 @@ public static class AsyncTransform
                 return;
             }
 
-            if (!ContainsAwait(s) && !ContainsYieldStatic(s))
+            if (!ContainsAwait(s) && !ContainsYieldStatic(s) && !ContainsReturn(s))
             {
                 // Await-free statement: keep it whole (nested ifs/loops compile normally
                 // inside the state), but break/continue that target a FLATTENED loop must
@@ -1287,7 +1290,13 @@ public static class AsyncTransform
                         s.Line, s.Column);
 
                 default:
-                    throw new SyntaxError($"async def '{_fnName}': {AwaitContext(s)}.", s.Line, s.Column);
+                    // A generator reaches here for a statement that carries a `return` the
+                    // splitter cannot take (the yield-position refusals already caught the
+                    // yield shapes); the message names `return` in a coroutine only because
+                    // `await` is the suspension kind it was written for.
+                    throw new SyntaxError(_aio != null
+                        ? $"async def '{_fnName}': {AwaitContext(s)}."
+                        : $"generator '{_fnName}': {ReturnContext(s)}.", s.Line, s.Column);
             }
         }
 
@@ -1869,6 +1878,23 @@ public static class AsyncTransform
         MatchStmt => "`await` inside `match` is not supported yet",
         _ => "`await` is supported in the body of the coroutine, in `if`/`elif`/`else`, in "
              + "`while`, and in `for i in range(...)`",
+    };
+
+    // What to tell someone whose `return` sits where a GENERATOR's splitter cannot take it.
+    // Reached only with _aio == null: the yield-position refusals already own the yield
+    // shapes, so what is left is a kept-statement `return` inside a container the split
+    // does not open.
+    private static string ReturnContext(Statement s) => s switch
+    {
+        TryStmt => "a `return` inside `try`/`except`/`finally` cannot end the machine: the "
+            + "exception region has no state to leave through. Move the `return` outside "
+            + "the `try`",
+        WithStmt => "a `return` inside `with` cannot end the machine: __exit__ would have "
+            + "to run after it stopped. Move the `return` outside the `with` block",
+        MatchStmt => "a `return` inside `match` is not supported yet. Move the `return` "
+            + "outside the `match`",
+        _ => "a `return` is supported at the top level of the generator, in `if`/`elif`/"
+            + "`else`, in `while`, and in `for`",
     };
 
     // The Python name of a construct, for messages about a form that cannot be handled.
