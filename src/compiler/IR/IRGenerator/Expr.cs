@@ -2640,9 +2640,18 @@ public partial class IRGenerator
             }
 
             // A returned buffer names the callee's fixed slot array, so the
-            // subscript reads it the way a named array's is read.
-            if (callResult is Variable retVar
-                && TryResolveArrayStorageKey(retVar.Name, out var retKey)
+            // subscript reads it the way a named array's is read. Through a
+            // property the result arrives as the expansion's ResultTemp -- a
+            // name aliased to the member array (`sr.gpio[0]` on
+            // adafruit_74hc595 bit-tested the alias instead).
+            string? retVarName = callResult switch
+            {
+                Variable rv => rv.Name,
+                Temporary rt => rt.Name,
+                _ => null,
+            };
+            if (retVarName != null
+                && TryResolveArrayStorageKey(FollowAliases(retVarName), out var retKey)
                 && arraySizes.TryGetValue(retKey, out int retSize))
             {
                 Val idxVal = VisitExpression(expr.Index);
@@ -3371,6 +3380,26 @@ public partial class IRGenerator
         // register-pointer write and read a second time before the subscript ran.
         Val target = tgtVal;
         Val indexVal2 = VisitExpression(expr.Index);
+
+        // `obj.field.prop[i]` where prop is a getter on the field's class
+        // returning the object's buffer (`self._shift_register.gpio[k]` on
+        // adafruit_74hc595): IsPropertyGetterRead only rewrites a VariableExpr
+        // receiver, so this arrives as the expansion's ResultTemp aliased to
+        // the member array -- an element load, not a bit test of the alias.
+        {
+            string? idxTgtName = target is Variable iv ? iv.Name
+                : target is Temporary it ? it.Name : null;
+            if (idxTgtName != null
+                && TryResolveArrayStorageKey(FollowAliases(idxTgtName), out var idxArr)
+                && arraySizes.TryGetValue(idxArr, out int idxArrSize))
+            {
+                DataType idxElem = arrayElemTypes.TryGetValue(idxArr, out var iedt)
+                    ? iedt : DataType.UINT8;
+                Temporary idxTmp = MakeTemp(idxElem);
+                Emit(new ArrayLoad(idxArr, indexVal2, idxTmp, idxElem, idxArrSize));
+                return idxTmp;
+            }
+        }
 
         Val ResolveAddr(Val val)
         {
