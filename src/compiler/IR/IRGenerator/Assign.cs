@@ -2332,7 +2332,14 @@ public partial class IRGenerator
         else if (value is Temporary tSrc && target is Variable tDst)
         {
             variableAliases[tDst.Name] = tSrc.Name;
-            valueTrackingAliases.Add(tDst.Name);
+            // The same rule the Variable branch applies: an alias to an INSTANCE
+            // is structural -- which object the name stands for does not depend
+            // on which path ran, so it must survive a label. `r = decode_bits(p)`
+            // binds r to the handle the inlined call returned; filed as
+            // value-tracking, the first label a later statement emitted dropped
+            // it, and `r.code[i]` resolved to a phantom `r_code` slot.
+            if (ReceiverClassThroughAliases(tSrc.Name) is null)
+                valueTrackingAliases.Add(tDst.Name);
         }
 
         if (string.IsNullOrEmpty(currentFunction))
