@@ -295,7 +295,13 @@ public partial class IRGenerator
             if (st is AssignStmt { Target: MemberAccessExpr { Object: VariableExpr sv } m2,
                                  Value: CallExpr { Callee: VariableExpr cv } }
                 && sv.Name == "self" && !IsScalarTypeName(cv.Name)
-                && !fieldClasses.ContainsKey(classKey + "|" + m2.Member))
+                && !fieldClasses.ContainsKey(classKey + "|" + m2.Member)
+                // Only a class construction records a field class -- a helper call's
+                // result is scalar storage. classNames is still filling (a callee
+                // declared later in the file is invisible), so classModuleMap, filed
+                // for every class before this pass runs, answers for it too.
+                && (classNames.Contains(cv.Name) || classNames.Contains(ResolveCallee(cv.Name))
+                    || classModuleMap.ContainsKey(cv.Name)))
                 fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv.Name);
         }
     }
@@ -1810,13 +1816,16 @@ public partial class IRGenerator
                         }
                         // (2) constructor-assigned fields (`self.x = SomeClass(...)`): the layout
                         //     records these as a scalar (the class collapses), so recover the class
-                        //     from the __init__ RHS. Resolved here in the defining module's scope.
-                        //     Every statement of `__init__`, not only its top level: a driver
-                        //     chooses its implementation in a branch, and the field it assigns
-                        //     there is the one a program tests. `adafruit_hcsr04` writes
+                        //     from the write's RHS. Resolved here in the defining module's scope.
+                        //     Every statement of every method, not only `__init__`'s top level:
+                        //     a driver chooses its implementation in a branch, and the field it
+                        //     assigns there is the one a program tests. `adafruit_hcsr04` writes
                         //     `self._echo = PulseIn(echo_pin)` under `if _USE_PULSEIO:` and the
                         //     `DigitalInOut` form under the `else`, so at the top level there is
                         //     no assignment at all and the field had no recorded class (#385).
+                        //     And `adafruit_framebuf` writes `self._font = BitmapFont(...)` in
+                        //     `text`, not `__init__` -- a field first assigned outside the
+                        //     constructor is still instance storage.
                         foreach (var s0 in block.Statements)
                             if (s0 is FunctionDef fdI && fdI.Name == "__init__")
                                 RecordConstructedFieldClasses(fdI.Body, classKey);
