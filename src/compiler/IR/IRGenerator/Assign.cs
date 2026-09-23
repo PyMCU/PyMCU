@@ -1587,7 +1587,7 @@ public partial class IRGenerator
         var setter = inlineFunctions[inlineKey];
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
-        var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
+        var newPrefix = $"inline{++inlineExpansionSerial}.{setter?.Name}__setter.";
 
         variableAliases[newPrefix + "self"] = @base;
         instanceClasses[newPrefix + "self"] = cls;

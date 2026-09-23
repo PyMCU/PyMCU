@@ -567,12 +567,12 @@ public class StackAllocator
     /// </summary>
     private static string StripInlinePrefix(string name)
     {
-        // Match "inline" + digits + "_" at the start of the name.
+        // Match "inline" + digits + "_" or "." at the start of the name.
         if (!name.StartsWith("inline", StringComparison.Ordinal)) return name;
         int i = 6; // length of "inline"
         while (i < name.Length && char.IsDigit(name[i])) i++;
-        if (i < name.Length && name[i] == '_')
-            return name[(i + 1)..]; // strip "inlineN_", keep the rest
+        if (i < name.Length && (name[i] == '_' || name[i] == '.'))
+            return name[(i + 1)..]; // strip "inlineN_" / "inlineN.", keep the rest
         return name;
     }
 }

@@ -559,7 +559,7 @@ public static class Verifier
             if (WrittenIn(compileTime, name)) continue;
 
             bool dotted = name.Contains('.');
-            if (name.StartsWith("tmp_") || dotted)
+            if (Temporary.IsScratchName(name) || dotted)
             {
                 // A module-frame spelling names flat module storage, the same
                 // slot in every frame: a write anywhere reaches this read.

@@ -122,6 +122,14 @@ public class InlineContext
     // pending exits pushed since then -- a `with`'s `__exit__`, a try's `finally` -- but
     // never the CALLER's pending finallys, which the jump to ExitLabel does not escape.
     public int FinallyDepth { get; set; } = 0;
+
+    // Per-expansion counter for the scratch names MakeTemp mints inside this frame
+    // ("<prefix>t0", "<prefix>t1", ...). Because the counter restarts per expansion and the
+    // prefix carries this expansion's unique serial, two expansions of the same body mint
+    // DIFFERENT full names whose canonical form (after the allocator strips the
+    // "inline{serial}" segment) is identical -- so the temps share one static slot instead
+    // of each site paying for its own.
+    public int TempNext { get; set; } = 0;
 }
 
 public class ModuleScope

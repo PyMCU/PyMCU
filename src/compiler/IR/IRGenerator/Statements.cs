@@ -1531,7 +1531,7 @@ public partial class IRGenerator
                 if (!string.IsNullOrEmpty(ctx.CalleeName)
                     && inlineFunctions.TryGetValue(ctx.CalleeName, out var retScan))
                     rt = JoinInlineResultLiteralEvidence(retScan, rt);
-                ctx.ResultTemp = MakeTemp(rt);
+                ctx.ResultTemp = MakeGlobalTemp(rt);
             }
             // RFC 0009: an `-> Optional[X]` callee's result is payload + member-index tag.
             // The tag temp is minted on the first return visited so a `return None` that
@@ -1539,7 +1539,7 @@ public partial class IRGenerator
             if (ctx.ResultTagTemp == null
                 && inlineFunctions.TryGetValue(ctx.CalleeName, out var optFn)
                 && optFn?.ReturnMembers != null)
-                ctx.ResultTagTemp = MakeTemp(DataType.UINT8);
+                ctx.ResultTagTemp = MakeGlobalTemp(DataType.UINT8);
             if (ctx.ResultTagTemp != null)
             {
                 Val tagV = InlineReturnTagVal(ctx, stmt.Value, val);

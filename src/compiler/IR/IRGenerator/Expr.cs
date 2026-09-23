@@ -335,7 +335,7 @@ public partial class IRGenerator
         var func = inlineFunctions[funcKey];
         string exitLabel = MakeLabel();
         int newDepth = inlineDepth + 1;
-        string newPrefix = $"inline{newDepth}.{func.Name}.";
+        string newPrefix = $"inline{++inlineExpansionSerial}.{func.Name}.";
 
         variableAliases[newPrefix + "self"] = selfQname;
         instanceClasses[newPrefix + "self"] = className;
@@ -2928,7 +2928,14 @@ public partial class IRGenerator
                     int resultCount = 0;
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++resultCount;
 
-                    string tmpName = "__slice_" + tempCounter++;
+                    // Inside an inline expansion the scratch array is named under the
+                    // frame's serial+depth with a counter that restarts per expansion,
+                    // so every expansion of a `writeto(buf[i:i+n])` body shares ONE slice
+                    // slot (allocator canonical-merge) instead of each site minting its
+                    // own copy of the backing bytes.
+                    string tmpName = inlineStack.Count > 0 && currentInlinePrefix.Length > 0
+                        ? $"{InlineSerialTag()}_d{inlineDepth}_slice{inlineStack[^1].TempNext++}"
+                        : "__slice_" + tempCounter++;
                     arraySizes[tmpName] = resultCount;
                     arrayElemTypes[tmpName] = elemDt;
                     variableTypes[tmpName] = elemDt;
@@ -4259,7 +4266,7 @@ public partial class IRGenerator
                 if (instanceClasses.TryGetValue(n, out var scoped) && scoped != null)
                     return scoped;
                 if (!variableAliases.TryGetValue(n, out var next)
-                    || next == null || next.StartsWith("tmp_")) break;
+                    || next == null || Temporary.IsScratchName(next)) break;
                 n = next;
             }
         }
@@ -4269,7 +4276,7 @@ public partial class IRGenerator
         for (int depth = 0; depth < 20; depth++)
         {
             if (!variableAliases.TryGetValue(name, out var next)
-                || next == null || next.StartsWith("tmp_")) break;
+                || next == null || Temporary.IsScratchName(next)) break;
             name = next;
         }
         return instanceClasses.TryGetValue(name, out var cls) ? cls : null;
@@ -4409,11 +4416,11 @@ public partial class IRGenerator
         for (int depth = 0; depth < 20; depth++)
         {
             if (!variableAliases.TryGetValue(name, out var next) || next == null) break;
-            // A temporary is a dead end for the chase UNLESS it carries a class -- a
-            // boxed field read (`with self._device:`) lowers to a slot-load temp that
-            // TagSlotFieldClass tags with the field's class, and stopping there would
-            // strand the manager's `__enter__` dispatch.
-            if (next.StartsWith("tmp_") && !instanceClasses.ContainsKey(next)) break;
+            // A scratch name is a dead end for the chase UNLESS it carries a class --
+            // a boxed field read (`with self._device:`) lowers to a slot-load temp
+            // that TagSlotFieldClass tags with the field's class, and stopping there
+            // would strand the manager's `__enter__` dispatch.
+            if (Temporary.IsScratchName(next) && !instanceClasses.ContainsKey(next)) break;
             name = next;
             if (instanceClasses.ContainsKey(name)) return name;
         }
@@ -5551,7 +5558,7 @@ public partial class IRGenerator
             {
                 string selfKey = currentInlinePrefix + selfVe2.Name;
                 while (variableAliases.TryGetValue(selfKey, out var a2)
-                       && !(a2 != null && a2.StartsWith("tmp_"))) selfKey = a2!;
+                       && !(a2 != null && Temporary.IsScratchName(a2))) selfKey = a2!;
                 if (instanceClasses.TryGetValue(selfKey, out var selfCls2) && selfCls2 != null
                     && classFieldLayout.TryGetValue(selfCls2, out var lay2) && lay2.Count == 1
                     && lay2[0].Field == expr.Member)
@@ -5559,7 +5566,7 @@ public partial class IRGenerator
                     if (fieldClasses.TryGetValue(selfCls2 + "|" + expr.Member, out var fc2)
                         && ResolveConcreteClass(fc2) is { } cc2)
                     {
-                        var t2 = new Temporary($"tmp_{tempCounter++}", DataType.UINT8);
+                        var t2 = MakeTemp(DataType.UINT8);
                         Emit(new Copy(objVal, t2));
                         instanceClasses[t2.Name] = cc2;
                         if (classFieldLayout.TryGetValue(cc2, out var l3) && l3.Count == 1)
@@ -5579,7 +5586,7 @@ public partial class IRGenerator
         }
         while (baseName != null && variableAliases.TryGetValue(baseName, out var next))
         {
-            if (next != null && next.StartsWith("tmp_")) break;
+            if (next != null && Temporary.IsScratchName(next)) break;
             baseName = next;
         }
 
@@ -5648,7 +5655,7 @@ public partial class IRGenerator
             && !globals.ContainsKey(flattenedName))
         {
             var sfTy = objVal switch { Variable sv => sv.Type, Temporary st => st.Type, _ => DataType.UINT8 };
-            var sfTmp = new Temporary($"tmp_{tempCounter++}", sfTy);
+            var sfTmp = MakeTemp(sfTy);
             Emit(new Copy(objVal, sfTmp));
             instanceClasses[sfTmp.Name] = sfNested;
             // The nested class is itself single-field (its instance IS this scalar), so mark the
@@ -5691,7 +5698,7 @@ public partial class IRGenerator
                     && ResolveConcreteClass(ofcRaw) is { } ofc)
                 {
                     var oTy = objVal switch { Variable ov => ov.Type, Temporary ot => ot.Type, _ => DataType.UINT8 };
-                    var oTmp = new Temporary($"tmp_{tempCounter++}", oTy);
+                    var oTmp = MakeTemp(oTy);
                     Emit(new Copy(objVal, oTmp));
                     instanceClasses[oTmp.Name] = ofc;
                     if (classFieldLayout.TryGetValue(ofc, out var ol) && ol.Count == 1)

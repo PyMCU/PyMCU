@@ -47,7 +47,33 @@ public record FloatConstant(double Value) : Val;
 
 public record Variable(string Name, DataType Type = DataType.UINT8) : Val;
 
-public record Temporary(string Name, DataType Type = DataType.UINT8) : Val;
+public record Temporary(string Name, DataType Type = DataType.UINT8) : Val
+{
+    /// <summary>
+    /// True for compiler-minted scratch names that carry no user-level binding:
+    /// the global `tmp_N` temporaries, and the per-expansion
+    /// `inline{serial}_d{depth}_t{k}` / `inline{serial}_d{depth}_slice{k}` names
+    /// emitted inside inline frames (the serial keeps siblings distinct; the
+    /// allocator's canonical prefix strip folds them onto the shared
+    /// `d{depth}_...` slot). Alias walkers treat these as chain terminals and
+    /// diagnostics never accuse them of being typos.
+    /// </summary>
+    public static bool IsScratchName(string name)
+    {
+        if (name.StartsWith("tmp_", StringComparison.Ordinal)) return true;
+        if (!name.StartsWith("inline", StringComparison.Ordinal)) return false;
+        int i = 6; // length of "inline"
+        while (i < name.Length && char.IsDigit(name[i])) i++;
+        if (i + 2 >= name.Length || name[i] != '_' || name[i + 1] != 'd') return false;
+        i += 2;
+        int dStart = i;
+        while (i < name.Length && char.IsDigit(name[i])) i++;
+        if (i == dStart || i >= name.Length || name[i] != '_') return false;
+        string tail = name[(i + 1)..];
+        return tail.StartsWith("t", StringComparison.Ordinal)
+            || tail.StartsWith("slice", StringComparison.Ordinal);
+    }
+}
 
 // Represents a physical memory address (MMIO or Static Global)
 public record MemoryAddress(int Address, DataType Type = DataType.UINT8) : Val;

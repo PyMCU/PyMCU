@@ -79,7 +79,38 @@ public partial class IRGenerator
 
     private Temporary MakeTemp(DataType type = DataType.UINT8)
     {
+        // Inside an inline expansion the temp is named inline{serial}_d{depth}_t{k}:
+        // the frame's unique serial keeps the full name distinct from every sibling
+        // expansion's, and the allocator's canonical strip folds it onto "d{depth}_t{k}"
+        // -- shared with every other expansion at that depth. That merge is safe
+        // because a temp's live range stays inside its own expansion and two
+        // same-depth expansions never overlap (a nested expansion is strictly
+        // deeper). The adafruit_ht16k33 matrix wing minted ~1800 unprefixed tmp_N in
+        // main alone and needed 4KB of static data on a 2KB chip.
+        // A name that outlives its frame must come from MakeGlobalTemp instead.
+        if (inlineStack.Count > 0 && currentInlinePrefix.Length > 0)
+        {
+            string tag = InlineSerialTag();
+            return new Temporary($"{tag}_d{inlineDepth}_t{inlineStack[^1].TempNext++}", type);
+        }
         return new Temporary($"tmp_{tempCounter++}", type);
+    }
+
+    // A temp the caller keeps reading after the expansion's frame is gone (a lazily
+    // minted ResultTemp/ResultTagTemp): it must NOT carry the frame prefix, because
+    // the allocator folds every `inlineN_f_tK` onto the canonical `f_tK` slot --
+    // two expansions whose results are both live would silently share one address.
+    private Temporary MakeGlobalTemp(DataType type = DataType.UINT8)
+        => new($"tmp_{tempCounter++}", type);
+
+    // The leading "inline{serial}" token of the current expansion's prefix: the
+    // part before the first '.' or '_' separator ("inline4.describe." / "inline4_f_"
+    // both yield "inline4").
+    private string InlineSerialTag()
+    {
+        int i = 6;
+        while (i < currentInlinePrefix.Length && char.IsDigit(currentInlinePrefix[i])) i++;
+        return currentInlinePrefix[..i];
     }
 
     private static string DataTypeToSuffixStr(DataType dt)
@@ -1679,7 +1710,7 @@ public partial class IRGenerator
             foreach (var ins in fn.Body)
                 foreach (var n in Verifier.ScalarNames(ins))
                 {
-                    if (n.StartsWith("tmp_") || paramSet.Contains(n)) continue;
+                    if (Temporary.IsScratchName(n) || paramSet.Contains(n)) continue;
                     bool scalar = AnyKey(HasScalarSlot, n);
                     // A positive compile-time map wins over the scalar gate:
                     // an object's placeholder byte still acquires a
@@ -2152,7 +2183,7 @@ public partial class IRGenerator
             for (int depth = 0; depth < 20; depth++)
             {
                 if (!variableAliases.TryGetValue(resolved, out string next)) break;
-                if (next.StartsWith("tmp_"))
+                if (Temporary.IsScratchName(next))
                 {
                     if (constantVariables.TryGetValue(next, out int tmpVal)) return new Constant(tmpVal);
                     if (constantAddressVariables.TryGetValue(next, out int tmpAddr))
@@ -2304,7 +2335,7 @@ public partial class IRGenerator
     {
         // Compiler-generated names (temporaries, anonymous constructor targets, inline result
         // slots) are never user-written, so they can never be a typo.
-        if (name.StartsWith("tmp_") || name.StartsWith("__c") || name.StartsWith("__slc")
+        if (Temporary.IsScratchName(name) || name.StartsWith("__c") || name.StartsWith("__slc")
             || name.StartsWith("__unpack") || name.StartsWith("_irq_synth_"))
             return true;
 
@@ -2437,7 +2468,7 @@ public partial class IRGenerator
         // storage slot. An owning module's same-named global keeps precedence: inside
         // `helper`'s code a bare `S` means `helper_S`, which the ordinary fallbacks
         // below already find.
-        if (key != null && !key.Contains('.') && !key.StartsWith("tmp_")
+        if (key != null && !key.Contains('.') && !Temporary.IsScratchName(key)
             && (mutableGlobals.ContainsKey(key) || globals.ContainsKey(key))
             && !OwningModulePrefixes().Any(mp =>
                 mutableGlobals.ContainsKey(mp + key) || globals.ContainsKey(mp + key)
