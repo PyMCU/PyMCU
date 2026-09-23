@@ -2393,7 +2393,15 @@ public partial class IRGenerator
                          currentFunction + "." + stmt.LoopElseFlag,
                          currentModulePrefix + stmt.LoopElseFlag,
                      })
+            {
                 constantVariables.Remove(key);
+                // FoldedOperand answers `if flag == 1` from localConstantValues too --
+                // and a branch join restores the pre-branch snapshot, so a plain
+                // Remove there resurrects the folded 1 the clear just erased. The
+                // kill survives every restore and the join filters both maps on it.
+                localConstantValues.Remove(key);
+                killedConstants.Add(key);
+            }
         }
 
         EmitPendingFinally(loop.FinallyDepth);   // run finallys between this break and the loop
