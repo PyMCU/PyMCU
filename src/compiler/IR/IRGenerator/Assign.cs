@@ -876,10 +876,37 @@ public partial class IRGenerator
             };
             if (rtSeq is { } compRes)
             {
-                string compKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix + listTarget.Name
-                    : (!string.IsNullOrEmpty(currentFunction)
-                        ? currentFunction + "." + listTarget.Name : listTarget.Name);
+                // A rebind of a module-level global lands on the global slot,
+                // exactly like EmitScalarVarAssign's mutableGlobals branch --
+                // qualifying it as `main.x` mints a phantom second slot, and a
+                // later `other = x` reads the stale global while `x[i]` reads
+                // the phantom (decode_bits filtered `even_bins` that way).
+                string compGlobalName = currentModulePrefix + listTarget.Name;
+                string compKey;
+                if (string.IsNullOrEmpty(currentInlinePrefix)
+                    && mutableGlobals.ContainsKey(compGlobalName))
+                {
+                    if (currentFunction != "main")
+                        throw new NameError(
+                            $"'{listTarget.Name}' is a module-level global; to assign it inside " +
+                            $"'{currentFunction}' add a 'global {listTarget.Name}' declaration, " +
+                            "or rename the variable if a local was intended",
+                            stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
+                    compKey = compGlobalName;
+                    // The global's storage width lives in mutableGlobals:
+                    // without this the slot is allocated one byte and the next
+                    // global overlaps the pointer's high byte (outliers at +17
+                    // collided with pulse_bins at +18 that way).
+                    widenableGlobals.Remove(compGlobalName);
+                    mutableGlobals[compGlobalName] = DataType.GC_REF;
+                }
+                else
+                {
+                    compKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + listTarget.Name
+                        : (!string.IsNullOrEmpty(currentFunction)
+                            ? currentFunction + "." + listTarget.Name : listTarget.Name);
+                }
                 variableTypes[compKey] = DataType.GC_REF;
                 listVarElemTypes[compKey] = listVarElemTypes[compRes.Name];
                 if (listInnerElemTypes.TryGetValue(compRes.Name, out var compInner))

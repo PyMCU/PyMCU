@@ -112,4 +112,34 @@ public class RuntimeListCompTests
         var bodies = ir.Functions.SelectMany(f => f.Body).ToList();
         Assert.True(bodies.OfType<GcAlloc>().Count() >= 3);
     }
+
+    [Fact]
+    public void Comp_RebindOfModuleGlobal_WritesTheGlobalNotAScopedPhantom()
+    {
+        // `even_bins = [b for b in even_bins if ...]` at module level used to
+        // file the result under `main.even_bins` while the original binding,
+        // the appends and the `pulse_bins = even_bins` alias all read the
+        // module global `even_bins`: the alias captured the PRE-filter list
+        // and decode_bits classified every pulse as a mark. The rebind must
+        // land on the global slot like EmitScalarVarAssign's mutableGlobals
+        // path.
+        var ir = Gen(
+            "from pymcu.types import uint16\n\n" +
+            "bins = [[1, 1], [2, 2]]\n" +
+            "bins = [b for b in bins if b[1] > 1]\n" +
+            "other = bins\n" +
+            "x = other[0][0]\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        // The comp result Copy must target the bare global `bins`, never a
+        // scoped `main.bins`; the alias Copy must read that same slot.
+        Assert.DoesNotContain(main.Body, i => i is Copy cp
+            && cp.Dst is Variable v && v.Name == "main.bins");
+        Assert.Contains(main.Body, i => i is Copy cp
+            && cp.Dst is Variable v && v.Name == "bins"
+            && cp.Src is Variable or Temporary);
+        Assert.Contains(main.Body, i => i is Copy cp
+            && cp.Dst is Variable v && v.Name == "other"
+            && cp.Src is Variable sv && sv.Name == "bins");
+    }
 }
