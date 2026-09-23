@@ -158,11 +158,13 @@ def _program(tmp_path: Path, source: str) -> Path:
     # to write the array type they had already written. Two phases, two texts, one program.
     #
     # `| None` is no longer one of these: None-ness is a compile-time property here, so
-    # `X | None` IS X and compiles. A union of two REAL types still has no width they share,
-    # and that is what these four now spell.
+    # `X | None` IS X and compiles. Since RFC 0009 phase 3 a union of real SCALAR types is
+    # legal where a tag byte can carry it -- the return and field positions -- so the rows
+    # that still refuse are the local and parameter ones, plus a union whose member is not
+    # a value a payload byte can hold (an array).
     'from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 | bool = 5\n',
     'from pymcu.types import uint8\ndef f(a: uint8 | bool) -> None:\n    pass\ndef main() -> None:\n    f(1)\n',
-    'from pymcu.types import uint8\ndef f() -> uint8 | bool:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
+    'from pymcu.types import uint8\ndef f() -> uint8[2] | bool:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
     'from pymcu.types import uint8\nclass C:\n    def __init__(self) -> None:\n        self.x: uint8[2] | bool = [1, 2]\ndef main() -> None:\n    c = C()\n',
     # Unary: the operator, not the operand it applies to.
     "from pymcu.types import uint8\ndef main() -> None:\n    a: uint8 = 2\n    b: uint8 = a ** -1\n",

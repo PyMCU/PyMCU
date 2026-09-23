@@ -2798,7 +2798,7 @@ public partial class IRGenerator
             string? field = null;
             Expression? rhs = null;
             string? annotatedType = null;
-            Expression? writeTarget = null;
+            ASTNode? writeTarget = null;
             if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
                 && ma.Object is VariableExpr sv && sv.Name == "self")
             {
@@ -2815,6 +2815,19 @@ public partial class IRGenerator
                 rhs = aug.Value;
                 writeTarget = ama;
             }
+            // `self.f: Union[A, B, ...] = v` -- an AnnAssign the parser keeps for
+            // its bracketed annotation. A union member list declares the field's
+            // tag domain outright (fieldDeclaredUnionMembers in NoteFieldWrite);
+            // every other bracketed annotation on a member is the array-field
+            // path, which lays its own storage and stays out of this scan.
+            else if (s is AnnAssign uaa && uaa.UnionMembers != null
+                     && uaa.Target.StartsWith("self.", StringComparison.Ordinal))
+            {
+                field = uaa.Target.Substring("self.".Length);
+                rhs = uaa.Value;
+                annotatedType = uaa.Annotation;
+                writeTarget = uaa;
+            }
 
             if (field == null) continue;
             // But `+=` cannot be the write that INTRODUCES the field: it reads the member
@@ -2823,6 +2836,7 @@ public partial class IRGenerator
             // `seen` keeps the field for a real assignment to claim, or for the read-side
             // refusal to name.
             if (s is AugAssignStmt && !seen.Contains(field)) continue;
+            NoteFieldWrite(classKey, field, rhs, annotatedType, paramTypes, localTypes);
             if (!seen.Add(field))
             {
                 // The categorical-mismatch check the method scan below runs applies inside
@@ -2899,6 +2913,11 @@ public partial class IRGenerator
                 type = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
                     ? annotatedType.Substring(6, annotatedType.Length - 7)
                     : annotatedType;
+                // A declared union field's scalar slot is its widest member -- the
+                // tag byte lives beside it, not inside the layout's size.
+                if (PyMCU.Common.AnnotationText.UnionMembers(annotatedType) is { } ufm
+                    && ufm.Count >= 2)
+                    type = WidestUnionMemberName(ufm);
                 pinnedTypes.Add(field);
             }
             if (rhs is VariableExpr rv && paramTypes.TryGetValue(rv.Name, out var pt))
@@ -3017,7 +3036,7 @@ public partial class IRGenerator
                 string? field = null;
                 Expression? rhs = null;
                 string? annotatedType = null;
-                Expression? writeTarget = null;
+                ASTNode? writeTarget = null;
                 if (ms is AssignStmt masg && masg.Target is MemberAccessExpr mma
                     && mma.Object is VariableExpr msv && msv.Name == "self")
                 {
@@ -3033,10 +3052,21 @@ public partial class IRGenerator
                     rhs = maug.Value;
                     writeTarget = ama;
                 }
+                // Same `self.f: Union[...]` AnnAssign arm as the __init__ scan above:
+                // a declared union field's member list is filed wherever the write sits.
+                else if (ms is AnnAssign muaa && muaa.UnionMembers != null
+                         && muaa.Target.StartsWith("self.", StringComparison.Ordinal))
+                {
+                    field = muaa.Target.Substring("self.".Length);
+                    rhs = muaa.Value;
+                    annotatedType = muaa.Annotation;
+                    writeTarget = muaa;
+                }
                 if (field == null) continue;
                 // `+=` widens and kind-checks a field already introduced, but cannot be the
                 // write that declares one (same reasoning as the __init__ loop above).
                 if (ms is AugAssignStmt && !seen.Contains(field)) continue;
+                NoteFieldWrite(classKey, field, rhs, annotatedType, mParamTypes, mLocalTypes);
 
                 // Same array-field exemption as the __init__ scan above: a field whose value is
                 // a literal list or tuple of compile-time constants is an array field, handled
@@ -3220,6 +3250,82 @@ public partial class IRGenerator
         return inferred != null ? ClassifyFieldKind(inferred) : "unknown";
     }
 
+    // RFC 0009 phase 3: record one `self.<field> = <rhs>` write's None/scalar
+    // evidence. A field that sees BOTH kinds across the class's methods is a union
+    // field (payload + tag byte, the field-level Optional). Scalar means "a value
+    // the payload can hold" -- a literal, a name, arithmetic, a call -- anything
+    // whose write is not a sequence literal, a buffer, an instance construction or
+    // a string. Those carry their own field kinds and stay out of the tag domain.
+    private void NoteFieldWrite(string classKey, string field, Expression? rhs,
+        string? annotatedType, Dictionary<string, string> paramTypes,
+        Dictionary<string, string> localTypes)
+    {
+        if (!fieldNoneWrites.TryGetValue(classKey, out var noneSet))
+            fieldNoneWrites[classKey] = noneSet = new HashSet<string>();
+        if (!fieldScalarWrites.TryGetValue(classKey, out var scalarSet))
+            fieldScalarWrites[classKey] = scalarSet = new HashSet<string>();
+
+        // `self.f: Union[...]`/`Optional[...]`/`A | B` declares the member list
+        // outright. UnionMembers is the same normaliser the return position asks:
+        // an Optional-shaped text normalised to one real member answers null and
+        // the write evidence below decides the field instead.
+        if (annotatedType is { } at
+            && PyMCU.Common.AnnotationText.UnionMembers(at) is { } dm && dm.Count >= 2)
+        {
+            // The member list is validated where it is recorded: an unchecked list
+            // let `self.x: uint8[2] | bool` file a plain array field and drop the
+            // `| bool` with no diagnostic at all.
+            ValidateUnionMembers($"the union field '{classKey}.{field}'", dm, rhs);
+            fieldDeclaredUnionMembers[classKey + "|" + field] = dm;
+            if (dm.Any(m => m != "None")) scalarSet.Add(field);
+            if (dm.Contains("None")) noneSet.Add(field);
+        }
+
+        if (rhs is NoneLiteral) { noneSet.Add(field); return; }
+        if (rhs == null) return;
+        if (annotatedType is { } at2)
+        {
+            // An annotated scalar write is scalar evidence; a str/buffer/instance
+            // annotation is a different field kind.
+            var ant = at2.StartsWith("const[") && at2.EndsWith("]") ? at2[6..^1] : at2;
+            if (ScalarWidthRank(ant) > 0 || ant == "bool" || ant == "float") scalarSet.Add(field);
+            return;
+        }
+        bool scalar = rhs switch
+        {
+            IntegerLiteral or FloatLiteral or BooleanLiteral => true,
+            StringLiteral or FStringExpr => false,
+            ListExpr or TupleExpr or DictExpr or SetExpr or ListCompExpr or GeneratorExpr => false,
+            VariableExpr ve =>
+                !(paramTypes.TryGetValue(ve.Name, out var pv) && IsNonScalarFieldType(pv))
+                && !(localTypes.TryGetValue(ve.Name, out var lv) && IsNonScalarFieldType(lv)),
+            // `self.f = Cls(...)` builds an instance; a scalar conversion call or a
+            // method/function result is scalar evidence. classNames fills as the
+            // scan walks, so a class declared LATER in the same file would be missed;
+            // classModuleMap is filed for every class before the layout pass runs.
+            CallExpr { Callee: VariableExpr cv } =>
+                cv.Name is not ("bytearray" or "bytes" or "str")
+                && !classNames.Contains(cv.Name) && !classNames.Contains(ResolveCallee(cv.Name))
+                && !classModuleMap.ContainsKey(cv.Name),
+            _ => true,
+        };
+        if (scalar) scalarSet.Add(field);
+    }
+
+    private bool IsNonScalarFieldType(string t)
+    {
+        if (t.StartsWith("const[") && t.EndsWith("]")) t = t[6..^1];
+        if (t is "str" or "bytearray" or "bytes" or "ptr") return true;
+        if (t.StartsWith("Union[") || t.StartsWith("Optional[")) return false;
+        if (t.Contains('[')) return true;   // list[..], tuple[..], ptr[..], array
+        // classNames fills as the scan walks -- a callee defined LATER in the same
+        // file (BitmapFont below Framebuf's text()) is still invisible there, so
+        // classModuleMap, which ScanGlobals files for every class before the layout
+        // pass runs, answers the ordering classNames cannot.
+        return classNames.Contains(t) || classNames.Contains(ResolveCallee(t))
+            || classModuleMap.ContainsKey(t);
+    }
+
     /// <summary>
     /// The width an expression stored into an unannotated field needs, or null when nothing
     /// here decides it. Deliberately narrow: a conversion call says its own type, a literal
@@ -3256,6 +3362,23 @@ public partial class IRGenerator
                 if (rt.StartsWith("const[") && rt.EndsWith("]"))
                     rt = rt.Substring(6, rt.Length - 7);
                 return ScalarWidthRank(rt) > 0 ? rt : null;
+            }
+
+            // `self.t = time.monotonic()` is as wide as the callee's DECLARED return
+            // type -- the same evidence `self.v = self._read()` takes above, for a
+            // module function instead of a sibling method. Without it the field kept
+            // the width of an earlier literal write (`self._last_called = 0` laid out
+            // as a byte, the monotonic() float truncated to 0) and every reader of the
+            // field saw the truncated value (adafruit_dht's rate-limit timestamp).
+            case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr mod, Member: var modFn } }
+                when NamesAModuleMember(mod.Name, modFn):
+            {
+                string realMod = TryImportedAlias(mod.Name, out var rm) && rm != null ? rm : mod.Name;
+                if (!functionReturnTypes.TryGetValue(realMod.Replace('.', '_') + "_" + modFn, out var mrt))
+                    return null;
+                if (mrt.StartsWith("const[") && mrt.EndsWith("]"))
+                    mrt = mrt.Substring(6, mrt.Length - 7);
+                return ScalarWidthRank(mrt) > 0 ? mrt : null;
             }
 
             // `self._message = ""` is a string field, not a uint8 that a later
