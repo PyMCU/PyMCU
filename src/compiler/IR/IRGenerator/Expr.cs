@@ -2208,20 +2208,41 @@ public partial class IRGenerator
     // a runtime one.
     private Val EmitDictLookup(Frontend.DictExpr d, Expression keyExpr, Expression? defaultExpr = null)
     {
-        var entries = new List<(int Key, Val Value, bool StrKey, string? Text)>();
+        var entries = new List<(int[] Key, Val Value, bool StrKey, string? Text)>();
         foreach (var (kE, vE) in d.Entries)
         {
-            Val kV = VisitExpression(kE);
             Val vV = VisitExpression(vE);
-            if (kV is not Constant kc || (vV is not Constant && vV is not FloatConstant))
+            if (vV is not Constant && vV is not FloatConstant)
                 throw UserError("dict literals are compile-time lookup tables: every key and " +
                                 "value must be a compile-time constant", d);
-            entries.Add((kc.Value, vV, kE is StringLiteral, kc.Text));
+            // A tuple key (`{(0, 1): x}`) is a constant key of several parts; each part must
+            // fold, and a lookup matches when every part compares equal.
+            if (kE is Frontend.TupleExpr tk)
+            {
+                var parts = new List<int>();
+                foreach (var te in tk.Elements)
+                {
+                    if (VisitExpression(te) is not Constant tp)
+                        throw UserError("dict literals are compile-time lookup tables: every key " +
+                                        "and value must be a compile-time constant", d);
+                    parts.Add(tp.Value);
+                }
+                entries.Add((parts.ToArray(), vV, false, null));
+                continue;
+            }
+            Val kV = VisitExpression(kE);
+            if (kV is not Constant kc)
+                throw UserError("dict literals are compile-time lookup tables: every key and " +
+                                "value must be a compile-time constant", d);
+            entries.Add((new[] { kc.Value }, vV, kE is StringLiteral, kc.Text));
         }
 
-        Val keyVal = VisitExpression(keyExpr);
-        if (keyVal is Constant keyC)
+        Val[] keyParts = keyExpr is Frontend.TupleExpr kt
+            ? kt.Elements.Select(VisitExpression).ToArray()
+            : new[] { VisitExpression(keyExpr) };
+        if (keyParts.All(p => p is Constant))
         {
+            var keyC = keyParts.Cast<Constant>().ToArray();
             // Match on the TEXT when both sides carry it, and only fall back to the numbers when
             // one of them does not. A one-character string has two encodings: as a literal it
             // folds to its character code, and through a name it resolves to its interned id.
@@ -2234,9 +2255,10 @@ public partial class IRGenerator
             // only in whether defaultExpr is null, so this covers both.
             foreach (var e in entries)
             {
-                bool hit = e.Text != null && keyC.Text != null
-                    ? e.Text == keyC.Text
-                    : e.Key == keyC.Value;
+                if (e.Key.Length != keyC.Length) continue;
+                bool hit = e.Key.Length == 1 && e.Text != null && keyC[0].Text != null
+                    ? e.Text == keyC[0].Text
+                    : e.Key.Zip(keyC, (ek, kc) => ek == kc.Value).All(b => b);
                 if (hit) return e.Value;
             }
 
@@ -2256,7 +2278,10 @@ public partial class IRGenerator
                 return MakeTemp(DataType.UINT8);
             }
 
-            throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC)} is not a key of " +
+            string miss = keyC.Length == 1
+                ? DescribeDictKey(keyExpr, keyC[0])
+                : "(" + string.Join(", ", keyC.Select(c => c.Value.ToString())) + ")";
+            throw UserError($"KeyError: {miss} is not a key of " +
                             "this dict literal (checked at compile time)", keyExpr);
         }
 
@@ -2293,12 +2318,18 @@ public partial class IRGenerator
         foreach (var e in entries)
         {
             string next = MakeLabel();
-            Emit(new JumpIfNotEqual(keyVal, new Constant(e.Key), next));
-            Val stored = anyFloat && e.Value is Constant ic
-                ? new FloatConstant(ic.Value)
-                : e.Value;
-            Emit(new Copy(stored, result));
-            Emit(new Jump(endL));
+            // A part-wise key (tuple) matches when every part compares equal: a length
+            // mismatch or one unequal part skips the entry.
+            if (e.Key.Length == keyParts.Length)
+            {
+                for (int i = 0; i < e.Key.Length; i++)
+                    Emit(new JumpIfNotEqual(keyParts[i], new Constant(e.Key[i]), next));
+                Val stored = anyFloat && e.Value is Constant ic
+                    ? new FloatConstant(ic.Value)
+                    : e.Value;
+                Emit(new Copy(stored, result));
+                Emit(new Jump(endL));
+            }
             Emit(new Label(next));
         }
         if (defaultExpr != null)

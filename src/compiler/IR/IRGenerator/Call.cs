@@ -3311,17 +3311,20 @@ public partial class IRGenerator
 
     private Val? TryEmitDictMethod(CallExpr expr)
     {
-        if (expr.Callee is not MemberAccessExpr { Object: VariableExpr dv } dm) return null;
-        if (!TryGetDictBinding(dv.Name, out var dict)) return null;
+        if (expr.Callee is not MemberAccessExpr dm) return null;
+        if (dm.Object is not VariableExpr && dm.Object is not MemberAccessExpr) return null;
+        if (!TryGetDictFor(dm.Object, out var dict)) return null;
+        string dvName = dm.Object is VariableExpr dvn ? dvn.Name
+            : dm.Object is MemberAccessExpr dma ? dma.Member : "d";
 
         if (dm.Member != "get")
             // Named receiver, matching its set counterpart above. Two sibling messages that
             // differ in whether they name the receiver is the inconsistency each of them
             // exists to avoid, and with two dicts in scope the name is the useful half.
             throw UserError(
-                $"'{dv.Name}' is a compile-time lookup table (read-only dict literal): " +
-                $"'{dm.Member}()' is not available. Supported: {dv.Name}[key], " +
-                $"key in {dv.Name}, len({dv.Name}), {dv.Name}.get(key, default). " +
+                $"'{dvName}' is a compile-time lookup table (read-only dict literal): " +
+                $"'{dm.Member}()' is not available. Supported: {dvName}[key], " +
+                $"key in {dvName}, len({dvName}), {dvName}.get(key, default). " +
                 "For a mutable dict use pymcu.collections.FixedDict(capacity).", expr.Callee);
 
         if (expr.Args.Count != 2)

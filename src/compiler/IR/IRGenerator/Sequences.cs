@@ -358,34 +358,38 @@ public partial class IRGenerator
         // A class-level dict (`gain_values = {ALS_GAIN_2: 2, ...}`) is filed under the
         // class prefix, not the instance-flattened SequenceKeyOf. `self.gain_values[k]`
         // has to find it the same way a descriptor finds a class attribute.
-        if (mae.Object is VariableExpr ov)
+        if (mae.Object is VariableExpr ov && ClassNameOf(ov) is { } clsOwner)
         {
-            if (ClassNameOf(ov) is { } clsOwner)
-            {
-                string classDictKey = ClassAttrKey(clsOwner, mae.Member);
-                if (dictLiteralBindings.TryGetValue(classDictKey, out dict!))
-                    return true;
-            }
-            string? baseName = ReceiverNameForLookup(ov) ?? ResolveNameKey(ov.Name);
-            if (TryFindClassAttribute(baseName, mae.Member, out _, out var fullName)
-                && dictLiteralBindings.TryGetValue(fullName, out dict!))
+            string classDictKey = ClassAttrKey(clsOwner, mae.Member);
+            if (dictLiteralBindings.TryGetValue(classDictKey, out dict!))
                 return true;
-            if (ReceiverClassThroughAliases(baseName ?? ov.Name) is { } cls)
+        }
+        // The receiver's flattened key: `self.t` gives `inst_t` directly, a deeper
+        // `self.a.t` resolves `self.a` first so `inst_a` names the instance that owns t.
+        string? baseName = mae.Object switch
+        {
+            VariableExpr rov => ReceiverNameForLookup(rov) ?? ResolveNameKey(rov.Name),
+            MemberAccessExpr => SequenceKeyOf(mae.Object),
+            _ => null,
+        };
+        if (TryFindClassAttribute(baseName, mae.Member, out _, out var fullName)
+            && dictLiteralBindings.TryGetValue(fullName, out dict!))
+            return true;
+        if (baseName != null && ReceiverClassThroughAliases(baseName) is { } cls)
+        {
+            string? cur = cls;
+            for (int depth = 0; cur != null && depth < 20; depth++)
             {
-                string? cur = cls;
-                for (int depth = 0; cur != null && depth < 20; depth++)
+                foreach (var cand in new[]
                 {
-                    foreach (var cand in new[]
-                    {
-                        classModuleMap.TryGetValue(cur, out var pfx) ? pfx + cur + "_" + mae.Member : null,
-                        cur + "_" + mae.Member,
-                    })
-                    {
-                        if (cand != null && dictLiteralBindings.TryGetValue(cand, out dict!))
-                            return true;
-                    }
-                    cur = BaseClassOf(cur);
+                    classModuleMap.TryGetValue(cur, out var pfx) ? pfx + cur + "_" + mae.Member : null,
+                    cur + "_" + mae.Member,
+                })
+                {
+                    if (cand != null && dictLiteralBindings.TryGetValue(cand, out dict!))
+                        return true;
                 }
+                cur = BaseClassOf(cur);
             }
         }
         return false;
