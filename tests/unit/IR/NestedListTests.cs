@@ -122,6 +122,26 @@ public class NestedListTests
     }
 
     [Fact]
+    public void AugmentedNestedStoreWritesTheInnerList()
+    {
+        // `bins[b][1] += v` on a list[list[T]]: the read resolved through the
+        // two-level index but the store-back had no nested path and fell to a
+        // bit write on the loaded pointer.
+        var ir = Gen(
+            "from pymcu.types import uint16\n\n" +
+            "def bump(bins: list[list[uint16]], b: uint8) -> None:\n" +
+            "    bins[b][1] += 1\n\n" +
+            "first: list[uint16] = [562, 0]\n" +
+            "bins: list[list[uint16]] = [first]\n" +
+            "bump(bins, 0)\n");
+        var bodies = ir.Functions.SelectMany(f => f.Body).ToList();
+
+        Assert.Contains(bodies,
+            i => i is StoreIndirect s && s.Elem == DataType.UINT16);
+        Assert.DoesNotContain(bodies, i => i is BitWrite || i is BitCheck);
+    }
+
+    [Fact]
     public void NestedListGrowAllocCarriesTheRefsFlag()
     {
         var ir = Gen(

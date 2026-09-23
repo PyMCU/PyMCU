@@ -8407,6 +8407,32 @@ public partial class IRGenerator
                     EvalGridIndex(ie.Index, aw, "column"), result);
                 return;
             }
+
+            // `bins[b][1] += v` on a list[list[T]]: the read above already
+            // resolved through the two-level index; the store-back is the same
+            // indirect store the plain `bins[b][j] = v` path emits. Without it
+            // the augmented write fell to BitWrite on the loaded pointer.
+            if (ie.Target is IndexExpr augNestedSub
+                && augNestedSub.Target is VariableExpr augNestedVe
+                && augNestedSub.Index is not SliceExpr and not TupleExpr
+                && ie.Index is not SliceExpr and not TupleExpr
+                && ResolveListVarQualified(augNestedVe.Name) is { Length: > 0 } augNestedListQ
+                && listVarElemTypes[augNestedListQ] == DataType.GC_REF
+                && listInnerElemTypes.TryGetValue(augNestedListQ, out var augNestedElemDt))
+            {
+                Val augOuterPtr = new Variable(augNestedListQ, DataType.GC_REF);
+                Val augInnerIdxVal = VisitExpression(augNestedSub.Index);
+                Temporary augInnerAddr = EmitElemAddr(augOuterPtr, augInnerIdxVal,
+                    DataType.GC_REF.SizeOf());
+                Temporary augInnerRef = MakeTemp(DataType.GC_REF);
+                Emit(new LoadIndirect(augInnerAddr, augInnerRef, DataType.GC_REF));
+                Val augIdxVal = VisitExpression(ie.Index);
+                Temporary augElemAddr = EmitElemAddr(augInnerRef, augIdxVal,
+                    augNestedElemDt.SizeOf());
+                Emit(new StoreIndirect(result, augElemAddr, augNestedElemDt));
+                return;
+            }
+
             if (ie.Target is VariableExpr augRowVe
                 && ie.Index is not SliceExpr and not TupleExpr
                 && ResolveRowRef(augRowVe) is { } augRowRef)
