@@ -1683,6 +1683,29 @@ public partial class IRGenerator
         // FixedDict.__setitem__ corruption). Nonlocal write-through aliases are exempt.
         InvalidateAliasesForWrite(varExpr.Name);
 
+        // `buffer = self._post_brightness_buffer` / `b2 = buf` / the ternary pick
+        // between two fields that adafruit_pixelbuf's `_getitem` opens with: a local
+        // bound to an arena-backed buffer receives the arena OFFSET scalar in its
+        // slot. Registering the new name lets `buffer[i]`, `buffer[i] = v` and
+        // `len(buffer)` resolve through the same arena path the source name does --
+        // the propagation call-argument binding already performs in Call.cs.
+        // Without it the subscript fell to the register-bit path and refused a
+        // non-constant index.
+        if (ArenaOffsetSource(stmt.Value) is { } arenaSrcQ)
+        {
+            string arenaTgtQ = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + varExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + varExpr.Name
+                    : varExpr.Name);
+            if (arenaSrcQ != arenaTgtQ)
+            {
+                arenaBufferNames.Add(arenaTgtQ);
+                if (arenaBufferLenVar.TryGetValue(arenaSrcQ, out var arenaSrcLen))
+                    arenaBufferLenVar[arenaTgtQ] = arenaSrcLen;
+            }
+        }
+
         // `s = "running"` on a name that other paths bind to another text: the id goes to the
         // name's 16-bit slot, whatever scope the name lives in. Without this the store either
         // resolved to the id it was storing (a copy with no destination) or landed in a slot
@@ -6897,6 +6920,37 @@ public partial class IRGenerator
         if (!arenaBufferNames.Contains(candidate)) return false;
         flattened = candidate;
         return true;
+    }
+
+    // The arena-buffer name a scalar-producing expression draws its offset from:
+    // a buffer field, a buffer local, or a ternary whose arms all deliver one.
+    // An arm that is statically None (a field `self._pre = None` that a later
+    // `is not None` test guards, IsNoneValued's exact remit) is not an arena
+    // source itself but cannot deliver a subscriptable value either, so it does
+    // not disqualify the pick. An arm that is anything else -- a plain scalar --
+    // disqualifies it: `buf = arr if c else 5` indexed later must stay a refusal,
+    // not silently read arena bytes when c is false.
+    private string? ArenaOffsetSource(Expression e)
+    {
+        switch (e)
+        {
+            case MemberAccessExpr m
+                when TryResolveArenaBufferField(m.Object, m.Member, out var fq):
+                return fq;
+            case VariableExpr v when TryResolveArenaBuffer(v.Name, out var vq):
+                return vq;
+            case TernaryExpr t:
+            {
+                string? tk = ArenaOffsetSource(t.TrueVal);
+                string? fk = ArenaOffsetSource(t.FalseVal);
+                if ((tk != null || IsNoneValued(t.TrueVal))
+                    && (fk != null || IsNoneValued(t.FalseVal)))
+                    return tk ?? fk;
+                return null;
+            }
+            default:
+                return null;
+        }
     }
 
     // The import alias `pymcu.arena` was given in the entry file (`pymcu build` injects
