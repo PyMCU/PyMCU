@@ -8737,6 +8737,21 @@ public partial class IRGenerator
                 }
             }
 
+            // `self._buf[i] OP= v`: the read above resolved the flattened
+            // instance-member array through ResolveMemberArrayName, but the
+            // store-back only knew VariableExpr targets -- a member target fell
+            // through to BitWrite and demanded a constant index
+            // (adafruit_ht16k33's `self._buffer[addr + 1] |= mask`).
+            if (ie.Target is MemberAccessExpr augMem
+                && ResolveMemberArrayName(augMem) is string flatAug)
+            {
+                Val idxVal = VisitExpression(ie.Index);
+                RemapArrayAccess(flatAug, idxVal, out var augName, out var augIdx,
+                    out var augSize, out var augDt);
+                Emit(new ArrayStore(augName, augIdx, result, augDt, augSize));
+                return;
+            }
+
             var tgtVal = VisitExpression(ie.Target);
             var idxVal2 = VisitExpression(ie.Index);
 
