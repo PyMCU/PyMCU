@@ -602,6 +602,21 @@ public partial class IRGenerator
                 // resolution mangles `t.sleep_ms` (import time as t) to time_sleep_ms.
                 importedAliases[modKey] = imp.ModuleName;
                 RegisterModuleAlias("", modKey, imp.ModuleName, null);
+
+                // `import alarm.time` binds `alarm`, not `alarm.time` -- CPython binds the
+                // top-level package name in the importing namespace, so `alarm.time.X`
+                // reads `alarm` first. Only the unaliased form does this: `import a.b as c`
+                // binds `c` to the submodule itself.
+                int topDot = imp.ModuleName.IndexOf('.');
+                if (topDot > 0 && string.IsNullOrEmpty(imp.ModuleAlias))
+                {
+                    string top = imp.ModuleName.Substring(0, topDot);
+                    if (!modules.ContainsKey(top))
+                        modules[top] = new ModuleScope();
+                    if (!importedAliases.ContainsKey(top))
+                        importedAliases[top] = top;
+                    RegisterModuleAlias("", top, top, null);
+                }
             }
 
             foreach (var sym in imp.Symbols)
@@ -676,6 +691,20 @@ public partial class IRGenerator
                     if (!modules.ContainsKey(modKey))
                         modules[modKey] = modules.TryGetValue(imp.ModuleName, out var realScope)
                             ? realScope : new ModuleScope();
+
+                    // Same top-name binding as the entry branch above: `import a.b` inside
+                    // a module binds `a`, so a later `a.b.X` read inside that module finds it.
+                    int topDot = imp.ModuleName.IndexOf('.');
+                    if (topDot > 0 && string.IsNullOrEmpty(imp.ModuleAlias))
+                    {
+                        string top = imp.ModuleName.Substring(0, topDot);
+                        RegisterModuleAlias(ownPrefix, top, top, null);
+                        if (!importedAliases.ContainsKey(top))
+                            importedAliases[top] = top;
+                        if (!modules.ContainsKey(top))
+                            modules[top] = modules.TryGetValue(top, out var topScope)
+                                ? topScope : new ModuleScope();
+                    }
                 }
             }
         }
@@ -1958,6 +1987,14 @@ public partial class IRGenerator
 
         foreach (var mod in modules)
         {
+            // `mod_member` mangling collides with ordinary user names: a program that
+            // imports `time` and declares `time_alarm` makes `alarm` resolve to that
+            // variable's slot here, exactly as `time.alarm` would if the module had
+            // one. Membership has to come from the module's own scope -- the flat
+            // tables cannot tell a module member from a user global of the same
+            // spelling.
+            if (!mod.Value.Globals.ContainsKey(name) && !mod.Value.MutableGlobals.ContainsKey(name))
+                continue;
             string mangledMod = mod.Key.Replace('.', '_');
             string modKey = mangledMod + "_" + name;
             if (globals.TryGetValue(modKey, out var modSym))

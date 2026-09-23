@@ -4523,6 +4523,15 @@ public partial class IRGenerator
 
             if (modules.ContainsKey(varExpr.Name))
             {
+                // `alarm.time` where `time` is a submodule file of package `alarm`:
+                // the import registered the dotted module under its full name, not
+                // as a member symbol of `alarm`. The placeholder keeps
+                // `alarm.time.TimeAlarm` resolving to alarm_time_TimeAlarm.
+                if (modules.ContainsKey(varExpr.Name + "." + expr.Member))
+                {
+                    return new Variable(mangledName, DataType.UINT8);
+                }
+
                 if (functionParams.ContainsKey(mangledName) || functionReturnTypes.ContainsKey(mangledName))
                 {
                     return new Variable(mangledName, DataType.UINT8);
