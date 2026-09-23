@@ -46,6 +46,33 @@ public class DottedModuleTests
     }
 
     [Fact]
+    public void PackageInitReExport_ImportAlarm_ResolvesTheSubmodule()
+    {
+        // compat-cp-alarm's shape: `import alarm` alone, while the package __init__
+        // binds its submodule -- `from . import time` is rewritten by
+        // RelativeImportResolver to `import alarm.time as time` before generation.
+        // `alarm.time` must lower to the submodule's own name (alarm_time); the
+        // re-export chase must not re-append the member and emit alarm_time_time.
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["alarm.time"] = Parse(
+                "def tick() -> uint8:\n    return 1\n"),
+            ["alarm"] = Parse(
+                "import alarm.time as time\n"),
+        };
+
+        var ir = Gen(
+            "import alarm\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = alarm.time.tick()\n", mods);
+
+        Assert.True(Calls(ir, "alarm_time_tick"),
+            "alarm.time.tick() should resolve to the dotted module's function");
+        Assert.False(Calls(ir, "alarm_time_time_tick"),
+            "the re-export chase must not double-append the submodule member");
+    }
+
+    [Fact]
     public void AUserVariableSpelledLikeTheMangledMember_DoesNotStealTheSubmodule()
     {
         // `alarm_time` as a user global collides with `alarm`'s member `time` under
