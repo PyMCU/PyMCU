@@ -4604,6 +4604,17 @@ public partial class IRGenerator
                 ? realModName.Replace('.', '_') : varExpr.Name;
             string mangledName = moduleBase + "_" + expr.Member;
 
+            // A module's own `from other import name` re-export -- the compat shims'
+            // `from .sys import maxsize` inside usys.py: the name binds to the DEFINING
+            // module in the re-exporting module's own import table, so no `usys_maxsize`
+            // global ever exists. Chase it the same way ResolveReExport chases a
+            // facade: `usys.maxsize` resolves to `sys_maxsize`.
+            if (!globals.ContainsKey(mangledName) && !mutableGlobals.ContainsKey(mangledName)
+                && modules.ContainsKey(varExpr.Name)
+                && perModuleImportedAliases.TryGetValue(moduleBase + "_", out var reExports)
+                && reExports.TryGetValue(expr.Member, out var reExportedMod) && reExportedMod != null)
+                mangledName = reExportedMod.Replace('.', '_') + "_" + expr.Member;
+
             if (globals.TryGetValue(mangledName, out var sym))
             {
                 if (sym.IsMemoryAddress) return new MemoryAddress(sym.Value, sym.Type);

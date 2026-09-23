@@ -288,4 +288,42 @@ public class IntrospectionFoldTests
             Gen("import sys\nbuf = bytearray(1)\nbuf[0] = sys.version_info[0]\n", stdlib: ""));
         Assert.Contains("compat layer", ex.Message);
     }
+
+    // The usys/uos shims re-export with `from .sys import X`: the name binds in
+    // the SHIM's own import table, so `usys.maxsize` resolves to `sys_maxsize`,
+    // not a phantom `usys_maxsize` global that was never emitted.
+
+    [Fact]
+    public void UsysReExportedMember_ResolvesToTheDefiningModule()
+    {
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["sys"] = new Parser(new Lexer("maxsize = 2147483647\n").Tokenize()).ParseProgram(),
+            ["usys"] = new Parser(new Lexer("from sys import maxsize\n").Tokenize()).ParseProgram(),
+        };
+        var config = new DeviceConfig { Arch = "avr", Chip = "atmega328p", Stdlib = "micropython" };
+        var program = new Parser(new Lexer("import usys\nbuf = bytearray(4)\nbuf[0] = usys.maxsize\n").Tokenize()).ParseProgram();
+        new ConditionalCompilator(config).Process(program);
+        var ir = new IRGenerator().Generate(program, mods, config);
+        // `usys.maxsize` resolves to sys.py's own global, not a phantom usys_maxsize.
+        Assert.True(ir.Functions.SelectMany(f => f.Body).Select(i => i.ToString())
+            .Any(s => s.Contains("sys_maxsize")));
+        Assert.False(ir.Functions.SelectMany(f => f.Body).Select(i => i.ToString())
+            .Any(s => s.Contains("usys_maxsize")));
+    }
+
+    [Fact]
+    public void UsysReExportedMember_Unknown_StillRefuses()
+    {
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["sys"] = new Parser(new Lexer("maxsize = 2147483647\n").Tokenize()).ParseProgram(),
+            ["usys"] = new Parser(new Lexer("from sys import maxsize\n").Tokenize()).ParseProgram(),
+        };
+        var config = new DeviceConfig { Arch = "avr", Chip = "atmega328p", Stdlib = "micropython" };
+        var program = new Parser(new Lexer("import usys\nv = usys.version_info\n").Tokenize()).ParseProgram();
+        new ConditionalCompilator(config).Process(program);
+        var ex = Assert.ThrowsAny<CompilerError>(() => new IRGenerator().Generate(program, mods, config));
+        Assert.Contains("Unknown module member", ex.Message);
+    }
 }
