@@ -342,6 +342,21 @@ public partial class IRGenerator
             }
         }
 
+        // `y = tuple(x)` / `y = list(x)`: the copy-ctor builtin emits the fresh
+        // heap object for the value; what remains here is the NAME's mutability
+        // -- the same bookkeeping a tuple literal gets, so `y[i] = v` on a
+        // tuple-bound name meets the refusal IsTupleBound exists for.
+        if (stmt.Target is VariableExpr ctorTgt
+            && stmt.Value is CallExpr { Callee: VariableExpr { Name: "tuple" or "list" } } ctorCall
+            && ctorCall.Args.Count == 1)
+        {
+            string ctorKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + ctorTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ctorTgt.Name : ctorTgt.Name);
+            NoteSequenceMutability(ctorKey, ctorTgt.Name,
+                isTuple: ((VariableExpr)ctorCall.Callee).Name == "tuple");
+        }
+
         // `order = range(2, 0, -1)` and `order = reversed(order)`: a compile-time sequence under
         // a name (#363). A range has no run-time value, so the binding IS the whole meaning of
         // the statement -- the same shape as the tuple literal above, and the reason both emit

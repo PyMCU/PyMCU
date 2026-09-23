@@ -831,6 +831,15 @@ public partial class IRGenerator
         if (callee == "round") return EmitRoundBuiltin(expr);
         if (callee == "memoryview") return EmitMemoryviewBuiltin(expr);
 
+        // `list(x)` / `tuple(x)` with a single runtime-list argument copy it into a
+        // fresh heap object: unmodified adafruit_irremote writes `list(pulses)`
+        // and `tuple(input_pulses)` in decode_bits. A list-literal or fixed-array
+        // argument, or a list whose element type is still pending, reports below.
+        if ((callee == "list" || callee == "tuple") && expr.Args.Count == 1
+            && expr.Args[0] is VariableExpr copySrc
+            && ResolveListVarQualified(copySrc.Name) is { Length: > 0 } copySrcKey)
+            return EmitListCopyCtor(copySrcKey, copySrc, expr);
+
         if (callee == "divmod") return EmitDivmodBuiltin(expr);
         if (CastTypes.ContainsKey(callee)) return EmitNumericCastBuiltin(expr, callee);
         if (callee == "bitcast") return EmitBitcastBuiltin(expr);
@@ -10142,6 +10151,87 @@ public partial class IRGenerator
         Emit(new StoreIndirect(newLen, listVar));
 
         return new NoneVal();
+    }
+
+    /// <summary>
+    /// `list(x)` / `tuple(x)` on a runtime heap list: a fresh GC object holding
+    /// the same elements. The copy is an exact fit -- capacity equals count --
+    /// because copying the source's capacity byte verbatim would claim headroom
+    /// the new allocation never received, and a later append would write past
+    /// the object's end. The result keeps the source's element type (and inner
+    /// element type for a list of lists) so reads, len() and append on it
+    /// resolve exactly as they did on the source.
+    /// </summary>
+    private Val EmitListCopyCtor(string srcKey, VariableExpr srcExpr, CallExpr expr)
+    {
+        DataType elemDt = listVarElemTypes[srcKey];
+        if (elemDt == DataType.UNKNOWN)
+            throw UserError(
+                $"cannot infer the element type of '{srcExpr.Name}' yet; append an element " +
+                "first or declare it like `x: list[uint8] = []`", expr);
+        int elemSize = elemDt.SizeOf();
+        Variable srcVar = new Variable(srcKey, DataType.GC_REF);
+
+        // len = src[0]. Read it before the alloc: the value itself is immune to
+        // compaction, while the base pointer is re-derived from the (possibly
+        // relocated) variable afterwards.
+        Temporary len = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(srcVar, len));
+        Temporary totalBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, len, new Constant(elemSize), totalBytes));
+        Temporary allocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, totalBytes, new Constant(2), allocSize));
+
+        Temporary dst = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(allocSize, dst, elemDt == DataType.GC_REF));
+
+        // A null return is real heap exhaustion; a header store through it is
+        // SRAM[0] (the register file) -- refuse loudly instead.
+        string okLabel = MakeLabel();
+        Emit(new JumpIfNotZero(dst with { Type = DataType.UINT16 }, okLabel));
+        EnterRuntimeBranch($"copying '{srcExpr.Name}'");
+        try
+        {
+            VisitRaise(new RaiseStmt("MemoryError",
+                "list copy ran out of heap on this target"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(okLabel));
+
+        EmitListStore(dst, 0, len);
+        EmitListStore(dst, 1, len);
+
+        Val srcU16 = srcVar with { Type = DataType.UINT16 };
+        Val dstU16 = dst with { Type = DataType.UINT16 };
+        Temporary srcBase = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, srcU16, new Constant(2), srcBase));
+        Temporary dstBase = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, dstU16, new Constant(2), dstBase));
+
+        Temporary byteOff = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), byteOff));
+        string copyLoopLabel = MakeLabel();
+        string copyLoopEnd = MakeLabel();
+        Emit(new Label(copyLoopLabel));
+        Temporary cmpDone = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterEqual, byteOff, totalBytes, cmpDone));
+        Emit(new JumpIfNotZero(cmpDone, copyLoopEnd));
+        Temporary srcAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, srcBase, byteOff, srcAddr));
+        Temporary dstAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, dstBase, byteOff, dstAddr));
+        Temporary byteTmp = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(srcAddr, byteTmp));
+        Emit(new StoreIndirect(byteTmp, dstAddr));
+        Emit(new AugAssign(BinaryOp.Add, byteOff, new Constant(1)));
+        Emit(new Jump(copyLoopLabel));
+        Emit(new Label(copyLoopEnd));
+
+        listVarElemTypes[dst.Name] = elemDt;
+        if (listInnerElemTypes.TryGetValue(srcKey, out var innerElem))
+            listInnerElemTypes[dst.Name] = innerElem;
+
+        return dst;
     }
 
     /// <summary>
