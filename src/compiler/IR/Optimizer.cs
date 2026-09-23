@@ -527,6 +527,235 @@ private static Function CloneFunction(Function f)
         var finalCfg = BuildCfg(func);
         EliminateDeadCodeCfg(finalCfg);
         func.Body = finalCfg.Blocks.SelectMany(b => b.Instructions).ToList();
+
+        ClearDeadGcRootSlots(func, globalNames);
+        ClearExpansionEndRoots(func);
+    }
+
+    /// <summary>
+    /// An inline expansion's locals die when the expansion does: the prefix is
+    /// reused by the next call at the same depth, and nothing inside the
+    /// finished body can run again. Function-scope rooting keeps every object
+    /// its slots last held reachable until the OUTER function returns anyway,
+    /// so `d.decode_bits(p); d.decode_bits(p)` carries call 1's ~1KB working
+    /// set through call 2's allocations and OOMs on real work.
+    ///
+    /// Clear each expansion's rooted slots at its end marker. The caller's
+    /// result copy-out reads some of them AFTER the marker (a namedtuple
+    /// return's field slots, a `x = f()` that names the field directly), so a
+    /// slot read between the marker and the next marker is exempt -- it is
+    /// still live. Everything else gets a `Copy(0, slot)` right after the
+    /// marker; the next galloc then collects the dead objects.
+    ///
+    /// Marker pairing is by stack depth: the expansion at depth d owns the
+    /// `inline{d}.` prefix, and only its own expansion writes depth-d slots
+    /// inside its region (nested calls are deeper). Runs after
+    /// ClearDeadGcRootSlots so a var already cleared at its last in-region
+    /// mention simply gets a redundant zero here.
+    /// </summary>
+    private static void ClearExpansionEndRoots(Function func)
+    {
+        var body = func.Body;
+        var nextMarker = new int[body.Count];
+        int nm = body.Count;
+        for (int i = body.Count - 1; i >= 0; i--)
+        {
+            nextMarker[i] = nm;
+            if (body[i] is InlineExpansionMarker) nm = i;
+        }
+
+        var inserts = new List<(int pos, Val dst)>();
+        var stack = new Stack<(int beg, int depth)>();
+        int depth = 0;
+        for (int i = 0; i < body.Count; i++)
+        {
+            if (body[i] is not InlineExpansionMarker) continue;
+            if (((InlineExpansionMarker)body[i]).IsEnd)
+            {
+                if (stack.Count == 0) break;
+                var (beg, d) = stack.Pop();
+                depth--;
+                string prefix = $"inline{d}.";
+
+                // Slots this expansion wrote. Only Variables carry the
+                // inlineN prefix; result temps are caller-side `tmp_*`.
+                var slots = new HashSet<string>();
+                for (int j = beg + 1; j < i; j++)
+                    RegisterWrites(body[j], v =>
+                    {
+                        if (v is Variable vv
+                            && vv.Type == DataType.GC_REF
+                            && vv.Name.StartsWith(prefix, StringComparison.Ordinal))
+                            slots.Add(vv.Name);
+                    });
+                if (slots.Count == 0) continue;
+
+                // Result carriers: a slot the caller still reads before it is
+                // next written is live -- the result copy-out (or a `x = f()`
+                // naming the field) escapes the expansion's end. A write
+                // first means the next use-cycle already overwrote it, so the
+                // question for that slot is settled either way.
+                var pending = new HashSet<string>(slots);
+                for (int j = i + 1; j < body.Count && pending.Count > 0; j++)
+                {
+                    var ins = body[j];
+                    RegisterUses(ins, v =>
+                    {
+                        if (v is Variable vv && pending.Remove(vv.Name))
+                            slots.Remove(vv.Name);
+                    });
+                    if (pending.Count == 0) break;
+                    RegisterWrites(ins, v =>
+                    {
+                        if (v is Variable vv) pending.Remove(vv.Name);
+                    });
+                }
+                foreach (var slotName in slots)
+                    inserts.Add((i + 1, new Variable(slotName, DataType.GC_REF)));
+            }
+            else
+            {
+                depth++;
+                stack.Push((i, depth));
+            }
+        }
+        if (inserts.Count == 0) return;
+
+        inserts.Sort(static (a, b) => a.pos.CompareTo(b.pos));
+        var merged = new List<Instruction>(body.Count + inserts.Count);
+        int n = 0;
+        for (int i = 0; i <= body.Count; i++)
+        {
+            while (n < inserts.Count && inserts[n].pos == i)
+                merged.Add(new Copy(new Constant(0), inserts[n++].dst));
+            if (i < body.Count) merged.Add(body[i]);
+        }
+        func.Body = merged;
+    }
+
+    /// <summary>
+    /// A rooted slot keeps whatever object it last held reachable until the
+    /// function returns -- the shadow stack has no scoped-pop -- so a call to a
+    /// heap-heavy helper leaves its whole working set live for the rest of the
+    /// CALLER's extent. Two sequential calls then OOM on real work, not on any
+    /// object still in use: an inlined decode_bits retains ~1KB of dead
+    /// intermediates and the second call's first copy has nowhere to go.
+    ///
+    /// Clear each rooted local's slot once its last mention has passed. The GC
+    /// then collects the dead object at the next galloc; the slot itself stays
+    /// rooted (a null root marks nothing). Globals are excluded -- their last
+    /// mention in one function says nothing about the next.
+    ///
+    /// Runs last: the clearing stores would themselves look dead to the passes
+    /// above (the slot is never read again), so they are appended after them.
+    /// </summary>
+    private static void ClearDeadGcRootSlots(Function func, HashSet<string>? globalNames)
+    {
+        var rooted = new HashSet<string>();
+        foreach (var ins in func.Body)
+            if (ins is GcRoot gr)
+            {
+                string? rn = gr.Var switch
+                { Variable v => v.Name, Temporary t => t.Name, _ => null };
+                if (rn != null && !(globalNames?.Contains(rn) ?? false)) rooted.Add(rn);
+            }
+        if (rooted.Count == 0) return;
+
+        var labelAt = new Dictionary<string, int>();
+        for (int i = 0; i < func.Body.Count; i++)
+            if (func.Body[i] is Label lb) labelAt[lb.Name] = i;
+
+        // Backward jumps bound loop bodies. A clear placed inside one would run
+        // every iteration -- and kill a variable still carried around the
+        // back-edge -- so clears always move to after the outermost enclosing
+        // back-edge instead.
+        var loops = new List<(int head, int tail)>();
+        for (int i = 0; i < func.Body.Count; i++)
+            if (JumpTargetOf(func.Body[i]) is string t && labelAt.TryGetValue(t, out var h) && h < i)
+                loops.Add((h, i));
+
+        // Last real mention per rooted var. GcRoot/GcUnroot are GC bookkeeping,
+        // not data flow -- counting them would pin every last-use at the
+        // epilogue and clear nothing. Write positions count too: a var written
+        // but never read (an exception-path message tuple, say) still holds an
+        // object worth releasing.
+        var lastUse = new Dictionary<string, (Val v, int pos)>();
+        for (int i = 0; i < func.Body.Count; i++)
+        {
+            if (func.Body[i] is GcRoot or GcUnroot) continue;
+            RegisterUses(func.Body[i], v =>
+            {
+                if (v switch { Variable vv => vv.Name, Temporary tt => tt.Name, _ => null }
+                        is { } n && rooted.Contains(n))
+                    lastUse[n] = (v, i);
+            });
+            RegisterWrites(func.Body[i], v =>
+            {
+                if (v switch { Variable vv => vv.Name, Temporary tt => tt.Name, _ => null }
+                        is { } n && rooted.Contains(n))
+                    lastUse[n] = (v, i);
+            });
+        }
+
+        var inserts = new List<(int pos, Val dst)>();
+        foreach (var (v, use) in lastUse.Values)
+        {
+            int pos = use + 1;
+            bool moved = true;
+            while (moved)
+            {
+                moved = false;
+                foreach (var (head, tail) in loops)
+                    if (pos > head && pos <= tail) { pos = tail + 1; moved = true; }
+            }
+            Val dst = v switch
+            {
+                Variable vv => new Variable(vv.Name, DataType.GC_REF),
+                Temporary tt => new Temporary(tt.Name, DataType.GC_REF),
+                _ => v,
+            };
+            inserts.Add((pos, dst));
+        }
+        if (inserts.Count == 0) return;
+
+        inserts.Sort(static (a, b) => a.pos.CompareTo(b.pos));
+        var body = new List<Instruction>(func.Body.Count + inserts.Count);
+        int n = 0;
+        for (int i = 0; i <= func.Body.Count; i++)
+        {
+            while (n < inserts.Count && inserts[n].pos == i)
+                body.Add(new Copy(new Constant(0), inserts[n++].dst));
+            if (i < func.Body.Count) body.Add(func.Body[i]);
+        }
+        func.Body = body;
+    }
+
+    /// <summary>
+    /// The write-side operand census matching RegisterUses: every Val an
+    /// instruction stores into. Read-modify-write targets (AugAssign, bit ops)
+    /// are already counted as uses and are not repeated here.
+    /// </summary>
+    private static void RegisterWrites(Instruction instr, Action<Val> register)
+    {
+        switch (instr)
+        {
+            case Copy c: register(c.Dst); break;
+            case Unary u: register(u.Dst); break;
+            case Binary b: register(b.Dst); break;
+            case Bitcast bc: register(bc.Dst); break;
+            case BitCheck bck: register(bck.Dst); break;
+            case Call cl:
+                register(cl.Dst);
+                if (cl.TagDst != null) register(cl.TagDst);
+                break;
+            case IndirectCall ic: register(ic.Dst); break;
+            case LoadIndirect li: register(li.Dst); break;
+            case ArrayLoad al: register(al.Dst); break;
+            case ArrayLoadFlash alf: register(alf.Dst); break;
+            case FlashLoadPtr flp: register(flp.Dst); break;
+            case BytearrayLoad bld: register(bld.Dst); break;
+            case GcAlloc ga: register(ga.Dst); break;
+        }
     }
 
     /// <summary>
