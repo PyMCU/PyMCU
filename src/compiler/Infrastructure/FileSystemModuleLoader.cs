@@ -231,7 +231,7 @@ public class FileSystemModuleLoader : IModuleLoader
         // Compat-flavor modules: point at the fix instead of a bare not-found.
         var flavorHint = moduleName switch
         {
-            "machine" or "utime" or "micropython" or "network" or "rp2"
+            "machine" or "utime" or "micropython" or "network" or "rp2" or "usys"
                 => "micropython",
             // `neopixel` is deliberately absent: it ships as a library now, and
             // sending someone to the circuitpython package for it is advice that

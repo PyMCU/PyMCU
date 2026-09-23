@@ -53,7 +53,7 @@ public static class StandardModuleNames
         // No operating system underneath -- except the compile-time facts `os` does provide
         // (`uname()`, `name`, `sep`). `listdir` / `getenv` stay undefined on that module.
         ["uos"]         = (Origin.MicroPython, "PyMCU provides it as `os`; `import os` works."),
-        ["sys"]         = (Origin.Python, "There is no interpreter to introspect; the chip and its sizes are available through pymcu.chips."),
+        ["sys"]         = (Origin.Python, "There is no interpreter to introspect; the chip and its sizes are available through pymcu.chips. The compat layers (pymcu-micropython, pymcu-circuitpython) provide sys.implementation and sys.platform for port guards."),
         ["socket"]      = (Origin.Python, "There is no general socket layer; networking is exposed per part through the HAL."),
         ["usocket"]     = (Origin.MicroPython, "There is no general socket layer; networking is exposed per part through the HAL."),
         ["threading"]   = (Origin.Python, "There are no OS threads; use the asyncio surface, which PyMCU does provide."),
