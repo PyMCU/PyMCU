@@ -2279,6 +2279,7 @@ public static class AsyncTransform
         {
             "uint8" or "int8" => 1,
             "uint16" or "int16" or "int" => 2,
+            "float" => 4,
             _ => 3,
         };
         static bool Signed(string t) => t.StartsWith("int");
@@ -2293,15 +2294,20 @@ public static class AsyncTransform
                 {
                     IntegerLiteral il when il.Value >= 0 && il.Value <= 255 => "uint8",
                     IntegerLiteral il when il.Value >= 0 && il.Value <= 65535 => "uint16",
+                    FloatLiteral => "float",
                     VariableExpr v when localTypes.TryGetValue(v.Name, out var lt) => lt,
                     VariableExpr v when pars.FirstOrDefault(p => p.Name == v.Name) is { } p
                                         && !string.IsNullOrEmpty(p.Type) => p.Type,
                     _ => null,
                 };
-                if (t == null || Rank(t) >= 3) return "uint32";
+                if (t == null || Rank(t) == 3) return "uint32";
                 rank = Math.Max(rank, Rank(t));
                 signed |= Signed(t);
             }
+        // `yield 1.5` anywhere makes _value a float field -- the width is the same
+        // four bytes uint32 was, but the consumer prints decimal digits, not the
+        // payload's raw word.
+        if (rank >= 4) return "float";
         if (signed) return rank == 1 ? "int8" : "int16";
         return rank == 1 ? "uint8" : "uint16";
     }
