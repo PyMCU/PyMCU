@@ -1565,14 +1565,12 @@ public partial class IRGenerator
                 // and neither spelling has a case there, so it kept UNKNOWN's default width
                 // instead of the GC pointer it actually carries. The caller's `x = f()` (see
                 // WidenInlineLocalToValue) resolves x's own list-ness from THIS registration.
-                if (val is Variable lv3 && listVarElemTypes.TryGetValue(lv3.Name, out var lvElem3))
+                // `return g()` is the same shape one hop removed: the value is the call's
+                // result temp, and its element type is the text/record the call left.
+                if (ListReturnElemType(stmt.Value, val) is { } retListElem)
                 {
-                    listVarElemTypes[ctx.ResultTemp.Name] = lvElem3;
-                    variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
-                }
-                else if (val is Temporary lt3 && listVarElemTypes.TryGetValue(lt3.Name, out var ltElem3))
-                {
-                    listVarElemTypes[ctx.ResultTemp.Name] = ltElem3;
+                    ctx.ResultListElem = retListElem;
+                    listVarElemTypes[ctx.ResultTemp.Name] = retListElem;
                     variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
                 }
 
@@ -1646,6 +1644,13 @@ public partial class IRGenerator
         }
         else
         {
+            // `return xs` of a list[T] local in an OUTLINED function: no inline
+            // expansion carries the registration to a caller temp, so record the
+            // element type under this function's own name -- the caller's `x = f()`
+            // binding picks it up the same way it reads the declared `-> list[T]`
+            // text. `return g()` chains it one hop through the call's own record.
+            if (ListReturnElemType(stmt.Value, val) is { } outListElem)
+                funcListReturnElems[currentFunction] = outListElem;
             Emit(new Return(val, TagForReturn(stmt.Value, val)));
         }
     }

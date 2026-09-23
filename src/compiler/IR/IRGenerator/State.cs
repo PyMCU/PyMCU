@@ -521,6 +521,16 @@ public partial class IRGenerator
     // treats the same as "not a list return".
     private string? lastCallReturnTypeText;
 
+    // Element type of the most recently emitted call's list result, taken from the
+    // callee's emitted `return <list var>` rather than its annotation -- the
+    // unannotated counterpart of lastCallReturnTypeText's "list[T]" text.
+    private DataType? lastCallReturnListElem;
+
+    // `return <list[T] local>` inside an OUTLINED function records the element type
+    // under the function's emitted name, so a later `x = f()` can register x's
+    // list-ness even though the declaration says nothing about lists.
+    private Dictionary<string, DataType> funcListReturnElems = new();
+
     // Unique suffix for the synthesized index of a runtime-bounds slice iteration.
     private int sliceLoopId = 0;
 

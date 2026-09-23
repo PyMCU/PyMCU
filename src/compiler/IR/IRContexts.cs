@@ -24,6 +24,12 @@ public class InlineContext
 
     public Temporary? ResultTemp { get; set; }
 
+    // Element type of the list[T] a `return <list var>` in this expansion carried.
+    // Kept on the context because listVarElemTypes is rebuilt at every branch join
+    // and would drop a registration made mid-expansion; the tail re-registers the
+    // temp the caller actually receives.
+    public DataType? ResultListElem { get; set; }
+
     // RFC 0009: the tag byte an `-> Optional[X]` callee's result carries. Minted alongside
     // ResultTemp when the callee's declared return members include None; each return writes
     // the member index into it (None is the last member, a payload is index 0).

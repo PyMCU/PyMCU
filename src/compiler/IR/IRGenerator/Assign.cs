@@ -1698,6 +1698,28 @@ public partial class IRGenerator
         return new Variable(key, vt);
     }
 
+    // `x = <val>` / `return <val>` where the value carries a list[T]: the element
+    // type comes from the value's own registration (an inlined callee's returned
+    // local or result temp, or `x = otherList` aliasing the same heap list), the
+    // call's declared `-> list[...]` text, or the element type an outlined
+    // unannotated callee recorded when it emitted `return <list var>`. Null when
+    // nothing says the value is a list (PyMCU#433's bare-name binding, extended
+    // to module globals and to unannotated callees).
+    private DataType? ListReturnElemType(Expression? source, Val value)
+    {
+        string? valueListKey = value switch
+        {
+            Variable lv when listVarElemTypes.ContainsKey(lv.Name) => lv.Name,
+            Temporary lt when listVarElemTypes.ContainsKey(lt.Name) => lt.Name,
+            _ => null,
+        };
+        if (valueListKey != null) return listVarElemTypes[valueListKey];
+        if (source is not CallExpr) return null;
+        if (lastCallReturnTypeText is { } lcrt && lcrt.StartsWith("list[") && lcrt.EndsWith("]"))
+            return DataTypeExtensions.StringToDataType(lcrt.Substring(5, lcrt.Length - 6));
+        return lastCallReturnListElem;
+    }
+
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
     {
         if (stmt.AnnotatedType is { Length: > 0 } declared
@@ -1897,6 +1919,18 @@ public partial class IRGenerator
                                 mutableGlobals[moduleGlobalName] = rhsT;
                         }
 
+                        // `x = f()` at module level where f hands back a list[T] --
+                        // declared `-> list[...]`, an inlined callee's returned list
+                        // variable, or an outlined unannotated `return <list var>`:
+                        // the same registration the function-local branch gives its
+                        // qualified name -- without it `x` is a widened global that
+                        // len()/x[i]/for refuse to see as a list.
+                        if (ListReturnElemType(stmt.Value, value) is { } mgListElem)
+                        {
+                            listVarElemTypes[moduleGlobalName] = mgListElem;
+                            mutableGlobals[moduleGlobalName] = DataType.GC_REF;
+                        }
+
                         target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
                     }
                     else
@@ -1906,19 +1940,19 @@ public partial class IRGenerator
                         if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
                         else
                         {
-                            // `x = f()` where f's declared return is `list[T]`: the result temp
+                            // `x = f()` where f hands back a list[T]: the result temp
                             // is already GC_REF (see EmitRegularFunctionCall/
                             // EmitInlineFunctionCall), but `x` also needs its OWN
                             // listVarElemTypes entry -- len(x)/x[i]/x.append() all resolve the
                             // qualified NAME, not the temp that flows through the Copy below.
                             // Left unregistered, x kept UNKNOWN-turned-uint8 and a subscript
                             // silently fell to the register-bit-index path (adafruit_dht's
-                            // `pulses = self._get_pulses_pulseio()`, PyMCU#433).
-                            if (stmt.Value is CallExpr && value is Temporary
-                                && lastCallReturnTypeText is { } lcrt
-                                && lcrt.StartsWith("list[") && lcrt.EndsWith("]"))
-                                listVarElemTypes[qualifiedName] = DataTypeExtensions.StringToDataType(
-                                    lcrt.Substring(5, lcrt.Length - 6));
+                            // `pulses = self._get_pulses_pulseio()`, PyMCU#433). The element
+                            // type may come from the value itself (inlined callee or `x =
+                            // otherList`), the declared `-> list[...]` text, or an outlined
+                            // unannotated callee's recorded `return <list var>`.
+                            if (ListReturnElemType(stmt.Value, value) is { } listElem)
+                                listVarElemTypes[qualifiedName] = listElem;
 
                             if (listVarElemTypes.ContainsKey(qualifiedName)) type = DataType.GC_REF;
                             else if (value is Temporary tmp) type = tmp.Type;

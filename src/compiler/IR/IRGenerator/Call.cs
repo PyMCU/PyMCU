@@ -146,6 +146,15 @@ public partial class IRGenerator
 
     private Val VisitCall(CallExpr expr)
     {
+        // The return-list bookkeeping below belongs to THIS call: a builtin or method
+        // path that never sets it must not inherit the previous call's text (a
+        // `n = len(p)` after `p = inner() -> list[T]` otherwise registers n as a
+        // list). A nested call in an argument position re-clears and re-sets it, and
+        // the outer call's own emission sets it after its args -- the outermost
+        // call's text is the one that survives for the assignment to read.
+        lastCallReturnTypeText = null;
+        lastCallReturnListElem = null;
+
         // `f(*xs)` and `f(**d)`: splice the elements of the compile-time sequence and the
         // entries of the compile-time mapping into the argument list before ANY path looks at
         // it, so every one of them sees an ordinary call.
@@ -1571,7 +1580,14 @@ public partial class IRGenerator
             }
         }
 
-        bool returnsVoidEnd = functionReturnTypes.TryGetValue(callee, out string? rType) && (rType == "void" || rType == "None");
+        // A "void" entry is also the parser's default for an UNANNOTATED def whose
+        // return type inference found nothing it could name -- `def f(): return
+        // <list local>` keeps "void" even though the body hands back a real value.
+        // The emitted `return <list var>` recorded that answer already, so only
+        // treat the callee as void when no list return was seen.
+        bool returnsVoidEnd = functionReturnTypes.TryGetValue(callee, out string? rType)
+            && (rType == "void" || rType == "None")
+            && !funcListReturnElems.ContainsKey(callee);
 
         if (returnsVoidEnd)
         {
@@ -1592,9 +1608,15 @@ public partial class IRGenerator
         // A live union call carries the widest member's payload width, exactly as the
         // inline result temp above: `Union[...]` resolves to UNKNOWN in StringToDataType
         // and would leave the destination a byte.
+        // The unannotated counterpart of the declared text: an outlined callee whose
+        // `return <list var>` already ran recorded the element type under its name,
+        // and the result temp is a GC pointer even though no annotation says so.
+        lastCallReturnListElem = funcListReturnElems.TryGetValue(callee, out var flre)
+            ? flre : (DataType?)null;
         DataType retDt = functionReturnMembers.TryGetValue(callee, out var cMembers)
             ? UnionPayloadType(cMembers)
-            : IsListLikeReturnType(rType) ? DataType.GC_REF
+            : IsListLikeReturnType(rType) || lastCallReturnListElem.HasValue
+                ? DataType.GC_REF
             : rType != null && rType.Length > 0 ? DataTypeExtensions.StringToDataType(rType)
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
@@ -1825,6 +1847,10 @@ public partial class IRGenerator
             // has no StringToDataType case either, and typing the temp UNKNOWN made the
             // caller's `t = dhtDevice.temperature` a one-byte destination that dropped the
             // float payload's upper bytes (RFC 0009, adafruit_dht).
+            // An inlined callee's `return <list var>` registers the expansion's own
+            // ResultTemp instead -- the assignment picks it up from the value, so
+            // there is no emitted-name entry to read here.
+            lastCallReturnListElem = null;
             result = MakeTemp(
                 functionReturnMembers.TryGetValue(callee, out var resMembers)
                     ? UnionPayloadType(resMembers)
@@ -3223,7 +3249,18 @@ public partial class IRGenerator
         var finishedCtx = Enumerable.Last<InlineContext>(inlineStack);
         string? returnedArr = finishedCtx.ReturnedBuffer;
         if (returnedArr != null)
+        {
             lastCallReturnTypeText = "bytearray";
+            lastCallReturnListElem = null;
+        }
+        else
+        {
+            // The expansion's own calls overwrote the fields set before it ran; the
+            // surviving attribution is this callee's signature, not whatever its
+            // body happened to call last.
+            lastCallReturnTypeText = func?.ReturnType;
+            lastCallReturnListElem = null;
+        }
         // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
         // expansion actually walked, which is exact for a body whose branches fold away. A
         // body that returns under a RUN-TIME condition assigns the result on the path taken
@@ -3247,6 +3284,16 @@ public partial class IRGenerator
             : func.ReturnMembers is { } lirFm
                 ? UnionPayloadType(lirFm)
                 : DataTypeExtensions.StringToDataType(func.ReturnType);
+
+        // A `return <list var>` inside the expansion recorded its element type on
+        // the context; the branch joins that ran since rebuilt listVarElemTypes and
+        // dropped the temp's entry. The temp the caller actually receives is the
+        // one that needs the registration.
+        if (result is { } listRes && finishedCtx.ResultListElem is { } resListElem)
+        {
+            listVarElemTypes[listRes.Name] = resListElem;
+            variableTypes[listRes.Name] = DataType.GC_REF;
+        }
 
         currentSourcePath = savedSourcePath;
         currentSourceFile = savedSourceFile;
