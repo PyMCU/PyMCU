@@ -850,11 +850,17 @@ public partial class IRGenerator
             }
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
 
-            // `[e for v in xs if c]` over a runtime heap list: no compile-time
-            // element list exists, but the heap list needs no fixed size -- the
-            // comprehension emits a counted loop that fills a fresh object.
-            if (stmt.Value is ListCompExpr rtComp
-                && TryEmitRuntimeListComp(rtComp) is { } compRes)
+            // `[e for v in xs if c]` over a runtime heap list, or `[e] * n`
+            // with a runtime count: no compile-time element list exists, but a
+            // heap list needs no fixed size -- each emits a counted loop that
+            // fills a fresh object.
+            Variable? rtSeq = stmt.Value switch
+            {
+                ListCompExpr rtComp => TryEmitRuntimeListComp(rtComp),
+                BinaryExpr { Op: Frontend.BinaryOp.Mul } rtMul => TryEmitRuntimeListRepeat(rtMul),
+                _ => null,
+            };
+            if (rtSeq is { } compRes)
             {
                 string compKey = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + listTarget.Name

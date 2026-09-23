@@ -3938,6 +3938,79 @@ public partial class IRGenerator
         return resVar;
     }
 
+    /// `[e] * n` with a count that only exists at run time: a fresh heap list
+    /// of n copies of the single literal element. The compile-time repeat path
+    /// answers the fixed-count form first, so what reaches here is exactly the
+    /// case a fixed array cannot hold. Returns null when the expression is not
+    /// a single-element `list * count` at all.
+    private Variable? TryEmitRuntimeListRepeat(BinaryExpr mul)
+    {
+        ListExpr? lit = mul.Left as ListExpr;
+        Expression countExpr = mul.Right;
+        if (lit == null)
+        {
+            lit = mul.Right as ListExpr;
+            countExpr = mul.Left;
+        }
+        if (lit == null || lit.Elements.Count != 1) return null;
+        // A compile-time count belongs to the fixed-array repeat path; reaching
+        // here means TryRepeatCount already declined it, so evaluate it for real.
+        if (TryRepeatCount(countExpr, out _)) return null;
+
+        Val count = VisitExpression(countExpr);
+        DataType elemDt = InferExprType(lit.Elements[0]);
+        if (elemDt is DataType.UNKNOWN or DataType.VOID) elemDt = DataType.UINT8;
+        if (elemDt == DataType.GC_REF)
+            throw UserError(
+                "a `[x] * n` repeat of a list element aliases one object n times -- "
+                + "PyMCU has no per-element copy to offer; build the list in a loop", mul);
+        int elemSize = elemDt.SizeOf();
+
+        // The element evaluates once -- `[f()] * n` calls f once, per Python.
+        Val elemVal = VisitExpression(lit.Elements[0]);
+
+        Temporary lenBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, count, new Constant(elemSize), lenBytes));
+        Temporary allocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, lenBytes, new Constant(2), allocSize));
+
+        string resKey = QualifyHelperName("__rep_" + labelCounter++);
+        var resVar = new Variable(resKey, DataType.GC_REF);
+        Temporary resPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(allocSize, resPtr, false));
+        string repOk = MakeLabel();
+        Emit(new JumpIfNotZero(resPtr with { Type = DataType.UINT16 }, repOk));
+        EnterRuntimeBranch("materializing a [x] * n list");
+        try
+        {
+            VisitRaise(new RaiseStmt("MemoryError",
+                "[x] * n list ran out of heap on this target"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(repOk));
+        variableTypes[resKey] = DataType.GC_REF;
+        listVarElemTypes[resKey] = elemDt;
+        Emit(new Copy(resPtr, resVar));
+
+        EmitListStore(resVar, 0, count);
+        EmitListStore(resVar, 1, count);
+
+        Temporary idx = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), idx));
+        string repTop = MakeLabel();
+        string repEnd = MakeLabel();
+        Emit(new Label(repTop));
+        Temporary repDone = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterEqual, idx, count, repDone));
+        Emit(new JumpIfNotZero(repDone, repEnd));
+        Temporary dstAddr = EmitElemAddr(resVar, idx, elemSize);
+        Emit(new StoreIndirect(elemVal, dstAddr, elemDt));
+        Emit(new AugAssign(BinaryOp.Add, idx, new Constant(1)));
+        Emit(new Jump(repTop));
+        Emit(new Label(repEnd));
+        return resVar;
+    }
+
     // The element type a literal asks for when none is declared: the widest type
     // its scalar elements infer to, GC_REF when the elements are themselves
     // literals. A mixed literal has no one element type -- a PyMCU list is
