@@ -2490,7 +2490,7 @@ public partial class IRGenerator
         // and the compiler substitutes the real answer (docs/rfcs/0007 sections 0.1, 4.2).
         if (expr.Target is MemberAccessExpr
             {
-                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "implementation" },
+                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "implementation" },
                 Member: "version"
             })
         {
@@ -4357,6 +4357,78 @@ public partial class IRGenerator
         if (expr.Object is VariableExpr { Name: "__CHIP__" }
             && ChipFactString(expr.Member) is { } chipFact)
             return InternedStringConstant(chipFact);
+
+        // RFC 0007: `sys.platform`, `sys.implementation.name` and `uname().<field>`
+        // (in their `usys`/`uos` spellings too) are compile-time facts the compat
+        // layer's sys.py/os.py only declares for IDEs -- the values in those files
+        // are placeholders. CompileTimeEvaluator already substitutes the table in
+        // `if`/`match`/`try` conditions; a read anywhere else (`p = sys.platform`)
+        // used to reach the placeholder, so the same program answered the same
+        // question two different ways. Substitute the table here too, the way
+        // `sys.implementation.version[i]` is already substituted below. Guarded by
+        // IsKnownStdlib: with no compat layer declared, `sys`/`os` are whatever the
+        // project made them (pymcu.os's uname() really does run inline) and the
+        // member must resolve normally, not to a table meant for another module.
+        if (IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib))
+        {
+            if (expr.Object is VariableExpr { Name: "sys" or "usys" }
+                && expr.Member == "platform")
+                return InternedStringConstant(IntrospectionTable.SysPlatform(deviceConfig));
+
+            if (expr is MemberAccessExpr
+                {
+                    Object: MemberAccessExpr
+                    {
+                        Object: VariableExpr { Name: "sys" or "usys" },
+                        Member: "implementation"
+                    },
+                    Member: "name"
+                })
+                return InternedStringConstant(IntrospectionTable.ImplementationName(deviceConfig));
+
+            // `sys.implementation.version` bare: the (major, minor, micro) tuple has no
+            // runtime object, so a read that is not `version[i]` cannot be answered --
+            // index it (this is the member-access half of the IndexExpr rule below).
+            if (expr is MemberAccessExpr
+                {
+                    Object: MemberAccessExpr
+                    {
+                        Object: VariableExpr { Name: "sys" or "usys" },
+                        Member: "implementation"
+                    },
+                    Member: "version"
+                })
+                throw UserError(
+                    "'sys.implementation.version' is a compile-time (major, minor, micro) tuple -- "
+                    + "index it with an integer literal (sys.implementation.version[0])", expr);
+
+            // `os.uname().machine` / `uos.uname().sysname` -- the five fields are the
+            // record a board answers, spelled here the way the evaluator already folds.
+            if (expr.Object is CallExpr
+                {
+                    Args.Count: 0,
+                    Callee: VariableExpr { Name: "uname" }
+                        or MemberAccessExpr
+                        {
+                            Object: VariableExpr { Name: "os" or "uos" },
+                            Member: "uname"
+                        }
+                })
+            {
+                var u = IntrospectionTable.GetUname(deviceConfig);
+                return InternedStringConstant(expr.Member switch
+                {
+                    "sysname" => u.Sysname,
+                    "nodename" => u.Nodename,
+                    "release" => u.Release,
+                    "version" => u.Version,
+                    "machine" => u.Machine,
+                    _ => throw UserError(
+                        $"uname() has no field '{expr.Member}' -- valid fields: "
+                        + "sysname, nodename, release, version, machine", expr)
+                });
+            }
+        }
 
         // A constant two class names deep: `Outer.Inner.A`, where one level works. The access
         // was resolved one hop at a time, so `Outer.Inner` was asked for as an attribute of

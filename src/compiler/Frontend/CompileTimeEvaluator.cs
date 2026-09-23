@@ -62,12 +62,12 @@ public class CompileTimeEvaluator(DeviceConfig config)
             // a single build-wide fact, exactly like __CHIP__ names a single chip.
             case MemberAccessExpr
             {
-                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "implementation" },
+                Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "implementation" },
                 Member: "name"
             }:
                 return IntrospectionTable.ImplementationName(config);
             // `sys.platform`.
-            case MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "platform" }:
+            case MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "platform" }:
                 return IntrospectionTable.SysPlatform(config);
             // `uname().<field>` / `os.uname().<field>` -- `from os import uname; uname()` and
             // `import os; os.uname()` are both written in the survey (docs/rfcs/0007 section 1).
@@ -193,7 +193,7 @@ public class CompileTimeEvaluator(DeviceConfig config)
             {
                 Target: MemberAccessExpr
                 {
-                    Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" }, Member: "implementation" },
+                    Object: MemberAccessExpr { Object: VariableExpr { Name: "sys" or "usys" }, Member: "implementation" },
                     Member: "version"
                 },
                 Index: IntegerLiteral idxLit
@@ -214,14 +214,15 @@ public class CompileTimeEvaluator(DeviceConfig config)
         }
     }
 
-    // Whether `e` is exactly `uname()` (bare, after `from os import uname`) or `os.uname()`
-    // (dotted) -- the two shapes the survey found (docs/rfcs/0007 section 1). No arguments,
-    // matching the real signature.
+    // Whether `e` is exactly `uname()` (bare, after `from os import uname`) or
+    // `os.uname()`/`uos.uname()` (dotted) -- the shapes the survey found plus
+    // MicroPython's u-spelling (docs/rfcs/0007 section 1). No arguments, matching
+    // the real signature.
     private static bool IsUnameCall(Expression e) => e is CallExpr
     {
         Args.Count: 0,
         Callee: VariableExpr { Name: "uname" }
-            or MemberAccessExpr { Object: VariableExpr { Name: "os" }, Member: "uname" }
+            or MemberAccessExpr { Object: VariableExpr { Name: "os" or "uos" }, Member: "uname" }
     };
 
     private static void RejectMixedComparison(BinaryExpr bin, bool leftNum, bool rightNum)

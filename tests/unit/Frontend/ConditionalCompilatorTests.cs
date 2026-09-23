@@ -767,4 +767,46 @@ public class CompileTimeEvaluatorTests
         new CompileTimeEvaluator(CircuitPythonAvrConfig()).EvaluateCondition(cond).Should().BeTrue();
         new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeFalse();
     }
+
+    // -------------------------------------------------------------------------
+    // The u-spellings: usys / uos answer the same table sys / os do.
+    // -------------------------------------------------------------------------
+
+    private static Expression UsysPlatform() => new MemberAccessExpr(new VariableExpr("usys"), "platform");
+
+    private static Expression UsysImplementationName() =>
+        new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("usys"), "implementation"), "name");
+
+    private static Expression UosDottedUnameCall() =>
+        new CallExpr(new MemberAccessExpr(new VariableExpr("uos"), "uname"), new List<Expression>());
+
+    [Fact]
+    public void Resolve_UsysPlatform_MicroPythonRp2040_AnswersRp2LikeSys()
+        => new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(UsysPlatform()).Should().Be("rp2");
+
+    [Fact]
+    public void Resolve_UsysImplementationName_MicroPython_AnswersMicropython()
+        => new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(UsysImplementationName()).Should().Be("micropython");
+
+    [Fact]
+    public void Resolve_UosUnameSysname_MicroPythonRp2040_AnswersThePortName()
+        => new CompileTimeEvaluator(MicroPythonPicoConfig())
+            .Resolve(new MemberAccessExpr(UosDottedUnameCall(), "sysname")).Should().Be("rp2");
+
+    [Fact]
+    public void EvaluateCondition_UsysImplementationVersionIndex_MicroPython_Answers129()
+    {
+        var versionIndex = new IndexExpr(
+            new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("usys"), "implementation"), "version"),
+            new IntegerLiteral(1));
+        var cond = new BinaryExpr(versionIndex, BinaryOp.Equal, new IntegerLiteral(29));
+        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateCondition_LinuxNotInUosUname_AlwaysTrue()
+    {
+        var cond = new BinaryExpr(new StringLiteral("Linux"), BinaryOp.NotIn, UosDottedUnameCall());
+        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+    }
 }
