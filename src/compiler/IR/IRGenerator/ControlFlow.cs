@@ -204,6 +204,35 @@ public partial class IRGenerator
             return 2;
         }
 
+        // `if flag:` / `if not flag:` where flag is a name whose last write folded to a
+        // compile-time value. A comparison already gets this through FoldedOperand --
+        // `flag == False` decided the branch on the value localConstantValues says the
+        // name provably holds -- but a bare truth test did not, so `if not lsb_first:`
+        // lowered as a run-time jump over a constant and BOTH sides compiled. A rebind
+        // in the dead arm then left a binding the join could only veto, and the
+        // sequence the live arm established was dropped along with it.
+        if (TryConstIntTruthiness(cond, out bool condTruthy))
+        {
+            if (condTruthy)
+            {
+                if (jumpIfTrue) Emit(new Jump(targetLabel));
+                return 2;
+            }
+            if (!jumpIfTrue) Emit(new Jump(targetLabel));
+            return -1;
+        }
+        if (cond is UnaryExpr { Op: AstUnOp.Not } notInt
+            && TryConstIntTruthiness(notInt.Operand, out bool notIntTruthy))
+        {
+            if (notIntTruthy)
+            {
+                if (!jumpIfTrue) Emit(new Jump(targetLabel));
+                return -1;
+            }
+            if (jumpIfTrue) Emit(new Jump(targetLabel));
+            return 2;
+        }
+
         // An `if` does not lower its comparison through VisitBinary; it comes straight here and
         // becomes a conditional jump. That is how `a == b` over two bytes names emitted a
         // one-byte `jne` between the two array names and answered without reading either.
@@ -573,6 +602,54 @@ public partial class IRGenerator
         if (text == null) return false;
         truthy = text.Length > 0;
         return true;
+    }
+
+    /// <summary>
+    /// The truthiness of an operand that is a name bound to a compile-time integer or
+    /// float: 0/0.0 is falsy, anything else truthy. The maps asked are the ones a
+    /// branch join already reconciles, so a hit is the value the name provably holds
+    /// on every path that reaches the test -- the same basis FoldedOperand compares
+    /// on. False when the name is not provably constant here.
+    /// </summary>
+    private bool TryConstIntTruthiness(Expression operand, out bool truthy)
+    {
+        truthy = false;
+        if (operand is not VariableExpr ve) return false;
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        if (constantVariables.TryGetValue(q, out int cv)
+            || localConstantValues.TryGetValue(q, out cv))
+        {
+            truthy = cv != 0;
+            return true;
+        }
+        if (floatConstantVariables.TryGetValue(q, out double fv))
+        {
+            truthy = fv != 0.0;
+            return true;
+        }
+        // A run-time local shadows a module global of the same spelling: asking the
+        // bare name past this point would fold the branch on a binding the function
+        // does not read.
+        if (q != ve.Name && variableTypes.ContainsKey(q)) return false;
+        if (constantVariables.TryGetValue(ve.Name, out cv)
+            || localConstantValues.TryGetValue(ve.Name, out cv))
+        {
+            truthy = cv != 0;
+            return true;
+        }
+        if (floatConstantVariables.TryGetValue(ve.Name, out fv))
+        {
+            truthy = fv != 0.0;
+            return true;
+        }
+        if (globals.TryGetValue(ve.Name, out var sym) && !sym.IsMemoryAddress)
+        {
+            truthy = sym.Value != 0;
+            return true;
+        }
+        return false;
     }
 
     // Python's truthiness for an instance: __bool__, else __len__ != 0, else always true.
