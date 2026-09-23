@@ -1120,6 +1120,17 @@ public partial class IRGenerator
     // stores resolve T instead of falling through to a register-bit access.
     private Dictionary<string, DataType> listInnerElemTypes = new();
 
+    // `x = []` is a compile-time empty sequence while nothing mutates it, but a
+    // later `x.append(v)` in the same function means the program wanted a
+    // runtime heap list whose element type is knowable only at that append.
+    // The per-function prescan collects the qualified names (`promotable`);
+    // `promoted` records the ones actually emitted as header-only GC objects
+    // (count 0, capacity 0, scalar-payload flag clear) -- an append of a
+    // GC_REF element must then set the object's ref-bearing bit, which the
+    // alloc could not know at creation time.
+    private HashSet<string> promotableEmptyLists = new();
+    private HashSet<string> promotedEmptyLists = new();
+
     // Function parameters declared as bytearray (passed as pointer, no length).
     // The parameter name is stored as qualified_name (funcname_paramname).
     private HashSet<string> bytearrayParams = new();

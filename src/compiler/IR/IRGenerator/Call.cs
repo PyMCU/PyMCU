@@ -2166,6 +2166,7 @@ public partial class IRGenerator
         // prescan only sees the caller's own body, never an inlined callee's locals, so without
         // this a runtime-indexed local array inside an @inline hit "subscript must be constant".
         if (func != null)
+        {
             ScanForVariableIndexedArrays(func.Body.Statements,
                 string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + ".",
                 // The callee's own class, when it is a method: `Radio_send` minus `_send`. This
@@ -2174,6 +2175,10 @@ public partial class IRGenerator
                 callee.EndsWith("_" + func.Name, StringComparison.Ordinal)
                     ? callee[..^(func.Name.Length + 1)]
                     : null);
+            // Unlike the array scan above, an `x = []` binding inside the expanded body
+            // is spelled with the inline prefix at the emit site, so scan under newPrefix.
+            ScanPromotableEmptyLists(func.Body.Statements, newPrefix);
+        }
 
         var savedModulePrefix = currentModulePrefix;
         // Resolve the body's calls in the module where the function was DEFINED,
@@ -9979,6 +9984,40 @@ public partial class IRGenerator
     private Val EmitListAppend(Variable listVar, Expression valExpr)
     {
         DataType elemDt = listVarElemTypes[listVar.Name];
+
+        // A promoted `x = []` learns its element type here, from the first
+        // append: the binding site emitted a header-only object with the type
+        // left pending. The answer must come from the expression's type alone
+        // -- the value itself is visited late (after the grow alloc) so a
+        // list-literal argument's own GcAlloc cannot be moved out from under
+        // it by the grow's collection.
+        if (elemDt == DataType.UNKNOWN)
+        {
+            elemDt = InferListElemType(valExpr);
+            if (elemDt is DataType.UNKNOWN or DataType.VOID)
+                throw UserError(
+                    $"cannot infer the element type of '{listVar.Name}' from this append; " +
+                    "declare it like `x: list[uint8] = []`", valExpr);
+            listVarElemTypes[listVar.Name] = elemDt;
+
+            // A GC_REF element makes the payload an array of inner-list
+            // pointers: record the appended list's own element type so
+            // `x[i][j]` and `for inner in x` resolve it, exactly as a
+            // declared list[list[T]] does.
+            if (elemDt == DataType.GC_REF && valExpr is VariableExpr valVar
+                && listVarElemTypes.TryGetValue(ResolveNameKey(valVar.Name), out var argElem)
+                && argElem != DataType.UNKNOWN)
+                listInnerElemTypes[listVar.Name] = argElem;
+        }
+
+        // The promoted object was allocated with the ref-bearing flag clear
+        // (the element type was unknowable then); an append of a GC_REF makes
+        // the payload an array of pointers, so set bit6 of the mark byte the
+        // way gc_alloc_refs does at creation. Emitted at every GC_REF append
+        // site: the flag is idempotent and each site may run first at runtime.
+        if (elemDt == DataType.GC_REF && promotedEmptyLists.Contains(listVar.Name))
+            EmitRefPayloadFlag(listVar);
+
         int elemSize = elemDt.SizeOf();
 
         // Load current length (offset 0) and capacity (offset 1)
@@ -10015,6 +10054,13 @@ public partial class IRGenerator
         Emit(new JumpIfNotZero(grew, growableLabel));
         EmitRuntimeRaise("MemoryError", "list capacity limit reached");
         Emit(new Label(growableLabel));
+
+        // A promoted `x = []` starts at capacity 0, which doubles to 0: floor
+        // at the same first-fit a declaration grants before the ceiling clamp.
+        string capFlooredLabel = MakeLabel();
+        Emit(new JumpIfGreaterOrEqual(newCapWide, new Constant(8), capFlooredLabel));
+        Emit(new Copy(new Constant(8), newCapWide));
+        Emit(new Label(capFlooredLabel));
 
         Temporary newCap = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.BitAnd, newCapWide, new Constant(0xFF), newCap));
@@ -10096,6 +10142,35 @@ public partial class IRGenerator
         Emit(new StoreIndirect(newLen, listVar));
 
         return new NoneVal();
+    }
+
+    /// <summary>
+    /// The element type an append argument would give a pending list. A list
+    /// or tuple value makes a list of references (GC_REF); everything else
+    /// answers the expression's own width.
+    /// </summary>
+    private DataType InferListElemType(Expression e) => e switch
+    {
+        ListExpr or TupleExpr => DataType.GC_REF,
+        _ => InferExprType(e),
+    };
+
+    /// <summary>
+    /// Set the ref-bearing bit (bit6) of a GC object's mark byte, which sits
+    /// two bytes under the user pointer -- the same flag gc_alloc_refs writes
+    /// at creation. Used when a promoted `x = []`, allocated while its element
+    /// type was still unknown, first holds a GC_REF element.
+    /// </summary>
+    private void EmitRefPayloadFlag(Variable listVar)
+    {
+        Temporary hdrAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Sub, listVar with { Type = DataType.UINT16 },
+            new Constant(2), hdrAddr));
+        Temporary hdrByte = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(hdrAddr, hdrByte));
+        Temporary hdrSet = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.BitOr, hdrByte, new Constant(0x40), hdrSet));
+        Emit(new StoreIndirect(hdrSet, hdrAddr));
     }
 
     /// <summary>

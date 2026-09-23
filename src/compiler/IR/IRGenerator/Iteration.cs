@@ -3043,6 +3043,14 @@ public partial class IRGenerator
                 if (!string.IsNullOrEmpty(listQ))
                 {
                     DataType elemDt = listVarElemTypes[listQ];
+                    // A promoted `x = []` iterated before its first append has
+                    // no element type for the loop variable -- refuse rather
+                    // than emit a 0-width load.
+                    if (elemDt == DataType.UNKNOWN)
+                        throw UserError(
+                            $"cannot infer the element type of '{listVarExpr.Name}' yet; " +
+                            "its first append must precede iteration, or declare it " +
+                            "like `x: list[uint8] = []`", stmt);
                     Variable listPtr = new Variable(listQ, DataType.GC_REF);
 
                     // load length

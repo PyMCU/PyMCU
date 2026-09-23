@@ -705,6 +705,7 @@ public partial class IRGenerator
         // being compiled. The scan below still adds this function's own variable-indexed
         // locals; marks from earlier functions keep answering for arrays they created.
         ScanForVariableIndexedArrays(funcNode.Body.Statements, fullName + ".");
+        ScanPromotableEmptyLists(funcNode.Body.Statements, fullName + ".");
 
         bool savedSeqTerminated = _seqTerminated;
         _seqTerminated = false;

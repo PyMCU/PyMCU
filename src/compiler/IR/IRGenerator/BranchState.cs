@@ -297,8 +297,21 @@ public partial class IRGenerator
             (x, y) => x.SequenceEqual(y));
         multiStrVariables = JoinDicts(arms.Select(a => a.MultiStrVariables).ToList(),
             (x, y) => x.SequenceEqual(y));
-        listVarElemTypes = JoinDicts(arms.Select(a => a.ListVarElemTypes).ToList());
-        listInnerElemTypes = JoinDicts(arms.Select(a => a.ListInnerElemTypes).ToList());
+        // A promoted `x = []` registers UNKNOWN (element type pending) and an
+        // arm's first append refines it -- under the plain all-agree rule the
+        // merge would veto the name outright and the next append/read would
+        // meet the untyped-[] refusal again. UNKNOWN is "not yet known", not
+        // a real disagreement: the key survives, preferring the concrete type
+        // an arm learned.
+        listVarElemTypes = JoinDicts(arms.Select(a => a.ListVarElemTypes).ToList(),
+            (a, b) => a == b || a == DataType.UNKNOWN || b == DataType.UNKNOWN);
+        foreach (var key in listVarElemTypes.Keys.ToList())
+            if (listVarElemTypes[key] == DataType.UNKNOWN)
+                foreach (var arm in arms)
+                    if (arm.ListVarElemTypes.TryGetValue(key, out var v) && v != DataType.UNKNOWN)
+                    { listVarElemTypes[key] = v; break; }
+        listInnerElemTypes = JoinDicts(arms.Select(a => a.ListInnerElemTypes).ToList(),
+            (a, b) => a == b || a == DataType.UNKNOWN || b == DataType.UNKNOWN);
         funcrefReturnTypes = JoinDicts(arms.Select(a => a.FuncrefReturnTypes).ToList());
         slotInstances = JoinDicts(arms.Select(a => a.SlotInstances).ToList());
         instanceArrayClass = JoinDicts(arms.Select(a => a.InstanceArrayClass).ToList(), SameResolvedClass);

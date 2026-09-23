@@ -307,6 +307,38 @@ public partial class IRGenerator
             else
             {
                 constSequenceBindings.Remove(seqKey);
+
+                // `x = []` in a function that later calls x.append(...): the program
+                // wants a runtime heap list, and the element type is knowable only at
+                // the first append. Emit the empty object now -- count 0, capacity 0,
+                // no payload -- and leave the element type pending; the append learns
+                // it and the grow path sizes the real buffer. A `x = []` nothing
+                // mutates stays the compile-time sequence it always was.
+                if (stmt.Value is ListExpr && seqElements.Count == 0
+                    && promotableEmptyLists.Contains(seqKey))
+                {
+                    string listKey = seqKey;
+                    // A module-level list is a global, spelled the way every other path
+                    // names it -- the same remap EmitListAnnAssign applies.
+                    if (!string.IsNullOrEmpty(currentFunction)
+                        && string.IsNullOrEmpty(currentInlinePrefix)
+                        && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
+                    {
+                        listKey = currentModulePrefix + seqTgt.Name;
+                        mutableGlobals[listKey] = DataType.GC_REF;
+                    }
+
+                    listVarElemTypes[listKey] = DataType.UNKNOWN;
+                    variableTypes[listKey] = DataType.GC_REF;
+                    promotedEmptyLists.Add(listKey);
+
+                    Temporary emptyPtr = MakeTemp(DataType.GC_REF);
+                    Emit(new GcAlloc(new Constant(2), emptyPtr));
+                    EmitListStore(emptyPtr, 0, new Constant(0));
+                    EmitListStore(emptyPtr, 1, new Constant(0));
+                    Emit(new Copy(emptyPtr, new Variable(listKey, DataType.GC_REF)));
+                    return;
+                }
             }
         }
 
@@ -4375,6 +4407,19 @@ public partial class IRGenerator
                 if (!string.IsNullOrEmpty(listQ))
                 {
                     DataType elemDt = listVarElemTypes[listQ];
+                    // A promoted `x = []` learns its element type from the
+                    // first store the way it does from the first append.
+                    if (elemDt == DataType.UNKNOWN)
+                    {
+                        elemDt = InferListElemType(stmt.Value);
+                        if (elemDt is DataType.UNKNOWN or DataType.VOID)
+                            throw UserError(
+                                $"cannot infer the element type of '{ve.Name}' from this store; " +
+                                "declare it like `x: list[uint8] = []`", stmt.Value);
+                        listVarElemTypes[listQ] = elemDt;
+                        if (elemDt == DataType.GC_REF && promotedEmptyLists.Contains(listQ))
+                            EmitRefPayloadFlag(new Variable(listQ, DataType.GC_REF));
+                    }
                     Val listPtr = new Variable(listQ, DataType.GC_REF);
                     Val idxVal = VisitExpression(indexExpr.Index);
                     Val srcVal = VisitExpression(stmt.Value);
@@ -8413,6 +8458,19 @@ public partial class IRGenerator
                     if (!string.IsNullOrEmpty(listQ))
                     {
                         DataType elemDt = listVarElemTypes[listQ];
+                        // A promoted `x = []` learns its element type from the
+                        // store the way it does from the first append.
+                        if (elemDt == DataType.UNKNOWN)
+                        {
+                            elemDt = InferListElemType(stmt.Value);
+                            if (elemDt is DataType.UNKNOWN or DataType.VOID)
+                                throw UserError(
+                                    $"cannot infer the element type of '{ve2.Name}' from this store; " +
+                                    "declare it like `x: list[uint8] = []`", stmt.Value);
+                            listVarElemTypes[listQ] = elemDt;
+                            if (elemDt == DataType.GC_REF && promotedEmptyLists.Contains(listQ))
+                                EmitRefPayloadFlag(new Variable(listQ, DataType.GC_REF));
+                        }
                         Val listPtr = new Variable(listQ, DataType.GC_REF);
                         Val idxVal = VisitExpression(ie.Index);
                         Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());

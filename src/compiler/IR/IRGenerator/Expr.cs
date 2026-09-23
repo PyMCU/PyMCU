@@ -3263,6 +3263,15 @@ public partial class IRGenerator
                 if (!string.IsNullOrEmpty(listQ))
                 {
                     DataType elemDt = listVarElemTypes[listQ];
+                    // A promoted `x = []` has no element type until an append
+                    // teaches it; a read before then would compute a 0-width
+                    // element address. The program's own fix is the append
+                    // order or an annotation.
+                    if (elemDt == DataType.UNKNOWN)
+                        throw UserError(
+                            $"cannot infer the element type of '{ve.Name}' yet; " +
+                            "its first append must precede reads, or declare it " +
+                            "like `x: list[uint8] = []`", expr);
                     Val listPtr = new Variable(listQ, DataType.GC_REF);
                     Val idxVal = VisitExpression(expr.Index);
                     Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());

@@ -5249,4 +5249,134 @@ public partial class IRGenerator
         // subscript inside try/with/match still marks the array variable-indexed.
         foreach (var s in TypeInference.WalkStatements(stmts)) ScanStmt(s);
     }
+
+    /// <summary>
+    /// Collect the names bound to `[]` that the same function later mutates
+    /// with `.append(...)` -- the shape an unmodified CircuitPython library
+    /// writes (`received = []`, then `received.append(pulse)`). A name in the
+    /// set tells the `x = []` binding site to emit a real heap object with the
+    /// element type left pending, instead of a compile-time empty sequence.
+    /// `prefix` is the qualification the emitted body will spell its locals
+    /// with (`fullName.` for an outlined function, `inlineN.callee.` for an
+    /// expansion), so the site and the prescan agree on the key.
+    /// </summary>
+    private void ScanPromotableEmptyLists(List<Statement> stmts, string prefix)
+    {
+        var boundEmpty = new HashSet<string>();
+        var appended = new HashSet<string>();
+
+        void ScanExpr(Expression? expr)
+        {
+            switch (expr)
+            {
+                case null: break;
+                case CallExpr call:
+                    if (call.Callee is MemberAccessExpr { Member: "append", Object: VariableExpr apv })
+                        appended.Add(apv.Name);
+                    ScanExpr(call.Callee);
+                    foreach (var arg in call.Args) ScanExpr(arg);
+                    break;
+                case MemberAccessExpr mem:
+                    ScanExpr(mem.Object);
+                    break;
+                case IndexExpr idx:
+                    ScanExpr(idx.Target);
+                    ScanExpr(idx.Index);
+                    break;
+                case BinaryExpr bin:
+                    ScanExpr(bin.Left);
+                    ScanExpr(bin.Right);
+                    break;
+                case UnaryExpr un:
+                    ScanExpr(un.Operand);
+                    break;
+                case TernaryExpr ter:
+                    ScanExpr(ter.Condition);
+                    ScanExpr(ter.TrueVal);
+                    ScanExpr(ter.FalseVal);
+                    break;
+                case ListExpr le:
+                    foreach (var e in le.Elements) ScanExpr(e);
+                    break;
+                case TupleExpr te:
+                    foreach (var e in te.Elements) ScanExpr(e);
+                    break;
+                case SetExpr se:
+                    foreach (var e in se.Elements) ScanExpr(e);
+                    break;
+                case DictExpr de:
+                    foreach (var (k, v) in de.Entries) { ScanExpr(k); ScanExpr(v); }
+                    break;
+            }
+        }
+
+        foreach (var s in TypeInference.WalkStatements(stmts))
+        {
+            switch (s)
+            {
+                case AssignStmt asn:
+                    if (asn.Target is VariableExpr tv && asn.Value is ListExpr { Elements.Count: 0 })
+                        boundEmpty.Add(tv.Name);
+                    ScanExpr(asn.Target);
+                    ScanExpr(asn.Value);
+                    break;
+                case AnnAssign ann:
+                    if (ann.Value is ListExpr { Elements.Count: 0 })
+                        boundEmpty.Add(ann.Target);
+                    ScanExpr(ann.Value);
+                    break;
+                case VarDecl vd:
+                    if (vd.Init is ListExpr { Elements.Count: 0 })
+                        boundEmpty.Add(vd.Name);
+                    ScanExpr(vd.Init);
+                    break;
+                case ExprStmt es:
+                    ScanExpr(es.Expr);
+                    break;
+                case ReturnStmt ret:
+                    ScanExpr(ret.Value);
+                    break;
+                case IfStmt ifs:
+                    ScanExpr(ifs.Condition);
+                    foreach (var (cond, _) in ifs.ElifBranches) ScanExpr(cond);
+                    break;
+                case WhileStmt wh:
+                    ScanExpr(wh.Condition);
+                    break;
+                case AugAssignStmt aug:
+                    ScanExpr(aug.Target);
+                    ScanExpr(aug.Value);
+                    break;
+                case ForStmt fr:
+                    ScanExpr(fr.RangeStart); ScanExpr(fr.RangeStop); ScanExpr(fr.RangeStep);
+                    ScanExpr(fr.Iterable);
+                    break;
+                case WithStmt wi:
+                    ScanExpr(wi.ContextExpr);
+                    break;
+                case MatchStmt m:
+                    ScanExpr(m.Target);
+                    foreach (var br in m.Branches) { ScanExpr(br.Pattern); ScanExpr(br.Guard); }
+                    break;
+                case TupleUnpackStmt tu:
+                    ScanExpr(tu.Value);
+                    break;
+            }
+        }
+
+        foreach (var name in boundEmpty)
+        {
+            if (!appended.Contains(name)) continue;
+            promotableEmptyLists.Add(prefix + name);
+            // Seed the pending registration NOW, before the body lowers: an
+            // `x = []` inside one arm of an `if` would otherwise introduce the
+            // name where the pre-branch snapshot lacks it, and the all-agree
+            // join at the merge would veto the element-type entry -- the
+            // append after the `if` (adafruit_irremote's `received`) then met
+            // the untyped-[] refusal all over. The slot exists for the whole
+            // function once the promotion emits; the name may claim its
+            // pending list-ness from the start.
+            listVarElemTypes[prefix + name] = DataType.UNKNOWN;
+        }
+    }
 }
