@@ -7523,7 +7523,7 @@ public partial class IRGenerator
             }
             if (ctorClasses[k] == null) visited[k] = VisitExpression(elemExprs[k]);
         }
-        if (!allConst && elemTypes == null && visited[0] is { } firstVal)
+        if (!allConst && elemTypes == null && count > 0 && visited[0] is { } firstVal)
             elemDt = firstVal switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
 
         bool useSram = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
