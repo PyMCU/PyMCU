@@ -1218,6 +1218,7 @@ public partial class IRGenerator
                 Emit(new Copy(new Variable(elemKey2, elemDt2), new Variable(forVarKey, elemDt2)));
 
             VisitStatement(stmt.Body);
+            _seqTerminated = false;
 
             if (forBrk)
             {
@@ -1651,6 +1652,9 @@ public partial class IRGenerator
         VisitStatement(body);
         loopStack.RemoveAt(loopStack.Count - 1);
         Emit(new Label(cont));
+        // Each unrolled iteration is a fresh sequence: a `continue`/`break` that
+        // terminated this body's tail must not dead-skip the next iteration.
+        _seqTerminated = false;
     }
 
     private void VisitFor(ForStmt stmt)
@@ -2409,6 +2413,7 @@ public partial class IRGenerator
                             constantVariables[idxKey] = k;
                             BindInstanceForIteration(enSeqBase + "__" + k, enQVal);
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                             if (enSeqBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(enSeqCont)); }
                             CleanCtState(enQVal);
                             constantVariables.Remove(enQVal);
@@ -2460,6 +2465,7 @@ public partial class IRGenerator
                             Emit(new JumpIfGreaterOrEqual(enumStrIdx, new Constant(enumStr.Length), enumEnd));
                             Emit(new ArrayLoadFlash(enumFlash, enumStrIdx, enumStrChar));
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                             Emit(new Label(enumCont));
                             Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, enumStrIdx, new Constant(1)));
                             Emit(new Jump(enumStart));
@@ -2473,6 +2479,7 @@ public partial class IRGenerator
                             constantVariables[idxKey] = k;
                             BindUnrolledString(valKey, enumStr[k].ToString());
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
                         constantVariables.Remove(idxKey);
                         strConstantVariables.Remove(valKey);
@@ -2490,6 +2497,7 @@ public partial class IRGenerator
                             constantVariables[idxKey] = k;
                             BindUnrolledString(valKey, eChunks[k]);
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
                         constantVariables.Remove(idxKey);
                         strConstantVariables.Remove(valKey);
@@ -2638,6 +2646,7 @@ public partial class IRGenerator
                                 }
 
                                 VisitStatement(stmt.Body);
+                                _seqTerminated = false;
                                 if (enBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(enContLabel)); }
                                 CleanCtState(qualifiedVal);
                                 constantVariables.Remove(qualifiedVal);
@@ -2750,6 +2759,7 @@ public partial class IRGenerator
                             side0.Bind(qk1, k);
                             side1.Bind(qk2, k);
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                             if (zbrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(zCont)); }
                             CleanCtState(qk1);
                             CleanCtState(qk2);
@@ -2875,6 +2885,7 @@ public partial class IRGenerator
                             loopFunctionAliases[key1] = funcRefs0[k];
                             constantVariables[key2] = vals1[k];
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
                         loopFunctionAliases.Remove(key1);
                         constantVariables.Remove(key2);
@@ -2889,6 +2900,7 @@ public partial class IRGenerator
                             constantVariables[key1] = vals0[k];
                             loopFunctionAliases[key2] = funcRefs1[k];
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
                         constantVariables.Remove(key1);
                         loopFunctionAliases.Remove(key2);
@@ -2904,6 +2916,7 @@ public partial class IRGenerator
                             constantVariables[key1] = vals0[k];
                             constantVariables[key2] = vals1[k];
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
 
                         constantVariables.Remove(key1);
@@ -2941,6 +2954,7 @@ public partial class IRGenerator
                                     rseq[k]);
                             constantVariables[valKey] = rv;
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
 
                         constantVariables.Remove(valKey);
@@ -2958,6 +2972,7 @@ public partial class IRGenerator
                                     "reversed() list elements must be compile-time integer constants.",
                                     le3.Elements[k]);
                             VisitStatement(stmt.Body);
+                            _seqTerminated = false;
                         }
 
                         constantVariables.Remove(valKey);
@@ -3101,6 +3116,7 @@ public partial class IRGenerator
                                 else
                                     Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
                                 VisitStatement(stmt.Body);
+                                _seqTerminated = false;
                                 if (rvBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(rvContLabel)); }
                                 CleanCtState(qValKey);
                                 constantVariables.Remove(valKey);
@@ -3338,6 +3354,7 @@ public partial class IRGenerator
                             Emit(new Copy(new Variable(elemKey, slElem), new Variable(slKey, slElem)));
 
                         VisitStatement(stmt.Body);
+                        _seqTerminated = false;
 
                         if (slBrk)
                         {
