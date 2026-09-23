@@ -1164,15 +1164,31 @@ public partial class IRGenerator
         // Variable naming that fixed slot. Bind `x` as another NAME for the same bytes --
         // a scalar copy of the name would write nothing -- and the alias makes `x[i]`,
         // `x[i] = v`, `len(x)` and `for` all answer the callee's storage.
-        if (value is Variable retBuf && arraySizes.ContainsKey(retBuf.Name)
-            && stmt.Target is VariableExpr bufTgt)
+        //
+        // Through a SECOND inline hop the value arrives as the outer expansion's
+        // ResultTemp instead -- `__getitem__`'s `return self._getitem(index)` copies the
+        // inner buffer's name into a Temporary and aliases it there (neopixel's px[i]).
+        // The alias entry is structural, so it survives; what the check below could not
+        // see was that the Temporary's terminal IS the returned buffer, and `x[0]`
+        // fell to a bit test on a slot the expansion never wrote.
         {
-            string bufKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + bufTgt.Name
-                : (!string.IsNullOrEmpty(currentFunction)
-                    ? currentFunction + "." + bufTgt.Name : bufTgt.Name);
-            BindSequenceAlias(bufKey, retBuf.Name);
-            return;
+            string? retBufName = value switch
+            {
+                Variable rv2 => rv2.Name,
+                Temporary rt2 => rt2.Name,
+                _ => null,
+            };
+            if (retBufName != null) retBufName = FollowAliases(retBufName);
+            if (retBufName != null && arraySizes.ContainsKey(retBufName)
+                && stmt.Target is VariableExpr bufTgt)
+            {
+                string bufKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + bufTgt.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + bufTgt.Name : bufTgt.Name);
+                BindSequenceAlias(bufKey, retBufName);
+                return;
+            }
         }
 
         if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
