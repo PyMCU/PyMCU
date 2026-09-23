@@ -121,6 +121,18 @@ public static class Verifier
         // Pass 2: the checks themselves.
         foreach (var f in program.Functions)
         {
+            // `x__slot` arrays are byte-cell object storage: a field store
+            // carries the whole field value in Src while the backend writes
+            // one byte per cell, and the Copy feeding such a store carries
+            // the same not-yet-split value. Both are the encoding, not lost
+            // data, so CheckWidths leaves them alone.
+            var slotSrcs = new HashSet<string>();
+            foreach (var ins0 in f.Body)
+                if (ins0 is ArrayStore a0 && a0.ArrayName.EndsWith("__slot"))
+                {
+                    var n0 = ValName(a0.Src);
+                    if (n0 != null) slotSrcs.Add(n0);
+                }
             var jumps = new List<(string kind, string target)>();
             foreach (var ins in f.Body)
             {
@@ -128,7 +140,7 @@ public static class Verifier
                 CheckStorageKeys(ins, f, declared, violations);
                 CheckReads(ins, f, writtenHere[f.Name], writtenSomewhere, declared,
                     compileTime, violations);
-                CheckWidths(ins, f, violations);
+                CheckWidths(ins, f, compileTime, slotSrcs, violations);
                 CheckIndexWidths(ins, f, flashTables, violations);
                 CheckTags(ins, f, fnByName, violations);
                 CheckCallArgs(ins, f, fnByName, bufferParams, program, violations);
@@ -462,6 +474,7 @@ public static class Verifier
     // ---------------------------------------------------------------------
 
     private static void CheckWidths(Instruction ins, Function f,
+        HashSet<string> compileTime, HashSet<string> slotSrcs,
         List<Violation> violations)
     {
         void Fit(Constant c, DataType slotType, string what)
@@ -473,11 +486,22 @@ public static class Verifier
 
         switch (ins)
         {
+            // A store into a compile-time name truncates a placeholder byte
+            // nothing reads at runtime -- the same exemption the read check
+            // applies, one name one meaning.
+            case Copy x when x.Src is Constant c && x.Dst is Variable or Temporary
+                         && WrittenIn(compileTime, ValName(x.Dst) ?? ""):
+                break;
+            case Copy x when x.Src is Constant c && x.Dst is Variable or Temporary
+                         && slotSrcs.Contains(ValName(x.Dst) ?? ""):
+                break;
             case Copy x when x.Src is Constant c && x.Dst is Variable or Temporary:
                 Fit(c, ValType(x.Dst) ?? DataType.UNKNOWN, $"copy {c.Value} -> {Describe(x.Dst)}");
                 break;
             case StoreIndirect x when x.Src is Constant c:
                 Fit(c, x.Elem, $"store {c.Value} through pointer as {x.Elem}");
+                break;
+            case ArrayStore x when x.Src is Constant c && x.ArrayName.EndsWith("__slot"):
                 break;
             case ArrayStore x when x.Src is Constant c:
                 Fit(c, x.ElemType, $"store {c.Value} into {x.ArrayName}[] as {x.ElemType}");

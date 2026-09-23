@@ -1478,15 +1478,16 @@ public partial class IRGenerator
                 foreach (var n0 in Verifier.ScalarNames(ins0))
                     AddParents(n0);
 
+        // The str-var maps stay out: a string variable's scalar byte is a
+        // vestigial handle -- the data lives in the str machinery's own
+        // buffers -- so the name joins the compile-time side below instead.
+        // runtimePtrVars stays scalar: a pointer variable's slot really is
+        // the storage.
         bool HasScalarSlot(string n) =>
             variableTypes.ContainsKey(n)
             || mutableGlobals.ContainsKey(n)
             || globals.ContainsKey(n)
-            || runtimeStrVars.ContainsKey(n)
             || runtimePtrVars.ContainsKey(n)
-            || bufferLogicalLen.ContainsKey(n)
-            || multiStrVariables.ContainsKey(n)
-            || multiStrCandidates.ContainsKey(n)
             || arrayElemTypes.ContainsKey(n)
             || arraySizes.ContainsKey(n)
             || moduleSramArrays.Contains(n)
@@ -1535,6 +1536,10 @@ public partial class IRGenerator
             || floatConstantVariables.ContainsKey(n)
             || localConstantValues.ContainsKey(n)
             || strConstantVariables.ContainsKey(n)
+            || runtimeStrVars.ContainsKey(n)
+            || bufferLogicalLen.ContainsKey(n)
+            || multiStrVariables.ContainsKey(n)
+            || multiStrCandidates.ContainsKey(n)
             || FunctionObject(n);
 
         // A name spelled "main.x" is the module global "x" -- the twin rule
