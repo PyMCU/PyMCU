@@ -146,6 +146,41 @@ public class ConditionalTupleReturnTests
     }
 
     /// <summary>
+    /// In an imported module, `ORDER = GRB` registers the alias under the module's
+    /// mangled name in the globals map but left the module's own scope unaware of the
+    /// bare spelling -- so a `striplib` doing `ORDER in {RGB, GRB}` inside wheel()
+    /// stopped folding and hit the conditional-tuple refusal. The scope must carry
+    /// the bare name too.
+    /// </summary>
+    [Fact]
+    public void AnImportedModulesAliasConstantStillFoldsTheMembership()
+    {
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["striplib"] = new Parser(new Lexer(
+                "RGB = \"RGB\"\n" +
+                "GRB = \"GRB\"\n" +
+                "ORDER = GRB\n" +
+                "@inline\n" +
+                "def wheel(pos: uint8):\n" +
+                "    r = pos\n" +
+                "    return (r, 2, 3) if ORDER in {RGB, GRB} else (r, 2, 3, 0)\n"
+            ).Tokenize()).ParseProgram(),
+        };
+
+        var ir = new IRGenerator().Generate(
+            new Parser(new Lexer(Preamble +
+                "import striplib\n" +
+                "def main():\n    a, b, c = striplib.wheel(5)\n").Tokenize()).ParseProgram(),
+            mods, new DeviceConfig { Arch = "avr" });
+
+        var slots = SlotsWritten(ir).Where(n => n.EndsWith("_0") || n.EndsWith("_1")
+                                                || n.EndsWith("_2") || n.EndsWith("_3")).ToList();
+        slots.Should().HaveCount(3,
+            because: "ORDER folds in the defining module, so wheel returns (r, 2, 3)");
+    }
+
+    /// <summary>
     /// An unannotated tuple return's element slots take each element's own width: a
     /// `uint16` member must not truncate to the uint8 default the slot used to mint
     /// with. The byte store keeps the low byte -- but through a real UINT16 slot,

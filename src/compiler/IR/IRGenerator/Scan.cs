@@ -889,6 +889,12 @@ public partial class IRGenerator
                         if (sourceInfo.HasValue)
                         {
                             globals[currentModulePrefix + name] = sourceInfo.Value;
+                            // The alias path must mirror into the scope like the
+                            // literal path below: `mod_member` reads gate on the
+                            // module's own Globals, so `ORDER = GRB` unseen here
+                            // makes `ORDER` stop folding for readers (the
+                            // cond-tuple-return probe's `ORDER in {RGB, GRB}`).
+                            if (scope != null) scope.Globals[name] = sourceInfo.Value;
                             continue;
                         }
                     }
