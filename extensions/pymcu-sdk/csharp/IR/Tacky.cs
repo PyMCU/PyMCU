@@ -253,8 +253,10 @@ public record BytearrayLoad(string PtrName, Val Index, Val Dst) : Instruction;
 // Indexed store through a bytearray pointer parameter.
 public record BytearrayStore(string PtrName, Val Index, Val Src) : Instruction;
 
-// GC: allocate Size bytes on the managed heap; Dst receives a GC_REF (null=0x0000 on OOM)
-public record GcAlloc(Val Size, Val Dst) : Instruction;
+// GC: allocate Size bytes on the managed heap; Dst receives a GC_REF (null=0x0000 on OOM).
+// Refs marks the payload as holding further GC_REFs (a list[list[T]]): the collector
+// traces those slots in the mark phase and rewrites them when their targets move.
+public record GcAlloc(Val Size, Val Dst, bool Refs = false) : Instruction;
 
 // GC: register a live GC_REF local as a root (shadow-stack push in prologue)
 public record GcRoot(Val Var) : Instruction;

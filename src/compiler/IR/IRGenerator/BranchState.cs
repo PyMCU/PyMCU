@@ -83,6 +83,7 @@ public partial class IRGenerator
         public Dictionary<string, List<Expression>> ArrayLiteralElements = new();
         public Dictionary<string, List<string>> NamedTupleElements = new();
         public Dictionary<string, DataType> ListVarElemTypes = new();
+        public Dictionary<string, DataType> ListInnerElemTypes = new();
         public Dictionary<string, DataType> FuncrefReturnTypes = new();
         public Dictionary<string, string> SlotInstances = new();
         public Dictionary<string, string> InstanceArrayClass = new();
@@ -141,6 +142,7 @@ public partial class IRGenerator
         ArrayLiteralElements = arrayLiteralElements.ToDictionary(kv => kv.Key, kv => new List<Expression>(kv.Value)),
         NamedTupleElements = namedTupleElements.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
         ListVarElemTypes = new Dictionary<string, DataType>(listVarElemTypes),
+        ListInnerElemTypes = new Dictionary<string, DataType>(listInnerElemTypes),
         FuncrefReturnTypes = new Dictionary<string, DataType>(funcrefReturnTypes),
         SlotInstances = new Dictionary<string, string>(slotInstances),
         InstanceArrayClass = new Dictionary<string, string>(instanceArrayClass),
@@ -190,6 +192,7 @@ public partial class IRGenerator
         RestoreInto(arrayLiteralElements, s.ArrayLiteralElements);
         RestoreInto(namedTupleElements, s.NamedTupleElements);
         RestoreInto(listVarElemTypes, s.ListVarElemTypes);
+        RestoreInto(listInnerElemTypes, s.ListInnerElemTypes);
         RestoreInto(funcrefReturnTypes, s.FuncrefReturnTypes);
         RestoreInto(slotInstances, s.SlotInstances);
         RestoreInto(instanceArrayClass, s.InstanceArrayClass);
@@ -295,6 +298,7 @@ public partial class IRGenerator
         multiStrVariables = JoinDicts(arms.Select(a => a.MultiStrVariables).ToList(),
             (x, y) => x.SequenceEqual(y));
         listVarElemTypes = JoinDicts(arms.Select(a => a.ListVarElemTypes).ToList());
+        listInnerElemTypes = JoinDicts(arms.Select(a => a.ListInnerElemTypes).ToList());
         funcrefReturnTypes = JoinDicts(arms.Select(a => a.FuncrefReturnTypes).ToList());
         slotInstances = JoinDicts(arms.Select(a => a.SlotInstances).ToList());
         instanceArrayClass = JoinDicts(arms.Select(a => a.InstanceArrayClass).ToList(), SameResolvedClass);

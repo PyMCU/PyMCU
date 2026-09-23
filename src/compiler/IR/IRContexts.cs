@@ -30,6 +30,10 @@ public class InlineContext
     // temp the caller actually receives.
     public DataType? ResultListElem { get; set; }
 
+    // One level deeper than ResultListElem: for `return <list[list[T]]>` this is T,
+    // the element type of each inner list the returned payload points at.
+    public DataType? ResultListInnerElem { get; set; }
+
     // RFC 0009: the tag byte an `-> Optional[X]` callee's result carries. Minted alongside
     // ResultTemp when the callee's declared return members include None; each return writes
     // the member index into it (None is the last member, a payload is index 0).

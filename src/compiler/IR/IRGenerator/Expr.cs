@@ -2809,6 +2809,34 @@ public partial class IRGenerator
             }
         }
 
+        // `bins[b][0]` on a list[list[T]]: the inner subscript loads the inner
+        // list's heap pointer (a GC_REF) out of the outer payload, and the outer
+        // subscript then reads an element of THAT list. Without this branch the
+        // outer index fell through to the register-bit path at the bottom and
+        // read a bit of the pointer's low byte -- bins[0][0] answered 1 where
+        // the bin held [562, 0] (adafruit_irremote's bin_data). The GC_REF temp
+        // the inner load produces is registered as a list var so a bound name
+        // (`inner = bins[b]`, `for kb in bins`) and `len()` resolve the same way.
+        if (expr.Target is IndexExpr innerSub
+            && innerSub.Target is VariableExpr innerVe
+            && ResolveListVarQualified(innerVe.Name) is { Length: > 0 } innerListQ
+            && listVarElemTypes[innerListQ] == DataType.GC_REF
+            && listInnerElemTypes.TryGetValue(innerListQ, out var innerElemDt))
+        {
+            Val outerPtr = new Variable(innerListQ, DataType.GC_REF);
+            Val innerIdxVal = VisitExpression(innerSub.Index);
+            Temporary innerAddr = EmitElemAddr(outerPtr, innerIdxVal, DataType.GC_REF.SizeOf());
+            Temporary innerRef = MakeTemp(DataType.GC_REF);
+            Emit(new LoadIndirect(innerAddr, innerRef, DataType.GC_REF));
+            listVarElemTypes[innerRef.Name] = innerElemDt;
+            listInnerElemTypes.Remove(innerRef.Name);
+            Val idxVal = VisitExpression(expr.Index);
+            Temporary elemAddr = EmitElemAddr(innerRef, idxVal, innerElemDt.SizeOf());
+            Temporary result = MakeTemp(innerElemDt);
+            Emit(new LoadIndirect(elemAddr, result, innerElemDt));
+            return result;
+        }
+
         // `m[x, y]` on a target whose class cannot take the pair (#352). Refused HERE rather
         // than in the readers, which cannot know the class, and before the index is visited so
         // the generic "tuples are not supported as runtime values" refusal, which is true and
@@ -3240,6 +3268,12 @@ public partial class IRGenerator
                     Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
                     Temporary result = MakeTemp(elemDt);
                     Emit(new LoadIndirect(elemAddr, result, elemDt));
+                    // `inner = bins[b]` on a list[list[T]]: the temp IS an inner list,
+                    // so the name that receives it resolves len()/[i]/append the same
+                    // way the declared spelling would.
+                    if (elemDt == DataType.GC_REF
+                        && listInnerElemTypes.TryGetValue(listQ, out var subElemDt))
+                        listVarElemTypes[result.Name] = subElemDt;
                     return result;
                 }
             }

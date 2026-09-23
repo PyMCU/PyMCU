@@ -108,6 +108,10 @@ public static class DataTypeExtensions
         if (typeStr == "void" || typeStr == "None") return DataType.VOID;
         if (typeStr == "Callable") return DataType.FUNCREF;
         if (typeStr == "gc_ref") return DataType.GC_REF;
+        // list[...] names a heap object: as a variable or parameter type it is a
+        // managed reference, and as the ELEMENT type of list[list[T]] the elements
+        // are pointers to the inner lists.
+        if (typeStr.StartsWith("list[") && typeStr.EndsWith("]")) return DataType.GC_REF;
 
         // For pointer/register types, extract the inner element type (e.g. ptr[uint8] -> UINT8)
         if (typeStr.StartsWith("ptr[") && typeStr.EndsWith("]"))

@@ -1579,6 +1579,11 @@ public partial class IRGenerator
                     ctx.ResultListElem = retListElem;
                     listVarElemTypes[ctx.ResultTemp.Name] = retListElem;
                     variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
+                    if (ListReturnInnerElemType(stmt.Value, val) is { } retInnerElem)
+                    {
+                        ctx.ResultListInnerElem = retInnerElem;
+                        listInnerElemTypes[ctx.ResultTemp.Name] = retInnerElem;
+                    }
                 }
 
                 if (val is Constant c && !afterUnconditionalReturn)

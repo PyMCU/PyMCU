@@ -3066,6 +3066,12 @@ public partial class IRGenerator
                         : currentInlinePrefix + stmt.VarName;
                     Variable elemVar = new Variable(elemVarName, elemDt);
                     variableTypes[elemVarName] = elemDt;
+                    // `for kb in bins` on a list[list[T]]: the loop variable is an
+                    // inner list (GC_REF), and kb[i]/len(kb) resolve through the
+                    // same tables a declared `kb: list[T]` would file.
+                    if (elemDt == DataType.GC_REF
+                        && listInnerElemTypes.TryGetValue(listQ, out var loopInnerElem))
+                        listVarElemTypes[elemVarName] = loopInnerElem;
 
                     string loopStart = MakeLabel();
                     string loopCont = MakeLabel();

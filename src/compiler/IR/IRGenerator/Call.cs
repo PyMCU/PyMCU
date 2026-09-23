@@ -3293,6 +3293,8 @@ public partial class IRGenerator
         {
             listVarElemTypes[listRes.Name] = resListElem;
             variableTypes[listRes.Name] = DataType.GC_REF;
+            if (finishedCtx.ResultListInnerElem is { } resInnerElem)
+                listInnerElemTypes[listRes.Name] = resInnerElem;
         }
 
         currentSourcePath = savedSourcePath;
@@ -9987,7 +9989,7 @@ public partial class IRGenerator
         // address. A pointer to the old buffer captured BEFORE this alloc would dangle, so the
         // copy source is re-derived from listVar AFTER the alloc.
         Temporary newPtr = MakeTemp(DataType.GC_REF);
-        Emit(new GcAlloc(newAllocSize, newPtr));
+        Emit(new GcAlloc(newAllocSize, newPtr, elemDt == DataType.GC_REF));
 
         // gc_alloc returns 0 on OOM; the stores and copy loop below write through the
         // pointer unchecked, so a null result would land a list header and the element

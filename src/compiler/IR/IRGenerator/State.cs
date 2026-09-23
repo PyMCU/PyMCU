@@ -1114,6 +1114,12 @@ public partial class IRGenerator
     // Heap-allocated list[T] support: maps qualified_name → element DataType (GC_REF variables)
     private Dictionary<string, DataType> listVarElemTypes = new();
 
+    // For a list[list[T]] variable: qualified_name → the INNER list's element type.
+    // `bins[b]` yields a Temporary whose own element type is T -- the entry lets the
+    // second subscript (`bins[b][0]`), a `for kb in bins` loop variable, and nested
+    // stores resolve T instead of falling through to a register-bit access.
+    private Dictionary<string, DataType> listInnerElemTypes = new();
+
     // Function parameters declared as bytearray (passed as pointer, no length).
     // The parameter name is stored as qualified_name (funcname_paramname).
     private HashSet<string> bytearrayParams = new();

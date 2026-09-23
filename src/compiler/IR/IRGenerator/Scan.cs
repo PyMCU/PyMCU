@@ -781,6 +781,9 @@ public partial class IRGenerator
                     string elemTypeName = type.Substring(5, type.Length - 6);
                     DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
                     listVarElemTypes[name] = elemDt;
+                    if (elemTypeName.StartsWith("list[") && elemTypeName.EndsWith("]"))
+                        listInnerElemTypes[name] = DataTypeExtensions.StringToDataType(
+                            elemTypeName.Substring(5, elemTypeName.Length - 6));
                 }
                 else
                 {
@@ -4528,7 +4531,12 @@ public partial class IRGenerator
     /// is what keeps decorator-style stdlib helpers (`def inline(f)`) out of normal lowering.
     /// </summary>
     private static bool IsZcaHandlerParamType(string type)
-        => DataTypeExtensions.StringToDataType(type) == DataType.UNKNOWN
+        => (DataTypeExtensions.StringToDataType(type) == DataType.UNKNOWN
+            // StringToDataType now answers GC_REF for `list[...]` -- true, but a
+            // list parameter still has no subroutine ABI: the body binds the
+            // caller's concrete element type, so it expands at the call site the
+            // same way it always has.
+            || (type.StartsWith("list[") && type.EndsWith("]")))
            && type != "bytearray"
            && !type.StartsWith("ptr")
            && type != "const[str]" && type != "str";
@@ -4989,6 +4997,9 @@ public partial class IRGenerator
                         && mutableGlobals.ContainsKey(currentModulePrefix + ann.Target))
                         listDeclKey = currentModulePrefix + ann.Target;
                     listVarElemTypes[listDeclKey] = elemDt;
+                    if (elemTypeName.StartsWith("list[") && elemTypeName.EndsWith("]"))
+                        listInnerElemTypes[listDeclKey] = DataTypeExtensions.StringToDataType(
+                            elemTypeName.Substring(5, elemTypeName.Length - 6));
                     // list variables are NOT fixed-size arrays; do not add to localArrays
                 }
                 else

@@ -1662,6 +1662,8 @@ public partial class IRGenerator
         if (valueListKey != null)
         {
             listVarElemTypes[key] = listVarElemTypes[valueListKey];
+            if (listInnerElemTypes.TryGetValue(valueListKey, out var innerElem))
+                listInnerElemTypes[key] = innerElem;
             variableTypes[key] = DataType.GC_REF;
             return new Variable(key, DataType.GC_REF);
         }
@@ -1718,6 +1720,28 @@ public partial class IRGenerator
         if (lastCallReturnTypeText is { } lcrt && lcrt.StartsWith("list[") && lcrt.EndsWith("]"))
             return DataTypeExtensions.StringToDataType(lcrt.Substring(5, lcrt.Length - 6));
         return lastCallReturnListElem;
+    }
+
+    // The inner element type for a value that is itself a list[list[T]] -- the
+    // same three answer paths as ListReturnElemType, one annotation level down.
+    private DataType? ListReturnInnerElemType(Expression? source, Val value)
+    {
+        string? valueListKey = value switch
+        {
+            Variable lv when listVarElemTypes.ContainsKey(lv.Name) => lv.Name,
+            Temporary lt when listVarElemTypes.ContainsKey(lt.Name) => lt.Name,
+            _ => null,
+        };
+        if (valueListKey != null)
+            return listInnerElemTypes.TryGetValue(valueListKey, out var ie) ? ie : null;
+        if (source is not CallExpr) return null;
+        if (lastCallReturnTypeText is { } lcrt && lcrt.StartsWith("list[") && lcrt.EndsWith("]"))
+        {
+            string e = lcrt.Substring(5, lcrt.Length - 6);
+            if (e.StartsWith("list[") && e.EndsWith("]"))
+                return DataTypeExtensions.StringToDataType(e.Substring(5, e.Length - 6));
+        }
+        return null;
     }
 
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
@@ -1929,6 +1953,8 @@ public partial class IRGenerator
                         {
                             listVarElemTypes[moduleGlobalName] = mgListElem;
                             mutableGlobals[moduleGlobalName] = DataType.GC_REF;
+                            if (ListReturnInnerElemType(stmt.Value, value) is { } mgInner)
+                                listInnerElemTypes[moduleGlobalName] = mgInner;
                         }
 
                         target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
@@ -1953,6 +1979,8 @@ public partial class IRGenerator
                             // unannotated callee's recorded `return <list var>`.
                             if (ListReturnElemType(stmt.Value, value) is { } listElem)
                                 listVarElemTypes[qualifiedName] = listElem;
+                            if (ListReturnInnerElemType(stmt.Value, value) is { } innerElem)
+                                listInnerElemTypes[qualifiedName] = innerElem;
 
                             if (listVarElemTypes.ContainsKey(qualifiedName)) type = DataType.GC_REF;
                             else if (value is Temporary tmp) type = tmp.Type;
@@ -4156,6 +4184,28 @@ public partial class IRGenerator
             EmitGridElemStore(ResolveGridKey(gInner.Target)!, gInner.Index, indexExpr.Index, stmt.Value);
             return;
         }
+
+        // `bins[b][0] = v` on a list[list[T]]: load the inner list's heap pointer
+        // out of the outer payload, then store into THAT list at the element's
+        // offset. Without this the write fell to the register-bit path below.
+        if (indexExpr.Target is IndexExpr innerSub
+            && innerSub.Target is VariableExpr innerVe
+            && ResolveListVarQualified(innerVe.Name) is { Length: > 0 } innerListQ
+            && listVarElemTypes[innerListQ] == DataType.GC_REF
+            && listInnerElemTypes.TryGetValue(innerListQ, out var innerElemDt))
+        {
+            Val outerPtr = new Variable(innerListQ, DataType.GC_REF);
+            Val innerIdxVal = VisitExpression(innerSub.Index);
+            Temporary innerAddr = EmitElemAddr(outerPtr, innerIdxVal, DataType.GC_REF.SizeOf());
+            Temporary innerRef = MakeTemp(DataType.GC_REF);
+            Emit(new LoadIndirect(innerAddr, innerRef, DataType.GC_REF));
+            Val idxVal = VisitExpression(indexExpr.Index);
+            Val srcVal = VisitExpression(stmt.Value);
+            Temporary elemAddr = EmitElemAddr(innerRef, idxVal, innerElemDt.SizeOf());
+            Emit(new StoreIndirect(srcVal, elemAddr, innerElemDt));
+            return;
+        }
+
         // `r[x] = v` where r was bound to a row by `r = g[y]` or `for r in g`.
         if (indexExpr.Target is VariableExpr rowStoreVe
             && ResolveRowRef(rowStoreVe) is { } rowStoreRef)
@@ -6814,6 +6864,12 @@ public partial class IRGenerator
 
         listVarElemTypes[qualified] = elemDt;
         variableTypes[qualified] = DataType.GC_REF;
+        // list[list[T]]: the elements are pointers to inner lists. Record the
+        // INNER element type so `bins[b][0]`, `for kb in bins`, and nested
+        // stores can resolve T on the GC_REF a subscript/iteration yields.
+        if (elemTypeName.StartsWith("list[") && elemTypeName.EndsWith("]"))
+            listInnerElemTypes[qualified] = DataTypeExtensions.StringToDataType(
+                elemTypeName.Substring(5, elemTypeName.Length - 6));
 
         if (stmt.Value != null)
         {
@@ -6836,7 +6892,10 @@ public partial class IRGenerator
 
             int allocSize = 2 + capacity * elemSize;
             Temporary tmpPtr = MakeTemp(DataType.GC_REF);
-            Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
+            // A list[list[T]]'s payload is an array of inner-list pointers: the
+            // object must carry the ref-bearing flag or the collector neither
+            // marks the inner lists nor fixes the slots when they move.
+            Emit(new GcAlloc(new Constant(allocSize), tmpPtr, elemDt == DataType.GC_REF));
 
             int initCount = initElements?.Count ?? 0;
             EmitListStore(tmpPtr, 0, new Constant(initCount));
