@@ -3678,6 +3678,129 @@ public partial class IRGenerator
         return dstPtr;
     }
 
+    // The element type a literal asks for when none is declared: the widest type
+    // its scalar elements infer to, GC_REF when the elements are themselves
+    // literals. A mixed literal has no one element type -- a PyMCU list is
+    // homogeneous, so `[[1], 2]` refuses rather than silently picking one.
+    private DataType InferLiteralElemType(List<Expression> elements, Expression at)
+    {
+        DataType elemDt = DataType.UNKNOWN;
+        foreach (var e in elements)
+        {
+            DataType et = e is ListExpr or TupleExpr ? DataType.GC_REF : InferExprType(e);
+            if (et == DataType.GC_REF || elemDt == DataType.GC_REF)
+            {
+                if (elemDt != DataType.UNKNOWN && elemDt != DataType.GC_REF
+                    || et != DataType.GC_REF && et != DataType.UNKNOWN)
+                    throw UserError(
+                        "a list literal that mixes list and scalar elements has no one "
+                        + "element type -- PyMCU lists are homogeneous; bind the inner "
+                        + "lists to names of their own first", at);
+                elemDt = DataType.GC_REF;
+                continue;
+            }
+            if (et is DataType.UNKNOWN or DataType.VOID)
+                throw UserError(
+                    "cannot infer the element type of this list literal; declare it "
+                    + "instead: `x: list[uint8] = [...]`", e);
+            elemDt = elemDt == DataType.UNKNOWN ? et : DataTypeExtensions.GetPromotedType(elemDt, et);
+        }
+        return elemDt == DataType.UNKNOWN ? DataType.UINT8 : elemDt;
+    }
+
+    // `x = [[v, 0]]` / `xs.append([v, 1])`: a literal that must be a run-time
+    // heap object. The object is gc_alloc'd exact-fit (count == capacity), its
+    // payload ref-flagged when the elements are themselves lists, and -- before
+    // any element that materializes a list of its own -- bound to a generated
+    // NAME: a Temporary is not a GC root, so the name is what keeps the object
+    // findable when a nested literal's allocation compacts the heap.
+    private Variable MaterializeSequenceLiteral(List<Expression> elements, DataType? declaredElem,
+                                                Expression at)
+    {
+        DataType elemDt = declaredElem ?? InferLiteralElemType(elements, at);
+
+        DataType innerDt = DataType.UNKNOWN;
+        if (elemDt == DataType.GC_REF)
+        {
+            var innerDts = new List<DataType>();
+            foreach (var e in elements)
+            {
+                // The outer's inner element type is each element-list's OWN
+                // element type: a literal infers it, a bound list variable
+                // already carries it, and anything else is the mixed-literal
+                // refusal InferLiteralElemType promises.
+                DataType dt = e switch
+                {
+                    ListExpr il => InferLiteralElemType(il.Elements, e),
+                    TupleExpr it => InferLiteralElemType(it.Elements, e),
+                    VariableExpr ev when ResolveListVarQualified(ev.Name) is { Length: > 0 } evk
+                        => listVarElemTypes[evk],
+                    _ => throw UserError(
+                        "a list literal that mixes list and scalar elements has no one "
+                        + "element type -- PyMCU lists are homogeneous; bind the inner "
+                        + "lists to names of their own first", at),
+                };
+                if (!innerDts.Contains(dt)) innerDts.Add(dt);
+            }
+            if (innerDts.Count > 1)
+                throw UserError(
+                    "the inner literals do not agree on an element type -- PyMCU lists "
+                    + "are homogeneous; declare the inner element type with `list[T]` "
+                    + "instead", at);
+            innerDt = innerDts.Count > 0 ? innerDts[0] : DataType.UINT8;
+            if (innerDt == DataType.GC_REF)
+                throw UserError(
+                    "a list literal nested deeper than list[list[T]] has no inferred "
+                    + "element type for the innermost lists; bind it to a name and "
+                    + "declare the levels separately", at);
+        }
+
+        int elemSize = elemDt.SizeOf();
+        Temporary tmpPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(new Constant(2 + elements.Count * elemSize), tmpPtr,
+                         elemDt == DataType.GC_REF));
+
+        // The allocation answers 0 on exhaustion: a header store through it is
+        // SRAM[0] -- raise the way list() and append do.
+        string litOk = MakeLabel();
+        Emit(new JumpIfNotZero(tmpPtr with { Type = DataType.UINT16 }, litOk));
+        EnterRuntimeBranch("materializing a list literal");
+        try
+        {
+            VisitRaise(new RaiseStmt("MemoryError",
+                "list literal ran out of heap on this target"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(litOk));
+
+        string litName = "__lit_" + labelCounter++;
+        string litKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + litName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + litName : litName);
+        var litVar = new Variable(litKey, DataType.GC_REF);
+        variableTypes[litKey] = DataType.GC_REF;
+        listVarElemTypes[litKey] = elemDt;
+        if (innerDt != DataType.UNKNOWN)
+            listInnerElemTypes[litKey] = innerDt;
+        Emit(new Copy(tmpPtr, litVar));
+
+        EmitListStore(litVar, 0, new Constant(elements.Count));
+        EmitListStore(litVar, 1, new Constant(elements.Count));
+
+        for (int k = 0; k < elements.Count; k++)
+        {
+            Val ev = elements[k] switch
+            {
+                ListExpr innerList => MaterializeSequenceLiteral(innerList.Elements, innerDt, elements[k]),
+                TupleExpr innerTuple => MaterializeSequenceLiteral(innerTuple.Elements, innerDt, elements[k]),
+                _ => VisitExpression(elements[k]),
+            };
+            EmitListStore(litVar, 2 + k * elemSize, ev, elemDt);
+        }
+
+        return litVar;
+    }
+
     // A just-loaded slot field whose declared type is itself a class: re-tag the loaded value
     // with that (concrete) class so a following `.field`/`.method()` resolves after the ZCA
     // collapse (the field stores only the scalar). Only class-typed fields (fieldClasses) ->

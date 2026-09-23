@@ -10012,7 +10012,8 @@ public partial class IRGenerator
             // A GC_REF element makes the payload an array of inner-list
             // pointers: record the appended list's own element type so
             // `x[i][j]` and `for inner in x` resolve it, exactly as a
-            // declared list[list[T]] does.
+            // declared list[list[T]] does. A literal argument's inner type is
+            // recorded after it materializes below.
             if (elemDt == DataType.GC_REF && valExpr is VariableExpr valVar
                 && listVarElemTypes.TryGetValue(ResolveNameKey(valVar.Name), out var argElem)
                 && argElem != DataType.UNKNOWN)
@@ -10141,7 +10142,31 @@ public partial class IRGenerator
         // === FAST PATH: write element at offset 2 + len * elemSize ===
         Emit(new Label(fastLabel));
 
-        Val elemVal = VisitExpression(valExpr);
+        // `bins.append([pulse, 1])`: a literal argument has no value position
+        // of its own -- materialize it into a heap object the payload can point
+        // at. This runs after the grow: the literal's own gc_alloc may collect,
+        // and listVar (a named root) is where the new address lands.
+        Val elemVal;
+        if (valExpr is ListExpr appendLit)
+        {
+            Variable litVar = MaterializeSequenceLiteral(appendLit.Elements,
+                listInnerElemTypes.TryGetValue(listVar.Name, out var litDecl)
+                    && litDecl != DataType.UNKNOWN ? litDecl : null, valExpr);
+            listInnerElemTypes[listVar.Name] = listVarElemTypes[litVar.Name];
+            elemVal = litVar;
+        }
+        else if (valExpr is TupleExpr appendTup)
+        {
+            Variable litVar = MaterializeSequenceLiteral(appendTup.Elements,
+                listInnerElemTypes.TryGetValue(listVar.Name, out var litDecl)
+                    && litDecl != DataType.UNKNOWN ? litDecl : null, valExpr);
+            listInnerElemTypes[listVar.Name] = listVarElemTypes[litVar.Name];
+            elemVal = litVar;
+        }
+        else
+        {
+            elemVal = VisitExpression(valExpr);
+        }
         Temporary appendAddr = EmitElemAddr(listVar, tmpLen, elemSize);
         Emit(new StoreIndirect(elemVal, appendAddr, elemDt));
 

@@ -165,6 +165,16 @@ public partial class IRGenerator
                 var rt = InferExprType(bin.Right);
                 return (DataType)Math.Max((int)lt, (int)rt);
             }
+            case IndexExpr ix when ix.Target is VariableExpr ixv:
+            {
+                // `xs[0]` inside a literal: the element type of the indexed list is
+                // the read's type -- `[p[0], 0]` infers uint16, not the uint8 a
+                // missed lookup would default to.
+                string ixKey = ResolveListVarQualified(ixv.Name);
+                if (ixKey.Length > 0 && listVarElemTypes.TryGetValue(ixKey, out var ixElem))
+                    return ixElem;
+                break;
+            }
         }
 
         return DataType.UINT8;

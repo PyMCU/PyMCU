@@ -339,6 +339,31 @@ public partial class IRGenerator
                     Emit(new Copy(emptyPtr, new Variable(listKey, DataType.GC_REF)));
                     return;
                 }
+
+                // `bins = [[pulses[0], 0]]`: an element that is itself a literal
+                // cannot flatten into a `bins__0` slot -- a slot answers only a
+                // compile-time index, and `bins[b]` behind a run-time `b` is a
+                // real dereference. Materialize the whole literal as a heap
+                // list of lists; the element type infers from the elements.
+                if (seqElements.Any(e => e is ListExpr or TupleExpr))
+                {
+                    string listKey = seqKey;
+                    if (!string.IsNullOrEmpty(currentFunction)
+                        && string.IsNullOrEmpty(currentInlinePrefix)
+                        && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
+                    {
+                        listKey = currentModulePrefix + seqTgt.Name;
+                        mutableGlobals[listKey] = DataType.GC_REF;
+                    }
+
+                    Variable litVar = MaterializeSequenceLiteral(seqElements, null, stmt.Value);
+                    listVarElemTypes[listKey] = listVarElemTypes[litVar.Name];
+                    if (listInnerElemTypes.TryGetValue(litVar.Name, out var litInner))
+                        listInnerElemTypes[listKey] = litInner;
+                    variableTypes[listKey] = DataType.GC_REF;
+                    Emit(new Copy(litVar, new Variable(listKey, DataType.GC_REF)));
+                    return;
+                }
             }
         }
 
@@ -5632,7 +5657,26 @@ public partial class IRGenerator
                     return;
                 }
             }
-            Val val = EvalOptionalCarry(stmt.Init);
+            // `v: list = [[..]]`: a nested literal element has no value position of
+            // its own -- materialize the whole literal into heap objects the way
+            // the unannotated `v = [[..]]` assign does, then let the declared name
+            // take the literal's registrations below.
+            Val val;
+            List<Expression>? vdLitElems = stmt.Init switch
+            {
+                ListExpr vdle => vdle.Elements,
+                TupleExpr vdtup => vdtup.Elements,
+                _ => null,
+            };
+            if (stmt.VarType is "list" or "tuple" && vdLitElems != null
+                && vdLitElems.Any(e => e is ListExpr or TupleExpr))
+            {
+                val = MaterializeSequenceLiteral(vdLitElems, null, stmt.Init);
+            }
+            else
+            {
+                val = EvalOptionalCarry(stmt.Init);
+            }
 
             // `v: list = <init>` -- the bare container annotation takes its element
             // type from the value, so the value must be a run-time list: a list
@@ -7024,8 +7068,18 @@ public partial class IRGenerator
             else if (stmt.Value is ListExpr le)
             {
                 initElements = new List<Val>();
+                listInnerElemTypes.TryGetValue(qualified, out var declaredInner);
                 foreach (var e in le.Elements)
-                    initElements.Add(VisitExpression(e));
+                    // `bins: list[list[uint16]] = [[p, 0]]`: a literal element has no
+                    // value position of its own -- materialize it into its own heap
+                    // object so the outer payload stores a real pointer.
+                    initElements.Add(e is ListExpr innerLit
+                        ? MaterializeSequenceLiteral(innerLit.Elements,
+                            declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
+                        : e is TupleExpr innerTup
+                        ? MaterializeSequenceLiteral(innerTup.Elements,
+                            declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
+                        : VisitExpression(e));
                 if (le.Elements.Count > capacity) capacity = le.Elements.Count;
             }
 
