@@ -2304,6 +2304,12 @@ public partial class IRGenerator
               // happens at the body walk. See #227 and the note on the field.
               CallerSourcePath = currentSourcePath });
 
+        // The callee's body joins this function's optional-capable precompute: an
+        // `x = None` inside an inline expansion is still a runtime-optional name,
+        // and the caller's own body scan never saw it (the set holds source
+        // names, so the expansion's qualified locals match through SourcePartOf).
+        CollectOptionalCapable(func.Body.Statements, optionalCapable);
+
         var boundParams = new HashSet<int>();
 
         // Too MANY positional arguments used to be dropped on the floor: the loop below simply
@@ -4252,6 +4258,10 @@ public partial class IRGenerator
             EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath,
             FinallyDepth = finallyStack.Count };
         inlineStack.Add(superCtx);
+
+        // Same optional-capable scan the plain inline path runs: the base method's
+        // `x = None` locals are runtime-optional names this expansion must tag.
+        CollectOptionalCapable(funcSuper.Body.Statements, optionalCapable);
 
         // The base method's body is text in the file that method is DEFINED in, which is not
         // the file the `super().m()` / `Base.m(self)` call is written in. Without the switch

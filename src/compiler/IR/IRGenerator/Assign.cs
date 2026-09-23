@@ -286,6 +286,18 @@ public partial class IRGenerator
             // in how the elements are stored and not in what the name is.
             NoteSequenceMutability(seqKey, seqTgt.Name, isTuple: stmt.Value is TupleExpr);
 
+            // `x = []` is a definite-value write: the noneValued record a prior
+            // `x = None` left has to clear for ANY name -- the list paths below
+            // all return early, so EmitScalarVarAssign's clear never sees this
+            // assignment (`received = None` then `received = []` in
+            // `_read_pulses_non_blocking` returned the built list with a
+            // constant None tag). A name that is also optional-capable gets the
+            // member-0 tag emitted alongside the payload.
+            noneValuedNames.Remove(seqKey);
+            if (IsOptionalCapableName(seqKey, seqTgt.Name))
+                EmitOptionalTagWrite(new Variable(seqKey, DataType.GC_REF),
+                    stmt.Value, new Constant(0));
+
             if (seqElements.Count is > 0 and <= ConstSequenceUnrollLimit
                 && seqElements.All(e => TryFoldConstElement(e, out _)))
             {
