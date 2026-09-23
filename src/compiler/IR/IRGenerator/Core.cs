@@ -592,7 +592,10 @@ public partial class IRGenerator
             }
 
             if (imp.WasStarImport)
+            {
+                CheckIntrospectionBinding("", imp, StarImportExpander.Star);
                 starImports.Add((imp.ModuleName, new List<string>(imp.Symbols)));
+            }
 
             if (imp.Symbols.Count == 0)
             {
@@ -621,6 +624,7 @@ public partial class IRGenerator
 
             foreach (var sym in imp.Symbols)
             {
+                CheckIntrospectionBinding("", imp, sym);
                 string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
                 // Re-export chase: `from pymcu.hal import Pin` where hal/__init__ itself
                 // does `from pymcu.hal.gpio import Pin` must bind Pin to the DEFINING
@@ -655,8 +659,12 @@ public partial class IRGenerator
                     intrinsicNames.Add("_set_irq_zca_arg");
                 }
 
+                if (imp.WasStarImport)
+                    CheckIntrospectionBinding(modName, imp, StarImportExpander.Star);
+
                 foreach (var sym in imp.Symbols)
                 {
+                    CheckIntrospectionBinding(modName, imp, sym);
                     string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
                     // A sub-module's `from X import S` can name a symbol X only re-exports;
                     // chase it to the defining module the same way the entry file's imports
@@ -2563,6 +2571,35 @@ public partial class IRGenerator
             return perModuleAliasToOriginal.TryGetValue(OwningModulePrefix(), out var ownOrig)
                    && ownOrig.ContainsKey(name);
         return aliasToOriginal.ContainsKey(name);
+    }
+
+    /// <summary>
+    /// `from sys import platform` (and the star form that brings it in) can only bind the
+    /// compat shim's module global -- the placeholder every chip shares ("rp2" on a chip
+    /// that answers "atmega328p"). The compile-time value is substituted at the
+    /// `sys.platform` member access, a spelling this import never makes, so the bound name
+    /// would answer the wrong platform for the whole program. Refuse it; `import sys`
+    /// then `sys.platform` substitutes the real value. `from sys import implementation` is
+    /// allowed: the object the shim binds carries only `name`, which is the honest answer.
+    ///
+    /// The layer's own `usys`/`uos` files are exempt: upstream defines them literally as
+    /// `from sys import *` / `from os import *`, so their re-export of `platform` is the
+    /// mechanism the member folds sit in front of, not a leak.
+    /// </summary>
+    private void CheckIntrospectionBinding(string importingModule, ImportStmt imp, string sym)
+    {
+        string tail = importingModule.Contains('.')
+            ? importingModule[(importingModule.LastIndexOf('.') + 1)..]
+            : importingModule;
+        if (tail is "usys" or "uos" or "sys" or "os") return;
+        if (imp.ModuleName is not ("sys" or "usys")) return;
+        if (!IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib)) return;
+        if (sym is not ("platform" or "*")) return;
+        throw UserError(
+            $"'from {imp.ModuleName} import {(sym == "*" ? "*" : sym)}' would bind the compat " +
+            "shim's placeholder -- a bound name can only carry the module global, which is " +
+            $"'rp2' for every chip. Write 'import {imp.ModuleName}' and read " +
+            $"{imp.ModuleName}.platform -- the compiler substitutes the real value there.", imp);
     }
 
     /// <summary>Record `name -> module` (and its original spelling) in one module's own table.</summary>

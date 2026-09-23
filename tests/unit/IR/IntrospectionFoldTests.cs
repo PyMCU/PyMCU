@@ -170,4 +170,57 @@ public class IntrospectionFoldTests
         var ir = Gen("import uos\nbuf = bytearray(1)\nbuf[0] = 1 if \"Linux\" not in uos.uname() else 0\n");
         Assert.True(EmitsInt(ir, 1));
     }
+
+    // `from sys import platform` binds the shim's placeholder global -- 'rp2' on
+    // every chip -- so it is refused; the member spelling is the answer.
+
+    [Fact]
+    public void FromSysImportPlatform_IsRefusedAsAPlaceholderBinding()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() => Gen("from sys import platform\n"));
+        Assert.Contains("placeholder", ex.Message);
+        Assert.Contains("sys.platform", ex.Message);
+    }
+
+    [Fact]
+    public void FromUsysImportPlatform_IsRefusedTheSameWay()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() => Gen("from usys import platform\n"));
+        Assert.Contains("placeholder", ex.Message);
+    }
+
+    [Fact]
+    public void FromSysImportStar_IsRefusedForTheSameReason()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() => Gen("from sys import *\n"));
+        Assert.Contains("placeholder", ex.Message);
+    }
+
+    [Fact]
+    public void FromSysImportImplementation_IsAllowed()
+    {
+        // `implementation` binds the name-only object -- the honest answer.
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["sys"] = new Parser(new Lexer(
+                "class _Implementation:\n" +
+                "    def __init__(self):\n" +
+                "        self.name = \"micropython\"\n" +
+                "implementation = _Implementation()\n").Tokenize()).ParseProgram(),
+        };
+        var config = new DeviceConfig { Arch = "avr", Chip = "atmega328p", Stdlib = "micropython" };
+        var program = new Parser(new Lexer("from sys import implementation\n").Tokenize()).ParseProgram();
+        new ConditionalCompilator(config).Process(program);
+        new IRGenerator().Generate(program, mods, config); // must not throw
+    }
+
+    [Fact]
+    public void FromSysImportPlatform_NoStdlib_DoesNotRaiseThePlaceholderError()
+    {
+        // With no compat layer declared, sys is the project's own module: whatever
+        // the program does wrong there is not this refusal.
+        var act = () => Gen("from sys import platform\n", stdlib: "");
+        var ex = Record.Exception(act);
+        Assert.True(ex == null || !ex.Message.Contains("placeholder"));
+    }
 }
