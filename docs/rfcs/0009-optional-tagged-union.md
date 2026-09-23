@@ -1,9 +1,14 @@
 # RFC 0009: Optional[T] and Union returns as a tagged union -- one tag byte, only when None-ness is a run-time fact
 
-- Status: **IMPLEMENTED (Phase 1)**. `-> Optional[X]` / `-> Union[X, None]` on real
+- Status: **IMPLEMENTED (Phases 1 and 3)**. `-> Optional[X]` / `-> Union[X, None]` on real
   subroutines and locals carry the payload plus one tag byte as specified here; the
-  readers, narrowing and the decision-5 diagnostic are in. Fields, real-subroutine
-  parameters and multi-member unions remain phases 2 and 3.
+  readers, narrowing and the decision-5 diagnostic are in. Phase 3 adds
+  `-> Union[A, B, ...]` member lists (up to four members, `None` anywhere in the list,
+  `A | B` spellings included): the payload is the widest member's storage, the tag
+  reports the member index, `isinstance(r, T)`/`match` dispatch on it, and
+  compile-time-decidable unions keep byte-identical code. Union-typed fields carry a
+  flattened payload plus a tag sibling. Optional fields and real-subroutine
+  parameters remain phase 2.
   Measurements: `docs/rfcs/0009-measurement-2026-09-21.json`; the GAS snippets and the
   avr8sharp harness live on branch `rescue/optional-proto` under `proto/optional-tag/`
   and are never merged into this branch.

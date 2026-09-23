@@ -501,9 +501,12 @@ A `return None` on a reached path of a function declared `-> X` (no `None` membe
 refused in one sentence at the line it is written on, in an `@inline` expansion and in a
 plain `def` compiled as a shared subroutine alike -- the outlined path used to leave `ret`
 holding whatever the register happened to hold. A `return None` on a path the caller cannot
-reach is not refused, because the guard that excludes it folds first. Optional FIELDS and
-Optional PARAMETERS on real subroutines are phase 2, and `Union[A, B]` of two payload types
-on a return is phase 3; the tag machinery is the same, the storage questions are theirs.
+reach is not refused, because the guard that excludes it folds first. Optional PARAMETERS
+on real subroutines are phase 2; `Union[A, B, ...]` returns and union-typed fields are
+phase 3, implemented: the tag carries the member index, the payload is the widest
+member's storage, `isinstance`/`match` dispatch on it, and union members are still
+limited to scalar storage types (a `list`/`tuple`/array or class member is refused at
+the annotation, as is a union of more than four members).
 
 **A `Union` of two REAL types on a PARAMETER** of an `@inline`-expanded function or method
 (a constructor included -- every ZCA instance is built at its own call site) reads the same
