@@ -757,9 +757,16 @@ public partial class IRGenerator
         if (gcRefs.Count > 0)
         {
             var annotated = new List<Instruction>();
-            // Prologue: push each GC_REF local onto the shadow stack.
+            // Prologue: push each GC_REF local onto the shadow stack, then null the
+            // slot. The slot's first real store may be much later in the body, and
+            // the mark phase reads every rooted slot -- an uninitialised slot can
+            // hold a garbage value that lands inside [heap_start, heap_top) and is
+            // marked as a live object, desynchronising compaction.
             foreach (var gcRef in gcRefs)
+            {
                 annotated.Add(new GcRoot(gcRef));
+                annotated.Add(new Copy(new Constant(0), gcRef));
+            }
             // Body: insert GcUnroot before every Return.
             foreach (var instr in currentInstructions)
             {
