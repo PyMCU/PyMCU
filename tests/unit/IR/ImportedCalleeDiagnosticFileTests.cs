@@ -99,9 +99,11 @@ public class ImportedCalleeDiagnosticFileTests
         Assert.Equal(12, ex.Column);
     }
 
-    // `yield` in a method is refused by AsyncTransform, which runs on a bare ProgramNode
-    // before the scan exists: the error kept the module's line and fell back to the entry
-    // file's name. The diagnostic names the METHOD, whose def is at gen.py line 3.
+    // `yield` inside `try` in a method is refused by AsyncTransform, which runs on a bare
+    // ProgramNode before the scan exists: the error kept the module's line and fell back to
+    // the entry file's name. The refusal points at the yield itself, at gen.py line 5.
+    // (A bare `yield` in a method compiles since RFC 0011 phase 1; the `try` around it is
+    // the shape that stays refused.)
     [Fact]
     public void AYieldInsideAnImportedMethod_NamesTheFileThatDefinesIt()
     {
@@ -113,11 +115,14 @@ public class ImportedCalleeDiagnosticFileTests
              "from pymcu.types import uint8\n" +
              "class Decoder:\n" +
              "    def read(self, n: uint8) -> uint8:\n" +
-             "        yield n\n"));
+             "        try:\n" +
+             "            yield n\n" +
+             "        except Exception:\n" +
+             "            pass\n"));
 
         Assert.Equal("/proj/src/gen.py", ex.File);
-        Assert.Equal(3, ex.Line);
-        Assert.Equal(5, ex.Column);
+        Assert.Equal(5, ex.Line);
+        Assert.Equal(13, ex.Column);
     }
 
     // A module the loader has no path for cannot be named. Falling back to the entry file
@@ -130,7 +135,10 @@ public class ImportedCalleeDiagnosticFileTests
             ["gen"] = new Parser(new Lexer(
                 "class Decoder:\n" +
                 "    def read(self):\n" +
-                "        yield 1\n").Tokenize()).ParseProgram(),
+                "        try:\n" +
+                "            yield 1\n" +
+                "        except Exception:\n" +
+                "            pass\n").Tokenize()).ParseProgram(),
         };
 
         var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => new IRGenerator().Generate(

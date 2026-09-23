@@ -29,14 +29,14 @@ public class GeneratorSurfaceDiagnosticTests
     }
 
     // ── a generator written as a method ──────────────────────────────────────────
-    // Only `prog.Functions` is scanned for `yield`, so a method never became a generator and
-    // `for v in s.items()` fell through to the for-in lowering, which answered with a list of
-    // iterable kinds that never mentions generators or methods.
+    // Phase 1 of RFC 0011: a method that yields lowers to a machine class namespaced under
+    // its class (`C.read` -> `C_read`) whose `__init__` keeps the receiver as the first
+    // field. The method itself leaves the class body.
 
     [Fact]
-    public void AGeneratorMethodIsRefusedAtItsDefinition()
+    public void AGeneratorMethodLowersToAMachineClass()
     {
-        var msg = TransformError("""
+        var ast = new Parser(new Lexer("""
             from pymcu.types import uint8
 
             class Source:
@@ -48,29 +48,132 @@ public class GeneratorSurfaceDiagnosticTests
                     while i < self.n:
                         yield i
                         i = i + 1
-            """);
+            """).Tokenize()).ParseProgram();
+        AsyncTransform.TransformProgram(ast);
 
-        msg.Should().Contain("items").And.Contain("Source").And.Contain("module-level");
-        msg.Should().NotContain("for-in loop iterable");
+        var machine = ast.GlobalStatements.OfType<ClassDef>()
+            .SingleOrDefault(c => c.Name == "Source_items");
+        machine.Should().NotBeNull("the method lowers to a state-machine class of its own");
+        machine!.IsGenerator.Should().BeTrue();
+        // The method is gone from the class: what remains cannot carry a raw `yield` to IR.
+        var cls = ast.GlobalStatements.OfType<ClassDef>().Single(c => c.Name == "Source");
+        ((Block)cls.Body).Statements.OfType<FunctionDef>()
+            .Should().NotContain(m => m.Name == "items");
     }
 
     [Fact]
-    public void AGeneratorMethodSaysHowToMoveItOut()
+    public void AGeneratorMethodKeepsTheReceiverAsAField()
     {
-        var msg = TransformError("""
-            from pymcu.types import uint8
-
+        var ast = new Parser(new Lexer("""
             class Source:
                 def __init__(self):
-                    self.n: uint8 = 3
+                    self.n = 3
 
                 def items(self):
                     yield self.n
+            """).Tokenize()).ParseProgram();
+        AsyncTransform.TransformProgram(ast);
+
+        var machine = ast.GlobalStatements.OfType<ClassDef>()
+            .Single(c => c.Name == "Source_items");
+        var init = ((Block)machine.Body).Statements.OfType<FunctionDef>()
+            .Single(f => f.Name == "__init__");
+        // __init__ takes `_recv` as parameter zero -- the receiver -- and stores it as a
+        // field, so `self.n` in the body reads the receiver's own slot, not a copy.
+        init.Params.Skip(1).First().Name.Should().Be("_recv");
+        bool StoresRecv(Statement s) =>
+            s is AssignStmt { Target: MemberAccessExpr { Member: "_recv" } };
+        Assert.Contains(init.Body.Statements, StoresRecv);
+        // No bare `self.n` left inside poll: the receiver reads through `self._recv`.
+        var poll = ((Block)machine.Body).Statements.OfType<FunctionDef>()
+            .Single(f => f.Name == "poll");
+        var bareSelf = AllMembers(poll.Body)
+            .Where(m => m.Object is VariableExpr { Name: "self" } && m.Member == "n");
+        bareSelf.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AForOverAGeneratorMethodConstructsTheMachine()
+    {
+        var ast = new Parser(new Lexer("""
+            class Bag:
+                def __init__(self):
+                    self.n = 3
+                def items(self):
+                    i = 0
+                    while i < self.n:
+                        yield i
+                        i = i + 1
+
+            bag = Bag()
+            for v in bag.items():
+                pass
+            """).Tokenize()).ParseProgram();
+        AsyncTransform.TransformProgram(ast);
+
+        // `for v in bag.items()` desugars to `__genN = Bag_items(bag)` + the poll loop.
+        var assigns = ast.GlobalStatements
+            .SelectMany(AllStatements)
+            .OfType<AssignStmt>()
+            .Where(a => a.Value is CallExpr { Callee: VariableExpr { Name: "Bag_items" } });
+        bool PassesTheReceiver(AssignStmt a) =>
+            ((CallExpr)a.Value!).Args.Count == 1
+            && ((CallExpr)a.Value!).Args[0] is VariableExpr { Name: "bag" };
+        Assert.Single(assigns.Where(PassesTheReceiver));
+    }
+
+    private static IEnumerable<Statement> AllStatements(Statement s)
+    {
+        yield return s;
+        if (s is Block b)
+            foreach (var st in b.Statements)
+            foreach (var x in AllStatements(st)) yield return x;
+        if (s is WhileStmt w)
+            foreach (var x in AllStatements(w.Body)) yield return x;
+        if (s is IfStmt i)
+        {
+            foreach (var x in AllStatements(i.ThenBranch)) yield return x;
+            foreach (var (_, eb) in i.ElifBranches)
+            foreach (var x in AllStatements(eb)) yield return x;
+            if (i.ElseBranch != null)
+                foreach (var x in AllStatements(i.ElseBranch)) yield return x;
+        }
+    }
+
+    private static IEnumerable<MemberAccessExpr> AllMembers(Statement s)
+    {
+        foreach (var st in AllStatements(s))
+        {
+            foreach (var e in st switch
+            {
+                ExprStmt es => new[] { es.Expr },
+                AssignStmt a => new Expression[] { a.Target, a.Value },
+                ReturnStmt { Value: { } rv } => new[] { rv },
+                IfStmt i => new[] { i.Condition },
+                WhileStmt w => new[] { w.Condition },
+                _ => System.Array.Empty<Expression>(),
+            })
+            {
+                if (e is MemberAccessExpr m)
+                {
+                    yield return m;
+                    if (m.Object is MemberAccessExpr inner) yield return inner;
+                }
+                if (e is CallExpr { Callee: MemberAccessExpr cm }) yield return cm;
+            }
+        }
+    }
+
+    [Fact]
+    public void AGeneratorDunderIsRefusedByName()
+    {
+        var msg = TransformError("""
+            class C:
+                def __init__(self):
+                    yield 1
             """);
 
-        // The way out is the same one the coroutine-method refusal offers: take what the body
-        // reads from `self` as an argument.
-        msg.Should().Contain("argument");
+        msg.Should().Contain("__init__").And.Contain("C").And.Contain("dunder");
     }
 
     // ── a generator written as @inline ───────────────────────────────────────────
@@ -203,10 +306,10 @@ public class GeneratorSurfaceDiagnosticTests
     }
 
     [Fact]
-    public void AYieldInsideAMethodInsideTryIsStillTheMethodRefusal()
+    public void AYieldInsideAMethodInsideTryNamesTheTry()
     {
-        // The deep finder, not ContainsYield: a `try:` around the yield did not hide the
-        // fact that what was written is a generator method.
+        // Methods are generators now, so the refusal that survives is the more specific one:
+        // the `try` around the yield, not the method holding it.
         var msg = TransformError("""
             class A:
                 def m(self):
@@ -217,7 +320,7 @@ public class GeneratorSurfaceDiagnosticTests
                         pass
             """);
 
-        msg.Should().Contain("method").And.Contain("A");
+        msg.Should().Contain("`try`");
     }
 
     [Fact]

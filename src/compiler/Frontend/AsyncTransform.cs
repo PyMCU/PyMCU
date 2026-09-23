@@ -32,7 +32,6 @@ public static class AsyncTransform
     public static void TransformProgram(ProgramNode prog)
     {
         RejectCoroutineMethods(prog);
-        RejectGeneratorMethods(prog);
         RejectInlineGenerators(prog);
         RejectAsyncGenerators(prog);
         RejectUnsupportedYieldPositions(prog);
@@ -43,6 +42,13 @@ public static class AsyncTransform
         // PENDING). Generators need no asyncio (no time source involved).
         var genFns = prog.Functions
             .Where(f => !f.IsAsync && !f.IsInline && ContainsYield(f.Body)).ToList();
+        // And a `yield` inside a class method is a generator METHOD (RFC 0011 phase 1):
+        // the same machine namespaced under its class, with the receiver kept as its
+        // first field. They count for the early return too, or a program whose only
+        // generator is a method would leave it untransformed.
+        bool hasGenMethods = prog.GlobalStatements.OfType<ClassDef>().Any(cls =>
+            !cls.IsGenerator && cls.Body is Block cb && cb.Statements.OfType<FunctionDef>()
+                .Any(m => !m.IsAsync && FirstYield(m.Body) != null));
         // A `yield from` in a function that is NOT a generator or a coroutine will never reach
         // the expansion, so it has to be named here. It happens more easily than it sounds:
         // `ContainsYield` only counts a `yield` that is a statement of its own, so
@@ -57,7 +63,7 @@ public static class AsyncTransform
                                       stray.At?.Column ?? 0, stray.At?.Length ?? 1);
         }
 
-        if (asyncFns.Count == 0 && genFns.Count == 0) return;
+        if (asyncFns.Count == 0 && genFns.Count == 0 && !hasGenMethods) return;
 
         string? alias = null;
         if (asyncFns.Count > 0)
@@ -106,11 +112,11 @@ public static class AsyncTransform
         // to hold the delegate's state machine as a field and drive it, and a nested ZCA
         // instance has no address to poll through. Expanding keeps a single flat state
         // machine -- the same thing @inline does everywhere else in this compiler.
+        var genByName = new Dictionary<string, FunctionDef>();
+        foreach (var g in genFns) genByName[g.Name] = g;
+        int yfCounter = 0;
         if (genFns.Count > 0)
         {
-            var genByName = new Dictionary<string, FunctionDef>();
-            foreach (var g in genFns) genByName[g.Name] = g;
-            int yfCounter = 0;
             foreach (var g in genFns)
                 ExpandYieldFrom(g.Body.Statements, genByName,
                     new HashSet<string> { g.Name }, ref yfCounter);
@@ -124,6 +130,14 @@ public static class AsyncTransform
                                           where.At?.Column ?? 0, where.At?.Length ?? 1);
         }
         var genNames = new HashSet<string>();
+        // Generator METHODS become machine classes of their own (`C.read` -> `C_read`,
+        // receiver kept as the first field). They run before the function transform so a
+        // name collision is diagnosed against the functions that still exist, and their
+        // machine names join genNames for the `for` desugar below.
+        var genMethods = new Dictionary<string, string>();
+        var genNeedsRecv = new HashSet<string>();
+        TransformGeneratorMethods(prog, genByName, ref yfCounter, genMethods, genNeedsRecv,
+            genNames);
         foreach (var fn in genFns)
         {
             prog.Functions.Remove(fn);
@@ -146,15 +160,38 @@ public static class AsyncTransform
             // functions are walked after, each seeded with those names and with its own local
             // bindings on top; a local `G = something_else` shadows the global inside that
             // function, because the walk removes a name on any other assignment to it.
-            var moduleBound = new HashSet<string>();
+            var moduleBound = new Dictionary<string, string>();
+            var moduleRecv = new Dictionary<string, string>();
+            var classNames = new HashSet<string>(
+                prog.GlobalStatements.OfType<ClassDef>().Select(c => c.Name));
             foreach (var gs in prog.GlobalStatements)
                 if (gs is AssignStmt { Target: VariableExpr gt } ga
-                    && ga.Value is CallExpr { Callee: VariableExpr gfn } && genNames.Contains(gfn.Name))
-                    moduleBound.Add(gt.Name);
+                    && ga.Value is CallExpr { Callee: VariableExpr callee })
+                {
+                    if (genNames.Contains(callee.Name)) moduleBound[gt.Name] = callee.Name;
+                    else if (classNames.Contains(callee.Name)) moduleRecv[gt.Name] = callee.Name;
+                }
+            var use = new GenUse(genNames, genMethods, genNeedsRecv, classNames);
 
             foreach (var f in prog.Functions)
-                RewriteGenFors(f.Body.Statements, genNames, ref counter, moduleBound);
-            RewriteGenFors(prog.GlobalStatements, genNames, ref counter, moduleBound);
+                RewriteGenFors(f.Body.Statements, use, ref counter,
+                    new Dictionary<string, string>(moduleBound),
+                    new Dictionary<string, string>(moduleRecv), selfClass: null);
+            RewriteGenFors(prog.GlobalStatements, use, ref counter, moduleBound, moduleRecv,
+                selfClass: null);
+            // Method bodies are consumption sites too: `for x in self.read()` inside a
+            // method of class C resolves `self` to C, and `for x in d.read()` uses the
+            // same `d = C(...)` binding tracking as everywhere else. Machine classes are
+            // skipped: a `for` over another generator inside a poll() state is the
+            // pipeline shape, which stays refused by the splitter's own diagnostic.
+            foreach (var cls in prog.GlobalStatements.OfType<ClassDef>())
+            {
+                if (cls.IsGenerator || cls.Body is not Block cb) continue;
+                foreach (var m in cb.Statements.OfType<FunctionDef>())
+                    RewriteGenFors(m.Body.Statements, use, ref counter,
+                        new Dictionary<string, string>(moduleBound),
+                        new Dictionary<string, string>(moduleRecv), cls.Name);
+            }
         }
 
         if (tasks.Count > 0) EmitTaskSet(prog, alias!, tasks);
@@ -178,30 +215,119 @@ public static class AsyncTransform
     //
     // See PyMCU/PyMCU#110 for the measurements.
     /// <summary>
-    /// A `yield` inside a method. Only `prog.Functions` is scanned for generators, so a method
-    /// kept its `yield` all the way to the IR and the caller's `for v in s.items()` answered
-    /// with the list of iterable kinds `for` knows -- a message that names neither generators
-    /// nor methods, and reads as though the call site were at fault.
+    /// A generator written as a METHOD lowers to the same state-machine class a module-level
+    /// generator does, namespaced under its class (`C.read` -> class `C_read`), with the
+    /// receiver kept as the machine's first field: `__init__` takes `_recv` as parameter
+    /// zero and the body's `self` is renamed to it, so `self.x` inside the method reads
+    /// `self._recv.x` -- the receiver's own slot, not a copy. That is exactly the path a
+    /// module-level generator already uses for a parameter holding an instance, measured
+    /// to write through correctly (including mutating calls on a nested instance field).
+    ///
+    /// `for x in obj.read()` then desugars to `__gen = C_read(obj)` plus the usual poll
+    /// loop -- see RewriteGenFors, which resolves `obj`'s class from its `obj = C(...)`
+    /// binding the same way bound generator names are tracked.
     /// </summary>
-    private static void RejectGeneratorMethods(ProgramNode prog)
+    private static void TransformGeneratorMethods(ProgramNode prog,
+        Dictionary<string, FunctionDef> genByName, ref int yfCounter,
+        Dictionary<string, string> genMethods, HashSet<string> needsRecv,
+        HashSet<string> genNames)
     {
-        foreach (var cls in prog.GlobalStatements.OfType<ClassDef>())
+        // ToList: the transform appends machine classes to GlobalStatements as it walks it.
+        foreach (var cls in prog.GlobalStatements.OfType<ClassDef>().ToList())
         {
+            if (cls.IsGenerator) continue;
             if (cls.Body is not Block body) continue;
-            foreach (var m in body.Statements.OfType<FunctionDef>())
+            for (int i = body.Statements.Count - 1; i >= 0; i--)
             {
-                // FirstYield, not ContainsYield: a `yield` inside `try`/`with`/`match` in a
-                // method is still a generator method, and the shallow walk let it reach the
-                // IR as a bare VisitYield error.
+                if (body.Statements[i] is not FunctionDef m) continue;
                 if (m.IsAsync || FirstYield(m.Body) == null) continue;
-                throw new SyntaxError(
-                    $"`yield` in method '{m.Name}' of class '{cls.Name}': a generator has to be a "
-                    + "module-level function today, because it lowers to a state-machine class of "
-                    + "its own and a method has no place to keep one. Move it out of the class and "
-                    + "pass what the body reads from `self` as an argument: `def "
-                    + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
-                        .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
-                    m.Line, m.Column, m.Length);
+
+                // Kinds of method a machine class cannot stand in for, refused by name.
+                if (m.IsClassMethod)
+                    throw new SyntaxError(
+                        $"`yield` in @classmethod '{m.Name}' of class '{cls.Name}': @classmethod " +
+                        "is expanded at each call site and a generator needs a state machine " +
+                        "of its own, so the two cannot be combined. Use a plain method (the " +
+                        "receiver becomes the machine's first field) or a module-level function.",
+                        m.Line, m.Column, m.Length);
+                if (m.IsPropertyGetter || m.IsPropertySetter)
+                    throw new SyntaxError(
+                        $"`yield` in @property '{m.PropertyName}' of class '{cls.Name}': a " +
+                        "property is read as a field, and a generator has to be called to " +
+                        "start its machine. Make it a named method instead.",
+                        m.Line, m.Column, m.Length);
+                if (m.IsInterrupt)
+                    throw new SyntaxError(
+                        $"`yield` in interrupt handler '{m.Name}' of class '{cls.Name}': an " +
+                        "interrupt runs to completion on hardware -- it cannot suspend.",
+                        m.Line, m.Column, m.Length);
+                if (m.IsOutline)
+                    throw new SyntaxError(
+                        $"`yield` in @outline method '{m.Name}' of class '{cls.Name}': @outline " +
+                        "shares one subroutine between instances, and a generator needs a state " +
+                        "machine of its own. Remove `@outline`.",
+                        m.Line, m.Column, m.Length);
+                if (m.Name.Length >= 4 && m.Name.StartsWith("__") && m.Name.EndsWith("__"))
+                    throw new SyntaxError(
+                        $"`yield` in method '{m.Name}' of class '{cls.Name}': a dunder is called " +
+                        "through the object protocol, and a generator lowers to a class the " +
+                        "protocol does not drive. Give the body a named method instead.",
+                        m.Line, m.Column, m.Length);
+                if (m.IsInline)
+                    throw new SyntaxError(
+                        $"`@inline` method '{m.Name}' of class '{cls.Name}' contains `yield`. " +
+                        "@inline expands into each call site, and a generator needs a state " +
+                        "machine of its own to suspend in, so the two cannot be combined. " +
+                        $"Remove `@inline` from '{m.Name}' to make it a generator method.",
+                        m.Line, m.Column, m.Length);
+
+                // `yield from` inside a method expands exactly as at module level: the
+                // delegate's body is spliced in with its locals renamed, before the split.
+                ExpandYieldFrom(m.Body.Statements, genByName,
+                    new HashSet<string> { cls.Name + "." + m.Name }, ref yfCounter);
+                if (DelegateYieldPosition(m.Body.Statements) is { } where)
+                    throw new SyntaxError(where.Message, where.Line,
+                                          where.At?.Column ?? 0, where.At?.Length ?? 1);
+
+                string machine = cls.Name + "_" + m.Name;
+                if (prog.Functions.Any(f => f.Name == machine) || genNames.Contains(machine))
+                    throw new SyntaxError(
+                        $"`yield` in method '{m.Name}' of class '{cls.Name}': the generator " +
+                        $"lowering needs the name '{machine}' for the state-machine class, " +
+                        "and a definition with that name already exists. Rename the method " +
+                        "or the colliding definition.", m.Line, m.Column, m.Length);
+
+                // The first parameter of a method is its receiver whatever it is called
+                // (PyMCU has no visible @staticmethod marker -- the parser ignores it, so a
+                // method with no leading receiver simply has no `self` to rename). Params[0]
+                // is renamed to `_recv`, which Phase C then promotes to the `self._recv`
+                // field like any other parameter.
+                bool hasRecv = m.Params.Count > 0;
+                var newParams = new List<Param>();
+                Block newBody = m.Body;
+                if (hasRecv)
+                {
+                    string recvName = m.Params[0].Name;
+                    newParams.Add(new Param("_recv", ""));
+                    newParams.AddRange(m.Params.Skip(1));
+                    newBody = new Block();
+                    foreach (var st in m.Body.Statements)
+                        newBody.Statements.Add(RenameReceiver.Rename(st, recvName));
+                    needsRecv.Add(machine);
+                }
+                else newParams.AddRange(m.Params);
+
+                var mfn = new FunctionDef(machine, newParams, m.ReturnType, newBody)
+                {
+                    ReturnMembers = m.ReturnMembers,
+                    Line = m.Line, Column = m.Column,
+                };
+                var genClass = TransformFunction(mfn, asyncioAlias: null);
+                genClass.IsGenerator = true;
+                prog.GlobalStatements.Add(genClass);
+                body.Statements.RemoveAt(i);
+                genMethods[cls.Name + "." + m.Name] = machine;
+                genNames.Add(machine);
             }
         }
     }
@@ -262,6 +388,18 @@ public static class AsyncTransform
         {
             if (fn.IsAsync) continue;   // any yield there is the async-generator refusal above
             RejectUnsupportedYieldPositions(fn.Body, fn.Name);
+        }
+        // Methods as well: a `yield` inside `try`/`with`/`match` in a method gets the
+        // container's refusal, not the generic method one -- the more specific message
+        // is the better one, and it must fire before the method transform below.
+        foreach (var cls in prog.GlobalStatements.OfType<ClassDef>())
+        {
+            if (cls.Body is not Block cb) continue;
+            foreach (var m in cb.Statements.OfType<FunctionDef>())
+            {
+                if (m.IsAsync) continue;
+                RejectUnsupportedYieldPositions(m.Body, m.Name);
+            }
         }
     }
 
@@ -605,45 +743,122 @@ public static class AsyncTransform
     private const string SchedResult = "__pymcu_sched_r";
 
 
+    /// <summary>
+    /// Everything the `for`-over-a-generator desugar knows about a module: which names are
+    /// generator machines (`C_read` counts the same as `g`), which method calls produce one
+    /// (`"C.read" -> "C_read"`), which machines take the receiver as their first argument,
+    /// and which names are classes (so `obj = C(...)` can bind `obj` for `obj.read()`).
+    /// </summary>
+    private sealed class GenUse
+    {
+        public readonly HashSet<string> Machines;
+        public readonly Dictionary<string, string> Methods;
+        public readonly HashSet<string> NeedsRecv;
+        public readonly HashSet<string> ClassNames;
+
+        public GenUse(HashSet<string> machines, Dictionary<string, string> methods,
+                      HashSet<string> needsRecv, HashSet<string> classNames)
+        {
+            Machines = machines;
+            Methods = methods;
+            NeedsRecv = needsRecv;
+            ClassNames = classNames;
+        }
+    }
+
     /// <param name="bound">
-    /// Names already bound to a generator by an earlier `g = gen(...)`, so `for v in g:` can be
-    /// driven as well as `for v in gen():`. Carried rather than recomputed because the binding
-    /// and the loop can be in different statement lists (a module-level `G = gen()` used inside
-    /// a function), and a name rebound to anything else drops out of it again.
+    /// Names already bound to a generator by an earlier `g = gen(...)`, mapped to the machine
+    /// they hold, so `for v in g:` can be driven as well as `for v in gen():`. Carried rather
+    /// than recomputed because the binding and the loop can be in different statement lists
+    /// (a module-level `G = gen()` used inside a function), and a name rebound to anything
+    /// else drops out of it again.
     /// </param>
-    private static void RewriteGenFors(List<Statement> stmts, HashSet<string> genNames,
-                                       ref int counter, HashSet<string>? bound = null)
+    /// <param name="recv">
+    /// Names bound to a class instance by `obj = C(...)`, so `for v in obj.read()` can resolve
+    /// which class `obj` is. Same statement-order tracking as <paramref name="bound"/>: any
+    /// other assignment to the name unbinds it.
+    /// </param>
+    /// <param name="selfClass">The enclosing class when walking a method body, else null.</param>
+    private static void RewriteGenFors(List<Statement> stmts, GenUse use, ref int counter,
+        Dictionary<string, string> bound, Dictionary<string, string> recv, string? selfClass)
     {
         // Local to this list, seeded with what an outer list already knew. A generator bound
         // here must not leak into a sibling function that happens to reuse the name.
-        var boundHere = bound == null ? new HashSet<string>() : new HashSet<string>(bound);
+        bound = new Dictionary<string, string>(bound);
+        recv = new Dictionary<string, string>(recv);
         for (int i = 0; i < stmts.Count; i++)
         {
             var s = stmts[i];
 
             // `g = gen(...)` binds; `g = anything else` unbinds. Tracked in statement order so
             // a name reused for something else after the loop is not still treated as a machine.
+            // A generator METHOD call binds the same way once it is rewritten to the machine
+            // construction, and `obj = C(...)` binds the receiver `obj` for `obj.read()`.
             if (s is AssignStmt { Target: VariableExpr bt } bas)
             {
-                if (bas.Value is CallExpr { Callee: VariableExpr bfn } && genNames.Contains(bfn.Name))
-                    boundHere.Add(bt.Name);
-                else boundHere.Remove(bt.Name);
+                if (bas.Value is CallExpr { Callee: VariableExpr bfn } && use.Machines.Contains(bfn.Name))
+                {
+                    bound[bt.Name] = bfn.Name;
+                    recv.Remove(bt.Name);
+                }
+                else if (bas.Value is CallExpr { Callee: MemberAccessExpr } mcall
+                         && MethodMachineCall(mcall, use, recv, selfClass) is (true, { } mname))
+                {
+                    stmts[i] = new AssignStmt(bas.Target,
+                        MachineCall(mname, mcall, use, recv, selfClass))
+                        { Line = bas.Line, AnnotatedType = bas.AnnotatedType };
+                    bound[bt.Name] = mname;
+                    recv.Remove(bt.Name);
+                }
+                else if (bas.Value is CallExpr { Callee: VariableExpr ctor }
+                         && use.ClassNames.Contains(ctor.Name))
+                {
+                    recv[bt.Name] = ctor.Name;
+                    bound.Remove(bt.Name);
+                }
+                else
+                {
+                    bound.Remove(bt.Name);
+                    recv.Remove(bt.Name);
+                }
             }
             // Two ways in. `for v in gen()` constructs the machine as part of the loop;
             // `for v in g`, where g was bound earlier, drives the machine that already exists.
             // The loop body is identical, so only the construction differs (#51 for-in cluster).
+            // A generator METHOD call is the third way: `for v in obj.read()` resolves `obj`'s
+            // class and constructs `C_read(obj)`.
             bool iterIsCall = s is ForStmt { Iterable: CallExpr { Callee: VariableExpr cf } } cfs
-                              && genNames.Contains(cf.Name);
-            bool iterIsBoundName = s is ForStmt { Iterable: VariableExpr bv } && boundHere.Contains(bv.Name);
-            if (s is ForStmt f && (iterIsCall || iterIsBoundName))
+                              && use.Machines.Contains(cf.Name);
+            bool iterIsBoundName = s is ForStmt { Iterable: VariableExpr bv } && bound.ContainsKey(bv.Name);
+            // `for v in obj.read()`: resolve the receiver's class and build `C_read(obj)`.
+            // A member call that is NOT a generator method is left for the ordinary path --
+            // the refusal fires only when a generator method of that name exists somewhere.
+            CallExpr? call = s is ForStmt { Iterable: CallExpr iter } ? iter : null;
+            if (s is ForStmt { Iterable: CallExpr { Callee: MemberAccessExpr ma } mc })
             {
-                var call = f.Iterable as CallExpr;
+                var (resolved, mname) = MethodMachineCall(mc, use, recv, selfClass);
+                if (mname != null) call = MachineCall(mname, mc, use, recv, selfClass);
+                // The refusal is only for a receiver this walk cannot name: `for v in
+                // obj.read()` where `obj` resolves to a class whose `read` is an ordinary
+                // method belongs to the iterable check, whatever other classes call their
+                // generators.
+                else if (!resolved && use.Methods.Keys.Any(k => k.EndsWith("." + ma.Member)))
+                    throw new SyntaxError(
+                        $"`for` over generator method '{ma.Member}': cannot tell which " +
+                        $"class '{ExprText(ma.Object)}' is here. A generator method " +
+                        "needs a receiver bound as `name = ClassName(...)` (or `self`) " +
+                        "so the machine class is known at compile time.",
+                        ma.Line, ma.Column, ma.Length);
+                else call = null;
+            }
+            if (s is ForStmt f && (iterIsCall || iterIsBoundName || call != null))
+            {
                 // The machine's name: a fresh temp when the loop constructs it, and the user's
                 // own variable when it does not. Reusing the user's name is what makes the
                 // second form work at all -- the state has to be the SAME instance the earlier
                 // assignment built, or the loop would poll a fresh machine and never advance
                 // past the first value.
-                string g = iterIsCall ? "__gen" + counter : ((VariableExpr)f.Iterable).Name;
+                string g = iterIsBoundName ? ((VariableExpr)f.Iterable).Name : "__gen" + counter;
                 string r = "__gr" + counter;
                 counter++;
 
@@ -670,10 +885,10 @@ public static class AsyncTransform
                     new MemberAccessExpr(new VariableExpr(g), "_value")));
                 if (f.Body is Block fb) loop.Statements.AddRange(fb.Statements);
                 else loop.Statements.Add(f.Body);
-                RewriteGenFors(loop.Statements, genNames, ref counter, boundHere);
+                RewriteGenFors(loop.Statements, use, ref counter, bound, recv, selfClass);
 
                 var repl = new Block();
-                if (iterIsCall) repl.Statements.Add(new AssignStmt(new VariableExpr(g), call!));
+                if (!iterIsBoundName) repl.Statements.Add(new AssignStmt(new VariableExpr(g), call!));
                 repl.Statements.Add(new WhileStmt(new BooleanLiteral(true), loop));
                 stmts[i] = repl;
                 continue;
@@ -681,34 +896,230 @@ public static class AsyncTransform
             // Recurse into nested statements.
             switch (s)
             {
-                case Block b: RewriteGenFors(b.Statements, genNames, ref counter, boundHere); break;
+                case Block b: RewriteGenFors(b.Statements, use, ref counter, bound, recv, selfClass); break;
                 case IfStmt iff:
-                    RewriteGenForsIn(iff.ThenBranch, genNames, ref counter, boundHere);
-                    foreach (var (_, eb) in iff.ElifBranches) RewriteGenForsIn(eb, genNames, ref counter, boundHere);
-                    if (iff.ElseBranch != null) RewriteGenForsIn(iff.ElseBranch, genNames, ref counter, boundHere);
+                    RewriteGenForsIn(iff.ThenBranch, use, ref counter, bound, recv, selfClass);
+                    foreach (var (_, eb) in iff.ElifBranches) RewriteGenForsIn(eb, use, ref counter, bound, recv, selfClass);
+                    if (iff.ElseBranch != null) RewriteGenForsIn(iff.ElseBranch, use, ref counter, bound, recv, selfClass);
                     break;
-                case WhileStmt w: RewriteGenForsIn(w.Body, genNames, ref counter, boundHere); break;
-                case ForStmt f2: RewriteGenForsIn(f2.Body, genNames, ref counter, boundHere); break;
+                case WhileStmt w: RewriteGenForsIn(w.Body, use, ref counter, bound, recv, selfClass); break;
+                case ForStmt f2: RewriteGenForsIn(f2.Body, use, ref counter, bound, recv, selfClass); break;
                 // try/except/else/finally. Missing until now, so `for v in gen():` inside a
                 // `try` was never desugared and fell through to the generic for-in guard --
                 // a refusal naming neither generators nor the try, for a loop that compiles
                 // one line further out. A TryStmt keeps four statement LISTS rather than
                 // Blocks, which is why it needs its own arm and not RewriteGenForsIn.
                 case TryStmt t:
-                    RewriteGenFors(t.Body, genNames, ref counter, boundHere);
+                    RewriteGenFors(t.Body, use, ref counter, bound, recv, selfClass);
                     foreach (var (_, handler) in t.Handlers)
-                        RewriteGenFors(handler, genNames, ref counter, boundHere);
-                    if (t.ElseBody != null) RewriteGenFors(t.ElseBody, genNames, ref counter, boundHere);
-                    if (t.Finally != null) RewriteGenFors(t.Finally, genNames, ref counter, boundHere);
+                        RewriteGenFors(handler, use, ref counter, bound, recv, selfClass);
+                    if (t.ElseBody != null) RewriteGenFors(t.ElseBody, use, ref counter, bound, recv, selfClass);
+                    if (t.Finally != null) RewriteGenFors(t.Finally, use, ref counter, bound, recv, selfClass);
                     break;
             }
         }
     }
 
-    private static void RewriteGenForsIn(Statement s, HashSet<string> genNames, ref int counter,
-                                         HashSet<string>? bound = null)
+    // (resolved, machine) for an `obj.m(...)` call: `resolved` says the receiver's class could
+    // be named at all (bound variable, `self`, or a class name), and `machine` is set when its
+    // `m` is one of the generator methods lowered above.
+    private static (bool Resolved, string? Machine) MethodMachineCall(CallExpr call, GenUse use,
+        Dictionary<string, string> recv, string? selfClass)
     {
-        if (s is Block b) RewriteGenFors(b.Statements, genNames, ref counter, bound);
+        if (call.Callee is not MemberAccessExpr { Object: VariableExpr v } ma) return (false, null);
+        string? cls = v.Name == "self" && selfClass != null ? selfClass
+            : recv.TryGetValue(v.Name, out var rc) ? rc
+            : use.ClassNames.Contains(v.Name) ? v.Name
+            : null;
+        if (cls == null) return (false, null);
+        return (true, use.Methods.TryGetValue(cls + "." + ma.Member, out var m) ? m : null);
+    }
+
+    // `C_m(<receiver?>, <args>)`: the receiver is prepended only for a bound-variable or `self`
+    // receiver -- a class-name call `S.m(a)` already carries the receiver positionally (the
+    // first argument fills `_recv`, matching Python's `S.m(s)`), and a no-receiver machine
+    // takes the arguments as they are.
+    private static CallExpr MachineCall(string machine, CallExpr call, GenUse use,
+        Dictionary<string, string> recv, string? selfClass)
+    {
+        var ma = (MemberAccessExpr)call.Callee;
+        var args = new List<Expression>();
+        if (ma.Object is VariableExpr v
+            && (v.Name == "self" && selfClass != null || recv.ContainsKey(v.Name))
+            && use.NeedsRecv.Contains(machine))
+            args.Add(ma.Object);
+        args.AddRange(call.Args);
+        return new CallExpr(new VariableExpr(machine), args) { Line = call.Line, Column = call.Column };
+    }
+
+    private static string ExprText(Expression e) => e switch
+    {
+        VariableExpr v => v.Name,
+        MemberAccessExpr m => ExprText(m.Object) + "." + m.Member,
+        CallExpr c => ExprText(c.Callee) + "(...)",
+        _ => "the receiver expression",
+    };
+
+    private static void RewriteGenForsIn(Statement s, GenUse use, ref int counter,
+        Dictionary<string, string> bound, Dictionary<string, string> recv, string? selfClass)
+    {
+        if (s is Block b) RewriteGenFors(b.Statements, use, ref counter, bound, recv, selfClass);
+    }
+
+    /// <summary>
+    /// Renames a method's receiver parameter (usually `self`) to `_recv` through its body, so
+    /// the machine transform can keep the receiver as an ordinary parameter -- Phase C then
+    /// promotes it to the `self._recv` field and `self.x` reads `self._recv.x`. Nested
+    /// `def`/`class` scopes are not entered: their `self` belongs to the nested function,
+    /// not to this receiver.
+    /// </summary>
+    private static class RenameReceiver
+    {
+        public static Statement Rename(Statement s, string from)
+        {
+            switch (s)
+            {
+                case ExprStmt es: return new ExprStmt(E(es.Expr, from)) { Line = es.Line };
+                case AssignStmt a:
+                    return new AssignStmt(E(a.Target, from), E(a.Value, from))
+                        { Line = a.Line, AnnotatedType = a.AnnotatedType };
+                case VarDecl vd:
+                    return new VarDecl(vd.Name, vd.VarType, vd.Init == null ? null : E(vd.Init, from))
+                        { Line = vd.Line, UnionMembers = vd.UnionMembers };
+                case AnnAssign an:
+                    return new AnnAssign(an.Target, an.Annotation,
+                        an.Value == null ? null : E(an.Value, from))
+                        { Line = an.Line, UnionMembers = an.UnionMembers };
+                case AugAssignStmt ag:
+                    return new AugAssignStmt(E(ag.Target, from), ag.Op, E(ag.Value, from))
+                        { Line = ag.Line };
+                case TupleUnpackStmt tu:
+                    return new TupleUnpackStmt(tu.Targets, E(tu.Value, from), tu.StarredIndex)
+                        { Line = tu.Line };
+                case ReturnStmt r:
+                    return r.Value == null ? r : new ReturnStmt(E(r.Value, from)) { Line = r.Line };
+                case AssertStmt ast:
+                    return new AssertStmt(E(ast.Condition, from), ast.Message) { Line = ast.Line };
+                case RaiseStmt rs:
+                    return new RaiseStmt(rs.ErrorType, rs.Message, rs.MessageName,
+                        rs.MessageExpr == null ? null : E(rs.MessageExpr, from)) { Line = rs.Line };
+                case Block b:
+                {
+                    var nb = new Block();
+                    foreach (var st in b.Statements) nb.Statements.Add(Rename(st, from));
+                    return nb;
+                }
+                case IfStmt i:
+                    return new IfStmt(E(i.Condition, from), Rename(i.ThenBranch, from),
+                        i.ElifBranches.Select(e => (E(e.Condition, from), Rename(e.Body, from))).ToList(),
+                        i.ElseBranch == null ? null : Rename(i.ElseBranch, from)) { Line = i.Line };
+                case WhileStmt w:
+                    return new WhileStmt(E(w.Condition, from), Rename(w.Body, from)) { Line = w.Line };
+                case ForStmt f:
+                    return f.Iterable != null
+                        ? new ForStmt(f.VarName, E(f.Iterable, from), Rename(f.Body, from))
+                            { Var2Name = f.Var2Name, Line = f.Line }
+                        : new ForStmt(f.VarName,
+                            f.RangeStart == null ? null : E(f.RangeStart, from),
+                            f.RangeStop == null ? null : E(f.RangeStop, from),
+                            f.RangeStep == null ? null : E(f.RangeStep, from),
+                            Rename(f.Body, from)) { Var2Name = f.Var2Name, Line = f.Line };
+                case TryStmt t:
+                {
+                    var nt = new TryStmt(
+                        t.Body.Select(x => Rename(x, from)).ToList(),
+                        t.Handlers.Select(h => (h.ExnType,
+                            h.Handler.Select(x => Rename(x, from)).ToList())).ToList(),
+                        t.Finally?.Select(x => Rename(x, from)).ToList(),
+                        t.ElseBody?.Select(x => Rename(x, from)).ToList())
+                        { Line = t.Line };
+                    foreach (var n in t.HandlerNames) nt.HandlerNames.Add(n);
+                    return nt;
+                }
+                case WithStmt wi:
+                    return new WithStmt(E(wi.ContextExpr, from), wi.AsName,
+                        Rename(wi.Body, from)) { Line = wi.Line };
+                case MatchStmt m:
+                {
+                    foreach (var br in m.Branches)
+                    {
+                        if (br.Guard != null) br.Guard = E(br.Guard, from);
+                        if (br.Pattern != null) br.Pattern = E(br.Pattern, from);
+                        if (br.Body != null) br.Body = Rename(br.Body, from);
+                    }
+                    return new MatchStmt(E(m.Target, from), m.Branches) { Line = m.Line };
+                }
+                // A nested def/class/lambda opens a scope of its own: its `self` is the nested
+                // function's parameter (or a closure over this receiver), not this receiver.
+                default: return s;
+            }
+        }
+
+        private static Expression E(Expression e, string from)
+        {
+            switch (e)
+            {
+                case VariableExpr v: return v.Name == from ? new VariableExpr("_recv") : v;
+                case BinaryExpr b:
+                    return new BinaryExpr(E(b.Left, from), b.Op, E(b.Right, from));
+                case UnaryExpr u: return new UnaryExpr(u.Op, E(u.Operand, from));
+                case CallExpr c:
+                    return new CallExpr(E(c.Callee, from), c.Args.Select(x => E(x, from)).ToList());
+                case MemberAccessExpr m:
+                    return new MemberAccessExpr(E(m.Object, from), m.Member);
+                case IndexExpr ix: return new IndexExpr(E(ix.Target, from), E(ix.Index, from));
+                case SliceExpr sx:
+                    return new SliceExpr(sx.Start == null ? null : E(sx.Start, from),
+                        sx.Stop == null ? null : E(sx.Stop, from),
+                        sx.Step == null ? null : E(sx.Step, from));
+                case TernaryExpr t:
+                    return new TernaryExpr(E(t.TrueVal, from), E(t.Condition, from),
+                        E(t.FalseVal, from));
+                case KeywordArgExpr kw: return new KeywordArgExpr(kw.Key, E(kw.Value, from));
+                case StarArgExpr sa: return new StarArgExpr(E(sa.Value, from));
+                case DoubleStarArgExpr ds: return new DoubleStarArgExpr(E(ds.Value, from));
+                case TupleExpr tu:
+                    return new TupleExpr(tu.Elements.Select(x => E(x, from)).ToList());
+                case ListExpr le:
+                    return new ListExpr(le.Elements.Select(x => E(x, from)).ToList());
+                case SetExpr se:
+                    return new SetExpr(se.Elements.Select(x => E(x, from)).ToList());
+                case DictExpr de:
+                    return new DictExpr(de.Entries.Select(kv =>
+                        (E(kv.Key, from), E(kv.Value, from))).ToList());
+                case FStringExpr fs:
+                {
+                    var parts = fs.Parts.Select(p => new FStringPart
+                    {
+                        IsExpr = p.IsExpr, Text = p.Text,
+                        Expr = p.Expr == null ? null : E(p.Expr, from),
+                        FormatSpec = p.FormatSpec,
+                    }).ToList();
+                    return new FStringExpr(parts);
+                }
+                case ListCompExpr lc:
+                    return new ListCompExpr(E(lc.Element, from), lc.VarName,
+                        E(lc.Iterable, from), lc.Var2Name,
+                        lc.Iterable2 == null ? null : E(lc.Iterable2, from),
+                        lc.Filter == null ? null : E(lc.Filter, from));
+                case GeneratorExpr ge:
+                    return new GeneratorExpr(E(ge.Element, from), ge.VarName,
+                        E(ge.Iterable, from), ge.Var2Name,
+                        ge.Iterable2 == null ? null : E(ge.Iterable2, from),
+                        ge.Filter == null ? null : E(ge.Filter, from));
+                case WalrusExpr wz: return new WalrusExpr(wz.VarName, E(wz.Value, from));
+                case AwaitExpr aw: return new AwaitExpr(E(aw.Operand, from));
+                case YieldExpr y:
+                    return new YieldExpr(y.Value == null ? null : E(y.Value, from), y.IsDelegate);
+                case LambdaExpr lm:
+                    // A lambda whose own parameter list covers `self` shadows it; anything
+                    // else captures the receiver like a nested def does not get to.
+                    return lm.Params.Any(p => p.Name == from)
+                        ? lm
+                        : new LambdaExpr(lm.Params, E(lm.Body, from));
+                default: return e;
+            }
+        }
     }
 
     // ── `yield from` expansion ──────────────────────────────────────────────────
