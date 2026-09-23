@@ -17,6 +17,7 @@ import os
 import shutil
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from rich.console import Console
@@ -383,9 +384,21 @@ class PyMCUCompiler:
                     errors="replace",
                     bufsize=1,
                 ) as proc:
+                    # stderr must drain WHILE stdout is being read: pymcuc writes
+                    # diagnostics there (every [Warning] line), and a volume past the
+                    # pipe's 64K buffer blocks the write, so stdout never reaches EOF
+                    # and the read below never returns -- a deadlock measured live
+                    # with PYMCU_VERIFY_IR=1 on a fixture that emits ~200 warnings.
+                    err_parts: list[str] = []
+                    def _drain_stderr() -> None:
+                        if proc.stderr:
+                            err_parts.append(proc.stderr.read())
+                    stderr_reader = threading.Thread(target=_drain_stderr, daemon=True)
+                    stderr_reader.start()
                     if proc.stdout:
                         buffered = [raw.rstrip("\r\n") for raw in proc.stdout]
-                    err_text = proc.stderr.read() if proc.stderr else ""
+                    stderr_reader.join()
+                    err_text = err_parts[0] if err_parts else ""
                     proc.wait()
 
                 needs_arena = "[NEEDS_ARENA]" in buffered
