@@ -3173,6 +3173,29 @@ public partial class IRGenerator
                 }
             }
 
+            // for v in lst[lo:hi:step]: a heap-list slice needs no copy to be iterated --
+            // rewrite to the index loop the bounds describe,
+            // `for __i in range(lo, hi, step): v = lst[__i]; <body>`, and let the range
+            // machinery take it from there (runtime bounds included). An omitted stop is
+            // len(lst), which lowers through the heap header the same call site uses.
+            if (iter is IndexExpr { Target: VariableExpr lstSliceVar, Index: SliceExpr lstSlc }
+                && !string.IsNullOrEmpty(ResolveListVarQualified(lstSliceVar.Name)))
+            {
+                string lstIdx = "__slci" + (++sliceLoopId);
+                var lstBody = new Block();
+                lstBody.Statements.Add(new AssignStmt(
+                    new VariableExpr(stmt.VarName),
+                    new IndexExpr(new VariableExpr(lstSliceVar.Name), new VariableExpr(lstIdx))));
+                if (stmt.Body is Block lstOb) lstBody.Statements.AddRange(lstOb.Statements);
+                else lstBody.Statements.Add(stmt.Body);
+                VisitStatement(new ForStmt(lstIdx,
+                    lstSlc.Start ?? new IntegerLiteral(0),
+                    lstSlc.Stop ?? new CallExpr(new VariableExpr("len"),
+                        new List<Expression> { new VariableExpr(lstSliceVar.Name) }),
+                    lstSlc.Step, lstBody));
+                return;
+            }
+
             // CPython's OLD iteration protocol is __getitem__(0), __getitem__(1), ... until
             // IndexError. PyMCU cannot stop on the exception, for the same reason it cannot run
             // __iter__/__next__ below, but it does not need to: when __len__ is a compile-time
