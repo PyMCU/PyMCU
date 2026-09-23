@@ -1815,6 +1815,17 @@ public partial class IRGenerator
             if (listInnerElemTypes.TryGetValue(valueListKey, out var innerElem))
                 listInnerElemTypes[key] = innerElem;
             variableTypes[key] = DataType.GC_REF;
+            // The bound name inherits the source's mutability class: a tuple-returning
+            // call's result must print `( ... )` and refuse `x[i] = v`, not read as
+            // a list because both happen to be heap objects.
+            // lastCallReturnTypeText is only fresh when the value IS the call's
+            // result temp -- a plain `x = otherList` must not inherit whichever
+            // annotation text the last call in the function happened to leave.
+            NoteSequenceMutability(key, varExpr.Name,
+                isTuple: IsTupleBound(valueListKey)
+                         || value is Temporary
+                            && lastCallReturnTypeText is { } wlrt
+                            && (wlrt.Contains("tuple") || wlrt.Contains("Tuple")));
             return new Variable(key, DataType.GC_REF);
         }
 
@@ -2125,6 +2136,16 @@ public partial class IRGenerator
                             mutableGlobals[moduleGlobalName] = DataType.GC_REF;
                             if (ListReturnInnerElemType(stmt.Value, value) is { } mgInner)
                                 listInnerElemTypes[moduleGlobalName] = mgInner;
+                            // `x = f()` with f declared `-> tuple`: the name is
+                            // tuple-bound even though the heap object shares a
+                            // list's shape -- the repr and indexed stores look
+                            // the mutability class up on the name itself.
+                            if (stmt.Value is CallExpr
+                                && lastCallReturnTypeText is { } mgRt
+                                && (mgRt.Contains("tuple") || mgRt.Contains("Tuple")))
+                                tupleBoundNames.Add(moduleGlobalName);
+                            else
+                                tupleBoundNames.Remove(moduleGlobalName);
                         }
 
                         target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
@@ -2151,6 +2172,16 @@ public partial class IRGenerator
                                 listVarElemTypes[qualifiedName] = listElem;
                             if (ListReturnInnerElemType(stmt.Value, value) is { } innerElem)
                                 listInnerElemTypes[qualifiedName] = innerElem;
+                            // `x = f()` with f declared `-> tuple`: the name is
+                            // tuple-bound even though the heap object shares a
+                            // list's shape -- the repr and indexed stores look
+                            // the mutability class up on the name itself.
+                            if (stmt.Value is CallExpr
+                                && lastCallReturnTypeText is { } qRt
+                                && (qRt.Contains("tuple") || qRt.Contains("Tuple")))
+                                tupleBoundNames.Add(qualifiedName);
+                            else
+                                tupleBoundNames.Remove(qualifiedName);
 
                             if (listVarElemTypes.ContainsKey(qualifiedName)) type = DataType.GC_REF;
                             else if (value is Temporary tmp) type = tmp.Type;

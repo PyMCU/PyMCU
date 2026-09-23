@@ -1620,6 +1620,15 @@ public partial class IRGenerator
                         ctx.ResultListInnerElem = retInnerElem;
                         listInnerElemTypes[ctx.ResultTemp.Name] = retInnerElem;
                     }
+                    // The result temp carries the source's mutability class too, so a
+                    // caller that prints it (or binds it to a name) sees a tuple where
+                    // the value is one -- same freshness guard as the assign path.
+                    NoteSequenceMutability(ctx.ResultTemp.Name, ctx.ResultTemp.Name,
+                        isTuple: (val is Variable rv && IsTupleBound(rv.Name))
+                                 || (val is Temporary rt && IsTupleBound(rt.Name))
+                                 || val is Temporary
+                                    && lastCallReturnTypeText is { } rlrt
+                                    && (rlrt.Contains("tuple") || rlrt.Contains("Tuple")));
                 }
 
                 if (val is Constant c && !afterUnconditionalReturn)

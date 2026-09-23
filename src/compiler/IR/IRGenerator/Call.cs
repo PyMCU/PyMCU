@@ -7558,6 +7558,44 @@ public partial class IRGenerator
         Emit(new Call(decFn, new List<Val> { tmp }, tmp));
     }
 
+    // `print(xs)` where xs is a heap list or tuple: CPython writes the bracketed,
+    // ", "-separated element repr; the scalar path showed the object pointer's
+    // decimal value instead. The object layout is count(u8), capacity(u8), then
+    // elements at 2 + i*elemSize, so the walk is a runtime loop over LoadIndirect.
+    // GC_REF elements (a list[list[T]]) print their pointer -- nested reprs need a
+    // recursion this one-level walk does not do.
+    private void EmitSeqRepr(string writeStrFn, string floatWriteFn, Val seqPtr,
+                           DataType elemDt, bool isTuple)
+    {
+        EmitStreamStr(writeStrFn, isTuple ? "(" : "[");
+        Temporary seqCount = EmitListLoad(seqPtr, 0, DataType.UINT8);
+        Temporary seqIdx = MakeTemp(DataType.UINT8);
+        Emit(new Copy(new Constant(0), seqIdx));
+        string seqTop = MakeLabel(), seqFirst = MakeLabel(), seqDone = MakeLabel();
+        Emit(new Label(seqTop));
+        Emit(new JumpIfGreaterOrEqual(seqIdx, seqCount, seqDone));
+        Emit(new JumpIfEqual(seqIdx, new Constant(0), seqFirst));
+        EmitStreamStr(writeStrFn, ", ");
+        Emit(new Label(seqFirst));
+        int elemSize = elemDt == DataType.GC_REF ? DataTypeExtensions.PointerWidth : elemDt.SizeOf();
+        Temporary seqElemAddr = EmitElemAddr(seqPtr, seqIdx, elemSize);
+        Temporary seqElem = MakeTemp(elemDt);
+        Emit(new LoadIndirect(seqElemAddr, seqElem, elemDt));
+        EmitStreamVal(floatWriteFn, seqElem, elemDt);
+        Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, seqIdx, new Constant(1)));
+        Emit(new Jump(seqTop));
+        Emit(new Label(seqDone));
+        if (isTuple)
+        {
+            // `(x,)` -- CPython keeps the trailing comma on a one-element tuple.
+            string seqNotOne = MakeLabel();
+            Emit(new JumpIfNotEqual(seqCount, new Constant(1), seqNotOne));
+            EmitStreamStr(writeStrFn, ",");
+            Emit(new Label(seqNotOne));
+        }
+        EmitStreamStr(writeStrFn, isTuple ? ")" : "]");
+    }
+
     /// <summary>The width a NAME was declared with, or null when the expression is not one.</summary>
     private DataType? DeclaredWidthOfName(Expression e)
     {
@@ -8925,7 +8963,33 @@ public partial class IRGenerator
                     EmitStreamStr(writeStrFn, ")");
                     return;
                 }
+                // A call result held as a single GC_REF (`print(f())` where f returns a
+                // heap list/tuple): CPython writes the bracketed element repr, not the
+                // pointer the decimal writer would show.
+                string? seqResName = seqVal switch
+                { Variable sv => sv.Name, Temporary st => st.Name, _ => null };
+                if (seqResName != null
+                    && listVarElemTypes.TryGetValue(seqResName, out var callSeqElem))
+                {
+                    EmitSeqRepr(writeStrFn, floatWriteFn, seqVal, callSeqElem,
+                        (lastCallReturnTypeText?.Contains("tuple") == true
+                         || lastCallReturnTypeText?.Contains("Tuple") == true)
+                        || IsTupleBound(seqResName));
+                    return;
+                }
                 EmitStreamVal(floatWriteFn, seqVal, DeclaredWidthOfName(arg));
+                return;
+            }
+
+            // `print(xs)` on a heap list or tuple held in a name: the bracketed element
+            // repr, same as a call result above, not the pointer's decimal value.
+            if (arg is VariableExpr seqVe
+                && ResolveListVarQualified(seqVe.Name) is { Length: > 0 } seqQual
+                && listVarElemTypes.TryGetValue(seqQual, out var seqVarElem))
+            {
+                EmitSeqRepr(writeStrFn, floatWriteFn,
+                    new Variable(seqQual, DataType.GC_REF), seqVarElem,
+                    tupleBoundNames.Contains(seqQual) || IsTupleBound(seqVe.Name));
                 return;
             }
 
@@ -10407,6 +10471,11 @@ public partial class IRGenerator
         listVarElemTypes[dst.Name] = elemDt;
         if (listInnerElemTypes.TryGetValue(srcKey, out var innerElem))
             listInnerElemTypes[dst.Name] = innerElem;
+        // `tuple(x)` shares this lowering with `list(x)`: the fresh object is a
+        // heap sequence either way, but only the tuple() call binds the
+        // immutable bracket the repr and indexed stores look up.
+        if (expr.Callee is VariableExpr { Name: "tuple" })
+            tupleBoundNames.Add(dst.Name);
 
         return dst;
     }
