@@ -52,4 +52,31 @@ public class SubmoduleAliasMemberTests
             .ToList();
         Assert.Contains(stores, s => s.Src is Constant { Value: 0 });
     }
+
+    [Fact]
+    public void AModuleLevelStringResolvesAsTextThroughTheModuleName()
+    {
+        // `M.__version__`: the module's own level runs inside __module_init, whose
+        // function-scoped str key hid the text from the module-global read -- the
+        // member resolved to a never-written byte and printed 0 (adafruit_mcp3xxx's
+        // `mcp3xxx.__version__` / `mcp3xxx.__repo__`).
+        var ir = GenWithModule(
+            "def uart_write_str(s: const[str]):\n    pass\n\n" +
+            "import pkg.sub as M\n\n" +
+            "print(M.__version__)\n",
+            "pkg.sub", "__version__ = \"0.0.0+auto.0\"\n");
+
+        var fstrArgs = ir.Functions.Single(f => f.Name == "main").Body
+            .OfType<Call>()
+            .Where(c => c.FunctionName == "uart_write_str")
+            .SelectMany(c => c.Args).OfType<FlashStrAddr>()
+            .Select(a => a.Name).ToList();
+        Assert.NotEmpty(fstrArgs);
+
+        var tables = ir.Functions.SelectMany(f => f.Body).OfType<FlashData>()
+            .ToDictionary(t => t.Name, t => t.Bytes);
+        Assert.Contains(fstrArgs, n => tables.ContainsKey(n)
+            && System.Text.Encoding.ASCII.GetString(tables[n].Select(b => (byte)b).ToArray())
+                .TrimEnd('\0') == "0.0.0+auto.0");
+    }
 }

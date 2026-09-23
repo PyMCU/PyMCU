@@ -4444,6 +4444,15 @@ public partial class IRGenerator
 
             if (mutableGlobals.TryGetValue(mangledName, out var type))
             {
+                // A module-level string constant (`__version__ = "0.0.0+auto.0"`) lives
+                // in strConstantVariables, never in the slot -- answer the text or the
+                // read streams the 0-initialised byte as a number. A global bound to
+                // DIFFERENT texts by the module's functions is runtime-dispatched --
+                // folding one of its texts here would hide that.
+                if (!multiStrVariables.ContainsKey(mangledName)
+                    && strConstantVariables.TryGetValue(mangledName, out var modStrText))
+                    return InternedStringConstant(modStrText);
+
                 // `mod.state` where the module's own functions bind it to different texts: the
                 // slot holds an interned id, not a number the program means (see VisitVariable).
                 if (multiStrHandleReads == 0 && !strConstantVariables.ContainsKey(mangledName)

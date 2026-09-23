@@ -7653,6 +7653,22 @@ public partial class IRGenerator
             foreach (string f in fields) key = ResolveAlias(key + "_" + f);
             if (strConstantVariables.TryGetValue(key, out var text)) return text;
         }
+
+        // `mod.attr` where mod names a MODULE: the member is a module-level global
+        // under <mod>_<member> (mangled with the module's own dots folded to
+        // underscores, the same spelling VisitMemberAccess builds), not a field on an
+        // instance -- `mcp3xxx.__version__` printed the interned id without this.
+        if (ma.Object is VariableExpr modVe && fields.Count == 1)
+        {
+            string? modBase = modules.ContainsKey(modVe.Name)
+                && TryImportedAlias(modVe.Name, out var realMod) && realMod != null
+                ? realMod.Replace('.', '_')
+                : modules.ContainsKey(modVe.Name) ? modVe.Name.Replace('.', '_') : null;
+            if (modBase != null
+                && !multiStrVariables.ContainsKey(modBase + "_" + ma.Member)
+                && strConstantVariables.TryGetValue(modBase + "_" + ma.Member, out var modText))
+                return modText;
+        }
         return null;
     }
 

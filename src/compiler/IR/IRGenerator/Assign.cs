@@ -184,6 +184,19 @@ public partial class IRGenerator
             if (boundText != null)
             {
                 strConstantVariables[strKey] = boundText;
+                // A module level runs inside the synthesized `__module_init`, so strKey
+                // is function-scoped while the name is a module global -- file the
+                // module-global spelling too, or `mod.attr` resolves to the never-written
+                // slot (adafruit_mcp3xxx's `mcp3xxx.__version__` printed 0). Restricted
+                // to the init itself: a module FUNCTION rebinding the same global is
+                // multiStr territory, where a recorded text would hide the dispatch.
+                if (currentFunction.EndsWith("__module_init", StringComparison.Ordinal))
+                {
+                    string modStrKey = currentModulePrefix + strTgt.Name;
+                    if (modStrKey != strKey && mutableGlobals.ContainsKey(modStrKey)
+                        && !multiStrVariables.ContainsKey(modStrKey))
+                        strConstantVariables[modStrKey] = boundText;
+                }
                 // A name that was None-marked and now holds a string is not None: the
                 // mark clears on the Variable-target path below, but a compile-time
                 // string resolves to a Constant, not a Variable, so the clear never
@@ -193,7 +206,16 @@ public partial class IRGenerator
                 noneValuedNames.Remove(strKey);
             }
             else
+            {
                 strConstantVariables.Remove(strKey);
+                if (currentFunction.EndsWith("__module_init", StringComparison.Ordinal))
+                {
+                    string modStrKey2 = currentModulePrefix + strTgt.Name;
+                    if (modStrKey2 != strKey && mutableGlobals.ContainsKey(modStrKey2)
+                        && !multiStrVariables.ContainsKey(modStrKey2))
+                        strConstantVariables.Remove(modStrKey2);
+                }
+            }
 
             // DISPATCH is a different question from what the name holds, and only this half
             // was ever load-bearing. A name bound to anything but a literal must stop
