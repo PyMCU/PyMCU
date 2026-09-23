@@ -1917,7 +1917,13 @@ public partial class IRGenerator
                                 RefuseUnsupportedMethodDecorators(func, classDef.Name);
 
                                 string fullName = currentModulePrefix + func.Name;
-                                functionReturnTypes[fullName] = func.ReturnType;
+                                // A property setter shares the getter's fullName, and
+                                // registering its `-> None` under that key overwrote the
+                                // getter's `-> bool`, so `print(d.value)` reached the
+                                // decimal writer where CPython spells True/False. The
+                                // setter's own expansion key is the ___setter spelling.
+                                functionReturnTypes[func.IsPropertySetter
+                                    ? fullName + "___setter" : fullName] = func.ReturnType;
                                 var @params = new List<string>();
                                 var paramTypes = new List<DataType>();
                                 foreach (var p in func.Params)
