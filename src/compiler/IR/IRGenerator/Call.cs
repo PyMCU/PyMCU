@@ -2667,6 +2667,29 @@ public partial class IRGenerator
                     variableAliases.Remove(paramName);
                     continue;
                 }
+                // A Temporary that stands for a constructed instance's ANCHOR —
+                // `return DigitalInOut(...)` in an @inline suppresses the copy into
+                // the result temp because the anchor is a namespace, not a byte, and
+                // records only `variableAliases[tmp] = <anchor>`. There is no scalar
+                // to copy: bind the parameter to the anchor itself so `param.field`
+                // and `param.method()` resolve like any object argument. A
+                // single-field class's anchor is a real byte (NamesInstanceAnchor
+                // answers false) and its temp still takes the Copy below.
+                string anchored = FollowAliases(tArg.Name);
+                if (anchored != tArg.Name && NamesInstanceAnchor(anchored)
+                    && !ParameterIsAssignedIn(func, func.Params[paramIdx].Name))
+                {
+                    variableAliases[paramName] = anchored;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableTypes[paramName] =
+                        DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                    if (instanceClasses.TryGetValue(anchored, out var anchoredCls)
+                        && anchoredCls != null)
+                        instanceClasses[paramName] = anchoredCls;
+                    continue;
+                }
                 // A Temporary that is a tagged class instance (e.g. a single-field ZCA field
                 // re-tagged with its nested class) must carry that class onto the @inline param,
                 // so the callee's `param.field`/`param.method()` resolves -- the param is bound by
