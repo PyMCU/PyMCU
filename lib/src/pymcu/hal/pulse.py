@@ -27,7 +27,7 @@ from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
 
 if __CHIP__.arch == "avr":
-    from pymcu.hal.avr.pulse import PulseCapture, PulseTrain
+    from pymcu.hal.avr.pulse import PulseCapture, PulseTrain, pulse_delay_us
 else:
     raise CompileError(
         "pulse capture and pulse trains are not implemented on this architecture yet. They "

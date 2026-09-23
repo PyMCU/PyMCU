@@ -89,8 +89,8 @@ _pulse_maxlen: uint8 = 1
 # is the one that leaves rest, and the first stored interval is therefore the first pulse
 # away from idle, for either value of idle_state.
 def pulse_isr():
-    global _pulse_buf, _pulse_head, _pulse_len, _pulse_last, _pulse_armed, _pulse_paused
-    global _pulse_maxlen
+    global _pulse_buf, _pulse_head, _pulse_tail, _pulse_len, _pulse_last, _pulse_armed
+    global _pulse_paused, _pulse_maxlen
     now: uint16 = TCNT1.value
     if _pulse_paused:
         return
@@ -100,21 +100,28 @@ def pulse_isr():
         return
     delta: uint16 = now - _pulse_last
     _pulse_last = now
+    # Ticks to microseconds, as a SHIFT chosen at compile time rather than a division.
+    # The divisor was __FREQ__ // 8 // 1000000 -- 2 at 16 MHz, 1 at 8 -- and a division by
+    # anything that is not a literal carries a divide-by-zero check, which is a raise.
+    # An interrupt handler has no caller to hand an error to, so the compiler refuses one
+    # that can raise, and it only sees it with the optimizer off: the fixture built and
+    # passed by default and failed on the unoptimized differential axis.
+    if __FREQ__ >= 16000000:
+        delta = delta >> 1
+    _pulse_buf[_pulse_head] = delta
+    _pulse_head = _pulse_head + 1
+    if _pulse_head >= _pulse_maxlen:
+        _pulse_head = 0
     if _pulse_len < _pulse_maxlen:
-        # Ticks to microseconds, as a SHIFT chosen at compile time rather than a division.
-        # The divisor was __FREQ__ // 8 // 1000000 -- 2 at 16 MHz, 1 at 8 -- and a division by
-        # anything that is not a literal carries a divide-by-zero check, which is a raise.
-        # An interrupt handler has no caller to hand an error to, so the compiler refuses one
-        # that can raise, and it only sees it with the optimizer off: the fixture built and
-        # passed by default and failed on the unoptimized differential axis.
-        if __FREQ__ >= 16000000:
-            _pulse_buf[_pulse_head] = delta >> 1
-        else:
-            _pulse_buf[_pulse_head] = delta
-        _pulse_head = _pulse_head + 1
-        if _pulse_head >= _pulse_maxlen:
-            _pulse_head = 0
         _pulse_len = _pulse_len + 1
+    else:
+        # A full ring pushes the OLDEST pulse out, as CircuitPython's PulseIn spells it --
+        # a DHT frame is two intervals longer than the 81-entry ring the library asks for,
+        # and it counts on this to scroll its two response-ack pulses off the front before
+        # the data is read.
+        _pulse_tail = _pulse_tail + 1
+        if _pulse_tail >= _pulse_maxlen:
+            _pulse_tail = 0
 
 
 # Start the time base the ISR reads. Timer1 normal mode, prescaler 8, nothing else touched.
@@ -170,7 +177,7 @@ def pulse_capture_set_maxlen(maxlen: const[uint16]):
             "this pulse capture can hold 128 pulses and cannot be sized per program: the "
             "buffer is a fixed array in the HAL, allocated at compile time. Ask for 128 or "
             "fewer, and read them out more often -- a pulse that arrives with the buffer "
-            "full is dropped.")
+            "full pushes the oldest one out.")
     if maxlen == 0:
         raise CompileError(
             "a pulse capture with room for no pulses would record nothing. Ask for at least "
