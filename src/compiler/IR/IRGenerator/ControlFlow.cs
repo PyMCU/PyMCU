@@ -1851,7 +1851,16 @@ public partial class IRGenerator
             foreach (var kv in inlineFunctions)
                 if (kv.Key.StartsWith(pfx, StringComparison.Ordinal) && kv.Value != null)
                     map.TryAdd(kv.Key[pfx.Length..], kv.Value!);
-            cur = classBasePrefixes.TryGetValue(cur, out var b) ? b : null;
+            // The map's values carry the trailing '_' its keys do not, so the next
+            // hop must strip it before the lookup -- without that the walk ends at
+            // the second class and a deeper ancestor's methods (HT16K33's on a
+            // Seg14x4 grandchild) are reported unresolvable, which reads as "this
+            // self-call may write anything" and drops every field's fold.
+            if (!classBasePrefixes.TryGetValue(
+                    cur.EndsWith("_", StringComparison.Ordinal) ? cur[..^1] : cur,
+                    out var b) || string.IsNullOrEmpty(b))
+                break;
+            cur = b;
         }
         return map;
     }
