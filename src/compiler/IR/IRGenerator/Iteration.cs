@@ -2298,6 +2298,79 @@ public partial class IRGenerator
                         return;
                     }
 
+                    // enumerate() over a run-time heap list: the loop IS a counter
+                    // loop -- `for i, v in enumerate(lst)` is `for i in range(len(lst)):
+                    // v = lst[i]` with the count read from the object header, the same
+                    // lowering `for v in lst` runs plus the index name alongside.
+                    if (inner is VariableExpr lstIterVe
+                        && ResolveListVarQualified(lstIterVe.Name) is { Length: > 0 } lstIterQ)
+                    {
+                        DataType lstElemDt = listVarElemTypes[lstIterQ];
+                        if (lstElemDt == DataType.UNKNOWN)
+                            throw UserError(
+                                $"cannot infer the element type of '{lstIterVe.Name}' yet; " +
+                                "its first append must precede iteration, or declare it " +
+                                "like `x: list[uint8] = []`", stmt);
+                        Variable lstIterPtr = new Variable(lstIterQ, DataType.GC_REF);
+
+                        string lstIdxQ = string.IsNullOrEmpty(currentInlinePrefix)
+                            ? (string.IsNullOrEmpty(currentFunction)
+                                ? stmt.VarName : currentFunction + "." + stmt.VarName)
+                            : currentInlinePrefix + stmt.VarName;
+                        string lstValQ = string.IsNullOrEmpty(currentInlinePrefix)
+                            ? (string.IsNullOrEmpty(currentFunction)
+                                ? stmt.Var2Name : currentFunction + "." + stmt.Var2Name)
+                            : currentInlinePrefix + stmt.Var2Name;
+                        Variable lstIdxVar = new Variable(lstIdxQ, DataType.UINT8);
+                        Variable lstValVar = new Variable(lstValQ, lstElemDt);
+                        variableTypes[lstIdxQ] = DataType.UINT8;
+                        variableTypes[lstValQ] = lstElemDt;
+                        // `for _, pb in enumerate(bins)` on a list[list[T]]: the value
+                        // var is an inner list (GC_REF) -- file its element type so
+                        // `pb[0]` resolves inside the body.
+                        if (lstElemDt == DataType.GC_REF
+                            && listInnerElemTypes.TryGetValue(lstIterQ, out var lstInnerElem))
+                            listVarElemTypes[lstValQ] = lstInnerElem;
+
+                        // A run-time loop: nothing the body writes may fold from the
+                        // value it held on the way in, same rule `for v in lst` keeps.
+                        constantVariables.Remove(idxKey);
+                        constantVariables.Remove(valKey);
+                        var lstStrBefore = new Dictionary<string, string?>(strConstantVariables);
+                        var lstLoopSnap = TakeBranchState();
+                        InvalidateConstantsAssignedIn(stmt.Body);
+
+                        Temporary lstLen = MakeTemp(DataType.UINT8);
+                        Emit(new LoadIndirect(lstIterPtr, lstLen));
+                        Emit(new Copy(new Constant(0), lstIdxVar));
+
+                        string lstLoopStart = MakeLabel();
+                        string lstLoopCont = MakeLabel();
+                        string lstLoopEnd = MakeLabel();
+                        loopStack.Add(new LoopLabels { ContinueLabel = lstLoopCont,
+                            BreakLabel = lstLoopEnd, FinallyDepth = finallyStack.Count });
+
+                        Emit(new Label(lstLoopStart));
+                        Temporary lstCmp = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(PyMCU.IR.BinaryOp.GreaterEqual, lstIdxVar, lstLen, lstCmp));
+                        Emit(new JumpIfNotZero(lstCmp, lstLoopEnd));
+
+                        Temporary lstElemAddr = EmitElemAddr(lstIterPtr, lstIdxVar, lstElemDt.SizeOf());
+                        Temporary lstElemTmp = MakeTemp(lstElemDt);
+                        Emit(new LoadIndirect(lstElemAddr, lstElemTmp, lstElemDt));
+                        Emit(new Copy(lstElemTmp, lstValVar));
+
+                        VisitStatement(stmt.Body);
+
+                        Emit(new Label(lstLoopCont));
+                        Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, lstIdxVar, new Constant(1)));
+                        Emit(new Jump(lstLoopStart));
+                        Emit(new Label(lstLoopEnd));
+                        loopStack.RemoveAt(loopStack.Count - 1);
+                        JoinLoopState(lstLoopSnap, TakeBranchState(), lstStrBefore);
+                        return;
+                    }
+
                     // enumerate() over a compile-time sequence of INSTANCES held in a field:
                     // `for i, _ in enumerate(self.i2c_device)` (the HT16K33 shape -- one
                     // wrapped I2CDevice, or a list literal of them). The elements live as
