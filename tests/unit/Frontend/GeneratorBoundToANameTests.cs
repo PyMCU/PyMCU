@@ -169,4 +169,29 @@ public class GeneratorBoundToANameTests
 
         Assert.Contains(CallsIn(ir), c => c.Contains("poll"));
     }
+
+    [Fact]
+    public void ForOverANonGeneratorCallIsNotDesugared()
+    {
+        // `for i, v in enumerate(xs)` is a call iterable but not a machine call: `enumerate`
+        // is a builtin, not a generator function. With any generator in the program the
+        // desugar walk runs, and it used to rewrite this loop too -- `call` was initialised
+        // to the raw iterable for ANY CallExpr, so `call != null` alone opened the desugar.
+        // The loop became `__gen0 = enumerate(xs)` plus a poll loop, and the assigned call
+        // hit "enumerate() is a Python builtin that PyMCU does not provide" -- a refusal that
+        // names a supported builtin, in a program whose only generator is elsewhere.
+        var ast = new Parser(new Lexer(
+                "def gen():\n" +
+                "    yield 1\n" +
+                "def f(xs: list):\n" +
+                "    for i, v in enumerate(xs):\n" +
+                "        pass\n").Tokenize()).ParseProgram();
+        AsyncTransform.TransformProgram(ast);
+
+        var f = ast.Functions.Single(fn => fn.Name == "f");
+        var forStmt = Assert.Single(f.Body.Statements.OfType<ForStmt>());
+        Assert.Equal("v", forStmt.Var2Name);
+        Assert.Equal("enumerate",
+            (Assert.IsType<CallExpr>(forStmt.Iterable).Callee as VariableExpr)?.Name);
+    }
 }

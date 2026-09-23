@@ -855,7 +855,14 @@ public static class AsyncTransform
             // `for v in obj.read()`: resolve the receiver's class and build `C_read(obj)`.
             // A member call that is NOT a generator method is left for the ordinary path --
             // the refusal fires only when a generator method of that name exists somewhere.
-            CallExpr? call = s is ForStmt { Iterable: CallExpr iter } ? iter : null;
+            // `call` is the machine construction when the iterable resolves to one: the
+            // callee's own call for `for v in gen()` (iterIsCall), or the rewritten
+            // `C_read(obj)` for `for v in obj.read()`. Starting it at the raw iterable
+            // rewrote EVERY `for x in f(...)` in a program that has a generator anywhere
+            // -- `enumerate(xs)` became `__gen0 = enumerate(xs)` plus a poll loop, and the
+            // assigned call died on "enumerate() is a Python builtin PyMCU does not
+            // provide", naming a builtin it does provide.
+            CallExpr? call = s is ForStmt { Iterable: CallExpr iter } && iterIsCall ? iter : null;
             if (s is ForStmt { Iterable: CallExpr { Callee: MemberAccessExpr ma } mc })
             {
                 var (resolved, mname) = MethodMachineCall(mc, use, recv, selfClass);
