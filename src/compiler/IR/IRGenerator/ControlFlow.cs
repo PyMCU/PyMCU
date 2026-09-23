@@ -2638,9 +2638,21 @@ public partial class IRGenerator
         // Post-process: find every Call emitted inside the try body and insert a
         // BranchOnError guard immediately after it. We iterate in reverse so that
         // inserting at position i does not shift the indices of earlier Calls.
+        // A Call already followed by a BranchOnError is guarded by a nested try
+        // lowered earlier (nested passes run before this one); only the innermost
+        // enclosing try may guard a call — its no-match path re-signals to this
+        // dispatch via enclosingCatch, so skipping keeps the ordering correct.
         var callIndices = new List<int>();
+        int totalCalls = 0;
         for (int i = bodyStart; i < currentInstructions.Count; i++)
-            if (currentInstructions[i] is Call) callIndices.Add(i);
+        {
+            if (currentInstructions[i] is not Call) continue;
+            totalCalls++;
+            int j = i + 1;
+            while (j < currentInstructions.Count && currentInstructions[j] is DebugLine) j++;
+            if (j < currentInstructions.Count && currentInstructions[j] is BranchOnError) continue;
+            callIndices.Add(i);
+        }
 
         for (int i = callIndices.Count - 1; i >= 0; i--)
             currentInstructions.Insert(callIndices[i] + 1, new BranchOnError(catchDispatch));
@@ -2674,8 +2686,11 @@ public partial class IRGenerator
         // Call) and a lexical raise / runtime fault emits SignalError. A body with
         // neither leaves the happy path as the only path, and its end state is the
         // post-try state -- joining handler arms here would veto exactly the bindings
-        // the provably-infallible body established.
-        if (callIndices.Count == 0
+        // the provably-infallible body established. totalCalls, not callIndices:
+        // a call a nested try already guarded still proves the body can throw --
+        // its no-match arm re-signals outward through enclosingCatch to THIS
+        // dispatch.
+        if (totalCalls == 0
             && !currentInstructions.Skip(bodyStart).Any(i => i is SignalError))
         {
             Emit(new Label(afterLabel));
