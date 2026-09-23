@@ -111,6 +111,12 @@ uv pip install --pre --no-deps pymcu-pic
 # pymcu-avr repo -- run them there when you touch codegen:
 #   dotnet test tests/integration   # in the pymcu-avr checkout
 #   just test-oracle                # oracle corpus, both front ends
+#
+# Before bisecting a miscompilation, run `just verify` in the pymcu-avr
+# checkout: it compiles the whole corpus with PYMCU_VERIFY_IR=1 and ratchets
+# the verifier's warnings. When the verifier already sees the violation the
+# message names the guilty pass, which is a better bisection start than the
+# wrong output.
 
 # Install the stdlib editable once; lib/src edits are then picked up live.
 # Do NOT rsync a copy into site-packages/pymcu/ — it shadows the editable .pth.
