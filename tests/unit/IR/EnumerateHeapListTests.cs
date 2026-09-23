@@ -83,6 +83,47 @@ public class EnumerateHeapListTests
     }
 
     [Fact]
+    public void Enumerate_ModuleLevelIndexIsTheGlobal()
+    {
+        // `for j, v in enumerate(p)` at module level where `j` is already a
+        // global: the counter must drive `j`, the spelling the body's
+        // `p[j]`/`if j` reads resolve. Qualifying it `main.j` split the name
+        // -- the loop advanced `main.j` while reads saw the untouched global,
+        // so every `p[j]` store landed on element 0.
+        var ir = Gen(
+            "p: list[uint16] = [562, 1687]\n" +
+            "j: uint8 = 0\n" +
+            "def main():\n" +
+            "    for j, v in enumerate(p):\n" +
+            "        p[j] = v\n");
+
+        var bodies = ir.Functions.SelectMany(f => f.Body).ToList();
+        // The counter init/increment and the compare must all name the global
+        // `j`; nothing may write a `main.j` phantom slot.
+        Assert.DoesNotContain(bodies, i => i is Copy c && c.Dst is Variable v && v.Name == "main.j");
+        Assert.DoesNotContain(bodies, i => i is AugAssign a && a.Target is Variable v && v.Name == "main.j");
+        Assert.Contains(bodies, i => i is Copy c && c.Dst is Variable v && v.Name == "j");
+        Assert.Contains(bodies, i => i is AugAssign a && a.Target is Variable v && v.Name == "j");
+    }
+
+    [Fact]
+    public void ForIn_ModuleLevelVarIsTheGlobal()
+    {
+        // Same split through `for v in lst`: the element binding at module
+        // level is the global `v`, not `main.v`.
+        var ir = Gen(
+            "p: list[uint16] = [562, 1687]\n" +
+            "v: uint16 = 0\n" +
+            "def main():\n" +
+            "    for v in p:\n" +
+            "        p[0] = v\n");
+
+        var bodies = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.DoesNotContain(bodies, i => i is Copy c && c.Dst is Variable x && x.Name == "main.v");
+        Assert.Contains(bodies, i => i is Copy c && c.Dst is Variable x && x.Name == "v");
+    }
+
+    [Fact]
     public void Enumerate_PendingElemRefuses()
     {
         // `x = []` promoted (a later append exists) but iterated BEFORE its

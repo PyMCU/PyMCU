@@ -1171,11 +1171,9 @@ public partial class IRGenerator
         // resolve to the same key the loop binds -- including the currentFunction prefix
         // when iterating inside a def. Without this, ZCA per-element state registered on
         // the loop var is invisible to the body inside a function.
-        string forVarKey = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + stmt.VarName
-            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+        string forVarKey = QualifyLoopVar(stmt.VarName);
         DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
-        variableTypes[forVarKey] = elemDt2;
+        variableTypes[forVarKey] = LoopVarStorageType(forVarKey, elemDt2);
         // An SRAM-resident array (runtime-indexed or module-level) has no per-element
         // arr__k vars — its elements live in memory and must be read with an indexed
         // load, exactly as the enumerate path does. Without this a `for v in arr` over
@@ -1448,10 +1446,41 @@ public partial class IRGenerator
     }
 
     // The key a loop variable is stored under: the same qualification the body uses to read it.
-    private string QualifyLoopVar(string bareName) =>
-        !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + bareName
-            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bareName : bareName);
+    private string QualifyLoopVar(string bareName)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+            return currentInlinePrefix + bareName;
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            // A loop variable at module level binds the module GLOBAL of the same
+            // name when one exists -- `for j in ...` writes `j`, the spelling
+            // ResolveBindingCore answers for every read in the body ("main" IS
+            // the module's top level). Minting `main.j` split the name: the
+            // counter advanced one slot while `pulses[j]` kept reading the
+            // untouched global, so a `p[j] = ...` store always hit element 0.
+            // A name no global claims stays function-scoped, where the body's
+            // reads resolve `main.j` the way they always did.
+            if ((currentFunction == "main"
+                    || currentFunction.EndsWith("___module_init", StringComparison.Ordinal))
+                && mutableGlobals.ContainsKey(currentModulePrefix + bareName))
+                return currentModulePrefix + bareName;
+            return currentFunction + "." + bareName;
+        }
+        return bareName;
+    }
+
+    // The type a possibly-global loop variable is stored at. When the loop var
+    // IS a module global its slot width lives in mutableGlobals: a wider element
+    // type must widen the slot (the same rule a `x = <wide>` rebind follows), a
+    // narrower one widens on store into the existing slot.
+    private DataType LoopVarStorageType(string key, DataType dt)
+    {
+        if (!mutableGlobals.TryGetValue(key, out var gdt)) return dt;
+        if (gdt.SizeOf() >= dt.SizeOf()) return gdt;
+        widenableGlobals.Remove(key);
+        mutableGlobals[key] = dt;
+        return dt;
+    }
 
     private (long Lo, long Hi) OperandRange(Val v)
         => v is Constant or Temporary or Variable ? ValRange(v) : RangeOfType(GetValType(v));
@@ -1637,12 +1666,9 @@ public partial class IRGenerator
         // variableTypes. Recorded before any lowering decision, because `for i in range(...)`
         // carries no Iterable at all and would otherwise miss the shape below.
         {
-            string loopKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + stmt.VarName
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
-            boundNames.Add(loopKey);
+            boundNames.Add(QualifyLoopVar(stmt.VarName));
             if (!string.IsNullOrEmpty(stmt.Var2Name))
-                boundNames.Add(loopKey[..^stmt.VarName.Length] + stmt.Var2Name);
+                boundNames.Add(QualifyLoopVar(stmt.Var2Name));
         }
 
         if (stmt.Iterable != null)
@@ -1652,9 +1678,7 @@ public partial class IRGenerator
             // `func.` prefix when not inline-expanded), so a constant the unrolled loop binds to
             // the loop variable is found when the body reads it. The inline-only prefix left a
             // top-level loop variable bare while the body read "func.<name>".
-            string varKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + stmt.VarName
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+            string varKey = QualifyLoopVar(stmt.VarName);
 
             // A generator expression is not an iterable this dispatch can lower -- there is
             // no iterator for `for` to draw from. The five reductions unwrap theirs before
@@ -1935,10 +1959,7 @@ public partial class IRGenerator
                 // first, from the element's second component. Qualified the same way varKey is,
                 // so the body finds it under whatever name it reads.
                 string? varKey2 = string.IsNullOrEmpty(stmt.Var2Name) ? null
-                    : (!string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + stmt.Var2Name
-                        : (!string.IsNullOrEmpty(currentFunction)
-                            ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name));
+                    : QualifyLoopVar(stmt.Var2Name);
 
                 foreach (var elem in elems)
                 {
@@ -2096,10 +2117,7 @@ public partial class IRGenerator
                 {
                     string dsWhich = dsPairs != null ? "items()" : dsWhat;
                     string? dsKey2 = string.IsNullOrEmpty(stmt.Var2Name) ? null
-                        : (!string.IsNullOrEmpty(currentInlinePrefix)
-                            ? currentInlinePrefix + stmt.Var2Name
-                            : (!string.IsNullOrEmpty(currentFunction)
-                                ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name));
+                        : QualifyLoopVar(stmt.Var2Name);
 
                     // Binds one entry to one loop name. A string key or value is bound as a
                     // string constant, which is what makes `d[k]` fold for the string-keyed
@@ -2316,18 +2334,14 @@ public partial class IRGenerator
                                 "like `x: list[uint8] = []`", stmt);
                         Variable lstIterPtr = new Variable(lstIterQ, DataType.GC_REF);
 
-                        string lstIdxQ = string.IsNullOrEmpty(currentInlinePrefix)
-                            ? (string.IsNullOrEmpty(currentFunction)
-                                ? stmt.VarName : currentFunction + "." + stmt.VarName)
-                            : currentInlinePrefix + stmt.VarName;
-                        string lstValQ = string.IsNullOrEmpty(currentInlinePrefix)
-                            ? (string.IsNullOrEmpty(currentFunction)
-                                ? stmt.Var2Name : currentFunction + "." + stmt.Var2Name)
-                            : currentInlinePrefix + stmt.Var2Name;
-                        Variable lstIdxVar = new Variable(lstIdxQ, DataType.UINT8);
-                        Variable lstValVar = new Variable(lstValQ, lstElemDt);
-                        variableTypes[lstIdxQ] = DataType.UINT8;
-                        variableTypes[lstValQ] = lstElemDt;
+                        string lstIdxQ = QualifyLoopVar(stmt.VarName);
+                        string lstValQ = QualifyLoopVar(stmt.Var2Name);
+                        DataType lstIdxDt = LoopVarStorageType(lstIdxQ, DataType.UINT8);
+                        DataType lstValDt = LoopVarStorageType(lstValQ, lstElemDt);
+                        Variable lstIdxVar = new Variable(lstIdxQ, lstIdxDt);
+                        Variable lstValVar = new Variable(lstValQ, lstValDt);
+                        variableTypes[lstIdxQ] = lstIdxDt;
+                        variableTypes[lstValQ] = lstValDt;
                         // `for _, pb in enumerate(bins)` on a list[list[T]]: the value
                         // var is an inner list (GC_REF) -- file its element type so
                         // `pb[0]` resolves inside the body.
@@ -2383,10 +2397,7 @@ public partial class IRGenerator
                     if (inner is MemberAccessExpr
                         && TryResolveInstanceSequence(inner, out var enSeqBase, out int enSeqN))
                     {
-                        string enQVal = !string.IsNullOrEmpty(currentInlinePrefix)
-                            ? currentInlinePrefix + stmt.Var2Name
-                            : (!string.IsNullOrEmpty(currentFunction)
-                                ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
+                        string enQVal = QualifyLoopVar(stmt.Var2Name);
                         bool enSeqBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                         string enSeqBreakLabel = enSeqBrk ? MakeLabel() : "";
                         for (int k = 0; k < enSeqN; ++k)
@@ -2584,14 +2595,8 @@ public partial class IRGenerator
                                 return;
                             }
 
-                            string qualifiedVal;
-                            if (!string.IsNullOrEmpty(currentInlinePrefix))
-                                qualifiedVal = currentInlinePrefix + stmt.Var2Name;
-                            else if (!string.IsNullOrEmpty(currentFunction))
-                                qualifiedVal = currentFunction + "." + stmt.Var2Name;
-                            else qualifiedVal = stmt.Var2Name;
-
-                            variableTypes[qualifiedVal] = elemDt;
+                            string qualifiedVal = QualifyLoopVar(stmt.Var2Name);
+                            variableTypes[qualifiedVal] = LoopVarStorageType(qualifiedVal, elemDt);
                             bool enBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                             string enBreakLabel = enBrk ? MakeLabel() : "";
                             for (int k = 0; k < arrSize; ++k)
@@ -2731,9 +2736,9 @@ public partial class IRGenerator
                     if (ResolveSide(arg0) is { } side0 && ResolveSide(arg1) is { } side1)
                     {
                         string qk1 = !string.IsNullOrEmpty(currentInlinePrefix)
-                            ? key1 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                            ? key1 : QualifyLoopVar(stmt.VarName);
                         string qk2 = !string.IsNullOrEmpty(currentInlinePrefix)
-                            ? key2 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
+                            ? key2 : QualifyLoopVar(stmt.Var2Name);
                         int zlen = Math.Min(side0.Len, side1.Len);
                         bool zbrk = LoopBodyHasBreakOrContinue(stmt.Body);
                         string zBreak = zbrk ? MakeLabel() : "";
@@ -3078,10 +3083,8 @@ public partial class IRGenerator
                             // maps "main.v" correctly when the body resolves the loop variable.
                             string qValKey = !string.IsNullOrEmpty(currentInlinePrefix)
                                 ? valKey
-                                : (!string.IsNullOrEmpty(currentFunction)
-                                    ? currentFunction + "." + stmt.VarName
-                                    : valKey);
-                            variableTypes[qValKey] = elemDt;
+                                : QualifyLoopVar(stmt.VarName);
+                            variableTypes[qValKey] = LoopVarStorageType(qValKey, elemDt);
                             bool rvBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                             string rvBreakLabel = rvBrk ? MakeLabel() : "";
                             for (int k = arrSize - 1; k >= 0; --k)
@@ -3145,11 +3148,10 @@ public partial class IRGenerator
                     Emit(new Copy(new Constant(0), idxVar));
 
                     // loop variable (the element)
-                    string elemVarName = string.IsNullOrEmpty(currentInlinePrefix)
-                        ? (string.IsNullOrEmpty(currentFunction) ? stmt.VarName : currentFunction + "." + stmt.VarName)
-                        : currentInlinePrefix + stmt.VarName;
-                    Variable elemVar = new Variable(elemVarName, elemDt);
-                    variableTypes[elemVarName] = elemDt;
+                    string elemVarName = QualifyLoopVar(stmt.VarName);
+                    DataType elemVarDt = LoopVarStorageType(elemVarName, elemDt);
+                    Variable elemVar = new Variable(elemVarName, elemVarDt);
+                    variableTypes[elemVarName] = elemVarDt;
                     // `for kb in bins` on a list[list[T]]: the loop variable is an
                     // inner list (GC_REF), and kb[i]/len(kb) resolve through the
                     // same tables a declared `kb: list[T]` would file.
@@ -3311,10 +3313,8 @@ public partial class IRGenerator
 
                     DataType slElem = arrayElemTypes.TryGetValue(slBase, out var sdt) ? sdt : DataType.UINT8;
                     bool slSram = arraysWithVariableIndex.Contains(slBase) || moduleSramArrays.Contains(slBase);
-                    string slKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + stmt.VarName
-                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
-                    variableTypes[slKey] = slElem;
+                    string slKey = QualifyLoopVar(stmt.VarName);
+                    variableTypes[slKey] = LoopVarStorageType(slKey, slElem);
 
                     bool slBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                     string slBreakLabel = slBrk ? MakeLabel() : "";
@@ -3547,9 +3547,7 @@ public partial class IRGenerator
             && (UnrolledLoopBodyIsCheap(stmt.Body) || LoopVarNeedsConst(stmt)))
         {
             (int unrollStart, int unrollStop, int unrollStep) = unroll;
-            string unrollKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + stmt.VarName
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+            string unrollKey = QualifyLoopVar(stmt.VarName);
             bool unrollBreaks = LoopBodyHasBreakOrContinue(stmt.Body);
             string unrollBrk = unrollBreaks ? MakeLabel() : "";
 
@@ -3617,15 +3615,14 @@ public partial class IRGenerator
         // inline-only prefix left a top-level loop variable bare ("i") while the body read it
         // as "func.i", so the counter and the body's reads were different registers — using `i`
         // in the body read 0 (e.g. `for i in range(n): acc += i` produced 0).
-        string varName = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + stmt.VarName
-            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+        string varName = QualifyLoopVar(stmt.VarName);
         // The counter was an unconditional UINT8 here, whatever the bounds said: range(300) ran
         // 44 times, range(0, 256) never ran, a descending range from 200 never ran, and a
         // uint16 stop variable or a uint16 annotation on the loop variable were both ignored.
         // Filed in variableTypes before the body is visited, so the body's reads and the
         // storage allocator see the same width the loop compares and steps.
-        DataType counterType = RangeCounterType(stmt, varName, startVal, stopVal, stepVal);
+        DataType counterType = LoopVarStorageType(varName,
+            RangeCounterType(stmt, varName, startVal, stopVal, stepVal));
         constantVariables.Remove(varName);
         variableTypes[varName] = counterType;
         var loopVar = new Variable(varName, counterType);
@@ -3641,7 +3638,7 @@ public partial class IRGenerator
         {
             string idxKey = QualifyLoopVar(idxName);
             var (cLo, cHi) = CounterValueRange(startVal, stopVal, stepVal);
-            var idxType = NarrowestTypeFor(0, cHi - cLo + 1);
+            var idxType = LoopVarStorageType(idxKey, NarrowestTypeFor(0, cHi - cLo + 1));
             variableTypes[idxKey] = idxType;
             enumIdxVar = new Variable(idxKey, idxType);
             Emit(new Copy(new Constant(0), enumIdxVar));
