@@ -26,6 +26,10 @@ namespace PyMCU.IR;
 /// Every check here exists because a program once shipped wrong code through it:
 ///   one-storage-key        -- module-level list filed under "main.xs" while readers
 ///                             used "xs"; one source name, two storage keys (9fd6afc5).
+///                             Checked on the last stage only: earlier stages still
+///                             carry the `main.X`/`X` spellings the optimizer
+///                             canonicalizes -- a collision that survives to the
+///                             backend-facing IR is the real split.
 ///   buffer-param-scalar    -- a bytearray/array parameter marshalled the buffer's
 ///                             first byte instead of its address (PyMCU#487).
 ///   write-exceeds-slot     -- a field's declared width was not the join of every
@@ -64,7 +68,7 @@ public static class Verifier
     {
         if (!Enabled) return new List<Violation>();
 
-        var violations = Verify(program);
+        var violations = Verify(program, pass);
         foreach (var v in violations)
             Logger.Warning("ir-verify", $"[{pass}] {v}");
 
@@ -77,7 +81,13 @@ public static class Verifier
     }
 
     /// <summary>All checks, no logging -- testable directly.</summary>
-    public static List<Violation> Verify(ProgramIR program)
+    public static List<Violation> Verify(ProgramIR program) => Verify(program, "");
+
+    /// <param name="pass">The pipeline stage being checked. Checks whose
+    /// question is "does the IR the backend sees have this shape" run only on
+    /// the last stage: intermediate stages legitimately hold spellings the
+    /// next pass canonicalizes.</param>
+    private static List<Violation> Verify(ProgramIR program, string pass)
     {
         var violations = new List<Violation>();
         var declared = DeclaredStorage(program);
@@ -118,7 +128,11 @@ public static class Verifier
             labels[f.Name] = lbl;
         }
 
-        // Pass 2: the checks themselves.
+        // Pass 2: the checks themselves. one-storage-key asks whether the IR
+        // the backend sees holds two keys for one source name; intermediate
+        // stages still carry the `main.X`/`X` spellings the optimizer later
+        // canonicalizes, so the check runs on the last stage only.
+        bool lastPhase = pass is "" or "canfail";
         foreach (var f in program.Functions)
         {
             // `x__slot` arrays are byte-cell object storage: a field store
@@ -137,7 +151,7 @@ public static class Verifier
             foreach (var ins in f.Body)
             {
                 CollectJumps(ins, jumps);
-                CheckStorageKeys(ins, f, declared, violations);
+                if (lastPhase) CheckStorageKeys(ins, f, declared, violations);
                 CheckReads(ins, f, writtenHere[f.Name], writtenSomewhere, declared,
                     compileTime, violations);
                 CheckWidths(ins, f, compileTime, slotSrcs, violations);
