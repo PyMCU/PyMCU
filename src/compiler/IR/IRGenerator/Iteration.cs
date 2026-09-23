@@ -1346,6 +1346,19 @@ public partial class IRGenerator
             for (int depth = 0; depth < 20 && key != null; depth++)
             {
                 if (constSequenceBindings.TryGetValue(key, out var elements)) return elements;
+                // A bare chase terminal can still name a module-level sequence: an
+                // inline parameter aliases to the caller's `g1`, while the binding is
+                // filed under `main.g1` -- the same split TryResolveArrayStorageKey
+                // normalises for arrays. Ask at each hop, not only of the starting
+                // name, so `self.f = p` keeps the sequence it was handed.
+                if (!key.Contains('.'))
+                {
+                    if (constSequenceBindings.TryGetValue("main." + key, out var mainElems))
+                        return mainElems;
+                    foreach (var mp in OwningModulePrefixes())
+                        if (constSequenceBindings.TryGetValue(mp + "__module_init." + key, out var modElems))
+                            return modElems;
+                }
                 if (!variableAliases.TryGetValue(key, out key)) break;
             }
         }
