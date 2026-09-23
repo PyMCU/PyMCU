@@ -3051,6 +3051,19 @@ public partial class IRGenerator
             prefixTry = prefixTry.Substring(0, lastSep + 1);
         }
 
+        // The walk above only tries prefixed spellings, so a name the ENTRY file
+        // defines (module prefix "") is invisible to it: `class Pin`/`def Pin` in
+        // main.py registers under the bare key, and a `Pin(8)` inside another
+        // class's method fell through to the flat import-alias table, where a
+        // stdlib package __init__'s `from pymcu.hal.gpio import Pin` had already
+        // claimed the name. An entry-file definition shadows an import of the
+        // same spelling.
+        if (inlineFunctions.ContainsKey(name) || functionParams.ContainsKey(name)
+            || classFieldLayout.ContainsKey(name) || classDirectMethods.ContainsKey(name))
+        {
+            return name;
+        }
+
         if (TryImportedAlias(name, out var modName))
         {
             var mangledMod = modName?.Replace('.', '_');
@@ -3079,6 +3092,9 @@ public partial class IRGenerator
             if (lastSep == -1) break;
             prefixTry = prefixTry.Substring(0, lastSep + 1);
         }
+        // Bare spelling last: same entry-file hole as the callee walk above.
+        if (classFieldLayout.ContainsKey(name) || classDirectMethods.ContainsKey(name))
+            return name;
         return null;
     }
 

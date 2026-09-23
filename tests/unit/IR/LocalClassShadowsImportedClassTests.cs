@@ -134,4 +134,76 @@ public class LocalClassShadowsImportedClassTests
         ir.Functions.Should().NotBeEmpty(
             because: "a facade that re-exports write_bytes must still resolve _wait in the defining module");
     }
+
+    [Fact]
+    public void AnEntryFileClassIsNotStolenByALoadedModulesFromImport()
+    {
+        // The program imports nothing, but a module on the load set (the stdlib
+        // package __init__ does exactly this) carries `from hal_gpio import Pin`,
+        // which claims the flat `importedAliases["Pin"]` slot. The prefix walk
+        // only ever tried prefixed spellings, so the entry file's own `class Pin`
+        // -- registered under the bare name -- was invisible and `Pin(8)` inside
+        // Wrap.__init__ resolved to the HAL constructor (oracle probe
+        // 090_nested_zca_field_method).
+        const string gpio =
+            "from pymcu.types import uint8\n" +
+            "class Pin:\n" +
+            "    def __init__(self, name: uint8, mode: uint8):\n" +
+            "        self.name = name\n";
+
+        const string hal =
+            "from hal_gpio import Pin\n";
+
+        var ir = GenWithModules(
+            "from pymcu.types import uint8\n" +
+            "class Pin:\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v = v\n" +
+            "    def read(self) -> uint8:\n" +
+            "        return self.v + 1\n" +
+            "class Wrap:\n" +
+            "    def __init__(self):\n" +
+            "        self.pin = Pin(8)\n" +
+            "    def read(self) -> uint8:\n" +
+            "        return self.pin.read()\n" +
+            "w = Wrap()\n" +
+            "n = w.read()\n",
+            ("hal_gpio", gpio),
+            ("hal", hal));
+
+        ir.Functions.Should().NotBeEmpty(
+            because: "the entry file's Pin(8) is its own 1-argument class, not the " +
+                     "hal_gpio re-export that claimed the flat alias slot");
+    }
+
+    [Fact]
+    public void AnEntryFileFunctionIsNotStolenByALoadedModulesFromImport()
+    {
+        // Same hole one walk down: `def tick` in the entry file registers the
+        // bare key `tick`, invisible to the prefixed walk, so a loaded module's
+        // `from impl import tick` stole the call through the flat alias table.
+        const string impl =
+            "from pymcu.types import uint8\n" +
+            "def tick(a: uint8, b: uint8) -> uint8:\n" +
+            "    return a + b\n";
+
+        const string facade =
+            "from impl import tick\n";
+
+        var ir = GenWithModules(
+            "from pymcu.types import uint8\n" +
+            "def tick() -> uint8:\n" +
+            "    return 7\n" +
+            "class Wrap:\n" +
+            "    def go(self) -> uint8:\n" +
+            "        return tick()\n" +
+            "w = Wrap()\n" +
+            "n = w.go()\n",
+            ("impl", impl),
+            ("facade", facade));
+
+        ir.Functions.Should().NotBeEmpty(
+            because: "the entry file's tick() is its own 0-argument function, not " +
+                     "the impl re-export that claimed the flat alias slot");
+    }
 }
