@@ -301,14 +301,18 @@ public static class AsyncTransform
                 // (PyMCU has no visible @staticmethod marker -- the parser ignores it, so a
                 // method with no leading receiver simply has no `self` to rename). Params[0]
                 // is renamed to `_recv`, which Phase C then promotes to the `self._recv`
-                // field like any other parameter.
+                // field like any other parameter. The receiver's class goes on the
+                // annotation: unannotated, the layout records `_recv` with no type, the
+                // field looks scalar, and every scan that follows instance-holding fields
+                // -- nested writes, method calls through it -- walks past the machine's
+                // only link back to the object.
                 bool hasRecv = m.Params.Count > 0;
                 var newParams = new List<Param>();
                 Block newBody = m.Body;
                 if (hasRecv)
                 {
                     string recvName = m.Params[0].Name;
-                    newParams.Add(new Param("_recv", ""));
+                    newParams.Add(new Param("_recv", cls.Name));
                     newParams.AddRange(m.Params.Skip(1));
                     newBody = new Block();
                     foreach (var st in m.Body.Statements)
@@ -887,10 +891,19 @@ public static class AsyncTransform
                 else loop.Statements.Add(f.Body);
                 RewriteGenFors(loop.Statements, use, ref counter, bound, recv, selfClass);
 
-                var repl = new Block();
-                if (!iterIsBoundName) repl.Statements.Add(new AssignStmt(new VariableExpr(g), call!));
-                repl.Statements.Add(new WhileStmt(new BooleanLiteral(true), loop));
-                stmts[i] = repl;
+                var whileLoop = new WhileStmt(new BooleanLiteral(true), loop) { Line = f.Line };
+                if (!iterIsBoundName)
+                {
+                    // The construction splices in as its own statement rather than hiding
+                    // inside a Block with the loop: a `for` at module level leaves
+                    // `__gen0 = C_read(...)` at module level, where the instance scans
+                    // look for constructions -- nested in the Block it was an instance
+                    // nobody ever marked.
+                    stmts[i] = new AssignStmt(new VariableExpr(g), call!) { Line = f.Line };
+                    stmts.Insert(i + 1, whileLoop);
+                    i++; // the desugared body was already rewritten; do not re-walk it
+                }
+                else stmts[i] = whileLoop;
                 continue;
             }
             // Recurse into nested statements.
