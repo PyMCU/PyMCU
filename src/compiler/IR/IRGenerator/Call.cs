@@ -1897,6 +1897,10 @@ public partial class IRGenerator
         // keeps the positional ones. `LCD(rs="PA0", ...)` passes every pin by keyword, so
         // without these the origin of a refused pin is lost at the first hop (#193).
         var rawKwArgExprs = new Dictionary<string, Expression>();
+        // Keyword arguments that are an empty tuple or list (`preserve_dios=()`): they
+        // bind an empty compile-time sequence, which a Val cannot carry, so the keys are
+        // recorded here and bound in the keyword loop below.
+        var rawKwEmptySeqs = new HashSet<string>();
         var rawStrArgs = new List<StringLiteral?>();
         // The argument EXPRESSIONS, parallel to argValues, kept for their source position.
         var rawArgExprs = new List<Expression?>();
@@ -1917,9 +1921,18 @@ public partial class IRGenerator
             {
                 string savedOuterPct = pendingConstructorTarget;
                 pendingConstructorTarget = "";
-                kwArgValues[kw.Key] = TryEvalInlineBufferArg(kw.Value) is ArrayBase kwBuf
-                    ? new Variable(kwBuf.ArrayName, DataType.UINT16)
-                    : VisitExpression(kw.Value);
+                if (kw.Value is TupleExpr { Elements.Count: 0 }
+                    or ListExpr { Elements.Count: 0 })
+                {
+                    rawKwEmptySeqs.Add(kw.Key);
+                    kwArgValues[kw.Key] = new NoneVal();
+                }
+                else
+                {
+                    kwArgValues[kw.Key] = TryEvalInlineBufferArg(kw.Value) is ArrayBase kwBuf
+                        ? new Variable(kwBuf.ArrayName, DataType.UINT16)
+                        : VisitExpression(kw.Value);
+                }
                 if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
                 rawKwArgExprs[kw.Key] = kw.Value;
                 // Always restore: inner ctor targets (anonymous __cN) must not
@@ -2876,6 +2889,17 @@ public partial class IRGenerator
                     boundParams.Add(pi);
                     found = true;
 
+                    if (rawKwEmptySeqs.Contains(kvp.Key))
+                    {
+                        constSequenceBindings[paramName] = new List<Expression>();
+                        constantVariables.Remove(paramName);
+                        strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        noneValuedNames.Remove(paramName);
+                        break;
+                    }
+
                     // A register alias bound at an EARLIER call site to the same @inline function
                     // survives in constantAddressVariables unless it is cleared here. The parameter key
                     // is the inline prefix plus the name, and that key is reused across call sites at
@@ -3027,6 +3051,20 @@ public partial class IRGenerator
             if (func.Params[i].DefaultValue != null)
             {
                 string paramName = currentInlinePrefix + func.Params[i].Name;
+                // `preserve_dios=()`: an empty tuple or list default is a compile-time
+                // EMPTY SEQUENCE -- the same binding an empty list argument carries --
+                // not a runtime tuple value, which the target does not have.
+                if (func.Params[i].DefaultValue is TupleExpr { Elements.Count: 0 }
+                    or ListExpr { Elements.Count: 0 })
+                {
+                    constSequenceBindings[paramName] = new List<Expression>();
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    noneValuedNames.Remove(paramName);
+                    continue;
+                }
                 // A parameter defaulting to None (e.g. `cs: Pin = None`) is bound as
                 // None, not as a value: track it so `cs is None` folds correctly and
                 // emit no Copy (None has no runtime representation for a reference).

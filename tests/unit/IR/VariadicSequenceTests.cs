@@ -43,4 +43,40 @@ public class VariadicSequenceTests
         Assert.True(sevens >= 2,
             "alarms[0].deadline should read the caller's instance field, not a pinned head");
     }
+
+    [Fact]
+    public void AnEmptyTupleKeywordArgument_BindsAnEmptySequence()
+    {
+        // preserve_dios=() -- the empty tuple is a compile-time EMPTY SEQUENCE, not a
+        // runtime value a Val can carry.
+        var ir = Gen(
+            "@inline\n" +
+            "def drain(pins) -> uint8:\n" +
+            "    n = 0\n" +
+            "    for p in pins:\n" +
+            "        n = n + 1\n" +
+            "    return n\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = drain(pins=())\n");
+
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.Contains(body.OfType<ArrayStore>(), s => s.Src is Constant k && k.Value == 0);
+    }
+
+    [Fact]
+    public void AnEmptyTupleParameterDefault_BindsAnEmptySequence()
+    {
+        var ir = Gen(
+            "@inline\n" +
+            "def drain(pins=()) -> uint8:\n" +
+            "    n = 0\n" +
+            "    for p in pins:\n" +
+            "        n = n + 1\n" +
+            "    return n\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = drain()\n");
+
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.Contains(body.OfType<ArrayStore>(), s => s.Src is Constant k && k.Value == 0);
+    }
 }
