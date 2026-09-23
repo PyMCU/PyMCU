@@ -69,6 +69,34 @@ public class IsrSharedGlobalFoldTests
     }
 
     [Fact]
+    public void AnInitOnlyGlobal_StillFoldsAsAnArgumentConstant()
+    {
+        // The companion case the refusal must not take with it: `display_width = 128`
+        // is written once, at module level, and never touched by any function -- its
+        // one store IS the initializer every reader sees. adafruit_ssd1306 hands it
+        // to SSD1306_I2C.__init__, whose `bytearray(((height // 8) * width) + 1)`
+        // sizes a fixed SRAM buffer from it; bound as a plain alias the size cannot
+        // fold and the field takes the arena path, where `memoryview(self.buffer)`
+        // then refuses a scalar.
+        var ir = Gen(
+            "from pymcu.types import uint8\n" +
+            "\n" +
+            "width = 128\n" +
+            "\n" +
+            "def buffer_for(w: uint8):\n" +
+            "    buf = bytearray((w // 8) + 1)\n" +
+            "    return buf\n" +
+            "\n" +
+            "b = buffer_for(width)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        // A statically-sized bytearray emits one ArrayStore per element; the arena
+        // path emits a call to pymcu.arena.alloc instead, and on a bare unit-test
+        // program refuses with "needs the pymcu.arena allocator".
+        Assert.Contains(main.Body, i => i is ArrayStore a && a.Count == 17);
+    }
+
+    [Fact]
     public void ABareGlobalTruthTest_DoesNotFoldInsideTheIsrEither()
     {
         var ir = Gen(Prelude +

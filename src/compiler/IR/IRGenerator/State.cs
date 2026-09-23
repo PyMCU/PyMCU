@@ -348,6 +348,13 @@ public partial class IRGenerator
     // that function reads, and the reader in another function folds the constructor's value.
     private HashSet<string> moduleInstanceMutableFields = new();
 
+    // Module-global names (mutableGlobals spelling: currentModulePrefix + name) whose value
+    // can differ between program points: written a second time at module level, or declared
+    // `global` inside a function/method. RecordLocalConstant refuses them outright -- the
+    // init-only global is the one whose last store IS the initializer every reader sees;
+    // these are the ones whose store is a fact about the flow that wrote it.
+    private HashSet<string> reassignedGlobals = new();
+
     // Constructor calls whose RESULT is held in a field that some method writes through, and
     // which have no name of their own: the inner call of `obj = Outer(Inner(0))`. The scan pass
     // can see that `Outer.go()` writes `inner_v`, but the instance holding that `v` is not named

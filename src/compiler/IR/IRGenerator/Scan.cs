@@ -608,6 +608,7 @@ public partial class IRGenerator
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
         var reassigned = CollectModuleReassignedNames(ast);
+        foreach (var n in reassigned) reassignedGlobals.Add(currentModulePrefix + n);
 
         // Collect every member name used as an assignment target anywhere in this module
         // (recursing into class methods and nested blocks). This forms the superset of all
