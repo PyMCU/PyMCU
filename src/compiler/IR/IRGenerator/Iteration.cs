@@ -2870,6 +2870,69 @@ public partial class IRGenerator
                         return;
                     }
 
+                    // `reversed(self._gpio)` -- the two forms the bare-name branches cover,
+                    // reached through a field: a compile-time sequence bound to the field
+                    // (the `self.f = buf` setter write in adafruit_74hc595), or the
+                    // member-held fixed array `self.f = bytearray(n)` laid out.
+                    if (inner is MemberAccessExpr rMem)
+                    {
+                        if (ResolveConstSequenceExpr(rMem) is { } rMemSeq)
+                        {
+                            if (TryConstSeqCounterLoop(stmt, rMemSeq, rMem.Member, reverse: true)) return;
+                            for (int k = rMemSeq.Count - 1; k >= 0; --k)
+                            {
+                                if (!TryEvalConstElement(rMemSeq[k], out int rmv))
+                                    throw UserError(
+                                        $"reversed(self.{rMem.Member}): element {k} is not a compile-time constant.",
+                                        rMemSeq[k]);
+                                constantVariables[valKey] = rmv;
+                                VisitStatement(stmt.Body);
+                            }
+                            constantVariables.Remove(valKey);
+                            return;
+                        }
+
+                        if (ResolveMemberArrayName(rMem) is { } rMemArr
+                            && arraySizes.TryGetValue(rMemArr, out int rMemSz) && rMemSz > 0)
+                        {
+                            if (HasSubscriptableStorage(rMemArr) && !HasInstanceElements(rMemArr)
+                                && !LoopVarNeedsConst(stmt)
+                                && (rMemSz > ConstSequenceUnrollLimit
+                                    || !UnrolledLoopBodyIsCheap(stmt.Body)))
+                            {
+                                EmitIndexedCounterLoop(stmt, rMem, rMemSz - 1, -1, -1);
+                                return;
+                            }
+                            DataType rMemDt = arrayElemTypes.TryGetValue(rMemArr, out var rmdt) ? rmdt : DataType.UINT8;
+                            bool rmUseSram = arraysWithVariableIndex.Contains(rMemArr) || moduleSramArrays.Contains(rMemArr);
+                            variableTypes[valKey] = rMemDt;
+                            bool rmBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                            string rmBreakLabel = rmBrk ? MakeLabel() : "";
+                            for (int k = rMemSz - 1; k >= 0; --k)
+                            {
+                                string rmContLabel = rmBrk ? MakeLabel() : "";
+                                if (rmBrk)
+                                    loopStack.Add(new LoopLabels { ContinueLabel = rmContLabel, BreakLabel = rmBreakLabel, FinallyDepth = finallyStack.Count });
+                                string rmElemKey = rMemArr + "__" + k;
+                                if (rmUseSram)
+                                {
+                                    Val rmElemVal = VisitIndex(new IndexExpr(rMem, new IntegerLiteral(k)));
+                                    Emit(new Copy(rmElemVal, new Variable(valKey, rMemDt)));
+                                }
+                                else if (constantVariables.TryGetValue(rmElemKey, out int rmCv))
+                                    constantVariables[valKey] = rmCv;
+                                else
+                                    Emit(new Copy(new Variable(rmElemKey, rMemDt), new Variable(valKey, rMemDt)));
+                                VisitStatement(stmt.Body);
+                                if (rmBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(rmContLabel)); }
+                                CleanCtState(valKey);
+                                constantVariables.Remove(valKey);
+                            }
+                            if (rmBrk) Emit(new Label(rmBreakLabel));
+                            return;
+                        }
+                    }
+
                     if (inner is VariableExpr v)
                     {
                         string @base = "";
