@@ -3848,27 +3848,53 @@ public partial class IRGenerator
         if (expr.Callee is not MemberAccessExpr mem) return null;
         if (mem.Object is not CallExpr { Callee: VariableExpr { Name: "super" } }) return null;
 
-        // When an OUTLINED method body is compiled standalone, currentModulePrefix is not the
-        // class prefix, so derive the child class from the method's recorded instance type first
-        // (this is what makes super().<method>() resolve inside an outlined override). Fall back
-        // to currentModulePrefix for the inline construction path (super().__init__()).
-        string childClass = methodInstanceTypes.TryGetValue(currentFunction, out var mitChild)
-            ? mitChild
-            : (string.IsNullOrEmpty(currentModulePrefix)
-                ? ""
-                : currentModulePrefix.Substring(0, currentModulePrefix.Length - 1));
+        // The child class super() searches from is the class the calling method was defined
+        // on. An OUTLINED body keeps it in methodInstanceTypes[currentFunction]; an EXPANDED
+        // one keeps it on the innermost inline frame's callee (currentFunction is the
+        // enclosing real function there, so it never answered -- `super()._pixel` inside a
+        // force-inlined override reported "super() is a Python builtin that PyMCU does not
+        // provide"). The module prefix is only the inline construction path's fallback
+        // (super().__init__()).
+        string childClass =
+            inlineStack.Count > 0
+            && inlineStack[^1].CalleeName is { Length: > 0 } expandedCallee
+            && methodInstanceTypes.TryGetValue(expandedCallee, out var mitExpanded)
+                ? mitExpanded
+                : methodInstanceTypes.TryGetValue(currentFunction, out var mitChild)
+                    ? mitChild
+                    : (string.IsNullOrEmpty(currentModulePrefix)
+                        ? ""
+                        : currentModulePrefix.Substring(0, currentModulePrefix.Length - 1));
         if (!classBasePrefixes.TryGetValue(childClass, out var basePrefix)) return null;
 
-        var calleeSuper = basePrefix + mem.Member;
+        // Walk the MRO: the member may live on a grandparent. Matrix16x8's
+        // super()._pixel skips Matrix8x8 (which defines `pixel`, not `_pixel`)
+        // and lands on HT16K33._pixel in a different module. Previously only the
+        // direct base was tried, so the call fell through to the builtin table
+        // and reported "super() is a Python builtin PyMCU does not provide".
+        FunctionDef? funcSuper = null;
+        for (string? searchPrefix = basePrefix;
+             !string.IsNullOrEmpty(searchPrefix);)
+        {
+            var candidate = searchPrefix + mem.Member;
+            if (inlineFunctions.TryGetValue(candidate, out funcSuper)
+                || instanceMethodDefs.TryGetValue(candidate, out funcSuper)
+                || methodAstByName.TryGetValue(candidate, out funcSuper))
+            {
+                basePrefix = searchPrefix;
+                break;
+            }
+            string clsKey = searchPrefix.Substring(0, searchPrefix.Length - 1);
+            if (!classBasePrefixes.TryGetValue(clsKey, out searchPrefix))
+                break;
+        }
         // The base method may be @inline (in inlineFunctions) OR a default-outlined method
         // (only its AST is in instanceMethodDefs). Either way, expand its BODY in place with
         // self aliased to the current instance -- this sidesteps the outlined-call ABI and
         // works whether the OVERRIDING method is itself outlined or force-inlined. Before,
         // only an @inline base method resolved; a non-inline one fell through to an undefined
         // 'super' (super().<method>() only worked for __init__).
-        if (!inlineFunctions.TryGetValue(calleeSuper, out var funcSuper)
-            && !instanceMethodDefs.TryGetValue(calleeSuper, out funcSuper)
-            && !methodAstByName.TryGetValue(calleeSuper, out funcSuper))
+        if (funcSuper == null)
             return null;
 
         return EmitUnboundMethodBody(basePrefix, funcSuper,
