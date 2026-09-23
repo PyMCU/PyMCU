@@ -1599,7 +1599,13 @@ private static Function CloneFunction(Function f)
                         //      wider/narrower/differently-signed dst leaves it mismatched (an int8
                         //      element/return loaded into an int16 temp never sign-extends the high
                         //      byte -> garbage; e.g. `print(neg_of(x))` for an int8-returning fn).
-                        // Binary/Unary adopt their dst type as the compute width, so they are fine.
+                        // Binary/Unary adopt their dst type as the compute width, so they are fine
+                        // -- but only while the retarget keeps the floatness. `i | j` computed
+                        // into a FLOAT dst asks the backend for a float bitwise op (none exists),
+                        // and even the ops that do exist on float change meaning when the copy
+                        // they replace was the int->float conversion of `/`'s operand. The
+                        // reverse (a float tmp stored into an int dst) is the truncating store
+                        // the copy already was, so it keeps the old single-instruction shape.
                         DataType newDstT = GetDataType(nextCopy.Dst);
                         bool blockCoalesce =
                             (func.Body[i] is Copy prod
@@ -1607,7 +1613,10 @@ private static Function CloneFunction(Function f)
                                 && ChangesRepr(tDst, newDstT))
                             || (func.Body[i] is ArrayLoad or ArrayLoadFlash or BytearrayLoad
                                     or LoadIndirect or Call
-                                && ChangesRepr(tDst, newDstT));
+                                && ChangesRepr(tDst, newDstT))
+                            || (func.Body[i] is Binary or Unary
+                                && GetDataType(tDst) != DataType.FLOAT
+                                && newDstT == DataType.FLOAT);
                         if (!blockCoalesce)
                         {
                             newBody.Add(ReplaceDst(func.Body[i], nextCopy.Dst));

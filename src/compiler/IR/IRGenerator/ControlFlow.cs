@@ -16,6 +16,7 @@
 
 using PyMCU.Frontend;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
+using AstBinOp = PyMCU.Frontend.BinaryOp;
 using PyMCU.IR;
 using PyMCU.Common;
 
@@ -176,14 +177,14 @@ public partial class IRGenerator
         if (LiveOptionalTag(cond) is { } optCond)
         {
             Val optPayload = EvalOptionalCarry(cond);
-            EmitOptionalTruthJump(optCond.tag, optPayload, optCond.noneIdx, targetLabel, jumpIfTrue);
+            EmitOptionalTruthJump(optCond.tag, optPayload, optCond.members, targetLabel, jumpIfTrue);
             return 1;
         }
         if (cond is UnaryExpr { Op: AstUnOp.Not } notOpt
             && LiveOptionalTag(notOpt.Operand) is { } notOptTag)
         {
             Val notPayload = EvalOptionalCarry(notOpt.Operand);
-            EmitOptionalTruthJump(notOptTag.tag, notPayload, notOptTag.noneIdx, targetLabel, !jumpIfTrue);
+            EmitOptionalTruthJump(notOptTag.tag, notPayload, notOptTag.members, targetLabel, !jumpIfTrue);
             return 1;
         }
 
@@ -842,13 +843,15 @@ public partial class IRGenerator
 
         // RFC 0009 narrowing: each arm lowers under the condition's effect on that arm
         // (`v is not None` narrows the then-path, `v is None` narrows the fall-through),
-        // and the join keeps a name narrowed only when every surviving path proves it.
-        var optArmEnds = new List<OptionalSnap?>();
-        OptionalSnap inheritOpt = SnapOptionalState();
+        // accumulated across the chain in inheritOpt -- the pre-chain state plus the
+        // false-effect of every earlier condition, which is what an elif/else runs
+        // under. Narrowing and tag slots ride BranchState, so the shared join below
+        // keeps a name narrowed only where every surviving path proves it.
+        var inheritOpt = snapBefore;
 
         if (!skipThen)
         {
-            RestoreOptionalState(inheritOpt);
+            RestoreBranchState(inheritOpt);
             ApplyOptionalCondEffect(stmt.Condition, true);
             if (isRuntimeBranch) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ThenBranch);
@@ -858,12 +861,10 @@ public partial class IRGenerator
             if (stmt.ElifBranches.Count > 0 || stmt.ElseBranch != null)
                 Emit(new Jump(endLabel));
             branchSnaps.Add(AlwaysLeaves(stmt.ThenBranch) ? null : TakeBranchState());
-            RestoreBranchState(snapBefore);
-            optArmEnds.Add(AlwaysLeaves(stmt.ThenBranch) ? null : SnapOptionalState());
         }
-        RestoreOptionalState(inheritOpt);
+        RestoreBranchState(inheritOpt);
         ApplyOptionalCondEffect(stmt.Condition, false);
-        inheritOpt = SnapOptionalState();
+        inheritOpt = TakeBranchState();
 
         for (int i = 0; i < stmt.ElifBranches.Count; ++i)
         {
@@ -925,7 +926,7 @@ public partial class IRGenerator
 
             if (!skipElif)
             {
-                RestoreOptionalState(inheritOpt);
+                RestoreBranchState(inheritOpt);
                 ApplyOptionalCondEffect(elifCond, true);
                 if (elifIsRuntime) EnterRuntimeBranch(elifUndecided);
                 VisitStatement(elifBlock);
@@ -933,12 +934,10 @@ public partial class IRGenerator
                 if (elifIsRuntime) { anyRuntimeArm = true; _seqTerminated = false; }
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
                 branchSnaps.Add(AlwaysLeaves(elifBlock) ? null : TakeBranchState());
-                RestoreBranchState(snapBefore);
-                optArmEnds.Add(AlwaysLeaves(elifBlock) ? null : SnapOptionalState());
             }
-            RestoreOptionalState(inheritOpt);
+            RestoreBranchState(inheritOpt);
             ApplyOptionalCondEffect(elifCond, false);
-            inheritOpt = SnapOptionalState();
+            inheritOpt = TakeBranchState();
         }
 
         if (stmt.ElseBranch != null)
@@ -946,7 +945,7 @@ public partial class IRGenerator
             Emit(new Label(nextLabel));
             // The else runs when every earlier condition failed, so it is guarded by ANY
             // run-time arm in the chain, not only the `if`'s own condition.
-            RestoreOptionalState(inheritOpt);
+            RestoreBranchState(inheritOpt);
             if (anyRuntimeArm) EnterRuntimeBranch(condUndecided);
             VisitStatement(stmt.ElseBranch);
             if (anyRuntimeArm) LeaveRuntimeBranch();
@@ -962,12 +961,9 @@ public partial class IRGenerator
             bool elseUncond = !anyRuntimeArm;
             branchSnaps.Add(AlwaysLeaves(stmt.ElseBranch) && !elseUncond ? null : TakeBranchState());
             if (elseUncond) firstUncondArm = branchSnaps.Count - 1;
-            RestoreBranchState(snapBefore);
-            optArmEnds.Add(AlwaysLeaves(stmt.ElseBranch) ? null : SnapOptionalState());
         }
 
         Emit(new Label(endLabel));
-        JoinOptionalState(optArmEnds, hasElse ? null : inheritOpt);
 
         // The merge keeps a binding only where every reachable arm agrees on it, and the
         // else-less fall-through is one more arm carrying the state from before the
@@ -1158,6 +1154,18 @@ public partial class IRGenerator
         // has no value to read -- that is what None means here -- so visiting it would emit a
         // read of a name nothing writes, and the match would be decided on it (#306).
         bool subjectIsNone = IsNoneValued(stmt.Target);
+        // RFC 0009 phase 3: `match v:` on a live union dispatches on the TAG byte --
+        // `case int():` asks which member the tag names, `case None:` asks for the
+        // None index, and a literal compares the payload as the member it can be.
+        if (!subjectIsNone && stmt.Target is VariableExpr matchSubj
+            && OptionalKeyOf(matchSubj.Name) is { } matchKey
+            && optionalMembersByName.ContainsKey(matchKey)
+            && optionalTagSlots.ContainsKey(matchKey)
+            && !noneValuedNames.Contains(matchKey))
+        {
+            VisitUnionMatchBody(stmt, matchSubj, matchKey);
+            return;
+        }
         Val targetVal = subjectIsNone ? new NoneVal() : VisitExpression(stmt.Target);
         bool ctAlreadyMatched = false;
         string endLabel = MakeLabel();
@@ -1522,8 +1530,208 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// Drops the compile-time value of everything <paramref name="body"/> can assign to, before
-    /// a loop body is lowered. A loop body is emitted once and executed many times, so folding
+    /// RFC 0009 phase 3: `match v:` on a live union dispatches on the TAG byte. A
+    /// member-type pattern (`case int():`, `case float():`) compares the tag to the
+    /// member index the type names; `case None:` compares it to the None index; a
+    /// literal pattern (`case 5:`) compares the payload read AS the member the
+    /// literal could be. Inside the arm the subject narrows exactly as `is None`
+    /// narrows it, so a payload read takes the member's width.
+    /// </summary>
+    private void VisitUnionMatchBody(MatchStmt stmt, VariableExpr subj, string key)
+    {
+        var members = optionalMembersByName[key];
+        Val tag = optionalTagSlots[key];
+        int noneIdx = NoneIndex(members);
+        // The payload val is read for its tag carry only -- a member test never
+        // needs the payload itself, and a literal pattern retypes it per member.
+        Val payload = EvalOptionalCarry(subj);
+        string endLabel = MakeLabel();
+        var preMatch = TakeBranchState();
+        var armEnds = new List<BranchState?>();
+
+        foreach (var branch in stmt.Branches)
+        {
+            RestoreBranchState(preMatch);
+            string nextCaseLabel = MakeLabel();
+
+            if (branch.Pattern == null)
+            {
+                // `case _:` -- the wildcard always matches.
+                UnionMatchBindCaptures(branch, subj, payload, key, members, -1);
+                EnterRuntimeBranch(null);
+                if (branch.Body != null) VisitBlock((Block)branch.Body);
+                LeaveRuntimeBranch();
+                armEnds.Add(TakeBranchState());
+                Emit(new Jump(endLabel));
+                Emit(new Label(nextCaseLabel));
+                continue;
+            }
+
+            // Flatten `case a | b:` alternation into alternatives.
+            var alts = new List<Expression>();
+            void FlattenPat(Expression e)
+            {
+                if (e is BinaryExpr bin && bin.Op == AstBinOp.BitOr) { FlattenPat(bin.Left); FlattenPat(bin.Right); return; }
+                alts.Add(e);
+            }
+            FlattenPat(branch.Pattern);
+
+            // Classify every alternative: member indices it names (tag compares),
+            // or a literal it compares the payload against.
+            var tagIdx = new List<int>();
+            var literalAlts = new List<(int memberIdx, Val lit)>();
+            foreach (var alt in alts)
+            {
+                if (alt is CallExpr cp)
+                {
+                    if (cp.Callee is not VariableExpr patName)
+                        throw UserError(
+                            "match/case: a call is not a pattern; `case T(...)` on a union "
+                            + "matches a member type, and its callee has to be a member's "
+                            + "type name", cp);
+                    var idxs = IsinstanceMemberIndices(new VariableExpr(patName.Name), members);
+                    if (idxs.Count == 0)
+                        throw UserError(
+                            $"match/case: '{patName.Name}' is not a member of this union "
+                            + $"({UnionDisplay(members)}) -- the tag can never be it.", cp);
+                    tagIdx.AddRange(idxs);
+                    continue;
+                }
+                if (alt is NoneLiteral || (alt is VariableExpr nv && nv.Name is "None" or "NoneType"))
+                {
+                    if (noneIdx >= 0) tagIdx.Add(noneIdx);
+                    continue;
+                }
+                // A literal (or a name resolving to a constant): compares against the
+                // payload read as each member that can hold it.
+                Val litVal = alt is VariableExpr or MemberAccessExpr ? VisitExpression(alt)
+                    : alt is UnaryExpr { Op: AstUnOp.Negate } neg
+                        ? new Constant(-(VisitExpression(neg.Operand) as Constant)?.Value ?? 0)
+                        : VisitExpression(alt);
+                if (litVal is not (Constant or FloatConstant))
+                    throw UserError(
+                        "match/case on a union takes a member type (`case int():`), `case None:`, "
+                        + "or a literal the payload can equal -- this pattern is none of those.", alt);
+                long litLong = litVal is Constant lc ? lc.Value
+                    : (long)(litVal as FloatConstant)!.Value;
+                bool litIsFloat = litVal is FloatConstant;
+                bool litIsBool = alt is BooleanLiteral;
+                for (int i = 0; i < members.Count; ++i)
+                {
+                    if (i == noneIdx) continue;
+                    string mn = members[i];
+                    bool can = litIsFloat ? mn == "float"
+                        : litIsBool ? (mn == "bool" || IsIntMember(mn))
+                        : (IsIntMember(mn) || mn == "bool" || mn == "float");
+                    if (!can) continue;
+                    // An int literal that an int member cannot hold can never equal it.
+                    if (!litIsFloat && !litIsBool && IsIntMember(mn) && !IntMemberFits(mn, litLong))
+                        continue;
+                    literalAlts.Add((i, litVal));
+                }
+            }
+
+            if (tagIdx.Count == 0 && literalAlts.Count == 0)
+            {
+                // No member can match this pattern: the arm is dead.
+                Emit(new Jump(nextCaseLabel));
+                Emit(new Label(nextCaseLabel));
+                continue;
+            }
+
+            string armLabel = MakeLabel();
+            bool singleTagArm = tagIdx.Distinct().Count() == 1 && literalAlts.Count == 0;
+            if (singleTagArm)
+                // One tag test per arm, fall through into the body -- the shape a
+                // reader's CPI/BREQ chain takes.
+                Emit(new JumpIfNotEqual(tag, new Constant(tagIdx[0]), nextCaseLabel));
+            else
+                foreach (var i in tagIdx.Distinct())
+                    Emit(new JumpIfEqual(tag, new Constant(i), armLabel));
+            foreach (var (mi, lv) in literalAlts)
+            {
+                string litSkip = MakeLabel();
+                Emit(new JumpIfNotEqual(tag, new Constant(mi), litSkip));
+                Temporary litCmp = MakeTemp(DataType.UINT8);
+                Val litAs = lv;
+                if (MemberDataType(members[mi]) == DataType.FLOAT && lv is Constant lci)
+                    litAs = new FloatConstant(lci.Value);
+                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, MemberRead(payload, mi, members), litAs, litCmp));
+                Emit(new JumpIfNotZero(litCmp, armLabel));
+                Emit(new Label(litSkip));
+            }
+            if (!singleTagArm)
+            {
+                Emit(new Jump(nextCaseLabel));
+                Emit(new Label(armLabel));
+            }
+
+            // The arm narrows when the pattern names exactly one member.
+            int singleIdx = (tagIdx.Count + literalAlts.Count == 1)
+                ? (tagIdx.Count == 1 ? tagIdx[0] : literalAlts[0].memberIdx) : -1;
+            if (singleIdx >= 0)
+            {
+                if (singleIdx == noneIdx) MarkOptionalNone(key);
+                else narrowedOptionals[key] = singleIdx;
+            }
+            UnionMatchBindCaptures(branch, subj, payload, key, members, singleIdx);
+
+            if (branch.Guard != null)
+            {
+                Val g = VisitExpression(branch.Guard);
+                Emit(new JumpIfZero(g, nextCaseLabel));
+            }
+
+            EnterRuntimeBranch(null);
+            if (branch.Body != null) VisitBlock((Block)branch.Body);
+            LeaveRuntimeBranch();
+            armEnds.Add(TakeBranchState());
+            Emit(new Jump(endLabel));
+            Emit(new Label(nextCaseLabel));
+        }
+
+        // Past the match the subject is whatever the surviving paths leave: each
+        // arm's end state, plus the pre-match state for the path no arm took. The
+        // unguarded wildcard answers every path no earlier arm took, so only a
+        // match without one has a fall-through carrying the pre-match state.
+        bool wildcardCoversAll = stmt.Branches.Any(b => b.Pattern == null);
+        var disagreedStr = JoinBranchStates(armEnds, preMatch, wildcardCoversAll);
+        foreach (var k in disagreedStr)
+        {
+            var candidates = new List<string?>();
+            if (preMatch.StrConstantVariables.TryGetValue(k, out var beforeVal))
+                candidates.Add(beforeVal);
+            foreach (var snap in armEnds)
+                if (snap != null && snap.StrConstantVariables.TryGetValue(k, out var bv))
+                    candidates.Add(bv);
+            MarkMultiStr(k, candidates);
+        }
+        Emit(new Label(endLabel));
+    }
+
+    /// Bind `case T(x)` positional captures and `case ... as name` on a union arm:
+    /// the name takes the subject's payload at the narrowed member's width (the
+    /// widest read when the arm did not narrow to one member).
+    private void UnionMatchBindCaptures(CaseBranch branch, VariableExpr subj, Val payload,
+        string key, List<string> members, int singleIdx)
+    {
+        var pattern = branch.Pattern;
+        var capNames = new List<string>();
+        if (pattern is CallExpr cp)
+            foreach (var arg in cp.Args)
+                if (arg is VariableExpr av && av.Name != "_") capNames.Add(av.Name);
+        if (!string.IsNullOrEmpty(branch.CaptureName)) capNames.Add(branch.CaptureName);
+        foreach (var cn in capNames)
+        {
+            string qname = string.IsNullOrEmpty(currentFunction)
+                ? cn : currentFunction + "." + cn;
+            var dt = singleIdx >= 0 && singleIdx < members.Count
+                ? MemberDataType(members[singleIdx]) : GetValType(payload);
+            Val src = singleIdx >= 0 ? MemberRead(payload, singleIdx, members) : payload;
+            Emit(new Copy(src, new Variable(qname, dt)));
+            variableTypes[qname] = dt;
+        }
+    }
     /// it against the state of the first iteration is wrong for every iteration after it.
     ///
     /// Deliberately conservative about method calls: any call on an instance drops that
@@ -1608,7 +1816,11 @@ public partial class IRGenerator
     private IEnumerable<string> FieldsMutatedBy(string instance, string method)
     {
         string? cls = InstanceClassOfName(instance);
-        return cls == null ? Enumerable.Empty<string>() : FieldsWrittenBy(cls + "_" + method);
+        // The method may be inherited: `adafruit_dht_DHT22` has no `temperature`
+        // of its own -- it lives under `adafruit_dht_DHTBase_temperature`, and
+        // looking it up under the concrete name found nothing and kept the fold.
+        return cls == null ? Enumerable.Empty<string>()
+                           : FieldsWrittenBy(ResolveMROMethod(cls, method) + "_" + method);
     }
 
     /// <summary>
@@ -1933,7 +2145,15 @@ public partial class IRGenerator
                 return;
             case BinaryExpr b: CollectCalls(b.Left, receivers); CollectCalls(b.Right, receivers); return;
             case UnaryExpr u: CollectCalls(u.Operand, receivers); return;
-            case MemberAccessExpr m: CollectCalls(m.Object, receivers); return;
+            case MemberAccessExpr m:
+                // `obj.member` with no call parens can still invoke a property or
+                // zero-arg method (adafruit_dht's `dht.temperature` runs measure(),
+                // which writes `self._last_called`). Treat it like the call it lowers
+                // to; a member that is a plain field resolves to no method and
+                // invalidates nothing downstream.
+                if (m.Object is VariableExpr mRecv) receivers.Add((mRecv.Name, m.Member));
+                CollectCalls(m.Object, receivers);
+                return;
             case IndexExpr ix: CollectCalls(ix.Target, receivers); CollectCalls(ix.Index, receivers); return;
             case TernaryExpr t:
                 CollectCalls(t.Condition, receivers);
@@ -2016,26 +2236,15 @@ public partial class IRGenerator
 
         // RFC 0009: the condition's narrowing holds inside the body (`while r is not
         // None:` narrows r there). Past the loop nothing the condition proved survives:
-        // it may never have run, and a name the body rewrites answers from its new
-        // value. Tag slots gained inside DO persist -- the byte exists whichever path
-        // ran -- so the slot map is the body's, the narrowing is the pre-loop's.
-        var preLoopOpt = SnapOptionalState();
+        // the exit joins the body's end state with loopSnap -- taken before the
+        // effect -- so a name stays narrowed only where both agree, and a name the
+        // body rewrote dropped its narrowing on the way. Tag slots gained inside DO
+        // persist -- the byte exists whichever path ran -- and the slot map's
+        // union-join in JoinBranchStates is what keeps them.
         ApplyOptionalCondEffect(stmt.Condition, true);
         if (isRuntimeLoop) EnterRuntimeBranch(null);
         VisitStatement(stmt.Body);
         if (isRuntimeLoop) LeaveRuntimeBranch();
-        var postLoopOpt = SnapOptionalState();
-        {
-            var bodyAssigned = new HashSet<string>();
-            CollectAssignedNames(stmt.Body, bodyAssigned);
-            postLoopOpt.Narrowed.Clear();
-            postLoopOpt.Narrowed.UnionWith(preLoopOpt.Narrowed);
-            postLoopOpt.Narrowed.RemoveWhere(k => bodyAssigned.Contains(SourcePartOf(k)));
-            postLoopOpt.None.Clear();
-            postLoopOpt.None.UnionWith(preLoopOpt.None);
-            postLoopOpt.None.RemoveWhere(k => bodyAssigned.Contains(SourcePartOf(k)));
-            RestoreOptionalState(postLoopOpt);
-        }
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);

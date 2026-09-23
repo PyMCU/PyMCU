@@ -576,9 +576,13 @@ public partial class IRGenerator
 
         // RFC 0009: the resolve pass decided before lowering whether this function's
         // Optional return is real (a run-time None can reach a `return`) -- only then
-        // does the .mir carry the member list and every Return a tag.
+        // does the .mir carry the member list and every Return a tag. The payload is
+        // the widest member, which is what the IR return type then says.
         if (functionReturnMembers.TryGetValue(fullName, out var retMembers))
+        {
             irFunc.ReturnMembers = retMembers;
+            irFunc.ReturnType = UnionPayloadType(retMembers);
+        }
 
         currentFunctionGlobals.Clear();
         currentInstructions.Clear();

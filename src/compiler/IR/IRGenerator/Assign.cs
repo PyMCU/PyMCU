@@ -1717,6 +1717,11 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentInlinePrefix))
             target = WidenInlineLocalToValue(varExpr, target, value);
 
+        // RFC 0009: a union slot's payload write uses the member's width, not the
+        // slot's -- a widest-typed Copy would convert an int member to float bits.
+        if (target is Variable payTgt && optionalMembersByName.ContainsKey(payTgt.Name))
+            target = UnionPayloadStoreTarget(payTgt, value, stmt.Value);
+
         if (value is ArrayBase abRet && target is Variable arrTgt)
             CopyArrayIdentity(arrTgt.Name, abRet.ArrayName);
         else if (!(value is NoneVal)
@@ -2195,7 +2200,9 @@ public partial class IRGenerator
 
         // RFC 0009: an Optional field is phase 2 -- a field store that kept only the
         // payload would drop the tag silently, so the unnarrowed case refuses by name.
-        RefuseOptionalPayloadStore(value, stmt.Value);
+        // A union field DOES carry a tag byte, so the store below keeps it honest.
+        if (!IsUnionFieldTarget(memExpr2))
+            RefuseOptionalPayloadStore(value, stmt.Value);
 
         // Class variable write: `ClassName.attr = value` and `cls.attr = value` inside a
         // @classmethod. A dict/set literal is a compile-time lookup table (Adafruit CV:
@@ -2470,6 +2477,18 @@ public partial class IRGenerator
                     + "out at compile time. Assign it in some method to make it a field, or correct the "
                     + $"spelling. Declared fields: {string.Join(", ", fieldLay.Select(f => f.Field))}",
                     memExpr2);
+
+            // RFC 0009 phase 3: a field that holds BOTH None and scalars across the
+            // class's writes is a tagged union -- payload at the widest member's
+            // width plus a tag byte. Its stores and reads keep the tag in step;
+            // the fold-only None bookkeeping below is the no-tag path.
+            if (baseName != null
+                && instanceClasses.TryGetValue(baseName, out var ufCls) && ufCls != null
+                && EnsureUnionField(flattenedName, ufCls, memExpr2.Member, out _))
+            {
+                EmitUnionFieldStore(flattenedName, memExpr2.Member, stmt.Value, value, memExpr2);
+                return;
+            }
 
             // A field assigned None has no runtime value; record the flattened name so
             // `obj.field is None` folds to True (IsNoneValued checks this set). A later non-None
@@ -4844,6 +4863,10 @@ public partial class IRGenerator
             }
             catch { /* non-constant initializer: keep the default */ }
         }
+        // RFC 0009 phase 3: a `Union[...]` local's slot is the widest member -- the
+        // tag byte picks which member's width a read takes.
+        if (stmt.UnionMembers != null)
+            declType = UnionPayloadType(stmt.UnionMembers);
 
         CheckIntLiteralRange(stmt.Init, declType, stmt.Line);
 
@@ -5069,6 +5092,10 @@ public partial class IRGenerator
             ? currentInlinePrefix + stmt.Name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
         variableTypes[q2] = dt;
+        // A declared union knows its member list before the initializer's copy runs,
+        // so the payload store can pick the member's width rather than the slot's.
+        if (stmt.UnionMembers != null)
+            optionalMembersByName[q2] = stmt.UnionMembers;
 
         if (stmt.VarType == "str" && stmt.Init is StringLiteral sl)
         {
@@ -5119,6 +5146,8 @@ public partial class IRGenerator
                 ? MultiStrStoreTarget(stmt.Name) : null;
             Val target = strSlot ?? ResolveBinding(stmt.Name);
             if (strSlot == null && target is Variable v) target = v with { Type = dt };
+            if (target is Variable uvTgt && stmt.UnionMembers != null)
+                target = UnionPayloadStoreTarget(uvTgt, val, stmt.Init);
             Emit(new Copy(val, target));
 
             // RFC 0009: an `Optional[X]` declaration (or a name another write can leave
@@ -5582,7 +5611,10 @@ public partial class IRGenerator
                 throw UserError(UnionAnnotationRefusal, at);
             }
             if (head is "Optional" or "typing.Optional")
+            {
+                if (allowUnion) return;
                 throw UserError(UnionAnnotationRefusal, at);
+            }
             // The 64-bit names before the known-head return, and inside the brackets as well
             // as at the head: `const[uint64]` and `uint64[4]` both put a width this compiler
             // does not have where storage is decided.
@@ -5850,7 +5882,11 @@ public partial class IRGenerator
                     paramUnionAllowed = !staysSubroutine;
                 }
                 foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f, paramUnionAllowed);
-                CheckAnnotationNames(f.ReturnType ?? "", f);
+                // RFC 0009 phase 3: a return position accepts a union member list --
+                // the tag carries the member index and the payload is the widest
+                // member. What the members can be, and how many, is for the resolve
+                // pass to refuse (ValidateUnionMembers).
+                CheckAnnotationNames(f.ReturnType ?? "", f, f.ReturnMembers != null);
 
                 // A RETURN annotation is the one position where a tuple's LENGTH is what the
                 // compiler needs: the count is what the caller unpacks, and there is no
@@ -5930,7 +5966,12 @@ public partial class IRGenerator
 
     private void VisitAnnAssign(AnnAssign stmt)
     {
-        CheckAnnotationNames(stmt.Annotation, stmt);
+        // `x: Union[A, B, ...]` / `self.f: Union[A, B, ...]` -- a declared union
+        // when the normaliser read a member list (UnionMembers != null). The
+        // local path below lays the widest member's slot and carries the tag;
+        // a `self.` target is a declared union field, lowered by EmitMemberAssign
+        // like any other member write.
+        CheckAnnotationNames(stmt.Annotation, stmt, stmt.UnionMembers != null);
 
         // A `const[...]` annotation marks the name immutable; record it so a later
         // assignment to it is rejected (see VisitAssign's reassignment guard).
@@ -5949,6 +5990,26 @@ public partial class IRGenerator
         {
             VisitStatement(new AssignStmt(new VariableExpr(stmt.Target), stmt.Value)
                 { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
+            return;
+        }
+
+        // `self.f: Union[A, B, ...] = v` -- a declared union field. The field
+        // scans filed the member list (fieldDeclaredUnionMembers) from the same
+        // AnnAssign; the write itself is an ordinary member assignment, so it
+        // lowers through VisitAssign exactly like the `self.f: T = v` scalar
+        // spelling (which the parser hands down as an AssignStmt).
+        if (stmt.Target.Contains('.') && stmt.UnionMembers != null)
+        {
+            if (stmt.Value == null)
+                throw UserError(
+                    "An annotated instance member needs an initial value, e.g. `self.x: int = 0`",
+                    stmt);
+            int udot = stmt.Target.IndexOf('.');
+            VisitStatement(new AssignStmt(
+                new MemberAccessExpr(new VariableExpr(stmt.Target.Substring(0, udot)),
+                                     stmt.Target.Substring(udot + 1)),
+                stmt.Value)
+            { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
             return;
         }
 
@@ -6239,6 +6300,10 @@ public partial class IRGenerator
             catch { /* non-constant initializer: keep the uint8 default */ }
         }
 
+        // RFC 0009 phase 3: a `Union[...]` local's slot is the widest member.
+        if (stmt.UnionMembers != null)
+            type = UnionPayloadType(stmt.UnionMembers);
+
         // An unannotated module-level binding reaches here as an AnnAssign with an EMPTY
         // annotation (the module-init pass rewrites the VarDecl that way), and the uint8
         // default above is what truncated it: `b = 5` then `b = 300` stored 44. Take the width
@@ -6269,6 +6334,8 @@ public partial class IRGenerator
             type = DataType.UINT16;
 
         variableTypes[qualified2] = type;
+        if (stmt.UnionMembers != null)
+            optionalMembersByName[qualified2] = stmt.UnionMembers;
 
         if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2
             && !multiStrVariables.ContainsKey(qualified2))
@@ -6276,7 +6343,9 @@ public partial class IRGenerator
 
         if (stmt.Value != null)
         {
-            Val rhs = VisitExpression(stmt.Value);
+            // A union-typed declaration reads its initializer as a tag CARRY: `x:
+            // Union[int, float] = r` takes r's whole value, tag byte included.
+            Val rhs = stmt.UnionMembers != null ? EvalOptionalCarry(stmt.Value) : VisitExpression(stmt.Value);
 
             // For ptr[T] = ptr(constant), register the constant address and element type;
             // do not emit a Copy (the "variable" is a compile-time address constant).
@@ -6303,7 +6372,14 @@ public partial class IRGenerator
             }
 
             if (rhs is MemoryAddress addr) rhs = addr with { Type = type };
-            Emit(new Copy(rhs, new Variable(qualified2, type)));
+            Variable annTgt = new Variable(qualified2, type);
+            if (stmt.UnionMembers != null)
+                annTgt = (Variable)UnionPayloadStoreTarget(annTgt, rhs, stmt.Value);
+            // `x: Union[..., None] = None` writes no payload -- only the tag.
+            if (rhs is not NoneVal)
+                Emit(new Copy(rhs, annTgt));
+            if (stmt.UnionMembers != null)
+                EmitOptionalTagWrite(new Variable(qualified2, type), stmt.Value, rhs);
 
             // Propagate string constant from rhs to the declared variable so that
             // downstream match/case DCE (e.g. select_port) can fold it.

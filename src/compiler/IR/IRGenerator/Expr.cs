@@ -666,13 +666,20 @@ public partial class IRGenerator
         // parameter bind -- mark their reads with optionalReadAllowed; every other
         // position (arithmetic, .field, call, subscript, print, a real-subroutine
         // argument) refuses by name.
-        if (optionalReadAllowed == 0 && TagOfVal(boundVal) != null
-            && ValNameOf(boundVal) is { } boundName
-            && !narrowedOptionals.Contains(boundName)
+        if (TagOfVal(boundVal) != null && ValNameOf(boundVal) is { } boundName
             && !noneValuedNames.Contains(boundName))
-            throw UserError(
-                $"'{expr.Name}' may be None here; narrow it first "
-                + $"(`if {expr.Name} is not None:`).", expr);
+        {
+            if (narrowedOptionals.TryGetValue(boundName, out var boundIdx)
+                && optionalMembersByName.TryGetValue(boundName, out var boundMembers)
+                && boundIdx >= 0 && boundIdx < boundMembers.Count)
+                // A narrowed name reads as ITS member: the low payload bytes at the
+                // member's width, not the union's widest slot (RFC 0009 section 6).
+                return MemberRead(boundVal, boundIdx, boundMembers);
+            if (optionalReadAllowed == 0)
+                throw UserError(
+                    $"'{expr.Name}' may be None here; narrow it first "
+                    + $"(`if {expr.Name} is not None:`).", expr);
+        }
 
         return boundVal;
     }
@@ -1223,8 +1230,11 @@ public partial class IRGenerator
             Val optPayload = EvalOptionalCarry(expr.Left);
             bool rightMaybeNone = ExprMayBeOptional(expr.Right);
             // `or` with a concrete default is never None; `and` keeps the left tag on
-            // the falsy path, so its result stays optional as long as the left is.
-            bool resultOptional = !isOr || rightMaybeNone;
+            // the falsy path, so its result stays optional as long as the left is. A
+            // left whose union has two or more real members is tag-dependent whichever
+            // way the pick goes, so the result keeps the tag too.
+            int leftReal = abTag.members.Count - (abTag.noneIdx >= 0 ? 1 : 0);
+            bool resultOptional = !isOr || rightMaybeNone || leftReal > 1;
             // The result holds whichever operand runs, so it is sized for both -- a
             // wider right (`v or 500`) must not truncate to the payload width.
             var rightT = InferExprType(expr.Right);
@@ -1234,7 +1244,7 @@ public partial class IRGenerator
             Variable? resTag = resultOptional ? TagStorageFor(optResult.Name) : null;
             Emit(new Copy(optPayload, optResult));
             if (resTag != null) Emit(new Copy(abTag.tag, resTag));
-            EmitOptionalTruthJump(abTag.tag, optPayload, abTag.noneIdx, optEndLabel, isOr);
+            EmitOptionalTruthJump(abTag.tag, optPayload, abTag.members, optEndLabel, isOr);
             Val optRight = VisitExpression(expr.Right);
             Emit(new Copy(optRight is NoneVal ? new Constant(0) : optRight, optResult));
             if (resTag != null)
@@ -1245,7 +1255,7 @@ public partial class IRGenerator
                         UnionMembersOf(optRight, expr.Right, null))
                     : UnionMerge(UnionMembersOf(optPayload, expr.Left, null),
                         UnionMembersOf(optRight, expr.Right, null));
-                Emit(new Copy(ArmTagFor(optRight, expr.Right, null, members.IndexOf("None")), resTag));
+                Emit(new Copy(ArmTagFor(optRight, expr.Right, null, members), resTag));
                 MarkOptional(optResult.Name, resTag, members);
             }
             Emit(new Label(optEndLabel));
@@ -1840,12 +1850,12 @@ public partial class IRGenerator
         // (the false branch is emitted between the true tail and the join).
         // RFC 0009: a bare optional as the condition tests its tag first; `r if r is
         // not None else d` narrows r on the true side only, and the result carries a
-        // tag only when an arm can hand back None.
-        var preTern = SnapOptionalState();
+        // tag only when an arm can hand back None. The narrowing rides BranchState:
+        // the all-agree join below drops whatever only one arm proved.
         var ternSnap = TakeBranchState();
         if (LiveOptionalTag(truthCond) is { } ternTag)
         {
-            EmitOptionalTruthJump(ternTag.tag, cond, ternTag.noneIdx, falseLabel, false);
+            EmitOptionalTruthJump(ternTag.tag, cond, ternTag.members, falseLabel, false);
         }
         else
         {
@@ -1854,21 +1864,15 @@ public partial class IRGenerator
         ApplyOptionalCondEffect(truthCond, true);
         Val trueVal = VisitExpression(expr.TrueVal);
         int trueTail = currentInstructions.Count;   // where the true copy + jump belong
-        var trueEndState = SnapOptionalState();
         var trueArmSnap = TakeBranchState();
-        RestoreOptionalState(preTern);
         RestoreBranchState(ternSnap);
         ApplyOptionalCondEffect(truthCond, false);
         Emit(new Label(falseLabel));
         Val falseVal = VisitExpression(expr.FalseVal);
-        var falseEndState = SnapOptionalState();
         var falseArmSnap = TakeBranchState();
         // The condition's narrowing belongs to its arm; past the expression the name
-        // is whatever it was before it.
-        RestoreOptionalState(preTern);
-        // Same rule for the binding maps: an arm runs under its own guard, so a walrus
-        // or call in one cannot answer reads in the other, and only what both arms
-        // agree on survives past the expression.
+        // is whatever the arms agree on -- an arm runs under its own guard, so a
+        // walrus or call in one cannot answer reads in the other either.
         var ternDisagreed = JoinBranchStates(
             new List<BranchState?> { trueArmSnap, falseArmSnap }, ternSnap, exhaustive: true);
         foreach (var key in ternDisagreed)
@@ -1886,17 +1890,20 @@ public partial class IRGenerator
         Emit(new Copy(falseVal, result));
         Emit(new Label(endLabel));
 
-        var members = UnionMerge(
-            UnionMembersOf(trueVal, expr.TrueVal, trueEndState),
-            UnionMembersOf(falseVal, expr.FalseVal, falseEndState));
+        var trueMembers = UnionMembersOf(trueVal, expr.TrueVal, trueArmSnap);
+        var falseMembers = UnionMembersOf(falseVal, expr.FalseVal, falseArmSnap);
+        var members = UnionMerge(trueMembers, falseMembers);
         Val? resultTag = null;
-        if (members.Contains("None"))
+        // The result carries a tag when an arm can hand back a value the promoted
+        // slot cannot represent: a None (no payload), or an arm that is itself a
+        // live union (its payload width is tag-dependent). Two scalar arms promote
+        // into each other and need no tag -- the same answer phase 1 gave.
+        if (members.Contains("None") || trueMembers.Count > 1 || falseMembers.Count > 1)
         {
-            int noneIdx = members.IndexOf("None");
             resultTag = TagStorageFor(result.Name);
-            Emit(new Copy(ArmTagFor(falseVal, expr.FalseVal, falseEndState, noneIdx), resultTag));
+            Emit(new Copy(ArmTagFor(falseVal, expr.FalseVal, falseArmSnap, members), resultTag));
             currentInstructions.Insert(trueTail,
-                new Copy(ArmTagFor(trueVal, expr.TrueVal, trueEndState, noneIdx), resultTag));
+                new Copy(ArmTagFor(trueVal, expr.TrueVal, trueArmSnap, members), resultTag));
             MarkOptional(result.Name, resultTag, members);
         }
         // Splice [Copy trueVal->result; Jump end] just after the true-branch body, ahead of
@@ -2026,17 +2033,31 @@ public partial class IRGenerator
         if (expr.Op == AstUnOp.Not && LiveOptionalTag(unaryOperand) is { } notTag)
         {
             Val notPayload = EvalOptionalCarry(unaryOperand);
-            Temporary isNoneT = MakeTemp(DataType.UINT8);
-            Emit(new Binary(BinaryOp.Equal, notTag.tag, new Constant(notTag.noneIdx), isNoneT));
-            Temporary isZeroT = MakeTemp(DataType.UINT8);
-            Emit(new Binary(BinaryOp.Equal, notPayload, new Constant(0), isZeroT));
-            Temporary notResult = MakeTemp(DataType.UINT8);
-            Emit(new Binary(BinaryOp.BitOr, isNoneT, isZeroT, notResult));
-            return notResult;
+            int realMembers = notTag.members.Count - (notTag.noneIdx >= 0 ? 1 : 0);
+            if (notTag.noneIdx >= 0 && realMembers == 1)
+            {
+                // The phase-1 [X, None] shape: tag-None OR payload-zero, three ops.
+                Temporary isNoneT = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.Equal, notTag.tag, new Constant(notTag.noneIdx), isNoneT));
+                Temporary isZeroT = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.Equal, notPayload, new Constant(0), isZeroT));
+                Temporary notResult = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.BitOr, isNoneT, isZeroT, notResult));
+                return notResult;
+            }
+            // Multi-member union: falsy = tag-None or payload-as-member-zero, the
+            // same dispatch EmitOptionalTruthJump emits, folded to a boolean temp.
+            Temporary notRes = MakeTemp(DataType.UINT8);
+            Emit(new Copy(new Constant(1), notRes));
+            string notDone = MakeLabel();
+            EmitOptionalTruthJump(notTag.tag, notPayload, notTag.members, notDone, false);
+            Emit(new Copy(new Constant(0), notRes));
+            Emit(new Label(notDone));
+            return notRes;
         }
         // `-r`, `~r` and friends need the payload -- an unnarrowed optional refuses.
         if (expr.Op != AstUnOp.Not && unaryOperand is VariableExpr uv
-            && OptionalKeyOf(uv.Name) is { } unKey && !narrowedOptionals.Contains(unKey))
+            && OptionalKeyOf(uv.Name) is { } unKey && !narrowedOptionals.ContainsKey(unKey))
             throw UserError(
                 $"'{uv.Name}' may be None here; narrow it first "
                 + $"(`if {uv.Name} is not None:`).", expr);
@@ -4681,6 +4702,24 @@ public partial class IRGenerator
                           + "of after. Assign it in some method to make it a field, or correct the "
                           + $"spelling. Assigned members: {recvMembers}",
                     expr);
+
+            // RFC 0009 phase 3: a field that can hold BOTH None and a scalar is a
+            // tagged union -- payload in `flattenedName`, member index in its
+            // `<flat>$tag` sibling. EnsureUnionField mints the bookkeeping on the
+            // field's first touch; from here the read is an ordinary payload read
+            // and the tag-carry paths (`x = obj.field`, `return self.f`, an
+            // `is None`/isinstance test) find it through the flat name exactly as
+            // a tagged local's.
+            if (baseName != null
+                && instanceClasses.TryGetValue(baseName, out var ufCls) && ufCls != null
+                && EnsureUnionField(flattenedName, ufCls, expr.Member, out _))
+            {
+                var uft = variableTypes.TryGetValue(flattenedName, out var udt)
+                    ? udt : DataType.UINT8;
+                if (moduleInstanceMutableFields.Contains(flattenedName))
+                    mutableGlobals[flattenedName] = uft;
+                return new Variable(flattenedName, uft);
+            }
 
             // A field of a module-level instance read inside a FUNCTION needs a real
             // global: its store ran in main, so as a plain local the optimizer

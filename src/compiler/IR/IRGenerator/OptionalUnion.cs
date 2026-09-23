@@ -50,9 +50,31 @@ public partial class IRGenerator
     // Qualified payload name -> its union member list, for diagnostics and the None index.
     private readonly Dictionary<string, List<string>> optionalMembersByName = new();
 
-    // Live-optional names proven non-None on the path being lowered (inside
-    // `if v is not None:` and past `if v is None: return`). Payload reads are safe.
-    private readonly HashSet<string> narrowedOptionals = new();
+    // Live-optional names proven to hold ONE member on the path being lowered:
+    // qualified payload name -> the member index it provably is (inside
+    // `if v is not None:` -- member 0 for the phase-1 [X, None] shape -- and inside
+    // `if isinstance(v, int):` / a matching `case` arm for a multi-member union).
+    // Payload reads are safe, and they read at the member's width.
+    private readonly Dictionary<string, int> narrowedOptionals = new();
+
+    // ── union fields (RFC 0009 phase 3: the field half of the tag) ──────────
+
+    // classKey -> the fields its writes hold BOTH None and a scalar: those fields
+    // are tagged unions -- a payload at the widest member's width plus a tag byte,
+    // exactly the local Optional shape at field scope. DeriveFieldLayout fills the
+    // two evidence sets below; IsUnionField merges them over the MRO (a base ctor's
+    // `self.f = None` and a subclass helper's scalar write are one field).
+    private readonly Dictionary<string, HashSet<string>> fieldNoneWrites = new();
+    private readonly Dictionary<string, HashSet<string>> fieldScalarWrites = new();
+
+    // `cls|field` -> the member list an `self.f: Union[...]`/`Optional[...]`
+    // annotation on a write declared; absent for fields the writes alone made
+    // unions (their member list grows as the writes expand, None pinned first).
+    private readonly Dictionary<string, List<string>> fieldDeclaredUnionMembers = new();
+
+    // Flattened field names whose member list is the declared one -- a write's
+    // member must already be in it, not join it.
+    private readonly HashSet<string> unionFieldDeclared = new();
 
     // Names the precompute proved CAN hold a run-time optional somewhere in this
     // function (or module top level). Only such names get the tag write on a
@@ -64,8 +86,151 @@ public partial class IRGenerator
     // print dispatch). Every other read of an unnarrowed optional is a CompileError.
     private int optionalReadAllowed;
 
-    /// The union-member index of None -- always the last member (RFC 0009 section 4).
-    private static int NoneIndex(List<string> members) => members.Count - 1;
+    /// The union-member index of None -- always the last member when present
+    /// (RFC 0009 section 4), -1 when the union has no None member.
+    private static int NoneIndex(List<string> members) => members.IndexOf("None");
+
+    /// The DataType a member name stores its payload in. `bool` is one byte.
+    private static DataType MemberDataType(string member) =>
+        member == "bool" ? DataType.UINT8 : DataTypeExtensions.StringToDataType(member);
+
+    /// Whether the member name is an integer-kind scalar (not bool, not float).
+    private static bool IsIntMember(string member) =>
+        member is "int" or "int8" or "int16" or "int32"
+            or "uint8" or "uint16" or "uint32" or "char";
+
+    /// The payload type a union's storage slot carries: the widest member, with a
+    /// float member winning a width tie (its register order differs from an int's).
+    private static DataType UnionPayloadType(List<string> members)
+    {
+        DataType widest = DataType.UINT8;
+        foreach (var m in members)
+        {
+            if (m == "None") continue;
+            var dt = MemberDataType(m);
+            if (dt.SizeOf() > widest.SizeOf()
+                || (dt == DataType.FLOAT && widest != DataType.FLOAT && dt.SizeOf() == widest.SizeOf()))
+                widest = dt;
+        }
+        return widest;
+    }
+
+    /// The widest member's NAME, where a union field's storage width is recorded
+    /// as annotation text (the class field layout's Type). Mirrors UnionPayloadType.
+    private static string WidestUnionMemberName(List<string> members)
+    {
+        string widest = "uint8";
+        foreach (var m in members)
+        {
+            if (m == "None") continue;
+            var dt = MemberDataType(m);
+            if (dt.SizeOf() > MemberDataType(widest).SizeOf()
+                || (dt == DataType.FLOAT && widest != "float"
+                    && dt.SizeOf() == MemberDataType(widest).SizeOf()))
+                widest = m;
+        }
+        return widest;
+    }
+
+    /// <summary>
+    /// The member index a returned/stored value takes in <paramref name="members"/>:
+    /// literal kinds pick their Python type's member, a constant integer picks the
+    /// first int member that can hold it, a run-time Val matches its DataType
+    /// (exact member first, then the first int-family member). Returns null when no
+    /// member can represent the value -- the caller turns that into the diagnostic.
+    /// </summary>
+    private int? MemberIndexFor(Expression? expr, Val? val, List<string> members)
+    {
+        // Literal evidence first: it carries the author's intended type even where
+        // the lowered Val would read as a narrower DataType.
+        if (expr is FloatLiteral || val is FloatConstant)
+            return members.IndexOf("float") >= 0 ? members.IndexOf("float") : null;
+        if (expr is BooleanLiteral)
+        {
+            int bIdx = members.IndexOf("bool");
+            return bIdx >= 0 ? bIdx : FirstIntMemberThatFits(members,
+                ((BooleanLiteral)expr!).Value ? 1 : 0);
+        }
+        if (expr is StringLiteral or FStringExpr) return members.IndexOf("str") >= 0 ? members.IndexOf("str") : null;
+
+        if (val is Constant c)
+        {
+            long v = c.Value;
+            for (int i = 0; i < members.Count; ++i)
+                if (IsIntMember(members[i]) && IntMemberFits(members[i], v)) return i;
+            return null;
+        }
+
+        DataType dt = val != null ? GetValType(val) : DataType.UNKNOWN;
+        if (dt == DataType.FLOAT) return members.IndexOf("float") >= 0 ? members.IndexOf("float") : null;
+        if (dt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+            or DataType.UINT32 or DataType.INT32)
+        {
+            // Exact-width member first (`return u16` under Union[uint8, uint16]
+            // is the uint16 member), else the first int member that holds it.
+            for (int i = 0; i < members.Count; ++i)
+                if (MemberDataType(members[i]) == dt && members[i] != "bool") return i;
+            for (int i = 0; i < members.Count; ++i)
+                if (IsIntMember(members[i]) && MemberDataType(members[i]).SizeOf() >= dt.SizeOf())
+                    return i;
+            return null;
+        }
+        if (dt == DataType.FUNCREF)
+        {
+            for (int i = 0; i < members.Count; ++i)
+                if (members[i].StartsWith("Callable")) return i;
+            return null;
+        }
+        return null;
+    }
+
+    /// Whether the integer member can hold the constant value.
+    private static bool IntMemberFits(string member, long v) => member switch
+    {
+        "uint8" or "char" => v is >= 0 and <= 0xFF,
+        "uint16" => v is >= 0 and <= 0xFFFF,
+        "uint32" => v is >= 0 and <= 0xFFFFFFFFL,
+        "int8" => v is >= sbyte.MinValue and <= sbyte.MaxValue,
+        "int16" or "int" => v is >= short.MinValue and <= short.MaxValue,
+        "int32" => v is >= int.MinValue and <= int.MaxValue,
+        _ => false,
+    };
+
+    private static int FirstIntMemberThatFits(List<string> members, long v)
+    {
+        for (int i = 0; i < members.Count; ++i)
+            if (IsIntMember(members[i]) && IntMemberFits(members[i], v)) return i;
+        return -1;
+    }
+
+    /// The member indices of <paramref name="members"/> an `isinstance(r, T)`
+    /// candidate name matches: an int-family name matches every int member, float
+    /// and bool their own, a class name none (a scalar union never holds one).
+    private List<int> IsinstanceMemberIndices(Expression typeExpr, List<string> members)
+    {
+        var names = new List<string>();
+        if (typeExpr is TupleExpr tup)
+            foreach (var e in tup.Elements)
+                if (e is VariableExpr v) names.Add(v.Name);
+        if (typeExpr is VariableExpr single) names.Add(single.Name);
+        if (names.Count == 0) return new List<int>();
+
+        var hits = new List<int>();
+        for (int i = 0; i < members.Count; ++i)
+        {
+            string m = members[i];
+            foreach (var n in names)
+            {
+                string bare = n.Contains('.') ? n[(n.LastIndexOf('.') + 1)..] : n;
+                bool hit = bare == m
+                    || (bare is "NoneType" && m == "None")
+                    || (IsIntMember(bare) && IsIntMember(m))
+                    || (bare == "int" && IsIntMember(m));
+                if (hit) { hits.Add(i); break; }
+            }
+        }
+        return hits;
+    }
 
     /// The member list of a call target, when it is a runtime-tagged Optional return.
     private List<string>? OptionalMembersOfCallee(string resolvedName)
@@ -108,19 +273,29 @@ public partial class IRGenerator
         return null;
     }
 
+    /// The live-optional key a condition subject resolves to: a bare name for a
+    /// tagged local, a member access for a tagged field (its flattened name is
+    /// the key).
+    private string? OptionalKeyOfExpr(Expression e) => e switch
+    {
+        VariableExpr ve => OptionalKeyOf(ve.Name),
+        MemberAccessExpr ma => FlatOptionalKeyOf(ma),
+        _ => null,
+    };
+
     /// Whether the source name is a live optional whose payload is unsafe to read
     /// here (not narrowed on this path).
     private bool IsUnnarrowedOptional(string name)
     {
         string? key = OptionalKeyOf(name);
-        return key != null && !narrowedOptionals.Contains(key);
+        return key != null && !narrowedOptionals.ContainsKey(key);
     }
 
     /// The RFC 0009 section-8 refusal, from the point a payload read would use it.
     private void RefuseIfUnnarrowedOptional(VariableExpr expr)
     {
         if (optionalReadAllowed > 0) return;
-        if (OptionalKeyOf(expr.Name) is { } key && !narrowedOptionals.Contains(key))
+        if (OptionalKeyOf(expr.Name) is { } key && !narrowedOptionals.ContainsKey(key))
             throw UserError(
                 $"'{expr.Name}' may be None here; narrow it first " +
                 $"(`if {expr.Name} is not None:`).", expr);
@@ -133,7 +308,7 @@ public partial class IRGenerator
     {
         if (TagOfVal(v) == null) return;
         if (ValNameOf(v) is { } nm
-            && (narrowedOptionals.Contains(nm) || noneValuedNames.Contains(nm))) return;
+            && (narrowedOptionals.ContainsKey(nm) || noneValuedNames.Contains(nm))) return;
         string who = DescribeOperand(src) ?? ValNameOf(v) ?? "the value";
         throw UserError(
             $"'{who}' may be None here; narrow it first (`if {who} is not None:`).", src);
@@ -173,12 +348,13 @@ public partial class IRGenerator
         noneValuedNames.Remove(storageName);
     }
 
-    /// Record that the storage name holds a definite payload (tag == 0 at run time).
-    /// The tag slot stays -- a name that is optional on ANY path keeps its byte on
-    /// every path -- but the read side is safe on this one.
-    private void MarkOptionalDefinite(string storageName)
+    /// Record that the storage name holds a definite member (its tag is that
+    /// member's index at run time). The tag slot stays -- a name that is optional
+    /// on ANY path keeps its byte on every path -- but the read side is safe on
+    /// this one, and reads take the member's width.
+    private void MarkOptionalDefinite(string storageName, int memberIdx = 0)
     {
-        narrowedOptionals.Add(storageName);
+        narrowedOptionals[storageName] = memberIdx;
         noneValuedNames.Remove(storageName);
     }
 
@@ -203,8 +379,8 @@ public partial class IRGenerator
     /// </summary>
     private void ResolveOptionalReturns()
     {
-        // Seed the declared/inferred member tables and refuse the member shapes phase
-        // 1 cannot carry BEFORE any reachability question is asked.
+        // Seed the declared/inferred member tables and refuse the member shapes the
+        // tag cannot carry BEFORE any reachability question is asked.
         var candidates = new List<(string key, string prefix, FunctionDef fn, List<string> members)>();
         foreach (var entry in functionsToCompile)
         {
@@ -219,35 +395,42 @@ public partial class IRGenerator
 
             if (fn.IsExportC || fn.IsExtern)
                 throw UserError(
-                    $"an exported function cannot return Optional[{members[0]}]; a C caller " +
-                    "has no tag to read.", fn);
+                    $"an exported function cannot return Union[{string.Join(", ", members)}]; " +
+                    "a C caller has no tag to read.", fn);
 
-            // members is [payload, "None"] -- two members by construction here: the
-            // annotation check refused Union[int, float, None] before it got this far.
-            string payload = members[0];
-            if (DataTypeExtensions.StringToDataType(payload) == DataType.UNKNOWN)
-            {
-                if (payload.StartsWith("list[") || payload is "bytearray" or "bytes" or "str"
-                    || payload.StartsWith("tuple[") || TupleType.IsTupleType(payload))
-                    throw UserError(
-                        $"Optional[{payload}] is not a value this compiler can carry: buffers " +
-                        "travel as names (a reference a caller already holds), not as a " +
-                        "payload byte the tag can guard.", fn);
-                throw UserError(
-                    $"Optional[{payload}] is not supported: an instance is not a value that " +
-                    "can be present or absent in storage -- it is storage. Keep the instance " +
-                    "and give it a field that says whether it is valid.", fn);
-            }
+            // The four-member ceiling applies to a declared union as spelled; for an
+            // inferred one it applies to the members returns can actually reach --
+            // a member that only appears in dead code does not count (6.1).
+            ValidateUnionMembers(fn, members, checkCeiling: !fn.ReturnMembersInferred);
 
             candidates.Add((key, entry.Prefix ?? "", fn, members));
             functionDeclaredMembers[key] = members;
         }
+
+        // The same member shapes are validated on functions that will INLINE:
+        // a union-returning body force-inlined out of functionsToCompile (a
+        // `return A()` factory, a ZCA method expanded at its call sites) still
+        // spells members a tag cannot carry, and refusing at the declaration is
+        // the same located diagnostic either way.
+        foreach (var (name, ifn) in inlineFunctions)
+            if (ifn?.ReturnMembers is { } im)
+            {
+                if (ifn.IsExportC || ifn.IsExtern)
+                    throw UserError(
+                        $"an exported function cannot return Union[{string.Join(", ", im)}]; " +
+                        "a C caller has no tag to read.", ifn);
+                ValidateUnionMembers(ifn, im, checkCeiling: !ifn.ReturnMembersInferred);
+            }
         if (candidates.Count == 0) return;
 
-        // `return g()` is a None-source when g is tagged, and g's tag-ness is what this
-        // pass is deciding -- close over it to a fixpoint. A cycle of functions that only
-        // ever return each other has no None source, so it converges to untagged, which
-        // is the correct answer for it.
+        // The tag exists only for members a return can actually reach at run time
+        // (RFC 0009 decision 2, generalized to N members): a union provably decidable
+        // at compile time -- every reachable return is the same member -- keeps the
+        // plain-type code it had before. `return g()` contributes g's reachable
+        // members, and g's set is what this pass is deciding -- close to a fixpoint.
+        // A cycle of functions that only ever return each other converges to
+        // untagged, which is the correct answer for it.
+        var reachableSets = new Dictionary<string, HashSet<int>>();
         bool changed = true;
         while (changed)
         {
@@ -259,47 +442,210 @@ public partial class IRGenerator
                 string prevFn = currentFunction;
                 currentModulePrefix = prefix;
                 currentFunction = key;
-                bool canNone = CanReachRuntimeNone(fn);
+                HashSet<int>? reach = ReachableReturnMembers(fn, members);
+                var lines = memberReturnLines;
                 currentModulePrefix = prevPrefix;
                 currentFunction = prevFn;
-                if (canNone)
+                // Null = a return the scan cannot pin to a member; it could be any
+                // of them, so the function is tagged with its full member list.
+                if (reach == null || reach.Count >= 2)
                 {
-                    functionReturnMembers[key] = members;
+                    // An inferred union keeps only the members a return can reach --
+                    // the tag's domain IS the evidence. The declared list keeps its
+                    // spelling (the author asked for those members).
+                    var live = members;
+                    if (fn.ReturnMembersInferred && reach != null)
+                        live = reach.OrderBy(i => i).Select(i => members[i]).ToList();
+                    if (fn.ReturnMembersInferred && live.Count > 4)
+                    {
+                        string detail = string.Join(", ", live.Select(m =>
+                            lines.TryGetValue(members.IndexOf(m), out int ln)
+                                ? $"{m} (return at line {ln})" : m));
+                        throw UserError(
+                            $"'{fn.Name}' infers a union of {live.Count} members ({detail}); " +
+                            "PyMCU tagged unions carry at most 4 -- a value with that many " +
+                            "possible types makes every reader dispatch that many ways. " +
+                            "Return one type, or split the function.", fn);
+                    }
+                    if (fn.ReturnMembersInferred)
+                    {
+                        fn.ReturnMembers = live;
+                        functionDeclaredMembers[key] = live;
+                    }
+                    functionReturnMembers[key] = live;
                     changed = true;
                 }
+                else
+                {
+                    reachableSets[key] = reach;
+                }
             }
+        }
+
+        // A candidate still undecided reaches at most one member: it is that member
+        // (or plain None) to its caller, at zero tag cost -- byte-identical.
+        foreach (var (key, _, fn, members) in candidates)
+        {
+            if (functionReturnMembers.ContainsKey(key)) continue;
+            if (reachableSets.TryGetValue(key, out var set) && set.Count == 1
+                && set.First() != NoneIndex(members))
+                fn.ReturnType = members[set.First()];
+            else
+                fn.ReturnType = "void";
+        }
+    }
+
+    /// The members of <paramref name="members"/> a `Union[...]` spelled out, for diagnostics.
+    private static string UnionDisplay(List<string> members)
+        => "Union[" + string.Join(", ", members) + "]";
+
+    /// <summary>
+    /// The member shapes a tagged union cannot carry, refused at the function with
+    /// the member list named (RFC 0009 section 6/6.1): more than four members (the
+    /// tag is one byte holding the member index -- the ceiling is a design one), a
+    /// member that is a ZCA instance (decision 4: instances are storage, not
+    /// values), a buffer member (travels as a name, not a payload byte), and any
+    /// member name that resolves to nothing.
+    /// </summary>
+    private void ValidateUnionMembers(FunctionDef fn, List<string> members, bool checkCeiling = true)
+        => ValidateUnionMembers($"the return union of '{fn.Name}'", members, fn, checkCeiling);
+
+    /// The member checks a declared union gets wherever it is spelled -- return
+    /// annotation or field annotation. <paramref name="owner"/> is the possessive
+    /// phrase the diagnostics attach the member to ("the return union of 'f'",
+    /// "the union field 'C.x'").
+    /// </summary>
+    private void ValidateUnionMembers(string owner, List<string> members, ASTNode? site,
+        bool checkCeiling = true)
+    {
+        if (checkCeiling && members.Count > 4)
+            throw UserError(
+                $"{owner} spells {members.Count} members " +
+                $"({UnionDisplay(members)}); PyMCU tagged unions carry at most 4. A value " +
+                "with that many possible types makes every reader dispatch that many ways; " +
+                "PyMCU keeps one type per value.", site);
+
+        foreach (var m in members)
+        {
+            if (m == "None") continue;
+            if (MemberDataType(m) != DataType.UNKNOWN) continue;
+            if (m.StartsWith("Callable") || m == "Callable") continue;
+            if (m.StartsWith("list[") || m is "bytearray" or "bytes"
+                || m.StartsWith("tuple[") || TupleType.IsTupleType(m) || m.Contains('['))
+                throw UserError(
+                    $"'{m}' in {owner} is not a value this compiler " +
+                    "can carry: buffers travel as names (a reference a caller already holds), " +
+                    "not as a payload byte the tag can guard.", site);
+            string bare = m.Contains('.') ? m[(m.LastIndexOf('.') + 1)..] : m;
+            if (classNames.Contains(m) || classNames.Contains(bare)
+                || classFieldLayout.ContainsKey(m) || classFieldLayout.ContainsKey(bare)
+                || zcaFactoryClasses.ContainsKey(m) || zcaFactoryClasses.ContainsKey(bare)
+                || FindClassKey(bare) != null)
+                throw UserError(
+                    $"a union of instance types is not supported: '{m}' in {owner} " +
+                    "is a class, and instances are storage, not values a tag " +
+                    "byte can switch between (RFC 0009 decision 4). Keep the instance and give " +
+                    "it a field that says which shape it is.", site);
+            if (protocolClasses.Any(k => k == m || k == bare || k.EndsWith("_" + bare)))
+                throw UserError(
+                    $"a union of instance types is not supported: '{m}' in {owner} " +
+                    "is a protocol, and instances are storage, not values a tag " +
+                    "byte can switch between (RFC 0009 decision 4).", site);
+            throw UserError(
+                $"unknown type '{m}' in {owner}; a union member must " +
+                "be a scalar type name (int, float, bool, uint8, ...) or None.", site);
         }
     }
 
     /// <summary>
-    /// Whether <paramref name="fn"/> can reach a return carrying a run-time None --
-    /// a reachable `return None`, falling off the end, or `return <expr>` where the
-    /// expression can hold a run-time None. Statement-level folding is replayed so a
-    /// `return None` on a dead arm does not count (RFC 0009 decision 2).
+    /// The set of member indices a `return` of <paramref name="fn"/> can carry at
+    /// run time -- None's index included when None is reachable. Null when a return
+    /// expression cannot be pinned to a member, which the caller reads as "any of
+    /// them" (the function is tagged). Statement-level folding is replayed so a
+    /// return on a dead arm contributes nothing (RFC 0009 decision 2 / 6.1).
     /// </summary>
-    private bool CanReachRuntimeNone(FunctionDef fn)
+    // The scan-time type scope for the function whose returns are being resolved:
+    // params and annotated locals -- the variableTypes table is not populated until
+    // the body lowers, which is after this pass.
+    private Dictionary<string, string>? scanScope;
+    // Member index -> source line of the first return that contributes it, for the
+    // five-member refusal (RFC 0009 section 6.1 wants the return paths named).
+    private readonly Dictionary<int, int> memberReturnLines = new();
+
+    private HashSet<int>? ReachableReturnMembers(FunctionDef fn, List<string> members)
     {
         var noneLocals = new HashSet<string>();
         var optLocals = new HashSet<string>();
-        bool hit = ScanStmtsForRuntimeNone(fn.Body.Statements, noneLocals, optLocals);
+        var hits = new HashSet<int>();
+        memberReturnLines.Clear();
+        scanScope = new Dictionary<string, string>();
+        foreach (var p in fn.Params)
+            if (p.Type is { Length: > 0 } pt) scanScope[p.Name] = pt;
+        try
+        {
+            if (!ScanStmtsForUnionMembers(fn.Body.Statements, noneLocals, optLocals, hits, members))
+                return null;
+        }
+        finally { scanScope = null; }
         // Reaching the end of the body is an implicit `return None`.
-        return hit || !AlwaysReturns(fn.Body);
+        if (!AlwaysReturns(fn.Body))
+        {
+            int endNone = NoneIndex(members);
+            if (endNone < 0)
+                throw UserError(
+                    $"'{fn.Name}' is declared to return {UnionDisplay(members)}, but it can reach " +
+                    "the end without returning -- an implicit `return None` -- and None is not a " +
+                    "member. Add a return on the remaining path, or add None to the union.", fn);
+            hits.Add(endNone);
+        }
+        return hits;
     }
 
-    /// Statement walk behind <see cref="CanReachRuntimeNone"/>. Tracks which locals
-    /// provably hold None (noneLocals) and which may hold a run-time optional
-    /// (optLocals), and returns true the moment a return can carry None.
-    private bool ScanStmtsForRuntimeNone(List<Statement> stmts,
-        HashSet<string> noneLocals, HashSet<string> optLocals)
+    /// Statement walk behind <see cref="ReachableReturnMembers"/>: the same arm-folding
+    /// and local tracking the Optional scan does, collecting member indices instead
+    /// of a yes/no. Returns false on the first return that cannot be pinned.
+    private bool ScanStmtsForUnionMembers(List<Statement> stmts,
+        HashSet<string> noneLocals, HashSet<string> optLocals,
+        HashSet<int> hits, List<string> members)
     {
         foreach (var s in stmts)
         {
             switch (s)
             {
                 case ReturnStmt r:
-                    if (r.Value == null || r.Value is NoneLiteral) return true;
-                    if (ExprMaybeRuntimeNone(r.Value, noneLocals, optLocals)) return true;
-                    break;
+                {
+                    if (r.Value == null || r.Value is NoneLiteral)
+                    {
+                        int ni = NoneIndex(members);
+                        if (ni < 0)
+                            throw UserError(
+                                $"'{currentFunction}' returns None here, but its return union " +
+                                $"{UnionDisplay(members)} has no None member -- the tag has no " +
+                                "index for it. Add None to the union or return a member value.", r);
+                        hits.Add(ni);
+                        memberReturnLines.TryAdd(ni, r.Line);
+                        break;
+                    }
+                    if (ExprMaybeRuntimeNone(r.Value, noneLocals, optLocals))
+                    {
+                        int ni = NoneIndex(members);
+                        if (ni < 0)
+                            throw UserError(
+                                $"'{currentFunction}' can return None here, but its return union " +
+                                $"{UnionDisplay(members)} has no None member. Add None to the " +
+                                "union or return a member value.", r);
+                        hits.Add(ni);
+                        memberReturnLines.TryAdd(ni, r.Line);
+                        break;
+                    }
+                    if (ReturnMemberIndexOf(r.Value, noneLocals, optLocals, members) is { } idx)
+                    {
+                        hits.Add(idx);
+                        memberReturnLines.TryAdd(idx, r.Line);
+                        break;
+                    }
+                    return false;   // unpinnable: could be any member
+                }
 
                 case AssignStmt a when a.Target is VariableExpr av:
                     TrackOptionalAssign(av.Name, a.Value, noneLocals, optLocals);
@@ -328,17 +674,14 @@ public partial class IRGenerator
                     break;
 
                 case IfStmt ifs:
-                    if (ScanIfForRuntimeNone(ifs, noneLocals, optLocals)) return true;
+                    if (!ScanIfForUnionMembers(ifs, noneLocals, optLocals, hits, members)) return false;
                     break;
 
                 case WhileStmt w:
                 {
-                    // The body may run zero or more times: scan it for returns, then
-                    // merge conservatively -- a name is still provably-None only if it
-                    // was before AND stays so through one iteration.
                     var bodyNone = new HashSet<string>(noneLocals);
                     var bodyOpt = new HashSet<string>(optLocals);
-                    if (ScanStmtsForRuntimeNone(ArmStatements(w.Body), bodyNone, bodyOpt)) return true;
+                    if (!ScanStmtsForUnionMembers(ArmStatements(w.Body), bodyNone, bodyOpt, hits, members)) return false;
                     noneLocals.IntersectWith(bodyNone);
                     optLocals.UnionWith(bodyOpt);
                     break;
@@ -347,7 +690,7 @@ public partial class IRGenerator
                 {
                     var bodyNone = new HashSet<string>(noneLocals);
                     var bodyOpt = new HashSet<string>(optLocals);
-                    if (ScanStmtsForRuntimeNone(ArmStatements(f.Body), bodyNone, bodyOpt)) return true;
+                    if (!ScanStmtsForUnionMembers(ArmStatements(f.Body), bodyNone, bodyOpt, hits, members)) return false;
                     noneLocals.IntersectWith(bodyNone);
                     optLocals.UnionWith(bodyOpt);
                     break;
@@ -357,21 +700,20 @@ public partial class IRGenerator
                 {
                     var tNone = new HashSet<string>(noneLocals);
                     var tOpt = new HashSet<string>(optLocals);
-                    if (ScanStmtsForRuntimeNone(t.Body, tNone, tOpt)) return true;
+                    if (!ScanStmtsForUnionMembers(t.Body, tNone, tOpt, hits, members)) return false;
                     foreach (var (_, h) in t.Handlers)
-                        if (ScanStmtsForRuntimeNone(h, noneLocals, optLocals)) return true;
-                    if (t.ElseBody != null && ScanStmtsForRuntimeNone(t.ElseBody, noneLocals, optLocals)) return true;
-                    if (t.Finally != null && ScanStmtsForRuntimeNone(t.Finally, noneLocals, optLocals)) return true;
-                    // The body's own effects merge conservatively into the through-state.
+                        if (!ScanStmtsForUnionMembers(h, noneLocals, optLocals, hits, members)) return false;
+                    if (t.ElseBody != null && !ScanStmtsForUnionMembers(t.ElseBody, noneLocals, optLocals, hits, members)) return false;
+                    if (t.Finally != null && !ScanStmtsForUnionMembers(t.Finally, noneLocals, optLocals, hits, members)) return false;
                     optLocals.UnionWith(tOpt);
                     break;
                 }
 
                 case WithStmt wi:
-                    if (ScanStmtsForRuntimeNone(ArmStatements(wi.Body), noneLocals, optLocals)) return true;
+                    if (!ScanStmtsForUnionMembers(ArmStatements(wi.Body), noneLocals, optLocals, hits, members)) return false;
                     break;
                 case Block b:
-                    if (ScanStmtsForRuntimeNone(b.Statements, noneLocals, optLocals)) return true;
+                    if (!ScanStmtsForUnionMembers(b.Statements, noneLocals, optLocals, hits, members)) return false;
                     break;
                 case MatchStmt m:
                 {
@@ -381,8 +723,8 @@ public partial class IRGenerator
                     {
                         var bn = new HashSet<string>(noneLocals);
                         var bo = new HashSet<string>(optLocals);
-                        if (br.Body != null && ScanStmtsForRuntimeNone(ArmStatements(br.Body), bn, bo))
-                            return true;
+                        if (br.Body != null && !ScanStmtsForUnionMembers(ArmStatements(br.Body), bn, bo, hits, members))
+                            return false;
                         armNones.Add(bn); armOpts.Add(bo);
                     }
                     MergeScanSets(noneLocals, optLocals, armNones, armOpts);
@@ -390,13 +732,14 @@ public partial class IRGenerator
                 }
             }
         }
-        return false;
+        return true;
     }
 
-    /// The `if` arm of <see cref="ScanStmtsForRuntimeNone"/>: a condition that folds
+    /// The `if` arm of <see cref="ScanStmtsForUnionMembers"/>: a condition that folds
     /// statically prunes its untaken side; otherwise all arms scan and merge.
-    private bool ScanIfForRuntimeNone(IfStmt ifs,
-        HashSet<string> noneLocals, HashSet<string> optLocals)
+    private bool ScanIfForUnionMembers(IfStmt ifs,
+        HashSet<string> noneLocals, HashSet<string> optLocals,
+        HashSet<int> hits, List<string> members)
     {
         var conds = new List<Expression?> { ifs.Condition };
         conds.AddRange(ifs.ElifBranches.Select(b => (Expression?)b.Condition));
@@ -415,22 +758,21 @@ public partial class IRGenerator
             if (cond != null && TryFoldStatic(cond, noneLocals, optLocals) is { } folded)
             {
                 if (!folded) continue;          // arm provably dead: contributes nothing
-                // Provably true: no later arm runs.
                 var tn = new HashSet<string>(noneLocals);
                 var to = new HashSet<string>(optLocals);
-                if (arm != null && ScanStmtsForRuntimeNone(ArmStatements(arm), tn, to)) return true;
+                if (arm != null && !ScanStmtsForUnionMembers(ArmStatements(arm), tn, to, hits, members))
+                    return false;
                 armNones.Add(tn); armOpts.Add(to);
                 alive = false;
                 break;
             }
             var an = new HashSet<string>(noneLocals);
             var ao = new HashSet<string>(optLocals);
-            if (arm != null && ScanStmtsForRuntimeNone(ArmStatements(arm), an, ao)) return true;
+            if (arm != null && !ScanStmtsForUnionMembers(ArmStatements(arm), an, ao, hits, members))
+                return false;
             armNones.Add(an); armOpts.Add(ao);
             if (cond == null) alive = false;    // else arm: no later path exists
         }
-        // If every arm was folded dead the whole `if` vanishes -- the implicit path is
-        // the pre-if state, which is already in noneLocals/optLocals.
         if (alive && ifs.ElseBranch == null && armNones.Count > 0)
         {
             armNones.Add(new HashSet<string>(noneLocals));
@@ -438,7 +780,168 @@ public partial class IRGenerator
         }
         if (alive || armNones.Count > 0)
             MergeScanSets(noneLocals, optLocals, armNones, armOpts);
-        return false;
+        return true;
+    }
+
+    /// <summary>
+    /// The member index a return expression carries, decided from the AST alone
+    /// (the value is not lowered yet): literal kinds, tracked None/optional locals,
+    /// declared local types, and callee member lists remapped by name. Null when
+    /// the expression's member cannot be decided statically.
+    /// </summary>
+    private int? ReturnMemberIndexOf(Expression e,
+        HashSet<string> noneLocals, HashSet<string> optLocals, List<string> members)
+    {
+        switch (e)
+        {
+            case IntegerLiteral il:
+            {
+                int idx = FirstIntMemberThatFits(members, il.Value);
+                return idx >= 0 ? idx : null;
+            }
+            case BooleanLiteral b:
+            {
+                int bIdx = members.IndexOf("bool");
+                if (bIdx >= 0) return bIdx;
+                int idx = FirstIntMemberThatFits(members, b.Value ? 1 : 0);
+                return idx >= 0 ? idx : null;
+            }
+            case FloatLiteral: return members.IndexOf("float") >= 0 ? members.IndexOf("float") : (int?)null;
+            case StringLiteral or FStringExpr:
+                return members.IndexOf("str") >= 0 ? members.IndexOf("str") : (int?)null;
+            case VariableExpr v:
+            {
+                if (noneLocals.Contains(v.Name)) return NoneIndex(members);
+                if (optLocals.Contains(v.Name)) return null;   // could be any of its members
+                if (scanScope != null && scanScope.TryGetValue(v.Name, out var sct))
+                    return MemberIndexFor(v, new Variable(v.Name,
+                        DataTypeExtensions.StringToDataType(sct)), members);
+                foreach (var k in new[] {
+                             currentInlinePrefix + v.Name,
+                             currentFunction + "." + v.Name,
+                             currentModulePrefix + v.Name, v.Name })
+                {
+                    if (variableTypes.TryGetValue(k, out var dt))
+                        return MemberIndexFor(v, new Variable(k, dt), members);
+                }
+                return null;
+            }
+            case UnaryExpr { Op: AstUnOp.Negate } un:
+                return ExprCouldBeFloat(un)
+                    ? (members.Contains("float") ? null : SignedIntOrNull(members))
+                    : SignedIntOrNull(members);
+            case UnaryExpr { Op: AstUnOp.Not or AstUnOp.BitNot } un2:
+                return ReturnMemberIndexOf(un2.Operand, noneLocals, optLocals, members)
+                       ?? SignedIntOrNull(members);
+            case BinaryExpr b when b.Op is AstBinOp.Equal or AstBinOp.NotEqual
+                or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq:
+            {
+                int bIdx = members.IndexOf("bool");
+                if (bIdx >= 0) return bIdx;
+                int idx = FirstIntMemberThatFits(members, 1);
+                return idx >= 0 ? idx : null;
+            }
+            case BinaryExpr b when b.Op is AstBinOp.And or AstBinOp.Or:
+            {
+                // `a or b` yields an operand: the member set is the union of both arms'.
+                var l = ReturnMemberIndexOf(b.Left, noneLocals, optLocals, members);
+                var r = ReturnMemberIndexOf(b.Right, noneLocals, optLocals, members);
+                if (l == null || r == null) return null;
+                return l == r ? l : null;   // different members possible -> unpinnable
+            }
+            case BinaryExpr b2:
+                // Any other binary expression is an arithmetic result: an int member
+                // when no operand can be float (a float operand or a `/` division
+                // makes it unpinnable between the int and float members).
+                return ExprCouldBeFloat(b2) ? null : SignedIntOrNull(members);
+            case TernaryExpr t:
+            {
+                var a = ReturnMemberIndexOf(t.TrueVal, noneLocals, optLocals, members);
+                var c = ReturnMemberIndexOf(t.FalseVal, noneLocals, optLocals, members);
+                if (a == null || c == null) return null;
+                return a == c ? a : null;
+            }
+            case CallExpr c:
+            {
+                string? key = c.Callee switch
+                {
+                    VariableExpr cv => ResolveCallee(cv.Name),
+                    MemberAccessExpr cm => cm.Member,
+                    _ => null,
+                };
+                if (key == null) return null;
+                // Width casts are exact: uint8(x) returns the uint8 member.
+                if (MemberDataType(key) != DataType.UNKNOWN)
+                    return MemberIndexFor(c, new Temporary("", MemberDataType(key)), members);
+                if (key == "bool")
+                    return members.IndexOf("bool") >= 0 ? members.IndexOf("bool") : (int?)null;
+                if (key == "float")
+                    return members.IndexOf("float") >= 0 ? members.IndexOf("float") : (int?)null;
+                // A tagged callee contributes its own reachable members, remapped by
+                // member name into this function's list.
+                List<string>? calleeMembers = functionReturnMembers.TryGetValue(key, out var cm2)
+                    ? cm2
+                    : functionDeclaredMembers.TryGetValue(key, out var dm) ? dm : null;
+                if (calleeMembers == null)
+                {
+                    var matchKey = functionReturnMembers.Keys
+                        .Concat(functionDeclaredMembers.Keys)
+                        .FirstOrDefault(k => k.EndsWith("_" + key));
+                    if (matchKey != null)
+                        calleeMembers = functionReturnMembers.TryGetValue(matchKey, out var mm)
+                            ? mm : functionDeclaredMembers[matchKey];
+                }
+                if (calleeMembers != null)
+                {
+                    // Any member could arrive; the caller cannot pin one.
+                    return null;
+                }
+                if (functionReturnTypes.TryGetValue(key, out var rt) && rt != null)
+                    return MemberIndexFor(c, new Temporary("", DataTypeExtensions.StringToDataType(rt)), members);
+                return null;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// The first signed int member index as a nullable (null = no int member).
+    private static int? SignedIntOrNull(List<string> members)
+    {
+        for (int i = 0; i < members.Count; ++i)
+            if (members[i] is "int" or "int8" or "int16" or "int32") return i;
+        for (int i = 0; i < members.Count; ++i)
+            if (IsIntMember(members[i])) return i;
+        return null;
+    }
+
+    /// Whether the scan-time expression can produce a float: a float literal or
+    /// float-typed name, a `/` division, or a call to `float(...)` -- recursively
+    /// through unary/binary wrappers.
+    private bool ExprCouldBeFloat(Expression e)
+    {
+        switch (e)
+        {
+            case FloatLiteral: return true;
+            case VariableExpr v:
+                if (scanScope != null && scanScope.TryGetValue(v.Name, out var sct)
+                    && sct == "float") return true;
+                foreach (var k in new[] {
+                             currentInlinePrefix + v.Name,
+                             currentFunction + "." + v.Name,
+                             currentModulePrefix + v.Name, v.Name })
+                    if (variableTypes.TryGetValue(k, out var dt) && dt == DataType.FLOAT)
+                        return true;
+                return false;
+            case UnaryExpr u: return ExprCouldBeFloat(u.Operand);
+            case BinaryExpr b:
+                return b.Op == AstBinOp.Div
+                    || ExprCouldBeFloat(b.Left) || ExprCouldBeFloat(b.Right);
+            case TernaryExpr t: return ExprCouldBeFloat(t.TrueVal) || ExprCouldBeFloat(t.FalseVal);
+            case CallExpr c:
+                return c.Callee is VariableExpr cf && cf.Name == "float";
+            default: return false;
+        }
     }
 
     private static List<Statement> ArmStatements(Statement arm)
@@ -652,58 +1155,12 @@ public partial class IRGenerator
     }
 
     // ── narrowing state across branches ───────────────────────────────────
-
-    /// The three pieces of optional state a branch snapshot carries. noneValuedNames is
-    /// shared with the pre-existing compile-time tracking, so only the entries an
-    /// optional name owns travel; a plain `x = None` keeps the loose semantics it has
-    /// always had.
-    private sealed class OptionalSnap
-    {
-        public Dictionary<string, Val> Slots = new();
-        public HashSet<string> Narrowed = new();
-        public HashSet<string> None = new();
-    }
-
-    /// Whether the qualified name can carry a runtime optional somewhere in this
-    /// function -- the keys noneValued-restore is allowed to touch.
-    private bool NameIsOptionalish(string q) =>
-        optionalTagSlots.ContainsKey(q) || optionalMembersByName.ContainsKey(q)
-        || optionalCapable.Contains(q) || optionalCapable.Contains(SourcePartOf(q));
-
-    /// The source-level spelling of a qualified storage name.
-    private string SourcePartOf(string q)
-    {
-        if (!string.IsNullOrEmpty(currentInlinePrefix) && q.StartsWith(currentInlinePrefix, StringComparison.Ordinal))
-            return q[currentInlinePrefix.Length..];
-        if (!string.IsNullOrEmpty(currentFunction) && q.StartsWith(currentFunction + ".", StringComparison.Ordinal))
-            return q[(currentFunction.Length + 1)..];
-        if (!string.IsNullOrEmpty(currentModulePrefix) && q.StartsWith(currentModulePrefix, StringComparison.Ordinal))
-            return q[currentModulePrefix.Length..];
-        return q;
-    }
-
-    private OptionalSnap SnapOptionalState()
-    {
-        var s = new OptionalSnap
-        {
-            Slots = new Dictionary<string, Val>(optionalTagSlots),
-            Narrowed = new HashSet<string>(narrowedOptionals),
-        };
-        foreach (var n in noneValuedNames)
-            if (NameIsOptionalish(n)) s.None.Add(n);
-        return s;
-    }
-
-    private void RestoreOptionalState(OptionalSnap s)
-    {
-        optionalTagSlots.Clear();
-        foreach (var kv in s.Slots) optionalTagSlots[kv.Key] = kv.Value;
-        narrowedOptionals.Clear();
-        narrowedOptionals.UnionWith(s.Narrowed);
-        foreach (var n in noneValuedNames.Where(NameIsOptionalish).ToList())
-            noneValuedNames.Remove(n);
-        noneValuedNames.UnionWith(s.None);
-    }
+    //
+    // optionalTagSlots and narrowedOptionals ride BranchState (BranchState.cs): the
+    // tag storage joins by union -- whichever arm minted the byte, it exists past
+    // the merge -- and the member narrowing joins all-agree like every other map
+    // there. noneValuedNames is in the same snapshot, so optional names keep the
+    // shared membership rule.
 
     /// The optional name a condition decides, and whether the condition being TRUE
     /// proves it None (`v is None`, `v == None`, `None is v`) or not-None
@@ -715,8 +1172,8 @@ public partial class IRGenerator
             return null;
         Expression? side = cmp.Left is NoneLiteral ? cmp.Right
             : cmp.Right is NoneLiteral ? cmp.Left : null;
-        if (side is not VariableExpr ve) return null;
-        if (OptionalKeyOf(ve.Name) is not { } key) return null;
+        if (side == null) return null;
+        if (OptionalKeyOfExpr(side) is not { } key) return null;
         bool trueMeansNone = cmp.Op is AstBinOp.Is or AstBinOp.Equal;
         return (key, trueMeansNone);
     }
@@ -725,52 +1182,116 @@ public partial class IRGenerator
     /// so the taken arm narrows. Null when the operand is not a live optional.
     private string? OptionalTruthSubject(Expression? cond)
     {
-        if (cond is not VariableExpr ve) return null;
-        return OptionalKeyOf(ve.Name);
+        if (cond == null) return null;
+        return OptionalKeyOfExpr(cond);
     }
 
-    /// The tag Val and None member-index of a live optional the expression reads, when
-    /// the expression is a bare unnarrowed optional name. Narrowed and provable-None
-    /// names answer through the ordinary truthiness/None folds instead.
-    private (Val tag, int noneIdx)? LiveOptionalTag(Expression? e)
+    /// The tag Val, member list and None member-index of a live optional the
+    /// expression reads, when the expression is a bare unnarrowed optional name.
+    /// Narrowed and provable-None names answer through the ordinary
+    /// truthiness/None folds instead. noneIdx is -1 for a union without None.
+    private (Val tag, List<string> members, int noneIdx, string key)? LiveOptionalTag(Expression? e)
     {
-        if (e is not VariableExpr ve) return null;
-        if (OptionalKeyOf(ve.Name) is not { } key) return null;
-        if (narrowedOptionals.Contains(key) || noneValuedNames.Contains(key)) return null;
+        if (e == null) return null;
+        if (OptionalKeyOfExpr(e) is not { } key) return null;
+        if (narrowedOptionals.ContainsKey(key) || noneValuedNames.Contains(key)) return null;
         if (!optionalTagSlots.TryGetValue(key, out var tag)) return null;
         if (!optionalMembersByName.TryGetValue(key, out var members) || members.Count == 0)
             return null;
-        return (tag, members.Count - 1);   // None is always the last member (RFC 0009)
+        return (tag, members, NoneIndex(members), key);
     }
 
     /// The union member list an arm's value contributes: `["None"]` for a provable
-    /// None, the source's own member list for a live (unnarrowed-on-that-arm)
-    /// optional, or the payload's type name alone for a definite value.
-    private List<string> UnionMembersOf(Val v, Expression src, OptionalSnap? arm)
+    /// None, the narrowed member alone for a name narrowed on that arm, the
+    /// source's own member list for a live (unnarrowed-on-that-arm) optional, or
+    /// the payload's type name alone for a definite value.
+    private List<string> UnionMembersOf(Val v, Expression src, BranchState? arm)
     {
         if (src is NoneLiteral || v is NoneVal || IsNoneValued(src))
             return new List<string> { "None" };
-        if (TagOfVal(v) != null && ValNameOf(v) is { } nm
-            && !(arm?.Narrowed.Contains(nm) ?? false)
-            && !noneValuedNames.Contains(nm))
+        if (TagOfVal(v) != null && ValNameOf(v) is { } nm)
         {
-            if (optionalMembersByName.TryGetValue(nm, out var m)) return new List<string>(m);
-            return new List<string> { TypeNameFor(v), "None" };
+            if (arm?.NarrowedOptionals.TryGetValue(nm, out var armIdx) ?? false)
+            {
+                // The arm proved one member: contribute THAT member's declared name,
+                // not the val's storage type -- `int` and `int16` are the same width
+                // and only the member spelling keeps the joined list deduplicated.
+                if (optionalMembersByName.TryGetValue(nm, out var nm2)
+                    && armIdx >= 0 && armIdx < nm2.Count)
+                    return new List<string> { nm2[armIdx] };
+                return new List<string> { TypeNameFor(v) };
+            }
+            if (!noneValuedNames.Contains(nm))
+            {
+                if (optionalMembersByName.TryGetValue(nm, out var m)) return new List<string>(m);
+                return new List<string> { TypeNameFor(v), "None" };
+            }
         }
         return new List<string> { TypeNameFor(v) };
     }
 
-    /// The tag an arm writes into a joined result: the source's own tag byte when it
-    /// is a live optional, the result's None index for a provable None, else 0. Phase-1
-    /// unions all share the [X, None] member order, so a copied tag keeps its meaning.
-    private Val ArmTagFor(Val v, Expression src, OptionalSnap? arm, int noneIdx)
+    /// <summary>
+    /// The tag an arm's value writes into a joined result: the source's own tag
+    /// byte when it is a live optional whose member list matches the result's,
+    /// the result's None index for a provable None, the member index for a
+    /// definite (or narrowed) value. When the source's member ORDER differs from
+    /// the result's the tag is remapped member-by-member -- a copied tag byte
+    /// would name the wrong member under the other order.
+    /// </summary>
+    private Val ArmTagFor(Val v, Expression src, BranchState? arm, List<string> dstMembers)
     {
+        int noneIdx = NoneIndex(dstMembers);
         if (src is NoneLiteral || v is NoneVal || IsNoneValued(src))
             return new Constant(noneIdx);
-        if (TagOfVal(v) is { } t && ValNameOf(v) is { } nm
-            && !(arm?.Narrowed.Contains(nm) ?? false))
-            return t;
-        return new Constant(0);
+        if (TagOfVal(v) is { } t && ValNameOf(v) is { } nm)
+        {
+            if (arm?.NarrowedOptionals.TryGetValue(nm, out var armIdx) ?? false)
+            {
+                if (optionalMembersByName.TryGetValue(nm, out var srcM2)
+                    && armIdx >= 0 && armIdx < srcM2.Count)
+                    return new Constant(dstMembers.IndexOf(srcM2[armIdx]));
+                return new Constant(MemberIndexFor(src, v, dstMembers) ?? 0);
+            }
+            if (!noneValuedNames.Contains(nm))
+            {
+                var srcMembers = optionalMembersByName.TryGetValue(nm, out var sm)
+                    ? sm : null;
+                if (srcMembers != null && !srcMembers.SequenceEqual(dstMembers))
+                    return EmitTagRemap(t, srcMembers, dstMembers, src);
+                return t;
+            }
+        }
+        return new Constant(MemberIndexFor(src, v, dstMembers) ?? 0);
+    }
+
+    /// <summary>
+    /// A run-time tag remapped from <paramref name="srcMembers"/>' order to
+    /// <paramref name="dstMembers"/>'s: a select chain over the source's members.
+    /// A source member with no image in the destination is a compile-time lie the
+    /// union could carry -- refuse the write rather than let a tag point nowhere.
+    /// </summary>
+    private Val EmitTagRemap(Val srcTag, List<string> srcMembers, List<string> dstMembers, Expression? src)
+    {
+        var remap = new List<(int srcIdx, int dstIdx)>();
+        for (int i = 0; i < srcMembers.Count; ++i)
+        {
+            int dstIdx = dstMembers.IndexOf(srcMembers[i]);
+            if (dstIdx < 0)
+                throw UserError(
+                    $"a member of the source union has no place here: '{srcMembers[i]}' is not " +
+                    $"a member of {UnionDisplay(dstMembers)}. Widen the target's union to " +
+                    "include it.", src);
+            remap.Add((i, dstIdx));
+        }
+        Temporary remapped = MakeTemp(DataType.UINT8);
+        foreach (var (si, di) in remap)
+        {
+            string skip = MakeLabel();
+            Emit(new JumpIfNotEqual(srcTag, new Constant(si), skip));
+            Emit(new Copy(new Constant(di), remapped));
+            Emit(new Label(skip));
+        }
+        return remapped;
     }
 
     /// Union-merge two member lists preserving order, with None always last.
@@ -793,22 +1314,94 @@ public partial class IRGenerator
     private string TypeNameFor(Val v) => DataTypeToSuffixStr(GetValType(v));
 
     /// Emit the conditional jump for an optional truth test: jump when the value is
-    /// truthy (payload tag AND nonzero payload) or falsy (None tag OR zero payload),
-    /// per <paramref name="jumpOnTruthy"/>.
-    private void EmitOptionalTruthJump(Val tag, Val payload, int noneIdx, string target, bool jumpOnTruthy)
+    /// truthy (a payload tag AND nonzero payload) or falsy (None tag OR zero
+    /// payload), per <paramref name="jumpOnTruthy"/>. A union with several real
+    /// members dispatches per member -- each reads the payload at ITS width.
+    private void EmitOptionalTruthJump(Val tag, Val payload, List<string> members,
+        string target, bool jumpOnTruthy)
     {
+        int noneIdx = NoneIndex(members);
+        var real = Enumerable.Range(0, members.Count).Where(i => i != noneIdx).ToList();
+        if (real.Count == 1 && noneIdx >= 0)
+        {
+            // The phase-1 [X, None] shape: the two-jump form, byte-identical.
+            if (jumpOnTruthy)
+            {
+                string skip = MakeLabel();
+                Emit(new JumpIfEqual(tag, new Constant(noneIdx), skip));
+                Emit(new JumpIfNotZero(payload, target));
+                Emit(new Label(skip));
+            }
+            else
+            {
+                Emit(new JumpIfEqual(tag, new Constant(noneIdx), target));
+                Emit(new JumpIfZero(payload, target));
+            }
+            return;
+        }
         if (jumpOnTruthy)
         {
+            // truthy = (tag == i AND payload-as-member-i != 0) for some real member i.
+            foreach (var i in real)
+            {
+                string skip = MakeLabel();
+                Emit(new JumpIfNotEqual(tag, new Constant(i), skip));
+                Emit(new JumpIfNotZero(MemberRead(payload, i, members), target));
+                Emit(new Label(skip));
+            }
+            return;
+        }
+        // falsy = (tag == None) OR (tag == i AND payload-as-member-i == 0).
+        if (noneIdx >= 0)
+            Emit(new JumpIfEqual(tag, new Constant(noneIdx), target));
+        string done = MakeLabel();
+        foreach (var i in real)
+        {
             string skip = MakeLabel();
-            Emit(new JumpIfEqual(tag, new Constant(noneIdx), skip));
-            Emit(new JumpIfNotZero(payload, target));
+            Emit(new JumpIfNotEqual(tag, new Constant(i), skip));
+            Emit(new JumpIfZero(MemberRead(payload, i, members), target));
+            Emit(new Jump(done));
             Emit(new Label(skip));
         }
-        else
+        Emit(new Label(done));
+    }
+
+    /// The payload Val retyped to member <paramref name="idx"/>'s width: narrowed
+    /// reads take the member's size from the low payload bytes (RFC 0009 section 6).
+    private static Val MemberRead(Val payload, int idx, List<string> members)
+    {
+        var dt = MemberDataType(members[idx]);
+        return payload switch
         {
-            Emit(new JumpIfEqual(tag, new Constant(noneIdx), target));
-            Emit(new JumpIfZero(payload, target));
+            Variable v => new Variable(v.Name, dt),
+            Temporary t => new Temporary(t.Name, dt),
+            _ => payload,
+        };
+    }
+
+    /// <summary>
+    /// The destination a payload write into a union slot must use: a definite
+    /// member writes its OWN width into the slot's low bytes -- a widest-typed
+    /// `Copy` would convert an int member into the float member's representation
+    /// under the int tag (Copy on a FLOAT destination calls __floatsisf). A live
+    /// union source moves its whole payload raw at the widest width; a None write
+    /// emits no payload copy at all.
+    /// </summary>
+    private Val UnionPayloadStoreTarget(Variable target, Val src, Expression? srcExpr)
+    {
+        if (!optionalMembersByName.TryGetValue(target.Name, out var m)) return target;
+        if (ValNameOf(src) is { } sn && narrowedOptionals.TryGetValue(sn, out var ni)
+            && optionalMembersByName.TryGetValue(sn, out var nm2) && ni >= 0 && ni < nm2.Count)
+        {
+            int tIdx = m.IndexOf(nm2[ni]);
+            if (tIdx >= 0) return MemberRead(target, tIdx, m);
         }
+        if (TagOfVal(src) != null) return target;
+        if (srcExpr is NoneLiteral || src is NoneVal
+            || (srcExpr != null && IsNoneValued(srcExpr))) return target;
+        int? idx = MemberIndexFor(srcExpr, src, m);
+        return idx is { } i && i >= 0 && i < m.Count && m[i] != "None"
+            ? MemberRead(target, i, m) : target;
     }
 
     /// Apply the narrowing a condition implies to the current path's state.
@@ -835,6 +1428,31 @@ public partial class IRGenerator
             default:
                 break;
         }
+        if (IsinstanceCondSubject(cond) is { } isa)
+        {
+            // `isinstance(v, T)` narrows the member set to the candidates T names
+            // (true arm) or to everything else (false arm). Only a single-member
+            // result narrows the payload read: a two-member remainder stays
+            // ambiguous and keeps the refusal.
+            var armSet = whenTrue
+                ? isa.match
+                : Enumerable.Range(0, isa.members.Count).Where(i => !isa.match.Contains(i)).ToList();
+            if (armSet.Count == 1)
+            {
+                int idx = armSet[0];
+                if (idx == NoneIndex(isa.members))
+                {
+                    narrowedOptionals.Remove(isa.key);
+                    noneValuedNames.Add(isa.key);
+                }
+                else
+                {
+                    narrowedOptionals[isa.key] = idx;
+                    noneValuedNames.Remove(isa.key);
+                }
+            }
+            return;
+        }
         if (OptionalCondSubject(cond) is { } subj)
         {
             bool proveNone = subj.trueMeansNone == whenTrue;
@@ -843,50 +1461,47 @@ public partial class IRGenerator
                 narrowedOptionals.Remove(subj.key);
                 noneValuedNames.Add(subj.key);
             }
-            else
+            else if (optionalMembersByName.TryGetValue(subj.key, out var sm))
             {
-                narrowedOptionals.Add(subj.key);
-                noneValuedNames.Remove(subj.key);
+                // `v is not None` on an [X, None] narrows to X; on a union with two
+                // or more real members the remainder is still ambiguous and the
+                // payload read keeps refusing -- the name is only known not-None.
+                var nonNone = Enumerable.Range(0, sm.Count)
+                    .Where(i => i != NoneIndex(sm)).ToList();
+                if (nonNone.Count == 1)
+                {
+                    narrowedOptionals[subj.key] = nonNone[0];
+                    noneValuedNames.Remove(subj.key);
+                }
             }
             return;
         }
-        // `if v:` narrows on the taken arm: truthy means the tag said payload. The
-        // fall-through proves nothing (None or a falsy payload), same as `if not v:`.
-        if (whenTrue && OptionalTruthSubject(cond) is { } truthKey)
-            narrowedOptionals.Add(truthKey);
+        // `if v:` narrows on the taken arm when the union has exactly one real
+        // member: truthy means the tag said payload. With two or more real members
+        // the tag is still ambiguous, same as the fall-through on every arm.
+        if (whenTrue && OptionalTruthSubject(cond) is { } truthKey
+            && optionalMembersByName.TryGetValue(truthKey, out var tm))
+        {
+            var nonNone = Enumerable.Range(0, tm.Count)
+                .Where(i => i != NoneIndex(tm)).ToList();
+            if (nonNone.Count == 1)
+                narrowedOptionals[truthKey] = nonNone[0];
+        }
     }
 
-    /// Merge the per-arm end states into the join. <paramref name="armEnds"/> holds a
-    /// null for an arm that never reaches the end (it returned or raised), and
-    /// <paramref name="fallthrough"/> is the state past a chain with no else. A name
-    /// stays narrowed only when EVERY surviving path narrows it; a tag slot stays when
-    /// ANY path can leave one.
-    private void JoinOptionalState(List<OptionalSnap?> armEnds, OptionalSnap? fallthrough)
+    /// The live optional name and member list an `isinstance(v, T)` test decides,
+    /// with the member indices T names. Null when the call is not an isinstance on
+    /// a live optional, or T names no member (the comparison folds to Constant
+    /// instead and this path never runs).
+    private (string key, List<string> members, List<int> match)? IsinstanceCondSubject(Expression? cond)
     {
-        var paths = new List<OptionalSnap>();
-        foreach (var e in armEnds) if (e != null) paths.Add(e);
-        if (fallthrough != null) paths.Add(fallthrough);
-        if (paths.Count == 0) return;   // every arm leaves: nothing joins
-
-        var narrowed = new HashSet<string>(paths[0].Narrowed);
-        var none = new HashSet<string>(paths[0].None);
-        foreach (var p in paths.Skip(1))
-        {
-            narrowed.IntersectWith(p.Narrowed);
-            none.IntersectWith(p.None);
-        }
-        var slots = new Dictionary<string, Val>();
-        foreach (var p in paths)
-            foreach (var kv in p.Slots)
-                slots.TryAdd(kv.Key, kv.Value);
-
-        optionalTagSlots.Clear();
-        foreach (var kv in slots) optionalTagSlots[kv.Key] = kv.Value;
-        narrowedOptionals.Clear();
-        narrowedOptionals.UnionWith(narrowed);
-        foreach (var n in noneValuedNames.Where(NameIsOptionalish).ToList())
-            noneValuedNames.Remove(n);
-        noneValuedNames.UnionWith(none);
+        if (cond is not CallExpr { Args.Count: 2 } ic) return null;
+        if (ic.Callee is not VariableExpr { Name: "isinstance" }) return null;
+        if (OptionalKeyOfExpr(ic.Args[0]) is not { } key) return null;
+        if (!optionalMembersByName.TryGetValue(key, out var members)) return null;
+        var match = IsinstanceMemberIndices(ic.Args[1], members);
+        if (match == null || match.Count == 0) return null;
+        return (key, members, match);
     }
 
     // ── capable-name precompute ─────────────────────────────────────────────
@@ -978,6 +1593,202 @@ public partial class IRGenerator
            || optionalCapable.Contains(sourceName)
            || optionalTagSlots.ContainsKey(storageName);
 
+    // ── union fields ────────────────────────────────────────────────────────
+
+    /// Whether <paramref name="cls"/> has <paramref name="field"/> as a union
+    /// field: some write stores None and some write stores a scalar, anywhere up
+    /// the class's MRO (each link's own writes count -- a subclass method's write
+    /// and the base ctor's write land on the same flattened name). A declared
+    /// `Union[...]`/`Optional[...]` annotation on the field answers the member
+    /// list outright.
+    private bool IsUnionField(string cls, string field, out List<string>? declared)
+    {
+        declared = null;
+        bool none = false, scalar = false;
+        for (string? c = cls; c != null;)
+        {
+            if (fieldDeclaredUnionMembers.TryGetValue(c + "|" + field, out declared))
+                return true;
+            if (fieldNoneWrites.TryGetValue(c, out var ns) && ns.Contains(field)) none = true;
+            if (fieldScalarWrites.TryGetValue(c, out var ss) && ss.Contains(field)) scalar = true;
+            if (!classBasePrefixes.TryGetValue(c, out var parent) || string.IsNullOrEmpty(parent))
+                break;
+            c = parent.EndsWith("_") ? parent[..^1] : parent;
+        }
+        return none && scalar;
+    }
+
+    /// The flattened-name tag bookkeeping for a union field, created on first touch:
+    /// the payload Variable's widest-member type, the tag byte sibling and the
+    /// member list (declared, or seeded [None] and grown by each write's member).
+    private bool EnsureUnionField(string flat, string cls, string field, out List<string> members)
+    {
+        members = null!;
+        if (!IsUnionField(cls, field, out var declared)) return false;
+        if (!optionalMembersByName.TryGetValue(flat, out members))
+        {
+            members = declared != null ? new List<string>(declared) : new List<string> { "None" };
+            optionalMembersByName[flat] = members;
+            variableTypes[flat] = UnionPayloadType(members);
+            // A union field is always runtime storage: never a compile-time fold.
+            constantVariables.Remove(flat);
+            killedConstants.Add(flat);
+            // The payload global must be registered BEFORE TagStorageFor runs -- the
+            // tag is itself a global byte only when the payload's name is one.
+            if (moduleInstanceMutableFields.Contains(flat))
+                mutableGlobals[flat] = variableTypes[flat];
+            optionalTagSlots[flat] = TagStorageFor(flat);
+            if (declared != null) unionFieldDeclared.Add(flat);
+        }
+        return true;
+    }
+
+    /// Whether this member-assign target resolves to a union field -- the
+    /// RefuseOptionalPayloadStore exemption asks before the flattened path runs.
+    private bool IsUnionFieldTarget(MemberAccessExpr m)
+    {
+        if (m.Object is not VariableExpr ov) return false;
+        // A module-level instance keys `instanceClasses` under its BARE name, so
+        // both the function-scoped and bare spellings have to answer here.
+        string pfx = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." : "");
+        foreach (var cand in new[] { pfx + ov.Name, ov.Name })
+        {
+            string b = cand;
+            for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var a); d++) b = a;
+            if (instanceClasses.TryGetValue(b, out var cls) && cls != null
+                && IsUnionField(cls, m.Member, out _))
+                return true;
+        }
+        return false;
+    }
+
+    /// The member list key a tagged field carries, resolved without emitting -- the
+    /// same flattened name the read path hands back. A cond test can be the field's
+    /// first touch, so the bookkeeping is minted here when the class resolves.
+    private string? FlatOptionalKeyOf(MemberAccessExpr ma)
+    {
+        if (ma.Object is not VariableExpr ov) return null;
+        string pfx = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." : "");
+        foreach (var cand in new[] { pfx + ov.Name, ov.Name })
+        {
+            string b = cand;
+            for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var a); d++) b = a;
+            string flat = b + "_" + ma.Member;
+            if (optionalMembersByName.ContainsKey(flat)) return flat;
+            if (instanceClasses.TryGetValue(b, out var cls) && cls != null
+                && EnsureUnionField(flat, cls, ma.Member, out _))
+                return flat;
+        }
+        return null;
+    }
+
+    /// The member-name a plain stored Val joins the field's list as.
+    private static string? UnionMemberNameFor(Val v, Expression? expr)
+    {
+        if (expr is FloatLiteral || v is FloatConstant) return "float";
+        if (expr is BooleanLiteral) return "bool";
+        // A folded scalar (a setter param bound to `Pull.UP`, say) still names an
+        // int member -- the same smallest-fit convention TypeOfIntValue uses.
+        if (v is Constant cv) return cv.Value switch
+        {
+            < short.MinValue => "int32", < sbyte.MinValue => "int16", < 0 => "int8",
+            <= byte.MaxValue => "uint8", <= ushort.MaxValue => "uint16",
+            _ => "uint32",
+        };
+        return (v != null ? v switch
+        {
+            Variable vv => vv.Type, Temporary tv => tv.Type, _ => DataType.UNKNOWN,
+        } : DataType.UNKNOWN) switch
+        {
+            DataType.FLOAT => "float",
+            DataType.INT8 => "int8", DataType.INT16 => "int16", DataType.INT32 => "int32",
+            DataType.UINT8 => "uint8", DataType.UINT16 => "uint16",
+            DataType.UINT32 => "uint32",
+            _ => null,
+        };
+    }
+
+    /// `self.f = v` where f is a union field: payload at the member's own width plus
+    /// the tag write. A None write writes only the tag. A live-union source forwards
+    /// (remapping) its tag and stores its payload bytes at its own width.
+    private void EmitUnionFieldStore(string flat, string field, Expression? srcExpr,
+        Val value, ASTNode loc)
+    {
+        var members = optionalMembersByName[flat];
+        var tagVar = (Variable)optionalTagSlots[flat];
+
+        bool noneWrite = srcExpr is NoneLiteral || (srcExpr != null && IsNoneValued(srcExpr))
+            || (value is NoneVal && srcExpr is not CallExpr);
+        if (!noneWrite)
+        {
+            // The value's kind must be a member: a live union contributes its whole
+            // list, a plain value its own type name, and anything else (an instance,
+            // a buffer) is a member a scalar payload cannot hold -- decision 4.
+            if (TagOfVal(value) is { }
+                && ValNameOf(value) is { } srcNm
+                && optionalMembersByName.TryGetValue(srcNm, out var srcMembers))
+            {
+                foreach (var m in srcMembers)
+                    if (!members.Contains(m))
+                    {
+                        if (unionFieldDeclared.Contains(flat))
+                            throw UserError(
+                                $"a member of the source union has no place here: '{m}' is " +
+                                $"not a member of field '{field}'s {UnionDisplay(members)}. " +
+                                "Widen the annotation to include it.", loc);
+                        members.Add(m);
+                    }
+            }
+            else if (MemberIndexFor(srcExpr, value, members) == null)
+            {
+                string? mn = UnionMemberNameFor(value, srcExpr);
+                if (mn == null || value is ArrayBase or MemoryAddress
+                    || !string.IsNullOrEmpty(GetValClass(value)))
+                    throw UserError(
+                        $"field '{field}' already holds None -- a tagged union member -- and " +
+                        "this value is not a scalar the payload can hold (an instance or a "
+                        + "buffer has no member slot; RFC 0009 decision 4)", loc);
+                if (unionFieldDeclared.Contains(flat))
+                    throw UserError(
+                        $"field '{field}' is declared {UnionDisplay(members)} -- this write's " +
+                        $"'{mn}' is not a member of it. Widen the annotation or keep the "
+                        + "stored types within it.", loc);
+                members.Add(mn);
+            }
+            if (members.Count > 4)
+                throw UserError(
+                    $"field '{field}' would need {members.Count} members -- a tagged union "
+                    + "carries at most 4 (RFC 0009 section 6.1)", loc);
+            variableTypes[flat] = UnionPayloadType(members);
+            if (moduleInstanceMutableFields.Contains(flat))
+                mutableGlobals[flat] = UnionPayloadType(members);
+        }
+
+        if (noneWrite)
+        {
+            Emit(new Copy(new Constant(NoneIndex(members) >= 0 ? NoneIndex(members) : 0), tagVar));
+            MarkOptionalNone(flat);
+            strConstantVariables.Remove(flat);
+            return;
+        }
+
+        // Payload at the member's own width; a still-tagged source stores the bytes
+        // it already carries (the runtime member is its tag's, not this write's).
+        DataType payTy;
+        if (TagOfVal(value) != null && ValNameOf(value) is { } pv
+            && !narrowedOptionals.ContainsKey(pv) && !noneValuedNames.Contains(pv))
+            payTy = GetValType(value);
+        else
+        {
+            int? idx = MemberIndexFor(srcExpr, value, members);
+            payTy = idx is { } i2 ? MemberDataType(members[i2]) : GetValType(value);
+        }
+        Emit(new Copy(value, new Variable(flat, payTy)));
+        EmitOptionalTagWrite(new Variable(flat, payTy), srcExpr, value);
+    }
+
     /// <summary>
     /// Emit the tag write that accompanies a payload write to a capable name, and
     /// update the read-side bookkeeping. The payload copy is emitted by the caller;
@@ -989,33 +1800,74 @@ public partial class IRGenerator
     private void EmitOptionalTagWrite(Variable target, Expression? valueExpr, Val value)
     {
         Variable tagVar = TagStorageFor(target.Name);
-        List<string> members = optionalMembersByName.TryGetValue(target.Name, out var m)
-            ? m : new List<string> { "uint8", "None" };
 
-        bool srcNarrowed = value is Variable sv && narrowedOptionals.Contains(sv.Name)
-                           || value is Temporary st && narrowedOptionals.Contains(st.Name);
+        // The member list the target carries: its own declared union when it has
+        // one, else the source's list (so `x = tagged_call()` inherits the callee's
+        // member order), else the phase-1 default.
+        List<string> members;
+        if (optionalMembersByName.TryGetValue(target.Name, out var declared))
+            members = declared;
+        else if (ValNameOf(value) is { } srcNm
+                 && optionalMembersByName.TryGetValue(srcNm, out var srcM))
+            members = srcM;
+        else
+            members = new List<string> { "uint8", "None" };
+        int noneIdx = NoneIndex(members);
+
+        int? srcNarrowedIdx = value is Variable sv2 && narrowedOptionals.TryGetValue(sv2.Name, out var si)
+                              ? si
+                              : value is Temporary st2 && narrowedOptionals.TryGetValue(st2.Name, out var si2)
+                                  ? si2 : null;
         // A NoneVal value alone does NOT mean None -- a constructor call yields one too.
         // The SOURCE expression has to say None, the same rule noneValuedNames follows.
         if (valueExpr is NoneLiteral
             || (valueExpr != null && IsNoneValued(valueExpr)))
         {
-            Emit(new Copy(new Constant(NoneIndex(members)), tagVar));
+            if (noneIdx < 0)
+                throw UserError(
+                    $"None is not a member of {UnionDisplay(members)} -- assigning it to " +
+                    $"'{target.Name.Split('.').Last()}' would write a tag with no meaning. " +
+                    "Add None to the union.", valueExpr);
+            Emit(new Copy(new Constant(noneIdx), tagVar));
             optionalTagSlots[target.Name] = tagVar;
             MarkOptionalNone(target.Name);
         }
         else if (TagOfVal(value) is { } srcTag)
         {
-            Emit(new Copy(srcTag, tagVar));
+            if (srcNarrowedIdx is { } sIdx
+                && optionalMembersByName.TryGetValue(ValNameOf(value)!, out var narrowM)
+                && sIdx >= 0 && sIdx < narrowM.Count)
+            {
+                // A narrowed source has a definite member: the tag is that member's
+                // index in the TARGET's list, not the runtime byte.
+                Emit(new Copy(new Constant(members.IndexOf(narrowM[sIdx])), tagVar));
+            }
+            else if (ValNameOf(value) is { } rNm
+                     && optionalMembersByName.TryGetValue(rNm, out var srcList)
+                     && !srcList.SequenceEqual(members))
+            {
+                Emit(new Copy(EmitTagRemap(srcTag, srcList, members, valueExpr), tagVar));
+            }
+            else
+            {
+                Emit(new Copy(srcTag, tagVar));
+            }
             optionalTagSlots[target.Name] = tagVar;
             narrowedOptionals.Remove(target.Name);
             noneValuedNames.Remove(target.Name);
-            if (srcNarrowed) narrowedOptionals.Add(target.Name);
+            if (srcNarrowedIdx is { } nIdx
+                && optionalMembersByName.TryGetValue(ValNameOf(value)!, out var nm2)
+                && nIdx >= 0 && nIdx < nm2.Count)
+            {
+                int tIdx = members.IndexOf(nm2[nIdx]);
+                if (tIdx >= 0) narrowedOptionals[target.Name] = tIdx;
+            }
         }
         else
         {
-            Emit(new Copy(new Constant(0), tagVar));
+            Emit(new Copy(new Constant(MemberIndexFor(valueExpr, value, members) ?? 0), tagVar));
             optionalTagSlots[target.Name] = tagVar;
-            MarkOptionalDefinite(target.Name);
+            MarkOptionalDefinite(target.Name, MemberIndexFor(valueExpr, value, members) ?? 0);
         }
         optionalMembersByName.TryAdd(target.Name, members);
     }
@@ -1035,7 +1887,7 @@ public partial class IRGenerator
             optionalTagSlots[paramName] = srcTag;
             if (optionalMembersByName.TryGetValue(argName, out var am))
                 optionalMembersByName[paramName] = am;
-            if (narrowedOptionals.Contains(argName)) narrowedOptionals.Add(paramName);
+            if (narrowedOptionals.TryGetValue(argName, out var nIdx)) narrowedOptionals[paramName] = nIdx;
         }
     }
 
@@ -1119,11 +1971,15 @@ public partial class IRGenerator
         string? vName = optV is Variable vv ? vv.Name
             : optV is Temporary tv ? tv.Name : null;
         bool isIs = expr.Op is AstBinOp.Is or AstBinOp.Equal;
-        if (vName != null && narrowedOptionals.Contains(vName))
+        if (vName != null && narrowedOptionals.ContainsKey(vName))
+            return new Constant(isIs ? 0 : 1);
+        int noneIdx = NoneIndexOfVal(optV);
+        if (noneIdx < 0)
+            // The union has no None member: the tag can never say None.
             return new Constant(isIs ? 0 : 1);
         var t = MakeTemp(DataType.UINT8);
         Emit(new Binary(isIs ? BinaryOp.Equal : BinaryOp.NotEqual,
-            liveTag, new Constant(NoneIndexOfVal(optV)), t));
+            liveTag, new Constant(noneIdx), t));
         return t;
     }
 
@@ -1142,36 +1998,59 @@ public partial class IRGenerator
         Emit(new Call(callee, args, dst));
     }
 
-    /// The member index an `-> Optional[X]` @inline callee's `return` writes into the
-    /// expansion's tag temp.
+    /// The member index an `-> Optional[X]`/union @inline callee's `return` writes
+    /// into the expansion's tag temp.
     private Val InlineReturnTagVal(InlineContext ctx, Expression? expr, Val val)
     {
-        int noneIdx = (inlineFunctions.TryGetValue(ctx.CalleeName, out var fn)
-            && fn?.ReturnMembers is { } m) ? m.Count - 1 : 1;
-        return ReturnTagVal(expr, val, noneIdx);
+        var members = (inlineFunctions.TryGetValue(ctx.CalleeName, out var fn)
+            && fn?.ReturnMembers is { } m) ? m : new List<string> { "uint8", "None" };
+        return ReturnTagVal(expr, val, members);
     }
 
-    /// Shared tag arithmetic for the two return paths: None or a bare `return` reports
-    /// the last member, a narrowed name reports member 0, a live optional forwards its
-    /// runtime tag, and anything else is member 0.
-    private Val ReturnTagVal(Expression? expr, Val val, int noneIdx)
+    /// <summary>
+    /// Shared tag arithmetic for the two return paths: None reports the None index
+    /// (a union without None has no legal `return None` -- the resolve pass already
+    /// refused it), a live optional forwards or remaps its runtime tag, a narrowed
+    /// or plain value reports its member index.
+    /// </summary>
+    private Val ReturnTagVal(Expression? expr, Val val, List<string> members)
     {
-        if (expr == null || expr is NoneLiteral || val is NoneVal) return new Constant(noneIdx);
+        int noneIdx = NoneIndex(members);
+        if (expr == null || expr is NoneLiteral || val is NoneVal)
+            return new Constant(noneIdx >= 0 ? noneIdx : 0);
         if (expr is VariableExpr ve)
         {
-            if (narrowedOptionals.Contains(ve.Name)) return new Constant(0);
-            if (TagOfVal(val) is { } srcTag) return srcTag;
-            if (IsNoneValued(ve)) return new Constant(noneIdx);
-            return new Constant(0);
+            foreach (var k in OptionalNameKeys(ve.Name))
+                if (narrowedOptionals.TryGetValue(k, out var nIdx)
+                    && optionalMembersByName.TryGetValue(k, out var nm)
+                    && nIdx >= 0 && nIdx < nm.Count)
+                    return new Constant(members.IndexOf(nm[nIdx]));
+            if (TagOfVal(val) is { } srcTag)
+            {
+                if (ValNameOf(val) is { } nm2
+                    && optionalMembersByName.TryGetValue(nm2, out var srcM)
+                    && !srcM.SequenceEqual(members))
+                    return EmitTagRemap(srcTag, srcM, members, expr);
+                return srcTag;
+            }
+            if (IsNoneValued(ve)) return new Constant(noneIdx >= 0 ? noneIdx : 0);
+            return new Constant(MemberIndexFor(expr, val, members) ?? 0);
         }
-        if (TagOfVal(val) is { } t) return t;
-        return new Constant(0);
+        if (TagOfVal(val) is { } t)
+        {
+            if (ValNameOf(val) is { } nm3
+                && optionalMembersByName.TryGetValue(nm3, out var srcM2)
+                && !srcM2.SequenceEqual(members))
+                return EmitTagRemap(t, srcM2, members, expr);
+            return t;
+        }
+        return new Constant(MemberIndexFor(expr, val, members) ?? 0);
     }
 
     /// The Tag operand a `Return` instruction needs for this return's value.
     private Val? TagForReturn(Expression? expr, Val val)
     {
         if (CurrentReturnMembers is not { } members) return null;
-        return ReturnTagVal(expr, val, NoneIndex(members));
+        return ReturnTagVal(expr, val, members);
     }
 }

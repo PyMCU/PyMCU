@@ -842,6 +842,46 @@ public partial class IRGenerator
             return isinstResult;
         }
 
+        // RFC 0009 section 5: `isinstance(v, T)` on a live tagged union is a tag
+        // compare -- the tag byte against the member index T names, OR'd when a
+        // tuple names several. A narrowed or provably-None name has its answer at
+        // compile time. Ahead of the ZCA fold: a tagged name is a union, not an
+        // instance.
+        if (callee == "isinstance" && expr.Args.Count == 2
+            && expr.Args[0] is Expression isinstUnionRecv
+            && OptionalKeyOfExpr(isinstUnionRecv) is { } isinstKey
+            && optionalMembersByName.TryGetValue(isinstKey, out var isinstMembers))
+        {
+            var isinstMatch = IsinstanceMemberIndices(expr.Args[1], isinstMembers);
+            if (isinstMatch.Count == 0)
+                return new Constant(0);   // T names no member: never true
+            if (narrowedOptionals.TryGetValue(isinstKey, out var isinstNIdx))
+                return new Constant(isinstMatch.Contains(isinstNIdx) ? 1 : 0);
+            if (noneValuedNames.Contains(isinstKey))
+                return new Constant(isinstMatch.Contains(NoneIndex(isinstMembers)) ? 1 : 0);
+            if (optionalTagSlots.TryGetValue(isinstKey, out var isinstTag))
+            {
+                // Only the tag is read -- never the payload.
+                Temporary isinstRes = MakeTemp(DataType.UINT8);
+                if (isinstMatch.Count == 1)
+                {
+                    Emit(new Binary(PyMCU.IR.BinaryOp.Equal,
+                        isinstTag, new Constant(isinstMatch[0]), isinstRes));
+                }
+                else
+                {
+                    Emit(new Copy(new Constant(0), isinstRes));
+                    foreach (var mi in isinstMatch)
+                    {
+                        Temporary one = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(PyMCU.IR.BinaryOp.Equal, isinstTag, new Constant(mi), one));
+                        Emit(new Binary(PyMCU.IR.BinaryOp.BitOr, isinstRes, one, isinstRes));
+                    }
+                }
+                return isinstRes;
+            }
+        }
+
         // `isinstance(x, T)` (and `isinstance(x, (T1, T2, ...))`) on a ZCA instance is not a
         // decision, it is a FOLD: every instance has a class fixed when the program is
         // compiled -- that is the whole premise this compiler is built on -- so the answer is
@@ -1514,7 +1554,12 @@ public partial class IRGenerator
         // return so a bare `x = f()` assignment can register x as that list, not merely widen
         // the UNKNOWN it would otherwise keep.
         lastCallReturnTypeText = rType;
-        DataType retDt = IsListLikeReturnType(rType) ? DataType.GC_REF
+        // A live union call carries the widest member's payload width, exactly as the
+        // inline result temp above: `Union[...]` resolves to UNKNOWN in StringToDataType
+        // and would leave the destination a byte.
+        DataType retDt = functionReturnMembers.TryGetValue(callee, out var cMembers)
+            ? UnionPayloadType(cMembers)
+            : IsListLikeReturnType(rType) ? DataType.GC_REF
             : rType != null && rType.Length > 0 ? DataTypeExtensions.StringToDataType(rType)
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
@@ -1741,8 +1786,21 @@ public partial class IRGenerator
             // has no StringToDataType case, so the result temp needs GC_REF, not UNKNOWN, and
             // a bare `x = f()` assignment needs the raw text to register x as that list.
             lastCallReturnTypeText = func.ReturnType;
-            result = MakeTemp(IsListLikeReturnType(func.ReturnType)
-                ? DataType.GC_REF : DataTypeExtensions.StringToDataType(func.ReturnType));
+            // A live union result carries the widest member's payload width: `Union[...]`
+            // has no StringToDataType case either, and typing the temp UNKNOWN made the
+            // caller's `t = dhtDevice.temperature` a one-byte destination that dropped the
+            // float payload's upper bytes (RFC 0009, adafruit_dht).
+            result = MakeTemp(
+                functionReturnMembers.TryGetValue(callee, out var resMembers)
+                    ? UnionPayloadType(resMembers)
+                    // A union-returning body that always inlines (a @property getter,
+                    // for one) is never a functionsToCompile candidate, so its member
+                    // list lives only on the FunctionDef (RFC 0009, adafruit_dht).
+                    : func.ReturnMembers is { } fm
+                        ? UnionPayloadType(fm)
+                    : IsListLikeReturnType(func.ReturnType)
+                        ? DataType.GC_REF
+                        : DataTypeExtensions.StringToDataType(func.ReturnType));
         }
 
         var argValues = new List<Val>();
@@ -3084,7 +3142,11 @@ public partial class IRGenerator
         // Nested expansions pop innermost-first, so after the RHS finishes this holds
         // the OUTERMOST call's declared return type — the width the assignment needs
         // when the result folded to a bare Constant.
-        lastInlineReturnType = DataTypeExtensions.StringToDataType(func.ReturnType);
+        lastInlineReturnType = functionReturnMembers.TryGetValue(callee, out var lirMembers)
+            ? UnionPayloadType(lirMembers)
+            : func.ReturnMembers is { } lirFm
+                ? UnionPayloadType(lirFm)
+                : DataTypeExtensions.StringToDataType(func.ReturnType);
 
         currentSourcePath = savedSourcePath;
         currentSourceFile = savedSourceFile;
@@ -9179,11 +9241,31 @@ public partial class IRGenerator
         Emit(new Binary(BinaryOp.LessThan, tmpLen, tmpCap, ltCap));
         Emit(new JumpIfNotZero(ltCap, fastLabel));
 
-        // === SLOW PATH: realloc to double capacity ===
+        // === SLOW PATH: realloc to grow capacity ===
 
-        // new_cap = cap * 2
+        // gc_alloc encodes the payload length in one header byte, so a list buffer's
+        // 2 + cap*elemSize bytes must stay <= 255. Double in u16 -- cap*2 already wraps
+        // in u8 at cap >= 128 -- clamp to the largest capacity that fits, and raise
+        // MemoryError when the list is already at that ceiling.
+        int maxCap = (255 - 2) / elemSize;
+        Temporary newCapWide = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, tmpCap, new Constant(2), newCapWide));
+        Temporary tooBig = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterThan, newCapWide, new Constant(maxCap), tooBig));
+        string capFitsLabel = MakeLabel();
+        Emit(new JumpIfZero(tooBig, capFitsLabel));
+        Emit(new Copy(new Constant(maxCap), newCapWide));
+        Emit(new Label(capFitsLabel));
+
+        Temporary grew = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterThan, newCapWide, tmpCap, grew));
+        string growableLabel = MakeLabel();
+        Emit(new JumpIfNotZero(grew, growableLabel));
+        EmitRuntimeRaise("MemoryError", "list capacity limit reached");
+        Emit(new Label(growableLabel));
+
         Temporary newCap = MakeTemp(DataType.UINT8);
-        Emit(new Binary(BinaryOp.Mul, tmpCap, new Constant(2), newCap));
+        Emit(new Binary(BinaryOp.BitAnd, newCapWide, new Constant(0xFF), newCap));
 
         // new_alloc_size = 2 + new_cap * elemSize
         Temporary newCapScaled = MakeTemp(DataType.UINT16);
@@ -9197,6 +9279,17 @@ public partial class IRGenerator
         // copy source is re-derived from listVar AFTER the alloc.
         Temporary newPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(newAllocSize, newPtr));
+
+        // gc_alloc returns 0 on OOM; the stores and copy loop below write through the
+        // pointer unchecked, so a null result would land a list header and the element
+        // bytes at address 0x0000 -- which is IO space, SPH included.
+        Val newPtrU16Chk = newPtr with { Type = DataType.UINT16 };
+        Temporary allocOk = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.NotEqual, newPtrU16Chk, new Constant(0), allocOk));
+        string allocOkLabel = MakeLabel();
+        Emit(new JumpIfNotZero(allocOk, allocOkLabel));
+        EmitRuntimeRaise("MemoryError", "list append out of memory");
+        Emit(new Label(allocOkLabel));
 
         // Write new header
         EmitListStore(newPtr, 0, tmpLen);
@@ -9547,6 +9640,11 @@ public partial class IRGenerator
         {
             constantVariables.Remove(bse + "_" + field);
             strConstantVariables.Remove(bse + "_" + field);
+            // A union field the callee writes is not the None the constructor's
+            // mark still claims, and a narrowing proved on one path does not
+            // survive a store the caller cannot see (RFC 0009 phase 3).
+            noneValuedNames.Remove(bse + "_" + field);
+            narrowedOptionals.Remove(bse + "_" + field);
         }
     }
 

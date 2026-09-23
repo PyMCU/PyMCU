@@ -100,6 +100,17 @@ public partial class IRGenerator
         public HashSet<string> WriteThroughAliases = new();
         public HashSet<string> RangeBoundSequences = new();
         public HashSet<string> TypingOnlyNames = new();
+
+        // RFC 0009: the member a name is narrowed to on this arm, kept only where
+        // every reachable arm narrows it to the SAME member.
+        public Dictionary<string, int> NarrowedOptionals = new();
+        // A name's tag storage exists whichever arm created it -- a capable name
+        // first tagged inside one arm still answers tag reads past the merge, so
+        // the slots join by union, not all-agree. optionalMembersByName is
+        // deliberately NOT here: member lists only grow (a write on one arm adds a
+        // member the merged union must still answer for), which is the monotone
+        // growth this class leaves alone.
+        public Dictionary<string, Val> OptionalTagSlots = new();
     }
 
     /// <summary>A snapshot of every arm-joined map, taken in source order.</summary>
@@ -143,6 +154,8 @@ public partial class IRGenerator
         WriteThroughAliases = new HashSet<string>(writeThroughAliases),
         RangeBoundSequences = new HashSet<string>(rangeBoundSequences),
         TypingOnlyNames = new HashSet<string>(typingOnlyNames),
+        NarrowedOptionals = new Dictionary<string, int>(narrowedOptionals),
+        OptionalTagSlots = new Dictionary<string, Val>(optionalTagSlots),
     };
 
     /// <summary>
@@ -190,6 +203,8 @@ public partial class IRGenerator
         RestoreInto(writeThroughAliases, s.WriteThroughAliases);
         RestoreInto(rangeBoundSequences, s.RangeBoundSequences);
         RestoreInto(typingOnlyNames, s.TypingOnlyNames);
+        RestoreInto(narrowedOptionals, s.NarrowedOptionals);
+        RestoreInto(optionalTagSlots, s.OptionalTagSlots);
     }
 
     private static void RestoreInto<T>(Dictionary<string, T> live, Dictionary<string, T> snap)
@@ -293,6 +308,15 @@ public partial class IRGenerator
         writeThroughAliases = JoinSets(arms.Select(a => a.WriteThroughAliases).ToList());
         rangeBoundSequences = JoinSets(arms.Select(a => a.RangeBoundSequences).ToList());
         RestoreInto(typingOnlyNames, JoinSets(arms.Select(a => a.TypingOnlyNames).ToList()));
+
+        RestoreInto(narrowedOptionals, JoinDicts(arms.Select(a => a.NarrowedOptionals).ToList()));
+        // Tag slots are the union case the doc comment spells out: whichever arm
+        // minted the storage, the byte exists past the merge.
+        var slots = new Dictionary<string, Val>();
+        foreach (var a in arms)
+            foreach (var kv in a.OptionalTagSlots)
+                slots.TryAdd(kv.Key, kv.Value);
+        RestoreInto(optionalTagSlots, slots);
 
         var strArms = arms.Select(a => a.StrConstantVariables).ToList();
         var disagreed = DisagreedKeys(strArms);
