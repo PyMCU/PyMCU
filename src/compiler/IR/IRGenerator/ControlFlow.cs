@@ -1910,6 +1910,11 @@ public partial class IRGenerator
             // is what FieldsWrittenBy does; here it is enough to refuse to answer, because
             // the caller's fallback is the conservative mark it would have made anyway.
             if (NestedMethodsCalledOn(def, field).Any()) return false;
+
+            // The direct spelling of the same reach: `self.<field>.<leaf> = v` writes
+            // through the held instance without any call to follow.
+            if (classFieldLayout.ContainsKey(type)
+                && DirectNestedWritesOn(def, cls, field, type).Any()) return false;
         }
 
         return true;
@@ -1973,6 +1978,82 @@ public partial class IRGenerator
             if (!classFieldLayout.ContainsKey(type)) continue;
             foreach (string inner in NestedMethodsCalledOn(def, field))
                 CollectNestedFieldsWrittenBy(type + "_" + inner, prefix + field + "_", typed, visiting);
+
+            // A write can reach the nested field with no call in sight: `self.<field>.<leaf>
+            // = v` assigns through the held instance directly, and missing it left the leaf
+            // registered as the constructor's constant while the method stored into it.
+            foreach (var (leaf, leafType) in DirectNestedWritesOn(def, cls, field, type))
+                typed.Add((prefix + field + "_" + leaf, leafType));
+        }
+    }
+
+    /// <summary>
+    /// The leaf paths <paramref name="def"/> writes DIRECTLY through the field
+    /// <paramref name="field"/> -- `self.&lt;field&gt;.&lt;leaf&gt; = v`, no method call in
+    /// sight -- each with the leaf's declared type. <see cref="NestedMethodsCalledOn"/>
+    /// covers `self.&lt;field&gt;.&lt;method&gt;()`; the plain assignment is the same
+    /// mutation reached without a call, and a class that only ever assigns through its
+    /// held instance looked, to every caller of these, like it wrote nothing at all.
+    ///
+    /// The chain is also accepted rooted at a bare <paramref name="field"/> name, because a
+    /// promoted field reads bare inside the method that owns it: a generator machine's
+    /// receiver is the field `_recv`, so `_recv.bag.total` in `poll` reaches the same leaf
+    /// `self.bag.total` did in the source method.
+    /// </summary>
+    private IEnumerable<(string LeafPath, string LeafType)> DirectNestedWritesOn(
+        FunctionDef def, string cls, string field, string fieldClass)
+    {
+        foreach (var st in TypeInference.WalkStatements(def.Body.Statements))
+        {
+            Expression? target = st switch
+            {
+                AssignStmt a => a.Target,
+                AugAssignStmt ag => ag.Target,
+                _ => null,
+            };
+            if (target is not MemberAccessExpr { Object: MemberAccessExpr } tmem) continue;
+
+            // The member chain leading to the object written through; the target's own
+            // member completes it: `<root>.<hop...>.<leaf> = v`.
+            var chain = new List<string> { tmem.Member };
+            Expression? cur = tmem.Object;
+            while (cur is MemberAccessExpr hop) { chain.Insert(0, hop.Member); cur = hop.Object; }
+            if (cur is not VariableExpr { Name: var root }) continue;
+
+            List<string> leaf;
+            if (root == "self")
+            {
+                // `self.<field>.<leaf>` -- the ordinary spelling.
+                if (chain.Count < 2 || chain[0] != field) continue;
+                leaf = chain.Skip(1).ToList();
+            }
+            else if (root == field && chain.Count >= 2
+                     && classFieldLayout.TryGetValue(cls, out var ownLay)
+                     && ownLay.Any(f => f.Field == field))
+            {
+                // `<field>.<leaf>` -- the bare spelling a promoted field takes, as in the
+                // receiver `_recv` of a generator machine's poll. Requiring the name to be
+                // a real field of the callee's class keeps a like-named local or global
+                // from claiming the reach.
+                leaf = chain;
+            }
+            else continue;
+
+            // The leaf type, resolved through the layouts under the field's class; a chain
+            // that leaves the known layouts yields nothing rather than a guessed type.
+            string? type = fieldClass;
+            foreach (var seg in leaf)
+            {
+                if (type == null || !classFieldLayout.TryGetValue(type, out var lay)
+                    || lay.FirstOrDefault(f => f.Field == seg).Field == null)
+                {
+                    type = null;
+                    break;
+                }
+                type = lay.First(f => f.Field == seg).Type;
+            }
+            if (type != null)
+                yield return (string.Join("_", leaf), type);
         }
     }
 

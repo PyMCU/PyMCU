@@ -1320,28 +1320,49 @@ public partial class IRGenerator
         // build the mask and is not an optimization to trade away.
         void MarkNestedWrites(string instance, string cls, string callee)
         {
-            if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
-            if (!ctorArgs.TryGetValue(instance, out var args)) return;
-
+            if (!classFieldLayout.TryGetValue(cls, out _)) return;
             foreach (var (path, leafType) in NestedFieldsWrittenBy(callee))
-                foreach (var (field, ftype, srcParam) in layout)
+                MarkResolved(instance, path, leafType);
+        }
+
+        // `path` reaches the written leaf through one or more instance-holding fields:
+        // `bag_total` under `r` is `r.bag` -> `bag`, then `total`. Hop each holding field
+        // the way HeldInstanceName does, so the mark lands on the name the store actually
+        // flattens to (`bag_total`) and not on a prefix of it (`r_bag_total`). A hop whose
+        // held instance is built inside the constructor argument has no name yet, so its
+        // leaf defers to anonCtorMutableLeaves for the lowering to claim, as before; a hop
+        // that resolves nowhere ends the walk and the flat mark stands -- the old answer,
+        // which names nothing emitted but marks nothing incorrectly either.
+        void MarkResolved(string instance, string path, string leafType)
+        {
+            while (ctorClass.TryGetValue(instance, out var instCls)
+                   && classFieldLayout.TryGetValue(instCls, out var instLay))
+            {
+                var (field, _, srcParam) = instLay.FirstOrDefault(x =>
+                    path.StartsWith(x.Field + "_", StringComparison.Ordinal)
+                    && classFieldLayout.ContainsKey(x.Type));
+                if (field == null || !ctorArgs.TryGetValue(instance, out var args)) break;
+
+                var leaf = path.Substring(field.Length + 1);
+                if (HeldInstanceName(instCls, srcParam, args) is { } held)
                 {
-                    if (!classFieldLayout.ContainsKey(ftype)) continue;
-                    if (!path.StartsWith(field + "_", StringComparison.Ordinal)) continue;
-
-                    string leaf = path.Substring(field.Length + 1);
-                    var held = HeldInstanceName(cls, srcParam, args);
-                    if (held != null) { Mark(held, leaf); continue; }
-
-                    // `Outer(Inner(0))`: the held instance is built in the argument and has no
-                    // name yet. Leave the leaf for the lowering to claim when it mints one.
-                    if (HeldCtorCall(cls, srcParam, args) is { } anon)
-                    {
-                        if (!anonCtorMutableLeaves.TryGetValue(anon, out var leaves))
-                            anonCtorMutableLeaves[anon] = leaves = new List<(string, string)>();
-                        if (!leaves.Any(l => l.Leaf == leaf)) leaves.Add((leaf, leafType));
-                    }
+                    instance = held;
+                    path = leaf;
+                    continue;
                 }
+
+                // `Outer(Inner(0))`: the held instance is built in the argument and has no
+                // name yet. Leave the leaf for the lowering to claim when it mints one.
+                if (HeldCtorCall(instCls, srcParam, args) is { } anon)
+                {
+                    if (!anonCtorMutableLeaves.TryGetValue(anon, out var leaves))
+                        anonCtorMutableLeaves[anon] = leaves = new List<(string, string)>();
+                    if (!leaves.Any(l => l.Leaf == leaf)) leaves.Add((leaf, leafType));
+                    return;
+                }
+                break;
+            }
+            Mark(instance, path);
         }
 
         // The constructor call passed for the field whose SourceParam is `srcParam`, when the
@@ -1461,6 +1482,162 @@ public partial class IRGenerator
 
         foreach (var func in ast.Functions)
             foreach (var st in TypeInference.WalkStatements(func.Body)) Walk(st);
+
+        // The module's own statements run as main, and were never walked: a method call or
+        // a member write there mutated nothing the scan could see, so the field stayed the
+        // constructor's constant and every later read folded it. Walk them with two rules
+        // the function walk does not share:
+        //
+        //   - a member READ marks nothing. A main-scope read shares the scope that stored
+        //     the field, so the fold is correct -- and marking every `pin._bit` the top
+        //     level touches would trade the constant masks the backend needs for runtime
+        //     shifts, exactly what the narrow call case above exists to avoid.
+        //   - a member WRITE TARGET marks: `o.inner.v = x` resolves `o.inner` back to the
+        //     instance it holds and marks the leaf under the held instance's own name,
+        //     the same hop MarkNestedWrites makes for `o.m()`.
+        //
+        // A one-hop target (`o.v = x`) needs no mark: the write path's own constant
+        // tracking kills the field's fold the first time a value lands that differs.
+        void ExprModule(Expression? e)
+        {
+            switch (e)
+            {
+                case null: return;
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr recv2,
+                        Member: var method2 } } cm
+                    when topLevelInstanceTargets.Contains(recv2.Name):
+                    if (ctorClass.TryGetValue(recv2.Name, out var recvCls2)
+                        && !MethodWritesNoField(recvCls2 + "_" + method2))
+                    {
+                        // A generator machine's own fields are managed by its desugared
+                        // poll loop; only the fields it reaches THROUGH matter here.
+                        if (!generatorClasses.Contains(recvCls2)) MarkEveryField(recv2.Name);
+                        MarkNestedWrites(recv2.Name, recvCls2, recvCls2 + "_" + method2);
+                    }
+                    foreach (var a2 in cm.Args) ExprModule(a2);
+                    return;
+                case CallExpr c3: ExprModule(c3.Callee); foreach (var a3 in c3.Args) ExprModule(a3); return;
+                case MemberAccessExpr m3: ExprModule(m3.Object); return;
+                case BinaryExpr b3: ExprModule(b3.Left); ExprModule(b3.Right); return;
+                case UnaryExpr u3: ExprModule(u3.Operand); return;
+                case IndexExpr ix3: ExprModule(ix3.Target); ExprModule(ix3.Index); return;
+                case TernaryExpr t3: ExprModule(t3.Condition); ExprModule(t3.TrueVal); ExprModule(t3.FalseVal); return;
+                case KeywordArgExpr kw3: ExprModule(kw3.Value); return;
+                case TupleExpr tu3: foreach (var el3 in tu3.Elements) ExprModule(el3); return;
+                case ListExpr le3: foreach (var el3 in le3.Elements) ExprModule(el3); return;
+                case SetExpr se3: foreach (var el3 in se3.Elements) ExprModule(el3); return;
+                case DictExpr de3: foreach (var (k3, v3) in de3.Entries) { ExprModule(k3); ExprModule(v3); } return;
+                case FStringExpr fs3: foreach (var part in fs3.Parts) ExprModule(part.Expr); return;
+                case SliceExpr sl3: ExprModule(sl3.Start); ExprModule(sl3.Stop); ExprModule(sl3.Step); return;
+                case StarArgExpr st3: ExprModule(st3.Value); return;
+                case DoubleStarArgExpr ds3: ExprModule(ds3.Value); return;
+                case WalrusExpr wz3: ExprModule(wz3.Value); return;
+                case AwaitExpr aw3: ExprModule(aw3.Operand); return;
+                case YieldExpr y3: ExprModule(y3.Value); return;
+                case ListCompExpr lc3:
+                    ExprModule(lc3.Element); ExprModule(lc3.Iterable); ExprModule(lc3.Iterable2);
+                    ExprModule(lc3.Filter); return;
+                case GeneratorExpr ge3:
+                    ExprModule(ge3.Element); ExprModule(ge3.Iterable); ExprModule(ge3.Iterable2);
+                    ExprModule(ge3.Filter); return;
+            }
+        }
+
+        // `o.<f1>.<f2>... = v`: follow the object path from the root instance to the field
+        // that holds the next, the same HeldInstanceName resolution MarkNestedWrites uses.
+        // Any hop that cannot be resolved (the field holds no instance, or the held one is
+        // built inside the argument) ends the walk; the write still emits, only unmarked.
+        void MarkMemberTarget(Expression t)
+        {
+            switch (t)
+            {
+                case MemberAccessExpr { Object: MemberAccessExpr } deep:
+                {
+                    var hops = new List<string>();
+                    Expression? cur = deep.Object;
+                    while (cur is MemberAccessExpr hop) { hops.Insert(0, hop.Member); cur = hop.Object; }
+                    if (cur is not VariableExpr root || !topLevelInstanceTargets.Contains(root.Name))
+                        return;
+                    string held = root.Name;
+                    foreach (var hop2 in hops)
+                    {
+                        if (!ctorClass.TryGetValue(held, out var heldCls)
+                            || !classFieldLayout.TryGetValue(heldCls, out var heldLay)
+                            || heldLay.FirstOrDefault(f => f.Field == hop2).SourceParam is not { } src
+                            || string.IsNullOrEmpty(src))
+                            return;
+                        var next = HeldInstanceName(heldCls, src,
+                            ctorArgs.TryGetValue(held, out var hArgs) ? hArgs : []);
+                        if (next == null)
+                        {
+                            // The held instance is built inside the argument and has no name
+                            // yet; leave the leaf for the lowering to claim when it mints one
+                            // (the same fallback MarkNestedWrites makes). The type is the
+                            // leaf's own declared type inside the anonymous class.
+                            if (HeldCtorCall(heldCls, src,
+                                    ctorArgs.TryGetValue(held, out var hArgs2) ? hArgs2 : [])
+                                is { Callee: VariableExpr anonCallee } anon2)
+                            {
+                                var leafType2 =
+                                    classFieldLayout.TryGetValue(ResolveCallee(anonCallee.Name),
+                                        out var anonLay)
+                                        ? anonLay.FirstOrDefault(f => f.Field == deep.Member).Type
+                                        : null;
+                                if (leafType2 != null)
+                                {
+                                    if (!anonCtorMutableLeaves.TryGetValue(anon2, out var leaves2))
+                                        anonCtorMutableLeaves[anon2] = leaves2 = new List<(string, string)>();
+                                    if (!leaves2.Any(l => l.Leaf == deep.Member))
+                                        leaves2.Add((deep.Member, leafType2));
+                                }
+                            }
+                            return;
+                        }
+                        held = next;
+                    }
+                    Mark(held, deep.Member);
+                    return;
+                }
+                case TupleExpr tt: foreach (var el4 in tt.Elements) MarkMemberTarget(el4); return;
+                case IndexExpr ix4: ExprModule(ix4.Target); ExprModule(ix4.Index); return;
+            }
+        }
+
+        void WalkModule(Statement st)
+        {
+            switch (st)
+            {
+                case AssignStmt a4: MarkMemberTarget(a4.Target); ExprModule(a4.Value); return;
+                case AugAssignStmt ag4: MarkMemberTarget(ag4.Target); ExprModule(ag4.Value); return;
+                case AnnAssign an4: ExprModule(an4.Value); return;
+                case VarDecl vd4: ExprModule(vd4.Init); return;
+                case TupleUnpackStmt tp4: ExprModule(tp4.Value); return;
+                case AssertStmt as4: ExprModule(as4.Condition); return;
+                case ExprStmt es4: ExprModule(es4.Expr); return;
+                case ReturnStmt r4: ExprModule(r4.Value); return;
+                case IfStmt i4:
+                    ExprModule(i4.Condition);
+                    foreach (var (c4, _) in i4.ElifBranches) ExprModule(c4);
+                    return;
+                case WhileStmt w4: ExprModule(w4.Condition); return;
+                case ForStmt f4:
+                    ExprModule(f4.RangeStart); ExprModule(f4.RangeStop); ExprModule(f4.RangeStep);
+                    ExprModule(f4.Iterable); return;
+                case WithStmt wi4: ExprModule(wi4.ContextExpr); return;
+                case MatchStmt m4:
+                    ExprModule(m4.Target);
+                    foreach (var br in m4.Branches)
+                    {
+                        ExprModule(br.Pattern);
+                        if (br.Guard != null) ExprModule(br.Guard);
+                    }
+                    return;
+                case RaiseStmt rs4: ExprModule(rs4.MessageExpr); return;
+            }
+        }
+
+        foreach (var st5 in ast.GlobalStatements)
+            foreach (var inner5 in TypeInference.WalkStatements(st5)) WalkModule(inner5);
     }
 
     private void ScanFunctions(ProgramNode ast, ModuleScope? scope = null)
