@@ -100,4 +100,47 @@ public class CallableFieldTests
         main.Body.Any(i => i is Call c && c.FunctionName == "a").Should().BeTrue();
         main.Body.Any(i => i is Call c && c.FunctionName == "b").Should().BeTrue();
     }
+
+    [Fact]
+    public void AValueBoundParam_IsNotAFunctionField()
+    {
+        // `self._n = number_of_shift_registers` in adafruit_74hc595's ctor: the
+        // parameter shares its name with the class's own property getter, so
+        // the callable-field probe resolved it as a function reference and the
+        // int field was never stored -- later reads loaded an unwritten
+        // variable and returned 0.
+        var ir = Gen(
+            "class S:\n" +
+            "    def __init__(self, n: int = 1) -> None:\n" +
+            "        self._n = n\n" +
+            "    def n(self) -> int:\n" +
+            "        return self._n\n\n" +
+            "s = S(5)\n" +
+            "x = s.n()\n");
+
+        var main = ir.Functions.Single(f => f.Name == "main");
+        main.Body.Any(i => i is Call c && c.FunctionName == "n").Should().BeFalse(
+            "the int param must not be stored as a callable field");
+    }
+
+    [Fact]
+    public void AFieldReadAfterCtorWrite_FoldsTheStoredValue()
+    {
+        // Same shape as above through a property: the getter's read must see
+        // the constant the ctor stored, not a runtime variable nothing wrote.
+        var ir = Gen(
+            "class S:\n" +
+            "    def __init__(self, number_of_shift_registers: int = 1) -> None:\n" +
+            "        self._number_of_shift_registers = number_of_shift_registers\n" +
+            "    @property\n" +
+            "    def number_of_shift_registers(self) -> int:\n" +
+            "        return self._number_of_shift_registers\n\n" +
+            "s = S()\n" +
+            "x = s.number_of_shift_registers\n");
+
+        var main = ir.Functions.Single(f => f.Name == "main");
+        main.Body.Any(i => i is Copy cp
+                && cp.Src is Variable v && v.Name == "s__number_of_shift_registers")
+            .Should().BeFalse("the stored constant folds every read; a var load means 0");
+    }
 }

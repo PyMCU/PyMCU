@@ -625,6 +625,15 @@ public partial class IRGenerator
                 if (cand == null) continue;
                 if (loopFunctionAliases.TryGetValue(cand, out var lf)) { fnFieldFn = lf; break; }
                 if (lambdaVariableNames.TryGetValue(cand, out var ll)) { fnFieldLam = ll; break; }
+                // A name bound to a compile-time VALUE in this scope shadows
+                // any function it would resolve to -- `self._n =
+                // number_of_shift_registers` stores the parameter's int, not
+                // the same-named property getter ResolveCallee would find
+                // (adafruit_74hc595). Runtime-slot maps (variableTypes et al.)
+                // cannot disqualify: a Callable param lives in them too.
+                if (constantVariables.ContainsKey(cand) || strConstantVariables.ContainsKey(cand)
+                    || floatConstantVariables.ContainsKey(cand) || constantAddressVariables.ContainsKey(cand))
+                    break;
                 if (FunctionNameBehind(cand) is { } bf) { fnFieldFn = bf; break; }
             }
             if (fnFieldFn != null || fnFieldLam != null)
