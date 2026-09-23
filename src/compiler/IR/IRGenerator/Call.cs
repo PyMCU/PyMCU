@@ -7119,9 +7119,29 @@ public partial class IRGenerator
     private bool PropertyReadDeclaresBool(MemberAccessExpr mem)
         => mem.Object is VariableExpr recv
            && InstanceClassOfName(recv.Name) is { } cls
-           && ResolveMROPropertyClass(cls, mem.Member) is { } propCls
-           && (functionReturnTypes.GetValueOrDefault(propCls + "_" + mem.Member) == "bool"
-               || GetterReturnsOnlyBoolEvidence(propCls, mem.Member));
+           && (MemberFieldDeclaresBool(cls, mem.Member)
+               || (ResolveMROPropertyClass(cls, mem.Member) is { } propCls
+                   && (functionReturnTypes.GetValueOrDefault(propCls + "_" + mem.Member) == "bool"
+                       || GetterReturnsOnlyBoolEvidence(propCls, mem.Member))));
+
+    // `ain.is_differential` is a FIELD, not a @property -- `self.is_differential =
+    // negative_pin is not None` typed it bool at layout, which is the same promise a
+    // `-> bool` getter makes about what the member yields.
+    private bool MemberFieldDeclaresBool(string cls, string member)
+    {
+        string? current = cls;
+        for (int depth = 0; current != null && depth < 32; depth++)
+        {
+            if (classFieldLayout.TryGetValue(current, out var layout)
+                && layout.Any(f => f.Field == member && f.Type == "bool"))
+                return true;
+            if (!classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                || string.IsNullOrEmpty(parentPrefix))
+                break;
+            current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+        }
+        return false;
+    }
 
     // An unannotated getter declares "" -- its body is the evidence. Every value-return
     // must be bool-shaped (literal, comparison, `not`, `bool(...)`, or a bool field read)

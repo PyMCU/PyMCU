@@ -58,4 +58,25 @@ public class ComparisonPrintsBoolTests
         main.Body.Any(i => Calls(i, "uart_write_decimal_u8")).Should().BeFalse(
             "`is not None` is a bool, not a number");
     }
+
+    [Fact]
+    public void AFieldStoredFromAnIsNotNone_PrintsAsWordsNotDecimal()
+    {
+        // `self.is_differential = negative_pin is not None`: the field is bool by
+        // the comparison evidence, so reading it in print spells False/True --
+        // the uint8 default sent 0/1 (adafruit_mcp3xxx's AnalogIn.is_differential).
+        var main = Gen(
+            "class Ain:\n" +
+            "    def __init__(self, pin: uint8, neg = None) -> None:\n" +
+            "        self.is_differential = neg is not None\n" +
+            "        self._p: uint8 = pin\n\n" +
+            "def main():\n" +
+            "    a = Ain(3, None)\n" +
+            "    print(a.is_differential)\n").Functions.Single(f => f.Name == "main");
+
+        main.Body.Any(i => Calls(i, "uart_write_decimal_u8")).Should().BeFalse(
+            "a bool-evidenced field is not a number to print");
+        main.Body.Any(i => Calls(i, "uart_write_str")).Should().BeTrue(
+            "the bool stream writes the True/False flash words");
+    }
 }

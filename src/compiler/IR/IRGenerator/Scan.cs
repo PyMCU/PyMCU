@@ -2974,8 +2974,17 @@ public partial class IRGenerator
             // introduction: bool ranks with uint8 (one byte) in ScalarWidthRank, so a
             // later ApplyInferredFieldType join can never promote the uint8 default to
             // bool -- and without the tag the field prints 0/1 where CPython spells
-            // False/True (adafruit_tcs34725.active).
-            else if (rhs is BooleanLiteral) type = "bool";
+            // False/True (adafruit_tcs34725.active). A comparison is the same evidence:
+            // `self.is_differential = negative_pin is not None` stores the bool the
+            // `is not` yields, not negative_pin's width (adafruit_mcp3xxx).
+            else if (rhs is BooleanLiteral
+                     or UnaryExpr { Op: Frontend.UnaryOp.Not }
+                     or BinaryExpr { Op: Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                         or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
+                         or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq
+                         or Frontend.BinaryOp.Is or Frontend.BinaryOp.IsNot
+                         or Frontend.BinaryOp.In or Frontend.BinaryOp.NotIn })
+                type = "bool";
 
             // A field whose value is an EXPRESSION took uint8 and truncated silently: the
             // width came from the field, not from what was stored in it, so
@@ -3450,6 +3459,20 @@ public partial class IRGenerator
                 if (d.StartsWith("const[") && d.EndsWith("]")) d = d.Substring(6, d.Length - 7);
                 return ScalarWidthRank(d) > 0 ? d : null;
             }
+
+            // `x = not p` / `x = a is not None` / `x = a < b`: the stored value is the
+            // comparison's bool, not the operands' joined width -- returning that width
+            // let ApplyInferredFieldType promote the field off "bool" again.
+            case UnaryExpr { Op: Frontend.UnaryOp.Not }:
+                return "bool";
+
+            case BinaryExpr { Op: var cop } when cop is Frontend.BinaryOp.Equal
+                or Frontend.BinaryOp.NotEqual or Frontend.BinaryOp.Less
+                or Frontend.BinaryOp.LessEq or Frontend.BinaryOp.Greater
+                or Frontend.BinaryOp.GreaterEq or Frontend.BinaryOp.Is
+                or Frontend.BinaryOp.IsNot or Frontend.BinaryOp.In
+                or Frontend.BinaryOp.NotIn:
+                return "bool";
 
             case UnaryExpr ue:
                 return InferAssignedFieldType(ue.Operand, paramTypes, localTypes, selfMethods);
