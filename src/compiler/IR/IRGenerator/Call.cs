@@ -10119,12 +10119,17 @@ public partial class IRGenerator
         // === SLOW PATH: realloc to grow capacity ===
 
         // gc_alloc encodes the payload length in one header byte, so a list buffer's
-        // 2 + cap*elemSize bytes must stay <= 255. Double in u16 -- cap*2 already wraps
-        // in u8 at cap >= 128 -- clamp to the largest capacity that fits, and raise
-        // MemoryError when the list is already at that ceiling.
+        // 2 + cap*elemSize bytes must stay <= 255. Grow by 1.5x in u16 -- cap + cap/2
+        // cannot wrap -- then clamp to the largest capacity that fits, and raise
+        // MemoryError when the list is already at that ceiling. A 1.5x step keeps
+        // append amortised O(1) while halving the overshoot waste: on a heap of a
+        // few hundred bytes, doubling a list[uint16] past 64 elements parked ~120
+        // dead bytes inside the object.
         int maxCap = (255 - 2) / elemSize;
         Temporary newCapWide = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Mul, tmpCap, new Constant(2), newCapWide));
+        Temporary halfCap = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.RShift, tmpCap, new Constant(1), halfCap));
+        Emit(new Binary(BinaryOp.Add, tmpCap, halfCap, newCapWide));
         Temporary tooBig = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterThan, newCapWide, new Constant(maxCap), tooBig));
         string capFitsLabel = MakeLabel();
@@ -10132,19 +10137,21 @@ public partial class IRGenerator
         Emit(new Copy(new Constant(maxCap), newCapWide));
         Emit(new Label(capFitsLabel));
 
+        // A promoted `x = []` starts at capacity 0, which stays 0 under any
+        // growth factor: floor at the same first-fit a declaration grants before
+        // the grew-check would call it finished. Never floor past the ceiling.
+        int floorCap = Math.Min(8, maxCap);
+        string capFlooredLabel = MakeLabel();
+        Emit(new JumpIfGreaterOrEqual(newCapWide, new Constant(floorCap), capFlooredLabel));
+        Emit(new Copy(new Constant(floorCap), newCapWide));
+        Emit(new Label(capFlooredLabel));
+
         Temporary grew = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterThan, newCapWide, tmpCap, grew));
         string growableLabel = MakeLabel();
         Emit(new JumpIfNotZero(grew, growableLabel));
         EmitRuntimeRaise("MemoryError", "list capacity limit reached");
         Emit(new Label(growableLabel));
-
-        // A promoted `x = []` starts at capacity 0, which doubles to 0: floor
-        // at the same first-fit a declaration grants before the ceiling clamp.
-        string capFlooredLabel = MakeLabel();
-        Emit(new JumpIfGreaterOrEqual(newCapWide, new Constant(8), capFlooredLabel));
-        Emit(new Copy(new Constant(8), newCapWide));
-        Emit(new Label(capFlooredLabel));
 
         Temporary newCap = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.BitAnd, newCapWide, new Constant(0xFF), newCap));

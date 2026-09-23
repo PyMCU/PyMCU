@@ -99,4 +99,30 @@ public class ListGrowCeilingTests
             && gt.Op == PyMCU.IR.BinaryOp.GreaterThan
             && gt.Src2 is Constant c && c.Value == 253);
     }
+
+    [Fact]
+    public void AppendGrowUsesAFiftyPercentStepNotDoubling()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint16\n\n" +
+            "def grow(xs: list[uint16], v: uint16) -> None:\n" +
+            "    xs.append(v)\n\n" +
+            "xs: list[uint16] = list()\n" +
+            "grow(xs, 1)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        // Doubling overshoots the 255-byte object ceiling long before the heap
+        // is full: a list[uint16] reaching 64 elements jumped straight to the
+        // 126-element clamp, parking ~120 dead bytes inside the object. On a
+        // 733-byte heap that waste alone decides whether decode_bits fits.
+        // The grow path must request cap + cap/2 (still amortised O(1)): an
+        // RShift-by-1 result added back to the same operand.
+        Assert.Contains(main.Body, i => i is Binary half
+            && half.Op == PyMCU.IR.BinaryOp.RShift
+            && half.Src2 is Constant h && h.Value == 1
+            && main.Body.Any(j => j is Binary add
+                && add.Op == PyMCU.IR.BinaryOp.Add
+                && add.Src1 == half.Src1
+                && add.Src2 == half.Dst));
+    }
 }
