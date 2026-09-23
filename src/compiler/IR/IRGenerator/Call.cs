@@ -8708,6 +8708,15 @@ public partial class IRGenerator
 
         if (!handlerProvided) return new NoneVal();
 
+        // A global the handler declares is written between any two instructions of the
+        // code the vector fires into, so the value a watched store gave it is provable
+        // nowhere -- inside the handler's own body least of all. pulse_isr's
+        // `if _pulse_armed == 0` folded to the clear's store whenever the handler lowered
+        // after the module level that ran the clear (the entry file builds its sensor at
+        // top level, which is exactly what hoists main's lowering ahead of it), and the
+        // arm's `return` discarded the whole recording tail as dead.
+        KillIsrDeclaredGlobals(handlerFuncName);
+
         // ZCA ISR synthesis: if a ZCA binding was registered via _set_irq_zca_arg,
         // synthesize a parameterless wrapper that inline-expands handler with the
         // ZCA constants bound. The wrapper is what gets registered at the vector.
@@ -8753,6 +8762,44 @@ public partial class IRGenerator
 
         pendingIsrRegistrations[handlerName] = vector;
         pendingIsrOrigins[handlerName] = (currentFunction, IsrCallLine(expr), currentModulePrefix);
+    }
+
+    /// <summary>
+    /// Every name the handler's `global` statements declare is a name it may write, and an
+    /// interrupt writes between any two instructions of the code around the call site -- so
+    /// no store the compiler watched is the value a later read provably sees. The constant
+    /// the write recorded is removed AND the name marked, because the next constant store
+    /// would record it again (the same hazard loop invalidation has for method-written
+    /// fields).
+    /// </summary>
+    private void KillIsrDeclaredGlobals(string handlerName)
+    {
+        FunctionDef? def = null;
+        string? pfx = null;
+        foreach (var entry in functionsToCompile)
+            if (entry.Prefix + entry.Func.Name == handlerName)
+            {
+                def = entry.Func;
+                pfx = entry.Prefix;
+                break;
+            }
+        def ??= methodAstByName.GetValueOrDefault(handlerName)
+              ?? instanceMethodDefs.GetValueOrDefault(handlerName)
+              ?? inlineFunctions.GetValueOrDefault(handlerName);
+        if (def == null) return;
+        pfx ??= handlerName.EndsWith(def.Name, StringComparison.Ordinal)
+            ? handlerName[..^def.Name.Length]
+            : currentModulePrefix;
+        var declared = new HashSet<string>();
+        CollectGlobalDeclarations(def.Body, declared);
+        foreach (var g in declared)
+        {
+            string key = pfx + g;
+            killedConstants.Add(key);
+            constantVariables.Remove(key);
+            strConstantVariables.Remove(key);
+            localConstantValues.Remove(key);
+        }
     }
 
     // Call into a C extern function (@extern): coerce float args to ints per the C ABI
