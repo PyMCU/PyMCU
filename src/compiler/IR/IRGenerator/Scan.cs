@@ -3919,6 +3919,13 @@ public partial class IRGenerator
         null => false,
         ReturnStmt => true,
         RaiseStmt => true,
+        // `continue`/`break` transfer control out of the enclosing block the same
+        // way `return`/`raise` do -- an `if` arm that ends in one never reaches
+        // the join, so its narrowed/None state must not merge there (read_pulses'
+        // `if blocking and pulses is None: continue` narrows `pulses` on the
+        // fall-through; the continue-arm's provable-None poisoned that join).
+        ContinueStmt => true,
+        BreakStmt => true,
         Block b => b.Statements.Any(AlwaysLeaves),
         // No `else` means the condition being false walks straight past the statement.
         IfStmt ifs => ifs.ElseBranch != null
