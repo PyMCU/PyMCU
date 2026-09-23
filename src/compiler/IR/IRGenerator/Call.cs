@@ -3950,6 +3950,16 @@ public partial class IRGenerator
                 variableAliases[paramKey] = FollowAliases(instArg.Name);
                 instanceClasses[paramKey] = instArgCls;
             }
+            else if (argVal is Variable supFnArg
+                     && FunctionNameBehind(supFnArg.Name) is { } supFnBound)
+            {
+                // A FUNCTION argument is a compile-time binding too: `super().__init__(pin,
+                // **kwargs)` on adafruit_debouncer's Button forwards `pin`, which the
+                // Callable member of the union lets be a predicate. Materializing it as a
+                // scalar would copy a function's name as a value; the base body's
+                // `self.f = io_or_predicate` needs the function behind the name.
+                loopFunctionAliases[paramKey] = supFnBound;
+            }
             else
             {
                 // Materialize the value into the param's own var (do NOT merely alias a
@@ -4582,6 +4592,40 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(qcallee) && lambdaVariableNames.TryGetValue(qcallee, out string lk1))
             lambdaKey = lk1;
         else if (lambdaVariableNames.TryGetValue(callee, out string lk2)) lambdaKey = lk2;
+        else if (expr.Callee is MemberAccessExpr lamMemC
+                 && FlattenedCallableFieldKey(lamMemC) is { } lamFieldKey)
+        {
+            // `self.f()` where `f` is a field bound to a callable at
+            // construction. The lambda expands in place; a plain function name
+            // rewrites to an ordinary call -- either way `self` is NOT passed,
+            // because the stored callable takes no receiver.
+            if (lambdaVariableNames.TryGetValue(lamFieldKey, out var lk3))
+                lambdaKey = lk3;
+            else if (loopFunctionAliases.TryGetValue(lamFieldKey, out var boundFieldFn))
+                return VisitExpression(new CallExpr(
+                    new VariableExpr(boundFieldFn), expr.Args) { Line = expr.Line });
+            else if (boundMethodFields.TryGetValue(lamFieldKey, out var bmField))
+            {
+                // `self.f(args)` where `f` was bound to `obj.method`: re-visit
+                // `<seed>.method(args)` on a fresh name aliased to the recorded
+                // receiver's terminal instance key. The seed is filed under the
+                // SAME key this scope would give the name, so the binding lands
+                // exactly where the lookup looks -- the receiver AST the write
+                // saw (`self._ow`, or a ctor param `p`) is not resolvable here.
+                // The generic member-call path then resolves the method exactly
+                // as if the source had spelled `obj.method(args)`, so an
+                // outlined callee gets the outlined ABI and an inline one
+                // expands in place.
+                string bmSeed = "__bm_" + boundMethodCounter++;
+                string bmSeedKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + bmSeed
+                    : currentFunction + "." + bmSeed;
+                variableAliases[bmSeedKey] = bmField.Recv;
+                return VisitExpression(new CallExpr(
+                    new MemberAccessExpr(new VariableExpr(bmSeed), bmField.Member),
+                    expr.Args) { Line = expr.Line });
+            }
+        }
 
         if (string.IsNullOrEmpty(lambdaKey) || !lambdaFunctionsMap.TryGetValue(lambdaKey, out var lam))
             return null;
@@ -4602,6 +4646,21 @@ public partial class IRGenerator
 
         string savedInline = currentInlinePrefix;
         currentInlinePrefix = pfx;
+        // Names the lambda captured from the scope it was WRITTEN in get re-seeded
+        // under this expansion's prefix: `lambda: io_or_predicate.value` inside
+        // __init__ read the constructor's parameter, and `self.f()` runs in
+        // update()'s scope where that parameter does not exist.
+        if (lambdaCaptures.TryGetValue(lambdaKey, out var captures))
+        {
+            foreach (var (freeName, cap) in captures)
+            {
+                var ck = pfx + freeName;
+                variableAliases[ck] = cap.Alias;
+                if (cap.Cls != null) instanceClasses[ck] = cap.Cls;
+                if (cap.HasConst) constantVariables[ck] = cap.Const;
+                if (cap.Str != null) strConstantVariables[ck] = cap.Str;
+            }
+        }
         Val resultL = VisitExpression(lam.Body);
         currentInlinePrefix = savedInline;
 
@@ -9100,6 +9159,199 @@ public partial class IRGenerator
         }
 
         return needed.All(has.Contains);
+    }
+
+    /// <summary>
+    /// The function a name resolves to, when it is one: a def, an @inline, or a
+    /// name already bound to a function (a Callable-union param forwarded
+    /// through super()). The module scope's `main.` qualifier on an alias
+    /// terminal strips off, the way `main.f` names f(). Null otherwise.
+    /// </summary>
+    private string? FunctionNameBehind(string name)
+    {
+        string terminal = FollowAliases(name);
+        string bare = terminal.Contains('.') ? terminal[(terminal.LastIndexOf('.') + 1)..] : terminal;
+        if (functionParams.ContainsKey(bare) || inlineFunctions.ContainsKey(bare)) return bare;
+        if (loopFunctionAliases.TryGetValue(terminal, out var trans)) return trans;
+        if (loopFunctionAliases.TryGetValue(name, out var trans2)) return trans2;
+        string resolved = ResolveCallee(terminal);
+        if (functionParams.ContainsKey(resolved) || inlineFunctions.ContainsKey(resolved)) return resolved;
+        return null;
+    }
+
+    /// <summary>
+    /// The flattened key a callable bound on an instance field is filed under:
+    /// the receiver's resolved name + "_" + member, matching the field-write
+    /// path. Returns null when the receiver is not a name.
+    /// </summary>
+    private string? FlattenedCallableFieldKey(MemberAccessExpr mem)
+        => mem.Object is VariableExpr rve ? ResolveNameKey(rve.Name) + "_" + mem.Member : null;
+
+    /// <summary>
+    /// The terminal key a name's instance is filed under, probing the scopes
+    /// <see cref="InstanceClassOfName"/> does (inline prefix, enclosing
+    /// function, bare) and following the alias chain to the end. Null when no
+    /// binding carries a class -- the same fact InstanceClassOfName reports,
+    /// but returning the KEY <see cref="EmitUnboundMethodBody"/> needs to alias
+    /// `self` onto.
+    /// </summary>
+    private string? InstanceKeyOfName(string name)
+    {
+        foreach (var key in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+            name,
+        })
+        {
+            if (key == null) continue;
+            string? chased = key;
+            for (int hop = 0; hop < 20 && chased != null && !instanceClasses.ContainsKey(chased); ++hop)
+                chased = variableAliases.TryGetValue(chased, out var next) ? next : null;
+            if (chased != null && instanceClasses.ContainsKey(chased)) return chased;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// `obj.method` used as a VALUE -- the right-hand side of
+    /// `self.f = obj.method`. Resolves the receiver to its terminal instance
+    /// key and the member to a method on the receiver's class. Returns null
+    /// for a member that is data, so the assignment keeps its ordinary
+    /// meaning.
+    /// </summary>
+    private BoundMethodField? BoundMethodBehind(MemberAccessExpr rhs)
+    {
+        string? recvKey = rhs.Object switch
+        {
+            VariableExpr ve => InstanceKeyOfName(ve.Name),
+            MemberAccessExpr nested => FlattenedCallableFieldKey(nested),
+            _ => null,
+        };
+        if (recvKey == null) return null;
+        for (int hop = 0; hop < 20; ++hop)
+        {
+            if (instanceClasses.TryGetValue(recvKey, out var cls) && cls != null)
+            {
+                // `obj.prop` where prop is a @property is a READ that invokes the
+                // getter -- not a bound method to store. `pwm.frequency` on the
+                // right of a member store (`GPIOR0.value = o.frequency`) must keep
+                // its ordinary meaning. The lookup is keyed by the DEFINING
+                // class, so ask through the MRO the way the setter path does.
+                if (ResolveMROPropertyClass(cls, rhs.Member) != null)
+                    return null;
+                string fn = cls + "_" + rhs.Member;
+                bool has = inlineFunctions.ContainsKey(fn) || instanceMethodDefs.ContainsKey(fn)
+                       || methodAstByName.ContainsKey(fn);
+                return has
+                    ? new BoundMethodField { Recv = recvKey, Member = rhs.Member, Fn = fn }
+                    : null;
+            }
+            if (!variableAliases.TryGetValue(recvKey, out var next) || next == null) return null;
+            recvKey = next;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Snapshot the resolution of every free name a lambda's body reads, so an
+    /// expansion somewhere else can re-seed them (see lambdaCaptures). A name
+    /// that resolves to nothing here needs no capture -- it will resolve in the
+    /// call's own scope or fail there honestly.
+    /// </summary>
+    private void RecordLambdaCaptures(string lambdaKey, LambdaExpr lam)
+    {
+        var names = new HashSet<string>();
+        CollectVariableNames(lam.Body, names);
+        foreach (var p in lam.Params) names.Remove(p.Name);
+        if (names.Count == 0) return;
+
+        var caps = new Dictionary<string, CapturedName>();
+        foreach (var n in names)
+        {
+            foreach (var start in new[]
+            {
+                string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + n,
+                string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + n,
+                n,
+            })
+            {
+                if (start == null) continue;
+                string key = start;
+                for (var i = 0; i < 20 && variableAliases.TryGetValue(key, out var a); ++i) key = a;
+                var cap = new CapturedName { Alias = key };
+                bool known = false;
+                if (instanceClasses.TryGetValue(key, out var capCls) && capCls != null)
+                { cap.Cls = capCls; known = true; }
+                if (constantVariables.TryGetValue(key, out var capC))
+                { cap.Const = capC; cap.HasConst = true; known = true; }
+                if (strConstantVariables.TryGetValue(key, out var capS))
+                { cap.Str = capS; known = true; }
+                if (known || key != n)
+                {
+                    caps[n] = cap;
+                    break;
+                }
+            }
+        }
+        if (caps.Count > 0) lambdaCaptures[lambdaKey] = caps;
+    }
+
+    private static void CollectVariableNames(Expression e, HashSet<string> into)
+    {
+        switch (e)
+        {
+            case VariableExpr v: into.Add(v.Name); break;
+            case MemberAccessExpr m: CollectVariableNames(m.Object, into); break;
+            case CallExpr c:
+                CollectVariableNames(c.Callee, into);
+                foreach (var a in c.Args) CollectVariableNames(a, into);
+                break;
+            case BinaryExpr b: CollectVariableNames(b.Left, into); CollectVariableNames(b.Right, into); break;
+            case UnaryExpr u: CollectVariableNames(u.Operand, into); break;
+            case AwaitExpr aw: CollectVariableNames(aw.Operand, into); break;
+            case IndexExpr ix: CollectVariableNames(ix.Target, into); CollectVariableNames(ix.Index, into); break;
+            case SliceExpr sl:
+                if (sl.Start != null) CollectVariableNames(sl.Start, into);
+                if (sl.Stop != null) CollectVariableNames(sl.Stop, into);
+                if (sl.Step != null) CollectVariableNames(sl.Step, into);
+                break;
+            case TernaryExpr t:
+                CollectVariableNames(t.TrueVal, into);
+                CollectVariableNames(t.Condition, into);
+                CollectVariableNames(t.FalseVal, into);
+                break;
+            case ListExpr l: foreach (var x in l.Elements) CollectVariableNames(x, into); break;
+            case TupleExpr tp: foreach (var x in tp.Elements) CollectVariableNames(x, into); break;
+            case SetExpr s: foreach (var x in s.Elements) CollectVariableNames(x, into); break;
+            case DictExpr d:
+                foreach (var (dk, dv) in d.Entries) { CollectVariableNames(dk, into); CollectVariableNames(dv, into); }
+                break;
+            case FStringExpr f:
+                foreach (var part in f.Parts) if (part.Expr != null) CollectVariableNames(part.Expr, into);
+                break;
+            case KeywordArgExpr kw: CollectVariableNames(kw.Value, into); break;
+            case StarArgExpr st: CollectVariableNames(st.Value, into); break;
+            case DoubleStarArgExpr ds: CollectVariableNames(ds.Value, into); break;
+            case WalrusExpr w: CollectVariableNames(w.Value, into); break;
+            case ListCompExpr lc:
+                CollectVariableNames(lc.Iterable, into);
+                if (lc.Iterable2 != null) CollectVariableNames(lc.Iterable2, into);
+                if (lc.Filter != null) CollectVariableNames(lc.Filter, into);
+                CollectVariableNames(lc.Element, into);
+                into.Remove(lc.VarName);
+                if (!string.IsNullOrEmpty(lc.Var2Name)) into.Remove(lc.Var2Name);
+                break;
+            case GeneratorExpr ge:
+                CollectVariableNames(ge.Iterable, into);
+                CollectVariableNames(ge.Element, into);
+                into.Remove(ge.VarName);
+                break;
+            case LambdaExpr inner:
+                CollectVariableNames(inner.Body, into);
+                foreach (var ip in inner.Params) into.Remove(ip.Name);
+                break;
+        }
     }
 
     private string? FindClassKey(string name)

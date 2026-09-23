@@ -1110,6 +1110,38 @@ public partial class IRGenerator
     private int lambdaCounter = 0;
     private string pendingLambdaKey = "";
 
+    // A lambda stored on an instance FIELD (`self.f = lambda: io.value`) reads
+    // names from the scope it was WRITTEN in, and that scope is gone by the
+    // time `self.f()` runs. The binding snapshots each free name's resolution
+    // -- where it points, its class, its constant -- so the expansion at the
+    // call site can re-seed the same bindings under its own prefix.
+    private sealed class CapturedName
+    {
+        public string Alias = "";
+        public string? Cls;
+        public int Const;
+        public bool HasConst;
+        public string? Str;
+    }
+    private Dictionary<string, Dictionary<string, CapturedName>> lambdaCaptures = new();
+
+    // A bound METHOD stored on an instance field (`self._readbit =
+    // self._ow.read_bit`, adafruit_onewire): the field is compile-time, so the
+    // call site re-visits <recv>.<member>(args) spelled through a fresh alias
+    // name seeded in variableAliases -- the original receiver AST (`self._ow`
+    // or a ctor param like `p`) need not resolve in the callee's scope, while
+    // the alias name always does and chase-follows to the recorded instance.
+    // The generic member-call path then resolves the method exactly as if the
+    // source had spelled it that way, outlined or inline.
+    private sealed class BoundMethodField
+    {
+        public string Recv = "";   // receiver's terminal instance key -- the call receiver
+        public string Member = ""; // the method's source name on the receiver's class
+        public string Fn = "";     // resolved <class>_<method>, for the rebind check
+    }
+    private Dictionary<string, BoundMethodField> boundMethodFields = new();
+    private int boundMethodCounter = 0;
+
     private DeviceConfig deviceConfig = null!;
 
     // Flash byte-pointers (const[str] by-reference params / FlashStrAddr values) carry the

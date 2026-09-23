@@ -564,18 +564,110 @@ public partial class IRGenerator
 
         if (stmt.Value is LambdaExpr lamRhs)
         {
-            if (stmt.Target is VariableExpr ve)
+            // `self.f = lambda: ...` binds the lambda to the FIELD, keyed by the
+            // flattened field name so `self.f()` later expands it per-instance
+            // (adafruit_debouncer's self.function). Same compile-time binding as
+            // the local form -- and the free names it captured get snapshotted,
+            // because the scope it was written in is gone at the call site.
+            string? lamTgtKey = stmt.Target switch
             {
+                VariableExpr ve => !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + ve.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name),
+                MemberAccessExpr lamMem => FlattenedCallableFieldKey(lamMem),
+                _ => null,
+            };
+            if (lamTgtKey != null)
+            {
+                // One field, one callable -- a second write on the same
+                // instance's field is the dispatch-table shape the local
+                // binding already refuses.
+                if (stmt.Target is MemberAccessExpr
+                    && (lambdaVariableNames.TryGetValue(lamTgtKey, out var lamAlready)
+                        || loopFunctionAliases.ContainsKey(lamTgtKey)))
+                    throw UserError(
+                        $"this field is already bound to a callable at compile time; " +
+                        "binding it again makes a dispatch table, which needs a "
+                        + "Callable array or funcref()", stmt.Target);
                 pendingLambdaKey = "";
                 VisitLambdaExpr(lamRhs);
-                string qname = !string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix + ve.Name
-                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
                 if (!string.IsNullOrEmpty(pendingLambdaKey))
-                    lambdaVariableNames[qname] = pendingLambdaKey;
+                {
+                    lambdaVariableNames[lamTgtKey] = pendingLambdaKey;
+                    RecordLambdaCaptures(pendingLambdaKey, lamRhs);
+                }
                 pendingLambdaKey = "";
                 return;
             }
+        }
+
+        // `self.f = fn` stores a callable on the instance. The field is
+        // compile-time, so `self.f()` calls whatever this write bound -- the
+        // same rule as the local form above: one field, one function.
+        if (stmt.Target is MemberAccessExpr fnFieldTgt
+            && stmt.Value is VariableExpr fnFieldSrc
+            && FlattenedCallableFieldKey(fnFieldTgt) is { } fnFieldKey)
+        {
+            // The source resolves under the same qualifications the read side
+            // uses: inline prefix, enclosing function, bare -- and a Callable
+            // param forwarded through super() is filed in loopFunctionAliases,
+            // which the storage-key resolver does not consult.
+            string? fnFieldFn = null;
+            string? fnFieldLam = null;
+            foreach (var cand in new[]
+            {
+                string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + fnFieldSrc.Name,
+                string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + fnFieldSrc.Name,
+                fnFieldSrc.Name,
+                ResolveNameKey(fnFieldSrc.Name),
+            })
+            {
+                if (cand == null) continue;
+                if (loopFunctionAliases.TryGetValue(cand, out var lf)) { fnFieldFn = lf; break; }
+                if (lambdaVariableNames.TryGetValue(cand, out var ll)) { fnFieldLam = ll; break; }
+                if (FunctionNameBehind(cand) is { } bf) { fnFieldFn = bf; break; }
+            }
+            if (fnFieldFn != null || fnFieldLam != null)
+            {
+                // One field, one callable -- same rule as the local binding.
+                if ((lambdaVariableNames.TryGetValue(fnFieldKey, out var fAlready)
+                     && fAlready != fnFieldLam)
+                    || (loopFunctionAliases.TryGetValue(fnFieldKey, out var ffAlready)
+                        && ffAlready != fnFieldFn))
+                    throw UserError(
+                        "this field is already bound to a callable at compile time; " +
+                        "binding it again makes a dispatch table, which needs a "
+                        + "Callable array or funcref()", fnFieldTgt);
+                if (fnFieldFn != null) loopFunctionAliases[fnFieldKey] = fnFieldFn;
+                else lambdaVariableNames[fnFieldKey] = fnFieldLam!;
+                return;
+            }
+        }
+
+        // `self.f = obj.method` stores a BOUND METHOD on the instance
+        // (adafruit_onewire's `self._readbit = self._ow.read_bit` -- caching the
+        // lookup so the hot loop calls it without the member hop). The pair
+        // (receiver, method) is compile-time, so `self.f(args)` re-emits the
+        // recorded `obj.method(args)` and the generic member-call path resolves
+        // it, outlined or inline. Without this the member fell to
+        // EmitMemberAssign, which stored a meaningless scalar, and the later
+        // call died as "undefined function '<Class>__<field>'" -- a message
+        // that reads as a missing import.
+        if (stmt.Target is MemberAccessExpr bmTgt
+            && stmt.Value is MemberAccessExpr bmRhs
+            && FlattenedCallableFieldKey(bmTgt) is { } bmFieldKey
+            && BoundMethodBehind(bmRhs) is { } bm)
+        {
+            if (lambdaVariableNames.ContainsKey(bmFieldKey)
+                || loopFunctionAliases.ContainsKey(bmFieldKey)
+                || (boundMethodFields.TryGetValue(bmFieldKey, out var bmAlready)
+                    && (bmAlready.Fn != bm.Fn || bmAlready.Recv != bm.Recv)))
+                throw UserError(
+                    "this field is already bound to a callable at compile time; " +
+                    "binding it again makes a dispatch table, which needs a "
+                    + "Callable array or funcref()", bmTgt);
+            boundMethodFields[bmFieldKey] = bm;
+            return;
         }
 
         // Untyped assignment of a list / list-comprehension to a name, e.g.
