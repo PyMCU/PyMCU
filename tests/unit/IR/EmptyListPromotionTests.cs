@@ -81,6 +81,39 @@ public class EmptyListPromotionTests
     }
 
     [Fact]
+    public void ModuleLevelEmptyList_LenReadsGlobalSlot()
+    {
+        // A module-level `p: list[uint16] = []` is a GLOBAL filed bare (`p`). The
+        // promotion scan seeded `main.p` too, and ResolveListVarQualified prefers
+        // the function-qualified key, so len(p) dereferenced a slot nobody writes
+        // while p.append()/p[i] used the real one -- len read 0 on a 3-element list.
+        var ir = Gen(
+            "p: list[uint16] = []\n" +
+            "p.append(9000)\n" +
+            "n: uint16 = len(p)\n");
+        var fn = Assert.Single(ir.Functions, f => f.Name == "main");
+        Assert.Contains(fn.Body, i => i is LoadIndirect { SrcPtr: Variable v }
+            && v.Name == "p" && v.Type == DataType.GC_REF);
+        Assert.DoesNotContain(fn.Body, i => i is LoadIndirect { SrcPtr: Variable v }
+            && v.Name == "main.p");
+    }
+
+    [Fact]
+    public void ModuleLevelEmptyAssign_LenReadsGlobalSlot()
+    {
+        // Same phantom through the unannotated `p = []` promotion path.
+        var ir = Gen(
+            "p = []\n" +
+            "p.append(9000)\n" +
+            "n: uint16 = len(p)\n");
+        var fn = Assert.Single(ir.Functions, f => f.Name == "main");
+        Assert.Contains(fn.Body, i => i is LoadIndirect { SrcPtr: Variable v }
+            && v.Name == "p" && v.Type == DataType.GC_REF);
+        Assert.DoesNotContain(fn.Body, i => i is LoadIndirect { SrcPtr: Variable v }
+            && v.Name == "main.p");
+    }
+
+    [Fact]
     public void EmptyListThenListAppend_MarksRefPayload()
     {
         // Appending a heap list makes the elements GC_REFs; the object was

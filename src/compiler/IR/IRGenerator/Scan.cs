@@ -5367,7 +5367,19 @@ public partial class IRGenerator
         foreach (var name in boundEmpty)
         {
             if (!appended.Contains(name)) continue;
-            promotableEmptyLists.Add(prefix + name);
+            string key = prefix + name;
+            // The key must be the one the promotion emit settles on: a
+            // module-level `x = []` is a GLOBAL filed bare (`x`), not under
+            // `main.x` -- the same remap CollectArrayDecls and EmitListAnnAssign
+            // apply. Filing the prefixed name here left a phantom entry that
+            // ResolveListVarQualified prefers over the real slot, so len(x)
+            // dereferenced a header nobody writes and read 0 while x.append()
+            // and x[i] used the right one.
+            if (!string.IsNullOrEmpty(currentFunction)
+                && string.IsNullOrEmpty(currentInlinePrefix)
+                && mutableGlobals.ContainsKey(currentModulePrefix + name))
+                key = currentModulePrefix + name;
+            promotableEmptyLists.Add(key);
             // Seed the pending registration NOW, before the body lowers: an
             // `x = []` inside one arm of an `if` would otherwise introduce the
             // name where the pre-branch snapshot lacks it, and the all-agree
@@ -5375,8 +5387,11 @@ public partial class IRGenerator
             // append after the `if` (adafruit_irremote's `received`) then met
             // the untyped-[] refusal all over. The slot exists for the whole
             // function once the promotion emits; the name may claim its
-            // pending list-ness from the start.
-            listVarElemTypes[prefix + name] = DataType.UNKNOWN;
+            // pending list-ness from the start. A declaration that already
+            // filed the element type (`x: list[uint8] = []`) keeps it: the
+            // type is not pending, it is declared.
+            if (!listVarElemTypes.ContainsKey(key))
+                listVarElemTypes[key] = DataType.UNKNOWN;
         }
     }
 }

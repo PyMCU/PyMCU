@@ -314,19 +314,21 @@ public partial class IRGenerator
                 // no payload -- and leave the element type pending; the append learns
                 // it and the grow path sizes the real buffer. A `x = []` nothing
                 // mutates stays the compile-time sequence it always was.
+                string promoKey = seqKey;
+                // A module-level list is a global, spelled the way every other path
+                // names it -- the same remap EmitListAnnAssign applies. The scan
+                // files the pending entry under this key too, so the gate and the
+                // emit must ask for it by the same name.
+                if (!string.IsNullOrEmpty(currentFunction)
+                    && string.IsNullOrEmpty(currentInlinePrefix)
+                    && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
+                    promoKey = currentModulePrefix + seqTgt.Name;
                 if (stmt.Value is ListExpr && seqElements.Count == 0
-                    && promotableEmptyLists.Contains(seqKey))
+                    && promotableEmptyLists.Contains(promoKey))
                 {
-                    string listKey = seqKey;
-                    // A module-level list is a global, spelled the way every other path
-                    // names it -- the same remap EmitListAnnAssign applies.
-                    if (!string.IsNullOrEmpty(currentFunction)
-                        && string.IsNullOrEmpty(currentInlinePrefix)
-                        && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
-                    {
-                        listKey = currentModulePrefix + seqTgt.Name;
+                    string listKey = promoKey;
+                    if (listKey != seqKey)
                         mutableGlobals[listKey] = DataType.GC_REF;
-                    }
 
                     listVarElemTypes[listKey] = DataType.UNKNOWN;
                     variableTypes[listKey] = DataType.GC_REF;
