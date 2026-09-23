@@ -1362,8 +1362,19 @@ public partial class IRGenerator
                     // this expansion (`bpp = len(byteorder)` in pixelbuf's parse_byteorder):
                     // its value sits in localConstantValues, not in a Constant Val.
                     if (elemVal is Constant c) constantVariables[ctx.ResultVars[k]] = c.Value;
+                    // Gated on the slot's declared width so a narrower element type cannot
+                    // claim a value the emitted Copy truncated.
                     else if (elemVal is Variable ev
-                             && localConstantValues.TryGetValue(ev.Name, out int evc))
+                             && localConstantValues.TryGetValue(ev.Name, out int evc)
+                             && FitsInScalar(evc, dt switch
+                             {
+                                 DataType.INT8 => "int8",
+                                 DataType.UINT16 => "uint16",
+                                 DataType.INT16 => "int16",
+                                 DataType.UINT32 => "uint32",
+                                 DataType.INT32 => "int32",
+                                 _ => "uint8",
+                             }))
                         constantVariables[ctx.ResultVars[k]] = evc;
                     else constantVariables.Remove(ctx.ResultVars[k]);
                     if (elemVal is FloatConstant fc) floatConstantVariables[ctx.ResultVars[k]] = fc.Value;
