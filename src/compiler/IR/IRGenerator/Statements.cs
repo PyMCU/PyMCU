@@ -1530,7 +1530,10 @@ public partial class IRGenerator
                 // this preserves the `return -1; ... return result` pattern where a runtime
                 // return must clear a stale constant set by an earlier const return.
                 bool wasAlreadyAssigned = ctx.ResultAssigned;
-                Emit(new Copy(val, ctx.ResultTemp));
+                // An instance anchor has no byte to copy (`return self` inside an
+                // inlined __enter__/__exit__): the alias below binds the result.
+                if (!(val is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
+                    Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;
 
                 // `return pulses` where pulses is a list[T] local (declared type `array.array`

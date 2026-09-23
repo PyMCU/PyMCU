@@ -1253,6 +1253,28 @@ public partial class IRGenerator
             EmitSlotFieldStore(slot, false, foff, fty, fv, total, byteWise: true);
     }
 
+    // A name that stands for an INSTANCE has no byte of its own to copy: a flattened
+    // instance's storage lives under `<name>_<field>` and a boxed one's in its `__slot`
+    // array -- the bare name is a namespace, not a value. Copying it emits a read of a
+    // slot nothing ever wrote (the verifier's read-never-written shape; the
+    // `with self._device` manager bind in adafruit_tcs34725 read the anchor that way).
+    // The alias registration still binds the target name -- only the dead byte move is
+    // skipped. Byte-valued exceptions: a single-field factory handle IS its field's
+    // scalar (RFC 0001) and an open() romfs handle is a real index; both keep their copy.
+    private bool NamesInstanceAnchor(string name)
+        => (virtualInstances.Contains(name) || slotInstances.ContainsKey(name))
+           && !factoryHandleInstances.Contains(name)
+           && !romfsHandles.ContainsKey(name)
+           // A single-field flattened instance's anchor IS the field's byte (the class
+           // collapses to its one scalar): `return cls()` where cls has one field hands
+           // the caller a real value, not a namespace. Boxed slot instances never
+           // collapse -- their byte lives inside the __slot array.
+           && !(virtualInstances.Contains(name)
+                && instanceClasses.TryGetValue(name, out var anchorCls)
+                && anchorCls != null
+                && classFieldLayout.TryGetValue(anchorCls, out var anchorLay)
+                && anchorLay.Count == 1);
+
     // `obj.prop = v` where prop has a registered @property setter: expand the setter.
     // Returns true when a matching setter was applied; false to fall through to the
     // normal member/assignment handling.
@@ -1966,7 +1988,8 @@ public partial class IRGenerator
         if (value is ArrayBase abRet && target is Variable arrTgt)
             CopyArrayIdentity(arrTgt.Name, abRet.ArrayName);
         else if (!(value is NoneVal)
-            && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name)))
+            && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name))
+            && !(value is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
             Emit(new Copy(value, target));
 
         // RFC 0009: a name that can hold a runtime optional gets its tag byte written
