@@ -35,6 +35,7 @@ public static class AsyncTransform
         RejectGeneratorMethods(prog);
         RejectInlineGenerators(prog);
         RejectAsyncGenerators(prog);
+        RejectUnsupportedYieldPositions(prog);
 
         var asyncFns = prog.Functions.Where(f => f.IsAsync).ToList();
         // A plain function containing `yield` is a GENERATOR: same state-machine
@@ -189,7 +190,10 @@ public static class AsyncTransform
             if (cls.Body is not Block body) continue;
             foreach (var m in body.Statements.OfType<FunctionDef>())
             {
-                if (m.IsAsync || !ContainsYield(m.Body)) continue;
+                // FirstYield, not ContainsYield: a `yield` inside `try`/`with`/`match` in a
+                // method is still a generator method, and the shallow walk let it reach the
+                // IR as a bare VisitYield error.
+                if (m.IsAsync || FirstYield(m.Body) == null) continue;
                 throw new SyntaxError(
                     $"`yield` in method '{m.Name}' of class '{cls.Name}': a generator has to be a "
                     + "module-level function today, because it lowers to a state-machine class of "
@@ -211,7 +215,7 @@ public static class AsyncTransform
     {
         foreach (var fn in prog.Functions)
         {
-            if (!fn.IsInline || fn.IsAsync || !ContainsYield(fn.Body)) continue;
+            if (!fn.IsInline || fn.IsAsync || FirstYield(fn.Body) == null) continue;
             throw new SyntaxError(
                 $"`@inline def {fn.Name}` contains `yield`. An @inline function is expanded into "
                 + "each call site, and a generator needs a state machine of its own to suspend in, "
@@ -241,6 +245,76 @@ public static class AsyncTransform
                 + "machine cannot be both. Split it into a plain `def` that yields (consumed "
                 + "with `for`), or keep the `async def` and hand results back another way.",
                 y.Line, y.Column, y.Length);
+        }
+    }
+
+    /// <summary>
+    /// A `yield` where the state splitter cannot cut one out. The splitter walks Block,
+    /// `if`/`elif`/`else`, `while` and `for` bodies; a `yield` inside `try`/`except`/`finally`,
+    /// `with`, `match`, a nested `def`, or a class body was invisible to ContainsYield, so
+    /// the function was never classified as a generator and the caller's `for` reported the
+    /// generic iterable-kind message -- a diagnostic naming neither `yield` nor the
+    /// container that holds it.
+    /// </summary>
+    private static void RejectUnsupportedYieldPositions(ProgramNode prog)
+    {
+        foreach (var fn in prog.Functions)
+        {
+            if (fn.IsAsync) continue;   // any yield there is the async-generator refusal above
+            RejectUnsupportedYieldPositions(fn.Body, fn.Name);
+        }
+    }
+
+    private static void RejectUnsupportedYieldPositions(Statement s, string fnName)
+    {
+        string What(YieldExpr y) => y.IsDelegate ? "`yield from`" : "`yield`";
+        switch (s)
+        {
+            case Block b:
+                foreach (var st in b.Statements) RejectUnsupportedYieldPositions(st, fnName);
+                return;
+            case IfStmt i:
+                RejectUnsupportedYieldPositions(i.ThenBranch, fnName);
+                foreach (var (_, eb) in i.ElifBranches) RejectUnsupportedYieldPositions(eb, fnName);
+                if (i.ElseBranch != null) RejectUnsupportedYieldPositions(i.ElseBranch, fnName);
+                return;
+            case WhileStmt w: RejectUnsupportedYieldPositions(w.Body, fnName); return;
+            case ForStmt f: RejectUnsupportedYieldPositions(f.Body, fnName); return;
+            case TryStmt t:
+                if (FirstYield(t) is { } yt)
+                    throw new SyntaxError(
+                        $"{What(yt)} inside `try`/`except`/`finally` cannot suspend: poll() "
+                        + "has no way to carry the exception region's state across a "
+                        + "suspension. Move the `yield` outside the `try` -- yield a value "
+                        + "the block computed, after it.", yt.Line, yt.Column, yt.Length);
+                return;
+            case WithStmt wi:
+                if (FirstYield(wi) is { } yw)
+                    throw new SyntaxError(
+                        $"{What(yw)} inside `with` cannot suspend: the context's __exit__ "
+                        + "would have to run across a poll() boundary. Move the `yield` "
+                        + "outside the `with` block.", yw.Line, yw.Column, yw.Length);
+                return;
+            case MatchStmt m:
+                if (FirstYield(m) is { } ym)
+                    throw new SyntaxError(
+                        $"{What(ym)} inside `match` is not supported yet. Move the `yield` "
+                        + "outside the `match`.", ym.Line, ym.Column, ym.Length);
+                return;
+            case FunctionDef nested:
+                if (FirstYield(nested.Body) is { } yn)
+                    throw new SyntaxError(
+                        $"{What(yn)} inside nested function '{nested.Name}': a generator has "
+                        + "to be a module-level function, and a nested `def` cannot suspend "
+                        + "inside '{fnName}' either. Move '{nested.Name}' out to module level "
+                        + "and call it from here.", yn.Line, yn.Column, yn.Length);
+                return;
+            case ClassDef cls:
+                if (FirstYield(cls.Body) is { } yc)
+                    throw new SyntaxError(
+                        $"{What(yc)} inside the body of class '{cls.Name}': a generator has "
+                        + "to be a module-level function.", yc.Line, yc.Column, yc.Length);
+                return;
         }
     }
 

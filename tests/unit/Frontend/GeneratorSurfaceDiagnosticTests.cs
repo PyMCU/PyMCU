@@ -135,6 +135,91 @@ public class GeneratorSurfaceDiagnosticTests
         err.Column.Should().Be(5);
     }
 
+    // ── yields where the splitter cannot cut ───────────────────────────────────
+    // ContainsYield only saw a yield that was a whole statement inside Block/if/while/
+    // for. A yield inside try/with/match (or a nested def) left the function
+    // unclassified, and the caller's `for` fell to the iterable-kind diagnostic, naming
+    // neither construct. Each refusal names the container and marks the yield.
+
+    [Fact]
+    public void AYieldInsideTryNamesTheTry()
+    {
+        var ast = new Parser(new Lexer("""
+            def g():
+                try:
+                    x = 1
+                    yield x
+                except ValueError:
+                    pass
+            """).Tokenize()).ParseProgram();
+        var err = Assert.Throws<SyntaxError>(() => AsyncTransform.TransformProgram(ast));
+
+        err.Message.Should().Contain("`try`");
+        err.Line.Should().Be(4);
+        err.Column.Should().Be(9);
+    }
+
+    [Fact]
+    public void AYieldInsideWithNamesTheWith()
+    {
+        var ast = new Parser(new Lexer("""
+            def g():
+                with cm():
+                    yield 1
+            """).Tokenize()).ParseProgram();
+        var err = Assert.Throws<SyntaxError>(() => AsyncTransform.TransformProgram(ast));
+
+        err.Message.Should().Contain("`with`");
+        err.Line.Should().Be(3);
+    }
+
+    [Fact]
+    public void AYieldInsideMatchNamesTheMatch()
+    {
+        var ast = new Parser(new Lexer("""
+            def g(k):
+                match k:
+                    case 1:
+                        yield 11
+            """).Tokenize()).ParseProgram();
+        var err = Assert.Throws<SyntaxError>(() => AsyncTransform.TransformProgram(ast));
+
+        err.Message.Should().Contain("`match`");
+        err.Line.Should().Be(4);
+    }
+
+    [Fact]
+    public void AYieldInsideANestedDefNamesTheNestedFunction()
+    {
+        var msg = TransformError("""
+            def outer():
+                @inline
+                def inner():
+                    yield 1
+            """);
+
+        msg.Should().Contain("inner");
+        msg.Should().NotContain("for-in loop iterable");
+    }
+
+    [Fact]
+    public void AYieldInsideAMethodInsideTryIsStillTheMethodRefusal()
+    {
+        // The deep finder, not ContainsYield: a `try:` around the yield did not hide the
+        // fact that what was written is a generator method.
+        var msg = TransformError("""
+            class A:
+                def m(self):
+                    try:
+                        x = 1
+                        yield x
+                    except ValueError:
+                        pass
+            """);
+
+        msg.Should().Contain("method").And.Contain("A");
+    }
+
     // ── a generator expression ───────────────────────────────────────────────────
     // `(x for x in ...)` PARSES now: as the argument of all()/any()/sum()/min()/max() it
     // unrolls over a compile-time sequence. Everywhere else the IR generator refuses it --
