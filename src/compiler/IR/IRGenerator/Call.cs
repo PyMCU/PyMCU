@@ -4251,6 +4251,28 @@ public partial class IRGenerator
             return source;
         if (value is Constant { Text: null } c) return new IntegerLiteral(c.Value);
 
+        // An instance is carried by NAME, not by value: its fields live under the
+        // element's qualified base (`ta__deadline_ms`) and a Copy of the head moves
+        // none of them. Aliasing the pin to the name the class hangs on makes a
+        // `*args` element dispatch field reads exactly like a declared parameter.
+        // The global registrations still happen -- without them a read inside a
+        // deeper expansion prefixes the bare name and finds nothing at all.
+        if (ResolveClassCarryingName(value) is { } carriedName)
+        {
+            string pinnedInst = "__variadic" + (tempCounter++);
+            DataType instType = value switch
+            {
+                Variable v => v.Type,
+                Temporary tv => tv.Type,
+                _ => DataType.UINT8,
+            };
+            variableTypes[pinnedInst] = instType;
+            mutableGlobals[pinnedInst] = instType;
+            variableAliases[pinnedInst] = carriedName;
+            instanceClasses[pinnedInst] = instanceClasses[carriedName];
+            return new VariableExpr(pinnedInst);
+        }
+
         string pinned = "__variadic" + (tempCounter++);
         DataType type = value switch
         {
