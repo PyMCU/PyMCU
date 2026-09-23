@@ -7680,7 +7680,8 @@ public partial class IRGenerator
                 string q = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + ve.Name
                     : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
-                DataType dt = variableTypes.TryGetValue(q, out var dt2) ? dt2 : DataType.UINT8;
+                DataType dt = variableTypes.TryGetValue(q, out var dt2) ? dt2
+                    : WidestElemType(new List<int> { c.Value });
                 var slot = new Variable(q, dt);
                 variableTypes[q] = dt;
                 Emit(new Copy(c, slot));
@@ -8253,9 +8254,12 @@ public partial class IRGenerator
                     continue;
                 }
                 // An undeclared target inherits the result slot's width, so a callee annotated
-                // `-> (uint8, uint16)` does not get its second value truncated to 8 bits.
+                // `-> (uint8, uint16)` does not get its second value truncated to 8 bits. A
+                // slot that carries a constant but no declared type sizes to that constant.
                 DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t
-                    : variableTypes.TryGetValue(srcName, out var st) ? st : DataType.UINT8;
+                    : variableTypes.TryGetValue(srcName, out var st) ? st
+                    : constantVariables.TryGetValue(srcName, out int scv)
+                        ? WidestElemType(new List<int> { scv }) : DataType.UINT8;
                 variableTypes[dstName] = dt;
                 Emit(new Copy(new Variable(srcName, dt), new Variable(dstName, dt)));
                 if (constantVariables.TryGetValue(srcName, out int cVal)) constantVariables[dstName] = cVal;

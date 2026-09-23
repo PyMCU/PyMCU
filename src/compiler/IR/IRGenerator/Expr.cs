@@ -2557,7 +2557,9 @@ public partial class IRGenerator
                                          expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                 string elem = lastTupleResults[tc.Value];
                 return new Variable(elem, variableTypes.TryGetValue(elem, out var et)
-                    ? et : DataType.UINT8);
+                    ? et
+                    : constantVariables.TryGetValue(elem, out int ec)
+                        ? WidestElemType(new List<int> { ec }) : DataType.UINT8);
             }
 
             // A returned buffer names the callee's fixed slot array, so the

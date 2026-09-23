@@ -1423,7 +1423,7 @@ public partial class IRGenerator
                             : currentFunction + "." + branch.CaptureName;
                         DataType dt = targetVal is Variable v2
                             ? v2.Type
-                            : (targetVal is Temporary t2 ? t2.Type : DataType.UINT8);
+                            : (targetVal is Temporary t2 ? t2.Type : GetValType(targetVal));
                         Emit(new Copy(targetVal, new Variable(qname, dt)));
                         variableTypes[qname] = dt;
                     }
@@ -1464,7 +1464,7 @@ public partial class IRGenerator
                             : currentFunction + "." + branch.CaptureName;
                         DataType dt = targetVal is Variable v2
                             ? v2.Type
-                            : (targetVal is Temporary t2 ? t2.Type : DataType.UINT8);
+                            : (targetVal is Temporary t2 ? t2.Type : GetValType(targetVal));
                         Emit(new Copy(targetVal, new Variable(qname, dt)));
                         variableTypes[qname] = dt;
                     }

@@ -144,4 +144,32 @@ public class ConditionalTupleReturnTests
         body.Any(i => i is JumpIfZero or JumpIfNotZero).Should().BeFalse(
             because: "a compile-time membership must not leave a runtime compare");
     }
+
+    /// <summary>
+    /// An unannotated tuple return's element slots take each element's own width: a
+    /// `uint16` member must not truncate to the uint8 default the slot used to mint
+    /// with. The byte store keeps the low byte -- but through a real UINT16 slot,
+    /// not a silent narrowing at the marshalling boundary.
+    /// </summary>
+    [Fact]
+    public void AWideElementKeepsItsWidthInTheResultSlot()
+    {
+        var body = Gen(
+            "from pymcu.types import uint8, uint16, inline, ptr\n" +
+            "G: ptr[uint16] = ptr(0x40)\n" +
+            "B: ptr[uint8] = ptr(0x3E)\n" +
+            "@inline\n" +
+            "def pair(w: uint16):\n" +
+            "    return (w, 7)\n" +
+            "def main():\n" +
+            "    hi, lo = pair(G.value)\n" +
+            "    B.value = hi\n").Functions.Single(f => f.Name == "main").Body;
+
+        var slotCopy = body.OfType<Copy>().SingleOrDefault(c =>
+            c.Src is Variable { Name: var sn } && sn.EndsWith("pair.w")
+            && c.Dst is Variable { Name: var dn } && dn.Contains("iret_"));
+        slotCopy.Should().NotBeNull(because: "the first tuple element marshals into an iret slot");
+        ((Variable)slotCopy!.Dst).Type.Should().Be(DataType.UINT16,
+            because: "the slot takes the element's own width, not the uint8 default");
+    }
 }

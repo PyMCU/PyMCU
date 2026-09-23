@@ -1410,8 +1410,13 @@ public partial class IRGenerator
             for (int i = 0; i < argValuesL.Count; ++i)
             {
                 string paramVarName = callee + "." + paramNames[i];
-                DataType ptype = i < paramTypes.Count ? paramTypes[i] : DataType.UINT8;
                 Val argVal = argValuesL[i];
+                // A param the signature scan never typed takes the argument's own width:
+                // defaulting to uint8 truncated a wide arg's marshalled copy before the
+                // callee ever read it.
+                DataType ptype = i < paramTypes.Count ? paramTypes[i]
+                    : argVal is Variable or Temporary or Constant ? GetValType(argVal)
+                    : DataType.UINT8;
 
                 // A flash-string-by-reference argument is a 16-bit flash address, regardless
                 // of how the const[str] param's nominal type folds.
@@ -8293,7 +8298,10 @@ public partial class IRGenerator
                         string slot = printSlots[k];
                         EmitPrintArg(new PreEvaluatedExpr(
                             new Variable(slot, variableTypes.TryGetValue(slot, out var sdt)
-                                ? sdt : DataType.UINT8), null)
+                                ? sdt
+                                : constantVariables.TryGetValue(slot, out int slotConst)
+                                    ? WidestElemType(new List<int> { slotConst })
+                                    : DataType.UINT8), null)
                             { Line = arg.Line });
                     }
                     if (printSlots.Count == 1) EmitStreamStr(writeStrFn, ",");

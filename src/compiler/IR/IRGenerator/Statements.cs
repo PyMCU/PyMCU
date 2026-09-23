@@ -1243,11 +1243,11 @@ public partial class IRGenerator
             {
                 Val seqElem = VisitExpression(unpackRetElems[k]);
                 // A slot the request widened from a declared `-> tuple[...]` keeps that
-                // width; a minted or unannotated one takes the field's, so an `H` read
-                // does not truncate to uint8.
+                // width; a minted or unannotated one takes the element's own, so an `H`
+                // read does not truncate to uint8.
                 DataType seqDt = variableTypes.TryGetValue(seqCtx.ResultVars[k], out var declaredSeqDt)
                     ? declaredSeqDt
-                    : unpackRetTypes?[k] ?? DataType.UINT8;
+                    : unpackRetTypes?[k] ?? GetValType(seqElem);
                 variableTypes[seqCtx.ResultVars[k]] = seqDt;
                 Emit(new Copy(seqElem, new Variable(seqCtx.ResultVars[k], seqDt)));
                 if (seqElem is Constant sc) constantVariables[seqCtx.ResultVars[k]] = sc.Value;
@@ -1343,9 +1343,10 @@ public partial class IRGenerator
 
                     Val elemVal = VisitExpression(tup.Elements[k]);
                     // The result slots carry the annotated element widths when the callee
-                    // declared them (see EmitInlineFunctionCall); uint8 otherwise.
+                    // declared them (see EmitInlineFunctionCall); the element's own width
+                    // otherwise, so a uint16 member does not truncate to uint8.
                     DataType dt = variableTypes.TryGetValue(ctx.ResultVars[k], out var slotDt)
-                        ? slotDt : DataType.UINT8;
+                        ? slotDt : GetValType(elemVal);
                     variableTypes[ctx.ResultVars[k]] = dt;
                     Emit(new Copy(elemVal, new Variable(ctx.ResultVars[k], dt)));
                     // The iret_ slots are scratch shared by every expansion at this

@@ -779,7 +779,10 @@ public partial class IRGenerator
             string src = lastTupleResults[k];
             string dst = key + "__" + k;
             DataType dt = variableTypes.TryGetValue(src, out var sdt)
-                ? sdt : DataType.UINT8;
+                ? sdt
+                : constantVariables.TryGetValue(src, out int srcConst)
+                    ? WidestElemType(new List<int> { srcConst })
+                    : DataType.UINT8;
             Emit(new Copy(new Variable(src, dt), new Variable(dst, dt)));
             variableTypes[dst] = dt;
             if (constantVariables.TryGetValue(src, out int cv)) constantVariables[dst] = cv;
