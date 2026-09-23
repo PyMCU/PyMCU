@@ -34,7 +34,11 @@ public class ImportResolutionTests : IDisposable
     }
 
     private void Write(string relPath, string source)
-        => File.WriteAllText(Path.Combine(_root, relPath.Replace('/', Path.DirectorySeparatorChar)), source);
+    {
+        var path = Path.Combine(_root, relPath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, source);
+    }
 
     private CompilationContext Context()
     {
@@ -181,5 +185,40 @@ public class ImportResolutionTests : IDisposable
         var module = new FileSystemModuleLoader().LoadModule("helper", ctx.Options.FilePath, ctx);
 
         Assert.Equal(2, module.Functions.Count);
+    }
+
+    // ---- parent package before submodule (alarm.time) ----------------------------------
+
+    [Fact]
+    public void LoadingASubmodule_RunsItsParentPackageFirst()
+    {
+        // CPython executes alarm/__init__.py before alarm/time.py: the submodule's own
+        // imports and names must see the package the way a board built it.
+        Write("alarm/__init__.py", "import alarm.time\n");
+        Write("alarm/time.py", "def tick():\n    return 1\n");
+
+        var ctx = Context();
+        new FileSystemModuleLoader().LoadModule("alarm.time", ctx.Options.FilePath, ctx);
+
+        Assert.True(ctx.NamedModules.ContainsKey("alarm"),
+            "the parent package should be loaded before its submodule");
+        Assert.True(ctx.NamedModules.ContainsKey("alarm.time"));
+    }
+
+    [Fact]
+    public void AParentImportingItsOwnSubmodule_TerminatesLikeSysModules()
+    {
+        // alarm/__init__.py doing `import alarm.time` must not recurse forever: the
+        // partially-loaded parent is skipped the way sys.modules holds it.
+        Write("alarm/__init__.py", "import alarm.time\n");
+        Write("alarm/time.py", "def tick():\n    return 1\n");
+        Write("main.py", "import alarm.time\n\ndef main():\n    alarm.time.tick()\n");
+
+        var ctx = Context();
+        ctx.RootAst = Parse(File.ReadAllText(Path.Combine(_root, "main.py")));
+        new DependencyGraphBuilder(new FileSystemModuleLoader()).Build(ctx.RootAst, ctx.Options.FilePath, ctx);
+
+        Assert.True(ctx.NamedModules.ContainsKey("alarm"));
+        Assert.True(ctx.NamedModules.ContainsKey("alarm.time"));
     }
 }

@@ -31,6 +31,32 @@ public class FileSystemModuleLoader : IModuleLoader
     public ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context,
                                   IReadOnlyList<string>? importedSymbols = null)
     {
+        // CPython runs the parent package before any submodule: `import alarm.time`
+        // executes alarm/__init__.py first, so its names (and its own submodule
+        // imports) exist when the submodule's body runs. A parent already in
+        // LoadingModules is mid-execution -- e.g. alarm/__init__.py doing
+        // `import alarm.time` -- and is skipped exactly like sys.modules holds the
+        // partially-initialised package.
+        int lastDot = moduleName.LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            string parent = moduleName.Substring(0, lastDot);
+            if (!context.NamedModules.ContainsKey(parent))
+            {
+                string? parentPath = null;
+                try
+                {
+                    parentPath = ResolveModulePath(parent, context.IncludePaths, currentFilePath, 0, null);
+                }
+                catch (Exception)
+                {
+                    // An unresolvable parent leaves the real import to report its own error.
+                }
+                if (parentPath != null && !context.LoadingModules.Contains(parentPath))
+                    LoadModule(parent, currentFilePath, context);
+            }
+        }
+
         string path;
         try
         {
