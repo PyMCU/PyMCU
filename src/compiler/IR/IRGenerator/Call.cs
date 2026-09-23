@@ -7090,7 +7090,10 @@ public partial class IRGenerator
     private bool CalleeDeclaresBool(Expression callee) => callee switch
     {
         VariableExpr cv =>
-            functionReturnTypes.GetValueOrDefault(ResolveCallee(cv.Name)) == "bool",
+            // `isinstance` is a builtin, not a def, so it has no functionReturnTypes
+            // entry -- but it always yields a Python bool.
+            cv.Name == "isinstance"
+            || functionReturnTypes.GetValueOrDefault(ResolveCallee(cv.Name)) == "bool",
         MemberAccessExpr cm =>
             cm.Object is VariableExpr cobj
             && InstanceClassOfName(cobj.Name) is { } ccls

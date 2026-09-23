@@ -86,4 +86,49 @@ public class BoolCallPrintsBoolTests
         main.Body.Any(i => i is Call c && c.FunctionName.StartsWith("uart_write_decimal_"))
             .Should().BeTrue("an int property still formats as a number");
     }
+
+    [Fact]
+    public void APropertyWithGetterAndSetter_StillPrintsAsWords()
+    {
+        // The setter shares the getter's method name; registering its `-> None`
+        // return under the same key overwrote the getter's `-> bool`, so
+        // `print(d.value)` on adafruit_pcf8574's DigitalInOut went to the
+        // decimal writer.
+        var main = Gen(
+            "class D:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._s = 0\n" +
+            "    @property\n" +
+            "    def value(self) -> bool:\n" +
+            "        return self._s != 0\n" +
+            "    @value.setter\n" +
+            "    def value(self, v: bool) -> None:\n" +
+            "        self._s = 1 if v else 0\n\n" +
+            "d = D()\n" +
+            "def main():\n" +
+            "    print(d.value)\n").Functions.Single(f => f.Name == "main");
+
+        main.Body.Any(i => Calls(i, "uart_write_decimal_u8")).Should().BeFalse(
+            "the setter's `-> None` must not shadow the getter's `-> bool`");
+        main.Body.Any(i => Calls(i, "uart_write_str")).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsinstanceFold_PrintsAsWordsNotDecimal()
+    {
+        // `isinstance` is a builtin: it has no functionReturnTypes entry, so
+        // `print(isinstance(d, D))` reached the decimal writer and sent 1/0
+        // where CPython spells True/False.
+        var main = Gen(
+            "class D:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._s = 0\n\n" +
+            "d = D()\n" +
+            "def main():\n" +
+            "    print(isinstance(d, D))\n").Functions.Single(f => f.Name == "main");
+
+        main.Body.Any(i => Calls(i, "uart_write_decimal_u8")).Should().BeFalse(
+            "isinstance() always yields a Python bool");
+        main.Body.Any(i => Calls(i, "uart_write_str")).Should().BeTrue();
+    }
 }
