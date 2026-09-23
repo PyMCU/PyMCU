@@ -886,7 +886,14 @@ public static class AsyncTransform
         // Params are always fields (initialized once in __init__).
         var localNames = new List<string>();
         var localTypes = new Dictionary<string, string>();
-        CollectAssignedLocals(fn.Body, new HashSet<string>(paramNames), localNames, localTypes);
+        // A name declared `global` is the module global, not a local: promoting it to a
+        // machine field made `T = 9` inside the body write `self.T` and leave the global
+        // untouched -- a silent wrong program. Keep such names out of the local set so the
+        // rewriter leaves them alone; the `global` statement itself stays in the state Raw
+        // and reaches the IR as it does in any other function.
+        var declaredGlobals = new HashSet<string>(paramNames);
+        CollectDeclaredGlobals(fn.Body, declaredGlobals);
+        CollectAssignedLocals(fn.Body, declaredGlobals, localNames, localTypes);
 
         var touchStates = new Dictionary<string, HashSet<int>>();
         var firstTouchIsRead = new Dictionary<string, bool>();
@@ -1559,6 +1566,29 @@ public static class AsyncTransform
         TernaryExpr t => ContainsAwait(t.Condition) || ContainsAwait(t.TrueVal) || ContainsAwait(t.FalseVal),
         _ => false,
     };
+
+    private static void CollectDeclaredGlobals(Statement s, HashSet<string> into)
+    {
+        switch (s)
+        {
+            case GlobalStmt g: foreach (var n in g.Names) into.Add(n); break;
+            case Block b: foreach (var st in b.Statements) CollectDeclaredGlobals(st, into); break;
+            case IfStmt iff:
+                CollectDeclaredGlobals(iff.ThenBranch, into);
+                if (iff.ElseBranch != null) CollectDeclaredGlobals(iff.ElseBranch, into);
+                foreach (var e in iff.ElifBranches) CollectDeclaredGlobals(e.Item2, into);
+                break;
+            case WhileStmt w: CollectDeclaredGlobals(w.Body, into); break;
+            case ForStmt f: CollectDeclaredGlobals(f.Body, into); break;
+            case TryStmt t:
+                foreach (var st in t.Body) CollectDeclaredGlobals(st, into);
+                foreach (var (_, handler) in t.Handlers)
+                    foreach (var st in handler) CollectDeclaredGlobals(st, into);
+                if (t.ElseBody != null) foreach (var st in t.ElseBody) CollectDeclaredGlobals(st, into);
+                if (t.Finally != null) foreach (var st in t.Finally) CollectDeclaredGlobals(st, into);
+                break;
+        }
+    }
 
     private static void CollectAssignedLocals(Statement s, HashSet<string> exclude, List<string> outList,
         Dictionary<string, string>? outTypes = null)
