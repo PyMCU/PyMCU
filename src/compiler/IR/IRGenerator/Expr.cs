@@ -3636,8 +3636,12 @@ public partial class IRGenerator
         string name = startName;
         for (int depth = 0; depth < 20; depth++)
         {
-            if (!variableAliases.TryGetValue(name, out var next)
-                || next == null || next.StartsWith("tmp_")) break;
+            if (!variableAliases.TryGetValue(name, out var next) || next == null) break;
+            // A temporary is a dead end for the chase UNLESS it carries a class -- a
+            // boxed field read (`with self._device:`) lowers to a slot-load temp that
+            // TagSlotFieldClass tags with the field's class, and stopping there would
+            // strand the manager's `__enter__` dispatch.
+            if (next.StartsWith("tmp_") && !instanceClasses.ContainsKey(next)) break;
             name = next;
             if (instanceClasses.ContainsKey(name)) return name;
         }

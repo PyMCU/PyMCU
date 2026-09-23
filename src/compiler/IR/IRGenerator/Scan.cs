@@ -303,6 +303,16 @@ public partial class IRGenerator
                 && (classNames.Contains(cv.Name) || classNames.Contains(ResolveCallee(cv.Name))
                     || classModuleMap.ContainsKey(cv.Name)))
                 fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv.Name);
+            // `self.<field> = mod.SomeClass(...)` -- the same record as the bare-name arm
+            // above, reached through a dotted callee. `i2c_device.I2CDevice(...)` is how
+            // every bus-device driver spells it; unrecorded, a boxed field read lost the
+            // class and `with self._device` reported its manager's `__enter__` undefined.
+            if (st is AssignStmt { Target: MemberAccessExpr { Object: VariableExpr sv3 } m3,
+                                 Value: CallExpr { Callee: MemberAccessExpr callee3 } }
+                && sv3.Name == "self" && !IsScalarTypeName(callee3.Member)
+                && !fieldClasses.ContainsKey(classKey + "|" + m3.Member)
+                && DottedExprText(callee3) is { } dottedCallee)
+                fieldClasses[classKey + "|" + m3.Member] = ResolveCallee(dottedCallee);
         }
     }
 
@@ -349,6 +359,18 @@ public partial class IRGenerator
             default:
                 return null;
         }
+    }
+
+    // `a.b.C` -> "a.b.C" when the chain is rooted at a plain name; null for anything
+    // deeper (a call or subscript inside the chain is not a resolvable dotted name).
+    private static string? DottedExprText(Expression e)
+    {
+        var parts = new List<string>();
+        Expression cur = e;
+        while (cur is MemberAccessExpr ma) { parts.Insert(0, ma.Member); cur = ma.Object; }
+        if (cur is not VariableExpr root || parts.Count == 0) return null;
+        parts.Insert(0, root.Name);
+        return string.Join(".", parts);
     }
 
     private void RecordClassAttrWriteTarget(Expression target)
