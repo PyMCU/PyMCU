@@ -885,7 +885,17 @@ public partial class IRGenerator
                 ? currentInlinePrefix + mo.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + mo.Name : mo.Name);
             for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var a); d++) b = a;
-            return noneValuedNames.Contains(b + "_" + ma.Member);
+            if (noneValuedNames.Contains(b + "_" + ma.Member)) return true;
+            // The write flattens under the name the object itself resolved to, which
+            // for a module-level instance is the bare global (d1_chip_select) — no
+            // function prefix. Same bare-name fallback the VariableExpr arm below has.
+            if (b != mo.Name)
+            {
+                string bare = mo.Name;
+                for (int d = 0; d < 20 && variableAliases.TryGetValue(bare, out var a2); d++) bare = a2;
+                if (noneValuedNames.Contains(bare + "_" + ma.Member)) return true;
+            }
+            return false;
         }
 
         if (e is not VariableExpr ve) return false;
