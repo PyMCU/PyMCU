@@ -1211,7 +1211,11 @@ public partial class IRGenerator
         // run the finallies, then return. Handles the common non-inline, non-constructor return;
         // the specialized inline/factory return shapes below are a rare combination with finally.
         bool ctorReturn = stmt.Value is CallExpr ccr && ccr.Callee is VariableExpr ccrv
-                          && classNames.Contains(ResolveCallee(ccrv.Name));
+                          && ResolveCallee(ccrv.Name) is { Length: > 0 } ccrRes
+                          && (classNames.Contains(ccrRes)
+                              || inlineFunctions.ContainsKey(ccrRes + "___init__")
+                              || overloadedFunctions.Contains(ccrRes + "___init__")
+                              || classFieldLayout.ContainsKey(ccrRes));
         if (finallyStack.Count > 0 && inlineStack.Count == 0 && !ctorReturn)
         {
             Val rfv = stmt.Value != null ? EvalOptionalCarry(stmt.Value) : new NoneVal();
@@ -1484,7 +1488,18 @@ public partial class IRGenerator
         Val val = new NoneVal();
         if (stmt.Value != null)
         {
+            // `return Cls(...)` inside an inlined call IS the call's result, so the
+            // target the caller's assignment supplied belongs to it even when an
+            // earlier return already consumed it -- every return path has to write
+            // the same canonical field names, or `r.code` only ever sees the
+            // first path's stores (decode_bits' `return IRMessage(...)` after its
+            // `return NECRepeatIRMessage(...)`).
+            string savedCtorTarget = pendingConstructorTarget;
+            if (ctorReturn && inlineStack.Count > 0
+                && inlineStack[^1].CtorTarget is { Length: > 0 } retCtorTarget)
+                pendingConstructorTarget = retCtorTarget;
             val = EvalOptionalCarry(stmt.Value);
+            pendingConstructorTarget = savedCtorTarget;
         }
 
         if (inlineStack.Count > 0)

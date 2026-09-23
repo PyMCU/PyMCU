@@ -110,6 +110,14 @@ public class InlineContext
     // entry file, which is then a statement rather than a fallback. Issue #230.
     public string CallerSourcePath { get; set; } = "";
 
+    // The pendingConstructorTarget the expansion was entered under -- the name the call's
+    // result binds to (`r` in `r = f()`). Every `return Cls(...)` in the body IS that
+    // result, so each one is offered this name again: without it only the FIRST return's
+    // constructor wrote `r_field` and every later one minted an anonymous `__cN` the
+    // reads never resolved (decode_bits' `return IRMessage(...)` after its
+    // `return NECRepeatIRMessage(...)`).
+    public string? CtorTarget { get; set; }
+
     // finallyStack depth when this expansion started. A `return` inside the body runs the
     // pending exits pushed since then -- a `with`'s `__exit__`, a try's `finally` -- but
     // never the CALLER's pending finallys, which the jump to ExitLabel does not escape.

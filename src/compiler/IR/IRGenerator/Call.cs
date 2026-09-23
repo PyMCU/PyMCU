@@ -2309,6 +2309,11 @@ public partial class IRGenerator
               TupleSlotPrefix = tupleSlotPrefix, CalleeName = callee,
               Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth,
               FinallyDepth = finallyStack.Count,
+              // For a constructor call the target was consumed above (self already
+              // aliases it), so this is empty there; for `r = f()` it still holds
+              // the caller's target, which each `return Cls(...)` in the body
+              // must be offered again -- see VisitReturn.
+              CtorTarget = pendingConstructorTarget,
               // Recorded here because the pair has not moved yet: the switch to the callee
               // happens at the body walk. See #227 and the note on the field.
               CallerSourcePath = currentSourcePath });
@@ -3351,6 +3356,11 @@ public partial class IRGenerator
 
         inlineStack.RemoveAt(inlineStack.Count - 1);
         activeInlineExpansions.Remove(callee);
+        // The snapshot each `return Cls(...)` was offered dies with the expansion:
+        // if it is still the pending target, clear it so a later bare `Cls()`
+        // mints its own `__cN` instead of writing the finished call's fields.
+        if (pendingConstructorTarget == finishedCtx.CtorTarget)
+            pendingConstructorTarget = "";
         if (func != null && func.IsClassMethod && func.Params.Count > 0)
             classmethodClsAlias.Remove(newPrefix + func.Params[0].Name);
         // Nested expansions pop innermost-first, so after the RHS finishes this holds
@@ -4271,6 +4281,7 @@ public partial class IRGenerator
         inlineDepth = newDepth;
         var superCtx = new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult,
             EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath,
+            CtorTarget = pendingConstructorTarget,
             FinallyDepth = finallyStack.Count };
         inlineStack.Add(superCtx);
 
@@ -4307,6 +4318,8 @@ public partial class IRGenerator
         lastLine = savedLastLine;
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);
+        if (pendingConstructorTarget == superCtx.CtorTarget)
+            pendingConstructorTarget = "";
 
         currentSourcePath = savedSourcePath;
         currentSourceFile = savedSourceFile;

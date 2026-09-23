@@ -105,6 +105,49 @@ public class RefFieldTests
     }
 
     [Fact]
+    public void FactoryResult_EveryReturnPathWritesTheCallTarget()
+    {
+        // `r = decode_bits(p)`: every `return Cls(...)` inside the inlined
+        // call IS the call's result, so each one must write the same
+        // canonical field slot. Consumed once by the first return, the
+        // pending constructor target left the second return's constructor
+        // minting an anonymous `__cN` whose stores died unreferenced --
+        // `m.c` then read only the first path's value.
+        var ir = Gen(
+            "class Msg:\n" +
+            "    def __init__(self, p, c):\n" +
+            "        self.p = p\n" +
+            "        self.c = c\n" +
+            "def make(pulses: list):\n" +
+            "    if len(pulses) == 0:\n" +
+            "        return Msg(1, 2)\n" +
+            "    return Msg(3, pulses[0])\n" +
+            "def main():\n" +
+            "    inp: list[uint8] = [7]\n" +
+            "    m = make(inp)\n" +
+            "    a: uint8 = m.c\n" +
+            "    for i in range(2):\n" +
+            "        b: uint8 = m.c\n");
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        // One store to the caller's field slot per return path.
+        var cWrites = body.OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name == "main.m_c")
+            .ToList();
+        Assert.Equal(2, cWrites.Count);
+        // And every `m.c` read resolves to that slot -- never an `__cN`
+        // and never a phantom the stores missed.
+        var cReads = body.OfType<Copy>()
+            .Select(c => c.Src is Variable sv ? sv.Name : null)
+            .Concat(body.SelectMany(i =>
+                i is Binary b ? new[] { b.Src1, b.Src2 } : new Val[] { }
+            ).OfType<Variable>().Select(v => v.Name))
+            .Where(n => n != null && n.EndsWith("_c"))
+            .Distinct()
+            .ToList();
+        Assert.All(cReads, n => Assert.Equal("main.m_c", n));
+    }
+
+    [Fact]
     public void ScalarField_StillFolds()
     {
         // A field holding a scalar is untouched by the ref path.
