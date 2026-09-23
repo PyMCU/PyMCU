@@ -199,6 +199,9 @@ public static class PythonAstReader
         Located(new Param(Str(e, "name"), PyMCU.Common.AnnotationText.Normalize(Str(e, "type")),
                           Has(e, "default") ? ReadExpr(e.GetProperty("default")) : null)
         {
+            // RFC 0009: `p: Optional[X]` / `p: Union[...]` member list from the raw
+            // annotation text, which Normalize just collapsed.
+            UnionMembers = PyMCU.Common.AnnotationText.UnionMembers(Str(e, "type")),
             IsVarArg = Flag(e, "vararg"),
             IsKwArg = Flag(e, "kwarg"),
         }, e);

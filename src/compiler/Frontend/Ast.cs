@@ -700,6 +700,12 @@ public class Param : ASTNode
     public string Type { get; set; }   // settable: TypeInference fills empty annotations in
     public Expression? DefaultValue { get; }
 
+    /// RFC 0009: the union-member list of a `name: Optional[X]` / `Union[...]`
+    /// annotation -- [payload,"None"] for Optional (None always last). Null for an
+    /// ordinary parameter. `Type` alone cannot answer this: normalization erases
+    /// the member spelling, and the tag ABI needs the members to order the tag.
+    public List<string>? UnionMembers { get; set; }
+
     /// `def f(*args)`. The name stands for the positions the call site did not give a
     /// parameter, which are known there, so it binds a compile-time sequence rather than a
     /// run-time argument list (#368).

@@ -962,9 +962,13 @@ public class Parser
 
             var name = Consume(TokenType.Identifier, "Expected parameter name");
             string type = "";
+            List<string>? unionMembers = null;
             if (Match(TokenType.Colon))
             {
                 type = ParseTypeAnnotation();
+                // `p: Optional[X]` / `p: Union[...]`: the member list survives the
+                // annotation's normalization, which erases it (RFC 0009).
+                unionMembers = ConsumeLastUnionMembers();
             }
 
             Expression? defaultVal = null;
@@ -973,7 +977,8 @@ public class Parser
                 defaultVal = ParseExpression();
             }
 
-            parameters.Add(Located(new Param(name.Value, type, defaultVal), name));
+            parameters.Add(Located(new Param(name.Value, type, defaultVal)
+                { UnionMembers = unionMembers }, name));
 
             // `!Check(RParen)` after the comma is the trailing comma, which `black` writes on
             // every multi-line signature and which the CPython front end already accepts -- so
