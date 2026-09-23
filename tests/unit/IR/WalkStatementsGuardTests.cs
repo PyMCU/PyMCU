@@ -39,6 +39,7 @@ public class WalkStatementsGuardTests
         ("TypeInference.cs", "MethodsOf"),          // class-member iteration, not a body walk
         ("TypeInference.cs", "InferReturnType"),    // hands the list to CollectReturns, which walks it
         ("TypeInference.cs", "InferOptionalReturn"),
+        ("TypeInference.cs", "InferUnionReturnMembers"), // hands the list to CollectReturns, which walks it
         ("TypeInference.cs", "HasValueReturn"),
 
         // Structural predicates: the recursion IS the semantics ("does every arm
