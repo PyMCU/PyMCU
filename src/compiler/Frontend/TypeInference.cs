@@ -25,6 +25,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using PyMCU.Common;
 
 namespace PyMCU.Frontend;
 
@@ -76,9 +77,15 @@ public static class TypeInference
 
         // Known (annotated or already-inferred) return types by bare function name.
         var returnTypes = new Dictionary<string, string>();
+        // And their union member lists where declared -- a `return f()` inside
+        // another unannotated function contributes the callee's whole member set.
+        var memberLists = new Dictionary<string, List<string>>();
         foreach (var prog in programs)
             foreach (var f in prog.Functions)
+            {
                 if (f.ReturnType.Length > 0) returnTypes[f.Name] = f.ReturnType;
+                if (f.ReturnMembers != null) memberLists[f.Name] = f.ReturnMembers;
+            }
 
         for (int pass = 0; pass < Passes; pass++)
         {
@@ -110,32 +117,38 @@ public static class TypeInference
                     if (f.Params[i].Type.Length == 0 && ev[i] != null)
                         f.Params[i].Type = ev[i]!;
 
-                if (InferReturnType(f, returnTypes) is { } rt)
+                // RFC 0009 phase 3 (6.1): the return type is the member list the
+                // return statements produce -- one member for a provably uniform
+                // body, several for a genuine union (the IRGenerator's resolve pass
+                // then decides whether a tag is spent, trims dead-only members, and
+                // refuses past the four-member ceiling).
+                if (InferUnionReturnMembers(f, returnTypes, memberLists) is { } umembers)
                 {
-                    f.ReturnType = rt;
-                    returnTypes[f.Name] = rt;
-                }
-                else if (InferOptionalReturn(f, returnTypes) is { } opt)
-                {
-                    // RFC 0009 (6.1, N=2): an unannotated body that mixes a value
-                    // return with a None return is an inferred Optional -- the
-                    // payload is what the values join to. Provisional member list:
-                    // the IRGenerator's reachability pass keeps it only when a
-                    // run-time None can actually arrive at a return (a `return
-                    // None` behind a guard the compiler folds costs nothing and
-                    // stays tag-free).
-                    f.ReturnType = opt;
-                    returnTypes[f.Name] = opt;
-                    f.ReturnMembers = new List<string> { opt, "None" };
+                    f.ReturnType = umembers.Count == 1 ? umembers[0] : WidestMemberName(umembers);
+                    returnTypes[f.Name] = f.ReturnType;
+                    if (umembers.Count >= 2)
+                    {
+                        f.ReturnMembers = umembers;
+                        f.ReturnMembersInferred = true;
+                        memberLists[f.Name] = umembers;
+                    }
                 }
             }
 
-            // Method returns: the same join, but nothing enters returnTypes -- a
-            // bare-name entry would alias a module-level function of the same name,
-            // and member calls never resolve through that table anyway.
+            // Method returns: the same member collection, but nothing enters
+            // returnTypes -- a bare-name entry would alias a module-level function
+            // of the same name, and member calls never resolve through that table
+            // anyway.
             foreach (var m in methodCandidates)
-                if (InferReturnType(m, returnTypes) is { } mrt)
-                    m.ReturnType = mrt;
+                if (InferUnionReturnMembers(m, returnTypes, memberLists) is { } mm)
+                {
+                    m.ReturnType = mm.Count == 1 ? mm[0] : WidestMemberName(mm);
+                    if (mm.Count >= 2)
+                    {
+                        m.ReturnMembers = mm;
+                        m.ReturnMembersInferred = true;
+                    }
+                }
         }
     }
 
@@ -160,45 +173,160 @@ public static class TypeInference
         }
     }
 
-    // Return type: join the static types of all value returns, using the (possibly
-    // just-inferred) param types as the local scope. One return whose type is unknown
-    // -- a member read, a subscript, a `return None`, a call this table does not
-    // cover -- gives up and leaves the declaration empty; that is what keeps the
-    // RFC 0009 `return None` shape compiling exactly as it did.
-    private static string? InferReturnType(FunctionDef f, Dictionary<string, string> returnTypes)
+    // Return member list: the distinct representations the value returns produce,
+    // in first-appearance order, None always last (RFC 0009 section 6.1). All
+    // integer evidence joins into ONE member -- "two paths that return an int share
+    // a tag", and the join is what keeps `return 0` / `return -1` a plain int16
+    // instead of a union that would force every caller to narrow. bool, float and
+    // None are members of their own. One return whose type is unknown -- a member
+    // read, a subscript, a string, a call this table does not cover -- gives up and
+    // leaves the declaration empty; that is what keeps the RFC 0009 `return None`
+    // shape compiling exactly as it did.
+    private static List<string>? InferUnionReturnMembers(
+        FunctionDef f, Dictionary<string, string> returnTypes,
+        Dictionary<string, List<string>> memberLists)
     {
         if (!IsInferableReturn(f.ReturnType) || !HasValueReturn(f.Body)) return null;
         var scope = ScopeTypes(f);
-        string? rt = null;
+        var members = new List<string>();
+        bool sawNone = false;
         foreach (var r in CollectReturns(f.Body.Statements))
         {
-            string? t = StaticTypeOf(r, scope, returnTypes);
-            if (t == null) return null;   // any unknown -> give up
-            rt = rt == null ? t : Join(rt, t);
+            if (r is NoneLiteral) { sawNone = true; continue; }
+            var em = ExprMembers(r, scope, returnTypes, memberLists);
+            if (em == null) return null;   // any unknown -> give up
+            foreach (var m in em)
+            {
+                if (m == "None") { sawNone = true; continue; }
+                MergeMember(members, m);
+            }
         }
-        return rt;
+        if (sawNone || HasBareReturn(f.Body)) members.Add("None");
+        return members;
     }
 
-    // RFC 0009 (6.1, N=2): `return None` -- the bare `return` is the same statement to
-    // Python -- does not poison the join; a body that mixes a value return with a None
-    // return is an inferred Optional and the payload is what the values join to.
-    // Returns null when no None return exists (the plain inference answered) or when a
-    // value's type is unknown (same give-up rule as InferReturnType).
-    private static string? InferOptionalReturn(FunctionDef f, Dictionary<string, string> returnTypes)
+    // Merge one inferred member into the list: int-family members coalesce into a
+    // single joined int member at its first-appearance slot; every other kind
+    // stays distinct (11.6: the tag keeps uint8 and bool apart even at one byte).
+    private static void MergeMember(List<string> members, string m)
     {
-        if (!IsInferableReturn(f.ReturnType) || !HasValueReturn(f.Body)) return null;
-        var returns = CollectReturns(f.Body.Statements).ToList();
-        if (!returns.Any(r => r is NoneLiteral) && !HasBareReturn(f.Body)) return null;
-        var scope = ScopeTypes(f);
-        string? rt = null;
-        foreach (var r in returns)
+        string? n = Normalize(m);
+        if (n != null)
         {
-            if (r is NoneLiteral) continue;
-            string? t = StaticTypeOf(r, scope, returnTypes);
-            if (t == null) return null;
-            rt = rt == null ? t : Join(rt, t);
+            int slot = members.FindIndex(x => Normalize(x) != null);
+            if (slot < 0) { members.Add(n); return; }
+            members[slot] = Join(members[slot], n);
+            return;
         }
-        return rt;
+        if (m == "bool" || m == "float")
+        {
+            if (!members.Contains(m)) members.Add(m);
+        }
+        // Anything else (str, named types) never reaches here -- ExprMembers gives up.
+    }
+
+    // The member list an expression can produce -- the union-aware counterpart of
+    // StaticTypeOf. Null = unknown (same give-up rule).
+    private static List<string>? ExprMembers(
+        Expression e, Dictionary<string, string> scope,
+        Dictionary<string, string> returnTypes, Dictionary<string, List<string>> memberLists)
+    {
+        switch (e)
+        {
+            case NoneLiteral: return new List<string> { "None" };
+            case BooleanLiteral: return new List<string> { "bool" };
+            case FloatLiteral: return new List<string> { "float" };
+            case IntegerLiteral il: return new List<string> { TypeOfIntValue(il.Value) };
+            case VariableExpr v:
+            {
+                if (!scope.TryGetValue(v.Name, out var t)) return null;
+                // A union/Optional-annotated local or param contributes its members --
+                // but only a union of scalars is a tag domain; Union[ROValueIO,
+                // Callable] is a call-site union and says nothing about this return.
+                var um = AnnotationText.UnionMembers(t);
+                if (um != null)
+                    return um.All(m => m == "None" || Normalize(m) != null
+                        || m is "bool" or "float") ? new List<string>(um) : null;
+                if (Normalize(t) is { } n) return new List<string> { n };
+                return t is "bool" or "float" ? new List<string> { t } : null;
+            }
+            case UnaryExpr { Op: UnaryOp.Negate } un:
+            {
+                var inner = ExprMembers(un.Operand, scope, returnTypes, memberLists);
+                if (inner == null) return null;
+                for (int i = 0; i < inner.Count; i++)
+                    if (Normalize(inner[i]) != null) inner[i] = Join(inner[i], "int8");
+                return inner;
+            }
+            case UnaryExpr { Op: UnaryOp.BitNot } bn:
+                return ExprMembers(bn.Operand, scope, returnTypes, memberLists);
+            case UnaryExpr { Op: UnaryOp.Not }:
+                return new List<string> { "uint8" };
+            case BinaryExpr b:
+            {
+                if (b.Op is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.LessEq
+                    or BinaryOp.Greater or BinaryOp.GreaterEq or BinaryOp.And or BinaryOp.Or
+                    or BinaryOp.In or BinaryOp.NotIn or BinaryOp.Is or BinaryOp.IsNot)
+                    return new List<string> { "uint8" };
+                var l = ExprMembers(b.Left, scope, returnTypes, memberLists);
+                var r = ExprMembers(b.Right, scope, returnTypes, memberLists);
+                if (l == null || r == null) return null;
+                // Numeric join: a float on either side makes the result float;
+                // otherwise the int members join.
+                if (l.Contains("float") || r.Contains("float") || b.Op == BinaryOp.Div)
+                    return new List<string> { "float" };
+                if (!l.All(m => Normalize(m) != null) || !r.All(m => Normalize(m) != null))
+                    return null;
+                return new List<string> { l.Concat(r).Aggregate(Join) };
+            }
+            case TernaryExpr t3:
+            {
+                var a = ExprMembers(t3.TrueVal, scope, returnTypes, memberLists);
+                var c = ExprMembers(t3.FalseVal, scope, returnTypes, memberLists);
+                if (a == null || c == null) return null;
+                var merged = new List<string>();
+                bool none = false;
+                foreach (var m in a.Concat(c))
+                    if (m == "None") none = true;
+                    else MergeMember(merged, m);
+                if (none) merged.Add("None");
+                return merged;
+            }
+            case CallExpr c2 when c2.Callee is VariableExpr fn:
+            {
+                // Width cast: uint16(x) etc.
+                if (IntTypes.Contains(fn.Name)) return new List<string> { Normalize(fn.Name)! };
+                if (fn.Name == "float") return new List<string> { "float" };
+                if (fn.Name == "bool") return new List<string> { "bool" };
+                if (fn.Name == "str") return null;
+                if (memberLists.TryGetValue(fn.Name, out var ml)) return new List<string>(ml);
+                return returnTypes.TryGetValue(fn.Name, out var rt) && Normalize(rt) is { } nrt
+                    ? new List<string> { nrt }
+                    : null;
+            }
+            default: return null;
+        }
+    }
+
+    // Widest member by payload bytes, float winning the four-byte tie -- the same
+    // order UnionPayloadType uses in the IRGenerator.
+    private static string WidestMemberName(List<string> members)
+    {
+        static int Rank(string m) => m switch
+        {
+            "float" or "uint32" or "int32" => 4,
+            "uint16" or "int16" or "int" => 2,
+            "bool" or "uint8" or "int8" or "char" => 1,
+            _ => 0,
+        };
+        string best = members[0];
+        foreach (var m in members)
+        {
+            if (Rank(m) > Rank(best) ||
+                (Rank(m) == Rank(best) && m == "float" && best != "float"))
+                best = m;
+        }
+        return best;
     }
 
     // ── evidence collection ─────────────────────────────────────────────────────

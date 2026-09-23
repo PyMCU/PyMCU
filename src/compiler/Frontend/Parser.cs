@@ -447,7 +447,11 @@ public class Parser
             while (Check(TokenType.Pipe))
             {
                 Advance();
-                typeStr += "|" + ParseTypeAnnotation();
+                // The inner call returns the NORMALIZED member text, which drops a
+                // trailing `| None`; the union-member read needs the spelled text,
+                // so the raw string accumulates the inner raw, not the return.
+                ParseTypeAnnotation();
+                typeStr += "|" + _lastAnnotationRaw;
             }
             _lastAnnotationRaw = typeStr;
             return PyMCU.Common.AnnotationText.Normalize(typeStr);
@@ -502,7 +506,8 @@ public class Parser
         while (Check(TokenType.Pipe))
         {
             Advance();
-            typeStr += "|" + ParseTypeAnnotation();
+            ParseTypeAnnotation();
+            typeStr += "|" + _lastAnnotationRaw;
         }
 
         // The spellings that mean something this compiler already has, rewritten to the
@@ -544,12 +549,15 @@ public class Parser
         if (Check(TokenType.None))
         {
             Advance();
-            if (!Check(TokenType.Pipe)) return "void";
+            // The raw slot still holds the LAST parameter's annotation text -- a
+            // `Union[...]` param would leak its members onto a `-> None` return.
+            if (!Check(TokenType.Pipe)) { _lastAnnotationRaw = ""; return "void"; }
             string typeStr = "None";
             while (Check(TokenType.Pipe))
             {
                 Advance();
-                typeStr += "|" + ParseTypeAnnotation();
+                ParseTypeAnnotation();
+                typeStr += "|" + _lastAnnotationRaw;
             }
             _lastAnnotationRaw = typeStr;
             return PyMCU.Common.AnnotationText.Normalize(typeStr);

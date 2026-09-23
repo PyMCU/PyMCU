@@ -1056,6 +1056,16 @@ def pattern_of(pat):
             return None, (pat.name or "")
         inner, _ = pattern_of(pat.pattern)
         return inner, (pat.name or "")
+    if isinstance(pat, ast.MatchClass):
+        # `case T(...)` is read by the C# parser as the call expression `T(...)`:
+        # the class is the callee and the inner patterns read as its arguments
+        # (a capture name is a Var, which is what pattern_element produces).
+        args = [pattern_element(p) for p in pat.patterns]
+        for attr, kp in zip(pat.kwd_attrs, pat.kwd_patterns):
+            args.append({"k": "Keyword", "key": attr, "value": pattern_element(kp),
+                         "line": line_of(pat)})
+        return {"k": "Call", "callee": expr(pat.cls), "args": args,
+                "line": line_of(pat)}, ""
     if isinstance(pat, ast.MatchOr):
         # `case 'PB0' | 'PB1':` is a BitOr chain in the PyMCU AST, which is what
         # CompileTimeEvaluator.FlattenOrPattern walks -- not a tuple.

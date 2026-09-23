@@ -740,6 +740,10 @@ public class FunctionDef : Statement
     // for Optional[X] (None always last), or the inferred member set TypeInference
     // fills when reachable returns mix values and None. Null = ordinary return.
     public List<string>? ReturnMembers { get; set; }
+    // True when ReturnMembers came from return-statement inference rather than an
+    // annotation -- inferred lists are trimmed to the members returns can reach
+    // (a member that only appears in dead code does not count toward the ceiling).
+    public bool ReturnMembersInferred { get; set; }
     public Block Body { get; }
     public bool IsInline { get; set; }
     public bool IsClassMethod { get; set; } = false;

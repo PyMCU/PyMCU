@@ -50,8 +50,9 @@ public static class AnnotationText
         // itself be a bracketed form.
         if (TopLevelPipeMembers(annotation) is { } pipeMembers)
         {
-            var kept = pipeMembers.Where(m => !IsNoneName(m)).ToList();
-            if (kept.Count == 1) return Normalize(kept[0]);
+            var kept = pipeMembers.Where(m => !IsNoneName(m))
+                .Select(m => Normalize(m.Trim())).Distinct().ToList();
+            if (kept.Count == 1) return kept[0];
             // Two real types still have no width they share, so the text is handed on
             // unchanged and refused downstream, by the sentence that has always answered it.
             return annotation;
@@ -71,8 +72,9 @@ public static class AnnotationText
         if (bare is "Optional" or "Union")
         {
             var members = SplitTopLevel(annotation[(lb + 1)..^1])
-                .Select(m => m.Trim()).Where(m => m.Length > 0 && !IsNoneName(m)).ToList();
-            if (members.Count == 1) return Normalize(members[0]);
+                .Select(m => m.Trim()).Where(m => m.Length > 0 && !IsNoneName(m))
+                .Select(Normalize).Distinct().ToList();
+            if (members.Count == 1) return members[0];
             return annotation;
         }
 
@@ -116,44 +118,66 @@ public static class AnnotationText
     }
 
     /// <summary>
-    /// The member list when <paramref name="annotation"/> spells a union that can
-    /// hold None at run time: the real members in written order, normalized, with
-    /// "None" appended last -- [payload, "None"] for `Optional[X]`, `Union[X, None]`
-    /// and `X | None` in any order. Null for a plain annotation, for a union of real
-    /// types only (which keeps the refusal it has), and for `Optional[None]`
-    /// (degenerate -- no payload member). RFC 0009: Normalize keeps answering the
-    /// payload type while this answers the members the tag byte encodes.
+    /// The member list when <paramref name="annotation"/> spells a union: the real
+    /// members in written order, normalized and deduplicated, with "None" appended
+    /// last when None is a member -- [payload, "None"] for `Optional[X]`,
+    /// `Union[X, None]` and `X | None` in any order, [A, B] for `Union[A, B]`
+    /// (RFC 0009 phase 3: a union of real types is a member list the tag byte
+    /// encodes; whether a POSITION may carry one is decided downstream).
+    /// Null for a plain annotation, for `Optional[None]` (degenerate -- no payload
+    /// member), and for a union that deduplicates to a single real member
+    /// (`Union[int, int]` is int).
     /// </summary>
     public static List<string>? UnionMembers(string? annotation)
     {
         if (string.IsNullOrEmpty(annotation)) return null;
 
+        List<string> raw;
+        // `Optional[X]` carries its None implicitly -- the name IS the union -- so no
+        // member has to spell it for the list to have one.
+        bool noneSpelled;
         if (TopLevelPipeMembers(annotation) is { } pipeMembers)
         {
-            var pipeKept = pipeMembers.Where(m => !IsNoneName(m))
-                .Select(m => Normalize(m.Trim())).ToList();
-            if (pipeKept.Count == 0 || pipeKept.Count == pipeMembers.Count) return null;
-            pipeKept.Add("None");
-            return pipeKept;
+            raw = pipeMembers;
+            noneSpelled = false;
+        }
+        else
+        {
+            int lb = annotation.IndexOf('[');
+            if (lb < 0 || !annotation.EndsWith("]", StringComparison.Ordinal)) return null;
+            string head = annotation[..lb];
+            string bare = head[(head.LastIndexOf('.') + 1)..];
+            if (bare is not ("Optional" or "Union")) return null;
+            raw = SplitTopLevel(annotation[(lb + 1)..^1]);
+            noneSpelled = bare == "Optional";
         }
 
-        int lb = annotation.IndexOf('[');
-        if (lb < 0 || !annotation.EndsWith("]", StringComparison.Ordinal)) return null;
-        string head = annotation[..lb];
-        string bare = head[(head.LastIndexOf('.') + 1)..];
-        if (bare is not ("Optional" or "Union")) return null;
+        var members = new List<string>();
+        foreach (var m in raw)
+        {
+            string t = m.Trim();
+            if (t.Length == 0) continue;
+            if (IsNoneName(t)) { noneSpelled = true; continue; }
+            // A member that is itself a union flattens into this one:
+            // `Optional[Union[int, float]]` is Union[int, float, None] spelled long.
+            if (UnionMembers(t) is { } inner)
+            {
+                foreach (var im in inner)
+                {
+                    if (im == "None") { noneSpelled = true; continue; }
+                    if (!members.Contains(im)) members.Add(im);
+                }
+                continue;
+            }
+            string n = Normalize(t);
+            if (!members.Contains(n)) members.Add(n);
+        }
 
-        var members = SplitTopLevel(annotation[(lb + 1)..^1])
-            .Select(m => m.Trim()).Where(m => m.Length > 0).ToList();
-        var kept = members.Where(m => !IsNoneName(m)).Select(Normalize).ToList();
-        // `Optional[X]` carries its None implicitly -- the name IS the union -- so no
-        // member has to be dropped for it to be one. `Union[...]` has to spell the
-        // None, and a Union of real types only keeps its refusal.
-        if (kept.Count == 0) return null;
-        if (bare == "Union" && kept.Count == members.Count) return null;
-        if (bare == "Optional" && kept.Count != 1) return null;
-        kept.Add("None");
-        return kept;
+        if (members.Count == 0) return null;
+        // A real-only union of one distinct member is that member, not a union.
+        if (!noneSpelled && members.Count < 2) return null;
+        if (noneSpelled) members.Add("None");
+        return members;
     }
 
     /// <summary>Whether an annotation member names None (or the void spelling of it).</summary>
