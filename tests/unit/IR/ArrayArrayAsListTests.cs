@@ -102,6 +102,51 @@ public class ArrayArrayAsListTests
     }
 
     [Fact]
+    public void AModuleLevelListGlobalIsSizedForAPointer()
+    {
+        // The mutableGlobals entry for `xs` kept the annotation-derived UNKNOWN
+        // (1-byte) type after the declaration resolved to a heap list: the
+        // backend sizes globals from that table, so `xs` was allotted a single
+        // byte and the next global's slot began inside it. `code: uint32`
+        // landed at xs+1, its four-byte init store overwrote the list pointer's
+        // high byte, and the next append dereferenced a wild address (the
+        // emulator died in Cpu.ReadData). variableTypes had GC_REF; the global
+        // table is what needed it.
+        var ir = Gen(
+            "from pymcu.types import uint16, uint32\n\n" +
+            "xs: list[uint16] = list()\n" +
+            "code: uint32 = 0x00FF906F\n" +
+            "xs.append(1)\n");
+        var xs = ir.Globals.Single(g => g.Name == "xs");
+        Assert.Equal(DataType.GC_REF, xs.Type);
+    }
+
+    [Fact]
+    public void LenOnAModuleLevelListReadsTheDeclaredSlot()
+    {
+        // The variable-indexed-array pre-scan files every `x: list[T]` it meets under the
+        // enclosing function's prefix -- `main.xs` for a module-level declaration. The
+        // emitter then settles the same decl on the bare global (`xs`), leaving a phantom
+        // `main.xs` entry in listVarElemTypes. Append and `xs[i]` resolve through
+        // ResolveNameKey, which never consults that table, so they kept working; len()
+        // resolves through ResolveListVarQualified, which checks the function-prefixed
+        // key FIRST and handed back `main.xs` -- a slot nobody writes, so len(xs) read 0
+        // no matter how full the list was. adafruit_irremote's read_pulses() saw every
+        // drained batch as empty and blocked forever (the cp-bisect self-loopback hang).
+        var ir = Gen(
+            "from pymcu.types import uint16\n\n" +
+            "xs: list[uint16] = list()\n" +
+            "xs.append(4)\n" +
+            "n = len(xs)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        Assert.Contains(main.Body, i => i is LoadIndirect li
+            && li.SrcPtr is Variable v && v.Name == "xs");
+        Assert.DoesNotContain(main.Body, i =>
+            i is LoadIndirect li2 && li2.SrcPtr is Variable lv && lv.Name == "main.xs");
+    }
+
+    [Fact]
     public void AListParameterAppendInsideAnExpansionWritesTheCallersList()
     {
         // `grow(xs, v)` binds `ys` to the caller's list through variableAliases; the

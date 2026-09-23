@@ -6801,7 +6801,15 @@ public partial class IRGenerator
         {
             string listGlobalKey = currentModulePrefix + stmt.Target;
             if (mutableGlobals.ContainsKey(listGlobalKey))
+            {
                 qualified = listGlobalKey;
+                // The global table sizes the slot from this type: the scan filed
+                // `xs` as UNKNOWN (1 byte) under its `list[...]` annotation, so the
+                // next global's storage began inside the pointer. Its init store
+                // overwrote the pointer's high byte and the next append read a
+                // wild address. GC_REF is the only honest size for a heap list.
+                mutableGlobals[listGlobalKey] = DataType.GC_REF;
+            }
         }
 
         listVarElemTypes[qualified] = elemDt;

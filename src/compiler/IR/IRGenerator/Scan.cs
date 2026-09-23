@@ -4975,7 +4975,20 @@ public partial class IRGenerator
                 {
                     string elemTypeName = ann.Annotation.Substring(5, ann.Annotation.Length - 6);
                     DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
-                    listVarElemTypes[prefix + ann.Target] = elemDt;
+                    // The key must be the one EmitListAnnAssign settles on: a module-level
+                    // list is a GLOBAL filed bare (`xs`), not under `main.xs`. Filing the
+                    // prefixed name here left a phantom entry that ResolveListVarQualified
+                    // prefers over the real slot -- len(xs) then dereferenced a pointer
+                    // nobody writes and read 0 while xs[i]/xs.append() used the right one
+                    // (they resolve through ResolveNameKey, which never consults this
+                    // table). The condition mirrors the emitter's: outside an inline
+                    // expansion, a name mutableGlobals holds is module storage.
+                    string listDeclKey = prefix + ann.Target;
+                    if (!string.IsNullOrEmpty(currentFunction)
+                        && string.IsNullOrEmpty(currentInlinePrefix)
+                        && mutableGlobals.ContainsKey(currentModulePrefix + ann.Target))
+                        listDeclKey = currentModulePrefix + ann.Target;
+                    listVarElemTypes[listDeclKey] = elemDt;
                     // list variables are NOT fixed-size arrays; do not add to localArrays
                 }
                 else
