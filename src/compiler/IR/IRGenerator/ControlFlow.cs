@@ -2956,6 +2956,14 @@ public partial class IRGenerator
         {
             foreach (string key in RaiseMessageNameKeys(ve.Name))
                 if (constantVariables.TryGetValue(key, out int cv)) { text = cv.ToString(); return true; }
+            // `_GAINS` names a module-level tuple of constants: CPython interpolates
+            // the repr `(1, 4, 16, 60)` -- the int-slot fallback would print the
+            // name's scalar binding instead, a bare 0 (adafruit_tcs34725).
+            if (ModuleConstListValues(ve.Name) is { } tv)
+            {
+                text = "(" + string.Join(", ", tv) + (tv.Count == 1 ? "," : "") + ")";
+                return true;
+            }
         }
 
         if (e is FStringExpr fs)

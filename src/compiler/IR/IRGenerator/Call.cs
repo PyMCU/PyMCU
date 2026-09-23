@@ -7157,6 +7157,20 @@ public partial class IRGenerator
             thenBranch, null, elseBranch));
     }
 
+    // Write the repr of a module-level constant tuple: `(1, 4, 16, 60)`, keeping
+    // the trailing comma of the one-element form, exactly as CPython spells it.
+    private void EmitConstTupleRepr(string writeStrFn, string floatFn, List<int> values)
+    {
+        EmitStreamStr(writeStrFn, "(");
+        for (int i = 0; i < values.Count; ++i)
+        {
+            if (i > 0) EmitStreamStr(writeStrFn, ", ");
+            EmitStreamVal(floatFn, new Constant(values[i]));
+        }
+        if (values.Count == 1) EmitStreamStr(writeStrFn, ",");
+        EmitStreamStr(writeStrFn, ")");
+    }
+
     // Write an already-evaluated value to the stream as a number/float.
     /// <param name="declared">
     /// The width the SOURCE was declared with, when the caller has it (#331). A Constant
@@ -8038,6 +8052,15 @@ public partial class IRGenerator
             if (sv != null) { pending += sv; continue; }
             if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
             if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
+            // `f"{_GAINS}"` names a module-level tuple of constants: CPython writes
+            // the repr `(1, 4, 16, 60)`. Reading the NAME instead evaluated to the
+            // table's base and streamed a 0 (adafruit_tcs34725's ValueErrors).
+            if (part.Expr is VariableExpr ftv && ModuleConstListValues(ftv.Name) is { } fcv)
+            {
+                Flush();
+                EmitConstTupleRepr(writeStrFn, floatFn, fcv);
+                continue;
+            }
             // `f"{t}"` where t names a tuple return (`t = f()`): the tuple text
             // CPython would write -- `(a, b, c)` -- without the tuple existing.
             if (part.Expr is VariableExpr fTupName
@@ -8466,6 +8489,14 @@ public partial class IRGenerator
 
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
+
+            // `print(_GAINS)` names a module-level tuple of constants: CPython prints
+            // the repr `(1, 4, 16, 60)` where the bare name read as a scalar 0.
+            if (arg is VariableExpr ptv && ModuleConstListValues(ptv.Name) is { } pcv)
+            {
+                EmitConstTupleRepr(writeStrFn, floatWriteFn, pcv);
+                return;
+            }
 
             // `print(t)` where t names a tuple return (`t = f()`): the tuple CPython
             // would have printed, not the `bytearray(b'...')` repr the fixed slots

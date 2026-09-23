@@ -577,6 +577,16 @@ public partial class IRGenerator
             if (!part.IsExpr) result += part.Text;
             else
             {
+                // `{_GAINS}` interpolates a module-level tuple of constants: CPython
+                // embeds the repr `(1, 4, 16, 60)` -- the name's scalar binding
+                // resolved to 0 and embedded that instead (adafruit_tcs34725).
+                if (part.Expr is VariableExpr ftv
+                    && ModuleConstListValues(ftv.Name) is { } fcv)
+                {
+                    result += "(" + string.Join(", ", fcv)
+                        + (fcv.Count == 1 ? "," : "") + ")";
+                    continue;
+                }
                 Val val = VisitExpression(part.Expr!);
                 if (val is Constant c)
                 {
