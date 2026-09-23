@@ -1780,6 +1780,16 @@ public partial class IRGenerator
                     constantVariables.Remove(prefix + "." + field);
                     strConstantVariables.Remove(prefix + "_" + field);
                     strConstantVariables.Remove(prefix + "." + field);
+                    localConstantValues.Remove(prefix + "_" + field);
+                    localConstantValues.Remove(prefix + "." + field);
+                    // Removing alone lets a later constant write re-track the name: a method
+                    // that stores different literals on different paths (DHTBase.measure's
+                    // `self.failed = True` on the error arms, `= False` on the success tail)
+                    // leaves the LAST write's value folded into every later read, including
+                    // reads on the paths the other value took. The name is runtime-mutable
+                    // for the rest of the compile, which is what killedConstants records.
+                    killedConstants.Add(prefix + "_" + field);
+                    killedConstants.Add(prefix + "." + field);
                     // A single-field instance IS its field: the value lives under the
                     // instance's own name, with no `_field` suffix to drop. Left in place,
                     // `self.value = self.value + 1` inside a method's loop folded every later
@@ -1787,6 +1797,8 @@ public partial class IRGenerator
                     // value, so a Fader that summed 0..9 returned 3.
                     constantVariables.Remove(prefix);
                     strConstantVariables.Remove(prefix);
+                    localConstantValues.Remove(prefix);
+                    killedConstants.Add(prefix);
                 }
         }
     }

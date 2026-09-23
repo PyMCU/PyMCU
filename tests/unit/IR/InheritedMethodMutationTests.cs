@@ -59,4 +59,41 @@ public class InheritedMethodMutationTests
 
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 17 }, Dst: Variable { Name: "x" } });
     }
+
+    /// <summary>
+    /// The receiver half of loop invalidation removed the field's constant but left the
+    /// name re-trackable: `measure` then stored `f = 1` on its error arms and `f = 0`
+    /// unconditionally at the end, so the last write's value folded into every later
+    /// read -- `G.value = o.f` emitted `const 0` on paths where `f` was 1. A name a
+    /// called method writes is runtime-mutable for the rest of the compile; it must go
+    /// to killedConstants, not just lose its current entry. (The `for` keeps `measure`
+    /// out of the outline pool so its writes expand inside the loop.)
+    /// </summary>
+    [Fact]
+    public void MethodWrittenFieldStaysRuntimeAfterLoopInvalidation()
+    {
+        var body = MainBody(Gen(
+            "from pymcu.types import uint8, ptr\n" +
+            "G: ptr[uint8] = ptr(0x3E)\n" +
+            "class DHTBase:\n" +
+            "    def __init__(self, pin: uint8):\n" +
+            "        self.f = 0\n" +
+            "        self.pin = pin\n" +
+            "    def measure(self):\n" +
+            "        for j in range(2):\n" +
+            "            pass\n" +
+            "        if self.pin > 0:\n" +
+            "            self.f = 1\n" +
+            "            return\n" +
+            "        self.f = 0\n" +
+            "class DHT(DHTBase):\n" +
+            "    pass\n" +
+            "o = DHT(G.value)\n" +
+            "for i in range(100):\n" +
+            "    o.measure()\n" +
+            "    G.value = o.f\n"));
+
+        Assert.Contains(body, i => i is Copy { Src: Variable { Name: "o_f" }, Dst: MemoryAddress });
+        Assert.DoesNotContain(body, i => i is Copy { Src: Constant { Value: 0 }, Dst: MemoryAddress });
+    }
 }
