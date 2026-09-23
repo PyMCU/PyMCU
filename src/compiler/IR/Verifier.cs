@@ -78,6 +78,7 @@ public static class Verifier
     {
         var violations = new List<Violation>();
         var declared = DeclaredStorage(program);
+        var compileTime = new HashSet<string>(program.CompileTimeNames);
         var fnByName = program.Functions
             .GroupBy(f => f.Name)
             .ToDictionary(g => g.Key, g => g.First());
@@ -123,7 +124,7 @@ public static class Verifier
                 CollectJumps(ins, jumps);
                 CheckStorageKeys(ins, f, declared, violations);
                 CheckReads(ins, f, writtenHere[f.Name], writtenSomewhere, declared,
-                    violations);
+                    compileTime, violations);
                 CheckWidths(ins, f, violations);
                 CheckIndexWidths(ins, f, flashTables, violations);
                 CheckTags(ins, f, fnByName, violations);
@@ -332,6 +333,12 @@ public static class Verifier
     private static IEnumerable<Val> AllVals(Instruction ins)
     {
         foreach (var v in ReadVals(ins)) yield return v;
+        foreach (var v in DstVals(ins)) yield return v;
+    }
+
+    /// The vals an instruction writes: every Dst position.
+    private static IEnumerable<Val> DstVals(Instruction ins)
+    {
         switch (ins)
         {
             case Unary x: yield return x.Dst; break;
@@ -352,6 +359,16 @@ public static class Verifier
             case BytearrayLoad x: yield return x.Dst; break;
             case GcAlloc x: yield return x.Dst; break;
         }
+    }
+
+    /// Names of every Variable and Temporary an instruction mentions, read or
+    /// written. Shared with the generator's compile-time-name export so both
+    /// sides enumerate "a name appeared in the IR" the same way.
+    internal static IEnumerable<string> ScalarNames(Instruction ins)
+    {
+        foreach (var v in AllVals(ins))
+            if (v is Variable x) yield return x.Name;
+            else if (v is Temporary t) yield return t.Name;
     }
 
     // ---------------------------------------------------------------------
@@ -485,24 +502,34 @@ public static class Verifier
 
     private static void CheckReads(Instruction ins, Function f,
         HashSet<string> writtenHere, HashSet<string> writtenSomewhere,
-        HashSet<string> declared, List<Violation> violations)
+        HashSet<string> declared, HashSet<string> compileTime,
+        List<Violation> violations)
     {
         foreach (var v in ReadVals(ins))
         {
             var name = ValName(v);
             if (name == null) continue;
-            if (writtenHere.Contains(name) || declared.Contains(name)) continue;
+            if (WrittenIn(writtenHere, name) || declared.Contains(name)) continue;
+            // A name the generator bound to a compile-time value (an object,
+            // a bound function, a literal container) is read through a
+            // placeholder byte that is never meant to be written.
+            if (WrittenIn(compileTime, name)) continue;
 
             bool dotted = name.Contains('.');
             if (name.StartsWith("tmp_") || dotted)
             {
-                // A temp or a qualified local read inside a function that never
-                // writes it is reading another frame's overlaid slot.
+                // A module-frame spelling names flat module storage, the same
+                // slot in every frame: a write anywhere reaches this read.
+                // Only frame-local spellings (inlineN.*, an outlined body's
+                // own prefix) are per-frame overlays a foreign write proves
+                // nothing about.
+                if (IsModuleSpelling(name) && WrittenIn(writtenSomewhere, name))
+                    continue;
                 violations.Add(new Violation("read-never-written", f.Name,
                     $"'{name}' is read but this function never writes it and it is " +
                     "not a parameter -- it names a slot in somebody else's frame"));
             }
-            else if (!writtenSomewhere.Contains(name))
+            else if (!WrittenIn(writtenSomewhere, name))
             {
                 // A bare name is a global by construction; one that no instruction
                 // anywhere writes and nothing declares is a slot that does not exist.
@@ -514,6 +541,33 @@ public static class Verifier
             // global spelling without registering it -- same split-name family as
             // one-storage-key, flagged there if it collides.
         }
+    }
+
+    /// "main.x" and "mod___module_init.x" both resolve to module-level storage:
+    /// main IS the entry module's top level, and a module-init frame is the
+    /// module's own. Any other dotted head is a frame-local prefix.
+    private static bool IsModuleSpelling(string name)
+    {
+        int dot = name.IndexOf('.');
+        if (dot <= 0) return false;
+        string head = name[..dot];
+        return head == "main" || head.EndsWith("___module_init");
+    }
+
+    // Module storage files under two spellings (the bare name and the
+    // qualified `main.X`/`module___module_init.X` form); a write to either
+    // reaches a read of either -- the same twin-key rule the storage-key
+    // check applies. A bare name read anywhere names the same module slot
+    // its `main.` spelling does.
+    private static bool WrittenIn(HashSet<string> set, string name)
+    {
+        if (set.Contains(name)) return true;
+        if (name.StartsWith("main.")) return set.Contains(name[5..]);
+        if (!name.Contains('.')) return set.Contains("main." + name);
+        int dot = name.IndexOf('.');
+        if (dot > 0 && name[..dot].EndsWith("___module_init"))
+            return set.Contains(name[..dot][..^"___module_init".Length] + "_" + name[(dot + 1)..]);
+        return false;
     }
 
     // ---------------------------------------------------------------------

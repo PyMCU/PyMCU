@@ -1431,11 +1431,182 @@ public partial class IRGenerator
         // @inline body, already expanded into its callers, cannot be flagged.
         CheckReentrancy(irProgram);
 
+        // Names emitted for values that exist only at compile time -- object
+        // instances, bound functions, comprehension items, literal containers.
+        // Each leaves a placeholder Variable where a read needs a Val and no
+        // instruction ever writes the byte; the verifier exempts exactly these
+        // from read-never-written, the one check that cannot tell them from a
+        // genuinely unwritten slot.
+        irProgram.CompileTimeNames = CompileTimeOnlyNames(irProgram);
+
         // Between-passes verifier (PYMCU_VERIFY_IR): the raw generator output is the
         // stage every later pass trusts, so it is the first thing worth checking.
         Verifier.Check(irProgram, "generate");
 
         return irProgram;
+    }
+
+    /// <summary>
+    /// Every Variable/Temporary name in the finished IR that stands for a
+    /// compile-time value rather than a run-time slot. A name counts when a
+    /// positive compile-time binding map knows it (instanceClasses and
+    /// friends -- an object's placeholder byte still acquires a scalar entry
+    /// from the synthesized assign that built it, so those maps win over the
+    /// scalar test), or when it owns no scalar slot of its own but is the
+    /// parent under which real slots were flattened, or it names a function
+    /// being used as a value. A name that fails both sides -- no slot, no
+    /// compile-time binding -- stays out, so the verifier still treats it as
+    /// a genuine unwritten read.
+    /// </summary>
+    private List<string> CompileTimeOnlyNames(ProgramIR irProgram)
+    {
+        // Strict prefixes of every emitted name: an object whose fields
+        // flatten to "obj_field" leaves the parent "obj" naming nothing but
+        // the instance itself. Every emitted name contributes, not only the
+        // scalar maps' -- a field slot the maps never registered still makes
+        // its parent a compound object. A real scalar that shares a prefix
+        // with a compound child is still kept out by HasScalarSlot below.
+        var scalarParents = new HashSet<string>(StringComparer.Ordinal);
+        void AddParents(string key)
+        {
+            for (int i = 1; i < key.Length; i++)
+                if (key[i] == '_' || key[i] == '.')
+                    scalarParents.Add(key[..i]);
+        }
+        foreach (var fn0 in irProgram.Functions)
+            foreach (var ins0 in fn0.Body)
+                foreach (var n0 in Verifier.ScalarNames(ins0))
+                    AddParents(n0);
+
+        bool HasScalarSlot(string n) =>
+            variableTypes.ContainsKey(n)
+            || mutableGlobals.ContainsKey(n)
+            || globals.ContainsKey(n)
+            || runtimeStrVars.ContainsKey(n)
+            || runtimePtrVars.ContainsKey(n)
+            || bufferLogicalLen.ContainsKey(n)
+            || multiStrVariables.ContainsKey(n)
+            || multiStrCandidates.ContainsKey(n)
+            || arrayElemTypes.ContainsKey(n)
+            || arraySizes.ContainsKey(n)
+            || moduleSramArrays.Contains(n)
+            || arraysWithVariableIndex.Contains(n)
+            || bytearrayParams.Contains(n)
+            || tempRanges.ContainsKey(n);
+
+        // A function or bound method passed as a value leaves a name whose
+        // byte is the funcref placeholder. The IR spells the module-level
+        // ones "main.f" -- the registration tables know them bare.
+        bool FunctionObject(string n)
+        {
+            if (functionParams.ContainsKey(n) || functionReturnTypes.ContainsKey(n)
+                || inlineFunctions.ContainsKey(n) || methodAstByName.ContainsKey(n)
+                || externFunctionMap.ContainsKey(n) || loopFunctionAliases.ContainsKey(n)
+                || lambdaVariableNames.ContainsKey(n))
+                return true;
+            int dot = n.IndexOf('.');
+            return dot > 0
+                && (functionParams.ContainsKey(n[(dot + 1)..])
+                    || functionReturnTypes.ContainsKey(n[(dot + 1)..])
+                    || inlineFunctions.ContainsKey(n[(dot + 1)..])
+                    || methodAstByName.ContainsKey(n[(dot + 1)..]));
+        }
+
+        // Positive compile-time bindings only; scalarParents and boundNames
+        // stay out because they also hold real scalars (a name that shares a
+        // prefix with another, and every assigned name respectively) -- they
+        // join the test below only behind the no-scalar-slot gate. The
+        // constant tables count as compile-time bindings -- a Variable read
+        // of a name whose value the generator already knows is a placeholder
+        // read, never a demand for runtime storage.
+        bool IsCompileTimeOnly(string n) =>
+            instanceClasses.ContainsKey(n)
+            || slotInstances.ContainsKey(n)
+            || constSequenceBindings.ContainsKey(n)
+            || dictLiteralBindings.ContainsKey(n)
+            || setLiteralBindings.ContainsKey(n)
+            || listLiteralParams.ContainsKey(n)
+            || arrayLiteralElements.ContainsKey(n)
+            || namedTupleElements.ContainsKey(n)
+            || instanceArrayClass.ContainsKey(n)
+            || noneValuedNames.Contains(n)
+            || constantVariables.ContainsKey(n)
+            || constantAddressVariables.ContainsKey(n)
+            || floatConstantVariables.ContainsKey(n)
+            || localConstantValues.ContainsKey(n)
+            || strConstantVariables.ContainsKey(n)
+            || FunctionObject(n);
+
+        // A name spelled "main.x" is the module global "x" -- the twin rule
+        // one-storage-key already encodes. Bindings file under either spelling
+        // (module-level `with m as v:` binds the bare name while reads spell
+        // the qualified one), so both sides of the test ask both spellings.
+        bool AnyKey(Func<string, bool> test, string n)
+        {
+            if (test(n)) return true;
+            if (n.StartsWith("main.")) return test(n[5..]);
+            int dot = n.IndexOf('.');
+            if (dot > 0 && n[..dot].EndsWith("___module_init"))
+                return test(n[..dot][..^"___module_init".Length] + "_"
+                            + n[(dot + 1)..]);
+            return false;
+        }
+
+        // A flattened field of a compile-time object: "main.s__offset" is the
+        // field alias of the slot instance "main.s". The module head itself
+        // ("main", "mod___module_init") is not an object, so the walk skips
+        // the first separator.
+        bool ChildOfCtParent(string n)
+        {
+            bool first = true;
+            for (int i = 1; i < n.Length; i++)
+            {
+                if (n[i] != '_' && n[i] != '.') continue;
+                if (first) { first = false; continue; }
+                if (IsCompileTimeOnly(n[..i])) return true;
+            }
+            return false;
+        }
+
+        // Names the compiler mints itself -- anonymous constructor targets
+        // ("__c" + id), const-sequence elements ("__ctseq"), comprehension
+        // temporaries ("__ctcomp"), const tables ("__cttab"). They never name
+        // user storage; IsNameKnownSomewhere applies the same "__c" test for
+        // the undefined-name check.
+        bool MintedName(string n)
+        {
+            int dot = n.LastIndexOf('.');
+            string seg = dot >= 0 ? n[(dot + 1)..] : n;
+            return seg.StartsWith("__c");
+        }
+
+        var names = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var fn in irProgram.Functions)
+        {
+            var paramSet = new HashSet<string>(fn.Params);
+            foreach (var ins in fn.Body)
+                foreach (var n in Verifier.ScalarNames(ins))
+                {
+                    if (n.StartsWith("tmp_") || paramSet.Contains(n)) continue;
+                    bool scalar = AnyKey(HasScalarSlot, n);
+                    // A positive compile-time map wins over the scalar gate:
+                    // an object's placeholder byte still acquires a
+                    // variableTypes entry from the synthesized assign that
+                    // built it. The compound/child/bound fallbacks only apply
+                    // to a name that owns NO scalar slot -- a real scalar can
+                    // share a prefix with an unrelated flattened child, and a
+                    // real field of an instance is ordinary storage. For a
+                    // slotless name, boundNames means bound-to-a-compile-time
+                    // value: a run-time binding would have emitted the write
+                    // the verifier looks for first.
+                    if (AnyKey(IsCompileTimeOnly, n) || MintedName(n)
+                        || (!scalar && (scalarParents.Contains(n)
+                                        || ChildOfCtParent(n)
+                                        || boundNames.Contains(n))))
+                        names.Add(n);
+                }
+        }
+        return new List<string>(names);
     }
 
     /// <summary>

@@ -395,6 +395,15 @@ public class ProgramIR
     public Dictionary<string, HashSet<string>> ClassChildren      { get; set; } = new();
     public Dictionary<string, HashSet<string>> ClassDirectMethods { get; set; } = new();
 
+    // Storage names emitted into the IR for values that exist only at compile
+    // time: object instances, bound functions, comprehension items, literal
+    // containers. The binding machinery reads each in value position through a
+    // placeholder Variable whose byte no instruction ever writes -- the
+    // between-passes verifier exempts exactly these from read-never-written,
+    // which is the one check that cannot tell them from an unwritten slot.
+    // Absent in .mir files from older compilers; deserializes to empty.
+    public List<string> CompileTimeNames { get; set; } = new();
+
     // Vtable specs surviving after devirtualization (empty for most programs).
     public List<VtableSpec> Vtables { get; set; } = new();
 
