@@ -1691,6 +1691,12 @@ public partial class IRGenerator
             }
 
             functionReturnTypes[fullName] = func.ReturnType;
+            // `return <seq>` in an outlined function: record the returned name so a
+            // call site compiled before this body can still resolve the element
+            // type -- a module-level `x = f()` precedes f's emission, when
+            // funcListReturnElems is still empty.
+            if (!func.IsInline && SeqNameReturnedBy(func) is { } seqName)
+                funcReturnSeqExprs[fullName] = (seqName, currentModulePrefix ?? "");
             var @params = new List<string>();
             var paramTypes = new List<DataType>();
             foreach (var p in func.Params)
@@ -4526,6 +4532,28 @@ public partial class IRGenerator
         // The shared walk reaches the arms the old recursion skipped: a return
         // inside try/with/match is still a return.
         return TypeInference.WalkStatements(method.Body.Statements).Any(s => s is ReturnStmt);
+    }
+
+    // The single sequence name an outlined function's returns agree on, or null:
+    // `return tuple(v)` / `return list(v)` / `return v` all answer "v". A name the
+    // body assigns is a local the caller cannot resolve, and returns naming
+    // different sequences have no one answer -- both refuse by answering null.
+    private static string? SeqNameReturnedBy(FunctionDef func)
+    {
+        var assigned = new HashSet<string>();
+        var receivers = new HashSet<(string, string)>();
+        CollectMutatedNames(func.Body, assigned, receivers);
+        string? name = null;
+        foreach (var r in TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>())
+        {
+            Expression? e = r.Value;
+            if (e is CallExpr { Callee: VariableExpr { Name: "tuple" or "list" }, Args: [var inner] })
+                e = inner;
+            if (e is not VariableExpr v || assigned.Contains(v.Name)) continue;
+            if (name == null) name = v.Name;
+            else if (name != v.Name) return null;
+        }
+        return name;
     }
 
     // Registers a nested class (a class defined in the body of another class) so it

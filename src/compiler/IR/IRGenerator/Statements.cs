@@ -1586,7 +1586,20 @@ public partial class IRGenerator
                 // An instance anchor has no byte to copy (`return self` inside an
                 // inlined __enter__/__exit__): the alias below binds the result.
                 if (!(val is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
-                    Emit(new Copy(val, ctx.ResultTemp));
+                {
+                    // A ResultTemp minted from an annotation StringToDataType can't map
+                    // (`-> NamedTuple`, `-> tuple`) is one byte wide; returning a GC_REF
+                    // through it truncates the pointer. The emitted Temporary keeps its
+                    // baked width -- variableTypes only feeds IRGenerator lookups -- so the
+                    // store must name a widened view of the same slot (the allocator sizes
+                    // the slot from the widest mention).
+                    Val resultDst = GetValType(val) == DataType.GC_REF && ctx.ResultTemp.Type != DataType.GC_REF
+                        ? ctx.ResultTemp with { Type = DataType.GC_REF }
+                        : ctx.ResultTemp;
+                    Emit(new Copy(val, resultDst));
+                    if (resultDst is Temporary { Type: DataType.GC_REF })
+                        variableTypes[ctx.ResultTemp.Name] = DataType.GC_REF;
+                }
                 ctx.ResultAssigned = true;
 
                 // `return pulses` where pulses is a list[T] local (declared type `array.array`

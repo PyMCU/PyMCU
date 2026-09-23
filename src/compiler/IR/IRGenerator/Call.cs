@@ -1639,6 +1639,19 @@ public partial class IRGenerator
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
         EmitMaybeTaggedCall(callee, argValuesL, dstC);
+        // An outlined sequence result whose element type is resolvable at the call
+        // site: `-> list[T]` names it, and a bare `-> list`/`-> tuple` answers
+        // through the `return <seq>` name the scan recorded. The callee's own body
+        // emits after every module-level caller, so funcListReturnElems cannot
+        // answer yet -- without this `print(f())` and a bare `x = f()` saw a GC
+        // pointer where the sequence's repr and len() belong.
+        if (retDt == DataType.GC_REF && !listVarElemTypes.ContainsKey(dstC.Name)
+            && ResolveOutlinedSeqElem(callee, rType, argValuesL) is { } seqElem)
+        {
+            listVarElemTypes[dstC.Name] = seqElem;
+            if (rType != null && (rType.Contains("tuple") || rType.Contains("Tuple")))
+                tupleBoundNames.Add(dstC.Name);
+        }
         return dstC;
     }
 
@@ -9471,7 +9484,36 @@ public partial class IRGenerator
     /// </summary>
     private static bool IsListLikeReturnType(string? returnType)
         => returnType != null && (returnType.StartsWith("list[") || returnType == "list"
-                                  || returnType == "array.array");
+                                  || returnType == "array.array"
+                                  || returnType == "tuple" || returnType.StartsWith("tuple[")
+                                  || returnType.StartsWith("Tuple[")
+                                  || returnType == "NamedTuple");
+
+    // The element type of an outlined callee's sequence result, when it is
+    // resolvable before the callee's own body emits: `-> list[T]` names it in the
+    // annotation; a bare `-> list`/`-> tuple` answers through the `return <seq>`
+    // name the scan recorded -- a returned parameter takes the bound argument's
+    // element type, a returned module-level sequence its own registration.
+    private DataType? ResolveOutlinedSeqElem(string callee, string? rType, List<Val> argValues)
+    {
+        if (rType is { Length: > 0 } rt && rt.StartsWith("list[") && rt.EndsWith("]"))
+            return DataTypeExtensions.StringToDataType(rt.Substring(5, rt.Length - 6));
+        if (!funcReturnSeqExprs.TryGetValue(callee, out var seq)) return null;
+        // A returned parameter answers with the argument bound at THIS call.
+        if (functionParams.TryGetValue(callee, out var fparams)
+            && fparams.IndexOf(seq.Name) is int pi && pi >= 0 && pi < argValues.Count)
+        {
+            string? argName = argValues[pi] switch
+            { Variable av => av.Name, Temporary at => at.Name, _ => null };
+            if (argName != null && ResolveListVarQualified(argName) is { Length: > 0 } argKey
+                && listVarElemTypes.TryGetValue(argKey, out var argElem))
+                return argElem;
+        }
+        // A module-level sequence of the callee's own module.
+        if (listVarElemTypes.TryGetValue(seq.ModulePrefix + seq.Name, out var ge)) return ge;
+        if (listVarElemTypes.TryGetValue(seq.Name, out var ge2)) return ge2;
+        return null;
+    }
 
     /// <summary>
     /// A `Union[A, B, ...]` parameter is resolved at its call site (CheckAnnotationNames'

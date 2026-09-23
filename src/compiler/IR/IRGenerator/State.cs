@@ -538,6 +538,14 @@ public partial class IRGenerator
     // list-ness even though the declaration says nothing about lists.
     private Dictionary<string, DataType> funcListReturnElems = new();
 
+    // The sequence name an outlined function's returns agree on (`return tuple(v)`,
+    // `return list(v)`, `return v` all answer "v"), recorded at scan time under the
+    // function's full name. A module-level `x = f()` compiles BEFORE f's own body
+    // emits, so funcListReturnElems cannot answer yet -- the call site resolves the
+    // recorded name against its own maps instead: a parameter's element type is the
+    // argument's, a module-level sequence's is already registered.
+    private Dictionary<string, (string Name, string ModulePrefix)> funcReturnSeqExprs = new();
+
     // Unique suffix for the synthesized index of a runtime-bounds slice iteration.
     private int sliceLoopId = 0;
 
