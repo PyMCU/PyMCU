@@ -40,7 +40,9 @@ public class GeneratorBoundToANameTests
     private const string Gen =
         "def gen():\n" +
         "    yield 1\n" +
-        "    yield 2\n";
+        "    yield 2\n" +
+        "def f() -> None:\n" +
+        "    pass\n";
 
     private static ProgramIR Compile(string src) =>
         new IRGenerator().Generate(
@@ -134,7 +136,7 @@ public class GeneratorBoundToANameTests
 
     [Theory]
     [InlineData("    try:\n        for v in gen():\n            T = v\n    except ValueError:\n        T = 9\n")]
-    [InlineData("    try:\n        T = 1\n    except ValueError:\n        for v in gen():\n            T = v\n")]
+    [InlineData("    try:\n        f()\n    except ValueError:\n        for v in gen():\n            T = v\n")]
     [InlineData("    try:\n        T = 1\n    finally:\n        for v in gen():\n            T = v\n")]
     public void AGeneratorLoopInsideATryIsStillDesugared(string body)
     {
@@ -145,7 +147,9 @@ public class GeneratorBoundToANameTests
         //
         // A TryStmt holds four statement LISTS (body, each handler, else, finally) rather than
         // Blocks, so it needs its own arm. All four are covered here except `else`, which the
-        // parser only builds alongside a handler and which the same arm walks.
+        // parser only builds alongside a handler and which the same arm walks. The handler
+        // case calls f() in the body because an infallible body makes the handler dead code
+        // that never emits.
         var ir = Compile(Gen + "T: uint8 = 0\n" +
                          "def main() -> None:\n    global T\n" + body);
 

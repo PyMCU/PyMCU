@@ -2427,12 +2427,13 @@ public partial class IRGenerator
 
         // RFC 0008: `try: self._font = open(...); ... except OSError:` -- a body that
         // emitted no Call and no raise cannot throw, so the handlers are dead code and
-        // the dispatch they hang off unreachable. Folded here rather than lowered: an
-        // `except OSError` around a compile-time open() cannot fire, exactly like the
-        // `except ImportError` around a resolved import never does. Gated on romfs
-        // being in play so programs that open nothing keep their emission, byte for
-        // byte.
-        if (romfsHandles.Count > 0 && callIndices.Count == 0
+        // the dispatch they hang off unreachable. Every throw path lowers to one of
+        // those two shapes: a callee signals through T (BranchOnError guards every
+        // Call) and a lexical raise / runtime fault emits SignalError. A body with
+        // neither leaves the happy path as the only path, and its end state is the
+        // post-try state -- joining handler arms here would veto exactly the bindings
+        // the provably-infallible body established.
+        if (callIndices.Count == 0
             && !currentInstructions.Skip(bodyStart).Any(i => i is SignalError))
         {
             Emit(new Label(afterLabel));
