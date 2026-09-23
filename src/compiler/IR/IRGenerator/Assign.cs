@@ -5011,10 +5011,25 @@ public partial class IRGenerator
     ///
     /// A value the declared width would truncate is NOT recorded: the storage would hold one
     /// number and a later call would be handed another.
+    ///
+    /// A module global is never recorded at all, even though the store reaches here through
+    /// the same path a local does. The map is read by every function lowered afterwards, and
+    /// a global's last stored constant is a fact about the function that WROTE it, not about
+    /// the reader: `pulse_capture_clear` stores `_pulse_armed = 0` while the constructor is
+    /// being lowered, and `pulse_isr`, generated later by compile_isr, folded its
+    /// `if _pulse_armed == 0:` on that stale 0 -- the arm-branch emitted unconditionally and
+    /// the whole delta/store path after it was dropped, so the capture ISR armed once and
+    /// never recorded a pulse.
     /// </summary>
     private void RecordLocalConstant(string key, Val value, Expression? init,
                                      string? declaredType, DataType storedType)
     {
+        if (mutableGlobals.ContainsKey(key))
+        {
+            localConstantValues.Remove(key);
+            return;
+        }
+
         // A FLOAT name is never recorded here, and the map is never asked about one. This map
         // holds INTEGERS; a float local reaching it answers a read with the integer part, and
         // `x: float = 1.0` then a read of x came back as the integer 1, whose bytes are not

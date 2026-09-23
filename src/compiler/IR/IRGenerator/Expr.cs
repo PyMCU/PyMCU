@@ -89,8 +89,11 @@ public partial class IRGenerator
             variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
             // A walrus writes the name like any assignment; it carries a constant only when
-            // the value it stores is one.
-            if (rhs is Constant walrusConst) localConstantValues[key] = walrusConst.Value;
+            // the value it stores is one. A module-global target is not remembered: the map
+            // answers for every function lowered afterwards, and one function's store is not
+            // the value another function's read can see (RecordLocalConstant says why).
+            if (rhs is Constant walrusConst && !mutableGlobals.ContainsKey(key))
+                localConstantValues[key] = walrusConst.Value;
             else localConstantValues.Remove(key);
             return vr;
         }
