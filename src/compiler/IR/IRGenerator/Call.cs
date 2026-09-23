@@ -2715,6 +2715,12 @@ public partial class IRGenerator
                         listVarElemTypes[paramName] = listVarElemTypes[argListKey];
                         if (listInnerElemTypes.TryGetValue(argListKey, out var argInnerElem))
                             listInnerElemTypes[paramName] = argInnerElem;
+                        // The parameter holds the reference itself: binding it at
+                        // the annotation's width (uint8 on an unannotated param, which
+                        // is also what namedtuple() synthesizes) truncated the 16-bit
+                        // GC pointer to its low byte and every `p[i]` inside the body
+                        // indexed the register file.
+                        variableTypes[paramName] = DataType.GC_REF;
                     }
                     Emit(new Copy(vArg, new Variable(paramName, variableTypes[paramName])));
                     CarryOptionalTagToParam(paramName, vArg);
@@ -2950,6 +2956,30 @@ public partial class IRGenerator
             floatConstantVariables.Remove(paramName);
             variableAliases.Remove(paramName);
             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+            // A heap-list argument arrives as a GC_REF Temporary (`tuple(xs)`) or a
+            // Variable the alias chase resolves to a registered list. Copying it into
+            // a param var of the annotation's width -- uint8 when unannotated, which
+            // is also what namedtuple() synthesizes for every field -- truncated the
+            // 16-bit pointer to its low byte; `p[i]` inside the body then indexed the
+            // register file. The parameter IS the list the caller passed: keep the
+            // binding at pointer width and carry the element type.
+            {
+                string? argBindName = argValues[i] switch
+                { Variable av => av.Name, Temporary at => at.Name, _ => null };
+                for (string? cur = argBindName; cur != null;)
+                {
+                    if (listVarElemTypes.TryGetValue(cur, out var argElemDt))
+                    {
+                        paramType = DataType.GC_REF;
+                        listVarElemTypes[paramName] = argElemDt;
+                        if (listInnerElemTypes.TryGetValue(cur, out var argInnerDt))
+                            listInnerElemTypes[paramName] = argInnerDt;
+                        break;
+                    }
+                    if (!variableAliases.TryGetValue(cur, out var argNext)) break;
+                    cur = argNext;
+                }
+            }
             variableTypes[paramName] = paramType;
             Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
             CarryOptionalTagToParam(paramName, argValues[i]);
@@ -5064,6 +5094,31 @@ public partial class IRGenerator
             if (TryResolveArenaBufferField(lenMem.Object, lenMem.Member, out string lenFieldQ)
                 && arenaBufferLenVar.TryGetValue(lenFieldQ, out string lenFieldVar))
                 return new Variable(lenFieldVar, DataType.UINT16);
+            // len(m.f) where the field holds a heap list or tuple: the field
+            // slot is a GC_REF whose header byte 0 is the count, same as a named
+            // list's. A single-field class collapses `m.f` onto m's own binding,
+            // so the name the access evaluates to is asked for too -- gated to a
+            // plain field so no getter or descriptor call is replayed.
+            if (lenMem.Object is VariableExpr lenOv)
+            {
+                string lenMemKey = ResolveNameKey(lenOv.Name) + "_" + lenMem.Member;
+                if (listVarElemTypes.ContainsKey(lenMemKey))
+                {
+                    Val memListPtr = new Variable(lenMemKey, DataType.GC_REF);
+                    return EmitListLoad(memListPtr, 0, DataType.UINT8);
+                }
+                if (InstanceClassOfName(lenOv.Name) is { } lenMemCls
+                    && classFieldLayout.TryGetValue(lenMemCls, out var lenMemLay)
+                    && lenMemLay.Any(f => f.Field == lenMem.Member)
+                    && !IsPropertyGetterRead(lenMem) && !IsDescriptorMemberRead(lenMem)
+                    && VisitExpression(lenMem) is { } lenMemVal)
+                {
+                    string? lenMemName = lenMemVal switch
+                    { Variable lmv => lmv.Name, Temporary lmt => lmt.Name, _ => null };
+                    if (lenMemName != null && listVarElemTypes.ContainsKey(lenMemName))
+                        return EmitListLoad(lenMemVal, 0, DataType.UINT8);
+                }
+            }
             if (TryGetDictFor(lenMem, out var lenDict)) return new Constant(lenDict.Entries.Count);
             if (TryGetSetFor(lenMem, out var lenSet)) return new Constant(lenSet.Elements.Count);
             if (TryResolveInstanceSequence(lenMem, out _, out int lenSeqCount))

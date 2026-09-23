@@ -3053,6 +3053,57 @@ public partial class IRGenerator
             return EmitClassObjectSelect(coSubInner, coSubCands, subVals);
         }
 
+        // `m.f[i]` where the field holds a heap list or tuple: the field slot
+        // is a GC_REF to the object, so the subscript lowers exactly like a
+        // named list's -- element at header offset 2 + i*elemSize. The field
+        // answers under its flattened `<obj>_<member>` key when the store wrote
+        // one; a single-field class collapses `m.f` onto the binding `m` itself
+        // was given, so the name the access EVALUATES to is asked for too --
+        // gated to a plain field of a resolved class so no property getter or
+        // descriptor call is replayed by the probe.
+        if (expr.Target is MemberAccessExpr { Object: VariableExpr lov } memList)
+        {
+            string memKey = ResolveNameKey(lov.Name) + "_" + memList.Member;
+            Val? memPtr = null;
+            DataType memElemDt = DataType.UNKNOWN;
+            if (listVarElemTypes.TryGetValue(memKey, out var flatElemDt))
+            {
+                memPtr = new Variable(memKey, DataType.GC_REF);
+                memElemDt = flatElemDt;
+            }
+            else if (InstanceClassOfName(lov.Name) is { } memCls
+                     && classFieldLayout.TryGetValue(memCls, out var memLay)
+                     && memLay.Any(f => f.Field == memList.Member)
+                     && !IsPropertyGetterRead(memList) && !IsDescriptorMemberRead(memList)
+                     && VisitExpression(expr.Target) is { } memVal)
+            {
+                string? memValName = memVal switch
+                { Variable mv => mv.Name, Temporary mt => mt.Name, _ => null };
+                if (memValName != null && listVarElemTypes.TryGetValue(memValName, out var mvElemDt))
+                {
+                    memPtr = memVal;
+                    memKey = memValName;
+                    memElemDt = mvElemDt;
+                }
+            }
+            if (memPtr != null)
+            {
+                if (memElemDt == DataType.UNKNOWN)
+                    throw UserError(
+                        $"cannot infer the element type of '{memList.Member}' yet; "
+                        + "its first append must precede reads, or declare it "
+                        + "like `x: list[uint8] = []`", expr);
+                Val memIdx = VisitExpression(expr.Index);
+                Temporary memAddr = EmitElemAddr(memPtr, memIdx, memElemDt.SizeOf());
+                Temporary memRes = MakeTemp(memElemDt);
+                Emit(new LoadIndirect(memAddr, memRes, memElemDt));
+                if (memElemDt == DataType.GC_REF
+                    && listInnerElemTypes.TryGetValue(memKey, out var memInnerDt))
+                    listVarElemTypes[memRes.Name] = memInnerDt;
+                return memRes;
+            }
+        }
+
         // `self._levels[0]`: an element of a list of NUMBERS held in a field. The elements are
         // compile-time values, so a constant subscript folds to one of them.
         if (expr.Target is MemberAccessExpr constSeqMem

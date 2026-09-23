@@ -3211,6 +3211,38 @@ public partial class IRGenerator
                 }
             }
 
+            // `self.f = xs` where xs is a heap list or tuple: the field holds the
+            // reference itself, so it files as a GC_REF carrying the source's
+            // element type -- `m.f[i]`, `len(m.f)` and friends then lower against
+            // the field the way they do against the name that fed it. The
+            // layout's declared width (uint8 on an unannotated __init__ param,
+            // which is what namedtuple() synthesizes) would truncate the 16-bit
+            // pointer to its low byte.
+            string? refSrc = value switch { Variable rv => rv.Name, Temporary rt => rt.Name, _ => null };
+            string? refKey = null;
+            for (string? cur = refSrc; cur != null;)
+            {
+                if (listVarElemTypes.ContainsKey(cur)) { refKey = cur; break; }
+                if (!variableAliases.TryGetValue(cur, out var nxt)) break;
+                cur = nxt;
+            }
+            if (refSrc != null
+                && (refKey != null
+                    || (value is Variable { Type: DataType.GC_REF }
+                        or Temporary { Type: DataType.GC_REF })))
+            {
+                variableTypes[flattenedName] = DataType.GC_REF;
+                listVarElemTypes[flattenedName] = refKey != null ? listVarElemTypes[refKey] : DataType.UNKNOWN;
+                if (refKey != null && listInnerElemTypes.TryGetValue(refKey, out var refInner))
+                    listInnerElemTypes[flattenedName] = refInner;
+                if (refSrc != null && IsTupleBound(refSrc)) tupleBoundNames.Add(flattenedName);
+                else tupleBoundNames.Remove(flattenedName);
+                if (moduleInstanceMutableFields.Contains(flattenedName))
+                    mutableGlobals[flattenedName] = DataType.GC_REF;
+                Emit(new Copy(value, new Variable(flattenedName, DataType.GC_REF)));
+                return;
+            }
+
             // Store the flattened field at its declared width; hard-coding uint8 truncated a
             // uint16/uint32 field (a no-method multi-field struct's `total` read back as total&0xFF).
             DataType fdt = FlattenedFieldType(baseName, memExpr2.Member);
