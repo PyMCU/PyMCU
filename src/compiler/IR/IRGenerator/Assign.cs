@@ -1895,6 +1895,60 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentInlinePrefix))
             target = WidenInlineLocalToValue(varExpr, target, value);
 
+        // A name bound to a compile-time value -- an @inline parameter given a
+        // literal, or a folded local/global -- is being REBOUND here, and the
+        // constant it resolved to is not a storage location. Copy(v, <const>)
+        // stores to a bogus absolute address for an int, and to nothing at all
+        // for a float (a bare `STS` with no operand), while the stale binding
+        // keeps answering later reads with the OLD value: `v = v + 1` on an
+        // @inline param bound to 5 returned 5. A compile-time value just
+        // updates the binding; anything else needs a real slot -- the same
+        // shape the AugAssign path materializes for `x += 1` below.
+        if (target is Constant or FloatConstant or FunctionRef)
+        {
+            string rebindQ = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + varExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + varExpr.Name
+                    : varExpr.Name);
+            // strConstantVariables is NOT touched here: VisitAssign's preamble
+            // already answered "what text does this name hold" for THIS statement
+            // (StaticStringOf sees through names and compile-time ternaries, where
+            // `value` below may be a bare Constant whose Text never rode along).
+            // Removing it on that say-so wiped the record the preamble had just
+            // written -- `p = GRB if c else "GRBW"` then `len(p)` refused.
+            if (value is Constant rc)
+            {
+                constantVariables[rebindQ] = rc.Value;
+                floatConstantVariables.Remove(rebindQ);
+                noneValuedNames.Remove(rebindQ);
+                if (rc.Text is { } rcText) strConstantVariables[rebindQ] = rcText;
+                return;
+            }
+            if (value is FloatConstant rfc)
+            {
+                floatConstantVariables[rebindQ] = rfc.Value;
+                constantVariables.Remove(rebindQ);
+                noneValuedNames.Remove(rebindQ);
+                return;
+            }
+            constantVariables.Remove(rebindQ);
+            floatConstantVariables.Remove(rebindQ);
+            if (value is NoneVal)
+            {
+                noneValuedNames.Add(rebindQ);
+                return;
+            }
+            noneValuedNames.Remove(rebindQ);
+            DataType rebindT = GetValType(value);
+            if (rebindT == DataType.UNKNOWN) rebindT = DataType.UINT8;
+            if (variableTypes.TryGetValue(rebindQ, out var priorT)
+                && priorT != DataType.UNKNOWN && priorT != DataType.FLOAT
+                && rebindT != DataType.FLOAT && priorT.SizeOf() > rebindT.SizeOf())
+                rebindT = priorT;
+            variableTypes[rebindQ] = rebindT;
+            target = new Variable(rebindQ, rebindT);
+        }
         // RFC 0009: a union slot's payload write uses the member's width, not the
         // slot's -- a widest-typed Copy would convert an int member to float bits.
         if (target is Variable payTgt && optionalMembersByName.ContainsKey(payTgt.Name))
@@ -7972,6 +8026,20 @@ public partial class IRGenerator
                 Emit(new Copy(c, slot));
                 target = slot;
                 constantVariables.Remove(q);
+            }
+            else if (target is FloatConstant fct)
+            {
+                // The float-bound twin of the Constant case above: `value = min(max(value,
+                // 0.0), 1.0); value *= x` inside a setter whose param bound to a literal
+                // float emitted the AugAssign with the constant itself as the target.
+                string qf = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + ve.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+                var fslot = new Variable(qf, DataType.FLOAT);
+                variableTypes[qf] = DataType.FLOAT;
+                Emit(new Copy(fct, fslot));
+                target = fslot;
+                floatConstantVariables.Remove(qf);
             }
 
             Emit(new AugAssign(IRGenerator.MapAugOp(stmt.Op), target, operand));
