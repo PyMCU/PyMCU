@@ -778,6 +778,13 @@ public partial class IRGenerator
                     if (functionParams.TryGetValue(srcKey, out var p)) functionParams.TryAdd(add.Key, p);
                     if (functionReturnTypes.TryGetValue(srcKey, out var rt)) functionReturnTypes.TryAdd(add.Key, rt);
                     if (functionParamTypes.TryGetValue(srcKey, out var pt)) functionParamTypes.TryAdd(add.Key, pt);
+                    if (methodInstanceTypes.TryGetValue(srcKey, out var it)) methodInstanceTypes.TryAdd(add.Key, it);
+                    // Keep the DEFINING module, the way the re-export copy below does:
+                    // expanding `pymcu.time.delay_us` under the alias prefix made its
+                    // internal `case "avr": _delay_us_avr(us)` look for a name only the
+                    // canonical `time` scan registered -- a non-inline sibling never
+                    // gets an alias entry, so the call resolved to nothing.
+                    if (functionModulePrefix.TryGetValue(srcKey, out var mp)) functionModulePrefix.TryAdd(add.Key, mp);
                 }
                 // Propagate globals under the alias prefix too.
                 var globAdds = new List<KeyValuePair<string, SymbolInfo>>();

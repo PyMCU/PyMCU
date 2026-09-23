@@ -64,4 +64,30 @@ public class DottedModuleTests
         Assert.True(Calls(ir, "alarm_time_tick"),
             "the user's alarm_time variable must not stand in for alarm.time");
     }
+
+    [Fact]
+    public void AnInlineBodyUnderAnAliasPrefix_SeesItsNonInlineSibling()
+    {
+        // One file imported under two names: `pymcu.time.delay_us` expands its inline
+        // body under the pymcu_time_ prefix, where a call to the non-inline
+        // _delay_us_avr resolved to nothing -- the sibling only exists under the
+        // canonical time_ prefix functionModulePrefix never propagated.
+        var timeAst = Parse(
+            "def _delay_us_avr(us: uint8) -> uint8:\n    return us + 1\n" +
+            "@inline\n" +
+            "def delay_us(us: uint8) -> uint8:\n    return _delay_us_avr(us)\n");
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["time"] = timeAst,
+            ["pymcu.time"] = timeAst,
+        };
+
+        var ir = Gen(
+            "import pymcu.time\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = pymcu.time.delay_us(4)\n", mods);
+
+        Assert.True(Calls(ir, "time__delay_us_avr"),
+            "the alias expansion should still reach the canonical module's helper");
+    }
 }
