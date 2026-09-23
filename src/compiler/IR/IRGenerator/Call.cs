@@ -7106,7 +7106,41 @@ public partial class IRGenerator
         => mem.Object is VariableExpr recv
            && InstanceClassOfName(recv.Name) is { } cls
            && ResolveMROPropertyClass(cls, mem.Member) is { } propCls
-           && functionReturnTypes.GetValueOrDefault(propCls + "_" + mem.Member) == "bool";
+           && (functionReturnTypes.GetValueOrDefault(propCls + "_" + mem.Member) == "bool"
+               || GetterReturnsOnlyBoolEvidence(propCls, mem.Member));
+
+    // An unannotated getter declares "" -- its body is the evidence. Every value-return
+    // must be bool-shaped (literal, comparison, `not`, `bool(...)`, or a bool field read)
+    // for the property to print as Python's True/False; a single unrecognized return is
+    // enough to stay numeric, matching the conservative declared-type check above.
+    private bool GetterReturnsOnlyBoolEvidence(string cls, string member)
+    {
+        if (!inlineFunctions.TryGetValue(cls + "_" + member, out var fn)) return false;
+        bool sawValue = false;
+        foreach (var s in TypeInference.WalkStatements(fn.Body.Statements))
+        {
+            if (s is not ReturnStmt { Value: { } rv }) continue;
+            if (!ReturnExprDeclaresBool(rv, cls)) return false;
+            sawValue = true;
+        }
+        return sawValue;
+    }
+
+    private bool ReturnExprDeclaresBool(Expression e, string cls) => e switch
+    {
+        BooleanLiteral => true,
+        UnaryExpr { Op: Frontend.UnaryOp.Not } => true,
+        BinaryExpr { Op: var op } => op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+            or Frontend.BinaryOp.Less or Frontend.BinaryOp.Greater or Frontend.BinaryOp.LessEq
+            or Frontend.BinaryOp.GreaterEq or Frontend.BinaryOp.Is or Frontend.BinaryOp.IsNot
+            or Frontend.BinaryOp.In or Frontend.BinaryOp.NotIn,
+        CallExpr { Callee: VariableExpr { Name: "bool" } } => true,
+        MemberAccessExpr { Member: var fm, Object: VariableExpr { Name: "self" } } =>
+            classFieldLayout.TryGetValue(cls, out var fl)
+            && fl.Any(f => f.Field == fm && f.Type == "bool"),
+        VariableExpr { Name: var vn } => boolNames.Contains(vn),
+        _ => false,
+    };
 
     // Stream a runtime bool as Python spells it: the two words live in flash and the
     // branch picks one, so nothing is formatted at runtime.

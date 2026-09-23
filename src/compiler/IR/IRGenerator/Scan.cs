@@ -2969,6 +2969,14 @@ public partial class IRGenerator
             // already lands on.
             else if (rhs is StringLiteral) type = "str";
 
+            // `self._active = False` is a BOOL field, the same evidence `= val` where
+            // `val: bool` gives through paramTypes above. It has to be decided HERE, at
+            // introduction: bool ranks with uint8 (one byte) in ScalarWidthRank, so a
+            // later ApplyInferredFieldType join can never promote the uint8 default to
+            // bool -- and without the tag the field prints 0/1 where CPython spells
+            // False/True (adafruit_tcs34725.active).
+            else if (rhs is BooleanLiteral) type = "bool";
+
             // A field whose value is an EXPRESSION took uint8 and truncated silently: the
             // width came from the field, not from what was stored in it, so
             // `self._period = uint16(1000000 // uint32(hz))` read back as 20000 & 0xFF. Nothing
@@ -3424,6 +3432,12 @@ public partial class IRGenerator
                 if (il.Value > 65535) return "uint32";
                 if (il.Value > 255) return "uint16";
                 return null;
+
+            // `self._active = False` is a bool field. Without this the write answers null
+            // and the layout guesses a numeric byte, which then prints as 0/1 instead of
+            // False/True through every path that consults the field's declared type.
+            case BooleanLiteral:
+                return "bool";
 
             case FloatLiteral:
                 return "float";
