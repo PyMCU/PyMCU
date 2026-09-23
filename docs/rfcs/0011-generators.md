@@ -173,11 +173,11 @@ class g:
 ```
 
 - `_state`: `uint16` -- small ids plus the `0x7FFF` terminal.
-- `_value`: the narrowest integer type covering every yielded expression
-  (`uint8`/`int8`/`uint16`/`int16`, `uint32` fallback). Under decision 3 a
-  non-scalar yield emits *no* `_value` field; the `AssignStmt`s to it are
-  dropped at EmitStmt, and the `for` desugar refuses the read naming the
-  generator.
+- `_value`: the narrowest type covering every yielded expression
+  (`uint8`/`int8`/`uint16`/`int16`, `float` when any payload is a float,
+  `uint32` fallback). Under decision 3 a non-scalar yield emits *no*
+  `_value` field; the `AssignStmt`s to it are dropped at EmitStmt, and
+  the `for` desugar refuses the read naming the generator.
 - Locals: a local touched in more than one state, or read before written in
   its only state, becomes a field; all others stay poll-locals. A name
   declared `global` is never collected (decision 5).
