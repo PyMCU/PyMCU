@@ -253,4 +253,99 @@ public class IRVerifierTests
 
         Checks(ir).Should().Contain("flash-name-resolves");
     }
+
+    [Fact]
+    public void StorageWidth_FlagsANameHomedNarrowerThanItsWidestUse()
+    {
+        // The union3 shape: the slot is homed at UINT8 while a use elsewhere
+        // reads the same name at UINT16 -- the wider use overflows the slot.
+        var ir = IrWith(new Function
+        {
+            Name = "main",
+            Body =
+            {
+                new Copy(new Constant(3), new Variable("main.x", DataType.UINT8)),
+                new Copy(new Variable("main.x", DataType.UINT16),
+                         new Variable("main.y", DataType.UINT16)),
+            }
+        });
+
+        Checks(ir).Should().Contain("storage-width");
+    }
+
+    [Fact]
+    public void StorageWidth_StaysQuietWhenEveryUseMatchesTheHome()
+    {
+        var ir = IrWith(new Function
+        {
+            Name = "main",
+            Body =
+            {
+                new Copy(new Constant(3), new Variable("main.x", DataType.UINT8)),
+                new Copy(new Variable("main.x", DataType.UINT8),
+                         new Variable("main.y", DataType.UINT8)),
+            }
+        });
+
+        Checks(ir).Should().NotContain("storage-width");
+    }
+
+    [Fact]
+    public void ReadNeverWritten_IgnoresACompileTimeOnlyName()
+    {
+        // Object handles live in CompileTimeNames: read, never written, and not
+        // a storage slot -- the handle's byte is a placeholder.
+        var ir = IrWith(new Function
+        {
+            Name = "main",
+            Body =
+            {
+                new BitCheck(new Variable("main.flags"), 0,
+                    new Temporary("tmp_0")),
+            }
+        });
+        ir.CompileTimeNames.Add("main.flags");
+
+        Checks(ir).Should().NotContain("read-never-written");
+    }
+
+    [Fact]
+    public void WriteExceedsSlot_IgnoresSlotCellEncodings()
+    {
+        // __slot arrays are byte-cell storage: Src carries the whole field
+        // value and the backend writes one byte per cell.
+        var ir = IrWith(new Function
+        {
+            Name = "main",
+            Body =
+            {
+                new ArrayStore("main.o__slot", new Constant(0),
+                    new Constant(305419896), DataType.UINT8, 4),
+            }
+        });
+        ir.GlobalArrays["main.o__slot"] = 4;
+
+        Checks(ir).Should().NotContain("write-exceeds-slot");
+    }
+
+    [Fact]
+    public void OneStorageKey_WaitsForTheBackendFacingStage()
+    {
+        var ir = IrWith(new Function
+        {
+            Name = "main",
+            Body =
+            {
+                new Copy(new Constant(1), new Variable("main.xs")),
+            }
+        });
+        ir.Globals.Add(new Variable("xs", DataType.GC_REF));
+
+        // Intermediate stages legitimately hold main.xs/xs spellings the next
+        // pass canonicalizes; the question only has an answer on the final IR.
+        Verifier.Check(ir, "generate").Select(v => v.Check)
+            .Should().NotContain("one-storage-key");
+        Verifier.Check(ir, "canfail").Select(v => v.Check)
+            .Should().Contain("one-storage-key");
+    }
 }
