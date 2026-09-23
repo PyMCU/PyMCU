@@ -2970,31 +2970,8 @@ public partial class IRGenerator
             strConstantVariables.Remove(paramName);
             floatConstantVariables.Remove(paramName);
             variableAliases.Remove(paramName);
-            DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
-            // A heap-list argument arrives as a GC_REF Temporary (`tuple(xs)`) or a
-            // Variable the alias chase resolves to a registered list. Copying it into
-            // a param var of the annotation's width -- uint8 when unannotated, which
-            // is also what namedtuple() synthesizes for every field -- truncated the
-            // 16-bit pointer to its low byte; `p[i]` inside the body then indexed the
-            // register file. The parameter IS the list the caller passed: keep the
-            // binding at pointer width and carry the element type.
-            {
-                string? argBindName = argValues[i] switch
-                { Variable av => av.Name, Temporary at => at.Name, _ => null };
-                for (string? cur = argBindName; cur != null;)
-                {
-                    if (listVarElemTypes.TryGetValue(cur, out var argElemDt))
-                    {
-                        paramType = DataType.GC_REF;
-                        listVarElemTypes[paramName] = argElemDt;
-                        if (listInnerElemTypes.TryGetValue(cur, out var argInnerDt))
-                            listInnerElemTypes[paramName] = argInnerDt;
-                        break;
-                    }
-                    if (!variableAliases.TryGetValue(cur, out var argNext)) break;
-                    cur = argNext;
-                }
-            }
+            DataType paramType = ParamListRefType(argValues[i], paramName,
+                DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type));
             variableTypes[paramName] = paramType;
             Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
             CarryOptionalTagToParam(paramName, argValues[i]);
@@ -3122,7 +3099,8 @@ public partial class IRGenerator
                         constantVariables.Remove(paramName);
                         strConstantVariables.Remove(paramName);
                         floatConstantVariables.Remove(paramName);
-                        DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
+                        DataType paramType = ParamListRefType(kvp.Value, paramName,
+                            DataTypeExtensions.StringToDataType(func.Params[pi].Type));
                         variableTypes[paramName] = paramType;
                         if (kvp.Value is Variable)
                         {
@@ -3438,6 +3416,34 @@ public partial class IRGenerator
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
         return new NoneVal();
+    }
+
+    // A heap-list argument arrives as a GC_REF Temporary (`tuple(xs)`) or a
+    // Variable the alias chase resolves to a registered list. Copying it into a
+    // param var of the annotation's width -- uint8 when unannotated, which is
+    // also what namedtuple() synthesizes for every field -- truncates the
+    // 16-bit pointer to its low byte; `p[i]` inside the body then indexes the
+    // register file. The parameter IS the list the caller passed: keep the
+    // binding at pointer width and carry the element type. Positional and
+    // keyword arguments bind through this one rule -- the keyword form is
+    // adafruit_irremote's `IRMessage(..., code=tuple(output))`.
+    private DataType ParamListRefType(Val arg, string paramName, DataType declared)
+    {
+        string? argBindName = arg switch
+        { Variable av => av.Name, Temporary at => at.Name, _ => null };
+        for (string? cur = argBindName; cur != null;)
+        {
+            if (listVarElemTypes.TryGetValue(cur, out var argElemDt))
+            {
+                listVarElemTypes[paramName] = argElemDt;
+                if (listInnerElemTypes.TryGetValue(cur, out var argInnerDt))
+                    listInnerElemTypes[paramName] = argInnerDt;
+                return DataType.GC_REF;
+            }
+            if (!variableAliases.TryGetValue(cur, out var argNext)) break;
+            cur = argNext;
+        }
+        return declared;
     }
 
     // `f(Cls(...))` where Cls is boxed into an SRAM slot (RFC 0001 Model B): build the
@@ -9888,6 +9894,16 @@ public partial class IRGenerator
             string k = currentInlinePrefix + name;
             if (listVarElemTypes.ContainsKey(k)) return k;
             qualified = k;
+            // A parameter alias (inline1.pulses -> evens) is the call-site
+            // argument binding: it outranks a same-named list in the CALLER's
+            // scope, which the currentFunction fallback below would otherwise
+            // resolve to first (bin_data(pulses) iterating main.pulses).
+            for (int depth = 0; depth < 20; depth++)
+            {
+                if (!variableAliases.TryGetValue(qualified, out string next)) break;
+                qualified = next;
+                if (listVarElemTypes.ContainsKey(qualified)) return qualified;
+            }
         }
         if (!string.IsNullOrEmpty(currentFunction))
         {

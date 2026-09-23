@@ -82,6 +82,29 @@ public class RefFieldTests
     }
 
     [Fact]
+    public void KeywordField_BindsAtPointerWidth()
+    {
+        // adafruit_irremote's exact shape: `IRMessage(tuple(input_pulses),
+        // code=tuple(output))` -- the second field arrives by keyword. The
+        // keyword binding path must promote the param to GC_REF exactly as
+        // the positional one does, or `tuple(output)` truncates at the
+        // parameter's synthesized uint8.
+        var ir = Gen(
+            "class Msg:\n" +
+            "    def __init__(self, p, c):\n" +
+            "        self.p = p\n" +
+            "        self.c = c\n" +
+            "def main():\n" +
+            "    inp: list[uint16] = [9000, 4500]\n" +
+            "    m = Msg(tuple(inp), c=tuple(inp))\n" +
+            "    x: uint16 = m.c[1]\n");
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.Contains(body, i => i is Copy { Dst: Variable { Type: DataType.GC_REF } v }
+            && v.Name.EndsWith("_c"));
+        Assert.Contains(body, i => i is LoadIndirect { Elem: DataType.UINT16 });
+    }
+
+    [Fact]
     public void ScalarField_StillFolds()
     {
         // A field holding a scalar is untouched by the ref path.
