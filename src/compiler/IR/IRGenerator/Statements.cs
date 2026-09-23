@@ -1744,7 +1744,7 @@ public partial class IRGenerator
                 // never reached, so neither is the end of the function.
                 return w.Condition is BooleanLiteral { Value: true }
                        or IntegerLiteral { Value: not 0 }
-                       && !LoopBodyHasBreakOrContinue(w.Body);
+                       && !LoopBodyHasBreakOrContinue(w.Body, breakOnly: true);
             case TryStmt t:
                 if (t.Finally != null && t.Finally.Any(AlwaysReturns)) return true;
                 if (!t.Body.Any(AlwaysReturns)) return false;

@@ -197,26 +197,29 @@ public partial class IRGenerator
     // must, only when this holds, bracket each iteration with a continue label and share a break
     // label so those statements have somewhere to jump; when it does not, the plain unroll is
     // kept so per-iteration constant folding is not split across label boundaries.
-    private static bool LoopBodyHasBreakOrContinue(Statement? s)
+    private static bool LoopBodyHasBreakOrContinue(Statement? s, bool breakOnly = false)
     {
         switch (s)
         {
             case null: return false;
-            case BreakStmt:
-            case ContinueStmt: return true;
+            case BreakStmt: return true;
+            // A continue restarts THIS loop; it never reaches the statement after it.
+            // The label-bracketing callers need it counted, the `while True:` end-of-
+            // function check does not (a continue-only while-True still cannot exit).
+            case ContinueStmt: return !breakOnly;
             case ForStmt:
             case WhileStmt: return false;            // nested loop owns its break/continue
-            case Block b: return b.Statements.Any(LoopBodyHasBreakOrContinue);
+            case Block b: return b.Statements.Any(x => LoopBodyHasBreakOrContinue(x, breakOnly));
             case IfStmt i:
-                return LoopBodyHasBreakOrContinue(i.ThenBranch)
-                       || i.ElifBranches.Any(e => LoopBodyHasBreakOrContinue(e.Body))
-                       || LoopBodyHasBreakOrContinue(i.ElseBranch);
-            case MatchStmt m: return m.Branches.Any(br => LoopBodyHasBreakOrContinue(br.Body));
-            case WithStmt w: return LoopBodyHasBreakOrContinue(w.Body);
+                return LoopBodyHasBreakOrContinue(i.ThenBranch, breakOnly)
+                       || i.ElifBranches.Any(e => LoopBodyHasBreakOrContinue(e.Body, breakOnly))
+                       || LoopBodyHasBreakOrContinue(i.ElseBranch, breakOnly);
+            case MatchStmt m: return m.Branches.Any(br => LoopBodyHasBreakOrContinue(br.Body, breakOnly));
+            case WithStmt w: return LoopBodyHasBreakOrContinue(w.Body, breakOnly);
             case TryStmt t:
-                return t.Body.Any(LoopBodyHasBreakOrContinue)
-                       || t.Handlers.Any(h => h.Handler.Any(LoopBodyHasBreakOrContinue))
-                       || (t.Finally?.Any(LoopBodyHasBreakOrContinue) ?? false);
+                return t.Body.Any(x => LoopBodyHasBreakOrContinue(x, breakOnly))
+                       || t.Handlers.Any(h => h.Handler.Any(x => LoopBodyHasBreakOrContinue(x, breakOnly)))
+                       || (t.Finally?.Any(x => LoopBodyHasBreakOrContinue(x, breakOnly)) ?? false);
             default: return false;
         }
     }
