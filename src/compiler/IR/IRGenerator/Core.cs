@@ -290,25 +290,34 @@ public partial class IRGenerator
         void RemoveDescendants<T>(Dictionary<string, T> map, string sep)
         {
             string dp = dst + sep;
-            foreach (var k in map.Keys.Where(k =>
-                         {
-                             if (!k.StartsWith(dp, StringComparison.Ordinal)) return false;
-                             // `__ctseqN` is minted from a counter no later expansion
-                             // re-uses, so its elements can never be stale state: they
-                             // are either escaped storage (a field aliases them) or
-                             // unreferenced. Removing them broke `self.segments = [Pin..
-                             // for ..]` the moment a second __init__ shared the prefix.
-                             // Two shapes must both be recognized: `scope.__ctseqN` (the
-                             // text right after dp, or after the last '.') and the
-                             // underscore-joined super() scheme `inline4___init_____ctseqN`.
-                             // A dst ending in '_' (the discard name `_` qualifies to it)
-                             // makes dp end in "__", which ate `__ctseqN__k` one underscore
-                             // deep under the remainder-only check.
-                             if (k.AsSpan(dp.Length).StartsWith("__ctseq", StringComparison.Ordinal)
-                                 || IsCtSeqKey(k)) return false;
-                             return true;
-                         }).ToList())
+            foreach (var k in map.Keys.Where(k => UnderDst(k, dp)).ToList())
                 map.Remove(k);
+        }
+
+        void RemoveDescendantsSet(HashSet<string> set, string sep)
+        {
+            string dp = dst + sep;
+            foreach (var k in set.Where(k => UnderDst(k, dp)).ToList())
+                set.Remove(k);
+        }
+
+        static bool UnderDst(string k, string dp)
+        {
+            if (!k.StartsWith(dp, StringComparison.Ordinal)) return false;
+            // `__ctseqN` is minted from a counter no later expansion
+            // re-uses, so its elements can never be stale state: they
+            // are either escaped storage (a field aliases them) or
+            // unreferenced. Removing them broke `self.segments = [Pin..
+            // for ..]` the moment a second __init__ shared the prefix.
+            // Two shapes must both be recognized: `scope.__ctseqN` (the
+            // text right after dp, or after the last '.') and the
+            // underscore-joined super() scheme `inline4___init_____ctseqN`.
+            // A dst ending in '_' (the discard name `_` qualifies to it)
+            // makes dp end in "__", which ate `__ctseqN__k` one underscore
+            // deep under the remainder-only check.
+            if (k.AsSpan(dp.Length).StartsWith("__ctseq", StringComparison.Ordinal)
+                || IsCtSeqKey(k)) return false;
+            return true;
         }
 
         static bool IsCtSeqKey(string k)
@@ -333,6 +342,17 @@ public partial class IRGenerator
             RemoveDescendants(variableAliases, sep);
             RemoveDescendants(constantAddressVariables, sep);
             RemoveDescendants(instanceClasses, sep);
+            // Heap-list element types are callee-local state too: a `pulses =
+            // list(pulses)` rebind in one expansion registers the param name
+            // here, and the next expansion's ResolveListVarQualified then
+            // resolves the param to the stale slot -- before its own alias
+            // binds -- and reads whatever the dead expansion left in it.
+            RemoveDescendants(listVarElemTypes, sep);
+            RemoveDescendants(listInnerElemTypes, sep);
+            RemoveDescendantsSet(tupleBoundNames, sep);
+            RemoveDescendantsSet(promotableEmptyLists, sep);
+            RemoveDescendantsSet(promotedEmptyLists, sep);
+            RemoveDescendantsSet(noneValuedNames, sep);
             // The "different texts on different paths" mark is callee-local state
             // too: an earlier expansion at this depth filed it under this same
             // prefix, and a str parameter freshly bound here must not refuse a
