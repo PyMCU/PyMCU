@@ -849,6 +849,24 @@ public partial class IRGenerator
                 elemExprs = repeated;
             }
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
+
+            // `[e for v in xs if c]` over a runtime heap list: no compile-time
+            // element list exists, but the heap list needs no fixed size -- the
+            // comprehension emits a counted loop that fills a fresh object.
+            if (stmt.Value is ListCompExpr rtComp
+                && TryEmitRuntimeListComp(rtComp) is { } compRes)
+            {
+                string compKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + listTarget.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + listTarget.Name : listTarget.Name);
+                variableTypes[compKey] = DataType.GC_REF;
+                listVarElemTypes[compKey] = listVarElemTypes[compRes.Name];
+                if (listInnerElemTypes.TryGetValue(compRes.Name, out var compInner))
+                    listInnerElemTypes[compKey] = compInner;
+                Emit(new Copy(compRes, new Variable(compKey, DataType.GC_REF)));
+                return;
+            }
         }
 
         // `pattern = self.digits[num]`: a row of a rectangular dict. A constant key folds to

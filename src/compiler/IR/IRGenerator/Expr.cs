@@ -3820,6 +3820,124 @@ public partial class IRGenerator
         : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
         : name;
 
+    /// `[e for v in xs if cond]` where `xs` is a runtime heap list: the result
+    /// is a fresh heap list. Capacity is the source length -- the filter can
+    /// only shrink it, so no grow path is needed. The loop variable is a named
+    /// slot (a Temporary would not be a GC root and `b[1]` reads need a real
+    /// list name to resolve against). Returns the result's Variable, or null
+    /// when the iterable is not a runtime list and the caller keeps its own
+    /// fallback.
+    private Variable? TryEmitRuntimeListComp(ListCompExpr lc)
+    {
+        if (lc.Iterable2 != null || !string.IsNullOrEmpty(lc.Var2Name)) return null;
+        if (ComprehensionElementIsInstance(lc)) return null;
+
+        // Decide whether the iterable can produce a runtime list BEFORE
+        // evaluating it, so a non-list iterable keeps the caller's fallback --
+        // and its diagnostic -- rather than emitting half a loop body first.
+        bool couldBeList =
+            lc.Iterable is VariableExpr iv && ResolveListVarQualified(iv.Name) is { Length: > 0 }
+            || lc.Iterable is BinaryExpr { Op: AstBinOp.Add };
+        if (!couldBeList) return null;
+
+        Val srcVal = VisitExpression(lc.Iterable);
+        string? srcKey = ListKeyOfVal(srcVal);
+        if (srcKey == null) return null;
+        srcKey = RootListOperand(srcVal, QualifyHelperName("__csrc_" + labelCounter++));
+        DataType srcElem = listVarElemTypes[srcKey];
+        DataType srcInner = listInnerElemTypes.TryGetValue(srcKey, out var si) ? si : DataType.UNKNOWN;
+        Variable srcVar = new Variable(srcKey, DataType.GC_REF);
+
+        // The loop variable: a named slot under the name the element and filter
+        // read -- qualified the same way a `for` target is, so `b[1]` resolves
+        // the inner type through it.
+        string varKey = QualifyHelperName(lc.VarName);
+        variableTypes[varKey] = srcElem;
+        var lcVar = new Variable(varKey, srcElem);
+        if (srcElem == DataType.GC_REF)
+        {
+            listVarElemTypes[varKey] = srcInner;
+            if (srcInner == DataType.GC_REF)
+                throw UserError(
+                    "a comprehension over a list nested deeper than list[list[T]] has no "
+                    + "element type for the innermost lists; bind the levels to names of "
+                    + "their own first", lc);
+        }
+
+        DataType resElem = InferExprType(lc.Element);
+        if (resElem == DataType.UNKNOWN || resElem == DataType.VOID) resElem = srcElem;
+        int elemSize = resElem.SizeOf();
+
+        // cap = len(src): the filter can only keep fewer.
+        Temporary srcLen = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(srcVar, srcLen));
+        Temporary capBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, srcLen, new Constant(elemSize), capBytes));
+        Temporary allocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, capBytes, new Constant(2), allocSize));
+
+        string resKey = QualifyHelperName("__compres_" + labelCounter++);
+        var resVar = new Variable(resKey, DataType.GC_REF);
+        Temporary resPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(allocSize, resPtr, resElem == DataType.GC_REF));
+        string resOk = MakeLabel();
+        Emit(new JumpIfNotZero(resPtr with { Type = DataType.UINT16 }, resOk));
+        EnterRuntimeBranch("materializing a list comprehension");
+        try
+        {
+            VisitRaise(new RaiseStmt("MemoryError",
+                "list comprehension ran out of heap on this target"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(resOk));
+        variableTypes[resKey] = DataType.GC_REF;
+        listVarElemTypes[resKey] = resElem;
+        if (resElem == DataType.GC_REF) listInnerElemTypes[resKey] = srcInner;
+        Emit(new Copy(resPtr, resVar));
+        EmitListStore(resVar, 1, srcLen);
+
+        Temporary outIdx = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), outIdx));
+        Temporary idx = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), idx));
+
+        string loopTop = MakeLabel();
+        string loopEnd = MakeLabel();
+        Emit(new Label(loopTop));
+        Temporary done = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterEqual, idx, srcLen, done));
+        Emit(new JumpIfNotZero(done, loopEnd));
+
+        // v = src[idx]
+        Temporary srcAddr = EmitElemAddr(srcVar, idx, srcElem.SizeOf());
+        Temporary elemTmp = MakeTemp(srcElem);
+        Emit(new LoadIndirect(srcAddr, elemTmp, srcElem));
+        Emit(new Copy(elemTmp, lcVar));
+
+        // The filter decides at run time -- a failed check skips the store.
+        string nextIter = MakeLabel();
+        if (lc.Filter != null)
+        {
+            Val cond = VisitExpression(lc.Filter);
+            Emit(new JumpIfZero(cond, nextIter));
+        }
+
+        // res[outIdx] = e; outIdx++
+        Val mapped = VisitExpression(lc.Element);
+        Temporary dstAddr = EmitElemAddr(resVar, outIdx, elemSize);
+        Emit(new StoreIndirect(mapped, dstAddr, resElem));
+        Emit(new AugAssign(BinaryOp.Add, outIdx, new Constant(1)));
+
+        Emit(new Label(nextIter));
+        Emit(new AugAssign(BinaryOp.Add, idx, new Constant(1)));
+        Emit(new Jump(loopTop));
+        Emit(new Label(loopEnd));
+
+        // len = the number of stores that ran; cap was the source length.
+        EmitListStore(resVar, 0, outIdx);
+        return resVar;
+    }
+
     // The element type a literal asks for when none is declared: the widest type
     // its scalar elements infer to, GC_REF when the elements are themselves
     // literals. A mixed literal has no one element type -- a PyMCU list is
