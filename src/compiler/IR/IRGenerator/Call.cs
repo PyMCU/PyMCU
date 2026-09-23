@@ -889,14 +889,18 @@ public partial class IRGenerator
         // otherwise. adafruit_mcp3xxx's own AnalogIn.__init__ guards its constructor with
         // exactly this: `if not isinstance(mcp, MCP3xxx): raise ValueError(...)`.
         //
-        // Answered only when BOTH sides resolve: the receiver to a known instance class (a
-        // name the ordinary receiver-resolution chain already tracks), and every candidate to
-        // a class this compiler built a layout for. Anything else -- a scalar receiver, an
-        // unresolved candidate -- falls through unchanged to the refusal below, which is still
-        // right about a receiver that is not a class instance.
+        // Answered only when BOTH sides resolve: every candidate to a class this compiler
+        // built a layout for, and the receiver either to a known instance class (a name the
+        // ordinary receiver-resolution chain already tracks) or to a value that is provably
+        // NOT an instance -- a string or number constant, None, an address, a buffer -- for
+        // which isinstance is False unconditionally. That last arm is the difference between
+        // pruning a constructor's `if not isinstance(mcp, MCP3xxx): raise` tail and lowering
+        // it anyway: AnalogIn("not an mcp", ...) binds mcp to a string, and the field reads
+        // after the raise were checked against a receiver that is not a class at all. A
+        // scalar Variable still falls through to the refusal below, which is right about a
+        // receiver that is not a class instance.
         if (callee == "isinstance" && expr.Args.Count == 2
-            && expr.Args[0] is VariableExpr isinstZcaRecv
-            && InstanceClassOfName(isinstZcaRecv.Name) is { } isinstRecvCls)
+            && expr.Args[0] is VariableExpr isinstZcaRecv)
         {
             var isinstCandidates = expr.Args[1] is TupleExpr isinstTuple
                 ? isinstTuple.Elements
@@ -923,8 +927,18 @@ public partial class IRGenerator
 
             if (isinstAllResolved)
             {
-                bool isinstMatches = isinstResolved.Any(t => IsClassOrSubclassOf(isinstRecvCls, t));
-                return new Constant(isinstMatches ? 1 : 0);
+                // The bound value outranks the declared type: `def f(mcp: MCP3xxx)`
+                // called as `f("not an mcp")` binds mcp to a string constant, and
+                // isinstance("not an mcp", MCP3xxx) is False whatever the annotation
+                // claims -- the guard's `raise` is the taken branch.
+                if (ProbeBinding(isinstZcaRecv.Name)
+                        is Constant or NoneVal or MemoryAddress or ArrayBase)
+                    return new Constant(0);
+                if (InstanceClassOfName(isinstZcaRecv.Name) is { } isinstRecvCls)
+                {
+                    bool isinstMatches = isinstResolved.Any(t => IsClassOrSubclassOf(isinstRecvCls, t));
+                    return new Constant(isinstMatches ? 1 : 0);
+                }
             }
         }
 

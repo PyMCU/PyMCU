@@ -121,6 +121,33 @@ public class IsInstanceFoldTests
     }
 
     [Fact]
+    public void FalseWhenTheBoundValueIsAStringNotTheDeclaredInstance()
+    {
+        // `Wrap("nope")`: the declared parameter type is Base, the value bound at
+        // this call site is a string -- isinstance answers on the VALUE, so the
+        // guard's raise is the taken branch and the rest of __init__ never lowers.
+        // While the annotation outranked the binding, the tail lowered anyway and
+        // `m._v` on a string failed "Unknown member access" -- adafruit_mcp3xxx's
+        // `AnalogIn("not an mcp", P0)` reported exactly that.
+        var body = Main(Preamble + Classes +
+            "class Wrap:\n" +
+            "    def __init__(self, m: Base) -> None:\n" +
+            "        if not isinstance(m, Base):\n" +
+            "            raise ValueError(\"not a base\")\n" +
+            "        self._v = m._v\n\n" +
+            "try:\n" +
+            "    w = Wrap(\"nope\")\n" +
+            "except ValueError:\n" +
+            "    GPIOR1.value = 9\n");
+
+        CopiesToGpior(body, 9).Should().BeTrue(
+            because: "the except arm is reached through the raise the fold says always runs");
+        body.Where(i => i is Copy { Dst: Variable { Name: var n } } && n.EndsWith("__v"))
+            .Should().BeEmpty(
+                because: "self._v = m._v sits after an unconditional raise and must not lower");
+    }
+
+    [Fact]
     public void TheReportedShapeBuildsWithNoUnraisedException()
     {
         var body = Main(Preamble + Classes +
