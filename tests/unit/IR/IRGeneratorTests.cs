@@ -370,6 +370,27 @@ public class IRGeneratorTests
         Assert.Contains(body, i => i is Unary { Op: IrUnaryOp.Not });
     }
 
+    [Fact]
+    public void UnaryNot_OnFloatOperand_ResultTempIsUint8()
+    {
+        // `not x` always yields a 1-byte bool. Minting the result temp with the
+        // operand's type (regression from widening Negate/BitNot temps) leaves the
+        // upper bytes of a FLOAT slot unwritten; a later conditional jump then
+        // reads stale bytes and takes the raise path even when x != 0.
+        const string src =
+            "def f(x: float) -> float:\n" +
+            "    if not x:\n" +
+            "        return 0.0\n" +
+            "    return x\n";
+
+        var body = GenerateIR(src).Functions[0].Body;
+
+        var notIns = Assert.Single(body, i => i is Unary { Op: IrUnaryOp.Not });
+        var unary = (Unary)notIns;
+        var dst = Assert.IsType<Temporary>(unary.Dst);
+        Assert.Equal(DataType.UINT8, dst.Type);
+    }
+
     // -------------------------------------------------------------------------
     // Group 2 -- Bit Manipulation (ptr / indexed non-array variables)
     // -------------------------------------------------------------------------

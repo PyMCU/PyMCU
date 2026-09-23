@@ -2181,7 +2181,11 @@ public partial class IRGenerator
             return res2;
         }
 
-        Temporary result = MakeTemp(GetValType(operand));
+        // `not x` always yields a 1-byte bool regardless of the operand's type --
+        // minting the result temp with GetValType(operand) widens it to e.g. FLOAT
+        // and a later conditional jump reads stale bytes past the stored bool.
+        Temporary result = MakeTemp(
+            expr.Op == AstUnOp.Not ? DataType.UINT8 : GetValType(operand));
         Emit(new Unary(MapUnaryOp(expr.Op), operand, result));
         return result;
     }
