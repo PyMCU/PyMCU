@@ -1363,7 +1363,18 @@ public partial class IRGenerator
             && (expr.Left is StringLiteral || expr.Right is StringLiteral);
         if (cmpAgainstStrLiteral) multiStrHandleReads++;
         Val v1 = VisitExpression(expr.Left);
+        // `a + b` on runtime heap lists is a concatenation, not a pointer add --
+        // without this the two GC_REF operands fell to the numeric path and the
+        // answer was the sum of two addresses. The check runs before the right
+        // operand is evaluated because a Temporary left operand is not a GC
+        // root: the concat emitter roots it before anything else can allocate.
+        if (expr.Op == AstBinOp.Add && ListKeyOfVal(v1) is not null)
+            return EmitRuntimeListConcat(v1, expr.Right, expr);
         Val v2 = VisitExpression(expr.Right);
+        if (expr.Op == AstBinOp.Add && ListKeyOfVal(v2) is not null)
+            throw new TypeError(
+                "cannot concatenate a non-list value with a list; both operands of '+' " +
+                "must be lists on this target", expr.Line > 0 ? expr.Line : lastLine, expr.Column);
         if (cmpAgainstStrLiteral) multiStrHandleReads--;
 
         // The operand is a run-time-decided string only where the read above was allowed:
@@ -3677,6 +3688,137 @@ public partial class IRGenerator
             listInnerElemTypes[dstPtr.Name] = innerElem;
         return dstPtr;
     }
+
+    /// The listVarElemTypes key a Val names, when it names a runtime heap list.
+    /// A Variable read comes back already qualified; a Temporary from a slice or
+    /// copy-ctor is registered under its own name. Null for anything else.
+    private string? ListKeyOfVal(Val v)
+    {
+        if (v is not Variable vv) return null;
+        if (listVarElemTypes.ContainsKey(vv.Name)) return vv.Name;
+        return ResolveListVarQualified(vv.Name) is { Length: > 0 } k ? k : null;
+    }
+
+    /// A runtime list lives in a named Variable slot or it is not a GC root: a
+    /// Temporary holding a fresh slice/copy survives only until the next
+    /// allocation relocates the heap under it. Rebind those to a generated name
+    /// (the same shape MaterializeSequenceLiteral gives a literal) and answer
+    /// the name's key; a Variable that is already a slot needs no copy.
+    private string RootListOperand(Val v, string key)
+    {
+        string? resolved = ListKeyOfVal(v);
+        if (v is Variable vv && !vv.Name.StartsWith("tmp_") && resolved != null)
+            return resolved;
+        variableTypes[key] = DataType.GC_REF;
+        listVarElemTypes[key] = listVarElemTypes[resolved!];
+        if (resolved != null && listInnerElemTypes.TryGetValue(resolved, out var srcInner))
+            listInnerElemTypes[key] = srcInner;
+        Emit(new Copy(v, new Variable(key, DataType.GC_REF)));
+        return key;
+    }
+
+    /// `a + b` on two runtime heap lists: CPython allocates a fresh list that
+    /// holds both payloads. Lowered the way the slice copy is -- a header of
+    /// len/cap, then a counted loop per source. The operands are bound to names
+    /// BEFORE the result allocates, because a Temporary is not a GC root and the
+    /// GcAlloc below can compact the heap under it.
+    private Variable EmitRuntimeListConcat(Val leftVal, Expression rightExpr, Expression at)
+    {
+        string aKey = RootListOperand(leftVal, QualifyHelperName("__cat_" + labelCounter++));
+        DataType elemDt = listVarElemTypes[aKey];
+        DataType innerDt = listInnerElemTypes.TryGetValue(aKey, out var inner) ? inner : DataType.UNKNOWN;
+
+        Val rightVal = VisitExpression(rightExpr);
+        string? rightKey = ListKeyOfVal(rightVal);
+        if (rightKey == null)
+            throw new TypeError(
+                "cannot concatenate a list with a non-list value; both operands of '+' " +
+                "must be lists on this target", at.Line > 0 ? at.Line : lastLine, at.Column);
+        string bKey = RootListOperand(rightVal, QualifyHelperName("__cat_" + labelCounter++));
+        if (listVarElemTypes[bKey] != elemDt)
+            throw UserError(
+                "the two lists do not agree on an element type -- PyMCU lists are "
+                + "homogeneous, so a concat cannot mix them", at);
+
+        int elemSize = elemDt.SizeOf();
+        Variable aVar = new Variable(aKey, DataType.GC_REF);
+        Variable bVar = new Variable(bKey, DataType.GC_REF);
+        Temporary lenA = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(aVar, lenA));
+        Temporary lenB = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(bVar, lenB));
+        Temporary total = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, lenA, lenB, total));
+
+        Temporary totalBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, total, new Constant(elemSize), totalBytes));
+        Temporary allocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, totalBytes, new Constant(2), allocSize));
+
+        string dstKey = QualifyHelperName("__cat_" + labelCounter++);
+        var dstVar = new Variable(dstKey, DataType.GC_REF);
+        Temporary dstPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(allocSize, dstPtr, elemDt == DataType.GC_REF));
+        string catOk = MakeLabel();
+        Emit(new JumpIfNotZero(dstPtr with { Type = DataType.UINT16 }, catOk));
+        EnterRuntimeBranch("concatenating two lists");
+        try
+        {
+            VisitRaise(new RaiseStmt("MemoryError",
+                "list concatenation ran out of heap on this target"));
+        }
+        finally { LeaveRuntimeBranch(); }
+        Emit(new Label(catOk));
+        variableTypes[dstKey] = DataType.GC_REF;
+        listVarElemTypes[dstKey] = elemDt;
+        if (innerDt != DataType.UNKNOWN) listInnerElemTypes[dstKey] = innerDt;
+        Emit(new Copy(dstPtr, dstVar));
+
+        EmitListStore(dstVar, 0, total);
+        EmitListStore(dstVar, 1, total);
+
+        // for i in 0..len(src): dst[2 + (base + i)*sz] = src[2 + i*sz]
+        void CopyPayload(Variable src, Val baseIdx)
+        {
+            Temporary idx = MakeTemp(DataType.UINT16);
+            Emit(new Copy(new Constant(0), idx));
+            Temporary srcLen = MakeTemp(DataType.UINT8);
+            Emit(new LoadIndirect(src, srcLen));
+            string loopTop = MakeLabel();
+            string loopEnd = MakeLabel();
+            Emit(new Label(loopTop));
+            Temporary done = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.GreaterEqual, idx, srcLen, done));
+            Emit(new JumpIfNotZero(done, loopEnd));
+            Temporary srcOff = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Mul, idx, new Constant(elemSize), srcOff));
+            Temporary srcAddr = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, src with { Type = DataType.UINT16 }, srcOff, srcAddr));
+            Emit(new AugAssign(BinaryOp.Add, srcAddr, new Constant(2)));
+            Temporary dstIdx = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, idx, baseIdx, dstIdx));
+            Temporary dstOff = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Mul, dstIdx, new Constant(elemSize), dstOff));
+            Temporary dstAddr = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, dstVar with { Type = DataType.UINT16 }, dstOff, dstAddr));
+            Emit(new AugAssign(BinaryOp.Add, dstAddr, new Constant(2)));
+            Temporary elemTmp = MakeTemp(elemDt);
+            Emit(new LoadIndirect(srcAddr, elemTmp, elemDt));
+            Emit(new StoreIndirect(elemTmp, dstAddr, elemDt));
+            Emit(new AugAssign(BinaryOp.Add, idx, new Constant(1)));
+            Emit(new Jump(loopTop));
+            Emit(new Label(loopEnd));
+        }
+
+        CopyPayload(aVar, new Constant(0));
+        CopyPayload(bVar, lenA);
+        return dstVar;
+    }
+
+    private string QualifyHelperName(string name) =>
+        !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
+        : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
+        : name;
 
     // The element type a literal asks for when none is declared: the widest type
     // its scalar elements infer to, GC_REF when the elements are themselves
