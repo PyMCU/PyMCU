@@ -33,6 +33,19 @@ public partial class IRGenerator
         // arrives here as AnnotatedType and was the position the check never saw (#278).
         CheckAnnotationNames(stmt.AnnotatedType ?? "", stmt);
 
+        // `v: list = 0` -- a bare container annotation promises a run-time sequence
+        // whose element type the VALUE supplies. A literal scalar supplies neither
+        // element type nor heap object, so the name would keep a byte where `v[i]`
+        // expects a list. Refuse the literal here; a non-literal initializer that is
+        // not a sequence is refused where the value is known (EmitScalarVarAssign).
+        if (stmt.AnnotatedType is "list" or "tuple"
+            && stmt.Value is IntegerLiteral or FloatLiteral or StringLiteral
+                or BooleanLiteral or NoneLiteral)
+            throw UserError(
+                $"'{(stmt.Target as VariableExpr)?.Name}: {stmt.AnnotatedType} = ...' needs a "
+                + $"{stmt.AnnotatedType} value -- the element type comes from the initializer, "
+                + "and this one has none", stmt);
+
         // Assigning to a plain name binds it, whatever the right-hand side turns out to be and
         // whichever of the shapes below claims the statement. The undefined-name check reads
         // this: an unannotated `x = f()` files no type anywhere, and without the record a later
@@ -1749,6 +1762,26 @@ public partial class IRGenerator
         if (stmt.AnnotatedType is { Length: > 0 } declared
             && !declared.Contains("ptr") && !declared.Contains("PIORegister"))
             RejectBareRegisterRead(stmt.Value);
+
+        // `v: list = 0` -- a bare container annotation promises a run-time sequence
+        // whose element type the VALUE supplies. A scalar (or string, or register)
+        // initializer supplies neither element type nor heap object: the name would
+        // keep a byte where `v[i]` expects a list. A list-valued right side carries
+        // both, so it binds exactly as `v = xs` does.
+        if (stmt.AnnotatedType is "list" or "tuple")
+        {
+            string? seqName = value switch
+            {
+                Variable lv => lv.Name,
+                Temporary lt => lt.Name,
+                _ => null,
+            };
+            if (seqName == null || ResolveListVarQualified(seqName).Length == 0)
+                throw UserError(
+                    $"'{varExpr.Name}: {stmt.AnnotatedType} = ...' needs a {stmt.AnnotatedType} "
+                    + "value -- the element type comes from the initializer, and this one has "
+                    + "none", stmt);
+        }
 
         // Assigning to a name that is a ptr[T] register alias NEVER writes the register:
         // it rebinds the Python name and the store is silently dead-code-eliminated.
@@ -5541,6 +5574,35 @@ public partial class IRGenerator
             }
             Val val = EvalOptionalCarry(stmt.Init);
 
+            // `v: list = <init>` -- the bare container annotation takes its element
+            // type from the value, so the value must be a run-time list: a list
+            // variable's registration carries over to the declared name, and a
+            // scalar initializer has no element type to give. `v: list = 0` used to
+            // keep a GC_REF slot holding 0 and `v[i]` lowered against it. (`tuple`
+            // gets the literal refusal in VisitAssign; a `v: tuple = pair()` binds
+            // a multi-value return through ResultVars and never reaches here as a
+            // sequence question.)
+            string? declaredSeqKey = null;
+            if (stmt.VarType is "list" or "tuple")
+            {
+                declaredSeqKey = val switch
+                {
+                    Variable lv => ResolveListVarQualified(lv.Name) is { Length: > 0 } k ? k : null,
+                    Temporary lt => ResolveListVarQualified(lt.Name) is { Length: > 0 } k ? k : null,
+                    _ => null,
+                };
+                // `tuple` keeps the literal check only: `v: tuple = pair()` binds a
+                // multi-value return through ResultVars, not a sequence registration.
+                bool bareTuple = stmt.VarType == "tuple"
+                    && stmt.Init is not (VariableExpr or CallExpr or IndexExpr
+                        or MemberAccessExpr or TupleExpr);
+                if (declaredSeqKey == null && (stmt.VarType == "list" || bareTuple))
+                    throw UserError(
+                        $"'{stmt.Name}: {stmt.VarType} = ...' needs a {stmt.VarType} value -- "
+                        + "the element type comes from the initializer, and this one has none",
+                        stmt);
+            }
+
             // A compile-time float result assigned to an integer variable (e.g.
             // `y: uint8 = 5 // 2.0`) is the same mistake as a bare float literal, but the
             // literal check above only sees a direct FloatLiteral — a folded FloatConstant
@@ -5566,6 +5628,16 @@ public partial class IRGenerator
             if (target is Variable uvTgt && stmt.UnionMembers != null)
                 target = UnionPayloadStoreTarget(uvTgt, val, stmt.Init);
             Emit(new Copy(val, target));
+
+            // `v: list = xs`: the declared name takes the value's element
+            // registration -- the annotation deferred it to the initializer.
+            if (declaredSeqKey != null && target is Variable seqTarget)
+            {
+                listVarElemTypes[seqTarget.Name] = listVarElemTypes[declaredSeqKey];
+                if (listInnerElemTypes.TryGetValue(declaredSeqKey, out var seqInner))
+                    listInnerElemTypes[seqTarget.Name] = seqInner;
+                variableTypes[seqTarget.Name] = DataType.GC_REF;
+            }
 
             // RFC 0009: an `Optional[X]` declaration (or a name another write can leave
             // optional) carries the tag write beside its payload.
@@ -6043,6 +6115,13 @@ public partial class IRGenerator
         RefuseSixtyFourBit(annotation, at);
         if (IsKnownBareTypeName(annotation)) return;
         if (annotation is "ptr" or "object" or "self") return;
+        // A bare `list`/`tuple` IS a type here: a run-time sequence whose element
+        // types arrive with the bound value -- the argument for a parameter, the
+        // initializer for a local, the returned variable for `-> list` /
+        // `-> list[list]`. It is the spelling a CircuitPython library writes
+        // (`pulses: list`, `-> tuple`); the refusal below belongs to names that
+        // name nothing, not to a container whose contents the binding supplies.
+        if (annotation is "list" or "tuple") return;
         if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
 
         // `busio.I2C`, the module-qualified spelling of a class (#342). The bare name the

@@ -2505,6 +2505,35 @@ public partial class IRGenerator
             }
             noneValuedNames.Remove(paramName);
 
+            // `xs: list` -- a bare list annotation -- promises the body a run-time
+            // list: `xs[i]`, `len(xs)`, `for x in xs`, `xs.append(...)` all answer
+            // through the list the ARGUMENT was. The element type is the argument's,
+            // resolved per call site; that is the spelling a CircuitPython library
+            // writes (`adafruit_irremote.bin_data` takes `pulses: list`). What cannot
+            // keep the promise is a scalar, a string, a register -- refuse here, at
+            // the site whose argument is wrong, rather than let `xs[i]` lower as a
+            // bit-test on a byte. A class instance is NOT refused: `pulsein` satisfies
+            // `input_pulses: list` by popleft/len, which the instance binding answers
+            // for. A compile-time sequence bound above is a list already.
+            if (paramAnn == "list"
+                && argInstanceClass == null
+                && !(i < rawConstSeqArgs.Count && rawConstSeqArgs[i] != null))
+            {
+                string argListKey = argValues[i] switch
+                {
+                    Variable blv => ResolveListVarQualified(blv.Name),
+                    Temporary blt => ResolveListVarQualified(blt.Name),
+                    _ => "",
+                };
+                if (argListKey.Length == 0)
+                    throw UserError(
+                        $"parameter '{func.Params[paramIdx].Name}' is declared 'list' -- a "
+                        + "run-time list -- and the argument bound to it is not one. If the "
+                        + "argument is a fixed-size array or a constant list, give the "
+                        + "parameter its element type (`xs: list[uint8]`) or pass the "
+                        + "sequence directly");
+            }
+
             if (argValues[i] is FloatConstant fcArg)
             {
                 var fcPType = func.Params[paramIdx].Type;
@@ -2662,6 +2691,17 @@ public partial class IRGenerator
                     strConstantVariables.Remove(paramName);
                     floatConstantVariables.Remove(paramName);
                     variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                    // The copy gives the parameter a slot of its own, so reads
+                    // between here and the body's first write must already see a
+                    // list: inherit the argument's element registration under the
+                    // parameter's own key. `decode_bits(pulses: list)` rebinding
+                    // `pulses = list(pulses)` reads `pulses` on the right first.
+                    if (ResolveListVarQualified(vArg.Name) is { Length: > 0 } argListKey)
+                    {
+                        listVarElemTypes[paramName] = listVarElemTypes[argListKey];
+                        if (listInnerElemTypes.TryGetValue(argListKey, out var argInnerElem))
+                            listInnerElemTypes[paramName] = argInnerElem;
+                    }
                     Emit(new Copy(vArg, new Variable(paramName, variableTypes[paramName])));
                     CarryOptionalTagToParam(paramName, vArg);
                     continue;
@@ -9323,7 +9363,8 @@ public partial class IRGenerator
     /// (wrong) address (PyMCU#433).
     /// </summary>
     private static bool IsListLikeReturnType(string? returnType)
-        => returnType != null && (returnType.StartsWith("list[") || returnType == "array.array");
+        => returnType != null && (returnType.StartsWith("list[") || returnType == "list"
+                                  || returnType == "array.array");
 
     /// <summary>
     /// A `Union[A, B, ...]` parameter is resolved at its call site (CheckAnnotationNames'

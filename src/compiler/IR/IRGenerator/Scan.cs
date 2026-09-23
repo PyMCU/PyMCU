@@ -4535,8 +4535,11 @@ public partial class IRGenerator
             // StringToDataType now answers GC_REF for `list[...]` -- true, but a
             // list parameter still has no subroutine ABI: the body binds the
             // caller's concrete element type, so it expands at the call site the
-            // same way it always has.
-            || (type.StartsWith("list[") && type.EndsWith("]")))
+            // same way it always has. A bare `list` parameter is the same shape
+            // with the element type arriving with the argument rather than the
+            // annotation.
+            || (type.StartsWith("list[") && type.EndsWith("]"))
+            || type == "list")
            && type != "bytearray"
            && !type.StartsWith("ptr")
            && type != "const[str]" && type != "str";

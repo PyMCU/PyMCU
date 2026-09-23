@@ -330,9 +330,8 @@ public class UnknownAnnotationTests
     // Every name in the pool but not in the known set is covered here, so a fourth one added
     // later fails this test instead of shipping the same sentence.
     [Theory]
-    [InlineData("list")]
-    [InlineData("tuple")]
     [InlineData("PIORegister")]
+    [InlineData("List")]
     public void ARejectedName_IsNeverSuggestedAsItsOwnCorrection(string name)
     {
         var ex = Fails(
@@ -357,18 +356,19 @@ public class UnknownAnnotationTests
             "    return take(1)\n").Message);
     }
 
-    // A bare `list` is not an annotation this compiler knows, in ANY position: it was already
-    // refused as a local before #278, which only made the parameter agree with it. Pinned so
-    // nobody "restores" it on the strength of the parameter position having once been silent.
+    // A bare `list` IS an annotation now -- the element type arrives with the bound
+    // value (adafruit_irremote writes `pulses: list`). What is still refused is a
+    // `list` name bound to something that is not a list: the promise then has no
+    // element type to take.
     [Fact]
-    public void ABareListIsNotAnAnnotation_InEitherPosition()
+    public void ABareListStillRefuses_ANonListValue()
     {
-        Assert.Contains("unknown type 'list'", Fails(
+        Assert.Contains("needs a list value", Fails(
             "def main() -> uint8:\n" +
             "    v: list = 0\n" +
             "    return 1\n").Message);
 
-        Assert.Contains("unknown type 'list'", Fails(
+        Assert.Contains("declared 'list'", Fails(
             "def take(v: list) -> uint8:\n" +
             "    return 1\n" +
             "def main() -> uint8:\n" +
@@ -382,9 +382,9 @@ public class UnknownAnnotationTests
     // hint says so and shows the form, in the same sentence and the same slot the near-miss
     // used. `PIORegister` is in here so the rule is the rule and not a special case for two
     // names everyone recognises.
+    // (`list` and `tuple` were in this list when a bare one named nothing; both are
+    // annotations now -- the element type comes from the bound value.)
     [Theory]
-    [InlineData("list", "list[uint8]")]
-    [InlineData("tuple", "tuple[uint8, uint8]")]
     [InlineData("PIORegister", "PIORegister[uint8]")]
     public void ABracketedFormHead_IsToldTheShapeAndShownAnExample(string name, string example)
     {
