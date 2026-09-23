@@ -1842,6 +1842,7 @@ public partial class IRGenerator
         // not None else d` narrows r on the true side only, and the result carries a
         // tag only when an arm can hand back None.
         var preTern = SnapOptionalState();
+        var ternSnap = TakeBranchState();
         if (LiveOptionalTag(truthCond) is { } ternTag)
         {
             EmitOptionalTruthJump(ternTag.tag, cond, ternTag.noneIdx, falseLabel, false);
@@ -1854,14 +1855,32 @@ public partial class IRGenerator
         Val trueVal = VisitExpression(expr.TrueVal);
         int trueTail = currentInstructions.Count;   // where the true copy + jump belong
         var trueEndState = SnapOptionalState();
+        var trueArmSnap = TakeBranchState();
         RestoreOptionalState(preTern);
+        RestoreBranchState(ternSnap);
         ApplyOptionalCondEffect(truthCond, false);
         Emit(new Label(falseLabel));
         Val falseVal = VisitExpression(expr.FalseVal);
         var falseEndState = SnapOptionalState();
+        var falseArmSnap = TakeBranchState();
         // The condition's narrowing belongs to its arm; past the expression the name
         // is whatever it was before it.
         RestoreOptionalState(preTern);
+        // Same rule for the binding maps: an arm runs under its own guard, so a walrus
+        // or call in one cannot answer reads in the other, and only what both arms
+        // agree on survives past the expression.
+        var ternDisagreed = JoinBranchStates(
+            new List<BranchState?> { trueArmSnap, falseArmSnap }, ternSnap, exhaustive: true);
+        foreach (var key in ternDisagreed)
+        {
+            var candidates = new List<string?>();
+            if (ternSnap.StrConstantVariables.TryGetValue(key, out var tBefore))
+                candidates.Add(tBefore);
+            foreach (var snap in new[] { trueArmSnap, falseArmSnap })
+                if (snap.StrConstantVariables.TryGetValue(key, out var bv))
+                    candidates.Add(bv);
+            MarkMultiStr(key, candidates);
+        }
         Temporary result = MakeTemp(
             DataTypeExtensions.GetPromotedType(GetValType(trueVal), GetValType(falseVal)));
         Emit(new Copy(falseVal, result));

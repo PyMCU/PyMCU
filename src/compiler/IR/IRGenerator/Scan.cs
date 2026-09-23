@@ -1820,6 +1820,13 @@ public partial class IRGenerator
                         foreach (var s0 in block.Statements)
                             if (s0 is FunctionDef fdI && fdI.Name == "__init__")
                                 RecordConstructedFieldClasses(fdI.Body, classKey);
+                        // ...and the same for fields first bound in ANOTHER method -- a
+                        // lifted coroutine local's `self.x = SomeClass(...)` lives in poll(),
+                        // not __init__ (async-task-local-object). __init__ ran first, so the
+                        // first-wins map keeps the constructor's answer wherever both write.
+                        foreach (var s0 in block.Statements)
+                            if (s0 is FunctionDef fdM && fdM.Name != "__init__")
+                                RecordConstructedFieldClasses(fdM.Body, classKey);
                         // `self.f = SomeClass` (a class OBJECT, not `SomeClass()`) is the
                         // same family but a different record: every method, every arm,
                         // because the field's tag byte has to name each class it can hold.

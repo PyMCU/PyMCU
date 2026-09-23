@@ -827,21 +827,17 @@ public partial class IRGenerator
         // so its termination propagates; with one, the chain's end is reachable through it.
         bool anyRuntimeArm = isRuntimeBranch;
 
-        var snapBefore = new Dictionary<string, string>(strConstantVariables);
-        var branchSnaps = new List<Dictionary<string, string>>();
-        // The same bookkeeping for integer constants. Arms are mutually exclusive, so a value
-        // one arm assigns cannot be in effect while a sibling arm runs: without this, a field
-        // set to a constant in one arm was still believed when another arm READ it, the read
-        // folded, and `self._n = self._n + 1` in the second arm became a store of the constant
-        // 1. The field never accumulated and a state machine never left that arm.
-        var snapBeforeInt = new Dictionary<string, int>(constantVariables);
-        var branchSnapsInt = new List<Dictionary<string, int>>();
-        // The locals map travels with constantVariables through every arm and is reconciled on
-        // the same rule. Left out, a name each arm assigns differently kept whichever arm was
-        // lowered last, and a call AFTER the chain handed the callee that arm's value: a PWM
-        // duty came out 0x3F where 0x7F was asked for, and a list sum printed 0 (PyMCU#327).
-        var snapBeforeLocals = new Dictionary<string, int>(localConstantValues);
-        var branchSnapsLocals = new List<Dictionary<string, int>>();
+        // Arms are mutually exclusive, so a value one arm assigns cannot be in effect
+        // while a sibling arm runs: each arm starts from the pre-chain state and the
+        // merge keeps a binding only where every reachable arm agrees on it. Without
+        // this a field set to a constant in one arm was still believed when another arm
+        // READ it, the read folded, and `self._n = self._n + 1` in the second arm became
+        // a store of the constant 1; and a name each arm assigns differently kept
+        // whichever arm was lowered last, so a call after the chain handed the callee
+        // that arm's value (PyMCU#327).
+        var snapBefore = TakeBranchState();
+        var branchSnaps = new List<BranchState?>();
+        int firstUncondArm = -1;
         bool hasElse = stmt.ElseBranch != null;
 
         // RFC 0009 narrowing: each arm lowers under the condition's effect on that arm
@@ -861,12 +857,8 @@ public partial class IRGenerator
             if (isRuntimeBranch) _seqTerminated = false;
             if (stmt.ElifBranches.Count > 0 || stmt.ElseBranch != null)
                 Emit(new Jump(endLabel));
-            branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
-            strConstantVariables = new Dictionary<string, string>(snapBefore);
-            branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
-            constantVariables = new Dictionary<string, int>(snapBeforeInt);
-            branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
-            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+            branchSnaps.Add(AlwaysLeaves(stmt.ThenBranch) ? null : TakeBranchState());
+            RestoreBranchState(snapBefore);
             optArmEnds.Add(AlwaysLeaves(stmt.ThenBranch) ? null : SnapOptionalState());
         }
         RestoreOptionalState(inheritOpt);
@@ -940,12 +932,8 @@ public partial class IRGenerator
                 if (elifIsRuntime) LeaveRuntimeBranch();
                 if (elifIsRuntime) { anyRuntimeArm = true; _seqTerminated = false; }
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
-                branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
-                strConstantVariables = new Dictionary<string, string>(snapBefore);
-                branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
-                constantVariables = new Dictionary<string, int>(snapBeforeInt);
-                branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
-                localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+                branchSnaps.Add(AlwaysLeaves(elifBlock) ? null : TakeBranchState());
+                RestoreBranchState(snapBefore);
                 optArmEnds.Add(AlwaysLeaves(elifBlock) ? null : SnapOptionalState());
             }
             RestoreOptionalState(inheritOpt);
@@ -965,131 +953,53 @@ public partial class IRGenerator
             // With a run-time arm before it the else is conditional; without one it is the
             // chain's unconditional continuation and its termination stands.
             if (anyRuntimeArm) _seqTerminated = false;
-            branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
-            strConstantVariables = new Dictionary<string, string>(snapBefore);
-            branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
-            constantVariables = new Dictionary<string, int>(snapBeforeInt);
-            branchSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
-            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+            // An else reached past only compile-time-decided conditions is the chain's
+            // whole answer -- the way a match arm under a compile-time-matched subject is.
+            // Even when it leaves (return/raise) its end state is the truth after the
+            // chain: post-chain code is dead, but a binding written through it -- an
+            // inline frame's result temp above all -- still has to flow out to the
+            // caller, so its snapshot is kept instead of contributing nothing.
+            bool elseUncond = !anyRuntimeArm;
+            branchSnaps.Add(AlwaysLeaves(stmt.ElseBranch) && !elseUncond ? null : TakeBranchState());
+            if (elseUncond) firstUncondArm = branchSnaps.Count - 1;
+            RestoreBranchState(snapBefore);
             optArmEnds.Add(AlwaysLeaves(stmt.ElseBranch) ? null : SnapOptionalState());
         }
 
         Emit(new Label(endLabel));
         JoinOptionalState(optArmEnds, hasElse ? null : inheritOpt);
 
-        // Past the chain, an integer constant survives only when every arm agrees on it and one
-        // arm always runs, which is the rule the string constants below already follow. Every
-        // arm has to contribute its snapshot, the else included: with one missing, a value only
-        // one arm assigns looks unanimous and is re-established as a constant, which is what
-        // #132 relies on NOT happening for an @inline returning a different value per branch.
-        if (branchSnapsInt.Count > 0)
+        // The merge keeps a binding only where every reachable arm agrees on it, and the
+        // else-less fall-through is one more arm carrying the state from before the
+        // chain. With an arm missing, a value only one arm assigns would look unanimous
+        // and be re-established as a constant, which is what #132 relies on NOT
+        // happening for an @inline returning a different value per branch. An arm that
+        // cannot reach the merge (return/raise) contributes no snapshot -- except an
+        // unconditional one, whose bindings are the chain's answer and survive as the
+        // post-chain state (same as the match arm's firstUncondArm restore).
+        List<string> disagreedStr;
+        if (firstUncondArm >= 0)
         {
-            // The pre-branch snapshot predates anything an arm killed, so restoring it
-            // wholesale resurrects a constant a write inside an arm had already marked mutable
-            // and the read then folds to a value the program has since overwritten.
-            constantVariables = new Dictionary<string, int>(snapBeforeInt);
-            foreach (var dead in killedConstants) constantVariables.Remove(dead);
-
-            var changedInt = new HashSet<string>();
-            foreach (var kvp in branchSnapsInt.SelectMany(snap => snap))
-                if (!snapBeforeInt.TryGetValue(kvp.Key, out var oldV) || oldV != kvp.Value)
-                    changedInt.Add(kvp.Key);
-
-            foreach (var key in changedInt)
-            {
-                bool allAgree = true;
-                int agreed = 0;
-                bool first = true;
-                foreach (var snap in branchSnapsInt)
-                {
-                    if (!snap.TryGetValue(key, out var v)) { allAgree = false; break; }
-                    if (first) { agreed = v; first = false; }
-                    else if (v != agreed) { allAgree = false; break; }
-                }
-
-                if (allAgree && !first && hasElse) constantVariables[key] = agreed;
-                else constantVariables.Remove(key);
-            }
+            RestoreBranchState(branchSnaps[firstUncondArm]!);
+            disagreedStr = new List<string>();
+        }
+        else
+        {
+            disagreedStr = JoinBranchStates(branchSnaps, snapBefore, hasElse);
         }
 
-        // The locals, on the same rule, stated the other way round: what the chain leaves is
-        // what EVERY path agrees on. Asking instead which keys changed misses the ones an arm
-        // DROPPED -- `prescaler: uint8 = 0` then a call in each arm -- because a key nothing
-        // records is absent from the arm's snapshot rather than different in it, and the
-        // pre-chain 0 was resurrected past a chain that had overwritten it.
-        //
-        // Without an `else` the fall-through is a path of its own, carrying the state from
-        // before the chain, so it counts as one more arm.
-        if (branchSnapsLocals.Count > 0)
+        // A name the arms left holding different texts has no single text here: it keeps
+        // its id at run time and a read dispatches on it. Restoring the pre-branch value
+        // printed the initializer on every path, with the store dropped and nothing said
+        // (issue #145), so a disagreement becomes a multi-str, not a folded constant.
+        foreach (var key in disagreedStr)
         {
-            var paths = new List<Dictionary<string, int>>(branchSnapsLocals);
-            if (!hasElse) paths.Add(snapBeforeLocals);
-
-            var agreedLocals = new Dictionary<string, int>();
-            foreach (var kvp in paths[0])
-            {
-                if (killedConstants.Contains(kvp.Key)) continue;
-                bool allAgree = true;
-                for (int pi = 1; pi < paths.Count; ++pi)
-                    if (!paths[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
-                    {
-                        allAgree = false;
-                        break;
-                    }
-                if (allAgree) agreedLocals[kvp.Key] = kvp.Value;
-            }
-
-            localConstantValues = agreedLocals;
-        }
-
-        if (branchSnaps.Count <= 0) return;
-        var changedKeys = new HashSet<string>();
-        foreach (var kvp in branchSnaps.SelectMany(snap => snap))
-        {
-            if (!snapBefore.TryGetValue(kvp.Key, out var oldV) || oldV != kvp.Value)
-                changedKeys.Add(kvp.Key);
-        }
-
-        foreach (var key in changedKeys)
-        {
-            var allAgree = true;
-            var agreedVal = "";
-            var first = true;
-            foreach (var snap in branchSnaps)
-            {
-                if (!snap.TryGetValue(key, out var v))
-                {
-                    allAgree = false;
-                    break;
-                }
-
-                if (first)
-                {
-                    agreedVal = v;
-                    first = false;
-                }
-                else if (v != agreedVal)
-                {
-                    allAgree = false;
-                    break;
-                }
-            }
-
-            if (allAgree && !first && hasElse)
-            {
-                strConstantVariables[key] = agreedVal;
-                continue;
-            }
-
-            // The branches left the name holding different texts (or one of them left it
-            // alone, so the value from before the `if` survives on that path). There is no
-            // single text here: the name keeps its id at run time and a read dispatches on
-            // it. Restoring the pre-branch value is what printed the initializer on every
-            // path, with the store dropped and nothing said (issue #145).
             var candidates = new List<string?>();
-            if (snapBefore.TryGetValue(key, out var beforeVal)) candidates.Add(beforeVal);
+            if (snapBefore.StrConstantVariables.TryGetValue(key, out var beforeVal))
+                candidates.Add(beforeVal);
             foreach (var snap in branchSnaps)
-                if (snap.TryGetValue(key, out var bv)) candidates.Add(bv);
+                if (snap != null && snap.StrConstantVariables.TryGetValue(key, out var bv))
+                    candidates.Add(bv);
             MarkMultiStr(key, candidates);
         }
     }
@@ -1256,26 +1166,21 @@ public partial class IRGenerator
         // recorded while lowering one arm must not answer reads in the next arm's body,
         // and what survives the match is what every reachable path agrees on -- the arm
         // states plus the pre-match state when no arm catches the fall-through.
-        var snapBeforeInt = new Dictionary<string, int>(constantVariables);
-        var snapBeforeStr = new Dictionary<string, string>(strConstantVariables);
-        var snapBeforeLocals = new Dictionary<string, int>(localConstantValues);
-        var armSnapsInt = new List<Dictionary<string, int>>();
-        var armSnapsStr = new List<Dictionary<string, string>>();
-        var armSnapsLocals = new List<Dictionary<string, int>>();
+        var snapBefore = TakeBranchState();
+        var armSnaps = new List<BranchState?>();
         // The first arm whose body runs unconditionally (a compile-time-matched pattern, or
         // an unguarded wildcard under a decided subject) decides the state after the match.
         int firstUncondArm = -1;
         // An unguarded wildcard answers every path no earlier arm took: nothing falls past it.
         bool wildcardCoversAll = false;
 
+        // Every lowered arm is snapshotted, including one whose body leaves (a
+        // compile-time-matched `case K: return v` is adopted wholesale below, and the
+        // binding its `return` established -- the inline result temp -- is part of it).
         void CloseArmLocals()
         {
-            armSnapsInt.Add(new Dictionary<string, int>(constantVariables));
-            armSnapsStr.Add(new Dictionary<string, string>(strConstantVariables));
-            armSnapsLocals.Add(new Dictionary<string, int>(localConstantValues));
-            constantVariables = new Dictionary<string, int>(snapBeforeInt);
-            strConstantVariables = new Dictionary<string, string>(snapBeforeStr);
-            localConstantValues = new Dictionary<string, int>(snapBeforeLocals);
+            armSnaps.Add(TakeBranchState());
+            RestoreBranchState(snapBefore);
         }
 
         foreach (var branch in stmt.Branches)
@@ -1540,7 +1445,7 @@ public partial class IRGenerator
                     // so its termination propagates; a run-time match keeps it conditional.
                     if (matchBodyIsRuntime) _seqTerminated = false;
                     if (!matchBodyIsRuntime && firstUncondArm < 0)
-                        firstUncondArm = armSnapsLocals.Count;
+                        firstUncondArm = armSnaps.Count;
                     CloseArmLocals();
                     Emit(new Jump(endLabel));
                 }
@@ -1578,7 +1483,7 @@ public partial class IRGenerator
                     if (wildcardIsRuntime) LeaveRuntimeBranch();
                     if (wildcardIsRuntime) _seqTerminated = false;
                     if (!wildcardIsRuntime && firstUncondArm < 0)
-                        firstUncondArm = armSnapsLocals.Count;
+                        firstUncondArm = armSnaps.Count;
                     if (branch.Guard == null) wildcardCoversAll = true;
                     CloseArmLocals();
                     Emit(new Jump(endLabel));
@@ -1594,64 +1499,23 @@ public partial class IRGenerator
         // pre-match state when no arm catches the fall-through -- agrees on it.
         if (firstUncondArm >= 0)
         {
-            constantVariables = armSnapsInt[firstUncondArm];
-            strConstantVariables = armSnapsStr[firstUncondArm];
-            localConstantValues = armSnapsLocals[firstUncondArm];
+            RestoreBranchState(armSnaps[firstUncondArm] ?? snapBefore);
         }
-        else if (armSnapsLocals.Count > 0)
+        else if (armSnaps.Count > 0)
         {
-            var pathsInt = new List<Dictionary<string, int>>(armSnapsInt);
-            var pathsStr = new List<Dictionary<string, string>>(armSnapsStr);
-            var pathsLocals = new List<Dictionary<string, int>>(armSnapsLocals);
-            if (!wildcardCoversAll)
+            // The unguarded wildcard answers every path no earlier arm took, so only a
+            // match without one has a fall-through carrying the pre-match state.
+            var disagreedStr = JoinBranchStates(armSnaps, snapBefore, wildcardCoversAll);
+            foreach (var key in disagreedStr)
             {
-                pathsInt.Add(snapBeforeInt);
-                pathsStr.Add(snapBeforeStr);
-                pathsLocals.Add(snapBeforeLocals);
+                var candidates = new List<string?>();
+                if (snapBefore.StrConstantVariables.TryGetValue(key, out var beforeVal))
+                    candidates.Add(beforeVal);
+                foreach (var snap in armSnaps)
+                    if (snap != null && snap.StrConstantVariables.TryGetValue(key, out var bv))
+                        candidates.Add(bv);
+                MarkMultiStr(key, candidates);
             }
-
-            var agreedInt = new Dictionary<string, int>();
-            foreach (var kvp in pathsInt[0])
-            {
-                bool allAgree = true;
-                for (int pi = 1; pi < pathsInt.Count; ++pi)
-                    if (!pathsInt[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
-                    {
-                        allAgree = false;
-                        break;
-                    }
-                if (allAgree) agreedInt[kvp.Key] = kvp.Value;
-            }
-            constantVariables = agreedInt;
-
-            var agreedStr = new Dictionary<string, string>();
-            foreach (var kvp in pathsStr[0])
-            {
-                bool allAgree = true;
-                for (int pi = 1; pi < pathsStr.Count; ++pi)
-                    if (!pathsStr[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
-                    {
-                        allAgree = false;
-                        break;
-                    }
-                if (allAgree) agreedStr[kvp.Key] = kvp.Value;
-            }
-            strConstantVariables = agreedStr;
-
-            var agreedLocals = new Dictionary<string, int>();
-            foreach (var kvp in pathsLocals[0])
-            {
-                if (killedConstants.Contains(kvp.Key)) continue;
-                bool allAgree = true;
-                for (int pi = 1; pi < pathsLocals.Count; ++pi)
-                    if (!pathsLocals[pi].TryGetValue(kvp.Key, out var v) || v != kvp.Value)
-                    {
-                        allAgree = false;
-                        break;
-                    }
-                if (allAgree) agreedLocals[kvp.Key] = kvp.Value;
-            }
-            localConstantValues = agreedLocals;
         }
 
         Emit(new Label(endLabel));
@@ -2107,6 +1971,7 @@ public partial class IRGenerator
         // the condition instead left `while c.bump() < 4:` folded to the first value it
         // returned, so the comparison vanished and the loop never ended.
         var strBeforeLoop = new Dictionary<string, string?>(strConstantVariables);
+        var loopSnap = TakeBranchState();
         InvalidateConstantsAssignedIn(stmt.Body, stmt.Condition);
 
         Emit(new Label(startLabel));
@@ -2114,19 +1979,27 @@ public partial class IRGenerator
         int whileOpt = EmitOptimizedConditionalJump(stmt.Condition, endLabel, false);
         if (whileOpt == -1)
         {
+            // The body never runs: the invalidation above dropped bindings for writes
+            // that provably do not happen, so the pre-loop state stands untouched.
             Emit(new Label(endLabel));
             loopStack.RemoveAt(loopStack.Count - 1);
+            RestoreBranchState(loopSnap);
             return;
         }
 
         bool isRuntimeLoop = whileOpt == 1;
+        bool bodyDead = false;
 
         if (whileOpt == 0)
         {
             Val condVal = VisitExpression(stmt.Condition);
             if (condVal is Constant c)
             {
-                if (c.Value == 0) Emit(new Jump(endLabel));
+                if (c.Value == 0)
+                {
+                    Emit(new Jump(endLabel));
+                    bodyDead = true;
+                }
             }
             else
             {
@@ -2167,29 +2040,20 @@ public partial class IRGenerator
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
 
-        // The body may run any number of times, zero included, so a str it rebinds holds
-        // either the value it came in with or the one the body last wrote. Folding the body's
-        // value here made a loop that never ran print the text from inside it.
-        MarkStrReboundBy(strBeforeLoop);
-    }
-
-    /// <summary>
-    /// Takes the compile-time value away from every str that a loop body rebound, keeping both
-    /// the value from before the loop and the one the body leaves as the candidates a read
-    /// dispatches over. A name the body binds for the FIRST time is left alone: it had no
-    /// value to disagree with, and the shape is a name the loop introduces.
-    /// </summary>
-    private void MarkStrReboundBy(Dictionary<string, string?> before)
-    {
-        var rebound = new List<(string Key, string? Before, string? After)>();
-        foreach (var kv in before)
+        if (bodyDead)
         {
-            strConstantVariables.TryGetValue(kv.Key, out var after);
-            if (after != kv.Value) rebound.Add((kv.Key, kv.Value, after));
+            // A body lowered under a condition that folded to false still wrote its
+            // maps; none of those writes run, so the state after the loop is the one
+            // it entered with.
+            RestoreBranchState(loopSnap);
+            return;
         }
 
-        foreach (var (key, beforeVal, afterVal) in rebound)
-            MarkMultiStr(key, new[] { beforeVal, afterVal });
+        // The exit merges "the body ran at least once" with "it never ran": a name
+        // survives only where the body's end state and the pre-loop state agree. A
+        // str the body rebound holds either text at the exit -- folding the body's
+        // value made a loop that never ran print the text from inside it.
+        JoinLoopState(loopSnap, TakeBranchState(), strBeforeLoop);
     }
 
     private void VisitBreak(BreakStmt stmt)
@@ -2507,6 +2371,15 @@ public partial class IRGenerator
         // catchDispatch) rather than propagated to the caller. Scope this to the body
         // only: a `raise` in a handler/finally is a re-raise and must propagate.
         // A finally is also pushed so a `return` escaping the body (or else) runs it first.
+        //
+        // The try's exits are sibling paths the way if-arms are: a binding the body
+        // established must not answer a read inside a handler (the exception can fire
+        // before the write), and what survives past the try is what the happy path and
+        // every handler agree on. Each arm lowers from the pre-try state and the merge
+        // joins them; the unmatched path counts too -- the SignalError that re-delivers
+        // the exception does not mark the IR label after it unreachable.
+        var trySnap = TakeBranchState();
+        var tryArms = new List<BranchState?>();
         bool pushedFinally = hasFinally;
         if (pushedFinally) finallyStack.Add(stmt.Finally!);
         tryCatchStack.Add(catchDispatch);
@@ -2546,6 +2419,10 @@ public partial class IRGenerator
         // explicitly, and a `return` inside the finally itself must not re-trigger it.
         if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
         EmitFinallyBody(stmt);
+        // The happy path reaches afterLabel unless the body or the else left the sequence.
+        bool happyLeaves = stmt.Body.Any(AlwaysLeaves)
+                           || (stmt.ElseBody?.Any(AlwaysLeaves) ?? false);
+        tryArms.Add(happyLeaves ? null : TakeBranchState());
         Emit(new Jump(afterLabel));
 
         // RFC 0008: `try: self._font = open(...); ... except OSError:` -- a body that
@@ -2563,6 +2440,9 @@ public partial class IRGenerator
         }
 
         // ── Catch dispatcher ─────────────────────────────────────────────────
+        // Handlers lower from the pre-try state: an exception can fire at any call in
+        // the body, so only what was true on entry is known inside a handler.
+        RestoreBranchState(trySnap);
         Emit(new Label(catchDispatch));
 
         // Save the error code (still in R22) to a stable variable so a bare `raise` and the
@@ -2574,6 +2454,9 @@ public partial class IRGenerator
         {
             var (exnType, handlerBody) = stmt.Handlers[i];
             string skipLabel = MakeLabel();
+            // The dispatch compares run under entry state, and so does the body: a
+            // sibling handler's writes cannot answer a read here.
+            RestoreBranchState(trySnap);
 
             // `except (A, B):` arrives as the comma-joined text of its alternatives (#346).
             // One name is the ordinary case and is the single-element split, so the two
@@ -2642,6 +2525,7 @@ public partial class IRGenerator
             if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
 
             EmitFinallyBody(stmt);
+            tryArms.Add(handlerBody.Any(AlwaysLeaves) ? null : TakeBranchState());
             Emit(new Jump(afterLabel));
 
             Emit(new Label(skipLabel));
@@ -2654,6 +2538,7 @@ public partial class IRGenerator
         //   - otherwise re-raise to the caller (RET with T set) so normal uncaught propagation
         //     carries it up — reaching main, where it halts via __pymcu_unhandled_exn;
         //   - in main itself there is no caller, so halt directly.
+        RestoreBranchState(trySnap);
         if (hasFinally) EmitFinallyBody(stmt);
         string? enclosingCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
         if (enclosingCatch != null)
@@ -2662,6 +2547,22 @@ public partial class IRGenerator
             Emit(new SignalError(new Constant(0), null));
         else
             Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+
+        // The unmatched path propagates the error away -- SignalError re-delivers to an
+        // enclosing dispatcher or returns to the caller, and the unhandled-exn call halts.
+        // None of them falls through to afterLabel, so the path contributes no state to
+        // the merge; joining it would drop every binding the try body established.
+        tryArms.Add(null);
+        var tryDisagreed = JoinBranchStates(tryArms, trySnap, exhaustive: true);
+        foreach (var key in tryDisagreed)
+        {
+            var candidates = new List<string?>();
+            if (trySnap.StrConstantVariables.TryGetValue(key, out var tb)) candidates.Add(tb);
+            foreach (var snap in tryArms)
+                if (snap != null && snap.StrConstantVariables.TryGetValue(key, out var bv))
+                    candidates.Add(bv);
+            MarkMultiStr(key, candidates);
+        }
 
         Emit(new Label(afterLabel));
     }

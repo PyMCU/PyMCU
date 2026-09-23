@@ -1728,6 +1728,8 @@ public partial class IRGenerator
                     // went unnoticed until reads of locals began to fold (#331) -- an
                     // accumulator then read its starting value on every pass and
                     // `for v in x: total = total + v` answered 0.
+                    var sStrBefore = new Dictionary<string, string?>(strConstantVariables);
+                    var sLoopSnap = TakeBranchState();
                     InvalidateConstantsAssignedIn(stmt.Body);
 
                     // continue advances the index then re-tests (else the loop spins on one char).
@@ -1744,6 +1746,7 @@ public partial class IRGenerator
                     Emit(new Jump(sStart));
                     Emit(new Label(sEnd));
                     loopStack.RemoveAt(loopStack.Count - 1);
+                    JoinLoopState(sLoopSnap, TakeBranchState(), sStrBefore);
                     return;
                 }
 
@@ -2336,6 +2339,8 @@ public partial class IRGenerator
                             string enumEnd = MakeLabel();
                             // A RUN-TIME loop, lowered once and run many times: nothing the
                             // body writes may fold from the value it held on the way in.
+                            var enumStrBefore = new Dictionary<string, string?>(strConstantVariables);
+                            var enumLoopSnap = TakeBranchState();
                             InvalidateConstantsAssignedIn(stmt.Body);
                             loopStack.Add(new LoopLabels { ContinueLabel = enumCont, BreakLabel = enumEnd, FinallyDepth = finallyStack.Count });
                             Emit(new Label(enumStart));
@@ -2347,6 +2352,7 @@ public partial class IRGenerator
                             Emit(new Jump(enumStart));
                             Emit(new Label(enumEnd));
                             loopStack.RemoveAt(loopStack.Count - 1);
+                            JoinLoopState(enumLoopSnap, TakeBranchState(), enumStrBefore);
                             return;
                         }
                         for (int k = 0; k < enumStr.Length; k++)
@@ -2981,6 +2987,8 @@ public partial class IRGenerator
                     // went unnoticed until reads of locals began to fold (#331) -- an
                     // accumulator then read its starting value on every pass and
                     // `for v in x: total = total + v` answered 0.
+                    var listStrBefore = new Dictionary<string, string?>(strConstantVariables);
+                    var listLoopSnap = TakeBranchState();
                     InvalidateConstantsAssignedIn(stmt.Body);
 
                     // continue advances the index then re-tests (else the loop spins on one elem).
@@ -3003,6 +3011,7 @@ public partial class IRGenerator
                     Emit(new Jump(loopStart));
                     Emit(new Label(loopEnd));
                     loopStack.RemoveAt(loopStack.Count - 1);
+                    JoinLoopState(listLoopSnap, TakeBranchState(), listStrBefore);
                     return;
                 }
             }
@@ -3461,6 +3470,7 @@ public partial class IRGenerator
         // accumulator read its starting value on every pass, and `for i in range(4): total =
         // total + i` came out 3 instead of 6.
         var strBeforeLoop = new Dictionary<string, string?>(strConstantVariables);
+        var loopSnap = TakeBranchState();
         InvalidateConstantsAssignedIn(stmt.Body);
 
         Emit(new Label(startLabel));
@@ -3511,9 +3521,10 @@ public partial class IRGenerator
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
 
-        // A range whose bounds are decided at run time can run zero times: a str the body
-        // rebinds holds either value at the exit (see MarkStrReboundBy).
-        MarkStrReboundBy(strBeforeLoop);
+        // A range whose bounds are decided at run time can run zero times: a name the
+        // body rewrote holds either value at the exit, so the merge is the pre-loop
+        // state joined with the body's (see JoinLoopState).
+        JoinLoopState(loopSnap, TakeBranchState(), strBeforeLoop);
     }
 
     private int _withManagerCounter;
