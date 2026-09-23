@@ -9976,7 +9976,7 @@ public partial class IRGenerator
         Temporary newCap = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.BitAnd, newCapWide, new Constant(0xFF), newCap));
 
-        // new_alloc_size = 2 + new_cap * elemSize
+        // new_alloc_size = 2 + new_cap * elemSize  (<= 255 by the clamp above)
         Temporary newCapScaled = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Mul, newCap, new Constant(elemSize), newCapScaled));
         Temporary newAllocSize = MakeTemp(DataType.UINT16);
