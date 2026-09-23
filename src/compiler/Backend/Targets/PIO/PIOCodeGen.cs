@@ -155,12 +155,12 @@ public class PIOCodeGen : CodeGen
         {
             if (func.ReturnMembers is { Count: > 0 })
                 throw new NotSupportedException(
-                    $"PIO: function '{func.Name}' returns a tagged Optional, which the PIO backend cannot represent");
+                    $"PIO: function '{func.Name}' returns a tagged Optional/Union, which the PIO backend cannot represent");
             foreach (var instr in func.Body)
             {
                 if (instr is Return { Tag: not null } or Call { TagDst: not null and not NoneVal })
                     throw new NotSupportedException(
-                        $"PIO: function '{func.Name}' carries an Optional tag operand, which the PIO backend cannot represent");
+                        $"PIO: function '{func.Name}' carries an Optional/Union tag operand, which the PIO backend cannot represent");
             }
         }
 

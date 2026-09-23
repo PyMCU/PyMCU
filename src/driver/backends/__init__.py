@@ -372,7 +372,8 @@ def run_backend(
         if not _capable(caps, "--return-tags"):
             _refuse_unsupported(
                 backend_binary, "--return-tags",
-                "the program returns Optional[...] and the tag byte must be moved")
+                "the program returns Optional[...]/Union[...] and the tag byte "
+                "must be moved")
         cmd.append("--return-tags")
 
     # returncode == -9 means the backend was SIGKILL'd by the OS -- on macOS the kernel
