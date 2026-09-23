@@ -530,6 +530,7 @@ public partial class IRGenerator
     {
         Val code = ResolveBinding(errorType);
         string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
         if (localCatch == null && currentFunction == "main")
         {
             string unhandled = MakeLabel();

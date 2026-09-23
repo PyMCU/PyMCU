@@ -513,6 +513,13 @@ public partial class IRGenerator
     // `raise` is a re-raise that must propagate.
     private List<string> tryCatchStack = new();
 
+    // Parallel to tryCatchStack: finallyStack.Count at the moment that try's dispatch
+    // was pushed — the index just above its own pending finally (if any). A `raise`
+    // delivered to tryCatchStack[^1] escapes every try whose finally sits above that
+    // floor, so those run inline before the SignalError; the target try's own finally
+    // runs at its dispatch instead.
+    private List<int> tryFinallyFloor = new();
+
     // Pending `finally` blocks of the enclosing try statements (innermost last). A `return` that
     // escapes a try-with-finally must run these before returning (Python semantics).
     private List<List<Statement>> finallyStack = new();

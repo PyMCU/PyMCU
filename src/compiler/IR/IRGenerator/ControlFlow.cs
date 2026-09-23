@@ -2541,6 +2541,12 @@ public partial class IRGenerator
         // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
         string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
 
+        // Pending finallys of the tries this raise escapes run first, innermost out
+        // (Python unwinds through them before the next handler sees the exception).
+        // The floor is the target try's own-finally slot: entries above it belong to
+        // lexically deeper scopes the raise leaves; the target's runs at its dispatch.
+        EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
+
         // Except in the entry function, which has no caller. Propagating there emits
         // `SET; RET`, and the RET pops a return address that was never pushed: the stack
         // pointer is at the top of SRAM and execution goes wherever those bytes point.
@@ -2617,6 +2623,7 @@ public partial class IRGenerator
         bool pushedFinally = hasFinally;
         if (pushedFinally) finallyStack.Add(stmt.Finally!);
         tryCatchStack.Add(catchDispatch);
+        tryFinallyFloor.Add(finallyStack.Count);
         foreach (var s in stmt.Body)
         {
             if (_seqTerminated) break;
@@ -2626,6 +2633,7 @@ public partial class IRGenerator
         // and the statements after the try stay reachable.
         _seqTerminated = false;
         tryCatchStack.RemoveAt(tryCatchStack.Count - 1);
+        tryFinallyFloor.RemoveAt(tryFinallyFloor.Count - 1);
 
         // Post-process: find every Call emitted inside the try body and insert a
         // BranchOnError guard immediately after it. We iterate in reverse so that
