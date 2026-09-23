@@ -168,8 +168,13 @@ public class UnionParameterAtCallSiteTests
 
     [Fact]
     public void AUnionParameterOnARegularFunctionKeepsItsRefusal()
+        // RFC 0009 phase 2: scalar members (int, float, None) now ride a tag byte in
+        // the argument run and are supported. What keeps the refusal is a member the
+        // tag cannot carry -- a class instance is storage, not a payload value.
         => Assert.Contains("union type annotation is not supported",
-            Refusal("def take(x: Union[int, float]) -> int:\n    return 1\n\ndef main() -> None:\n    pass\n"));
+            Refusal(Classes +
+                "def take(x: Union[A, int]) -> int:\n    return 1\n\n" +
+                "@used\ndef main() -> int:\n    return 0\n"));
 
     [Fact]
     public void OptionalIsUnaffected()

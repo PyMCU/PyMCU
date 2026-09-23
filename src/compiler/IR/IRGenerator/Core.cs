@@ -1306,6 +1306,13 @@ public partial class IRGenerator
         // call site can ask it while its own function is still being generated.
         ResolveOptionalReturns();
 
+        // RFC 0009 section 10: the same question turned around for parameters -- a
+        // union-annotated parameter of a real subroutine carries a tag byte only
+        // when the call sites can hand it more than one member. Must run after
+        // ResolveOptionalReturns so an argument that is itself a call can ask what
+        // its callee returns.
+        ResolveOptionalParams(mainAst, importedModules, astToCanonicalPrefix);
+
         // Whether raises record their message for a later read. Two readers: a handler that
         // binds `except X as e` (#369), and the unhandled-exception report, which prints
         // `E:<Type>: <msg>` through __pymcu_exn_tail. The second needs a raise that actually

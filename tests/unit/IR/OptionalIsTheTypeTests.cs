@@ -61,8 +61,11 @@ public class OptionalIsTheTypeTests
     [Fact]
     public void AUnionOfTwoRealTypesIsStillRefused()
     {
-        // The refusal was right about this one all along: two widths, and nothing to pick.
-        foreach (string ann in new[] { "uint8 | bool", "Union[uint8, bool]" })
+        // RFC 0009 phase 2 lifted the refusal for members a tag can carry (scalars and
+        // None): the argument run grows a tag byte that picks between them. What still
+        // has no answer is a member the tag cannot carry -- a buffer travels as a name,
+        // not a payload byte.
+        foreach (string ann in new[] { "uint8 | bytearray", "Union[uint8, bytearray]" })
             Assert.Contains("union type annotation", Refusal(
                 $"def take(v: {ann}) -> uint8:\n    return 1\n\ndef main():\n    y = take(1)\n"));
     }
@@ -70,9 +73,9 @@ public class OptionalIsTheTypeTests
     [Fact]
     public void AUnionOfThreeWithOneNoneIsStillRefused()
     {
-        // Dropping the None leaves two, which is the case that has no answer.
+        // Same: None is a member the tag carries, but bytearray is not.
         Assert.Contains("union type annotation", Refusal(
-            "def take(v: Union[uint8, bool, None]) -> uint8:\n    return 1\n\n" +
+            "def take(v: Union[uint8, bytearray, None]) -> uint8:\n    return 1\n\n" +
             "def main():\n    y = take(1)\n"));
     }
 

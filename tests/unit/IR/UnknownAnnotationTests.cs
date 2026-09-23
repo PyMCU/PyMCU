@@ -288,9 +288,12 @@ public class UnknownAnnotationTests
     // the same sentence; "unknown type 'Union'" would be true and useless. `Optional[X]` and
     // `Union[X, None]` are no longer in this list: None-ness is a compile-time property here,
     // so those mean X and are read as X.
+    // RFC 0009 phase 2 narrowed which unions still land here: members a tag byte can
+    // carry (scalars, None) compile, so the refusal now needs a member the tag cannot
+    // carry -- a buffer has no payload bytes for the tag to guard.
     [Theory]
-    [InlineData("Union[uint8, bool]")]
-    [InlineData("uint8 | bool")]
+    [InlineData("Union[uint8, bytearray]")]
+    [InlineData("uint8 | bytearray")]
     public void TheTypingSpellingsOfAUnion_GetTheUnionMessage(string ann)
     {
         var ex = Fails(

@@ -101,6 +101,21 @@ public partial class IRGenerator
     private static DataType MemberDataType(string member) =>
         member == "bool" ? DataType.UINT8 : DataTypeExtensions.StringToDataType(member);
 
+    /// Whether a parameter's union members are all payloads a tag byte can guard on a
+    /// real subroutine (RFC 0009 phase 2): every member a scalar, or None. A member
+    /// that is a class, a Callable, or an unknown name reports UNKNOWN through
+    /// MemberDataType and keeps the union refusal; a buffer or pointer member has a
+    /// real DataType (the pointer) but still is not a payload byte, so the
+    /// ValidateUnionMembers exclusion is mirrored here by name. The member count and
+    /// the per-parameter tag-vs-proven split are ResolveOptionalParams' later call.
+    private static bool ParamUnionMembersTaggable(Param prm) =>
+        prm.UnionMembers != null
+        && prm.UnionMembers.All(m =>
+            m == "None"
+            || (MemberDataType(m) != DataType.UNKNOWN
+                && m is not ("bytearray" or "bytes" or "str" or "const[str]")
+                && !m.Contains('[')));
+
     /// Whether the member name is an integer-kind scalar (not bool, not float).
     private static bool IsIntMember(string member) =>
         member is "int" or "int8" or "int16" or "int32"
@@ -505,6 +520,636 @@ public partial class IRGenerator
     /// The members of <paramref name="members"/> a `Union[...]` spelled out, for diagnostics.
     private static string UnionDisplay(List<string> members)
         => "Union[" + string.Join(", ", members) + "]";
+
+    // ── phase 2: union parameters on real subroutines ───────────────────────
+
+    /// <summary>
+    /// RFC 0009 section 10: decide which union-annotated parameters of a REAL
+    /// subroutine carry a run-time member tag -- a byte staged after the payload
+    /// in the argument run, the mirror of the return tag. The gate is the same
+    /// decision-2 rule turned around: a parameter is tagged only when the call
+    /// sites can actually hand it more than one member. A parameter every caller
+    /// provably fills with one member keeps the exact code it had before.
+    ///
+    /// Runs after <see cref="ResolveOptionalReturns"/> so an argument expression
+    /// that is itself a call can ask what its callee returns.
+    /// </summary>
+    private void ResolveOptionalParams(ProgramNode mainAst,
+        Dictionary<string, ProgramNode> importedModules,
+        Dictionary<ProgramNode, string> astToCanonicalPrefix)
+    {
+        // Spelled member lists per callable name, aligned with functionParams.
+        // Every definition contributes its list (a call site needs the members no
+        // matter how the callee is emitted); the tag itself is decided only for
+        // functions lowered as real subroutines.
+        var unionParamsOf = new Dictionary<string, List<List<string>?>>(StringComparer.Ordinal);
+        var realFns = new HashSet<string>(StringComparer.Ordinal);
+        var allDefs = new List<(string key, string prefix, FunctionDef fn)>();
+        var seenDefs = new HashSet<FunctionDef>();
+        foreach (var entry in functionsToCompile)
+        {
+            string key = (entry.Prefix ?? "") + entry.Func.Name;
+            realFns.Add(key);
+            if (seenDefs.Add(entry.Func)) allDefs.Add((key, entry.Prefix ?? "", entry.Func));
+        }
+        foreach (var kv in inlineFunctions)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, "", kv.Value));
+        foreach (var kv in methodAstByName)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, "", kv.Value));
+        foreach (var kv in instanceMethodDefs)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, "", kv.Value));
+        // A fixed-ABI definition lands in NONE of the registries above -- an @extern
+        // function is a declaration the linker resolves, not a body compiled here --
+        // so sweep the module function lists too, or its union parameter slips past
+        // the ABI refusal below entirely.
+        foreach (var fn in mainAst.Functions)
+            if (seenDefs.Add(fn)) allDefs.Add((fn.Name, "", fn));
+        foreach (var mod in importedModules.Values)
+            foreach (var fn in mod.Functions)
+                if (seenDefs.Add(fn)) allDefs.Add((fn.Name, "", fn));
+
+        foreach (var (key, _, fn) in allDefs)
+        {
+            var list = fn.Params.Select(p => p.UnionMembers).ToList();
+            if (list.All(m => m == null)) continue;
+            // A fixed-ABI callable never grows a tag byte -- an extern declaration is
+            // not in functionsToCompile at all, so this check stands outside realFns.
+            if (fn.IsExtern || fn.IsExportC || fn.IsInterrupt || fn.IsNaked)
+                throw UserError(
+                    $"parameter of '{fn.Name}' is a tagged union, but '{fn.Name}' has a fixed "
+                    + "ABI (extern, export, interrupt or @naked): a caller outside PyMCU code "
+                    + "has no tag byte to give. Keep the parameter a plain scalar and carry "
+                    + "the member choice in a second argument.", fn);
+            if (realFns.Contains(key))
+            {
+                for (int i = 0; i < list.Count; ++i)
+                    if (list[i] is { } pm)
+                        ValidateUnionMembers($"parameter '{fn.Params[i].Name}' of '{fn.Name}'",
+                            pm, fn);
+            }
+            unionParamsOf[key] = list;
+        }
+        if (unionParamsOf.Count == 0) return;
+
+        // Name evidence, deliberately program-wide and unqualified: a wrong "yes"
+        // costs a tag byte, a wrong "no" drops it -- so these sets err wide.
+        var maybeUnion = new HashSet<string>(StringComparer.Ordinal);
+        var maybeNone = new HashSet<string>(StringComparer.Ordinal);
+        var fnAsValue = new HashSet<string>(StringComparer.Ordinal);
+        var assigns = new List<(string name, Expression? value)>();
+        foreach (var (_, _, fn) in allDefs)
+        {
+            foreach (var p in fn.Params)
+            {
+                if (p.UnionMembers != null) maybeUnion.Add(p.Name);
+                if (p.DefaultValue is NoneLiteral) maybeNone.Add(p.Name);
+            }
+            CollectUnionParamEvidence(fn.Body.Statements, assigns, maybeUnion, maybeNone,
+                fnAsValue, unionParamsOf);
+        }
+        CollectUnionParamEvidence(mainAst.GlobalStatements, assigns, maybeUnion, maybeNone,
+            fnAsValue, unionParamsOf);
+        foreach (var mod in importedModules.Values)
+            CollectUnionParamEvidence(mod.GlobalStatements, assigns, maybeUnion, maybeNone,
+                fnAsValue, unionParamsOf);
+        foreach (var kv in fieldDeclaredUnionMembers)
+            maybeUnion.Add(kv.Key[(kv.Key.IndexOf('|') + 1)..]);
+
+        // Propagate through plain assignments until stable: `x = y`, `x = f()`,
+        // `x = <expr that touches y>` inherit y's evidence.
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (var (name, value) in assigns)
+            {
+                if (value == null) continue;
+                if (!maybeNone.Contains(name) && ScanExprMaybeNone(value, maybeNone, maybeUnion))
+                    { maybeNone.Add(name); grew = true; }
+                if (!maybeUnion.Contains(name) && ScanExprMentionsName(value, maybeUnion))
+                    { maybeUnion.Add(name); grew = true; }
+            }
+        }
+
+        // Walk every body that can contain a call; for each call to a function with
+        // union parameters, accumulate the member indexes each union parameter can
+        // receive. Null contribution = the argument cannot be pinned.
+        var reach = new Dictionary<(string callee, int pidx), HashSet<int>>();
+        foreach (var (key, prefix, fn) in allDefs)
+        {
+            // `self`/`super` inside a method resolves against the enclosing class.
+            methodInstanceTypes.TryGetValue(key, out var ctxClass);
+            ScanParamCallArgs(fn.Body.Statements, prefix, ctxClass, unionParamsOf,
+                maybeUnion, maybeNone, reach);
+        }
+        ScanParamCallArgs(mainAst.GlobalStatements, "", null, unionParamsOf,
+            maybeUnion, maybeNone, reach);
+        foreach (var mod in importedModules.Values)
+        {
+            string mp = astToCanonicalPrefix.TryGetValue(mod, out var cp) ? cp : "";
+            ScanParamCallArgs(mod.GlobalStatements, mp, null, unionParamsOf,
+                maybeUnion, maybeNone, reach);
+        }
+
+        // Decide per parameter.
+        foreach (var (callee, list) in unionParamsOf)
+        {
+            if (!realFns.Contains(callee)) continue;
+            List<List<string>?>? tags = null;
+            Dictionary<string, int>? proven = null;
+            functionParams.TryGetValue(callee, out var pnames);
+            for (int i = 0; i < list.Count; ++i)
+            {
+                if (list[i] is not { } members) continue;
+                if (!reach.TryGetValue((callee, i), out var set)) set = new HashSet<int>();
+                if (set.Count == 1)
+                {
+                    if (pnames != null && i < pnames.Count)
+                        (proven ??= new Dictionary<string, int>())[pnames[i]] = set.First();
+                    continue;
+                }
+                (tags ??= new List<List<string>?>(new List<string>?[list.Count]))[i] = members;
+                // A union payload carries the widest member; an argument narrowed by
+                // the signature's declared width must marshal at that width instead.
+                if (functionParamTypes.TryGetValue(callee, out var pt) && i < pt.Count)
+                    pt[i] = UnionPayloadType(members);
+            }
+            if (tags != null)
+            {
+                // A function referenced as a value is called through ICALL, whose
+                // staging has no tag byte -- refuse rather than silently drop it.
+                string bare = callee.Contains('_') ? callee[(callee.LastIndexOf('_') + 1)..] : callee;
+                if (fnAsValue.Any(n => callee == n || callee.EndsWith("_" + n) || n == bare))
+                    throw UserError(
+                        $"'{bare}' is called through a function reference, which cannot carry "
+                        + "the tag byte its union parameter needs. Call it by name, or keep the "
+                        + "parameter a plain scalar.");
+                functionParamTags[callee] = tags;
+            }
+            if (proven != null) functionParamProven[callee] = proven;
+        }
+    }
+
+    /// Whether parameter <paramref name="pIdx"/> of <paramref name="callee"/> carries
+    /// a run-time member tag (RFC 0009 section 10). False for an ordinary parameter
+    /// and for a callee the resolve pass never tagged.
+    private bool IsTaggedParam(string callee, int pIdx)
+        => functionParamTags.TryGetValue(callee, out var pt)
+           && pIdx >= 0 && pIdx < pt.Count && pt[pIdx] != null;
+
+    /// A name-resolution spelling worth trying for <paramref name="name"/>:
+    /// the name itself or any registered function ending at a `_{name}` boundary.
+    private bool ResolvesToUnionParamFn(string name,
+        Dictionary<string, List<List<string>?>> unionParamsOf)
+    {
+        foreach (var k in unionParamsOf.Keys)
+            if (k == name || k.EndsWith("_" + name)) return true;
+        return false;
+    }
+
+    /// Whether <paramref name="e"/> can evaluate to None under the scan's name
+    /// evidence: a None literal, a name that can hold None or a union, a union
+    /// field read, a call returning a tagged union or void, or a composite that
+    /// mentions any of those.
+    private bool ScanExprMaybeNone(Expression? e, HashSet<string> maybeNone,
+        HashSet<string> maybeUnion)
+    {
+        switch (e)
+        {
+            case null: return false;
+            case NoneLiteral: return true;
+            case VariableExpr v: return maybeNone.Contains(v.Name) || maybeUnion.Contains(v.Name);
+            case MemberAccessExpr ma:
+                return maybeUnion.Contains(ma.Member) || maybeNone.Contains(ma.Member)
+                    || ScanExprMaybeNone(ma.Object, maybeNone, maybeUnion);
+            case CallExpr c:
+            {
+                bool resolved = false;
+                foreach (var g in ScanCalleeReturnNames(c, ""))
+                {
+                    resolved = true;
+                    if (functionReturnMembers.TryGetValue(g, out var rm) && NoneIndex(rm) >= 0)
+                        return true;
+                    if (functionReturnTypes.TryGetValue(g, out var crt)
+                        && (crt == "void" || crt == "None"))
+                        return true;
+                }
+                // An unresolved callee is a builtin or unmodelled call: conservatively
+                // tainted only when its arguments mention a tainted name.
+                return !resolved
+                    && (ScanExprMentionsName(c, maybeNone) || ScanExprMentionsName(c, maybeUnion));
+            }
+            case TernaryExpr t:
+                return ScanExprMaybeNone(t.TrueVal, maybeNone, maybeUnion)
+                    || ScanExprMaybeNone(t.FalseVal, maybeNone, maybeUnion);
+            case KeywordArgExpr kw: return ScanExprMaybeNone(kw.Value, maybeNone, maybeUnion);
+            case WalrusExpr w: return ScanExprMaybeNone(w.Value, maybeNone, maybeUnion);
+            default:
+                // Any composite mentioning a maybe-None/maybe-union name can yield it
+                // (`x or default`, arithmetic on a narrowed name is refused anyway).
+                return ScanExprMentionsName(e, maybeNone) || ScanExprMentionsName(e, maybeUnion);
+        }
+    }
+
+    /// Whether <paramref name="e"/> mentions any of the names in <paramref name="names"/>.
+    private static bool ScanExprMentionsName(Expression? e, HashSet<string> names)
+    {
+        bool hit = false;
+        WalkScanExpr(e, x =>
+        {
+            if (x is VariableExpr v && names.Contains(v.Name)) hit = true;
+            if (x is MemberAccessExpr ma && names.Contains(ma.Member)) hit = true;
+        });
+        return hit;
+    }
+
+    /// Generic expression walker for the scan passes: visits every node. The
+    /// callback sees each expression; children are always walked too.
+    private static void WalkScanExpr(Expression? e, Action<Expression> visit)
+    {
+        if (e == null) return;
+        visit(e);
+        switch (e)
+        {
+            case BinaryExpr b: WalkScanExpr(b.Left, visit); WalkScanExpr(b.Right, visit); break;
+            case UnaryExpr u: WalkScanExpr(u.Operand, visit); break;
+            case CallExpr c:
+                WalkScanExpr(c.Callee, visit);
+                foreach (var a in c.Args) WalkScanExpr(a, visit);
+                break;
+            case MemberAccessExpr ma: WalkScanExpr(ma.Object, visit); break;
+            case IndexExpr ix: WalkScanExpr(ix.Target, visit); WalkScanExpr(ix.Index, visit); break;
+            case SliceExpr sl: WalkScanExpr(sl.Start, visit); WalkScanExpr(sl.Stop, visit); WalkScanExpr(sl.Step, visit); break;
+            case TupleExpr t: foreach (var x in t.Elements) WalkScanExpr(x, visit); break;
+            case ListExpr l: foreach (var x in l.Elements) WalkScanExpr(x, visit); break;
+            case SetExpr s: foreach (var x in s.Elements) WalkScanExpr(x, visit); break;
+            case DictExpr d: foreach (var (k, v) in d.Entries) { WalkScanExpr(k, visit); WalkScanExpr(v, visit); } break;
+            case FStringExpr f: foreach (var p in f.Parts) if (p.Expr != null) WalkScanExpr(p.Expr, visit); break;
+            case TernaryExpr t:
+                WalkScanExpr(t.Condition, visit); WalkScanExpr(t.TrueVal, visit); WalkScanExpr(t.FalseVal, visit); break;
+            case KeywordArgExpr kw: WalkScanExpr(kw.Value, visit); break;
+            case StarArgExpr st: WalkScanExpr(st.Value, visit); break;
+            case DoubleStarArgExpr ds: WalkScanExpr(ds.Value, visit); break;
+            case WalrusExpr w: WalkScanExpr(w.Value, visit); break;
+            case YieldExpr y: WalkScanExpr(y.Value, visit); break;
+            case AwaitExpr a: WalkScanExpr(a.Operand, visit); break;
+            case ListCompExpr lc:
+                WalkScanExpr(lc.Element, visit); WalkScanExpr(lc.Iterable, visit);
+                WalkScanExpr(lc.Iterable2, visit); WalkScanExpr(lc.Filter, visit); break;
+            case GeneratorExpr g:
+                WalkScanExpr(g.Element, visit); WalkScanExpr(g.Iterable, visit);
+                WalkScanExpr(g.Iterable2, visit); WalkScanExpr(g.Filter, visit); break;
+            case LambdaExpr lm:
+                foreach (var p in lm.Params) WalkScanExpr(p.DefaultValue, visit);
+                WalkScanExpr(lm.Body, visit); break;
+        }
+    }
+
+    /// Generic statement walker: visits every nested statement and calls
+    /// <paramref name="exprSink"/> on every expression position.
+    private static void WalkScanStmts(IEnumerable<Statement>? stmts, Action<Expression?> exprSink,
+        Action<Statement>? stmtSink = null)
+    {
+        if (stmts == null) return;
+        foreach (var s in stmts)
+        {
+            stmtSink?.Invoke(s);
+            switch (s)
+            {
+                case AssignStmt a: exprSink(a.Target); exprSink(a.Value); break;
+                case AugAssignStmt a: exprSink(a.Target); exprSink(a.Value); break;
+                case VarDecl vd: exprSink(vd.Init); break;
+                case AnnAssign aa: exprSink(aa.Value); break;
+                case ReturnStmt r: exprSink(r.Value); break;
+                case ExprStmt es: exprSink(es.Expr); break;
+                case IfStmt i:
+                    exprSink(i.Condition);
+                    WalkScanStmts(new[] { i.ThenBranch }, exprSink, stmtSink);
+                    foreach (var (c2, b2) in i.ElifBranches) { exprSink(c2); WalkScanStmts(new[] { b2 }, exprSink, stmtSink); }
+                    if (i.ElseBranch != null) WalkScanStmts(new[] { i.ElseBranch }, exprSink, stmtSink);
+                    break;
+                case WhileStmt w: exprSink(w.Condition); WalkScanStmts(new[] { w.Body }, exprSink, stmtSink); break;
+                case ForStmt f:
+                    exprSink(f.RangeStart); exprSink(f.RangeStop); exprSink(f.RangeStep); exprSink(f.Iterable);
+                    WalkScanStmts(new[] { f.Body }, exprSink, stmtSink); break;
+                case TryStmt t:
+                    WalkScanStmts(t.Body, exprSink, stmtSink);
+                    foreach (var (_, h) in t.Handlers) WalkScanStmts(h, exprSink, stmtSink);
+                    WalkScanStmts(t.ElseBody, exprSink, stmtSink);
+                    WalkScanStmts(t.Finally, exprSink, stmtSink);
+                    break;
+                case WithStmt wi: exprSink(wi.ContextExpr); WalkScanStmts(new[] { wi.Body }, exprSink, stmtSink); break;
+                case MatchStmt m:
+                    exprSink(m.Target);
+                    foreach (var br in m.Branches)
+                    { exprSink(br.Pattern); exprSink(br.Guard); if (br.Body != null) WalkScanStmts(new[] { br.Body }, exprSink, stmtSink); }
+                    break;
+                case Block b: WalkScanStmts(b.Statements, exprSink, stmtSink); break;
+                case TupleUnpackStmt tu: exprSink(tu.Value); break;
+                case AssertStmt a2: exprSink(a2.Condition); break;
+                case RaiseStmt r2: exprSink(r2.MessageExpr); break;
+                case FunctionDef fd:
+                    foreach (var p in fd.Params) exprSink(p.DefaultValue);
+                    WalkScanStmts(fd.Body.Statements, exprSink, stmtSink); break;
+                case ClassDef cd:
+                    if (cd.Body is Block cb) WalkScanStmts(cb.Statements, exprSink, stmtSink);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evidence collection for <see cref="ResolveOptionalParams"/>: assignment pairs
+    /// for the fixpoint, union-annotated names, names bound to None, and function
+    /// names used as values (a tagged parameter cannot ride an indirect call).
+    /// </summary>
+    private void CollectUnionParamEvidence(IEnumerable<Statement>? stmts,
+        List<(string name, Expression? value)> assigns,
+        HashSet<string> maybeUnion, HashSet<string> maybeNone, HashSet<string> fnAsValue,
+        Dictionary<string, List<List<string>?>> unionParamsOf)
+    {
+        WalkScanStmts(stmts, e =>
+        {
+            // A bare function name anywhere but callee position is an address-taken
+            // function; check it against the union-param name set.
+            if (e is VariableExpr v && ResolvesToUnionParamFn(v.Name, unionParamsOf))
+                fnAsValue.Add(v.Name);
+            if (e is MemberAccessExpr mav)
+            {
+                foreach (var k in unionParamsOf.Keys)
+                    if (k.EndsWith("_" + mav.Member)) { fnAsValue.Add(mav.Member); break; }
+            }
+        }, s =>
+        {
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr tv } a:
+                    assigns.Add((tv.Name, a.Value));
+                    if (a.Value is NoneLiteral) maybeNone.Add(tv.Name);
+                    break;
+                case AssignStmt { Target: MemberAccessExpr mt } am:
+                    if (am.Value is NoneLiteral) maybeNone.Add(mt.Member);
+                    assigns.Add((mt.Member, am.Value));
+                    break;
+                case VarDecl vd:
+                    if (vd.UnionMembers != null) maybeUnion.Add(vd.Name);
+                    assigns.Add((vd.Name, vd.Init));
+                    if (vd.Init is NoneLiteral) maybeNone.Add(vd.Name);
+                    break;
+                case AnnAssign aa:
+                    if (aa.UnionMembers != null)
+                    {
+                        maybeUnion.Add(aa.Target);
+                        int dot = aa.Target.LastIndexOf('.');
+                        if (dot >= 0) maybeUnion.Add(aa.Target[(dot + 1)..]);
+                    }
+                    assigns.Add((aa.Target, aa.Value));
+                    if (aa.Value is NoneLiteral) maybeNone.Add(aa.Target);
+                    break;
+                case TupleUnpackStmt tu:
+                    foreach (var t in tu.Targets) assigns.Add((t, tu.Value));
+                    break;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Call-site walk for <see cref="ResolveOptionalParams"/>: every CallExpr in the
+    /// body contributes the member indexes its arguments can carry to each
+    /// union-annotated parameter of the resolved callee.
+    /// </summary>
+    private void ScanParamCallArgs(IEnumerable<Statement>? stmts, string ctxPrefix,
+        string? ctxClass, Dictionary<string, List<List<string>?>> unionParamsOf,
+        HashSet<string> maybeUnion, HashSet<string> maybeNone,
+        Dictionary<(string callee, int pidx), HashSet<int>> reach)
+    {
+        // Local constructor tracking: `x = C(...)` teaches `x.m(...)` the class.
+        var varClass = new Dictionary<string, string>(StringComparer.Ordinal);
+        WalkScanStmts(stmts, e => { }, s =>
+        {
+            if (s is AssignStmt { Target: VariableExpr tv, Value: CallExpr { Callee: VariableExpr cn } }
+                && ClassKeyForScan(cn.Name, ctxPrefix) is { } ck)
+                varClass[tv.Name] = ck;
+        });
+        WalkScanStmts(stmts, e =>
+        {
+            if (e is not CallExpr call) return;
+            foreach (var (callee, selfCount, recvArgs) in
+                     ScanCalleeHits(call, ctxPrefix, ctxClass, varClass, unionParamsOf))
+            {
+                if (!unionParamsOf.TryGetValue(callee, out var list)) continue;
+                functionParams.TryGetValue(callee, out var pnames);
+                functionParamDefaults.TryGetValue(callee, out var pdefaults);
+                bool star = call.Args.Any(a => a is StarArgExpr or DoubleStarArgExpr);
+                var byName = new Dictionary<string, Expression>(StringComparer.Ordinal);
+                foreach (var a in call.Args)
+                    if (a is KeywordArgExpr kw) byName[kw.Key] = kw.Value;
+                for (int p = 0; p < list.Count; ++p)
+                {
+                    if (list[p] is not { } members) continue;
+                    // bound: param p <- arg index p - selfCount; unbound (the
+                    // receiver itself is an argument): arg index p - selfCount + 1.
+                    int argIdx = p - selfCount + recvArgs;
+                    Expression? argExpr = null;
+                    if (star) argExpr = null;   // positions unknown: unpinnable below
+                    else if (argIdx >= 0 && argIdx < call.Args.Count(a => a is not KeywordArgExpr))
+                    {
+                        int seen = -1;
+                        foreach (var a in call.Args)
+                        {
+                            if (a is KeywordArgExpr) continue;
+                            if (++seen == argIdx) { argExpr = a; break; }
+                        }
+                    }
+                    if (argExpr == null && pnames != null && p < pnames.Count
+                        && byName.TryGetValue(pnames[p], out var kwv))
+                        argExpr = kwv;
+                    if (argExpr == null && pdefaults != null && p < pdefaults.Count)
+                        argExpr = pdefaults[p];
+                    var key = (callee, p);
+                    if (!reach.TryGetValue(key, out var set))
+                        reach[key] = set = new HashSet<int>();
+                    var add = ScanArgMemberSet(star ? null : argExpr, members, ctxPrefix,
+                        maybeUnion, maybeNone);
+                    if (add == null || star)
+                        for (int mi = 0; mi < members.Count; ++mi) set.Add(mi);
+                    else
+                        set.UnionWith(add);
+                }
+            }
+        });
+    }
+
+    /// The class key a name resolves to at scan time -- a class in this module or
+    /// an imported one, both spelled in <c>classFieldLayout</c>/instance key form.
+    private string? ClassKeyForScan(string name, string ctxPrefix)
+    {
+        if (classNames.Contains(name)) return ctxPrefix + name;
+        if (classModuleMap.TryGetValue(name, out var cm) && cm != null) return cm + name;
+        if (classNames.Contains(ctxPrefix + name)) return ctxPrefix + name;
+        return classNames.Contains(name) ? name : null;
+    }
+
+    /// <summary>
+    /// The callees a call site can resolve to, each with the number of leading
+    /// self-derived parameters and receiver-arguments that shift the positional
+    /// mapping. Unknown receivers widen to every method of the same name.
+    /// </summary>
+    private IEnumerable<(string callee, int selfCount, int recvArgs)> ScanCalleeHits(
+        CallExpr call, string ctxPrefix, string? ctxClass,
+        Dictionary<string, string> varClass,
+        Dictionary<string, List<List<string>?>> unionParamsOf)
+    {
+        int SelfCount(string key)
+            => functionParamSelfCount.TryGetValue(key, out var sc) ? sc
+             : (functionParams.TryGetValue(key, out var pn) && pn.Count > 0 && pn[0] == "self" ? 1 : 0);
+
+        var hits = new List<(string, int, int)>();
+        switch (call.Callee)
+        {
+            case VariableExpr v:
+                foreach (var k in unionParamsOf.Keys)
+                    if (k == v.Name || k == ctxPrefix + v.Name || k.EndsWith("_" + v.Name))
+                        hits.Add((k, 0, 0));
+                if (ClassKeyForScan(v.Name, ctxPrefix) is { } ck)
+                {
+                    string init = ck + "___init__";
+                    foreach (var k in unionParamsOf.Keys)
+                        if (k == init || k.EndsWith("_" + init))
+                            hits.Add((k, Math.Max(1, SelfCount(k)), 0));
+                }
+                break;
+            case MemberAccessExpr ma:
+            {
+                int recvArgs = 0;
+                var classes = new List<string>();
+                switch (ma.Object)
+                {
+                    case VariableExpr { Name: "self" or "cls" } when ctxClass != null:
+                        classes.Add(ctxClass); break;
+                    case VariableExpr rv:
+                        if (modules.ContainsKey(rv.Name))
+                        {
+                            // `mod.f(...)`: the member is a module-level function.
+                            foreach (var k in unionParamsOf.Keys)
+                                if (k == rv.Name + "_" + ma.Member
+                                    || k.EndsWith("_" + rv.Name + "_" + ma.Member))
+                                    hits.Add((k, 0, 0));
+                            break;
+                        }
+                        if (varClass.TryGetValue(rv.Name, out var vc)) classes.Add(vc);
+                        if (instanceClasses.TryGetValue(ctxPrefix + rv.Name, out var ic) && ic != null)
+                            classes.Add(ic);
+                        if (instanceClasses.TryGetValue(rv.Name, out var ic2) && ic2 != null)
+                            classes.Add(ic2);
+                        if (classes.Count == 0 && ClassKeyForScan(rv.Name, ctxPrefix) is { } rk)
+                        { classes.Add(rk); recvArgs = 1; }   // unbound spelling: C.m(recv, ...)
+                        break;
+                    case CallExpr { Callee: VariableExpr { Name: "super" } }:
+                        for (string? c = ctxClass;
+                             c != null && classBasePrefixes.TryGetValue(c, out var bp)
+                                 && !string.IsNullOrEmpty(bp);
+                             c = bp.EndsWith("_") ? bp[..^1] : bp)
+                            classes.Add(bp.EndsWith("_") ? bp[..^1] : bp);
+                        break;
+                }
+                foreach (var clsKey in classes.Distinct())
+                    foreach (var k in unionParamsOf.Keys)
+                        if (k == clsKey + "_" + ma.Member || k.EndsWith("_" + clsKey + "_" + ma.Member))
+                            hits.Add((k, SelfCount(k), recvArgs));
+                if (classes.Count == 0 && hits.Count == 0)
+                    // Receiver the scan cannot pin: any method of this name may be it.
+                    foreach (var k in unionParamsOf.Keys)
+                        if (k.EndsWith("_" + ma.Member))
+                            hits.Add((k, SelfCount(k), 0));
+                break;
+            }
+        }
+        return hits;
+    }
+
+    /// <summary>
+    /// The member-index set a call argument can carry into <paramref name="members"/>.
+    /// Null = unpinnable (could be any member). An empty set = the argument position
+    /// contributes nothing (missing arg without a default is an arity error elsewhere).
+    /// </summary>
+    private HashSet<int>? ScanArgMemberSet(Expression? e, List<string> members,
+        string ctxPrefix, HashSet<string> maybeUnion, HashSet<string> maybeNone)
+    {
+        var set = new HashSet<int>();
+        HashSet<int> NonNone() { var s = new HashSet<int>();
+            for (int i = 0; i < members.Count; ++i) if (members[i] != "None") s.Add(i); return s; }
+        switch (e)
+        {
+            case null: return set;
+            case NoneLiteral:
+            {
+                int ni = NoneIndex(members);
+                if (ni >= 0) set.Add(ni); else return null;
+                return set;
+            }
+            case KeywordArgExpr kw: return ScanArgMemberSet(kw.Value, members, ctxPrefix, maybeUnion, maybeNone);
+            case StarArgExpr or DoubleStarArgExpr: return null;
+            case VariableExpr v:
+                if (maybeUnion.Contains(v.Name) || maybeNone.Contains(v.Name)) return null;
+                return NonNone();
+            case MemberAccessExpr ma:
+                if (maybeUnion.Contains(ma.Member) || maybeNone.Contains(ma.Member)) return null;
+                return NonNone();
+            case CallExpr c:
+            {
+                bool resolved = false;
+                foreach (var g in ScanCalleeReturnNames(c, ctxPrefix))
+                {
+                    resolved = true;
+                    if (functionReturnMembers.TryGetValue(g, out var rm))
+                        foreach (var m in rm) { int mi = members.IndexOf(m); if (mi >= 0) set.Add(mi); }
+                    else if (functionReturnTypes.TryGetValue(g, out var rt)
+                             && (rt == "void" || rt == "None"))
+                        { int ni = NoneIndex(members); if (ni >= 0) set.Add(ni); }
+                    else set.UnionWith(NonNone());
+                }
+                if (!resolved) return null;
+                return set;
+            }
+            case TernaryExpr t:
+            {
+                var a = ScanArgMemberSet(t.TrueVal, members, ctxPrefix, maybeUnion, maybeNone);
+                var b = ScanArgMemberSet(t.FalseVal, members, ctxPrefix, maybeUnion, maybeNone);
+                if (a == null || b == null) return null;
+                a.UnionWith(b); return a;
+            }
+            case IntegerLiteral or FloatLiteral or BooleanLiteral or StringLiteral or FStringExpr:
+            {
+                if (MemberIndexFor(e, null, members) is { } idx) { set.Add(idx); return set; }
+                // A literal that fits no member still can't be None.
+                return NonNone();
+            }
+            default:
+                // Composite: could still be None if it mentions a maybe-None name.
+                if (ScanExprMaybeNone(e, maybeNone, maybeUnion)) return null;
+                return NonNone();
+        }
+    }
+
+    /// The function names a call expression can resolve to, for return-type lookup.
+    private IEnumerable<string> ScanCalleeReturnNames(CallExpr c, string ctxPrefix)
+    {
+        if (c.Callee is VariableExpr v)
+        {
+            if (functionReturnTypes.ContainsKey(v.Name) || functionReturnMembers.ContainsKey(v.Name))
+                yield return v.Name;
+            foreach (var k in functionReturnTypes.Keys.Concat(functionReturnMembers.Keys))
+                if (k != null && (k == ctxPrefix + v.Name || k.EndsWith("_" + v.Name)))
+                    yield return k;
+        }
+        else if (c.Callee is MemberAccessExpr ma)
+        {
+            foreach (var k in functionReturnTypes.Keys.Concat(functionReturnMembers.Keys))
+                if (k != null && k.EndsWith("_" + ma.Member))
+                    yield return k;
+        }
+    }
 
     /// <summary>
     /// The member shapes a tagged union cannot carry, refused at the function with
@@ -2131,6 +2776,39 @@ public partial class IRGenerator
         Emit(new Call(callee, args, dst));
     }
 
+    /// <summary>
+    /// RFC 0009 section 10: splice each tagged union parameter's member byte after
+    /// its payload argument. <paramref name="args"/> is the payload argument list
+    /// aligned with <c>functionParams[callee]</c>; <paramref name="argOffset"/>
+    /// shifts when hidden leading arguments (a sret `__self` pointer) sit in
+    /// <paramref name="args"/> but not in the declared parameter list. The tag
+    /// stages into the callee's `p$tag` home exactly like the payload stages into
+    /// `callee.p`. A callee with no tagged parameters returns <paramref name="args"/>
+    /// untouched -- the ordinary call is byte-identical to before.
+    /// </summary>
+    private List<Val> WithParamTags(string callee, List<Val> args,
+        IReadOnlyList<Expression>? argExprs = null, int argOffset = 0)
+    {
+        if (!functionParamTags.TryGetValue(callee, out var ptags)) return args;
+        functionParams.TryGetValue(callee, out var pnames);
+        functionParamDefaults.TryGetValue(callee, out var pdefaults);
+        var result = new List<Val>(args.Count + 4);
+        for (int i = 0; i < args.Count; ++i)
+        {
+            result.Add(args[i]);
+            int p = i - argOffset;
+            if (p < 0 || p >= ptags.Count || ptags[p] is not { } pm) continue;
+            Expression? ae = argExprs != null && p < argExprs.Count ? argExprs[p] : null;
+            if (ae == null && pdefaults != null && p < pdefaults.Count) ae = pdefaults[p];
+            Val tagVal = ArgTagVal(ae, args[i], pm);
+            if (pnames != null && p < pnames.Count)
+                Emit(new Copy(tagVal,
+                    new Variable(callee + "." + pnames[p] + "$tag", DataType.UINT8)));
+            result.Add(tagVal);
+        }
+        return result;
+    }
+
     /// The member index an `-> Optional[X]`/union @inline callee's `return` writes
     /// into the expansion's tag temp.
     private Val InlineReturnTagVal(InlineContext ctx, Expression? expr, Val val)
@@ -2147,9 +2825,18 @@ public partial class IRGenerator
     /// or plain value reports its member index.
     /// </summary>
     private Val ReturnTagVal(Expression? expr, Val val, List<string> members)
+        => MemberTagVal(expr, val, members, nullExprIsNone: true);
+
+    /// The member-index byte an argument contributes to a tagged union parameter
+    /// (RFC 0009 section 10): the same arithmetic as <see cref="ReturnTagVal"/>,
+    /// except a missing expression is an arity error elsewhere, not a `return None`.
+    private Val ArgTagVal(Expression? expr, Val val, List<string> members)
+        => MemberTagVal(expr, val, members, nullExprIsNone: false);
+
+    private Val MemberTagVal(Expression? expr, Val val, List<string> members, bool nullExprIsNone)
     {
         int noneIdx = NoneIndex(members);
-        if (expr == null || expr is NoneLiteral || val is NoneVal)
+        if ((nullExprIsNone && expr == null) || expr is NoneLiteral || val is NoneVal)
             return new Constant(noneIdx >= 0 ? noneIdx : 0);
         if (expr is VariableExpr ve)
         {

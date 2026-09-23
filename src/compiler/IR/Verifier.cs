@@ -669,6 +669,14 @@ public static class Verifier
         Dictionary<string, Function> fnByName, List<Violation> violations)
     {
         bool fTagged = f.ReturnMembers is { Count: > 0 };
+        // RFC 0009 phase 2: TagParams marks the indexes of Params that are tag
+        // bytes -- each must sit right after its payload parameter and carry the
+        // `p$tag` name the callee body reads.
+        if (f.TagParams is { } tps)
+            foreach (var t in tps)
+                if (t <= 0 || t >= f.Params.Count || !f.Params[t].EndsWith("$tag"))
+                    violations.Add(new Violation("tag-contract", f.Name,
+                        $"TagParams entry {t} does not point at a '$tag' parameter"));
         switch (ins)
         {
             case Return r:
@@ -691,6 +699,15 @@ public static class Verifier
                     violations.Add(new Violation("tag-contract", f.Name,
                         $"call to '{c.FunctionName}' carries TagDst but the callee " +
                         "declares no ReturnMembers"));
+                // The argument run of a tagged-parameter callee carries the tag
+                // values inline: Args must line up with Params one for one.
+                if (fnByName.TryGetValue(c.FunctionName, out var ptc)
+                    && ptc.TagParams is { Count: > 0 }
+                    && c.Args.Count != ptc.Params.Count)
+                    violations.Add(new Violation("tag-contract", f.Name,
+                        $"call to tagged-parameter '{c.FunctionName}' carries " +
+                        $"{c.Args.Count} args for {ptc.Params.Count} params -- " +
+                        "the tag bytes are missing"));
                 break;
             case IndirectCall ic when ic.FuncAddr is FunctionRef fr
                                        && fnByName.TryGetValue(fr.FunctionName, out var icc)

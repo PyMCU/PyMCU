@@ -1802,7 +1802,13 @@ public partial class IRGenerator
                 // (`undefined reference` from the linker), and a class in any other position was
                 // lowered as an ordinary function whose field reads were never bound, so it
                 // silently computed on whatever the RAM held.
-                bool hasZcaFirstParam = func.Params.Count > 0 && IsZcaHandlerParamType(func.Params[0].Type);
+                // RFC 0009 phase 2: a union parameter whose members are all tag-carrying
+                // scalars (or None) is NOT a ZCA-instance param -- the payload plus tag
+                // byte is its subroutine ABI. A union containing a class keeps the
+                // expansion treatment below, resolved per call site as before.
+                bool hasZcaFirstParam = func.Params.Count > 0
+                    && IsZcaHandlerParamType(func.Params[0].Type)
+                    && !ParamUnionMembersTaggable(func.Params[0]);
                 // `*args` and `**kwargs` have no subroutine ABI either, and for the same
                 // reason: what they stand for is only known at the call site, where the extra
                 // arguments were written. A subroutine would have nothing to bind them to, so
@@ -1817,7 +1823,8 @@ public partial class IRGenerator
                 // not from any call site this could expand at, so registering it for expansion
                 // would leave it compiled nowhere and the program would do nothing at all.
                 bool growsAnOuterBuffer = func.Name != "main" && FunctionGrowsAnOuterBuffer(func);
-                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type))
+                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type)
+                        && !ParamUnionMembersTaggable(p))
                     || hasVariadicParam || growsAnOuterBuffer;
 
                 // The first-position form is also the ISR handler shape (`def on_irq(pin: Pin)`),
@@ -4124,6 +4131,10 @@ public partial class IRGenerator
         outlineFieldLayout[fullName] = layout;
         functionReturnTypes[fullName] = returnType;
         functionParams[fullName] = synthParams.Select(p => p.Name).ToList();
+        // The leading self-derived parameters ("self" or one self_<field> per layout
+        // field) are not user arguments: a call site's arg index for param p is
+        // p minus this count, which the union-parameter scan needs to line them up.
+        functionParamSelfCount[fullName] = synthParams.Count - (func.Params.Count - 1);
         // Aligned with synthParams (the leading self_<field> ones included), so the call site
         // can index them by position when an argument is omitted.
         functionParamDefaults[fullName] = synthParams.Select(p => p.DefaultValue).ToList();

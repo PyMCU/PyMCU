@@ -359,6 +359,12 @@ public class Function
     // return. When set, every Return in Body carries Tag and every Call that names
     // this function carries TagDst.
     public List<string>? ReturnMembers { get; set; }
+
+    // RFC 0009 phase 2: indexes into Params that are union-member tag bytes.
+    // Params[k] is the tag of the union parameter immediately before it, and the
+    // matching Call.Args carries the tag value at the same index. Null (absent
+    // from the .mir) means an ordinary untagged signature, byte-identical.
+    public List<int>? TagParams { get; set; }
 }
 
 // One slot in a class's flash-resident vtable.

@@ -405,6 +405,7 @@ private static Function CloneFunction(Function f)
         IsExtern = f.IsExtern,
         IsExportC = f.IsExportC,
         ReturnMembers = f.ReturnMembers,
+        TagParams = f.TagParams,
     };
 }
 

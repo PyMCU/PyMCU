@@ -522,11 +522,28 @@ public partial class IRGenerator
                                         ? VisitExpression(memC.Object)
                                         : VisitExpression(new MemberAccessExpr(memC.Object, fld)));
                             }
+                            {
+                                functionParams.TryGetValue(callee, out var oKwPnames);
+                                int oKwSelf = functionParamSelfCount.GetValueOrDefault(callee);
+                                int oKwPos = 0;
                             foreach (var a in expr.Args)
                             {
                                 RefuseGridArgument(a);
-                                Val av = TryEvalInlineBufferArg(a)
-                                    ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
+                                // The parameter this argument binds: a keyword by name,
+                                // a positional behind the leading self-derived params.
+                                int oPidx = a is KeywordArgExpr oKwA && oKwPnames != null
+                                    ? oKwPnames.IndexOf(oKwA.Key) : oKwSelf + oKwPos++;
+                                // RFC 0009: a tagged parameter reads the argument's tag
+                                // byte, so a live Optional's bare-name read is allowed here.
+                                bool oArgTagged = IsTaggedParam(callee, oPidx);
+                                if (oArgTagged) optionalReadAllowed++;
+                                Val av;
+                                try
+                                {
+                                    av = TryEvalInlineBufferArg(a)
+                                        ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
+                                }
+                                finally { if (oArgTagged) optionalReadAllowed--; }
                                 if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
                                 // An array var / field (`self.temp` -> `d_temp`) marshals as
                                 // its base, same as the bare-name path in argValuesL -- a
@@ -538,7 +555,9 @@ public partial class IRGenerator
                                     && (arraysWithVariableIndex.Contains(oStorage)
                                         || moduleSramArrays.Contains(oStorage)))
                                     av = new ArrayBase(oStorage);
+                                if (!oArgTagged) RefuseOptionalPayloadStore(av, a);
                                 oArgs.Add(av);
+                            }
                             }
 
                             // An omitted argument takes its declared default. An outlined method
@@ -559,6 +578,31 @@ public partial class IRGenerator
                                     if (dv is FloatConstant dfc) dv = new Constant((int)Math.Round(dfc.Value));
                                     oArgs.Add(dv);
                                 }
+                            }
+
+                            // RFC 0009: splice each tagged union parameter's member byte
+                            // after its payload. expr.Args is the raw (unreordered) list,
+                            // so line its expressions up by parameter index first.
+                            if (functionParamTags.ContainsKey(callee))
+                            {
+                                functionParams.TryGetValue(callee, out var oPnames);
+                                int oSelf = functionParamSelfCount.GetValueOrDefault(callee);
+                                var oArgExprs = new List<Expression?>(new Expression?[oArgs.Count]);
+                                int oPos = 0;
+                                foreach (var a in expr.Args)
+                                {
+                                    if (a is KeywordArgExpr okw)
+                                    {
+                                        int opi = oPnames?.IndexOf(okw.Key) ?? -1;
+                                        if (opi >= 0 && opi < oArgExprs.Count) oArgExprs[opi] = okw.Value;
+                                    }
+                                    else
+                                    {
+                                        int opi = oSelf + oPos++;
+                                        if (opi < oArgExprs.Count) oArgExprs[opi] = a;
+                                    }
+                                }
+                                oArgs = WithParamTags(callee, oArgs, oArgExprs);
                             }
 
                             // RFC 0001 (write-back): a single-field void mutator returns its
@@ -1353,9 +1397,24 @@ public partial class IRGenerator
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
         // Resolve any keyword arguments into positional order before evaluating them.
         var callArgs = ReorderCallArgs(expr.Args, callee, expr.Callee);
-        var argValuesL = new List<Val>();
-        foreach (var arg in callArgs)
+        // RFC 0009: the tag table is keyed by the resolved (module-mangled) name the
+        // Call below emits; a still-dotted callee resolves the same way here.
+        string tagCallee = callee;
         {
+            int tagDot = tagCallee.IndexOf('.');
+            if (tagDot != -1 && modules.ContainsKey(tagCallee[..tagDot]))
+                tagCallee = tagCallee[..tagDot] + "_" + tagCallee[(tagDot + 1)..];
+        }
+        var argValuesL = new List<Val>();
+        for (int ai = 0; ai < callArgs.Count; ++ai)
+        {
+            var arg = callArgs[ai];
+            // A tagged union parameter reads a live Optional's tag byte, not just its
+            // payload -- so the bare-name read that would otherwise refuse is allowed.
+            bool argIsTagged = IsTaggedParam(tagCallee, ai);
+            if (argIsTagged) optionalReadAllowed++;
+            try
+            {
             RefuseGridArgument(arg);
             // const[str] argument to a non-@inline function: intern the string and pass its
             // flash address by reference (FlashStrAddr). The callee walks it with FlashLoadPtr,
@@ -1455,6 +1514,8 @@ public partial class IRGenerator
                 argEvaluated = seqBuf;
             }
             argValuesL.Add(argEvaluated);
+            }
+            finally { if (argIsTagged) optionalReadAllowed--; }
         }
 
         int dotPos2 = callee.IndexOf('.');
@@ -1594,9 +1655,21 @@ public partial class IRGenerator
                     argVal = coerced;
                 }
 
+                // RFC 0009: a still-tagged argument only fits a parameter that carries
+                // its own tag byte -- a plain parameter would keep the payload and drop
+                // which member it is. Bare names were already refused at the read; a
+                // call result or other composite reaches here tagged and answers here.
+                if (!IsTaggedParam(callee, i))
+                    RefuseOptionalPayloadStore(argVal,
+                        i < callArgs.Count ? callArgs[i] : expr.Callee);
+
                 Emit(new Copy(argVal, new Variable(paramVarName, ptype)));
             }
         }
+
+        // RFC 0009: a tagged union parameter's member byte rides as the argument
+        // right after its payload; a callee with none keeps the list untouched.
+        argValuesL = WithParamTags(callee, argValuesL, callArgs);
 
         // A "void" entry is also the parser's default for an UNANNOTATED def whose
         // return type inference found nothing it could name -- `def f(): return
@@ -4783,8 +4856,27 @@ public partial class IRGenerator
         Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr)); // base + i*stride
 
         var iaArgs = new List<Val> { elemAddr };
+        var iaArgExprs = new List<Expression?> { null };   // elemAddr binds the self slot
+        int iaSelf = functionParamSelfCount.GetValueOrDefault(iaMethod);
+        int iaPos = 0;
         foreach (var a in expr.Args)
-            iaArgs.Add(TryEvalInlineBufferArg(a) ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a));
+        {
+            int iaPidx = a is KeywordArgExpr iaKw && functionParams.TryGetValue(iaMethod, out var iaPn)
+                ? iaPn.IndexOf(iaKw.Key) : iaSelf + iaPos++;
+            bool iaTagged = IsTaggedParam(iaMethod, iaPidx);
+            if (iaTagged) optionalReadAllowed++;
+            Val iaAv;
+            try
+            {
+                iaAv = TryEvalInlineBufferArg(a) ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
+            }
+            finally { if (iaTagged) optionalReadAllowed--; }
+            if (!iaTagged) RefuseOptionalPayloadStore(iaAv, a);
+            iaArgs.Add(iaAv);
+            iaArgExprs.Add(a is KeywordArgExpr iaKw2 ? iaKw2.Value : a);
+        }
+
+        iaArgs = WithParamTags(iaMethod, iaArgs, iaArgExprs);
 
         bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
                       || iaRt == "void" || iaRt == "None";
@@ -4879,14 +4971,44 @@ public partial class IRGenerator
         if (!outlinedMethods.Contains(target)) return null;
 
         var fwdArgs = new List<Val>();
+        int fwdSelf = 0;
         if (slotMethods.Contains(currentFunction))
+        {
             fwdArgs.Add(new Variable(currentFunction + ".self", DataType.UINT16));
+            fwdSelf = 1;
+        }
         else
             foreach (var (fld, ty, _) in outlineFieldLayout[currentFunction])
+            {
                 fwdArgs.Add(new Variable(currentFunction + ".self_" + fld,
                     DataTypeExtensions.StringToDataType(ty)));
+                fwdSelf++;
+            }
+        // RFC 0009: the sibling's parameter list leads with its own self-derived
+        // entries (a target inherited from a narrower base takes fewer than this
+        // method forwards); the union-parameter scan lines user args up by the
+        // TARGET's self count.
+        int fwdSelfParams = functionParamSelfCount.GetValueOrDefault(target);
+        var fwdArgExprs = new List<Expression?>();
+        for (int si = 0; si < fwdSelfParams; ++si) fwdArgExprs.Add(null);
+        int fwdPos = 0;
         foreach (var a in expr.Args)
-            fwdArgs.Add(TryEvalInlineBufferArg(a) ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a));
+        {
+            int fwdPidx = a is KeywordArgExpr fKw && functionParams.TryGetValue(target, out var fPn)
+                ? fPn.IndexOf(fKw.Key) : fwdSelfParams + fwdPos++;
+            bool fwdTagged = IsTaggedParam(target, fwdPidx);
+            if (fwdTagged) optionalReadAllowed++;
+            Val fAv;
+            try
+            {
+                fAv = TryEvalInlineBufferArg(a) ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
+            }
+            finally { if (fwdTagged) optionalReadAllowed--; }
+            if (!fwdTagged) RefuseOptionalPayloadStore(fAv, a);
+            fwdArgs.Add(fAv);
+            fwdArgExprs.Add(a is KeywordArgExpr fKw2 ? fKw2.Value : a);
+        }
+        fwdArgs = WithParamTags(target, fwdArgs, fwdArgExprs);
 
         // RFC 0001 (write-back), sibling case: the callee is a mutator that returns its
         // updated field because Model A passes the field BY VALUE. This method's own copy

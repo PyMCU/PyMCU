@@ -623,8 +623,9 @@ public partial class IRGenerator
             irFunc.ReturnType = DataType.UINT16; // returns the slot pointer
         }
 
-        foreach (var param in funcNode.Params)
+        for (int paramIndex = 0; paramIndex < funcNode.Params.Count; ++paramIndex)
         {
+            var param = funcNode.Params[paramIndex];
             string qualifiedParam = currentFunction + "." + param.Name;
             irFunc.Params.Add(qualifiedParam);
             DataType paramDt = DataTypeExtensions.StringToDataType(param.Type);
@@ -657,6 +658,34 @@ public partial class IRGenerator
                 paramDt = DataTypeExtensions.PointerWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
 
             variableTypes[qualifiedParam] = paramDt;
+
+            // RFC 0009 section 10: a union-annotated parameter the call sites can hand
+            // more than one member carries a run-time tag byte, staged by the caller
+            // as the argument right after the payload. The callee binds it to a
+            // sibling `p$tag` slot, which is what `param is None` reads in the body.
+            // A parameter every caller provably fills with one member is not tagged
+            // (functionParamTags has no entry) and keeps the exact code it had before.
+            if (param.UnionMembers != null
+                && functionParamTags.TryGetValue(fullName, out var paramTags)
+                && paramIndex < paramTags.Count && paramTags[paramIndex] is { } tagMembers)
+            {
+                variableTypes[qualifiedParam] = UnionPayloadType(tagMembers);
+                string tagParam = qualifiedParam + "$tag";
+                (irFunc.TagParams ??= new List<int>()).Add(irFunc.Params.Count);
+                irFunc.Params.Add(tagParam);
+                variableTypes[tagParam] = DataType.UINT8;
+                MarkOptional(qualifiedParam, new Variable(tagParam, DataType.UINT8), tagMembers);
+            }
+            else if (param.UnionMembers is { } provMembers
+                     && functionParamProven.TryGetValue(fullName, out var provSet)
+                     && provSet.TryGetValue(param.Name, out var provIdx)
+                     && provIdx == NoneIndex(provMembers))
+            {
+                // Every caller provably passes None: the parameter reads as None in
+                // the body without a tag byte -- the same as if the signature had
+                // never mentioned the union.
+                noneValuedNames.Add(qualifiedParam);
+            }
 
             // A parameter annotated with a class is that instance, even when this method is
             // compiled as a shared subroutine (adafruit_character_lcd's Character_LCD.__init__

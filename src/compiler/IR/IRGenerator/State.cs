@@ -43,6 +43,22 @@ public partial class IRGenerator
     // Lets a non-inline call site fill in omitted trailing arguments, so defaults
     // work for real subroutines and not just @inline functions.
     private Dictionary<string, List<Frontend.Expression?>> functionParamDefaults = new();
+    // RFC 0009 phase 2: the tag decision for union-annotated parameters, keyed by
+    // resolved function name and aligned with functionParams. A non-null entry means
+    // that parameter carries a runtime member tag immediately after its payload in
+    // the argument run; a missing callee or null entry means the parameter is
+    // provably single-state (or not a union) and the call is byte-identical to a
+    // plain signature.
+    private Dictionary<string, List<List<string>?>> functionParamTags = new();
+    // The proven member index for a union-annotated parameter that did NOT get a tag:
+    // every call site passes the same member (NoneIndex -> the param is always None,
+    // so the body folds `is None` to true). Keyed by resolved function name, then
+    // parameter name.
+    private Dictionary<string, Dictionary<string, int>> functionParamProven = new();
+    // Leading self-derived parameters of an outlined method signature (Model B slot
+    // pointer = 1; Model A = one self_<field> per field). Used to map a bound call's
+    // argument positions onto parameter indexes.
+    private Dictionary<string, int> functionParamSelfCount = new();
     // Functions currently being inline/force-inline expanded up the call chain.
     // If a callee is already here, expanding it again is recursion through inlined
     // calls — which would loop forever and segfault the compiler. Detected here so

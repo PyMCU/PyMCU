@@ -6090,6 +6090,9 @@ public partial class IRGenerator
 
         var callArgs = new List<Val> { new ArrayBase(slot) };
         foreach (var a in args) callArgs.Add(VisitExpression(a));
+        // RFC 0009: __self is the hidden sret pointer, not a declared parameter --
+        // the union-parameter scan lines callArgs[1..] up with functionParams[0..].
+        callArgs = WithParamTags(facFn, callArgs, args, argOffset: 1);
         Emit(new Call(facFn, callArgs, new NoneVal()));
 
         instanceClasses[qn] = cls;
@@ -6625,7 +6628,16 @@ public partial class IRGenerator
                         && !(classPlainFunctions.Contains(methodKey) && FunctionReadsParamMember(f));
                     paramUnionAllowed = !staysSubroutine;
                 }
-                foreach (var prm in f.Params) CheckAnnotationNames(prm.Type ?? "", f, paramUnionAllowed);
+                // RFC 0009 phase 2: a union parameter on a real subroutine is no longer a
+                // refusal when every member is a payload the tag can carry (a scalar type,
+                // or None) -- the argument run grows a tag byte after the payload, which is
+                // the one ABI every caller shares. Whether the tag is actually emitted is
+                // ResolveOptionalParams' call: all call sites proving one member keeps the
+                // parameter tag-free. Callable members stay refused here -- an indirect-call
+                // payload has no ABI today.
+                foreach (var prm in f.Params)
+                    CheckAnnotationNames(prm.Type ?? "", f,
+                        paramUnionAllowed || ParamUnionMembersTaggable(prm));
                 // RFC 0009 phase 3: a return position accepts a union member list --
                 // the tag carries the member index and the payload is the widest
                 // member. What the members can be, and how many, is for the resolve
