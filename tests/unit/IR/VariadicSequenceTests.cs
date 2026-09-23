@@ -79,4 +79,32 @@ public class VariadicSequenceTests
         var body = ir.Functions.SelectMany(f => f.Body).ToList();
         Assert.Contains(body.OfType<ArrayStore>(), s => s.Src is Constant k && k.Value == 0);
     }
+
+    [Fact]
+    public void ForInOverAStarArgsSequence_BindsInstanceElements()
+    {
+        // `for a in alarms` inside a *args callee: the bound sequence's elements are
+        // instance-carrying names, not integers -- previously refused outright.
+        var ir = Gen(
+            "class Alarm:\n" +
+            "    def __init__(self, d: uint8):\n" +
+            "        self.deadline = d\n" +
+            "@inline\n" +
+            "def soonest(*alarms) -> uint8:\n" +
+            "    best = 255\n" +
+            "    for a in alarms:\n" +
+            "        if a.deadline < best:\n" +
+            "            best = a.deadline\n" +
+            "    return best\n" +
+            "x = Alarm(9)\n" +
+            "y = Alarm(4)\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = soonest(x, y)\n");
+
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.True(
+            body.OfType<Copy>().Any(c => c.Src is Constant k && k.Value == 4) ||
+            body.OfType<ArrayStore>().Any(s => s.Src is Constant k && k.Value == 4),
+            "the loop should reach y.deadline (4) through the carried instance names");
+    }
 }

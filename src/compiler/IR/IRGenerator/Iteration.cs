@@ -1858,10 +1858,23 @@ public partial class IRGenerator
                 string sqBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in boundSeq)
                 {
-                    if (!TryEvalConstElement(elem, out int sv))
-                        throw UserError("for-in over a named sequence needs compile-time integer elements.");
-                    constantVariables[varKey] = sv;
-                    EmitUnrolledIteration(stmt.Body, sqBrk);
+                    if (TryEvalConstElement(elem, out int sv))
+                    {
+                        constantVariables[varKey] = sv;
+                        EmitUnrolledIteration(stmt.Body, sqBrk);
+                    }
+                    // Strings, instances and nested sequences bind the same way the
+                    // parameter-literal branch above binds them: `for a in alarms`
+                    // over `*alarms` carries the call site's elements here.
+                    else if (BindUnrolledElement(varKey, elem))
+                    {
+                        EmitUnrolledIteration(stmt.Body, sqBrk);
+                        constSequenceBindings.Remove(varKey);
+                        strConstantVariables.Remove(varKey);
+                        constantVariables.Remove(varKey);
+                        floatConstantVariables.Remove(varKey);
+                    }
+                    else throw UserError("for-in over a named sequence needs compile-time integer elements.");
                 }
                 if (sqBrk.Length > 0) Emit(new Label(sqBrk));
 
