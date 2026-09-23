@@ -96,6 +96,45 @@ public class GeneratorSurfaceDiagnosticTests
     // reader never typed, with "(typo, or a missing import?)" pointing at neither.
     // These are IR-level and are pinned in IR/GeneratorProtocolDiagnosticTests.
 
+    // ── an async generator ─────────────────────────────────────────────────────
+    // `async def` with `yield` is an async generator in Python. The coroutine lowering
+    // took it anyway -- it has no channel to publish a yielded value, so the program
+    // compiled and the `yield` silently did nothing (driven with asyncio.run, CPython
+    // raised TypeError and the emulator printed END). Refused at the yield by name.
+
+    [Fact]
+    public void AnAsyncGeneratorIsRefusedAsAnAsyncGenerator()
+    {
+        var msg = TransformError("""
+            import asyncio
+
+            async def ticks():
+                yield 1
+
+            async def main():
+                pass
+            """);
+
+        msg.Should().Contain("async generator");
+        msg.Should().NotContain("for-in loop iterable");
+    }
+
+    [Fact]
+    public void AnAsyncGeneratorDiagnosticMarksTheYield()
+    {
+        var ast = new Parser(new Lexer("""
+            import asyncio
+
+            async def ticks():
+                await asyncio.sleep_ms(1)
+                yield 1
+            """).Tokenize()).ParseProgram();
+        var err = Assert.Throws<SyntaxError>(() => AsyncTransform.TransformProgram(ast));
+
+        err.Line.Should().Be(5);
+        err.Column.Should().Be(5);
+    }
+
     // ── a generator expression ───────────────────────────────────────────────────
     // `(x for x in ...)` PARSES now: as the argument of all()/any()/sum()/min()/max() it
     // unrolls over a compile-time sequence. Everywhere else the IR generator refuses it --

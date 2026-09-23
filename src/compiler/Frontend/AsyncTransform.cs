@@ -34,6 +34,7 @@ public static class AsyncTransform
         RejectCoroutineMethods(prog);
         RejectGeneratorMethods(prog);
         RejectInlineGenerators(prog);
+        RejectAsyncGenerators(prog);
 
         var asyncFns = prog.Functions.Where(f => f.IsAsync).ToList();
         // A plain function containing `yield` is a GENERATOR: same state-machine
@@ -217,6 +218,29 @@ public static class AsyncTransform
                 + $"so the two cannot be combined. Remove `@inline` from '{fn.Name}' to make it a "
                 + "generator, and consume it with `for v in " + fn.Name + "(...):`.",
                 fn.Line, fn.Column, fn.Length);
+        }
+    }
+
+    /// <summary>
+    /// An `async def` whose body yields is an async generator in Python. The coroutine
+    /// lowering took it anyway -- `genFns` excludes IsAsync, so `yield` in the body was
+    /// suspended like an `await` and the program built and quietly did nothing a `yield`
+    /// should do (driven with asyncio.run, CPython raised TypeError; the board printed
+    /// END). It is refused here, at the yield, rather than left to compile wrongly.
+    /// </summary>
+    private static void RejectAsyncGenerators(ProgramNode prog)
+    {
+        foreach (var fn in prog.Functions)
+        {
+            if (!fn.IsAsync) continue;
+            if (FirstYield(fn.Body) is not { } y) continue;
+            throw new SyntaxError(
+                $"`async def {fn.Name}` contains `yield`, which makes it an async generator. "
+                + "PyMCU does not provide async generators: a coroutine suspends on the event "
+                + "loop's clock and a generator's poll() channel carries values -- one state "
+                + "machine cannot be both. Split it into a plain `def` that yields (consumed "
+                + "with `for`), or keep the `async def` and hand results back another way.",
+                y.Line, y.Column, y.Length);
         }
     }
 
@@ -841,6 +865,100 @@ public static class AsyncTransform
             case WhileStmt w: return ContainsYield(w.Body);
             case ForStmt f: return ContainsYield(f.Body);
             default: return false;
+        }
+    }
+
+    // The first YieldExpr anywhere in a statement -- inside any statement container and any
+    // expression position, not just the statement-level ones ContainsYield counts. Used by
+    // the refusals that need to know a yield EXISTS, wherever it sits: a `yield` in `async
+    // def` is an async generator no matter how deep the statement it is buried in.
+    private static YieldExpr? FirstYield(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return null;
+            case ExprStmt es: return FirstYieldExpr(es.Expr);
+            case AssignStmt a: return FirstYieldExpr(a.Value) ?? FirstYieldExpr(a.Target);
+            case VarDecl vd: return FirstYieldExpr(vd.Init);
+            case AnnAssign an: return FirstYieldExpr(an.Value);
+            case AugAssignStmt ag: return FirstYieldExpr(ag.Value) ?? FirstYieldExpr(ag.Target);
+            case TupleUnpackStmt tu: return FirstYieldExpr(tu.Value);
+            case ReturnStmt r: return FirstYieldExpr(r.Value);
+            case AssertStmt ast: return FirstYieldExpr(ast.Condition);
+            case RaiseStmt rs: return FirstYieldExpr(rs.MessageExpr);
+            case Block b: return b.Statements.Select(FirstYield).FirstOrDefault(x => x != null);
+            case IfStmt iff:
+                return FirstYieldExpr(iff.Condition)
+                    ?? FirstYield(iff.ThenBranch)
+                    ?? iff.ElifBranches.Select(e => FirstYieldExpr(e.Condition)
+                        ?? FirstYield(e.Body)).FirstOrDefault(x => x != null)
+                    ?? FirstYield(iff.ElseBranch);
+            case WhileStmt w: return FirstYieldExpr(w.Condition) ?? FirstYield(w.Body);
+            case ForStmt f:
+                return FirstYieldExpr(f.Iterable) ?? FirstYieldExpr(f.RangeStart)
+                    ?? FirstYieldExpr(f.RangeStop) ?? FirstYieldExpr(f.RangeStep)
+                    ?? FirstYield(f.Body);
+            case TryStmt t:
+                return t.Body.Select(FirstYield).FirstOrDefault(x => x != null)
+                    ?? t.Handlers.SelectMany(h => h.Handler).Select(FirstYield).FirstOrDefault(x => x != null)
+                    ?? (t.ElseBody?.Select(FirstYield).FirstOrDefault(x => x != null))
+                    ?? (t.Finally?.Select(FirstYield).FirstOrDefault(x => x != null));
+            case WithStmt wi: return FirstYieldExpr(wi.ContextExpr) ?? FirstYield(wi.Body);
+            case MatchStmt m:
+                return FirstYieldExpr(m.Target)
+                    ?? m.Branches.Select(br => FirstYieldExpr(br.Guard)
+                        ?? FirstYield(br.Body)).FirstOrDefault(x => x != null);
+            case FunctionDef nested: return FirstYield(nested.Body);
+            case ClassDef cls: return FirstYield(cls.Body);
+            default: return null;
+        }
+    }
+
+    // The first YieldExpr in an expression, at any depth -- the shared finder both
+    // DelegateYieldPosition and the definition-site refusals walk with. Keeping ONE copy is
+    // the fix for the twin-drift bug the old pair warned about: a case added to one and not
+    // the other made the diagnostic fire with no node, the silent half of the failure.
+    private static YieldExpr? FirstYieldExpr(Expression? e)
+    {
+        switch (e)
+        {
+            case null: return null;
+            case YieldExpr y: return y;
+            case LambdaExpr lm: return FirstYieldExpr(lm.Body);
+            case BinaryExpr b: return FirstYieldExpr(b.Left) ?? FirstYieldExpr(b.Right);
+            case UnaryExpr u: return FirstYieldExpr(u.Operand);
+            case CallExpr c:
+                return FirstYieldExpr(c.Callee)
+                    ?? c.Args.Select(FirstYieldExpr).FirstOrDefault(x => x != null);
+            case MemberAccessExpr m: return FirstYieldExpr(m.Object);
+            case IndexExpr ix: return FirstYieldExpr(ix.Target) ?? FirstYieldExpr(ix.Index);
+            case SliceExpr sx:
+                return FirstYieldExpr(sx.Start) ?? FirstYieldExpr(sx.Stop)
+                    ?? FirstYieldExpr(sx.Step);
+            case TernaryExpr t:
+                return FirstYieldExpr(t.Condition) ?? FirstYieldExpr(t.TrueVal)
+                    ?? FirstYieldExpr(t.FalseVal);
+            case KeywordArgExpr kw: return FirstYieldExpr(kw.Value);
+            case StarArgExpr sa: return FirstYieldExpr(sa.Value);
+            case DoubleStarArgExpr ds: return FirstYieldExpr(ds.Value);
+            case TupleExpr tu: return tu.Elements.Select(FirstYieldExpr).FirstOrDefault(x => x != null);
+            case ListExpr le: return le.Elements.Select(FirstYieldExpr).FirstOrDefault(x => x != null);
+            case SetExpr se: return se.Elements.Select(FirstYieldExpr).FirstOrDefault(x => x != null);
+            case DictExpr de:
+                return de.Entries.Select(kv => FirstYieldExpr(kv.Key)
+                    ?? FirstYieldExpr(kv.Value)).FirstOrDefault(x => x != null);
+            case FStringExpr fs:
+                return fs.Parts.Where(p => p.IsExpr).Select(p => FirstYieldExpr(p.Expr))
+                    .FirstOrDefault(x => x != null);
+            case ListCompExpr lc:
+                return FirstYieldExpr(lc.Element) ?? FirstYieldExpr(lc.Iterable)
+                    ?? FirstYieldExpr(lc.Iterable2) ?? FirstYieldExpr(lc.Filter);
+            case GeneratorExpr ge:
+                return FirstYieldExpr(ge.Element) ?? FirstYieldExpr(ge.Iterable)
+                    ?? FirstYieldExpr(ge.Iterable2) ?? FirstYieldExpr(ge.Filter);
+            case WalrusExpr wz: return FirstYieldExpr(wz.Value);
+            case AwaitExpr aw: return FirstYieldExpr(aw.Operand);
+            default: return null;
         }
     }
 
@@ -1754,59 +1872,11 @@ public static class AsyncTransform
 
         // A delegation nested inside a larger expression (`1 + (yield from g())`) is the same
         // unsupported thing as one on the right of an assignment, and it used to slip past a
-        // check that only looked at the outermost node.
-        // The same walk as HasNestedYield, returning the node instead of a bool. Two functions
-        // for one shape, and they have to stay in step: a case added to one and not the other
-        // makes the diagnostic fire with no node, which is the silent half of the failure.
-        static YieldExpr? FirstYield(Expression? e)
-        {
-            switch (e)
-            {
-                case null: return null;
-                case YieldExpr y: return y;
-                // Both twins lacked this, so a `yield` inside a lambda was invisible to
-                // BOTH -- a symmetry obligation kept perfectly while both sides were
-                // wrong. Found while fixing #243, where the same blind spot let
-                // `f = lambda: (yield 1)` compile to nothing.
-                case LambdaExpr lm: return FirstYield(lm.Body);
-                case BinaryExpr b: return FirstYield(b.Left) ?? FirstYield(b.Right);
-                case UnaryExpr u: return FirstYield(u.Operand);
-                case CallExpr c:
-                    return FirstYield(c.Callee) ?? c.Args.Select(FirstYield).FirstOrDefault(x => x != null);
-                case MemberAccessExpr m: return FirstYield(m.Object);
-                case IndexExpr ix: return FirstYield(ix.Target) ?? FirstYield(ix.Index);
-                case TernaryExpr t:
-                    return FirstYield(t.Condition) ?? FirstYield(t.TrueVal) ?? FirstYield(t.FalseVal);
-                case KeywordArgExpr kw: return FirstYield(kw.Value);
-                case TupleExpr tu: return tu.Elements.Select(FirstYield).FirstOrDefault(x => x != null);
-                case ListExpr le: return le.Elements.Select(FirstYield).FirstOrDefault(x => x != null);
-                default: return null;
-            }
-        }
-
-        static bool HasNestedYield(Expression? e)
-        {
-            switch (e)
-            {
-                case null: return false;
-                case YieldExpr: return true;
-                // See the note on FirstYield: the twin lacked this too.
-                case LambdaExpr lm: return HasNestedYield(lm.Body);
-                case BinaryExpr b: return HasNestedYield(b.Left) || HasNestedYield(b.Right);
-                case UnaryExpr u: return HasNestedYield(u.Operand);
-                case CallExpr c:
-                    return HasNestedYield(c.Callee) || c.Args.Any(HasNestedYield);
-                case MemberAccessExpr m: return HasNestedYield(m.Object);
-                case IndexExpr ix: return HasNestedYield(ix.Target) || HasNestedYield(ix.Index);
-                case TernaryExpr t:
-                    return HasNestedYield(t.Condition) || HasNestedYield(t.TrueVal)
-                           || HasNestedYield(t.FalseVal);
-                case KeywordArgExpr kw: return HasNestedYield(kw.Value);
-                case TupleExpr tu: return tu.Elements.Any(HasNestedYield);
-                case ListExpr le: return le.Elements.Any(HasNestedYield);
-                default: return false;
-            }
-        }
+        // check that only looked at the outermost node. The deep finder is the shared
+        // FirstYieldExpr: the twin pair that used to live here drifted apart once already
+        // (#243 -- `f = lambda: (yield 1)` was invisible to both), and a case added to one
+        // and not the other made the diagnostic fire with no node to point at.
+        static bool HasNestedYield(Expression? e) => FirstYieldExpr(e) != null;
 
         // Records the line of the DEEPEST statement that produced a message: the recursion
         // returns from the innermost match first, so the first line recorded is the one the
@@ -1823,11 +1893,11 @@ public static class AsyncTransform
                 // returns, so widening it here located both of them at once.
                 foundAt = st switch
                 {
-                    AssignStmt a => FirstYield(a.Value),
-                    VarDecl vd => FirstYield(vd.Init),
-                    AnnAssign an => FirstYield(an.Value),
-                    ReturnStmt r => FirstYield(r.Value),
-                    ExprStmt es => FirstYield(es.Expr),
+                    AssignStmt a => FirstYieldExpr(a.Value),
+                    VarDecl vd => FirstYieldExpr(vd.Init),
+                    AnnAssign an => FirstYieldExpr(an.Value),
+                    ReturnStmt r => FirstYieldExpr(r.Value),
+                    ExprStmt es => FirstYieldExpr(es.Expr),
                     _ => null,
                 };
             }
