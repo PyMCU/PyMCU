@@ -1190,6 +1190,19 @@ public partial class IRGenerator
                     expr);
             }
 
+            // `hasattr(obj, "name")` on a statically-known shape is not runtime
+            // reflection either: an instance's class fixes its member set (the
+            // same set a Protocol match consults), a module's exports are all
+            // registered, and a name bound to a function or a scalar has no
+            // attributes to find. adafruit_debouncer's __init__ picks between a
+            // value-like IO and a predicate callable this way. A shape that is
+            // not pinned -- an ambiguous union parameter -- stays refused below.
+            if (expr.Callee is VariableExpr { Name: "hasattr" }
+                && expr.Args.Count == 2
+                && expr.Args[1] is StringLiteral hasattrMember
+                && TryFoldHasattr(expr.Args[0], hasattrMember.Value) is { } hasattrFolded)
+                return VisitExpression(hasattrFolded);
+
             // Reflection builtins: name the real reason instead of "undefined function".
             if (shown is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec" or "vars" or "dir" or "globals" or "locals")
                 throw UserError($"'{shown}' is runtime reflection, which PyMCU does not support " +
@@ -9144,21 +9157,97 @@ public partial class IRGenerator
         string? argKey = FindClassKey(argClass);
         if (argKey == null) return needed.Count == 0;
 
+        return needed.All(ClassMemberNames(argKey).Contains);
+    }
+
+    /// <summary>
+    /// Every member name a class is known to carry: direct methods, members
+    /// assigned on `self.` anywhere in the class, flattened field slots, and
+    /// property getters. The same set a Protocol match and a `hasattr` fold
+    /// consult.
+    /// </summary>
+    private HashSet<string> ClassMemberNames(string classKey)
+    {
         var has = new HashSet<string>(
-            classDirectMethods.GetValueOrDefault(argKey) ?? []);
-        if (assignedMemberNamesByClass.TryGetValue(argKey, out var assigned))
+            classDirectMethods.GetValueOrDefault(classKey) ?? []);
+        if (assignedMemberNamesByClass.TryGetValue(classKey, out var assigned))
             has.UnionWith(assigned);
-        if (classFieldLayout.TryGetValue(argKey, out var layout))
+        if (classFieldLayout.TryGetValue(classKey, out var layout))
             foreach (var (field, _, _) in layout)
                 has.Add(field);
         foreach (var g in propertyGetters)
         {
             int dot = g.LastIndexOf('.');
-            if (dot > 0 && g.AsSpan(0, dot).SequenceEqual(argKey))
+            if (dot > 0 && g.AsSpan(0, dot).SequenceEqual(classKey))
                 has.Add(g[(dot + 1)..]);
         }
+        return has;
+    }
 
-        return needed.All(has.Contains);
+    /// <summary>
+    /// `hasattr(obj, "name")` folds when the object's shape is statically
+    /// known: an instance (or the class name itself) answers from its member
+    /// set, a module answers from its exports, a function or scalar binding
+    /// answers False. Returns null when nothing pins the shape, leaving the
+    /// call to the runtime-reflection refusal.
+    /// </summary>
+    private Expression? TryFoldHasattr(Expression objExpr, string member)
+    {
+        if (objExpr is not VariableExpr ve) return null;
+
+        if (TryImportedAlias(ve.Name, out var hasMod) && hasMod != null
+            || modules.ContainsKey(ve.Name))
+            return new BooleanLiteral(
+                ExportedNames(hasMod ?? ve.Name).Contains(member)) { Line = objExpr.Line };
+
+        // The same qualifications the type read side uses: the inline prefix,
+        // then the enclosing function, then the bare name -- each followed
+        // through aliases. The terminal name is kept: a Callable union member
+        // binds the parameter as an alias of the caller's function, so
+        // `hasattr(pred_param, "value")` asks about the FUNCTION, not the param.
+        string terminal = ve.Name;
+        foreach (var start in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+            ve.Name,
+        })
+        {
+            if (start == null) continue;
+            var key = start;
+            for (var i = 0; i < 20; ++i)
+            {
+                if (instanceClasses.TryGetValue(key, out var cls) && cls != null
+                    && FindClassKey(cls) is { } clsKey)
+                    return new BooleanLiteral(ClassMemberNames(clsKey).Contains(member))
+                        { Line = objExpr.Line };
+                // A Callable-union param bound through super() carries
+                // loopFunctionAliases, not a variable alias.
+                if (loopFunctionAliases.ContainsKey(key))
+                    return new BooleanLiteral(false) { Line = objExpr.Line };
+                if (variableAliases.TryGetValue(key, out var alias)) { key = alias; terminal = key; }
+                else break;
+            }
+        }
+
+        // A class name itself -- `hasattr(DigitalInOut, "value")` -- reads the
+        // same member set.
+        if (FindClassKey(terminal) is { } ownKey)
+            return new BooleanLiteral(ClassMemberNames(ownKey).Contains(member))
+                { Line = objExpr.Line };
+
+        // A function binding has no instance attributes to find -- this is the
+        // Callable member of a union param, answered False.
+        if (FunctionNameBehind(terminal) != null
+            || FunctionNameBehind(ve.Name) != null
+            || loopFunctionAliases.ContainsKey(terminal))
+            return new BooleanLiteral(false) { Line = objExpr.Line };
+        foreach (var key in new[] { terminal, ve.Name })
+        {
+            if (constantVariables.ContainsKey(key) || strConstantVariables.ContainsKey(key))
+                return new BooleanLiteral(false) { Line = objExpr.Line };
+        }
+        return null;
     }
 
     /// <summary>
