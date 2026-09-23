@@ -981,7 +981,11 @@ public partial class IRGenerator
         }
         else
         {
-            disagreedStr = JoinBranchStates(branchSnaps, snapBefore, hasElse);
+            // The fall-through arm is inheritOpt, not snapBefore: a no-else chain's
+            // skipped path runs under every condition's false-effect (`if v is None:
+            // return` leaves v narrowed to a value past it), which is what inheritOpt
+            // accumulated. The other maps are identical between the two.
+            disagreedStr = JoinBranchStates(branchSnaps, inheritOpt, hasElse);
         }
 
         // A name the arms left holding different texts has no single text here: it keeps
