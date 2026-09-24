@@ -1966,7 +1966,7 @@ public partial class IRGenerator
         if (constantVariables.TryGetValue(key, out int iv)
             || localConstantValues.TryGetValue(key, out iv))
         {
-            var dt = MaterializedIntType(key);
+            var dt = MaterializedIntType(key, iv);
             variableTypes[key] = dt;
             Emit(new Copy(new Constant(iv), new Variable(key, dt)));
             return;
@@ -1980,10 +1980,12 @@ public partial class IRGenerator
 
     /// <summary>
     /// The width a materialized int takes: the parameter's declared type when the binding is an
-    /// expansion's (`inline<i>.param`), else INT16 -- the same `int` default a bare literal
-    /// assignment would widen to.
+    /// expansion's (`inline<i>.param`), else the value's own width on the same ladder a literal
+    /// assignment applies (InferExprType's IntegerLiteral arm). A blanket INT16 here forced the
+    /// slot signed, which dragged `t = t + self.g[y][x]` accumulators to i16 and emitted a
+    /// whole second `write_decimal_i16` where main stayed unsigned.
     /// </summary>
-    private DataType MaterializedIntType(string key)
+    private DataType MaterializedIntType(string key, long value)
     {
         if (!string.IsNullOrEmpty(currentInlinePrefix)
             && key.StartsWith(currentInlinePrefix, StringComparison.Ordinal)
@@ -1996,7 +1998,15 @@ public partial class IRGenerator
             if (idx >= 0 && idx < pts.Count && pts[idx] != DataType.UNKNOWN)
                 return pts[idx];
         }
-        return DataType.INT16;
+        return value switch
+        {
+            < short.MinValue => DataType.INT32,
+            < sbyte.MinValue => DataType.INT16,
+            < 0 => DataType.INT8,
+            <= byte.MaxValue => DataType.UINT8,
+            <= ushort.MaxValue => DataType.UINT16,
+            _ => DataType.UINT32,
+        };
     }
 
     /// <summary>
