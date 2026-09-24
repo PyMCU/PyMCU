@@ -490,9 +490,13 @@ is always the last tag state). A local that binds the result keeps the tag byte 
 the readers ask it directly: `r is None` / `r is not None` / `if r:` emit the tag test, `r
 or default` picks the payload or the default on it, and `if r is None: return` narrows `r`
 to `X` on the fall-through the same way `if r is not None:` narrows inside its arm. Reading
-an unnarrowed runtime-tagged name (`r + 1` where `r` may be `None`) is refused at the line:
-CPython raises `TypeError` there, and a provable run-time type error is a compile-time
-refusal here. When every reached path is provable -- the annotation is wider than the body,
+an unnarrowed runtime-tagged name is refused at the line wherever the use site cannot
+represent both outcomes (`r + 1`, `buf[r]`, `r == x`, or passing `r` to a non-Optional
+parameter): CPython raises `TypeError` there, and a provable run-time type error is a
+compile-time refusal here. The sites that CAN represent both read the tag instead:
+`print(r)` and `f"{r}"` emit the payload through the member's own writer when a real member
+is active and the text `None` when it is not, exactly as CPython prints the value. When
+every reached path is provable -- the annotation is wider than the body,
 the guard folds, the `return None` sits on a dead arm -- no tag exists and the code is
 byte-identical to a plain `-> X` return; the byte is spent only where the None-ness is a
 run-time fact.

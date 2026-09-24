@@ -68,6 +68,19 @@
    proves a payload value free (`r & 0x7F` leaves 0x80-0xFF), the tag may fold into it;
    where it cannot, every value of `T` must stay distinguishable from `None`. Never
    emitted by default.
+7. **A read site that can represent both outcomes consults the tag.** `print(r)` and
+   f-string interpolation `{r}` are the first such sites: each real member prints by
+   its own repr (the int member through the decimal writer, the float member through
+   the float writer, a bool member as `True`/`False`), and the None member writes the
+   literal `None` -- the text CPython produces. The tag is the cost of that notation,
+   the same one a `Nullable<T>` pays in C# and a `std::optional<T>` in C++: a marker
+   beside the payload saying which member is live. The difference is decision 2 --
+   those languages pay it on every value of the type, and PyMCU pays it only where the
+   None-ness is a run-time fact, so a compile-time-decidable Optional still emits
+   byte-identical code. Sites that cannot represent both -- arithmetic, an index, a
+   comparison other than `is None`/`is not None`, a parameter that is not Optional --
+   keep the located refusal: CPython raises TypeError there and this target has no
+   exception to raise it with, so the honest answer stays the CompileError.
 
 ## 1. The measured problem
 
@@ -210,7 +223,19 @@ zero while the pair is register-resident.
 | `match r:` with `case None:` / `case <type>():` | dispatches on the tag; note for phase 3 |
 | `r + 1`, `r.field`, `r()` on an unnarrowed Optional | **CompileError**: "r may be None here; narrow it first (`if r is not None:`)." CPython raises TypeError at run time; a provable run-time type error is a compile-time refusal in PyMCU |
 | inside `if r is not None:` | `r` reads as the payload type; the tag is not consulted again in that arm |
-| `print(r)` | `if tag is None-state: emit "None"; else print(payload)` -- the print machinery already knows both halves |
+| `print(r)` | one tag compare per real member, then the member's own writer; the None member writes the literal `None` |
+| `f"{r}"` | same dispatch at the interpolation site; a format spec (`{r:.1f}`) is a payload read and stays refused unnarrowed |
+
+### The cost table, per decision 7
+
+| what | cost |
+|---|---|
+| Optional provable at compile time | nothing: no tag storage, no wire register, no dispatch -- byte-identical (decision 2) |
+| runtime Optional local or field | payload + one tag byte in storage; a tag copy on each store |
+| runtime Optional across a call boundary | the tag byte after the payload in the return/argument run (section 4) |
+| `print(r)` / `f"{r}"` on a runtime Optional | a `CPI`/`BRNE` per real member plus the member writer the program already had; `None` is the fall-through |
+| a name proven None on this path | the literal `None` write only -- the fold, no tag read |
+| arithmetic, index, non-`is` comparison, non-Optional parameter on an unnarrowed Optional | CompileError (unchanged; the site cannot represent both outcomes) |
 
 A return of an already-tagged name (`return self._temperature`, the dht shape) copies the
 field's tag byte to the tag register and the payload to the result registers -- the tag is
@@ -390,7 +415,13 @@ representation itself, in GAS, exactly as RFC 0006 measured its cost model.
    an optional tuple is "tag + N slots". No demandant yet.
 4. **Sentinel folding**: where a range proof leaves a payload value free (`x & 0x7F`),
    emitting (c) saves the tag byte in storage as well as the wire. Pure optimization; a
-   wrong proof is a miscompile, so it needs the range machinery to be sound first.
+   wrong proof is a miscompile, so it needs the range machinery to be sound first. This
+   is the escape hatch Rust already ships as the *niche optimization*: `Option<&T>` is
+   pointer-sized because the null bit pattern doubles as the discriminant, and
+   `Option<NonZeroU32>` pays nothing for the same reason. The day sentinel folding
+   lands, the decision-7 costs that survive are only the ones with no free pattern --
+   a `None`-tagged `Optional[uint8]` can hide in 0x80-0xFF when the program masks, and
+   the tag byte disappears where the proof reaches.
 5. **`Optional` on PIC/ARM/RISC-V**: the IR shape is arch-neutral (`Return.Tag`,
    `Call.TagDst`); each backend picks its own tag register. PIC14's banking may prefer a
    GPIOR-style flag byte over a register; measure when a PIC demandant appears.
