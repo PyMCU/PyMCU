@@ -653,10 +653,21 @@ public partial class IRGenerator
                 // the same-named property getter ResolveCallee would find
                 // (adafruit_74hc595). Runtime-slot maps (variableTypes et al.)
                 // cannot disqualify: a Callable param lives in them too.
+                // boundNames can: it marks every `x = ...` binding in the
+                // scope, which is how `auto_write = self._auto_write` inside
+                // Seg14x4._number lands -- the snapshot files no value-map
+                // entry once the field write kills its alias, but the name is
+                // still a local value, so `self._auto_write = auto_write`
+                // stores it rather than binding the field to the auto_write
+                // property setter. A bound name that still resolves to a
+                // function (`x = obj.method` aliased through variableAliases)
+                // keeps the callable path.
+                var behind = FunctionNameBehind(cand);
                 if (constantVariables.ContainsKey(cand) || strConstantVariables.ContainsKey(cand)
-                    || floatConstantVariables.ContainsKey(cand) || constantAddressVariables.ContainsKey(cand))
+                    || floatConstantVariables.ContainsKey(cand) || constantAddressVariables.ContainsKey(cand)
+                    || (behind == null && boundNames.Contains(cand)))
                     break;
-                if (FunctionNameBehind(cand) is { } bf) { fnFieldFn = bf; break; }
+                if (behind is { } bf) { fnFieldFn = bf; break; }
             }
             if (fnFieldFn != null || fnFieldLam != null)
             {
@@ -2724,6 +2735,17 @@ public partial class IRGenerator
                 throw UserError("Unknown member access in assignment: " + memExpr2.Member, memExpr2);
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             var flattenedName = baseName + "_" + memExpr2.Member;
+
+            // A field write kills the aliases that pointed AT it, exactly as a scalar
+            // write does through InvalidateAliasesForWrite: `x = self._f` files
+            // variableAliases[x] = <obj>_f for tracking, and this store must end it --
+            // otherwise a later `self._f = x` resolves x back to the field itself and
+            // folds to a self-copy that emits nothing (an outlined S_m's
+            // `self._auto_write = auto_write` restore in adafruit_ht16k33). The field's
+            // own OUTGOING alias is untouched: a param-threaded field forwards its
+            // writes to the caller's storage through it (held-instance-field).
+            localConstantValues.Remove(flattenedName);
+            InvalidateAliasesPointingAt(flattenedName);
 
             // Reaching here on a known class means the member is not one of its fields: every real
             // field write (slot store, write-back, instance array) returned above. The write lands
@@ -5038,6 +5060,13 @@ public partial class IRGenerator
         string written = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
                        : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
                        : name;
+        InvalidateAliasesPointingAt(written);
+    }
+
+    // The sweep half of a write's bookkeeping, for a target whose key is already resolved:
+    // every alias that pointed at `written` is stale the moment the name is stored into.
+    private void InvalidateAliasesPointingAt(string written)
+    {
         List<string>? stale = null;
         foreach (var kv in variableAliases)
             if (kv.Value == written && !writeThroughAliases.Contains(kv.Key))

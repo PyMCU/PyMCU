@@ -143,4 +143,38 @@ public class CallableFieldTests
                 && cp.Src is Variable v && v.Name == "s__number_of_shift_registers")
             .Should().BeFalse("the stored constant folds every read; a var load means 0");
     }
+
+    [Fact]
+    public void AValueBoundLocal_IsNotAFunctionField()
+    {
+        // `auto_write = self._auto_write` then `self._auto_write = auto_write`
+        // in adafruit_ht16k33's Seg14x4._number: the local shares its name with
+        // the class's own auto_write property setter, so the restore's
+        // callable-field probe resolved the setter and swallowed the store --
+        // the field stayed False and every `if self._auto_write: self.show()`
+        // skipped its flush. boundNames marks the local a value binding, which
+        // must shadow the same-named setter.
+        var ir = Gen(
+            "class S:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._auto_write = True\n" +
+            "    @property\n" +
+            "    def auto_write(self) -> bool:\n" +
+            "        return self._auto_write\n" +
+            "    @auto_write.setter\n" +
+            "    def auto_write(self, v: bool) -> None:\n" +
+            "        self._auto_write = v\n" +
+            "    def m(self) -> None:\n" +
+            "        auto_write = self._auto_write\n" +
+            "        self._auto_write = False\n" +
+            "        self._auto_write = auto_write\n\n" +
+            "s = S()\n" +
+            "s.m()\n" +
+            "x = s.auto_write\n", optimize: false);
+
+        ir.Functions.SelectMany(f => f.Body).Any(i => i is Copy cp
+                && cp.Dst is Variable v && v.Name.Contains("__auto_write")
+                && cp.Src is Variable s && s.Name.Contains(".auto_write"))
+            .Should().BeTrue("the restore must emit a real store of the saved local");
+    }
 }
