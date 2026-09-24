@@ -1561,6 +1561,46 @@ public partial class IRGenerator
     /// </summary>
     private void CollectOptionalCapable(List<Statement> stmts, HashSet<string> capable)
     {
+        // `x = None` alone does not mint a tag slot. The slot exists so runtime
+        // code can discriminate a name that is None on one path and a payload
+        // on another; a name bound to None and never handed a real value (the
+        // `except ImportError: T = None` annotation guard, or an `x = None`
+        // whose `is None` check folds against a mark nothing ever clears)
+        // stays a compile-time None, and capability would only buy a dead
+        // global and its init store. Any binding form that can hand the name a
+        // non-None value counts -- not just `x = v`: for-loop and `with as`
+        // targets, tuple-unpack targets and walrus binds rebind the name too.
+        var reassigned = new HashSet<string>();
+        foreach (var s in TypeInference.WalkStatements(stmts))
+            switch (s)
+            {
+                case AssignStmt a2 when a2.Target is VariableExpr av2
+                                        && a2.Value is not NoneLiteral:
+                    reassigned.Add(av2.Name);
+                    break;
+                case AnnAssign aa2 when aa2.Value != null
+                                        && aa2.Value is not NoneLiteral:
+                    reassigned.Add(aa2.Target);
+                    break;
+                case VarDecl vd2 when vd2.Init != null
+                                      && vd2.Init is not NoneLiteral:
+                    reassigned.Add(vd2.Name);
+                    break;
+                case ForStmt f2:
+                    reassigned.Add(f2.VarName);
+                    if (f2.Var2Name.Length > 0) reassigned.Add(f2.Var2Name);
+                    break;
+                case TupleUnpackStmt t2 when t2.Value is not NoneLiteral:
+                    foreach (var t in t2.Targets) reassigned.Add(t);
+                    break;
+                case WithStmt w2 when w2.AsName.Length > 0:
+                    reassigned.Add(w2.AsName);
+                    break;
+            }
+        foreach (var e in TypeInference.WalkExpressions(stmts))
+            if (e is WalrusExpr wz && wz.Value is not NoneLiteral)
+                reassigned.Add(wz.VarName);
+
         bool changed = true;
         while (changed)
         {
@@ -1578,18 +1618,16 @@ public partial class IRGenerator
 
                 bool isCapable = s switch
                 {
-                    // `x = None` makes x optional-capable outright: a name that can
-                    // hold None at run time IS the union, whatever it is later
-                    // reassigned to -- and `x is None` past a back-edge join needs a
-                    // runtime tag, because the compile-time noneValued record drops
-                    // out of the all-agree join the moment any arm writes a value.
                     VarDecl vd => vd.UnionMembers != null
-                        || vd.Init is NoneLiteral
+                        || (vd.Init is NoneLiteral
+                            && reassigned.Contains(name))
                         || (vd.Init != null && ExprPossiblyOptional(vd.Init, capable)),
                     AnnAssign aa => aa.UnionMembers != null
-                        || aa.Value is NoneLiteral
+                        || (aa.Value is NoneLiteral
+                            && reassigned.Contains(name))
                         || (aa.Value != null && ExprPossiblyOptional(aa.Value, capable)),
-                    AssignStmt a => a.Value is NoneLiteral
+                    AssignStmt a => (a.Value is NoneLiteral
+                            && reassigned.Contains(name))
                         || ExprPossiblyOptional(a.Value, capable),
                     _ => false,
                 };

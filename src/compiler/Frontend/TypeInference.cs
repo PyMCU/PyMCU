@@ -554,7 +554,7 @@ public static class TypeInference
 
     // Every expression appearing in the statements (top-level expressions; sub-expressions
     // are reached via WalkExpression).
-    private static IEnumerable<Expression> WalkExpressions(List<Statement> body)
+    internal static IEnumerable<Expression> WalkExpressions(List<Statement> body)
     {
         foreach (var s in WalkStatements(body))
         {
