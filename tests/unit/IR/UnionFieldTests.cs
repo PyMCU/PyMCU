@@ -138,7 +138,8 @@ public class UnionFieldTests
             "            self.t = None\n" +
             "s = S()\n" +
             "s.put(3)\n" +
-            "s.put(4)\n");
+            "s.put(4)\n" +
+            "s.put(5)\n");
 
         var bound = ir.Functions.SingleOrDefault(f => f.Name == "_bound_s_put");
         Assert.NotNull(bound);

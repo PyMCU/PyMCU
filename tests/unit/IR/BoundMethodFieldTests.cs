@@ -46,6 +46,8 @@ public class BoundMethodFieldTests
         "        self._wb = self._ow.write_bit\n" +
         "    def probe(self, v: uint8) -> uint8:\n" +
         "        self._wb(v)\n" +
+        "        w = self._rb()\n" +
+        "        self._wb(w)\n" +
         "        return self._rb()\n\n";
 
     [Fact]

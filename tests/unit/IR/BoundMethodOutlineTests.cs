@@ -36,16 +36,20 @@ public class BoundMethodOutlineTests
         "    def __init__(self):\n" +
         "        self.buf = bytearray(4)\n" +
         "        self.n = 0\n" +
+        "        self.total = 0\n" +
         "    def put(self, v: uint8) -> None:\n" +
         "        self.buf[self.n] = v\n" +
         "        self.n = self.n + 1\n" +
+        "        self.total = self.total + v\n" +
+        "        self.total = self.total + self.n\n" +
         "\n" +
         "s = Sink()\n" +
         "s.put(1)\n" +
-        "s.put(2)\n";
+        "s.put(2)\n" +
+        "s.put(3)\n";
 
     [Fact]
-    public void TwoCallsToTheSameMethod_ShareOneSynthesizedBody()
+    public void RepeatedCallsToTheSameMethod_ShareOneSynthesizedBody()
     {
         var ir = GenOpt(TwoCallSink);
         var synths = ir.Functions.Where(f => f.Name.StartsWith("_bound_")).ToList();
@@ -55,8 +59,9 @@ public class BoundMethodOutlineTests
 
         var calls = ir.Functions.SelectMany(f => f.Body).OfType<Call>()
             .Where(c => c.FunctionName.EndsWith("_put")).ToList();
-        calls.Should().HaveCount(2,
-            because: "both put() sites emit a real call into the shared body");
+        calls.Should().HaveCount(3,
+            because: "the site census sees the repeats before the first call " +
+                     "emits, so every site emits a real call into the shared body");
     }
 
     [Fact]
@@ -105,11 +110,12 @@ public class BoundMethodOutlineTests
             "    def __init__(self):\n" +
             "        self.scale = bytearray([10, 20, 30])\n" +
             "    def at(self, n: uint8) -> uint8:\n" +
-            "        return self.scale[n]\n" +
+            "        return self.scale[n] + self.scale[0] + self.scale[1] + self.scale[2]\n" +
             "\n" +
             "d = Dev()\n" +
             "buf[0] = d.at(1)\n" +
-            "buf[1] = d.at(GPIOR0.value)\n");
+            "buf[1] = d.at(GPIOR0.value)\n" +
+            "buf[0] = d.at(GPIOR0.value)\n");
 
         ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>()
             .Should().Contain(l => ConstIndexedBy(l, "d_scale", 1),
@@ -177,20 +183,27 @@ public class BoundMethodOutlineTests
             "class M:\n" +
             "    def __init__(self):\n" +
             "        self.seen = 0\n" +
+            "        self.miss = 0\n" +
+            "        self.hit = 0\n" +
             "    def px(self, x: uint8, c: Optional[bool] = None) -> None:\n" +
             "        if c is None:\n" +
             "            self.seen = self.seen + x\n" +
+            "            self.miss = self.miss + 1\n" +
             "        else:\n" +
             "            self.seen = self.seen + x + 1\n" +
+            "            self.hit = self.hit + 1\n" +
             "\n" +
             "m = M()\n" +
             "m.px(1, True)\n" +
-            "m.px(2, None)\n");
+            "m.px(2, None)\n" +
+            "m.px(3, True)\n");
 
         var synth = ir.Functions.Single(f => f.Name.EndsWith("_px"));
         var calls = ir.Functions.SelectMany(f => f.Body).OfType<Call>()
             .Where(c => c.FunctionName == synth.Name).ToList();
-        calls.Should().HaveCount(2);
+        calls.Should().HaveCount(3,
+            because: "the site census sees the repeats before the first call " +
+                     "emits, so every site emits a real call into the shared body");
         calls.Should().OnlyContain(c => c.Args.Count == 3,
             because: "payload x, payload c, then c's tag byte in the argument run");
     }
@@ -251,7 +264,10 @@ public class BoundMethodOutlineTests
             "if r is None:\n" +
             "    buf[1] = 1\n" +
             "else:\n" +
-            "    buf[1] = 2\n");
+            "    buf[1] = 2\n" +
+            "r = m.get(1)\n" +
+            "if r is None:\n" +
+            "    buf[0] = 3\n");
 
         var synth = ir.Functions.SingleOrDefault(f => f.Name.EndsWith("_get"));
         synth.Should().NotBeNull(
