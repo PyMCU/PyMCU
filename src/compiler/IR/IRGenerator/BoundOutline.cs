@@ -1442,6 +1442,28 @@ public partial class IRGenerator
         // must put the set back too, or the per-site fallback expansion reports
         // that same callee "recursive" and masks the real error.
         var savedActiveInline   = new HashSet<string>(activeInlineExpansions);
+        // Bodies synthesized while this visit runs belong to the attempt: when
+        // the visit throws and the caller falls back to expanding, that inner
+        // call site never materialised, so the memoised synth -- and any inner
+        // body already queued -- must go back with the rest.
+        var savedSynthMemos     = new Dictionary<string, string>(boundMethodSynths);
+        int savedPendingSynths  = pendingZcaSynthFunctions.Count;
+        // The attempt also mutates the shared value tables: a `self.f = v`
+        // write inside the visited body files `inst_f` in mutableGlobals and
+        // friends, and those flat names are exactly what the kept-inline
+        // expansions read afterwards. Snapshot the tables the visit can touch
+        // so a refusal leaves the caller's world byte-for-byte unchanged.
+        var savedMutableGlobals  = new Dictionary<string, DataType>(mutableGlobals);
+        var savedVariableTypes   = new Dictionary<string, DataType>(variableTypes);
+        var savedAliases         = new Dictionary<string, string?>(variableAliases);
+        var savedConstVars       = new Dictionary<string, int>(constantVariables);
+        var savedConstAddr       = new Dictionary<string, int>(constantAddressVariables);
+        var savedFloatConsts     = new Dictionary<string, double>(floatConstantVariables);
+        var savedStrConsts       = new Dictionary<string, string?>(strConstantVariables);
+        var savedNoneValued      = new HashSet<string>(noneValuedNames);
+        var savedNarrowed        = new Dictionary<string, int>(narrowedOptionals);
+        var savedInstanceClasses = new Dictionary<string, string?>(instanceClasses);
+        var savedBytearrayParams = new HashSet<string>(bytearrayParams);
 
         currentInstructions    = new List<Instruction>();
         currentFunction        = synthName;
@@ -1624,6 +1646,17 @@ public partial class IRGenerator
         }
         catch (PyMCU.Common.CompilerError)
         {
+            mutableGlobals.Clear();  foreach (var kv in savedMutableGlobals)  mutableGlobals[kv.Key]  = kv.Value;
+            variableTypes.Clear();   foreach (var kv in savedVariableTypes)   variableTypes[kv.Key]   = kv.Value;
+            variableAliases.Clear(); foreach (var kv in savedAliases)         variableAliases[kv.Key] = kv.Value;
+            constantVariables.Clear();      foreach (var kv in savedConstVars)   constantVariables[kv.Key]      = kv.Value;
+            constantAddressVariables.Clear(); foreach (var kv in savedConstAddr) constantAddressVariables[kv.Key] = kv.Value;
+            floatConstantVariables.Clear(); foreach (var kv in savedFloatConsts) floatConstantVariables[kv.Key] = kv.Value;
+            strConstantVariables.Clear();   foreach (var kv in savedStrConsts)   strConstantVariables[kv.Key]   = kv.Value;
+            noneValuedNames.Clear();        foreach (var n in savedNoneValued)       noneValuedNames.Add(n);
+            narrowedOptionals.Clear();      foreach (var kv in savedNarrowed)        narrowedOptionals[kv.Key]    = kv.Value;
+            instanceClasses.Clear();        foreach (var kv in savedInstanceClasses) instanceClasses[kv.Key]      = kv.Value;
+            bytearrayParams.Clear();        foreach (var n in savedBytearrayParams)  bytearrayParams.Add(n);
             RestoreStrippedConsts(strippedConsts);
             boundFieldInitPreamble.RemoveRange(preambleBefore,
                                                boundFieldInitPreamble.Count - preambleBefore);
@@ -1651,6 +1684,10 @@ public partial class IRGenerator
             inlineCalleeStmtLine   = savedCalleeLine;
             currentFunctionGlobals = savedFunctionGlobals;
             activeInlineExpansions = savedActiveInline;
+            boundMethodSynths.Clear();
+            foreach (var kv in savedSynthMemos) boundMethodSynths[kv.Key] = kv.Value;
+            pendingZcaSynthFunctions.RemoveRange(savedPendingSynths,
+                pendingZcaSynthFunctions.Count - savedPendingSynths);
             return null;
         }
         if (currentInstructions.Count == 0 || currentInstructions[^1] is not Return)
