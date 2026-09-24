@@ -122,6 +122,20 @@ public partial class IRGenerator
                 && m is not ("bytearray" or "bytes" or "str" or "const[str]")
                 && !m.Contains('[')));
 
+    /// Whether a spelled member list is `Optional[X]` -- exactly one payload
+    /// member plus None -- whose payload is not a scalar the tag can carry.
+    /// Such a list is not a union at all: `Optional[str]` is a string that is
+    /// sometimes absent and `Optional[Cls]` an instance slot that is sometimes
+    /// None, the same decision-4 line the field scan and the parameter gate
+    /// already draw. The declared type is X (Normalize's answer), so dropping
+    /// the member list hands the position back its pre-union semantics: the
+    /// payload travels as itself and None rides the compile-time marks.
+    private static bool IsNullableNonScalar(List<string> members) =>
+        members is [var only, "None"]
+        && !(MemberDataType(only) != DataType.UNKNOWN
+            && only is not ("bytearray" or "bytes" or "str" or "const[str]")
+            && !only.Contains('['));
+
     /// Whether the member name is an integer-kind scalar (not bool, not float).
     private static bool IsIntMember(string member) =>
         member is "int" or "int8" or "int16" or "int32"
@@ -426,6 +440,15 @@ public partial class IRGenerator
                     $"an exported function cannot return Union[{string.Join(", ", members)}]; " +
                     "a C caller has no tag to read.", fn);
 
+            // `-> Optional[str]` / `-> Optional[Cls]` is not a union candidate:
+            // the payload is a name or a storage slot, so None stays the
+            // absence marker the marks already track (RFC 0009 decision 4).
+            if (IsNullableNonScalar(members))
+            {
+                fn.ReturnMembers = null;
+                continue;
+            }
+
             // The four-member ceiling applies to a declared union as spelled; for an
             // inferred one it applies to the members returns can actually reach --
             // a member that only appears in dead code does not count (6.1).
@@ -447,6 +470,11 @@ public partial class IRGenerator
                     throw UserError(
                         $"an exported function cannot return Union[{string.Join(", ", im)}]; " +
                         "a C caller has no tag to read.", ifn);
+                if (IsNullableNonScalar(im))
+                {
+                    ifn.ReturnMembers = null;
+                    continue;
+                }
                 ValidateUnionMembers(ifn, im, checkCeiling: !ifn.ReturnMembersInferred);
             }
         if (candidates.Count == 0) return;
