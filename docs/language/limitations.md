@@ -445,7 +445,7 @@ has a probe of this shape marked `# expect: divergence`, citing this paragraph.
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
 | `None` assigned to a scalar (`int` / `uintN`) | `None` is a real null literal, not the integer `-1` | Use a sentinel value (e.g. `0xFF`), or keep `None` for reference / optional-typed values where `is None` / `== None` checks work |
-| `Union` of two real types | Runtime type tag required | Separate functions per type |
+| `Union` of more than four members, or of non-scalar members | The member tag encodes at most four states and every member needs scalar storage | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
 
 **`None` is a compile-time value.** It travels: passing it as an argument, assigning it
@@ -501,12 +501,17 @@ A `return None` on a reached path of a function declared `-> X` (no `None` membe
 refused in one sentence at the line it is written on, in an `@inline` expansion and in a
 plain `def` compiled as a shared subroutine alike -- the outlined path used to leave `ret`
 holding whatever the register happened to hold. A `return None` on a path the caller cannot
-reach is not refused, because the guard that excludes it folds first. Optional PARAMETERS
-on real subroutines are phase 2; `Union[A, B, ...]` returns and union-typed fields are
-phase 3, implemented: the tag carries the member index, the payload is the widest
-member's storage, `isinstance`/`match` dispatch on it, and union members are still
-limited to scalar storage types (a `list`/`tuple`/array or class member is refused at
-the annotation, as is a union of more than four members).
+reach is not refused, because the guard that excludes it folds first. Union PARAMETERS on
+real subroutines carry the same tag as a return: the caller stages the member byte in the
+argument run immediately after the payload, and the callee's `p is None` /
+`isinstance(p, T)` reads narrow on it. `Union[A, B, ...]` returns, parameters and
+union-typed fields are implemented in full: the tag carries the member index, the payload
+is the widest member's storage, `isinstance`/`match` dispatch on it, and union members are
+still limited to scalar storage types (a `list`/`tuple`/array or class member is refused
+at the annotation, as is a union of more than four members). A local a program merges
+`None` into under a runtime condition (`if c: x = None` beside a scalar assignment)
+carries the tag byte too; writes that can only meet sequentially stay provable and emit
+exactly the code they had before.
 
 **A `Union` of two REAL types on a PARAMETER** of an `@inline`-expanded function or method
 (a constructor included -- every ZCA instance is built at its own call site) reads the same
@@ -517,10 +522,12 @@ from such a parameter takes the site's type the same way any unannotated field d
 `List[X]`/`Tuple[X, ...]` member matches a fixed array/list literal argument (there is no
 run-time `List`/`Tuple` object here); a `Callable[...]` member matches a plain function
 reference. A call whose argument matches none of the members is refused, naming them. A
-`Union` on a REAL SUBROUTINE's parameter, or on anything that is not a parameter (a field, a
-local, a return type), keeps its refusal: there both members need storage and disagree about
-how much, and a real subroutine has one ABI for every caller with no call site to resolve it
-at.
+`Union` on a REAL SUBROUTINE's parameter takes the tagged-parameter ABI instead: the member
+byte travels as an extra argument staged immediately after the payload, the callee's reads
+dispatch on it, and a parameter every caller provably fills with the same member keeps the
+untagged code it had before. What is still refused is a union position with no storage or
+ABI for a tag at all -- a buffer member (`list`/`tuple`/array or class instance), or a tag
+that would have to cross a function reference's fixed signature.
 
 An annotation may also be written through an alias: `ColorUnion = Union[int, uint8]` binds
 the name at compile time (inside a discarded `if TYPE_CHECKING:` / compat-layer guard too),
@@ -1058,14 +1065,14 @@ base, `pixels[i] = (r, g, b)` included, verified on the wire on the emulated Uno
 | `adafruit_bus_device` | **builds unmodified, 800 bytes** (simpletest too, 1 444 bytes) | the library and its example compile; the example's `print("".join(f"{x:02x}" for x in result))` is the expression-position join |
 | `adafruit_character_lcd` | `Pin.high()` runtime bit index | `__init__` is no longer a shared subroutine and a reduced `Lcd(mcp.get_pin())` fixture keeps the expander class; the unmodified I2C backpack still reaches HAL `self._port[self._bit] = 1` |
 | `adafruit_debouncer` | `Debouncer(pin)` | `'io_or_predicate' is declared Union[ROValueIO, Callable[[], bool]]`, and this argument's type matches none of those members |
-| `adafruit_dht` | `def temperature(...) -> Union[int, float, None]` | a union of two REAL types; `uname()` is a compile-time view of `__CHIP__` (#466) so the CircuitPython-vs-Blinka test already took the CircuitPython arm |
+| `adafruit_dht` | **builds unmodified, 12 252 bytes** | (moved off `def temperature(...) -> Union[int, float, None]`: a multi-member return union carries the runtime tag; `self._temperature`/`self._humidity` store a payload plus a sibling tag byte) |
 | `adafruit_dps310` | **builds unmodified, 13 162 bytes** | (moved off `coeffs = [None] * 18`: a repeated list of None is a fixed SRAM array) |
 | `adafruit_ds18x20` | `import onewireio` | module not found |
 | `adafruit_ds3231` | `from time import struct_time` | `pymcu.time` defines the nine-field stub; the CircuitPython overlay's advertised names are still only `monotonic` / `monotonic_ns` / `sleep` |
 | `adafruit_74hc595` | **builds unmodified, 402 bytes** | (moved off `bytearray(self._number_of_shift_registers)` and `DigitalInOut(pin, self)`: a compile-time field is a buffer size, and a class defined in the module shadows the entry file's `from digitalio import DigitalInOut`) |
 | `adafruit_hcsr04` | **builds unmodified, 3 430 bytes** | |
-| `adafruit_ht16k33` (matrix) | `bytearray((self._buffer_size) * len(self.i2c_device))` | could not determine buffer size from initializer |
-| `adafruit_ht16k33` (segments) | `def print(self, value: Union[str, float], ...)` | a union of two REAL types; a call in a raise message is a deferred print (#435) |
+| `adafruit_ht16k33` (matrix) | **builds unmodified** (matrix simpletest 4 234 bytes) | (moved off the buffer-size and `Optional[bool]` pixel demandants: bound module-level instances outline to real subroutines, and `pixel`'s `Optional[bool]` color/return ride the tag) |
+| `adafruit_ht16k33` (segments) | **builds unmodified, 5 710 bytes** | (moved off `def print(self, value: Union[str, float], ...)`: a union parameter resolves the member at the call site) |
 | `adafruit_ina219` | **builds unmodified, 7 294 bytes** | (moved off `self.raw_bus_voltage`: `type(self)` in the descriptor rewrite is `INA219`, not the mangled `adafruit_ina219_INA219`) |
 | `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
 | `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
@@ -1240,12 +1247,14 @@ them once `type(self)` in a descriptor rewrite is the source class name.
 lookup table. `adafruit_dps310` (13 162 bytes) and `adafruit_pca9685` (1 852 bytes)
 join once `[None] * n` is a fixed SRAM array that can hold a later instance.
 
-**A union of two REAL types is what the union refusal is now about.** `Optional[X]`,
-`X | None` and `Union[X, None]` are read as `X` in parameter and local positions, and a
-`-> Optional[X]` return carries the runtime tag described in "None is a compile-time
-value" above. A `Union` whose members are two payload types (`Union[int, float, None]`
-included) still meets the refusal on a return: the tag machinery exists but the multi-member
-readers are phase 3.
+**A union of two REAL types is implemented end to end.** `Optional[X]`,
+`X | None` and `Union[X, None]` are read as `X` in parameter and local positions when the
+None-ness stays provable, and a `-> Optional[X]` / `-> Union[A, B, ...]` return carries
+the runtime tag described in "None is a compile-time value" above. The same tag backs
+multi-member returns (`Union[int, float, None]` included), union parameters on real
+subroutines, union-typed fields on an instance, and a local merged `None` under a runtime
+condition -- the readers dispatch on the member index and the payload keeps the widest
+member's storage.
 That moved nine of the original twenty off the annotation they used to stop on, and cost nothing (the
 321-fixture corpus is byte-identical).
 
