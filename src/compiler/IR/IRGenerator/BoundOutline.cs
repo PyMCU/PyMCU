@@ -545,6 +545,15 @@ public partial class IRGenerator
                         when cv.Name == selfName:
                     if (BoundLookupMethod(curCls, cm.Member) is { } selfCall)
                         work.Push((selfCall.def, selfCall.cls, false));
+                    // `self.f(...)` where `f` is a field bound to `obj.method`:
+                    // the call re-dispatches through the receiver recorded at the
+                    // bind site. A shared body can name that receiver only when
+                    // it is module-level storage -- a function-scoped held
+                    // instance (`main.__c1`) resolves to caller temps the body
+                    // would read as phantoms.
+                    else if (boundMethodFields.TryGetValue(instName + "_" + cm.Member, out var bmField)
+                             && !BoundMethodRecvShareable(bmField.Recv))
+                        safe = false;
                     foreach (var a in cc.Args) T(a);
                     return;
                 // `super().m(...)`: the base of the CLASS THE BODY IS WRITTEN ON
@@ -702,6 +711,24 @@ public partial class IRGenerator
             for (int d = 0; d < 20 && variableAliases.TryGetValue(n, out var a); d++) n = a;
             if (BoundShareableName(n)) return true;
         }
+        return false;
+    }
+
+    /// True when a recorded bound-method receiver names storage a synthesized
+    /// body can reach: a module-level instance (`pin`, `matrix`) or a
+    /// field-path under one (`b__ow`). A function-scoped held instance key
+    /// (`main.__c1`) carries a `.` prefix -- its flattened fields live in the
+    /// caller's frame, so the shared body must refuse it.
+    private bool BoundMethodRecvShareable(string recv)
+    {
+        // The recorded key is a FIELD path (`b__ow`); the instance it holds
+        // sits at the end of the alias chain -- chase it to the terminal key
+        // the emitted call would actually name.
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(recv, out var r); d++) recv = r;
+        if (recv.IndexOf('.') >= 0) return false;
+        if (topLevelInstanceTargets.Contains(recv)) return true;
+        foreach (var inst in topLevelInstanceTargets)
+            if (recv.StartsWith(inst + "_", StringComparison.Ordinal)) return true;
         return false;
     }
 

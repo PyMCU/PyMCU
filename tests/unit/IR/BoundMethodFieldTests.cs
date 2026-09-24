@@ -63,6 +63,32 @@ public class BoundMethodFieldTests
         ir.Functions.Any(f => f.Name == "Pin_read_bit").Should().BeTrue(
             "the outlined callee is emitted");
         ir.Functions.Any(f => f.Name == "Pin_write_bit").Should().BeTrue();
+        ir.Functions.Any(f => f.Name == "_bound_b_probe").Should().BeFalse(
+            "the recorded receiver is caller-scoped storage -- the body must not share");
+    }
+
+    [Fact]
+    public void AModuleLevelReceiver_StillOutlinesTheSharedBody()
+    {
+        // `pin` is module-level storage, so the recorded receiver survives in a
+        // shared body: `probe` outlines and its bound-method calls re-dispatch
+        // to the pin's own bound bodies instead of a caller temp.
+        var ir = Gen(Fixture +
+            "pin = Pin(GPIOR0.value)\n" +
+            "b = Bus(pin)\n" +
+            "r = b.probe(3)\n" +
+            "s = b.probe(4)\n");
+
+        var bound = ir.Functions.SingleOrDefault(f => f.Name == "_bound_b_probe");
+        bound.Should().NotBeNull(
+            "a bound-method field whose receiver is module-level storage is safe to share");
+        bound!.Body.Any(i => i is Call c && c.FunctionName == "Pin_write_bit")
+            .Should().BeTrue("the recorded receiver is the module-level pin");
+        bound.Body.Any(i => i is Call c && c.FunctionName == "Pin_read_bit")
+            .Should().BeTrue();
+        bound.Body.OfType<Call>().SelectMany(c => c.Args).OfType<Variable>()
+            .Any(v => v.Name.StartsWith("main.")).Should().BeFalse(
+            "no argument may name caller-scoped storage the shared body cannot reach");
     }
 
     [Fact]
