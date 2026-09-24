@@ -34,13 +34,14 @@ public class EmptyListLiteralAssignTests
     }
 
     [Fact]
-    public void EmptyListLiteral_ThenRuntimeAppend_IsRefused()
+    public void EmptyListLiteral_ThenRuntimeAppend_Promotes()
     {
-        // `xs.append(1)` needs a typed list; the refusal must be the named
-        // diagnostic, not the IndexOutOfRangeException it used to throw.
-        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(
-            () => Gen("xs = []\nxs.append(1)\n"));
-        Assert.Contains("typed list", ex.Message);
+        // `xs = []` then `xs.append(1)` promotes the name to a heap list
+        // element-typed by the appended value -- the assign lowers to a
+        // GcAlloc'd header instead of the "typed list" refusal.
+        var ir = Gen("xs = []\nxs.append(1)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is GcAlloc);
     }
 
     [Fact]
