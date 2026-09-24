@@ -10254,17 +10254,12 @@ public partial class IRGenerator
         // === SLOW PATH: realloc to grow capacity ===
 
         // gc_alloc encodes the payload length in one header byte, so a list buffer's
-        // 2 + cap*elemSize bytes must stay <= 255. Grow by 1.5x in u16 -- cap + cap/2
-        // cannot wrap -- then clamp to the largest capacity that fits, and raise
-        // MemoryError when the list is already at that ceiling. A 1.5x step keeps
-        // append amortised O(1) while halving the overshoot waste: on a heap of a
-        // few hundred bytes, doubling a list[uint16] past 64 elements parked ~120
-        // dead bytes inside the object.
+        // 2 + cap*elemSize bytes must stay <= 255. Grow by 2x in u16 -- cap*2 cannot
+        // wrap -- then clamp to the largest capacity that fits, and raise
+        // MemoryError when the list is already at that ceiling.
         int maxCap = (255 - 2) / elemSize;
         Temporary newCapWide = MakeTemp(DataType.UINT16);
-        Temporary halfCap = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.RShift, tmpCap, new Constant(1), halfCap));
-        Emit(new Binary(BinaryOp.Add, tmpCap, halfCap, newCapWide));
+        Emit(new Binary(BinaryOp.LShift, tmpCap, new Constant(1), newCapWide));
         Temporary tooBig = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterThan, newCapWide, new Constant(maxCap), tooBig));
         string capFitsLabel = MakeLabel();
@@ -10275,11 +10270,16 @@ public partial class IRGenerator
         // A promoted `x = []` starts at capacity 0, which stays 0 under any
         // growth factor: floor at the same first-fit a declaration grants before
         // the grew-check would call it finished. Never floor past the ceiling.
-        int floorCap = Math.Min(8, maxCap);
-        string capFlooredLabel = MakeLabel();
-        Emit(new JumpIfGreaterOrEqual(newCapWide, new Constant(floorCap), capFlooredLabel));
-        Emit(new Copy(new Constant(floorCap), newCapWide));
-        Emit(new Label(capFlooredLabel));
+        // Only a promoted list can hold cap 0 -- declared lists mint at 8 -- so the
+        // floor is emitted only where the promotion feature engaged.
+        if (promotedEmptyLists.Contains(listVar.Name))
+        {
+            int floorCap = Math.Min(8, maxCap);
+            string capFlooredLabel = MakeLabel();
+            Emit(new JumpIfGreaterOrEqual(newCapWide, new Constant(floorCap), capFlooredLabel));
+            Emit(new Copy(new Constant(floorCap), newCapWide));
+            Emit(new Label(capFlooredLabel));
+        }
 
         Temporary grew = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterThan, newCapWide, tmpCap, grew));
