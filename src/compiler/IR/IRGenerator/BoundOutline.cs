@@ -1,6 +1,7 @@
 using PyMCU.Common;
 using PyMCU.Frontend;
 using PyMCU.IR;
+using AstUnOp = PyMCU.Frontend.UnaryOp;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -50,6 +51,18 @@ public partial class IRGenerator
     // still contribute its instructions to the program.
     private readonly Dictionary<string, (bool ok, string cls, HashSet<string> strip,
         HashSet<string> foldPs)> boundEligibility = new();
+    // (callee|instance) -> AST-visible shareable call sites, computed once per
+    // pair by BoundSiteCensus.
+    private readonly Dictionary<string, int> boundSiteCensus = new();
+    // (classKey.method|instance) -> whether that method body ever emits with
+    // self bound to the instance, memoized by BoundEnclosingReaches.
+    private readonly Dictionary<string, bool> boundEnclReach = new();
+    // The entry module's AST, kept for the site census alongside
+    // importedModuleAsts (assigned in Generate).
+    private ProgramNode? mainProgramAst;
+    // ProgramNode -> module name, the inverse of importedModuleAsts, built on
+    // first census.
+    private Dictionary<ProgramNode, string>? boundAstModuleNames;
 
     /// <summary>
     /// The subroutine name for (<paramref name="callee"/>, <paramref name="instName"/>),
@@ -101,10 +114,462 @@ public partial class IRGenerator
         }
         if (!boundMethodSynths.TryGetValue(memoKey, out var memo))
         {
-            memo = SynthesizeBoundMethod(callee, instName, dec.cls, func, dec.strip) ?? "";
+            // Share only what the AST can prove repeats. The census counts
+            // `inst.m()` anywhere and `self.m()` inside a method on the
+            // instance's own MRO, so the decision lands before the first site
+            // emits and every site shares. Sites the AST cannot show -- a call
+            // inside a compile-time-unrolled loop, a subscript route like
+            // `matrix[i] = v`, a bound-method field -- keep the per-site
+            // expansion: synthesizing on an emitted-site count alone would pay
+            // the body's prologue whenever the sites stop arriving, and that
+            // bet is exactly the growth this gate exists to remove.
+            int census = BoundSiteCensus(callee, instName, dec.cls, func,
+                                         dec.foldPs);
+            if (census < 2) return null;
+            boundMethodSynths[memoKey] = ""; // claim the pair: a recursive
+                                            // self-call inside the visit then
+                                            // keeps the inline path
+            memo = SynthesizeBoundMethod(callee, instName, dec.cls, func, dec.strip,
+                                         census) ?? "";
             boundMethodSynths[memoKey] = memo;
         }
         return memo.Length > 0 ? memo : null;
+    }
+
+    /// <summary>
+    /// The number of AST-visible call sites of (<paramref name="callee"/> on
+    /// <paramref name="instName"/>): `inst.m(...)` in any body, plus `self.m(...)`
+    /// inside a method of a class on the instance's own MRO (that `self` is the
+    /// instance whenever the method is emitted for it). Sites that bind a
+    /// compile-time constant to a fold-sensitive parameter do not share the body
+    /// and are not counted. The count is deliberately approximate in the safe
+    /// direction only: sites hidden behind unrolling or indirection under-count
+    /// and keep the expansion; a site in dead code over-counts and at worst buys
+    /// one marshal of growth.
+    /// </summary>
+    private int BoundSiteCensus(string callee, string instName, string cls,
+                              FunctionDef func, HashSet<string> foldPs)
+    {
+        string key = callee + "|" + instName;
+        if (boundSiteCensus.TryGetValue(key, out var cached))
+            // -1 is the in-progress sentinel: a recursion through a mutually
+            // recursive pair (a calls b, b calls a) contributes nothing rather
+            // than double-counting itself.
+            return Math.Max(cached, 0);
+        boundSiteCensus[key] = -1;
+        string method = func.Name;
+        string defCls = callee.Substring(0, callee.Length - method.Length - 1);
+
+        // The instance's own class chain, keyed the way callee is (module prefix
+        // + bare name). `self.m` inside a method of any of these classes can be
+        // emitted with self == instName.
+        var ancestors = new HashSet<string> { cls };
+        for (string? cur = cls; cur != null;)
+        {
+            cur = BaseClassOf(cur);
+            if (cur != null) ancestors.Add(cur);
+        }
+
+        // Resolve `self.m` on the instance's concrete class once: the defining
+        // class has to be callee's own, or the site dispatches elsewhere.
+        bool selfSiteCounts = ResolveMROMethod(cls, method) == defCls;
+
+        // `self.m()` inside method M shares only when M's body can emit with
+        // self bound to the instance -- a textual `inst.M()` site (whose
+        // expansion propagates the receiver), or a `self.M()` inside another
+        // instance-reaching method. A method reached only through a desugar
+        // that binds self to a temp (`with` -> __exit__) expands the nested
+        // call with it, so the site never becomes a real call.
+        bool EnclosingShares(FunctionDef? encl, string selfClsKey)
+            => encl != null && selfSiteCounts
+               && BoundEnclosingReaches(encl, selfClsKey, instName, cls, ancestors);
+
+        int count = 0;
+        void ScanExprs(IEnumerable<Statement> body, string? selfClsKey,
+                       FunctionDef? enclMethod, string modPrefix)
+        {
+            foreach (var st in TypeInference.WalkStatements(body))
+            {
+                switch (st)
+                {
+                    case FunctionDef fd:
+                        ScanExprs(fd.Body.Statements, selfClsKey, fd, modPrefix);
+                        break;
+                    case ClassDef cd:
+                        string cdKey = modPrefix + cd.Name;
+                        foreach (var inner in TypeInference.WalkStatements(cd.Body))
+                            if (inner is FunctionDef m)
+                                ScanExprs(m.Body.Statements, cdKey, m, modPrefix);
+                        break;
+                    default:
+                        foreach (var e in BoundStmtExprs(st))
+                        {
+                            if (e is CallExpr c
+                                && c.Callee is MemberAccessExpr me
+                                && me.Member == method
+                                && me.Object is VariableExpr recv
+                                && (recv.Name == instName
+                                    || (recv.Name == "self" && selfClsKey != null
+                                        && ancestors.Contains(selfClsKey)
+                                        && EnclosingShares(enclMethod, selfClsKey)))
+                                && BoundSiteSharesArgs(c, func, foldPs))
+                            {
+                                count++;
+                                continue;
+                            }
+                            // Operator syntax that dispatches through the bound
+                            // path: `inst[i] = v` lowers to `inst.__setitem__`
+                            // via VisitCall, and `inst(...)` to `__call__`. A
+                            // `self[...]` store inside a reaching method counts
+                            // the same way.
+                            if (BoundOperatorSite(st, e, method, instName,
+                                    consultableOnly: true)
+                                || (selfClsKey != null
+                                    && ancestors.Contains(selfClsKey)
+                                    && EnclosingShares(enclMethod, selfClsKey)
+                                    && BoundOperatorSite(st, e, method, "self",
+                                        consultableOnly: true)))
+                                count++;
+                        }
+                        break;
+                }
+            }
+        }
+
+        foreach (var p in BoundProgramAsts())
+        {
+            string pfx = BoundModulePrefixOf(p);
+            ScanExprs(p.GlobalStatements, null, null, pfx);
+            foreach (var f in p.Functions)
+                ScanExprs(f.Body.Statements, null, f, pfx);
+        }
+        boundSiteCensus[key] = count;
+        return count;
+    }
+
+    /// <summary>
+    /// Whether method <paramref name="m"/> of class <paramref name="mClsKey"/>
+    /// ever emits a body whose `self` is bound to <paramref name="instName"/>:
+    /// true when a textual `inst.m()` site dispatches to this def on the
+    /// instance's MRO (the expansion binds self to the receiver variable), or
+    /// when a `self.m()` inside another method that itself reaches the instance
+    /// does. `self` inside such a body is the instance, so nested `self.x()`
+    /// calls resolve to the real receiver and can share a synthesized body.
+    /// Recursion through a self-call cycle that has no `inst.()` anchor is not
+    /// a reaching path, so the in-progress answer is false.
+    /// </summary>
+    private bool BoundEnclosingReaches(FunctionDef m, string mClsKey,
+                                       string instName, string cls,
+                                       HashSet<string> ancestors)
+    {
+        if (ResolveMROMethod(cls, m.Name) != mClsKey) return false;
+        string key = mClsKey + "." + m.Name + "|" + instName;
+        if (boundEnclReach.TryGetValue(key, out var r)) return r;
+        boundEnclReach[key] = false;
+        bool reach = false;
+        void Scan(IEnumerable<Statement> body, string? clsKey, FunctionDef? encl,
+                  string modPrefix)
+        {
+            foreach (var st in TypeInference.WalkStatements(body))
+            {
+                switch (st)
+                {
+                    case FunctionDef fd:
+                        Scan(fd.Body.Statements, clsKey, fd, modPrefix);
+                        break;
+                    case ClassDef cd:
+                        string cdKey = modPrefix + cd.Name;
+                        foreach (var inner in TypeInference.WalkStatements(cd.Body))
+                            if (inner is FunctionDef im)
+                                Scan(im.Body.Statements, cdKey, im, modPrefix);
+                        break;
+                    default:
+                        foreach (var e in BoundStmtExprs(st))
+                        {
+                            if (reach || e is not CallExpr c
+                                || c.Callee is not MemberAccessExpr me
+                                || me.Member != m.Name
+                                || me.Object is not VariableExpr recv)
+                                continue;
+                            if (recv.Name == instName
+                                || (recv.Name == "self" && clsKey != null
+                                    && ancestors.Contains(clsKey)
+                                    && encl != null
+                                    && BoundEnclosingReaches(encl, clsKey,
+                                        instName, cls, ancestors)))
+                            {
+                                reach = true;
+                                continue;
+                            }
+                        }
+                        // Any emission binds self to the receiver, so operator
+                        // syntax (`inst[i]`, `inst[i] = v`, `inst + x`,
+                        // `len(inst)`, property reads/writes) reaches too.
+                        foreach (var e in BoundStmtExprs(st))
+                        {
+                            if (reach) break;
+                            if (e is MemberAccessExpr ma && ma.Member == m.Name
+                                && ma.Object is VariableExpr mv
+                                && (mv.Name == instName
+                                    || (mv.Name == "self" && clsKey != null
+                                        && ancestors.Contains(clsKey)
+                                        && encl != null
+                                        && BoundEnclosingReaches(encl, clsKey,
+                                            instName, cls, ancestors))))
+                            {
+                                reach = true;   // property getter/setter site
+                                continue;
+                            }
+                            if (BoundOperatorSite(st, e, m.Name, instName,
+                                    consultableOnly: false)
+                                || (clsKey != null && ancestors.Contains(clsKey)
+                                    && encl != null
+                                    && BoundEnclosingReaches(encl, clsKey,
+                                        instName, cls, ancestors)
+                                    && BoundOperatorSite(st, e, m.Name, "self",
+                                        consultableOnly: false)))
+                                reach = true;
+                        }
+                        break;
+                }
+            }
+        }
+        foreach (var p in BoundProgramAsts())
+        {
+            string pfx = BoundModulePrefixOf(p);
+            Scan(p.GlobalStatements, null, null, pfx);
+            foreach (var f in p.Functions)
+                Scan(f.Body.Statements, null, f, pfx);
+        }
+        boundEnclReach[key] = reach;
+        return reach;
+    }
+
+    /// The mangled module prefix a ProgramNode's symbols carry: the entry
+    /// module's is empty; an imported module `a.b` mangles to `a_b_`.
+    private string BoundModulePrefixOf(ProgramNode p)
+    {
+        if (boundAstModuleNames == null)
+        {
+            boundAstModuleNames = new Dictionary<ProgramNode, string>(
+                ReferenceEqualityComparer.Instance);
+            foreach (var (mod, ast) in importedModuleAsts)
+                boundAstModuleNames[ast] = mod;
+        }
+        return boundAstModuleNames.TryGetValue(p, out var modName)
+            ? modName.Replace('.', '_') + "_" : "";
+    }
+
+    /// <summary>
+    /// Every ProgramNode the program compiles -- the entry module first, then
+    /// the imports. Populated lazily so the census never walks a module twice.
+    /// </summary>
+    private IEnumerable<ProgramNode> BoundProgramAsts()
+    {
+        if (mainProgramAst != null) yield return mainProgramAst;
+        foreach (var ast in importedModuleAsts.Values) yield return ast;
+    }
+
+    /// Whether the arguments at this call site keep the site shareable: a
+    /// compile-time constant bound to a fold-sensitive parameter means the site
+    /// takes the expansion and never reuses the shared body.
+    private bool BoundSiteSharesArgs(CallExpr call, FunctionDef func,
+                                     HashSet<string> foldPs)
+    {
+        if (foldPs.Count == 0) return true;
+        int pos = 0;
+        foreach (var a in call.Args)
+        {
+            string pname;
+            Expression val;
+            if (a is KeywordArgExpr kw) { pname = kw.Key; val = kw.Value; }
+            else
+            {
+                int pi = pos + 1;
+                pname = pi < func.Params.Count ? func.Params[pi].Name : "";
+                val = a;
+                ++pos;
+            }
+            if (pname.Length > 0 && foldPs.Contains(pname)
+                && BoundCompileTimeConst(val))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Whether expression <paramref name="e"/> surfaced from statement
+    /// <paramref name="st"/> is an operator-syntax emission of
+    /// <paramref name="method"/> with the receiver bound to
+    /// <paramref name="recv"/>: `recv[i]` for __getitem__, `recv[i] = v` for
+    /// __setitem__, `recv(...)` for __call__, `for x in recv` for __iter__,
+    /// `recv op x`/`x op recv` for the binary dunders, `-recv`/`~recv` for the
+    /// unary ones, `x in recv` for __contains__, and `len(recv)`/str/int/etc.
+    /// for the builtin-routed dunders. Every one of these expands the method
+    /// with self aliased to the receiver name, so nested `self.m()` calls
+    /// inside it resolve to the real instance.
+    /// <paramref name="consultableOnly"/> narrows the answer to forms that pass
+    /// through BoundMethodCallee and can therefore become a CALL: the member
+    /// call itself (handled by the caller), `__call__`, and the scalar-value
+    /// __setitem__ dispatch. The rest always expand in place.
+    /// </summary>
+    private bool BoundOperatorSite(Statement st, Expression e,
+                                   string method, string recv,
+                                   bool consultableOnly)
+    {
+        switch (method)
+        {
+            case "__call__":
+                return e is CallExpr { Callee: VariableExpr cv }
+                       && cv.Name == recv;
+            case "__setitem__":
+                if (e is not IndexExpr { Target: VariableExpr sv }
+                    || sv.Name != recv || !BoundIsStoreTarget(st, e))
+                    return false;
+                // Sequence values take the EmitDunderCall unroll, which never
+                // becomes a call; scalar values dispatch through VisitCall.
+                return !consultableOnly
+                       || st is AssignStmt { Value: not (ListExpr or TupleExpr) };
+            case "__getitem__":
+                return !consultableOnly
+                       && e is IndexExpr { Target: VariableExpr gv }
+                       && gv.Name == recv && !BoundIsStoreTarget(st, e);
+            case "__iter__":
+                return !consultableOnly
+                       && e is VariableExpr iv && iv.Name == recv
+                       && st is ForStmt { Iterable: { } it }
+                       && ReferenceEquals(it, e);
+            case "__contains__":
+                // `x in recv` dispatches through VisitCall like a member call.
+                return e is BinaryExpr { Op: Frontend.BinaryOp.In
+                                             or Frontend.BinaryOp.NotIn,
+                                         Right: VariableExpr rv }
+                       && rv.Name == recv;
+            case "__len__" or "__str__" or "__repr__" or "__int__" or "__float__"
+                 or "__bool__" or "__abs__":
+                return !consultableOnly
+                       && e is CallExpr { Callee: VariableExpr bv } bc
+                       && BoundBuiltinDunder(bv.Name) == method
+                       && bc.Args.Count == 1
+                       && bc.Args[0] is VariableExpr av && av.Name == recv;
+            case "__neg__" or "__pos__" or "__invert__":
+                return !consultableOnly
+                       && e is UnaryExpr { Operand: VariableExpr uv } u
+                       && uv.Name == recv && BoundUnaryDunder(u.Op) == method;
+            default:
+                if (consultableOnly) return false;
+                if (method.StartsWith("__r"))
+                    return e is BinaryExpr rb
+                           && BinaryOpDunder(rb.Op) is { } rd
+                           && "__r" + rd[2..] == method
+                           && rb.Right is VariableExpr rv2 && rv2.Name == recv;
+                return e is BinaryExpr bb && BinaryOpDunder(bb.Op) == method
+                       && bb.Left is VariableExpr lv && lv.Name == recv;
+        }
+    }
+
+    /// Whether <paramref name="e"/> is the store target of its statement
+    /// (`recv[i] = v` stores through __setitem__; the same IndexExpr anywhere
+    /// else reads through __getitem__).
+    private static bool BoundIsStoreTarget(Statement st, Expression e)
+        => (st is AssignStmt a && ReferenceEquals(a.Target, e))
+           || (st is AugAssignStmt ag && ReferenceEquals(ag.Target, e));
+
+    private static string? BoundBuiltinDunder(string name) => name switch
+    {
+        "len" => "__len__", "str" => "__str__", "repr" => "__repr__",
+        "int" => "__int__", "float" => "__float__", "bool" => "__bool__",
+        "abs" => "__abs__", "iter" => "__iter__", "next" => "__next__",
+        _ => null,
+    };
+
+    private static string? BoundUnaryDunder(AstUnOp op) => op switch
+    {
+        AstUnOp.Negate => "__neg__",
+        AstUnOp.BitNot => "__invert__",
+        _ => null,
+    };
+
+    /// The expressions a statement carries directly (the condition, the
+    /// assigned value, the iterated sequence); nesting is WalkStatements' job.
+    private static IEnumerable<Expression> BoundStmtExprs(Statement s)
+    {
+        switch (s)
+        {
+            case ExprStmt es:
+                foreach (var e in BoundExprWalk(es.Expr)) yield return e;
+                break;
+            case AssignStmt a:
+                foreach (var e in BoundExprWalk(a.Value)) yield return e;
+                foreach (var e in BoundExprWalk(a.Target)) yield return e;
+                break;
+            case VarDecl vd when vd.Init != null:
+                foreach (var e in BoundExprWalk(vd.Init)) yield return e;
+                break;
+            case AnnAssign aa when aa.Value != null:
+                foreach (var e in BoundExprWalk(aa.Value)) yield return e;
+                break;
+            case AugAssignStmt ag:
+                foreach (var e in BoundExprWalk(ag.Value)) yield return e;
+                foreach (var e in BoundExprWalk(ag.Target)) yield return e;
+                break;
+            case ReturnStmt r when r.Value != null:
+                foreach (var e in BoundExprWalk(r.Value)) yield return e;
+                break;
+            case IfStmt ifs:
+                foreach (var e in BoundExprWalk(ifs.Condition)) yield return e;
+                foreach (var (c, _) in ifs.ElifBranches)
+                    foreach (var e in BoundExprWalk(c)) yield return e;
+                break;
+            case WhileStmt w:
+                foreach (var e in BoundExprWalk(w.Condition)) yield return e;
+                break;
+            case ForStmt f:
+                if (f.Iterable != null)
+                    foreach (var e in BoundExprWalk(f.Iterable)) yield return e;
+                if (f.RangeStart != null)
+                    foreach (var e in BoundExprWalk(f.RangeStart)) yield return e;
+                if (f.RangeStop != null)
+                    foreach (var e in BoundExprWalk(f.RangeStop)) yield return e;
+                if (f.RangeStep != null)
+                    foreach (var e in BoundExprWalk(f.RangeStep)) yield return e;
+                break;
+        }
+    }
+
+    private static IEnumerable<Expression> BoundExprWalk(Expression e)
+    {
+        yield return e;
+        switch (e)
+        {
+            case BinaryExpr b:
+                foreach (var i in BoundExprWalk(b.Left)) yield return i;
+                foreach (var i in BoundExprWalk(b.Right)) yield return i;
+                break;
+            case UnaryExpr u:
+                foreach (var i in BoundExprWalk(u.Operand)) yield return i;
+                break;
+            case TernaryExpr t:
+                foreach (var i in BoundExprWalk(t.Condition)) yield return i;
+                foreach (var i in BoundExprWalk(t.TrueVal)) yield return i;
+                foreach (var i in BoundExprWalk(t.FalseVal)) yield return i;
+                break;
+            case CallExpr c:
+                foreach (var a in c.Args)
+                {
+                    var inner = a is KeywordArgExpr kw ? kw.Value : a;
+                    foreach (var i in BoundExprWalk(inner)) yield return i;
+                }
+                foreach (var i in BoundExprWalk(c.Callee)) yield return i;
+                break;
+            case IndexExpr ix:
+                foreach (var i in BoundExprWalk(ix.Target)) yield return i;
+                foreach (var i in BoundExprWalk(ix.Index)) yield return i;
+                break;
+            case MemberAccessExpr m:
+                foreach (var i in BoundExprWalk(m.Object)) yield return i;
+                break;
+        }
     }
 
     /// Whether (<paramref name="callee"/>, <paramref name="instName"/>) can share one
@@ -892,7 +1357,8 @@ public partial class IRGenerator
     /// caller's lowering context, emit into a fresh instruction list, restore.
     /// </summary>
     private string SynthesizeBoundMethod(string callee, string instName, string cls,
-                                       FunctionDef func, HashSet<string> stripFields)
+                                       FunctionDef func, HashSet<string> stripFields,
+                                       int siteCount)
     {
         string synthName = "_bound_" + instName + "_" + func.Name;
         var userParams = func.Params.Skip(1).ToList();
@@ -1133,6 +1599,28 @@ public partial class IRGenerator
             if (phantom != null)
                 throw new PyMCU.Common.CompilerError("CompileError",
                     $"bound body reads caller-scoped name '{phantom}'", lastLine);
+
+            // A shared site pays the marshal -- CALL, one staging move per
+            // argument (tag bytes ride as ordinary params), the callee's RET --
+            // where an expanded site pays the body PLUS its own arg binding,
+            // which is the same marshal. So each shared site saves about the
+            // body's size: the gate is body x (sites - 1) against the marshal's
+            // width, and a body that cannot beat it keeps the expansion. Only
+            // real instructions count: a DebugLine emits no bytes, and counting
+            // it let a one-line getter (`return self.v`) pass at 3 sites, which
+            // then dragged the field it reads into global storage and lost the
+            // compile-time fold the inline read had.
+            int bodyInsns = currentInstructions.Count(i => i is not DebugLine);
+            // The marshal side is wider than the parameter count alone: CALL+RET
+            // is two instructions, and an outlined body that touches callee-saved
+            // registers pays a push/pop prologue on top. Counting params+6 -- the
+            // two fixed halves plus a four-insn prologue allowance -- keeps a
+            // five-insn deinit body at two sites (saves ~1) from paying ~10.
+            if (bodyInsns * (siteCount - 1) <= irFunc.Params.Count + 6)
+                throw new PyMCU.Common.CompilerError("CompileError",
+                    $"bound body ({bodyInsns} insns x "
+                    + $"{siteCount - 1} shared) no bigger than its call marshal "
+                    + $"(params {irFunc.Params.Count})", lastLine);
         }
         catch (PyMCU.Common.CompilerError)
         {

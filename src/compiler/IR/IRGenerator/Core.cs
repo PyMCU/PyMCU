@@ -523,6 +523,7 @@ public partial class IRGenerator
         projectModules ??= new HashSet<string>();
         this.projectModules = projectModules;
         this.importedModuleAsts = importedModules;
+        this.mainProgramAst = mainAst;
         this.deviceConfig = config;
         this.sourceLines = sourceLines ?? new List<string>();
         this.moduleSourceLines = moduleSourceLines ?? new Dictionary<string, List<string>>();
