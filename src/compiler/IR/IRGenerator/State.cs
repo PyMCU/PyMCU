@@ -307,8 +307,14 @@ public partial class IRGenerator
     // integer, a loop variable, a parameter). A name prints as a bool only when it is in the
     // first set and absent from the second, so a name that is a bool at one point and an
     // integer later keeps printing as a number everywhere.
+    // The flat sets hold module-level bindings, which genuinely share one namespace. Bindings
+    // inside a function live in boolScopes/nonBoolScopes keyed by the function's qualified
+    // name: a parameter or local in a library routine can never be the same binding as a
+    // same-spelled name in the program, so it must not veto it.
     private HashSet<string> boolNames = new();
     private HashSet<string> nonBoolNames = new();
+    private readonly Dictionary<string, HashSet<string>> boolScopes = new();
+    private readonly Dictionary<string, HashSet<string>> nonBoolScopes = new();
 
     // Dict/set literals bound to a name: compile-time CLOSED lookup tables (no storage, no
     // GC). d[k] folds for a constant key or lowers to a compare chain for a runtime key

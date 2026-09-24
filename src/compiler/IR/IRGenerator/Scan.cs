@@ -2545,8 +2545,10 @@ public partial class IRGenerator
     // Walk a statement and classify every plain-name binding as bool or not-bool (see the
     // boolNames/nonBoolNames comment in State.cs). Only a True/False literal binds a bool;
     // everything else -- a comparison (an integer in PyMCU), a loop variable, a parameter --
-    // vetoes the name for the whole program.
-    private void CollectBoolNames(Statement? s)
+    // vetoes the name. Module-level bindings veto program-wide (one flat namespace);
+    // bindings inside a function veto only within that function's scope, since a callee's
+    // `off` parameter is a different binding from the program's `off` local.
+    private void CollectBoolNames(Statement? s, string? scope = null, string? cls = null)
     {
         foreach (var st in TypeInference.WalkStatements(s))
         {
@@ -2555,41 +2557,92 @@ public partial class IRGenerator
                 // The shared walk does not descend into defs/classes; these are walked
                 // explicitly, the same scopes the old recursion entered.
                 case ClassDef cd:
-                    CollectBoolNames(cd.Body);
+                    CollectBoolNames(cd.Body, scope, cd.Name);
                     break;
                 case FunctionDef fd:
-                    foreach (var p in fd.Params) nonBoolNames.Add(p.Name);
-                    CollectBoolNames(fd.Body);
+                {
+                    // Methods scope under the `Class_method` key the inline tables and
+                    // currentFunction already use; a plain function keys on its
+                    // module-qualified name.
+                    string fScope = cls != null
+                        ? cls + "_" + fd.Name
+                        : (currentModulePrefix ?? "") + fd.Name;
+                    foreach (var p in fd.Params) NoteNonBool(fScope, p.Name);
+                    CollectBoolNames(fd.Body, fScope);
                     break;
+                }
                 case ForStmt f:
-                    nonBoolNames.Add(f.VarName);
-                    if (!string.IsNullOrEmpty(f.Var2Name)) nonBoolNames.Add(f.Var2Name);
+                    NoteNonBool(scope, f.VarName);
+                    if (!string.IsNullOrEmpty(f.Var2Name)) NoteNonBool(scope, f.Var2Name);
                     break;
                 case AssignStmt { Target: VariableExpr av } a:
-                    NoteBoolBinding(av.Name, a.Value);
+                    NoteBoolBinding(av.Name, a.Value, scope);
                     break;
                 case AssignStmt { Target: TupleExpr tup }:
                     foreach (var e in tup.Elements)
-                        if (e is VariableExpr tv) nonBoolNames.Add(tv.Name);
+                        if (e is VariableExpr tv) NoteNonBool(scope, tv.Name);
                     break;
-                case AugAssignStmt { Target: VariableExpr gv }: nonBoolNames.Add(gv.Name); break;
-                case VarDecl vd: NoteBoolBinding(vd.Name, vd.Init); break;
+                case AugAssignStmt { Target: VariableExpr gv }: NoteNonBool(scope, gv.Name); break;
+                case VarDecl vd: NoteBoolBinding(vd.Name, vd.Init, scope); break;
                 case AnnAssign an when !an.Target.Contains('.'):
-                    NoteBoolBinding(an.Target, an.Value);
+                    NoteBoolBinding(an.Target, an.Value, scope);
                     break;
             }
         }
     }
 
-    private void NoteBoolBinding(string name, Expression? value)
+    private void NoteBoolBinding(string name, Expression? value, string? scope)
     {
-        if (value is BooleanLiteral) boolNames.Add(name);
-        else nonBoolNames.Add(name);
+        if (value is BooleanLiteral) NoteBool(scope, name);
+        else NoteNonBool(scope, name);
     }
 
-    // True when `name` is bound to True/False everywhere in the program, so interpolating it
-    // must print Python's words rather than the underlying byte.
-    private bool IsBoolName(string name) => boolNames.Contains(name) && !nonBoolNames.Contains(name);
+    private void NoteBool(string? scope, string name)
+    {
+        if (scope == null) boolNames.Add(name);
+        else
+        {
+            if (!boolScopes.TryGetValue(scope, out var s)) boolScopes[scope] = s = new();
+            s.Add(name);
+        }
+    }
+
+    private void NoteNonBool(string? scope, string name)
+    {
+        if (scope == null) nonBoolNames.Add(name);
+        else
+        {
+            if (!nonBoolScopes.TryGetValue(scope, out var s)) nonBoolScopes[scope] = s = new();
+            s.Add(name);
+        }
+    }
+
+    // The scope the read belongs to: inside an inline expansion the prefix's function
+    // segment (`inline{depth}.{func}.`), inside a regular body the qualified function
+    // name, at module level null (the flat namespace).
+    private string? CurrentBoolScope()
+    {
+        string p = currentInlinePrefix;
+        if (p.Length > 0)
+        {
+            int d1 = p.IndexOf('.'), d2 = p.LastIndexOf('.');
+            if (d1 >= 0 && d2 > d1 + 1) return p.Substring(d1 + 1, d2 - d1 - 1);
+        }
+        return currentFunction.Length > 0 ? currentFunction : null;
+    }
+
+    // True when `name` is bound to True/False everywhere the read can see it, so
+    // interpolating it must print Python's words rather than the underlying byte.
+    private bool IsBoolName(string name) => IsBoolNameIn(CurrentBoolScope(), name);
+
+    private bool IsBoolNameIn(string? scope, string name)
+    {
+        if (scope != null && nonBoolScopes.TryGetValue(scope, out var ns) && ns.Contains(name))
+            return false;
+        if (scope != null && boolScopes.TryGetValue(scope, out var bs) && bs.Contains(name))
+            return true;
+        return boolNames.Contains(name) && !nonBoolNames.Contains(name);
+    }
 
     private void RecordMemberAssignTarget(Expression target, string? owner = null)
     {

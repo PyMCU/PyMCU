@@ -7249,13 +7249,13 @@ public partial class IRGenerator
         foreach (var s in TypeInference.WalkStatements(fn.Body.Statements))
         {
             if (s is not ReturnStmt { Value: { } rv }) continue;
-            if (!ReturnExprDeclaresBool(rv, cls)) return false;
+            if (!ReturnExprDeclaresBool(rv, cls, member)) return false;
             sawValue = true;
         }
         return sawValue;
     }
 
-    private bool ReturnExprDeclaresBool(Expression e, string cls) => e switch
+    private bool ReturnExprDeclaresBool(Expression e, string cls, string member) => e switch
     {
         BooleanLiteral => true,
         UnaryExpr { Op: Frontend.UnaryOp.Not } => true,
@@ -7267,7 +7267,7 @@ public partial class IRGenerator
         MemberAccessExpr { Member: var fm, Object: VariableExpr { Name: "self" } } =>
             classFieldLayout.TryGetValue(cls, out var fl)
             && fl.Any(f => f.Field == fm && f.Type == "bool"),
-        VariableExpr { Name: var vn } => boolNames.Contains(vn),
+        VariableExpr { Name: var vn } => IsBoolNameIn(cls + "_" + member, vn),
         _ => false,
     };
 
