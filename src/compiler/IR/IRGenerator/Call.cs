@@ -1907,7 +1907,7 @@ public partial class IRGenerator
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
-        var newPrefix = $"inline{++inlineExpansionSerial}.{func?.Name}.";
+        var newPrefix = $"inline{newDepth}.{func?.Name}.";
 
         // The prefix repeats for every expansion at this depth, and the callee's
         // own locals file under it (`inline2._parse_color.r`): a previous
@@ -4227,7 +4227,7 @@ public partial class IRGenerator
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
-        var newPrefix = $"inline{++inlineExpansionSerial}_{funcSuper.Name}_";
+        var newPrefix = $"inline{newDepth}_{funcSuper.Name}_";
 
         var selfAlias = selfAliasKey;
         if (variableAliases.TryGetValue(selfAlias, out var vAlias))

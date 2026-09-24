@@ -24,12 +24,11 @@ public partial class IRGenerator
 {
     private List<Instruction> currentInstructions = new();
     private int tempCounter = 0;
-    // Unique serial per inline expansion, used in the frame's name prefix
-    // ("inline{serial}.{func}." / "inline{serial}_{func}_"). Two expansions of the
-    // same body get different prefixes, so a name minted inside one can never collide
-    // with -- or read stale side-table state left by -- a sibling expansion (the
-    // allocator still folds them onto shared slots via the canonical prefix strip).
-    private int inlineExpansionSerial = 0;
+    // Pooled scratch temps minted inside inline expansions: tmp_N spelling (so the
+    // MIR stays name-identical to a build without pooling) mapped to the canonical
+    // "d{depth}_t{k}" slot key the backend allocator folds on. Serialized on
+    // ProgramIR.CanonicalTemps.
+    private readonly Dictionary<string, string> canonicalTemps = new();
     private int labelCounter = 0;
     private Dictionary<string, SymbolInfo> globals = new();
     private Dictionary<string, DataType> mutableGlobals = new();

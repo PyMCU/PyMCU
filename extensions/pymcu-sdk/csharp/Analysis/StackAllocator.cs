@@ -61,7 +61,36 @@ public class StackAllocator
 
     public Dictionary<string, int> VariableSizes { get; } = new();
 
+    // Scratch-pool fold keys from the .mir's CanonicalTemps. Consulted by
+    // CalculateOffsets instead of the name's own spelling only after the plain
+    // layout has failed to fit (see Allocate).
+    private readonly Dictionary<string, string> _canonicalTemps = new();
+
+    // Set only for the fallback layout (see Allocate): pooled mode also folds
+    // `inlineN.` expansion prefixes, which the plain pass must not do -- the
+    // historical compiler only ever merged the `inlineN_` spellings.
+    private bool _pooled;
+
     public (Dictionary<string, int> Offsets, int MaxStack) Allocate(ProgramIR program)
+    {
+        // Scratch pooling fires only where the plain layout cannot fit. A program
+        // whose statics fit keeps its original slot-for-slot layout -- the .mir a
+        // compiler with pooling emits is name-identical to one without, so leaving
+        // the merge off wherever it is unneeded keeps the emitted bytes identical
+        // too. A program that would overflow SRAM folds pooled expansion temps onto
+        // their canonical keys and tries again.
+        var result = RunAllocate(program);
+        if (result.MaxStack > (program.Device?.RamSize ?? int.MaxValue)
+            && program.CanonicalTemps.Count > 0)
+        {
+            foreach (var kv in program.CanonicalTemps) _canonicalTemps[kv.Key] = kv.Value;
+            _pooled = true;
+            result = RunAllocate(program);
+        }
+        return result;
+    }
+
+    private (Dictionary<string, int> Offsets, int MaxStack) RunAllocate(ProgramIR program)
     {
         _offsets.Clear();
         _offsetsBase.Clear();
@@ -408,7 +437,9 @@ public class StackAllocator
         foreach (var varName in node.Locals)
         {
             if (_globalNames.Contains(varName)) continue;
-            string canonical = StripInlinePrefix(varName);
+            string canonical = _canonicalTemps.TryGetValue(varName, out var poolKey)
+                ? poolKey
+                : StripInlinePrefix(varName, _pooled);
             varCanonical[varName] = canonical;
             int sz = VariableSizes.GetValueOrDefault(varName, 1);
             if (canonicalSize.TryGetValue(canonical, out int prev))
@@ -565,13 +596,14 @@ public class StackAllocator
     /// Nested prefixes ("inline2_inline3_...") are stripped one level at a time so
     /// deeply nested inline chains also benefit.
     /// </summary>
-    private static string StripInlinePrefix(string name)
+    private static string StripInlinePrefix(string name, bool stripDot = false)
     {
-        // Match "inline" + digits + "_" or "." at the start of the name.
+        // Match "inline" + digits + "_" at the start of the name; the pooled
+        // pass also folds "inline" + digits + ".".
         if (!name.StartsWith("inline", StringComparison.Ordinal)) return name;
         int i = 6; // length of "inline"
         while (i < name.Length && char.IsDigit(name[i])) i++;
-        if (i < name.Length && (name[i] == '_' || name[i] == '.'))
+        if (i < name.Length && (name[i] == '_' || (stripDot && name[i] == '.')))
             return name[(i + 1)..]; // strip "inlineN_" / "inlineN.", keep the rest
         return name;
     }

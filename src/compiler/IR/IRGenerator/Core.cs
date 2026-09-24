@@ -79,39 +79,30 @@ public partial class IRGenerator
 
     private Temporary MakeTemp(DataType type = DataType.UINT8)
     {
-        // Inside an inline expansion the temp is named inline{serial}_d{depth}_t{k}:
-        // the frame's unique serial keeps the full name distinct from every sibling
-        // expansion's, and the allocator's canonical strip folds it onto "d{depth}_t{k}"
-        // -- shared with every other expansion at that depth. That merge is safe
-        // because a temp's live range stays inside its own expansion and two
-        // same-depth expansions never overlap (a nested expansion is strictly
-        // deeper). The adafruit_ht16k33 matrix wing minted ~1800 unprefixed tmp_N in
+        // Inside an inline expansion the temp keeps the ordinary `tmp_{n}` spelling --
+        // the MIR a program emits is the same one it emitted before pooling existed --
+        // and the canonical key goes to canonicalTemps instead: the allocator folds
+        // "d{depth}_t{k}" slots shared with every other expansion at that depth. The
+        // merge is safe because a temp's live range stays inside its own expansion and
+        // two same-depth expansions never overlap (a nested expansion is strictly
+        // deeper). The adafruit_ht16k33 matrix wing minted ~1800 unpooled tmp_N in
         // main alone and needed 4KB of static data on a 2KB chip.
         // A name that outlives its frame must come from MakeGlobalTemp instead.
         if (inlineStack.Count > 0 && currentInlinePrefix.Length > 0)
         {
-            string tag = InlineSerialTag();
-            return new Temporary($"{tag}_d{inlineDepth}_t{inlineStack[^1].TempNext++}", type);
+            string name = $"tmp_{tempCounter++}";
+            canonicalTemps[name] = $"d{inlineDepth}_t{inlineStack[^1].TempNext++}";
+            return new Temporary(name, type);
         }
         return new Temporary($"tmp_{tempCounter++}", type);
     }
 
     // A temp the caller keeps reading after the expansion's frame is gone (a lazily
-    // minted ResultTemp/ResultTagTemp): it must NOT carry the frame prefix, because
-    // the allocator folds every `inlineN_f_tK` onto the canonical `f_tK` slot --
-    // two expansions whose results are both live would silently share one address.
+    // minted ResultTemp/ResultTagTemp): it must NOT join canonicalTemps, because the
+    // allocator folds every entry onto the shared `d{depth}_t{k}` slot -- two
+    // expansions whose results are both live would silently share one address.
     private Temporary MakeGlobalTemp(DataType type = DataType.UINT8)
         => new($"tmp_{tempCounter++}", type);
-
-    // The leading "inline{serial}" token of the current expansion's prefix: the
-    // part before the first '.' or '_' separator ("inline4.describe." / "inline4_f_"
-    // both yield "inline4").
-    private string InlineSerialTag()
-    {
-        int i = 6;
-        while (i < currentInlinePrefix.Length && char.IsDigit(currentInlinePrefix[i])) i++;
-        return currentInlinePrefix[..i];
-    }
 
     private static string DataTypeToSuffixStr(DataType dt)
     {
@@ -577,6 +568,7 @@ public partial class IRGenerator
         zcaHandlerAstNodes.Clear();
         pendingZcaSynthFunctions.Clear();
         externFunctionMap.Clear();
+        canonicalTemps.Clear();
         pendingFlashData.Clear();
         classAttrInits.Clear();
         writtenClassAttributes.Clear();
@@ -1575,6 +1567,7 @@ public partial class IRGenerator
         // from read-never-written, the one check that cannot tell them from a
         // genuinely unwritten slot.
         irProgram.CompileTimeNames = CompileTimeOnlyNames(irProgram);
+        irProgram.CanonicalTemps = new Dictionary<string, string>(canonicalTemps);
 
         // Between-passes verifier (PYMCU_VERIFY_IR): the raw generator output is the
         // stage every later pass trusts, so it is the first thing worth checking.

@@ -47,6 +47,7 @@ public static class Optimizer
             ClassDirectMethods = new Dictionary<string, HashSet<string>>(
                 program.ClassDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),
             CompileTimeNames = new List<string>(program.CompileTimeNames),
+            CanonicalTemps = new Dictionary<string, string>(program.CanonicalTemps),
         };
 
         // Build the set of global variable names so EliminateDeadVariableStores

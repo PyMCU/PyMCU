@@ -123,12 +123,11 @@ public class InlineContext
     // never the CALLER's pending finallys, which the jump to ExitLabel does not escape.
     public int FinallyDepth { get; set; } = 0;
 
-    // Per-expansion counter for the scratch names MakeTemp mints inside this frame
-    // ("<prefix>t0", "<prefix>t1", ...). Because the counter restarts per expansion and the
-    // prefix carries this expansion's unique serial, two expansions of the same body mint
-    // DIFFERENT full names whose canonical form (after the allocator strips the
-    // "inline{serial}" segment) is identical -- so the temps share one static slot instead
-    // of each site paying for its own.
+    // Per-expansion counter for the scratch keys MakeTemp hands the allocator inside
+    // this frame. A `tmp_{n}` minted in the frame records canonicalTemps entry
+    // "d{depth}_t{k}"; every expansion at the same depth mints the same keys, so the
+    // backend's canonical fold gives sibling expansions ONE shared static slot set
+    // instead of each site paying for its own.
     public int TempNext { get; set; } = 0;
 }
 

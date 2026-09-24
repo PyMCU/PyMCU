@@ -335,7 +335,7 @@ public partial class IRGenerator
         var func = inlineFunctions[funcKey];
         string exitLabel = MakeLabel();
         int newDepth = inlineDepth + 1;
-        string newPrefix = $"inline{++inlineExpansionSerial}.{func.Name}.";
+        string newPrefix = $"inline{newDepth}.{func.Name}.";
 
         variableAliases[newPrefix + "self"] = selfQname;
         instanceClasses[newPrefix + "self"] = className;
@@ -2931,14 +2931,15 @@ public partial class IRGenerator
                     int resultCount = 0;
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++resultCount;
 
-                    // Inside an inline expansion the scratch array is named under the
-                    // frame's serial+depth with a counter that restarts per expansion,
-                    // so every expansion of a `writeto(buf[i:i+n])` body shares ONE slice
-                    // slot (allocator canonical-merge) instead of each site minting its
-                    // own copy of the backing bytes.
-                    string tmpName = inlineStack.Count > 0 && currentInlinePrefix.Length > 0
-                        ? $"{InlineSerialTag()}_d{inlineDepth}_slice{inlineStack[^1].TempNext++}"
-                        : "__slice_" + tempCounter++;
+                    // Inside an inline expansion the scratch array keeps its ordinary
+                    // `__slice_{n}` spelling and joins canonicalTemps under the frame's
+                    // "d{depth}_slice{k}" key, so every expansion of a
+                    // `writeto(buf[i:i+n])` body shares ONE slice slot (allocator
+                    // canonical-merge) instead of each site minting its own copy of
+                    // the backing bytes.
+                    string tmpName = "__slice_" + tempCounter++;
+                    if (inlineStack.Count > 0 && currentInlinePrefix.Length > 0)
+                        canonicalTemps[tmpName] = $"d{inlineDepth}_slice{inlineStack[^1].TempNext++}";
                     arraySizes[tmpName] = resultCount;
                     arrayElemTypes[tmpName] = elemDt;
                     variableTypes[tmpName] = elemDt;

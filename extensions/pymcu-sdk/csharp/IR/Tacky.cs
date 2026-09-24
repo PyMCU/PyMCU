@@ -453,6 +453,15 @@ public class ProgramIR
     // Vtable specs surviving after devirtualization (empty for most programs).
     public List<VtableSpec> Vtables { get; set; } = new();
 
+    // Scratch-slot pooling: a `tmp_N` (or `__slice_N`) minted inside an inline
+    // expansion keeps its ordinary spelling so the .mir stays name-identical to a
+    // build without pooling, and this map records the canonical "d{depth}_t{k}" key
+    // the StackAllocator folds on. Two same-depth expansions of the same body mint
+    // the same keys, so their temps share one static slot -- the merge that lets a
+    // 1800-temp program fit in SRAM. Names absent from the map are never pooled.
+    // Absent in .mir files from older compilers; deserializes to empty.
+    public Dictionary<string, string> CanonicalTemps { get; set; } = new();
+
     /// <summary>
     /// The target's memory geometry, or a build error when this .mir predates the
     /// geometry contract. Backends call this instead of touching <see cref="Device"/>,
