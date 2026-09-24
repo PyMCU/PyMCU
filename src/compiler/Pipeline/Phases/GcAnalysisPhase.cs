@@ -40,6 +40,7 @@ public class GcAnalysisPhase : CompilerPhaseBase
     {
         var program = context.IntermediateRepresentation!;
         bool needsGc = false;
+        bool usesRefPayloads = program.UsesRefPayloads;
 
         // Check globals for GC_REF type.
         foreach (var global in program.Globals)
@@ -72,6 +73,20 @@ public class GcAnalysisPhase : CompilerPhaseBase
                 if (needsGc) break;
             }
         }
+
+        if (!usesRefPayloads)
+        {
+            // Ref-bearing payloads are created by GcAlloc(Ref) -- a
+            // list[list[T]] materialization -- or by EmitRefPayloadFlag on a
+            // promoted empty list's first GC_REF append, which the generator
+            // already stamped onto the program.
+            foreach (var func in program.Functions)
+                foreach (var instr in func.Body)
+                    if (instr is GcAlloc { Refs: true })
+                        usesRefPayloads = true;
+        }
+
+        program.UsesRefPayloads = usesRefPayloads;
 
         if (needsGc)
         {

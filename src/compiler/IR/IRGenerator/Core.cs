@@ -1434,6 +1434,8 @@ public partial class IRGenerator
         pendingIsrRegistrations.Clear();
         pendingIsrOrigins.Clear();
 
+        irProgram.UsesRefPayloads = usesRefPayloads;
+
         foreach (var kvp in mutableGlobals)
         {
             irProgram.Globals.Add(new Variable(kvp.Key, kvp.Value));

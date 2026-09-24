@@ -1146,6 +1146,11 @@ public partial class IRGenerator
     // alloc could not know at creation time.
     private HashSet<string> promotableEmptyLists = new();
     private HashSet<string> promotedEmptyLists = new();
+    // Set when a heap object's payload may hold GC_REFs -- GcAlloc(Ref) sites
+    // and the inline flag write EmitRefPayloadFlag emits. Stamped onto
+    // ProgramIR.UsesRefPayloads so the backend can drop the ref-tracing GC
+    // routines when no program code can produce a flagged payload.
+    private bool usesRefPayloads = false;
 
     // Function parameters declared as bytearray (passed as pointer, no length).
     // The parameter name is stored as qualified_name (funcname_paramname).

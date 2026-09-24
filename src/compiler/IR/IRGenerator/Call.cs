@@ -10499,6 +10499,7 @@ public partial class IRGenerator
     /// </summary>
     private void EmitRefPayloadFlag(Variable listVar)
     {
+        usesRefPayloads = true;
         Temporary hdrAddr = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Sub, listVar with { Type = DataType.UINT16 },
             new Constant(2), hdrAddr));

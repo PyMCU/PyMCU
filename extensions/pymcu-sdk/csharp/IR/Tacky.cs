@@ -400,6 +400,11 @@ public class ProgramIR
     // True when the program uses GC_REF values; the backend injects the GC runtime.
     public bool NeedsGc { get; set; } = false;
 
+    // True when a heap object's payload can hold GC_REFs (a list[list[T]] --
+    // GcAlloc with Refs, or a promoted empty list flagged at a GC_REF append).
+    // The backend keeps the ref-tracing GC routines only when this is set.
+    public bool UsesRefPayloads { get; set; } = false;
+
     // Class hierarchy for the devirtualization pass.
     public Dictionary<string, HashSet<string>> ClassChildren      { get; set; } = new();
     public Dictionary<string, HashSet<string>> ClassDirectMethods { get; set; } = new();
