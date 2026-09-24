@@ -1512,12 +1512,14 @@ public partial class IRGenerator
                     when topLevelInstanceTargets.Contains(recv2.Name):
                     if (ctorClass.TryGetValue(recv2.Name, out var recvCls2)
                         && !MethodWritesNoField(recvCls2 + "_" + method2))
-                    {
-                        // A generator machine's own fields are managed by its desugared
-                        // poll loop; only the fields it reaches THROUGH matter here.
-                        if (!generatorClasses.Contains(recvCls2)) MarkEveryField(recv2.Name);
+                        // Only the nested leaves need a mark: the method's own fields are
+                        // written through the outline write-back or an inline expansion,
+                        // both of which store the flattened name in this very frame, and
+                        // a member access in another function marks itself off Expr. A
+                        // direct mark here made init-only fields (Life's width/height,
+                        // written once in __init__) into mutable globals: `x % self.width`
+                        // stopped folding to `% 32` and the div/mod runtime linked in.
                         MarkNestedWrites(recv2.Name, recvCls2, recvCls2 + "_" + method2);
-                    }
                     foreach (var a2 in cm.Args) ExprModule(a2);
                     return;
                 case CallExpr c3: ExprModule(c3.Callee); foreach (var a3 in c3.Args) ExprModule(a3); return;
