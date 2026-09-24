@@ -1424,6 +1424,44 @@ public partial class IRGenerator
                 ApplyOptionalCondEffect(a.Left, true);
                 ApplyOptionalCondEffect(a.Right, true);
                 return;
+            case BinaryExpr { Op: AstBinOp.And } a when !whenTrue:
+            {
+                // `not (A and B)`: the not-taken path is "the first falsy
+                // operand decided it". When every operand but one is
+                // statically true, that one decides alone and its
+                // false-effect is certain -- `blocking and pulses is None`
+                // with blocking bound to a literal True is `pulses is None`
+                // to the fall-through (read_pulses' `continue` narrows
+                // pulses for the `return` after it). A statically-false
+                // operand makes the whole `and` statically false, and two
+                // or more runtime operands decide on different paths;
+                // nothing is provable in either case.
+                var andOperands = new List<Expression>();
+                void FlattenAnd(Expression e)
+                {
+                    if (e is BinaryExpr { Op: AstBinOp.And } inner)
+                    {
+                        FlattenAnd(inner.Left);
+                        FlattenAnd(inner.Right);
+                    }
+                    else andOperands.Add(e);
+                }
+                FlattenAnd(a);
+                var runtimeOps = new List<Expression>();
+                bool decidedStatic = false;
+                foreach (var op in andOperands)
+                {
+                    if (TryFoldConstElement(op, out int cv))
+                    {
+                        if (cv == 0) { decidedStatic = true; break; }
+                        continue;
+                    }
+                    runtimeOps.Add(op);
+                }
+                if (!decidedStatic && runtimeOps.Count == 1)
+                    ApplyOptionalCondEffect(runtimeOps[0], false);
+                return;
+            }
             case BinaryExpr { Op: AstBinOp.Or } o when !whenTrue:
                 // Neither operand held: both of their false-effects apply.
                 ApplyOptionalCondEffect(o.Left, false);

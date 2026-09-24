@@ -72,4 +72,22 @@ public class LoopNoneRebindTests
             .Should().ContainSingle(
                 because: "`received is None` inside a loop must read the run-time tag");
     }
+
+    [Fact]
+    public void AndFalsePathNarrowsTheDecidingOperand()
+    {
+        // `not (A and B)` is decided by the first falsy operand: with `1` folding
+        // true, `x is None` alone decides, so the fall-through knows x is the int.
+        // Without the and-false narrowing, `x + 1` reads a live optional's payload
+        // and refuses.
+        var ir = Gen(
+            "def pick(x: Optional[int]) -> int:\n" +
+            "    if 1 and x is None:\n" +
+            "        return 0\n" +
+            "    return x + 1\n" +
+            "\nr = pick(3)\n");
+
+        ir.Functions.Should().Contain(f => f.Name == "pick",
+            because: "the narrowed `x + 1` on the and-false path must compile");
+    }
 }
