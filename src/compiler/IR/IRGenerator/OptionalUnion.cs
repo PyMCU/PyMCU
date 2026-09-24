@@ -2817,6 +2817,16 @@ public partial class IRGenerator
             int? midx = MemberIndexFor(valueExpr, value, members);
             if (midx == null)
             {
+                // A member the list already holds that scalar indexing cannot
+                // reach (a `[]` names "list" by expression shape, not by Val
+                // type) still indexes by name -- growing here would append a
+                // phantom member and write the wrong tag.
+                if (MemberNameForDefinite(valueExpr, value) is { } heldMn
+                    && members.Contains(heldMn))
+                    midx = members.IndexOf(heldMn);
+            }
+            if (midx == null)
+            {
                 // The write's member is not in the list so far. A declared
                 // spelling refuses; an evidence list grows to hold it (the
                 // same rule a union field's store follows).
