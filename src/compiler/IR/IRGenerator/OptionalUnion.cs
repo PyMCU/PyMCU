@@ -81,6 +81,13 @@ public partial class IRGenerator
     // non-optional assignment, which is what keeps the tag honest across arms.
     private readonly HashSet<string> optionalCapable = new();
 
+    // Names whose member list in optionalMembersByName was INFERRED (the phase-1
+    // default minted by EmitOptionalTagWrite), not written in an annotation. An
+    // inferred member-0 is a placeholder: the first definite write renames it to
+    // the member the value actually is -- `x = None` then `x = 570` stores a u16,
+    // and a `uint8` member-0 would narrow every read of x to the low byte.
+    private readonly HashSet<string> optionalInferredMembers = new();
+
     // >0 while lowering a reader that knows about the tag (is-None operands, `or`
     // left operand, truth tests, return values, the payload copy of `x = v`, the
     // print dispatch). Every other read of an unnarrowed optional is a CompileError.
@@ -1533,11 +1540,19 @@ public partial class IRGenerator
 
                 bool isCapable = s switch
                 {
+                    // `x = None` makes x optional-capable outright: a name that can
+                    // hold None at run time IS the union, whatever it is later
+                    // reassigned to -- and `x is None` past a back-edge join needs a
+                    // runtime tag, because the compile-time noneValued record drops
+                    // out of the all-agree join the moment any arm writes a value.
                     VarDecl vd => vd.UnionMembers != null
+                        || vd.Init is NoneLiteral
                         || (vd.Init != null && ExprPossiblyOptional(vd.Init, capable)),
                     AnnAssign aa => aa.UnionMembers != null
+                        || aa.Value is NoneLiteral
                         || (aa.Value != null && ExprPossiblyOptional(aa.Value, capable)),
-                    AssignStmt a => ExprPossiblyOptional(a.Value, capable),
+                    AssignStmt a => a.Value is NoneLiteral
+                        || ExprPossiblyOptional(a.Value, capable),
                     _ => false,
                 };
                 if (isCapable) { capable.Add(name); changed = true; }
@@ -1805,13 +1820,26 @@ public partial class IRGenerator
         // one, else the source's list (so `x = tagged_call()` inherits the callee's
         // member order), else the phase-1 default.
         List<string> members;
-        if (optionalMembersByName.TryGetValue(target.Name, out var declared))
+        if (optionalMembersByName.TryGetValue(target.Name, out var declared)
+            && !(optionalInferredMembers.Contains(target.Name)
+                 && ValNameOf(value) is { } inhSrcNm
+                 && optionalMembersByName.TryGetValue(inhSrcNm, out _)))
             members = declared;
         else if (ValNameOf(value) is { } srcNm
                  && optionalMembersByName.TryGetValue(srcNm, out var srcM))
+        {
+            // An inferred placeholder steps aside for a tagged source's real
+            // member list -- `x = None` then `x = tagged_call()` must carry the
+            // callee's member order or the tag remap below mistypes it.
             members = srcM;
+            optionalMembersByName[target.Name] = srcM;
+            optionalInferredMembers.Remove(target.Name);
+        }
         else
+        {
             members = new List<string> { "uint8", "None" };
+            optionalInferredMembers.Add(target.Name);
+        }
         int noneIdx = NoneIndex(members);
 
         int? srcNarrowedIdx = value is Variable sv2 && narrowedOptionals.TryGetValue(sv2.Name, out var si)
@@ -1865,11 +1893,40 @@ public partial class IRGenerator
         }
         else
         {
+            if (optionalInferredMembers.Contains(target.Name)
+                && MemberNameForDefinite(valueExpr, value) is { } inferred0
+                && members.Count == 2 && members[1] == "None" && members[0] != inferred0)
+            {
+                members = new List<string> { inferred0, "None" };
+                optionalMembersByName[target.Name] = members;
+            }
             Emit(new Copy(new Constant(MemberIndexFor(valueExpr, value, members) ?? 0), tagVar));
             optionalTagSlots[target.Name] = tagVar;
             MarkOptionalDefinite(target.Name, MemberIndexFor(valueExpr, value, members) ?? 0);
         }
         optionalMembersByName.TryAdd(target.Name, members);
+    }
+
+    /// The union-member name a definite write's value belongs to, for the inferred
+    /// member list of an unannotated optional-capable name. Null when the value's
+    /// kind does not name a member spelling (plain GC_REF objects, Unknown vals) --
+    /// the inferred list then keeps whatever member-0 it already had.
+    private string? MemberNameForDefinite(Expression? expr, Val val)
+    {
+        if (expr is ListExpr or TupleExpr) return "list";
+        if (expr is FloatLiteral || val is FloatConstant) return "float";
+        if (expr is BooleanLiteral) return "bool";
+        return GetValType(val) switch
+        {
+            DataType.UINT8 => "uint8",
+            DataType.INT8 => "int8",
+            DataType.UINT16 => "uint16",
+            DataType.INT16 => "int16",
+            DataType.UINT32 => "uint32",
+            DataType.INT32 => "int32",
+            DataType.FLOAT => "float",
+            _ => null,
+        };
     }
 
     /// RFC 0009: when an @inline argument is a live optional, the parameter it binds to
