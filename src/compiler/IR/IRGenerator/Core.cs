@@ -1424,6 +1424,17 @@ public partial class IRGenerator
             }
         }
 
+        // Bound-instance outlining: a mutable field a bound subroutine reads gets
+        // real storage; when its constructor value only ever lived in the constant
+        // tables, this preamble writes it before any call can run.
+        if (boundFieldInitPreamble.Count > 0)
+        {
+            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFunc != null)
+                mainFunc.Body.InsertRange(0, boundFieldInitPreamble);
+            boundFieldInitPreamble.Clear();
+        }
+
         foreach (var sf in pendingZcaSynthFunctions)
             irProgram.Functions.Add(sf);
         pendingZcaSynthFunctions.Clear();
@@ -2325,6 +2336,31 @@ public partial class IRGenerator
             throw UserError(
                 $"name '{name}' is not defined -- it is read here but never assigned, " +
                 "imported, or received as a parameter" + StarImportHint(name), at);
+        }
+
+        // A bound-instance subroutine's `self` is a structural alias for its
+        // instance's global storage, filed under the function-qualified name --
+        // `_bound_o_m.self` -> `o`. That key carries ONE dot, so the two-dot
+        // alias walk above never reaches it, and paths that hand the read back
+        // as a value (the single-field collapse, where `self.f` IS self) would
+        // mint a variable nobody writes. Chase the alias here; everywhere else
+        // (inline prefixes, module statements) the tables answer before this
+        // line or the earlier walk does.
+        if (name == "self" && string.IsNullOrEmpty(currentInlinePrefix)
+            && variableAliases.ContainsKey(finalLocalName))
+        {
+            string chased = FollowAliases(finalLocalName);
+            if (constantVariables.TryGetValue(chased, out int chaseConst))
+                return new Constant(chaseConst);
+            if (constantAddressVariables.TryGetValue(chased, out int chaseAddr))
+                return new MemoryAddress(chaseAddr,
+                    variableTypes.TryGetValue(chased, out var chaseAddrDt)
+                        ? chaseAddrDt : DataType.UINT16);
+            if (mutableGlobals.TryGetValue(chased, out var chaseGt))
+                return new Variable(chased, chaseGt);
+            if (variableTypes.TryGetValue(chased, out var chaseDt))
+                return new Variable(chased, chaseDt);
+            return new Variable(chased, type);
         }
 
         return new Variable(finalLocalName, type);

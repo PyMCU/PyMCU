@@ -621,8 +621,16 @@ public partial class IRGenerator
                                 string fieldVar = fieldBase + "_" + wb.Field;
 
                                 Temporary wDst = MakeTemp(wb.Type);
-                                Emit(new Call(callee, oArgs, wDst));
+                                // A union write-back field returns its tag alongside the
+                                // payload (the self_<field> parameter carried one in, the
+                                // appended `return self.<field>` carries it out) -- the
+                                // call lands both and the field's $tag sibling updates
+                                // with the same store the payload gets.
+                                EmitMaybeTaggedCall(callee, oArgs, wDst);
                                 Emit(new Copy(wDst, new Variable(fieldVar, wb.Type)));
+                                if (TagOfVal(wDst) is { } wbTag)
+                                    Emit(new Copy(wbTag,
+                                        new Variable(fieldVar + "$tag", DataType.UINT8)));
                                 // A module-level instance whose field is written through this
                                 // write-back needs the same real storage a syntactic
                                 // `obj.n = ...` gets: there is no assignment anywhere in the
@@ -651,6 +659,24 @@ public partial class IRGenerator
                             EmitMaybeTaggedCall(callee, oArgs, oDst);
                             InvalidateFieldsWrittenByCall(callee, instName);
                             return oDst;
+                        }
+
+                        // Bound-instance outlining: a force-inline method called on a
+                        // module-level instance compiles its body once as a real
+                        // subroutine with `self` bound to the instance's global
+                        // storage, so N call sites share one body instead of N
+                        // expansions (the ht16k33 matrix demandant inlined show()
+                        // 44 times). Anything the shared body cannot reproduce --
+                        // per-site constant bindings, instance/tuple arguments --
+                        // keeps the force-inline path below.
+                        if (objVal is Variable boundRecv
+                            && instanceMethodDefs.TryGetValue(callee, out var boundImpl)
+                            && BoundMethodCallee(callee, boundRecv.Name, boundImpl,
+                                                 expr.Args) is { } boundCallee)
+                        {
+                            Val boundResult = EmitRegularFunctionCall(expr, boundCallee);
+                            InvalidateFieldsWrittenByCall(callee, boundRecv.Name);
+                            return boundResult;
                         }
 
                         // ZCA force-inline: if the resolved callee is a non-inline instance
@@ -2253,10 +2279,16 @@ public partial class IRGenerator
         // outside the nested call: `self.value = self.value + 1` silently did nothing (#427).
         // Mirror the enclosing frame's own self binding, the same way a method call mirrors
         // the RECEIVER's (a few lines below, for a real `self` parameter).
-        if (func != null && (func.Params.Count == 0 || func.Params[0].Name != "self")
-            && !string.IsNullOrEmpty(savedPrefix))
+        if (func != null && (func.Params.Count == 0 || func.Params[0].Name != "self"))
         {
-            string outerSelf = savedPrefix + "self";
+            // savedPrefix is empty inside a bound-instance subroutine -- no inline
+            // frame wraps the body's `self`, whose alias lives on the
+            // function-qualified name instead. A plain function's `func.self`
+            // simply does not exist, so the lookups miss and nothing binds, as
+            // before.
+            string outerSelf = !string.IsNullOrEmpty(savedPrefix)
+                ? savedPrefix + "self"
+                : currentFunction + ".self";
             string newSelf = newPrefix + "self";
             if (variableAliases.TryGetValue(outerSelf, out var outerSelfTarget))
                 variableAliases[newSelf] = outerSelfTarget;
@@ -3970,8 +4002,16 @@ public partial class IRGenerator
         if (funcSuper == null)
             return null;
 
+        // The KEY the in-scope `self` alias is filed under: the inline frame's
+        // prefixed name, or -- inside a bound-instance subroutine, where no
+        // inline prefix exists -- the function-qualified `synth.self`.
+        // EmitUnboundMethodBody re-aliases it through variableAliases itself,
+        // so it wants the raw key, not the resolved root ResolveNameKey returns.
         return EmitUnboundMethodBody(basePrefix, funcSuper,
-            currentInlinePrefix + "self", expr.Args, $"super().{mem.Member}");
+            !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + "self"
+                : currentFunction + ".self",
+            expr.Args, $"super().{mem.Member}");
     }
 
     // Base.method(self, ...) -- the unbound spelling of a base-class call, and ordinary
@@ -4028,7 +4068,13 @@ public partial class IRGenerator
         string selfKey;
         if (recvVe.Name == "self")
         {
-            selfKey = currentInlinePrefix + "self";
+            // The alias KEY, as above: inside a bound-instance subroutine there is
+            // no inline prefix to qualify `self` with, so it lives on the
+            // function-qualified name. EmitUnboundMethodBody re-aliases the key
+            // through variableAliases, so the resolved root would be wrong here.
+            selfKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + "self"
+                : currentFunction + ".self";
         }
         else
         {
@@ -5019,8 +5065,14 @@ public partial class IRGenerator
             && outlineWriteBack.TryGetValue(target, out var swb))
         {
             Temporary swDst = MakeTemp(swb.Type);
-            Emit(new Call(target, fwdArgs, swDst));
+            EmitMaybeTaggedCall(target, fwdArgs, swDst);
             Emit(new Copy(swDst, new Variable(currentFunction + ".self_" + swb.Field, swb.Type)));
+            // A union write-back field's tag lands with its payload: update the same
+            // self_<field>$tag sibling the body's own tagged parameter binds.
+            if (TagOfVal(swDst) is { } swTag
+                && optionalTagSlots.TryGetValue(currentFunction + ".self_" + swb.Field,
+                                                out var swTagHome))
+                Emit(new Copy(swTag, swTagHome));
             return new NoneVal(LiveCallResult: true);
         }
 
