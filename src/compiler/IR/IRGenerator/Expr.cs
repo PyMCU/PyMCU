@@ -1307,7 +1307,8 @@ public partial class IRGenerator
                         UnionMembersOf(optRight, expr.Right, null))
                     : UnionMerge(UnionMembersOf(optPayload, expr.Left, null),
                         UnionMembersOf(optRight, expr.Right, null));
-                Emit(new Copy(ArmTagFor(optRight, expr.Right, null, members), resTag));
+                Emit(new Copy(ArmTagFor(optRight, expr.Right, null, members,
+                    optResult.Name), resTag));
                 MarkOptional(optResult.Name, resTag, members);
             }
             Emit(new Label(optEndLabel));
@@ -1967,9 +1968,11 @@ public partial class IRGenerator
         if (members.Contains("None") || trueMembers.Count > 1 || falseMembers.Count > 1)
         {
             resultTag = TagStorageFor(result.Name);
-            Emit(new Copy(ArmTagFor(falseVal, expr.FalseVal, falseArmSnap, members), resultTag));
+            Emit(new Copy(ArmTagFor(falseVal, expr.FalseVal, falseArmSnap, members,
+                result.Name), resultTag));
             currentInstructions.Insert(trueTail,
-                new Copy(ArmTagFor(trueVal, expr.TrueVal, trueArmSnap, members), resultTag));
+                new Copy(ArmTagFor(trueVal, expr.TrueVal, trueArmSnap, members,
+                    result.Name), resultTag));
             MarkOptional(result.Name, resultTag, members);
         }
         // Splice [Copy trueVal->result; Jump end] just after the true-branch body, ahead of
@@ -5783,12 +5786,13 @@ public partial class IRGenerator
             // `is None`/isinstance test) find it through the flat name exactly as
             // a tagged local's.
             if (baseName != null
-                && instanceClasses.TryGetValue(baseName, out var ufCls) && ufCls != null
+                && UnionOwnerClass(baseName) is { } ufCls
                 && EnsureUnionField(flattenedName, ufCls, expr.Member, out _))
             {
                 var uft = variableTypes.TryGetValue(flattenedName, out var udt)
                     ? udt : DataType.UINT8;
-                if (moduleInstanceMutableFields.Contains(flattenedName))
+                if (moduleInstanceMutableFields.Contains(flattenedName)
+                    || UnionFieldIsModuleStorage(flattenedName))
                     mutableGlobals[flattenedName] = uft;
                 return new Variable(flattenedName, uft);
             }

@@ -2106,7 +2106,11 @@ public class Parser
 
             ConsumeStatementEnd();
 
-            if (type.Contains('['))
+            // `self.f: Union[A, B]` / `self.f: Optional[X]` -- a declared union field
+            // (RFC 0009 phase 2). The annotation text alone has already collapsed to
+            // the payload type, so the member list must ride the AST node: an
+            // AnnAssign keeps it, where the plain-assignment lowering below could not.
+            if (type.Contains('[') || (unionMembers != null && name.Contains('.')))
             {
                 return new AnnAssign(name, type, init) { Line = line, UnionMembers = unionMembers };
             }

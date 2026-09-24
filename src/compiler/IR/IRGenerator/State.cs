@@ -523,6 +523,13 @@ public partial class IRGenerator
     // loop iterations. Construction promotes these fields from constant to runtime storage.
     private Dictionary<string, HashSet<string>> zcaWriteBackFields = new();
 
+    // RFC 0009 phase 3: the scalar member names an UNANNOTATED union field's writes
+    // contribute, keyed "class|field" in first-seen order. EnsureUnionField seeds an
+    // evidence field's list from this table instead of bare [None], so every function
+    // that touches the field -- the caller's flat storage AND a write-back subroutine's
+    // self_<field> parameter -- orders the same tag values.
+    private Dictionary<string, List<string>> fieldUnionMemberEvidence = new();
+
     // RFC 0001 Model B (Class[N]): an array of boxed ZCA instances laid out contiguously in
     // SRAM. arr[i] is the slot at base + i*stride; arr[i].method() passes that element address
     // as the self pointer. Maps the array's qualified name to its element class and byte stride.

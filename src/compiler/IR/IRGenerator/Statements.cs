@@ -675,6 +675,7 @@ public partial class IRGenerator
                 irFunc.Params.Add(tagParam);
                 variableTypes[tagParam] = DataType.UINT8;
                 MarkOptional(qualifiedParam, new Variable(tagParam, DataType.UINT8), tagMembers);
+                unionNameDeclared.Add(qualifiedParam);
             }
             else if (param.UnionMembers is { } provMembers
                      && functionParamProven.TryGetValue(fullName, out var provSet)

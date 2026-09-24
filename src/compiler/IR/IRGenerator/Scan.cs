@@ -3114,6 +3114,7 @@ public partial class IRGenerator
             Expression? rhs = null;
             string? annotatedType = null;
             ASTNode? writeTarget = null;
+            List<string>? declaredMembers = null;
             if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
                 && ma.Object is VariableExpr sv && sv.Name == "self")
             {
@@ -3142,6 +3143,7 @@ public partial class IRGenerator
                 rhs = uaa.Value;
                 annotatedType = uaa.Annotation;
                 writeTarget = uaa;
+                declaredMembers = uaa.UnionMembers;
             }
 
             if (field == null) continue;
@@ -3151,7 +3153,8 @@ public partial class IRGenerator
             // `seen` keeps the field for a real assignment to claim, or for the read-side
             // refusal to name.
             if (s is AugAssignStmt && !seen.Contains(field)) continue;
-            NoteFieldWrite(classKey, field, rhs, annotatedType, paramTypes, localTypes);
+            NoteFieldWrite(classKey, field, rhs, annotatedType, paramTypes, localTypes,
+                declaredMembers);
             if (!seen.Add(field))
             {
                 // The categorical-mismatch check the method scan below runs applies inside
@@ -3384,6 +3387,7 @@ public partial class IRGenerator
                 Expression? rhs = null;
                 string? annotatedType = null;
                 ASTNode? writeTarget = null;
+                List<string>? declaredMembers = null;
                 if (ms is AssignStmt masg && masg.Target is MemberAccessExpr mma
                     && mma.Object is VariableExpr msv && msv.Name == "self")
                 {
@@ -3408,12 +3412,14 @@ public partial class IRGenerator
                     rhs = muaa.Value;
                     annotatedType = muaa.Annotation;
                     writeTarget = muaa;
+                    declaredMembers = muaa.UnionMembers;
                 }
                 if (field == null) continue;
                 // `+=` widens and kind-checks a field already introduced, but cannot be the
                 // write that declares one (same reasoning as the __init__ loop above).
                 if (ms is AugAssignStmt && !seen.Contains(field)) continue;
-                NoteFieldWrite(classKey, field, rhs, annotatedType, mParamTypes, mLocalTypes);
+                NoteFieldWrite(classKey, field, rhs, annotatedType, mParamTypes, mLocalTypes,
+                    declaredMembers);
 
                 // Same array-field exemption as the __init__ scan above: a field whose value is
                 // a literal list or tuple of compile-time constants is an array field, handled
@@ -3652,7 +3658,7 @@ public partial class IRGenerator
     // a string. Those carry their own field kinds and stay out of the tag domain.
     private void NoteFieldWrite(string classKey, string field, Expression? rhs,
         string? annotatedType, Dictionary<string, string> paramTypes,
-        Dictionary<string, string> localTypes)
+        Dictionary<string, string> localTypes, List<string>? declaredMembers = null)
     {
         if (!fieldNoneWrites.TryGetValue(classKey, out var noneSet))
             fieldNoneWrites[classKey] = noneSet = new HashSet<string>();
@@ -3660,11 +3666,13 @@ public partial class IRGenerator
             fieldScalarWrites[classKey] = scalarSet = new HashSet<string>();
 
         // `self.f: Union[...]`/`Optional[...]`/`A | B` declares the member list
-        // outright. UnionMembers is the same normaliser the return position asks:
-        // an Optional-shaped text normalised to one real member answers null and
-        // the write evidence below decides the field instead.
-        if (annotatedType is { } at
-            && PyMCU.Common.AnnotationText.UnionMembers(at) is { } dm && dm.Count >= 2)
+        // outright. The AnnAssign arm carries it on the AST node itself; the
+        // plain-assignment arm can only re-derive it from the annotation text,
+        // which `Optional[X]` has already collapsed to X -- that single-member
+        // shape answers null and the write evidence below decides the field.
+        List<string>? dm = declaredMembers
+            ?? (annotatedType is { } at ? PyMCU.Common.AnnotationText.UnionMembers(at) : null);
+        if (dm is { Count: >= 2 })
         {
             // The member list is validated where it is recorded: an unchecked list
             // let `self.x: uint8[2] | bool` file a plain array field and drop the
@@ -3682,7 +3690,11 @@ public partial class IRGenerator
             // An annotated scalar write is scalar evidence; a str/buffer/instance
             // annotation is a different field kind.
             var ant = at2.StartsWith("const[") && at2.EndsWith("]") ? at2[6..^1] : at2;
-            if (ScalarWidthRank(ant) > 0 || ant == "bool" || ant == "float") scalarSet.Add(field);
+            if (ScalarWidthRank(ant) > 0 || ant == "bool" || ant == "float")
+            {
+                scalarSet.Add(field);
+                NoteUnionMemberEvidence(classKey, field, MemberNameForTypeText(ant));
+            }
             return;
         }
         bool scalar = rhs switch
@@ -3703,7 +3715,63 @@ public partial class IRGenerator
                 && !classModuleMap.ContainsKey(cv.Name),
             _ => true,
         };
-        if (scalar) scalarSet.Add(field);
+        if (scalar)
+        {
+            scalarSet.Add(field);
+            NoteUnionMemberEvidence(classKey, field, ScanUnionMemberName(rhs, paramTypes, localTypes));
+        }
+    }
+
+    /// Append <paramref name="memberName"/> to the class|field evidence list, first-seen
+    /// order preserved. A name the scan cannot spell (a call result, a union source) is
+    /// left out -- the emit-time member growth covers it.
+    private void NoteUnionMemberEvidence(string classKey, string field, string? memberName)
+    {
+        if (memberName == null) return;
+        string key = classKey + "|" + field;
+        if (!fieldUnionMemberEvidence.TryGetValue(key, out var ev))
+            fieldUnionMemberEvidence[key] = ev = new List<string>();
+        if (!ev.Contains(memberName)) ev.Add(memberName);
+    }
+
+    /// The member name a field write's rhs contributes at scan time, mirroring
+    /// UnionMemberNameFor's emit-time rules: literals name their kind (an int by
+    /// smallest fit), a variable the type its annotation/declaration gave it.
+    /// Anything the scan cannot type returns null -- not a member refusal, just
+    /// "the emitter will name it when it lowers the write".
+    private static string? ScanUnionMemberName(Expression rhs,
+        Dictionary<string, string> paramTypes, Dictionary<string, string> localTypes)
+        => rhs switch
+        {
+            FloatLiteral => "float",
+            BooleanLiteral => "bool",
+            IntegerLiteral il => il.Value switch
+            {
+                < short.MinValue => "int32", < sbyte.MinValue => "int16", < 0 => "int8",
+                <= byte.MaxValue => "uint8", <= ushort.MaxValue => "uint16",
+                _ => "uint32",
+            },
+            VariableExpr ve => MemberNameForTypeText(
+                paramTypes.TryGetValue(ve.Name, out var pt) ? pt
+                : localTypes.TryGetValue(ve.Name, out var lt) ? lt : ""),
+            _ => null,
+        };
+
+    /// The union-member spelling of an annotation/local type text, or null for a
+    /// kind a scalar payload never holds (str, buffer, instance, another union --
+    /// a live-union source's members join wholesale at emit time).
+    private static string? MemberNameForTypeText(string t)
+    {
+        if (t.StartsWith("const[") && t.EndsWith("]")) t = t[6..^1];
+        if (t.Contains('[')) return null;
+        if (t == "bool") return "bool";
+        return DataTypeExtensions.StringToDataType(t) switch
+        {
+            DataType.FLOAT => "float",
+            DataType.INT8 => "int8", DataType.INT16 => "int16", DataType.INT32 => "int32",
+            DataType.UINT8 => "uint8", DataType.UINT16 => "uint16", DataType.UINT32 => "uint32",
+            _ => null,
+        };
     }
 
     private bool IsNonScalarFieldType(string t)
@@ -4070,7 +4138,18 @@ public partial class IRGenerator
         else
         {
             foreach (var (fld, ty, _) in layout)
-                synthParams.Add(new Param("self_" + fld, ty));
+            {
+                var selfParam = new Param("self_" + fld, ty);
+                // RFC 0009 phase 2/3: a union field arrives as payload + tag, so the
+                // self_<field> parameter carries the field's member list (declared or
+                // evidence) for ResolveOptionalParams to tag -- the reader as well as
+                // the mutator reads `self.<field> is None` off that byte.
+                if (IsUnionField(classKey, fld, out var selfUf))
+                    selfParam.UnionMembers = selfUf != null
+                        ? new List<string>(selfUf)
+                        : EvidenceUnionMembers(classKey, fld);
+                synthParams.Add(selfParam);
+            }
         }
         for (int pi = 1; pi < func.Params.Count; ++pi)
             synthParams.Add(func.Params[pi]);
@@ -4095,6 +4174,21 @@ public partial class IRGenerator
             if (!zcaWriteBackFields.TryGetValue(classKey, out var wf))
                 zcaWriteBackFields[classKey] = wf = new HashSet<string>();
             wf.Add(field);
+
+            // RFC 0009 phase 2/3: the write-back field being a tagged union makes the
+            // self_<field> parameter an Optional argument -- ResolveOptionalParams then
+            // tags it like any declared one (payload + tag, the phase-2 argument-run
+            // order) -- and the appended `return self.<field>` a tagged return, so the
+            // caller's `inst_<field>$tag` stores stay in step with the payload the
+            // plain write-back already carried.
+            if (IsUnionField(classKey, field, out var wbDeclared))
+            {
+                List<string> wbMembers = wbDeclared != null
+                    ? new List<string>(wbDeclared)
+                    : EvidenceUnionMembers(classKey, field);
+                synthParams[0].UnionMembers = wbMembers;
+                functionReturnMembers[fullName] = wbMembers;
+            }
         }
 
         // The stand-in carries the position of the method it stands for. It is not a synthetic

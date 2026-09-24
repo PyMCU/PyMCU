@@ -3064,7 +3064,7 @@ public partial class IRGenerator
             // width plus a tag byte. Its stores and reads keep the tag in step;
             // the fold-only None bookkeeping below is the no-tag path.
             if (baseName != null
-                && instanceClasses.TryGetValue(baseName, out var ufCls) && ufCls != null
+                && UnionOwnerClass(baseName) is { } ufCls
                 && EnsureUnionField(flattenedName, ufCls, memExpr2.Member, out _))
             {
                 EmitUnionFieldStore(flattenedName, memExpr2.Member, stmt.Value, value, memExpr2);
@@ -3326,7 +3326,14 @@ public partial class IRGenerator
             // A field of a module-level instance that some function assigns needs real storage:
             // without it the write is a dead store to a name nothing else in that function
             // reads, and the reader in another function folds the constructor's value instead.
-            if (moduleInstanceMutableFields.Contains(flattenedName))
+            // The marker's set is one way to know; the write's own context is the other -- a
+            // module-level instance's field stored inside ANY function (a bound-outlined
+            // method writes from its own body, which the marker never walks) is cross-function
+            // storage by construction.
+            if (moduleInstanceMutableFields.Contains(flattenedName)
+                || (baseName != null && topLevelInstanceTargets.Contains(baseName)
+                    && instanceClasses.ContainsKey(baseName)
+                    && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main"))
                 mutableGlobals[flattenedName] = fdt;
 
             Emit(new Copy(value, new Variable(flattenedName, fdt)));
@@ -5508,6 +5515,7 @@ public partial class IRGenerator
                 Emit(new Copy(new Constant(NoneIndex(stmt.UnionMembers)), tagVar));
                 optionalTagSlots[qn] = tagVar;
                 optionalMembersByName[qn] = stmt.UnionMembers;
+                unionNameDeclared.Add(qn);
             }
             return;
         }
@@ -5774,7 +5782,10 @@ public partial class IRGenerator
         // A declared union knows its member list before the initializer's copy runs,
         // so the payload store can pick the member's width rather than the slot's.
         if (stmt.UnionMembers != null)
+        {
             optionalMembersByName[q2] = stmt.UnionMembers;
+            unionNameDeclared.Add(q2);
+        }
 
         if (stmt.VarType == "str" && stmt.Init is StringLiteral sl)
         {
@@ -5894,7 +5905,10 @@ public partial class IRGenerator
                     || TagOfVal(val) != null))
             {
                 if (stmt.UnionMembers != null)
+                {
                     optionalMembersByName[optVt.Name] = stmt.UnionMembers;
+                    unionNameDeclared.Add(optVt.Name);
+                }
                 EmitOptionalTagWrite(optVt, stmt.Init, val);
             }
 
@@ -7091,7 +7105,10 @@ public partial class IRGenerator
 
         variableTypes[qualified2] = type;
         if (stmt.UnionMembers != null)
+        {
             optionalMembersByName[qualified2] = stmt.UnionMembers;
+            unionNameDeclared.Add(qualified2);
+        }
 
         if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2
             && !multiStrVariables.ContainsKey(qualified2))
