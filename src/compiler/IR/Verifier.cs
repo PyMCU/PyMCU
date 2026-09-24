@@ -234,7 +234,7 @@ public static class Verifier
     /// Every Val this instruction reads, in operand position. Dst slots whose
     /// instruction also reads them (AugAssign, BitSet...) are included by their
     /// own case; pure Dst vals are not.
-    private static IEnumerable<Val> ReadVals(Instruction ins)
+    internal static IEnumerable<Val> ReadVals(Instruction ins)
     {
         switch (ins)
         {
@@ -368,7 +368,7 @@ public static class Verifier
     }
 
     /// The vals an instruction writes: every Dst position.
-    private static IEnumerable<Val> DstVals(Instruction ins)
+    internal static IEnumerable<Val> DstVals(Instruction ins)
     {
         switch (ins)
         {

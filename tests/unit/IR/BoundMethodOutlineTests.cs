@@ -263,4 +263,29 @@ public class BoundMethodOutlineTests
             .Should().OnlyContain(c => c.TagDst != null,
                 because: "a tagged-return callee hands the caller a tag destination");
     }
+
+    [Fact]
+    public void ABoundMethodReadingACallerFrameArenaLen_IsNotOutlined()
+    {
+        // self.buf = bytearray(n) binds the buffer's length to a temp minted by the
+        // caller-side __init__ expansion (inlineNN___init___buf__arena_len). A shared
+        // body reading that name reads a caller frame slot whose write can die to DCE;
+        // the audit must refuse and keep peek() expanding per site.
+        var ir = GenOpt(
+            "class Dev:\n" +
+            "    def __init__(self, n: uint16):\n" +
+            "        self.buf = bytearray(n)\n" +
+            "    def peek(self, i: uint16) -> uint8:\n" +
+            "        self.buf[i] = self.buf[i] + 1\n" +
+            "        return self.buf[i]\n" +
+            "\n" +
+            "d = Dev(4)\n" +
+            "d.peek(0)\n" +
+            "d.peek(1)\n" +
+            "d.peek(2)\n");
+
+        ir.Functions.Should().NotContain(f => f.Name.EndsWith("_peek"),
+            because: "peek() reads the caller-minted arena_len slot, so it must not " +
+                     "be lifted into a shared body");
+    }
 }

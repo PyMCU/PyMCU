@@ -732,6 +732,16 @@ public partial class IRGenerator
         return false;
     }
 
+    /// A `<inst>_*` flat name is module storage under a module-level instance
+    /// (nested fields share the prefix: `b__ow_x`, `px__buf__arena_len`). Only
+    /// called on names without a `.` -- dotted heads are resolved by the audit.
+    private bool BoundModuleStorageSpelling(string n)
+    {
+        foreach (var inst in topLevelInstanceTargets)
+            if (n == inst || n.StartsWith(inst + "_", StringComparison.Ordinal)) return true;
+        return false;
+    }
+
     private bool BoundShareableName(string n) =>
         constantVariables.ContainsKey(n) || floatConstantVariables.ContainsKey(n)
         || strConstantVariables.ContainsKey(n) || constSequenceBindings.ContainsKey(n)
@@ -1065,6 +1075,64 @@ public partial class IRGenerator
                 && rets.All(v => v is Constant or FloatConstant or NoneVal))
                 throw new PyMCU.Common.CompilerError("CompileError",
                     "bound method is a constant thunk", lastLine);
+
+            // Phantom-name audit: a shared body may only read storage it owns
+            // (its params, names it writes itself, temps its own expansions
+            // mint) or module-reachable storage (globals, module arrays,
+            // instance-field flats, compile-time bindings). Anything else -- a
+            // temp minted by a caller-side expansion such as
+            // `inline15___init___buf__arena_len`, or a `main.`-spelled name that
+            // can be homed inside a callee's frame region where a sibling call
+            // overlays it -- names a slot the shared body cannot safely reach.
+            // Refuse; the sites keep expanding.
+            var writtenHere = new HashSet<string>();
+            foreach (var ins in currentInstructions)
+                foreach (var dv in Verifier.DstVals(ins))
+                {
+                    if (dv is Variable wv) writtenHere.Add(wv.Name);
+                    else if (dv is Temporary wt) writtenHere.Add(wt.Name);
+                }
+            string? phantom = null;
+            void AuditName(string n)
+            {
+                if (phantom != null) return;
+                int dot = n.IndexOf('.');
+                if (dot > 0)
+                {
+                    string head = n[..dot];
+                    // Own params/locals, plus temps this body's own inline
+                    // expansions minted (`inlineNN.func.*`) -- both home in
+                    // the synth's frame. Any other dotted head is a foreign
+                    // frame's spelling: `main.x` included -- a name shared by
+                    // main and a callee can be homed inside the callee's frame
+                    // region, where a sibling call overlays it.
+                    if (head == synthName) return;
+                    if (head.StartsWith("inline", StringComparison.Ordinal)
+                        && head[6..].All(char.IsDigit) && writtenHere.Contains(n)) return;
+                    phantom = n; return;
+                }
+                if (writtenHere.Contains(n)) return;
+                // Backend-owned register alias, not a memory slot (Verifier's
+                // DeclaredStorage blesses it the same way).
+                if (n == "__exn_r22_capture") return;
+                if (BoundShareableName(n) || BoundModuleStorageSpelling(n)) return;
+                phantom = n;
+            }
+            foreach (var ins in currentInstructions)
+            {
+                foreach (var v in Verifier.ReadVals(ins))
+                    if (v is Variable rv) AuditName(rv.Name);
+                    else if (v is Temporary tv) AuditName(tv.Name);
+                    else if (v is ArrayBase ab) AuditName(ab.ArrayName);
+                switch (ins)
+                {
+                    case ArrayLoad al: AuditName(al.ArrayName); break;
+                    case ArrayStore ast: AuditName(ast.ArrayName); break;
+                }
+            }
+            if (phantom != null)
+                throw new PyMCU.Common.CompilerError("CompileError",
+                    $"bound body reads caller-scoped name '{phantom}'", lastLine);
         }
         catch (PyMCU.Common.CompilerError)
         {
