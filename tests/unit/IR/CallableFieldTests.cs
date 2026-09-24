@@ -39,10 +39,12 @@ public class CallableFieldTests
             "d = D(tick)\n" +
             "x = d.go()\n");
 
-        var main = ir.Functions.Single(f => f.Name == "main");
-        main.Body.Any(i => i is Call c && c.FunctionName == "tick").Should().BeTrue(
+        // The dispatch lands inside the shared bound body when `go` outlines.
+        ir.Functions.SelectMany(f => f.Body)
+            .Any(i => i is Call c && c.FunctionName == "tick").Should().BeTrue(
             "self.f() dispatches to the function the field was bound to");
-        main.Body.Any(i => i is Call c && c.FunctionName.EndsWith("_f")).Should().BeFalse(
+        ir.Functions.SelectMany(f => f.Body)
+            .Any(i => i is Call c && c.FunctionName.EndsWith("_f")).Should().BeFalse(
             "the field name is not a mangled method");
     }
 
@@ -96,9 +98,11 @@ public class CallableFieldTests
             "x = d1.go()\n" +
             "y = d2.go()\n");
 
-        var main = ir.Functions.Single(f => f.Name == "main");
-        main.Body.Any(i => i is Call c && c.FunctionName == "a").Should().BeTrue();
-        main.Body.Any(i => i is Call c && c.FunctionName == "b").Should().BeTrue();
+        // Each instance's shared bound body dispatches to its own binding.
+        ir.Functions.SelectMany(f => f.Body)
+            .Any(i => i is Call c && c.FunctionName == "a").Should().BeTrue();
+        ir.Functions.SelectMany(f => f.Body)
+            .Any(i => i is Call c && c.FunctionName == "b").Should().BeTrue();
     }
 
     [Fact]
