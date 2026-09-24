@@ -1759,6 +1759,12 @@ public partial class IRGenerator
                 // A loop body is lowered once and runs many times, so what the name held on the
                 // first iteration is not what a call inside the loop may hand a callee.
                 localConstantValues.Remove(key);
+                // `x = None` ahead of the loop then `x = <value>` inside it: the
+                // noneValued/narrowed records the entry state carries cannot fold
+                // `x is None` in the body -- iteration two holds the payload. A
+                // capable name answers the test through its tag byte instead.
+                noneValuedNames.Remove(key);
+                narrowedOptionals.Remove(key);
             }
 
         // `obj.method()` writes only the fields that method assigns to. Dropping every field
@@ -1782,6 +1788,10 @@ public partial class IRGenerator
                     strConstantVariables.Remove(prefix + "." + field);
                     localConstantValues.Remove(prefix + "_" + field);
                     localConstantValues.Remove(prefix + "." + field);
+                    noneValuedNames.Remove(prefix + "_" + field);
+                    noneValuedNames.Remove(prefix + "." + field);
+                    narrowedOptionals.Remove(prefix + "_" + field);
+                    narrowedOptionals.Remove(prefix + "." + field);
                     // Removing alone lets a later constant write re-track the name: a method
                     // that stores different literals on different paths (DHTBase.measure's
                     // `self.failed = True` on the error arms, `= False` on the success tail)

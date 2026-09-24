@@ -58,4 +58,18 @@ public class LoopNoneRebindTests
         ir.Functions.SelectMany(f => f.Body).OfType<Return>()
             .Should().NotBeEmpty(because: "the optional return must compile");
     }
+
+    [Fact]
+    public void IsNoneInsideALoopReadsTheTag_NotTheEntryState()
+    {
+        var ir = Gen(Collect + "\ndef main():\n    collect()\n");
+
+        var body = ir.Functions.Single(f => f.Name == "collect").Body;
+        // A folded check emits no comparison at all. The honest lowering compares the
+        // tag byte against the None member index: one JumpIfNotEqual on the `is None`.
+        body.OfType<JumpIfNotEqual>()
+            .Where(j => j.Src1 is Variable v && v.Name.EndsWith("received$tag"))
+            .Should().ContainSingle(
+                because: "`received is None` inside a loop must read the run-time tag");
+    }
 }
