@@ -347,6 +347,14 @@ public partial class IRGenerator
                 // instanceClasses check on the temp's own name, one hop short, does not.
                 if (objVal is Temporary tObj && ResolveClassCarryingName(tObj) is { } tObjClassName)
                     objVal = new Variable(tObjClassName, tObj.Type);
+                // A receiver that is an object-typed FIELD (a coroutine's `self.a = Acc(s)`)
+                // evaluates to a nameless anchor: the field owns no scalar of its own, only
+                // the flattened `<anchor>_<member>` names under it. Its NAME is still the
+                // instance the method dispatches on -- hand the dispatch a Variable carrying
+                // it, the same way the Temporary re-tag above hands it a class-carrying one.
+                if (objVal is not Variable && objVal is not Temporary
+                    && AnchorNameOf(memC.Object) is { } anchorRecv)
+                    objVal = new Variable(anchorRecv, DataType.UINT8);
                 if (objVal is Variable vObj)
                 {
                     // `buf.extend(...)` on a fixed-size buffer grows it while compiling (#362).
@@ -1868,6 +1876,10 @@ public partial class IRGenerator
                 // same one-hop-short gap a direct instanceClasses.ContainsKey(recvName) missed.
                 string? recvName = objVal is Variable v2 ? v2.Name
                                  : (objVal is Temporary t2 ? ResolveClassCarryingName(t2) : null);
+                // An object-field receiver (a coroutine's `self.a`) lowers to a nameless
+                // anchor, so neither arm above names it -- but its flattened name is the
+                // instance self must bind to.
+                if (recvName == null) recvName = AnchorNameOf(mem2.Object);
                 if (recvName != null && instanceClasses.ContainsKey(recvName))
                 {
                     string selfName = newPrefix + "self";

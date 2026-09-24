@@ -2925,6 +2925,21 @@ public partial class IRGenerator
                 continue;
             }
 
+            // `self._device = i2c_device.I2CDevice(i2c, address)` declares an OBJECT
+            // field -- a nested instance whose fields flatten under `<obj>_<field>_*`,
+            // not a scalar the slot could hold. Filed as a uint8 the boxed instance
+            // stored the dead anchor name into its slot, and every `with self._device`
+            // then read flattened names under the manager variable -- read-never-written
+            // slots that sent 0x00 on the bus (adafruit_tcs34725). Same exemption as the
+            // buffer field above: kept out of `layout`, kept in `seen`.
+            if (IsObjectFieldWrite(rhs, annotatedType, paramTypes, localTypes))
+            {
+                if (!classInstanceFields.TryGetValue(classKey, out var objSet))
+                    classInstanceFields[classKey] = objSet = new HashSet<string>();
+                objSet.Add(field);
+                continue;
+            }
+
             // SourceParam: the __init__ param that directly initializes the field
             // (RHS is a bare parameter), else "" -- needed for factory return lowering.
             // A string literal or bytearray() is not a uint8: leaving it as the default
@@ -3133,6 +3148,21 @@ public partial class IRGenerator
                     continue;
                 }
 
+                // Same exemption as the __init__ scan above: `self.f = SomeClass(...)` (or a
+                // class-typed parameter/annotation) is an OBJECT write wherever it appears.
+                // A field first seeded `None` and later handed an instance is the lazy-init
+                // idiom, not a numeric-vs-other conflict -- and the scalar entry the seed
+                // write left in `layout` is filtered out below, with the buffer fields'.
+                if (IsObjectFieldWrite(rhs, annotatedType, mParamTypes, mLocalTypes))
+                {
+                    if (!classInstanceFields.TryGetValue(classKey, out var mObjSet))
+                        classInstanceFields[classKey] = mObjSet = new HashSet<string>();
+                    mObjSet.Add(field);
+                    if (mayIntroduceFields) seen.Add(field);
+                    fieldKind.Remove(field);
+                    continue;
+                }
+
                 string writeKind = ClassifyWriteKind(rhs, annotatedType, mParamTypes, mLocalTypes,
                     methodsByName);
 
@@ -3185,7 +3215,39 @@ public partial class IRGenerator
             }
         }
 
+        // A field an object write claimed anywhere stays out of the scalar layout no
+        // matter which write introduced it: a `None` seed in __init__ may have filed a
+        // uint8 entry before the method scan ever saw the instance write.
+        if (classInstanceFields.TryGetValue(classKey, out var claimedObj))
+            layout.RemoveAll(e => claimedObj.Contains(e.Item1));
+
         return layout;
+    }
+
+    // `self.f = SomeClass(...)` or `self.f = mod.SomeClass(...)`: the write settles the field
+    // to a nested INSTANCE, whose storage is its own flattened `<obj>_f_*` names. The slot
+    // layout can only file a scalar byte for it -- the dead anchor var -- so fields matching
+    // this shape are kept out of `layout` and registered in classInstanceFields instead.
+    // Two exceptions keep the field's layout entry: an explicit `self.f: SomeClass`
+    // annotation already records the class as the entry's own type (the record the
+    // nested-instance machinery reads to mint `<obj>_f_*` -- excluding it orphans the
+    // field, held-instance-field), and `self.f = p` where p is a class-typed parameter
+    // threads the caller's instance through the field's own slot (held-write-anon).
+    private bool IsObjectFieldWrite(Expression? rhs, string? annotatedType,
+        Dictionary<string, string> paramTypes, Dictionary<string, string> localTypes)
+    {
+        if (annotatedType != null && IsKnownClassPath(annotatedType)) return false;
+        string? ty = null;
+        switch (rhs)
+        {
+            case CallExpr { Callee: VariableExpr cv } when !IsScalarTypeName(cv.Name):
+                ty = cv.Name;
+                break;
+            case CallExpr { Callee: MemberAccessExpr cm } when !IsScalarTypeName(cm.Member):
+                ty = DottedExprText(cm);
+                break;
+        }
+        return ty != null && IsKnownClassPath(ty);
     }
 
     /// <summary>

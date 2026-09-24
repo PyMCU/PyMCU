@@ -214,6 +214,18 @@ public partial class IRGenerator
     // classFieldLayout's convention: module prefix + class name.
     private Dictionary<string, HashSet<string>> classBufferFields = new();
 
+    // Fields `__init__` (or a later method) fills with a class instance
+    // (`self._device = i2c_device.I2CDevice(i2c, address)`): real fields, but the storage
+    // is the nested object's own flattened fields (`<obj>_<field>_*`), never a scalar byte
+    // the slot layout could hold. Kept in `layout` they boxed as a uint8 copy of the dead
+    // anchor name, and a boxed `with self._device` read the manager's own flattened
+    // `device_address`/`i2c` -- read-never-written slots that put 0x00 on the bus
+    // (adafruit_tcs34725). Keys match classFieldLayout's convention: module prefix +
+    // class name. A field annotated `self.f: SomeClass` does NOT land here: the
+    // annotation already files the class as the layout entry's type, which is the
+    // record the nested-instance machinery reads (held-instance-field).
+    private Dictionary<string, HashSet<string>> classInstanceFields = new();
+
     // Class-body attributes that the ALL-CAPS convention does NOT turn into compile-time
     // constants (Scan.cs) get run-time storage instead -- and nothing ever ran their
     // initializer, so `class Dev: limit = 7` gave every read of `Dev.limit` a fabricated

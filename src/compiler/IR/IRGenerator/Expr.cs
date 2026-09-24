@@ -3658,6 +3658,65 @@ public partial class IRGenerator
         return null;
     }
 
+    /// <summary>
+    /// The flattened instance NAME behind an expression whose Val is nameless: an
+    /// object-typed field, kept out of the scalar slot layout, whose members live
+    /// under `<anchor>_<field>` names. A coroutine's `self.a = Acc(s)` is the shape
+    /// that needs it -- `self` inside a method inlined onto that field aliases to
+    /// the anchor (`main.__c1_a`), the anchor evaluates to no scalar, and the
+    /// field's own members are still written and read under its name.
+    ///
+    /// Answers only when the resolved name carries a class in `instanceClasses`,
+    /// so a name that is merely unresolved keeps answering null instead of being
+    /// mistaken for an object.
+    /// </summary>
+    private string? AnchorNameOf(Expression expr)
+    {
+        switch (expr)
+        {
+            case VariableExpr ve:
+                foreach (var cand in new[]
+                         {
+                             currentInlinePrefix + ve.Name,
+                             string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name,
+                             ve.Name,
+                         })
+                {
+                    string cur = cand;
+                    for (int d = 0; d < 20 && variableAliases.TryGetValue(cur, out var nx); d++)
+                    {
+                        if (nx == null || nx.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                        cur = nx;
+                    }
+                    if (instanceClasses.ContainsKey(cur)) return cur;
+                }
+                return null;
+
+            case MemberAccessExpr ma:
+                if (AnchorNameOf(ma.Object) is { } outer)
+                {
+                    string flat = outer + "_" + ma.Member;
+                    if (instanceClasses.ContainsKey(flat)) return flat;
+                    // The write that registers <outer>_<member> can sit behind a branch
+                    // boundary the join already closed: a coroutine's `self.a = Acc(s)`
+                    // runs in one state arm while `self.a.add(1)` lowers in the next, and
+                    // instanceClasses is arm-scoped. The field's class is still recorded
+                    // on the owner's class at scan time -- recover it from there.
+                    if (instanceClasses.TryGetValue(outer, out var outerCls) && outerCls != null
+                        && fieldClasses.TryGetValue(outerCls + "|" + ma.Member, out var fCls)
+                        && fCls != null)
+                    {
+                        instanceClasses[flat] = fCls;
+                        return flat;
+                    }
+                }
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
     // True when <member> could legitimately be reached through this receiver.
     //
     // When the receiver's class is known, that class and its bases answer, and `receiverClass` is
@@ -4630,7 +4689,13 @@ public partial class IRGenerator
                     return objVal;   // scalar single field: self IS the value
                 }
             }
-            throw UserError("Unknown member access: " + expr.Member, expr);
+            // An object-typed field is the other nameless receiver: `self.a.x` where `a`
+            // holds an instance -- the anchor has no scalar, but its name is the prefix
+            // the member's own storage flattens under.
+            if (AnchorNameOf(expr.Object) is { } anchorName)
+                baseName = anchorName;
+            else
+                throw UserError("Unknown member access: " + expr.Member, expr);
         }
         while (baseName != null && variableAliases.TryGetValue(baseName, out var next))
         {

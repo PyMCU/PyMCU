@@ -2719,6 +2719,7 @@ public partial class IRGenerator
         {
             var objVal = VisitExpression(memExpr2.Object);
             var baseName = objVal is Variable v3 ? v3.Name : (objVal is Temporary t3 ? t3.Name : "");
+            if (string.IsNullOrEmpty(baseName)) baseName = AnchorNameOf(memExpr2.Object);
             if (string.IsNullOrEmpty(baseName))
                 throw UserError("Unknown member access in assignment: " + memExpr2.Member, memExpr2);
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
@@ -2756,6 +2757,8 @@ public partial class IRGenerator
                 && !fieldLay.Any(f => f.Field == memExpr2.Member)
                 && !(classBufferFields.TryGetValue(fieldCls, out var bufFlds)
                      && bufFlds.Contains(memExpr2.Member))
+                && !(classInstanceFields.TryGetValue(fieldCls, out var objFlds)
+                     && objFlds.Contains(memExpr2.Member))
                 && !IsKnownMethodName(memExpr2.Member))
                 throw UserError(
                     $"'{fieldCls}' has no field '{memExpr2.Member}' -- assigning it here creates a "
