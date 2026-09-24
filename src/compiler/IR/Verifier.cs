@@ -768,6 +768,28 @@ public static class Verifier
         var widest = new Dictionary<string, (int Width, DataType Type)>();
         var narrowestWrite = new Dictionary<string, (int Width, DataType Type, string Fn)>();
 
+        // A `<name>$tag` sibling marks a tagged-union payload: the slot is sized for
+        // the widest member and each member writes at its own width, with the tag
+        // telling readers which bytes are live. A narrow member write beside a wider
+        // member use is the design, not an overflow (dhtDevice__temperature: an
+        // `int` member store beside a `float` member read).
+        var unionPayloads = new HashSet<string>();
+        void NoteTag(string? n)
+        {
+            if (n != null && n.EndsWith("$tag", StringComparison.Ordinal))
+                unionPayloads.Add(n[..^4]);
+        }
+        foreach (var g in program.Globals) NoteTag(g.Name);
+        foreach (var f in program.Functions)
+        {
+            foreach (var p in f.Params) NoteTag(p);
+            foreach (var ins in f.Body)
+            {
+                foreach (var v in ReadVals(ins)) NoteTag(ValName(v));
+                foreach (var v in DstVals(ins)) NoteTag(ValName(v));
+            }
+        }
+
         foreach (var f in program.Functions)
             foreach (var ins in f.Body)
             {
@@ -790,7 +812,7 @@ public static class Verifier
         }
 
         foreach (var (name, nw) in narrowestWrite)
-            if (nw.Width < widest[name].Width)
+            if (nw.Width < widest[name].Width && !unionPayloads.Contains(name))
                 violations.Add(new Violation("storage-width", nw.Fn,
                     $"'{name}' is written at {nw.Type} but used at " +
                     $"{widest[name].Type} elsewhere -- the backend homes a " +
