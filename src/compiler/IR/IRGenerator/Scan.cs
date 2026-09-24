@@ -3713,6 +3713,15 @@ public partial class IRGenerator
                 cv.Name is not ("bytearray" or "bytes" or "str")
                 && !classNames.Contains(cv.Name) && !classNames.Contains(ResolveCallee(cv.Name))
                 && !classModuleMap.ContainsKey(cv.Name),
+            // `self.f = mod.Cls(...)` is the same instance construction through a
+            // dotted path -- IsObjectFieldWrite is the identical check the layout
+            // pass files the field under, so whatever claims the field as an
+            // object there cannot also feed the tag domain here. An instance has
+            // no member slot (RFC 0009 decision 4): None is the field's absence
+            // marker (adafruit_74hc595's `self._device`, SPIDevice or bitbang).
+            // A module FUNCTION's result stays scalar evidence.
+            CallExpr { Callee: MemberAccessExpr } =>
+                !IsObjectFieldWrite(rhs, annotatedType, paramTypes, localTypes),
             _ => true,
         };
         if (scalar)
