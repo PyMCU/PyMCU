@@ -3657,18 +3657,28 @@ public partial class IRGenerator
         var slice = finallyStack.GetRange(floor, finallyStack.Count - floor);
         var saved = finallyStack;
         finallyStack = finallyStack.GetRange(0, floor);
-        for (int k = slice.Count - 1; k >= 0; k--)
+        try
         {
-            // Every pending finally must emit even when an inner one ends in `return`:
-            // the terminated flag is per-sequence state, and each finally is its own.
-            _seqTerminated = false;
-            foreach (var s in slice[k])
+            for (int k = slice.Count - 1; k >= 0; k--)
             {
-                if (_seqTerminated) break;
-                VisitStatement(s);
+                // Every pending finally must emit even when an inner one ends in `return`:
+                // the terminated flag is per-sequence state, and each finally is its own.
+                _seqTerminated = false;
+                foreach (var s in slice[k])
+                {
+                    if (_seqTerminated) break;
+                    VisitStatement(s);
+                }
             }
+            _seqTerminated = false;
         }
-        _seqTerminated = false;
-        finallyStack = saved;
+        finally
+        {
+            // The floor slice was handed to the run above -- an exception inside it
+            // must not leave the floor list standing in for the real stack, or the
+            // enclosing `with`'s own pop meets an empty list (the read_bus() `with
+            // self._mgr as bus:` + `return` demandant crashed exactly there).
+            finallyStack = saved;
+        }
     }
 }
