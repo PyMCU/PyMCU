@@ -255,4 +255,68 @@ public class TaggedUnionReturnTests
             "    v = pick(GPIOR0.value)\n"));
         Assert.NotEmpty(ex.Message);
     }
+
+    // ── Optional[X] with a non-scalar payload is not a union ────────────────────
+
+    [Fact]
+    public void AnOptionalStrReturnIsNotAUnion()
+    {
+        // `-> Optional[str]` is a string that is sometimes absent, not a tagged
+        // union: a buffer is a name, not a payload byte (RFC 0009 decision 4 --
+        // the same line the parameter gate already draws). The member list is
+        // dropped and the function keeps the marks-based None semantics it had
+        // before the union work (adafruit_character_lcd's `message` getter).
+        var ir = Gen(Hdr +
+            "def pick(a: uint8) -> Optional[str]:\n" +
+            "    if a == 0:\n" +
+            "        return None\n" +
+            "    return \"x\"\n\n" +
+            "def main():\n" +
+            "    v = pick(GPIOR0.value)\n");
+
+        var f = ir.Functions.Single(fn => fn.Name == "pick");
+        Assert.Null(f.ReturnMembers);
+        Assert.DoesNotContain(f.Body, i => i is Return { Tag: not null });
+        var call = ir.Functions.SelectMany(fn => fn.Body).OfType<Call>()
+            .Single(c => c.FunctionName == "pick");
+        Assert.Null(call.TagDst);
+    }
+
+    [Fact]
+    public void AnOptionalInstanceReturnIsNotAUnion()
+    {
+        // `-> Optional[Dev]` is an instance slot that is sometimes None: an
+        // instance has no member slot, so this is the field-scan rule applied
+        // to a return.
+        var ir = Gen(Hdr +
+            "class Dev:\n" +
+            "    def __init__(self):\n" +
+            "        self.x: uint8 = 0\n\n" +
+            "def pick(a: uint8) -> Optional[Dev]:\n" +
+            "    if a == 0:\n" +
+            "        return None\n" +
+            "    d = Dev()\n" +
+            "    return d\n\n" +
+            "def main():\n" +
+            "    v = pick(GPIOR0.value)\n");
+
+        var f = ir.Functions.Single(fn => fn.Name == "pick");
+        Assert.Null(f.ReturnMembers);
+        Assert.DoesNotContain(f.Body, i => i is Return { Tag: not null });
+    }
+
+    [Fact]
+    public void AUnionOfStrAndIntStillRefuses()
+    {
+        // Two REAL members, one a buffer: that is a genuine union a tag byte
+        // cannot carry, and the refusal stands.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Hdr +
+            "def pick(a: uint8) -> Union[str, int]:\n" +
+            "    if a == 0:\n" +
+            "        return \"x\"\n" +
+            "    return a\n\n" +
+            "def main():\n" +
+            "    v = pick(GPIOR0.value)\n"));
+        Assert.Contains("pick", ex.Message);
+    }
 }
