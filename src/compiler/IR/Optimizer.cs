@@ -305,6 +305,41 @@ public static class Optimizer
                             && deadTags.Contains(td.Name))
                             func.Body[i] = cl with { TagDst = null };
                 }
+
+                // A stripped tag's payload is demotable too: the union-field
+                // promotion made it module storage before the tag's deadness
+                // was provable, but a name every mention of which sits in one
+                // function's body homes itself in that frame -- the layout the
+                // same field had without a union. A name read or written from
+                // two functions keeps its global: frames cannot share a slot.
+                var deadPayloads = deadTags.Select(t => t[..^4])
+                    .Where(p => !isrShared.Contains(p)).ToList();
+                if (deadPayloads.Count > 0)
+                {
+                    var demotable = new List<string>();
+                    foreach (var payload in deadPayloads)
+                    {
+                        int useFns = 0;
+                        foreach (var func in optimized.Functions)
+                        {
+                            bool hit = false;
+                            foreach (var instr in func.Body)
+                            {
+                                RegisterUses(instr, v => hit |=
+                                    (v is Variable uv && uv.Name == payload)
+                                    || (v is Temporary ut && ut.Name == payload));
+                                RegisterWrites(instr, v => hit |=
+                                    (v is Variable wv && wv.Name == payload)
+                                    || (v is Temporary wt && wt.Name == payload));
+                                if (hit) break;
+                            }
+                            if (hit && ++useFns > 1) break;
+                        }
+                        if (useFns <= 1) demotable.Add(payload);
+                    }
+                    if (demotable.Count > 0)
+                        optimized.Globals.RemoveAll(g => demotable.Contains(g.Name));
+                }
             }
         }
 
