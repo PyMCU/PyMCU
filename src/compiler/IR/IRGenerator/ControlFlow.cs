@@ -90,7 +90,8 @@ public partial class IRGenerator
         // reconciled at every join to the entry all arms agree on, so a hit IS the
         // run-time value; a miss answers as before (adafruit_ht16k33's `if dot < 0`,
         // where the unfollowed arm slices a compile-time string by dot).
-        if (v is Variable fv && localConstantValues.TryGetValue(fv.Name, out int lcv))
+        if (v is Variable fv && localConstantValues.TryGetValue(fv.Name, out int lcv)
+            && !ForeignFlowRead(fv.Name))
             return new Constant(lcv);
         if (v is not Temporary t) return v;
         if (!TryFoldedConstant(t, out int value)) return v;
@@ -635,7 +636,7 @@ public partial class IRGenerator
         // does not read.
         if (q != ve.Name && variableTypes.ContainsKey(q)) return false;
         if (constantVariables.TryGetValue(ve.Name, out cv)
-            || localConstantValues.TryGetValue(ve.Name, out cv))
+            || (localConstantValues.TryGetValue(ve.Name, out cv) && !ForeignFlowRead(ve.Name)))
         {
             truthy = cv != 0;
             return true;
@@ -1812,6 +1813,18 @@ public partial class IRGenerator
                 }
         }
     }
+
+    /// Whether a bare-name hit in <c>localConstantValues</c> is stale at the current
+    /// emission point. The map holds module-global values as a flow fact: a read in the
+    /// same module flow (`main`, or an @inline expansion a module-level call pulled in)
+    /// sees the last store, which is right. A read inside another function is not ordered
+    /// against those stores -- the body can run before or after any of them -- so the hit
+    /// is refused there and the name answers at run time (489b650a). Names a function
+    /// writes through `global` are never recorded at all, so this only ever declines the
+    /// module-reassigned subset.
+    /// </summary>
+    private bool ForeignFlowRead(string name) =>
+        currentFunction is not ("" or "main") && reassignedGlobals.Contains(name);
 
     /// <summary>
     /// Every storage name <paramref name="name"/> can stand for: the qualified spellings, plus

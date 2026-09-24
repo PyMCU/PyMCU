@@ -5327,14 +5327,16 @@ public partial class IRGenerator
     private void RecordLocalConstant(string key, Val value, Expression? init,
                                      string? declaredType, DataType storedType)
     {
-        // A REASSIGNED global is refused outright: its last store is a fact about
-        // the flow that wrote it (the `global` declaration or second store is
-        // what put the name in reassignedGlobals). An init-only global is the
-        // opposite case -- its one store IS the module initializer every later
-        // reader sees -- so it records like a local and
-        // `SSD1306_I2C(display_width, ...)` still hands the callee the constant
-        // its buffer sizes are computed from.
-        if (reassignedGlobals.Contains(key))
+        // A FUNCTION-WRITTEN global is refused outright: a `global x` store is a
+        // fact about the flow that wrote it, and the map answers for every
+        // function lowered afterwards. A name only the MODULE rebinds records
+        // like a local -- its stores are ordered, so the entry a module-level
+        // read or argument bind sees IS the current value; reads inside other
+        // functions pass on it through ForeignFlowRead instead. An init-only
+        // global is the simplest case -- its one store IS the module initializer
+        // every later reader sees -- so `SSD1306_I2C(display_width, ...)` still
+        // hands the callee the constant its buffer sizes are computed from.
+        if (functionWrittenGlobals.Contains(key))
         {
             localConstantValues.Remove(key);
             return;

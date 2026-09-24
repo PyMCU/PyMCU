@@ -101,7 +101,8 @@ public partial class IRGenerator
                 if (localConstantValues.TryGetValue(currentInlinePrefix + varE.Name, out int lcip)) return lcip;
                 if (!string.IsNullOrEmpty(currentFunction) &&
                     localConstantValues.TryGetValue(currentFunction + "." + varE.Name, out int lcf)) return lcf;
-                if (localConstantValues.TryGetValue(varE.Name, out int lcb)) return lcb;
+                if (localConstantValues.TryGetValue(varE.Name, out int lcb)
+                    && !ForeignFlowRead(varE.Name)) return lcb;
             }
 
             string lookup = currentModulePrefix + varE.Name;
@@ -1276,7 +1277,8 @@ public partial class IRGenerator
                 Emit(new Copy(seqElem, new Variable(seqCtx.ResultVars[k], seqDt)));
                 if (seqElem is Constant sc) constantVariables[seqCtx.ResultVars[k]] = sc.Value;
                 else if (seqElem is Variable seqV
-                         && localConstantValues.TryGetValue(seqV.Name, out int seqVc))
+                         && localConstantValues.TryGetValue(seqV.Name, out int seqVc)
+                         && !ForeignFlowRead(seqV.Name))
                     constantVariables[seqCtx.ResultVars[k]] = seqVc;
                 else constantVariables.Remove(seqCtx.ResultVars[k]);
                 if (seqElem is FloatConstant sfc) floatConstantVariables[seqCtx.ResultVars[k]] = sfc.Value;
@@ -1385,6 +1387,7 @@ public partial class IRGenerator
                     // claim a value the emitted Copy truncated.
                     else if (elemVal is Variable ev
                              && localConstantValues.TryGetValue(ev.Name, out int evc)
+                             && !ForeignFlowRead(ev.Name)
                              && FitsInScalar(evc, dt switch
                              {
                                  DataType.INT8 => "int8",

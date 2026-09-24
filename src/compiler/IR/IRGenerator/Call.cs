@@ -9195,7 +9195,7 @@ public partial class IRGenerator
         for (int hop = 0; hop < 20; ++hop)
         {
             if (constantVariables.TryGetValue(chase, out value)) return true;
-            if (localConstantValues.TryGetValue(chase, out value)) return true;
+            if (localConstantValues.TryGetValue(chase, out value) && !ForeignFlowRead(chase)) return true;
             if (!variableAliases.TryGetValue(chase, out var next) || next == null) break;
             chase = next;
         }

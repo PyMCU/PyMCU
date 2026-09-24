@@ -354,6 +354,7 @@ public partial class IRGenerator
     // init-only global is the one whose last store IS the initializer every reader sees;
     // these are the ones whose store is a fact about the flow that wrote it.
     private HashSet<string> reassignedGlobals = new();
+    private HashSet<string> functionWrittenGlobals = new();
 
     // Constructor calls whose RESULT is held in a field that some method writes through, and
     // which have no name of their own: the inner call of `obj = Outer(Inner(0))`. The scan pass

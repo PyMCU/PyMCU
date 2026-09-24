@@ -166,6 +166,19 @@ public partial class IRGenerator
         return result;
     }
 
+    /// <summary>Every name a `global` statement declares in a function or method.</summary>
+    private static HashSet<string> CollectGlobalDeclaredNames(ProgramNode ast)
+    {
+        var result = new HashSet<string>();
+        void WalkGlobals(Statement s)
+        {
+            if (s is GlobalStmt g) foreach (var n in g.Names) result.Add(n);
+        }
+        foreach (var fn in ast.Functions.Concat(TypeInference.ClassMethods(ast)))
+            foreach (var s in TypeInference.WalkStatements(fn.Body)) WalkGlobals(s);
+        return result;
+    }
+
     /// <summary>
     /// The names whose every write is a straight-line top-level assignment, with no top-level
     /// read before the last of them (#372). Such a name is the constant of its last write.
@@ -609,6 +622,13 @@ public partial class IRGenerator
     {
         var reassigned = CollectModuleReassignedNames(ast);
         foreach (var n in reassigned) reassignedGlobals.Add(currentModulePrefix + n);
+        // The subset whose writes happen from FUNCTION flow (`global x` inside a
+        // def or method): the module's last store is not the value a later call
+        // sees, so these are never recorded as constants at all. A name only the
+        // module rebinds is different -- its stores are ordered, so the flow map
+        // can hold it, and only reads inside other functions have to pass on it.
+        foreach (var n in CollectGlobalDeclaredNames(ast))
+            functionWrittenGlobals.Add(currentModulePrefix + n);
 
         // Collect every member name used as an assignment target anywhere in this module
         // (recursing into class methods and nested blocks). This forms the superset of all
