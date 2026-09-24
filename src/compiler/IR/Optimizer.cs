@@ -269,6 +269,45 @@ public static class Optimizer
         foreach (var func in optimized.Functions)
             DevirtualizeCalls(func, optimized.ClassChildren, optimized.ClassDirectMethods);
 
+        // --- Dead union-tag elimination ---
+        // A field's tag byte is minted from static evidence (the class has a write
+        // that could store a non-None member), but that evidence lives in methods
+        // the program may never emit. When no instruction reads the tag -- no
+        // branch, no read, no call argument -- it is a written-only global byte,
+        // and the RFC's own guarantee applies: a value whose member is provable at
+        // compile time carries no tag. Strip the global and every store to it.
+        {
+            var readTags = new HashSet<string>();
+            foreach (var func in optimized.Functions)
+            foreach (var instr in func.Body)
+                RegisterUses(instr, v =>
+                {
+                    if (v is Variable rv && rv.Name.EndsWith("$tag", StringComparison.Ordinal))
+                        readTags.Add(rv.Name);
+                    else if (v is Temporary rt && rt.Name.EndsWith("$tag", StringComparison.Ordinal))
+                        readTags.Add(rt.Name);
+                });
+
+            var deadTags = new HashSet<string>(
+                optimized.Globals.Select(g => g.Name)
+                    .Where(n => n.EndsWith("$tag", StringComparison.Ordinal)
+                                && !readTags.Contains(n)
+                                && !isrShared.Contains(n)));
+            if (deadTags.Count > 0)
+            {
+                optimized.Globals.RemoveAll(g => deadTags.Contains(g.Name));
+                foreach (var func in optimized.Functions)
+                {
+                    func.Body.RemoveAll(i =>
+                        i is Copy dc && dc.Dst is Variable dv && deadTags.Contains(dv.Name));
+                    for (int i = 0; i < func.Body.Count; i++)
+                        if (func.Body[i] is Call { TagDst: Variable td } cl
+                            && deadTags.Contains(td.Name))
+                            func.Body[i] = cl with { TagDst = null };
+                }
+            }
+        }
+
         // Build vtable specs for VirtualCall nodes that survived devirtualization.
         // In the common case this list is empty (no vtable flash overhead).
         optimized.Vtables = BuildVtableSpecs(optimized);
