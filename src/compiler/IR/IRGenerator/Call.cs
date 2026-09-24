@@ -7695,6 +7695,76 @@ public partial class IRGenerator
             thenBranch, null, elseBranch));
     }
 
+    /// <summary>
+    /// RFC 0009 section 8: print()/f-string interpolation of a live tagged Optional --
+    /// the one read that can represent BOTH outcomes. The tag picks the text CPython
+    /// writes: each real member reads the payload at ITS width through the ordinary
+    /// numeric/float/bool writers, and the None member writes the literal "None".
+    /// Every other position (arithmetic, an index, a comparison other than `is`,
+    /// a non-Optional parameter) keeps the located refusal.
+    /// </summary>
+    private void EmitOptionalStream(string writeStrFn, string floatFn, Val payload,
+        Val tag, List<string> members)
+    {
+        int noneIdx = NoneIndex(members);
+        string optPrinted = MakeLabel();
+        for (int mi = 0; mi < members.Count; ++mi)
+        {
+            if (mi == noneIdx) continue;
+            string notMember = MakeLabel();
+            Emit(new JumpIfNotEqual(tag, new Constant(mi), notMember));
+            if (members[mi] == "bool")
+                EmitStreamBool(writeStrFn,
+                    new PreEvaluatedExpr(MemberRead(payload, mi, members), null));
+            else
+                EmitStreamVal(floatFn, MemberRead(payload, mi, members));
+            Emit(new Jump(optPrinted));
+            Emit(new Label(notMember));
+        }
+        if (noneIdx >= 0)
+            EmitStreamStr(writeStrFn, "None");
+        Emit(new Label(optPrinted));
+    }
+
+    /// The operand half of the Optional print dispatch: a bare name or a field read
+    /// carries the tag beside the payload, so <see cref="LiveOptionalTag"/> finds it
+    /// without lowering the read. <paramref name="beforeEmit"/> is the f-string's
+    /// pending-text flush: it runs after the payload read lowers and before the
+    /// writes, so buffered literal text still precedes this part's bytes on the
+    /// wire. A name proven None still prints "None" -- its payload bytes are stale.
+    private bool TryEmitOptionalStreamOperand(string writeStrFn, string floatFn,
+        Expression arg, Action? beforeEmit = null)
+    {
+        if (arg is not (VariableExpr or MemberAccessExpr)) return false;
+        if (LiveOptionalTag(arg) is { } live)
+        {
+            Val optPayload = EvalOptionalCarry(arg);
+            beforeEmit?.Invoke();
+            EmitOptionalStream(writeStrFn, floatFn, optPayload, live.tag, live.members);
+            return true;
+        }
+        if (OptionalKeyOfExpr(arg) is { } noneKey && noneValuedNames.Contains(noneKey))
+        {
+            beforeEmit?.Invoke();
+            EmitStreamStr(writeStrFn, "None");
+            return true;
+        }
+        return false;
+    }
+
+    /// The already-evaluated half of the dispatch: a call or property result rides in
+    /// a temp whose tag slot sits beside it (MarkOptional filed it when the callee's
+    /// return union made the result taggable).
+    private bool TryEmitOptionalStreamVal(string writeStrFn, string floatFn, Val v)
+    {
+        if (ValNameOf(v) is not { } vn || TagOfVal(v) is not { } vt) return false;
+        if (noneValuedNames.Contains(vn)) { EmitStreamStr(writeStrFn, "None"); return true; }
+        if (narrowedOptionals.ContainsKey(vn)) return false;
+        if (!optionalMembersByName.TryGetValue(vn, out var members)) return false;
+        EmitOptionalStream(writeStrFn, floatFn, v, vt, members);
+        return true;
+    }
+
     // Write the repr of a module-level constant tuple: `(1, 4, 16, 60)`, keeping
     // the trailing comma of the one-element form, exactly as CPython spells it.
     private void EmitConstTupleRepr(string writeStrFn, string floatFn, List<int> values)
@@ -8669,7 +8739,22 @@ public partial class IRGenerator
                 EmitStreamStr(writeStrFn, ")");
                 continue;
             }
+            // RFC 0009 section 8: `{v}` / `{obj.field}` on a live tagged Optional
+            // prints the member's repr or "None" -- the same read print() takes.
+            // Ahead of RejectInstanceInterpolation so a union field prints.
+            if (TryEmitOptionalStreamOperand(writeStrFn, floatFn, part.Expr!, Flush)) continue;
             RejectInstanceInterpolation(part.Expr!);
+            // `{f()}` / `{obj.prop}`: the call lowers first, then the tag it
+            // returned decides -- same dispatch, on the evaluated value.
+            if (part.Expr is CallExpr or MemberAccessExpr or PreEvaluatedExpr)
+            {
+                Val partVal = part.Expr is PreEvaluatedExpr pev
+                    ? pev.Value : VisitExpression(part.Expr!);
+                Flush();
+                if (!TryEmitOptionalStreamVal(writeStrFn, floatFn, partVal))
+                    EmitStreamVal(floatFn, partVal);
+                continue;
+            }
             Flush();
             EmitStreamVal(floatFn, VisitExpression(part.Expr!));
         }
@@ -9079,6 +9164,11 @@ public partial class IRGenerator
                 return;
             }
 
+            // RFC 0009 section 8: the unnarrowed Optional read that CAN answer --
+            // the tag picks the member's repr or "None". Ahead of
+            // RejectInstanceInterpolation so a live union FIELD prints too.
+            if (TryEmitOptionalStreamOperand(writeStrFn, floatWriteFn, arg)) return;
+
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
 
@@ -9125,7 +9215,8 @@ public partial class IRGenerator
 
             if (arg is PreEvaluatedExpr pre)
             {
-                EmitStreamVal(floatWriteFn, pre.Value, pre.Declared);
+                if (!TryEmitOptionalStreamVal(writeStrFn, floatWriteFn, pre.Value))
+                    EmitStreamVal(floatWriteFn, pre.Value, pre.Declared);
                 return;
             }
 
@@ -9177,6 +9268,9 @@ public partial class IRGenerator
                         || IsTupleBound(seqResName));
                     return;
                 }
+                // `print(f())` / `print(obj.prop)` on a tagged union result: the
+                // tag the callee returned decides "None" or the member's repr.
+                if (TryEmitOptionalStreamVal(writeStrFn, floatWriteFn, seqVal)) return;
                 EmitStreamVal(floatWriteFn, seqVal, DeclaredWidthOfName(arg));
                 return;
             }
