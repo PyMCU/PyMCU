@@ -1804,10 +1804,24 @@ public partial class IRGenerator
                     strConstantVariables.Remove(prefix + "." + field);
                     localConstantValues.Remove(prefix + "_" + field);
                     localConstantValues.Remove(prefix + "." + field);
-                    noneValuedNames.Remove(prefix + "_" + field);
-                    noneValuedNames.Remove(prefix + "." + field);
-                    narrowedOptionals.Remove(prefix + "_" + field);
-                    narrowedOptionals.Remove(prefix + "." + field);
+                    // The noneValued/narrowed marks may only go where a tag byte answers
+                    // `is None` instead: a union field (a None write plus a scalar write)
+                    // carries one, so its marks are as stale as a bare name's across the
+                    // back-edge. A field that holds an INSTANCE (`self._font = None` in
+                    // __init__, `= BitmapFont(...)` in the method) is not a union member --
+                    // instances have no member slot -- so its noneValued record IS the
+                    // field's None-ness. Dropping it left `not self._font` unfolded with
+                    // no tag to consult, the branch join dropped the field's class
+                    // binding, and `self._font.draw_char()` minted a callee nobody emits
+                    // (adafruit_framebuf's text() under `while True:`).
+                    if (UnionOwnerClass(prefix) is { } writtenFieldCls
+                        && IsUnionField(writtenFieldCls, field, out _))
+                    {
+                        noneValuedNames.Remove(prefix + "_" + field);
+                        noneValuedNames.Remove(prefix + "." + field);
+                        narrowedOptionals.Remove(prefix + "_" + field);
+                        narrowedOptionals.Remove(prefix + "." + field);
+                    }
                     // Removing alone lets a later constant write re-track the name: a method
                     // that stores different literals on different paths (DHTBase.measure's
                     // `self.failed = True` on the error arms, `= False` on the success tail)
