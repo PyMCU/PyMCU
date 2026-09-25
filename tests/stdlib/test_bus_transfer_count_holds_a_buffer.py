@@ -40,6 +40,7 @@ COUNT_NAMES = {"n", "nbytes", "count", "length"}
 TOO_NARROW = {"uint8", "int8"}
 
 _DEF = re.compile(r"^(\s*)def\s+(\w+)\s*\(([^)]*)\)", re.M)
+_NEXT_DEF = re.compile(r"^\s*(?:@inline\s*$|def |class )", re.M)
 
 
 def _params(signature):
@@ -89,44 +90,146 @@ def _offenders():
             )
             if not takes_buffer:
                 continue
+            line = source[: match.start()].count("\n") + 1
+            where = f"{path.relative_to(HAL.parents[2])}:{line}"
+
+            counts = set()
             for name, ann in params:
-                if name in COUNT_NAMES and ann in TOO_NARROW:
-                    line = source[: match.start()].count("\n") + 1
+                if name not in COUNT_NAMES:
+                    continue
+                counts.add(name)
+                if ann in TOO_NARROW:
                     bad.append(
-                        f"{path.relative_to(HAL.parents[2])}:{line}: {func}({name}: {ann}) "
-                        f"moves bytes through a buffer, so a buffer longer than 255 "
-                        f"truncates at the call"
+                        f"{where}: {func}({name}: {ann}) moves bytes through a buffer, "
+                        f"so a buffer longer than 255 truncates at the call"
+                    )
+
+            # THE OTHER END OF THE SAME LOOP. Widening the count and leaving the counter
+            # that walks it narrow is worse than the defect it replaces: `i: uint8` against
+            # `while i < n` with n over 255 does not truncate, it never terminates -- and
+            # the compiler folds the comparison to always-true, so what is emitted is a bare
+            # backward jump with the code after the loop deleted. Measured on an AVR probe
+            # of exactly this shape: the MIR loop body ends in `jmp` with no compare, and
+            # the print after it is not in the program at all.
+            for local, ann in _local_counters(source, match.end()):
+                if ann in TOO_NARROW and local in _walked_against(source, match.end(), counts):
+                    bad.append(
+                        f"{where}: {func} walks a wide count with `{local}: {ann}`, "
+                        f"which cannot reach it: the loop never ends"
                     )
     return bad
+
+
+def _body(source, start):
+    """The text of the def that starts at `start`, up to the next def/class."""
+    nxt = _NEXT_DEF.search(source, start)
+    return source[start : nxt.start() if nxt else len(source)]
+
+
+def _local_counters(source, start):
+    """(name, annotation) for each annotated local assignment in the body."""
+    return re.findall(r"^\s*(\w+)\s*:\s*(\w+)\s*=", _body(source, start), re.M)
+
+
+def _walked_against(source, start, counts):
+    """Locals used as the left side of `while <local> < <a count parameter>`."""
+    body = _body(source, start)
+    return {
+        var
+        for var, limit in re.findall(r"^\s*while\s+(\w+)\s*<\s*(\w+)\s*:", body, re.M)
+        if limit in counts
+    }
 
 
 def test_a_bus_transfer_count_is_not_declared_uint8():
     bad = _offenders()
     assert not bad, (
-        "a byte count declared uint8 beside a buffer parameter truncates silently:\n  "
-        + "\n  ".join(bad)
+        "a byte count that cannot hold a buffer longer than 255, at either end of the "
+        "loop:\n  " + "\n  ".join(bad)
     )
 
 
-def test_the_sweep_finds_the_shape_it_is_looking_for(tmp_path):
+def _sweep_over(tmp_path, source):
+    probe = tmp_path / "hal" / "probe.py"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text(source)
+
+    global HAL
+    original, HAL = HAL, probe.parent
+    try:
+        return _offenders()
+    finally:
+        HAL = original
+
+
+def test_the_sweep_finds_a_narrow_count_parameter(tmp_path):
     """The sweep is only worth its runtime if it catches the reported signature.
 
     A sweep that matches nothing passes for the wrong reason, so the defect as it was
     written is fed back through the same matcher.
     """
-    probe = tmp_path / "hal" / "probe.py"
-    probe.parent.mkdir(parents=True)
-    probe.write_text(
+    found = _sweep_over(tmp_path,
         "def i2c_write_bytes(addr: uint8, buf, n: uint8) -> uint8:\n"
         "    return 0\n"
     )
 
-    global HAL
-    original, HAL = HAL, probe.parent
-    try:
-        found = _offenders()
-    finally:
-        HAL = original
-
     assert len(found) == 1, found
     assert "i2c_write_bytes" in found[0]
+    assert "truncates" in found[0]
+
+
+def test_the_sweep_finds_a_narrow_counter_walking_a_wide_count(tmp_path):
+    """The other end of the loop, which the parameter check alone cannot see.
+
+    This shape shipped: the RP2040 and RP2350 `write_bytes` had the count widened to
+    uint16 and the counter left at uint8, which is worse than the truncation it replaced
+    because the loop never terminates. The first version of this sweep looked only at the
+    parameter list and passed over both.
+    """
+    found = _sweep_over(tmp_path,
+        "def write_bytes(self, addr: uint8, data: bytearray, n: uint16):\n"
+        "    i: uint8 = 0\n"
+        "    while i < n:\n"
+        "        i = i + 1\n"
+    )
+
+    assert len(found) == 1, found
+    assert "write_bytes" in found[0]
+    assert "never ends" in found[0]
+
+
+def test_the_sweep_leaves_a_bit_counter_alone(tmp_path):
+    """A uint8 counter is only wrong when it walks the COUNT.
+
+    `softi2c.py` shifts a byte out bit by bit with `i: uint8 = 0` against `while i < 8`, in
+    a function that also takes a buffer and a wide count. That counter is right as it is and
+    widening it would cost bytes for nothing, so the rule is tied to the variable compared
+    against the COUNT PARAMETER, not against any constant. Without this case a sweep that
+    flagged every narrow local in such a function would still pass its other probes.
+    """
+    found = _sweep_over(tmp_path,
+        "def write_bytes(self, addr: uint8, buf, n: uint16) -> uint8:\n"
+        "    i: uint16 = 0\n"
+        "    while i < n:\n"
+        "        bit: uint8 = 0\n"
+        "        while bit < 8:\n"
+        "            bit = bit + 1\n"
+        "        i = i + 1\n"
+    )
+
+    assert found == [], found
+
+
+def test_the_sweep_leaves_a_counter_that_can_reach_its_count(tmp_path):
+    """The invariant beside it: a wide counter on a wide count is not a finding.
+
+    Without this the previous test passes for a matcher that flags every local named `i`.
+    """
+    found = _sweep_over(tmp_path,
+        "def write_bytes(self, addr: uint8, data: bytearray, n: uint16):\n"
+        "    i: uint16 = 0\n"
+        "    while i < n:\n"
+        "        i = i + 1\n"
+    )
+
+    assert found == [], found
