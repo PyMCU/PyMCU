@@ -117,6 +117,16 @@ uv pip install --pre --no-deps pymcu-pic
 # the verifier's warnings. When the verifier already sees the violation the
 # message names the guilty pass, which is a better bisection start than the
 # wrong output.
+#
+# For a miscompile that smells like a NAME -- a value that is stale, a write
+# that never lands, a read that answers somebody else's binding -- run
+# `tools/resolve_observe.py` in the same checkout. It builds the whole corpus
+# with PYMCU_RESOLVE_OBSERVE=1, which turns on the observer-mode resolution
+# pass (src/compiler/IR/NameResolution.cs): the pass decides each name's
+# binding once before lowering, derives the storage key from that binding plus
+# the expansion it is read in, and prints every place where the existing
+# ladder's key differs from its own. It changes nothing -- the flag is off by
+# default and the firmware is byte-identical with it on.
 
 # Install the stdlib editable once; lib/src edits are then picked up live.
 # Do NOT rsync a copy into site-packages/pymcu/ — it shadows the editable .pth.
