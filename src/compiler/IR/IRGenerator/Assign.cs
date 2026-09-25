@@ -6017,6 +6017,22 @@ public partial class IRGenerator
         return magnitude <= 0xFF ? DataType.UINT8 : magnitude <= 0xFFFF ? DataType.UINT16 : DataType.UINT32;
     }
 
+    // The flattened storage name a `<obj>.<member>` field is filed under, resolved the same
+    // way EmitMemberAssign resolves it: the object's binding, alias-followed, plus "_member".
+    // Null when the object does not resolve to a name. Visiting a bare object name only
+    // resolves a binding and has no side effects.
+    private string? FlattenedMemberName(string objName, string member)
+    {
+        var objVal = VisitExpression(new VariableExpr(objName));
+        string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : null);
+        if (string.IsNullOrEmpty(baseName)) return null;
+        var seen = new HashSet<string>();
+        while (variableAliases.TryGetValue(baseName, out var alias)
+               && !string.IsNullOrEmpty(alias) && seen.Add(alias))
+            baseName = alias;
+        return baseName + "_" + member;
+    }
+
     // Resolves a member access (self._buf) to the flattened SRAM array name it
     // was declared under via `self._buf: uint8[N]`, or null if it is not an
     // instance-member array. Visiting the object (self) only resolves an alias
@@ -6955,6 +6971,33 @@ public partial class IRGenerator
             int dot = stmt.Target.IndexOf('.');
             string objName = stmt.Target.Substring(0, dot);
             string member = stmt.Target.Substring(dot + 1);
+
+            // `self.reg: ptr[uint8] = TCCR1B` -- a REGISTER field with its element width
+            // written down. The bracket made the array reader take `uint8` for a size
+            // expression and refuse the program with "Array size 'uint8' is not a
+            // compile-time constant", which named a construct the source does not contain.
+            // The same subscript on a parameter and on a module-level declaration was
+            // already accepted, so this was the one position that misrouted it.
+            //
+            // The write itself is an ordinary member assignment; what the annotation adds is
+            // the element width, which is otherwise whatever the value happens to carry (a
+            // bare `ptr()` says UINT8) or whatever the class scan guessed. Stating it is the
+            // spelling that fixes the width at the field, so the annotation wins over both.
+            if (stmt.Annotation.StartsWith("ptr[") && stmt.Annotation.EndsWith("]"))
+            {
+                if (stmt.Value == null)
+                    throw UserError(
+                        "An annotated instance member needs an initial value, e.g. "
+                        + "`self.reg: ptr[uint8] = TCCR1B`", stmt);
+                DataType annElem = DataTypeExtensions.StringToDataType(
+                    stmt.Annotation[4..^1]);
+                VisitStatement(new AssignStmt(
+                    new MemberAccessExpr(new VariableExpr(objName), member), stmt.Value)
+                { Line = stmt.Line, Column = stmt.Column, Length = stmt.Length });
+                if (FlattenedMemberName(objName, member) is { } annFlat)
+                    variableTypes[annFlat] = annElem;
+                return;
+            }
 
             int mb = stmt.Annotation.IndexOf('[');
             int mc = stmt.Annotation.LastIndexOf(']');
