@@ -4,6 +4,25 @@
 
 ### Added
 
+- **ir/stdlib**: grouped peripherals (RFC 0012). A `ptr[T]` declaration works in a CLASS
+  body, so a peripheral's registers can be reached as attributes of one named class the way
+  an XC8 program reaches T1CON through the Timer1 SFR block:
+  `TIMER1.TCCR1A.value = 0x82`, `TIMER1.ICR1.value = 19999`,
+  `TIMER1.TCCR1B[TIMER1.CS10] = 1`, `if TIMER1.TIFR1[TIMER1.TOV1]:`. Bit positions are
+  members of the same class, so one import brings the whole peripheral and no bit name
+  reaches module scope. The address may be a literal, constant arithmetic, or another
+  register's name -- `ptr(TCCR1A)` -- which keeps ONE copy of every address in the chip
+  file, so the grouped surface cannot drift from the loose one; an address that cannot be
+  resolved while compiling is a located error naming the attribute, where the group used to
+  be filed as a dead SRAM variable in silence. The class has no runtime existence: a program
+  rewritten from loose register names to the grouped form produces byte-identical firmware,
+  measured over the whole access surface (both widths, byte halves, read-modify-write,
+  augmented assignment, constant and runtime bit index, the register inside an `@inline`
+  helper and inside an ISR) and pinned in the AVR suite by two fixtures whose `.hex` must
+  match. `pymcu.chips.atmega328p` ships the first group, `TIMER1`. The grouped classes are
+  the surface the project keeps stable; the loose module-level register names are an
+  implementation detail of the HAL and may change in any release.
+
 - **ir**: compile-time 2-D grids the way CircuitPython writes them:
   `g = [[v] * W for _ in range(H)]`, `g = [bytearray(W) for _ in range(H)]` and
   `self.g = <same>` in `__init__` lower to ONE flat fixed array of `W * H`
@@ -95,6 +114,16 @@
   the shadowed global held an instance, and the arm's reads folded to the global's constant.
   `case C() as name` on the subject itself no longer files a self-alias, which made the
   compiler spin instead of emitting.
+- **ir**: a subscript write on a class attribute was claimed unconditionally by the
+  compile-time class-dict accumulator that exists for the Adafruit CV pattern, so
+  `Store.buf[0] = 5` on a class-level `bytearray` emitted no store and the matching read
+  folded to the 5 out of a phantom dict entry. The program agreed with itself at that one
+  subscript and read the allocation's zeros everywhere else -- from a loop, from a runtime
+  index, from another function. The accumulator now runs only when the attribute IS a dict
+  or set binding.
+- **ir/avr**: a class constant used as a bit index missed the direct bit test, so
+  `if TIFR1[TIMER1.TOV1]:` materialized the bit into a register and compared it -- ten bytes
+  where `SBIS` answers in one -- while the same condition written `if TIFR1[0]:` was free.
 - **hal/avr**: `I2C.writebyte()` returned nothing, so a NACKed transaction was invisible
   to the caller. It now returns `1` on success, the failing TWI status (`0x20`/`0x30`) on
   a NACK and `0xFF` on a bus timeout, with an early STOP — the same contract

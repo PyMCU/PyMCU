@@ -123,7 +123,7 @@ This page tracks which language and HAL features have been implemented, and what
 |---|---|
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Annotation for variables; unannotated `def` params/returns of outlined functions are inferred from call sites (v0.14) |
 | `int` (built-in) | Maps to `int16`; no import required |
-| `ptr[T]` / `ptr(addr)` | Memory-mapped I/O |
+| `ptr[T]` / `ptr(addr)` | Memory-mapped I/O. The declaration works at module level and inside a class body, which is what a grouped peripheral is (RFC 0012): `class TIMER1: TCCR1A: ptr[uint8] = ptr(TCCR1A)` and then `TIMER1.TCCR1A.value = 0x82`, `TIMER1.TCCR1B[TIMER1.CS10] = 1`. The class has no runtime existence and the grouped spelling compiles to the same bytes as the loose one. An address the compiler cannot resolve while compiling is a located error |
 | `const[T]` / `const[uint8[N]]` | Compile-time constants, integer / string / **float** (`Timer(freq=2.5)`); flash-resident arrays via `LPM Z`. A runtime-varying argument is a located `CompileError`, not a silent fold |
 | `asm("instr")` | Inline assembly with register constraints `%N` |
 | `delay_ms(n)` / `delay_us(n)` | Intrinsic busy-wait |

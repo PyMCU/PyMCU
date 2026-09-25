@@ -594,6 +594,15 @@ This means the following operations are **not supported**:
 
 The following, previously listed here as unsupported, **do work**:
 
+- **Grouped peripherals (RFC 0012)** - a `ptr[T]` declaration in a CLASS body is a register,
+  the same declaration one scope deeper. `TIMER1.TCCR1A.value`, `TIMER1.TIFR1[TIMER1.TOV1]`
+  and the 16-bit names compile to exactly what the loose module-level names compile to, and
+  the class has no runtime existence. The address may be another register's name
+  (`ptr(TCCR1A)`), constant arithmetic on one (`ptr(TCCR1A + 1)`), or a literal; an address
+  the compiler cannot resolve while compiling is a located error naming the attribute.
+  The grouped classes in `pymcu.chips.<chip>` are the surface the project keeps stable; the
+  loose module-level register names are an implementation detail of the HAL and may change
+  in any release.
 - **`ptr` as a function parameter and return type** — `def f(reg: ptr[uint8])` and
   compile-time selectors returning `-> ptr[uint8]` are used throughout the HAL; a bare
   register name in those positions contributes its address.
