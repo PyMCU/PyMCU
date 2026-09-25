@@ -172,13 +172,13 @@ V: int = 3; N: int = 2; Z: int = 1; C: int = 0
 # attribute of a class named after it, the way an XC8 program reaches T1CON
 # through the Timer1 SFR block, and the class is what the documentation covers:
 #
-#   from pymcu.chips.atmega328p import TIMER1
+#   from pymcu.chips.atmega328p import Timer1
 #
-#   TIMER1.TCCR1A.value = 0x82                  # whole register
-#   TIMER1.ICR1.value = 19999                   # 16-bit, one name
-#   TIMER1.TCCR1B[TIMER1.CS10] = 1              # one bit, by its datasheet name
-#   if TIMER1.TIFR1[TIMER1.TOV1]:
-#       TIMER1.TIFR1[TIMER1.TOV1] = 1           # write 1 to clear
+#   Timer1.TCCR1A.value = 0x82                  # whole register
+#   Timer1.ICR1.value = 19999                   # 16-bit, one name
+#   Timer1.TCCR1B[Timer1.CS10] = 1              # one bit, by its datasheet name
+#   if Timer1.TIFR1[Timer1.TOV1]:
+#       Timer1.TIFR1[Timer1.TOV1] = 1           # write 1 to clear
 #
 # Costs nothing: a class-level ptr declaration is a register, so every access
 # compiles to the same LDS/STS/SBI/CBI as the loose name and the class itself has
@@ -187,9 +187,15 @@ V: int = 3; N: int = 2; Z: int = 1; C: int = 0
 #
 # Register names are the datasheet's. Bit positions are members of the same class
 # so one import brings the whole peripheral and no bit name reaches module scope.
+#
+# Naming follows PEP 8. The group is a class, so it is CapWords (Timer1, not TIMER1);
+# the loose names above are module-level constants, so they keep ALL_CAPS; and the
+# registers inside the group keep ALL_CAPS too, which is what makes the group a pure
+# regrouping of the loose list. A group is a namespace and not a type, so calling it
+# (Timer1()) is a compile error that says so.
 
 
-class TIMER1:
+class Timer1:
     """Timer/Counter1 of the ATmega328P: 16-bit, two compare units, input capture."""
 
     # Control and status

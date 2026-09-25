@@ -6,7 +6,7 @@
 - Affects: `src/compiler/IR/IRGenerator/Scan.cs` (class-level register declarations),
   `src/compiler/IR/IRGenerator/Assign.cs` (the class-dict accumulator's guard),
   `src/compiler/IR/IRGenerator/ControlFlow.cs` (a class constant as a bit index),
-  `lib/src/pymcu/chips/atmega328p.py` (the `TIMER1` group),
+  `lib/src/pymcu/chips/atmega328p.py` (the `Timer1` group),
   `pymcu-avr`: `tests/integration/fixtures/grouped-peripheral-timer1{,-loose}`,
   `tests/integration/Tests/AVR/GroupedPeripheralTimer1Tests.cs`,
   `tests/oracle/probes/277_grouped_peripheral_registers.py`.
@@ -36,11 +36,11 @@ CAN promise and keep still while the definitions underneath it move.
    after it, its registers as class attributes:
 
    ```python
-   from pymcu.chips.atmega328p import TIMER1
+   from pymcu.chips.atmega328p import Timer1
 
-   TIMER1.TCCR1A.value = 0x82
-   TIMER1.ICR1.value = 19999
-   TIMER1.TCCR1B[TIMER1.CS10] = 1
+   Timer1.TCCR1A.value = 0x82
+   Timer1.ICR1.value = 19999
+   Timer1.TCCR1B[Timer1.CS10] = 1
    ```
 
    Evaluated against two alternatives and chosen on evidence:
@@ -55,19 +55,33 @@ CAN promise and keep still while the definitions underneath it move.
    - *A class with class-level constants* has no runtime existence at all: measured
      byte-identical firmware, no constructor, no instance, nothing to pass by accident.
 
-2. **The register names are the datasheet's.** `TIMER1.TCCR1A`, not `TIMER1.TCCRA` and not
-   `TIMER1.control_a`. Two reasons, and the second is the decisive one: a name that matches
+2. **The naming follows PEP 8, and this is settled.** The group is a class, and PEP 8 says
+   "Class names should normally use the CapWords convention", so it is `Timer1`, `Timer0`,
+   `Timer2`, and CapWords for every group the generalisation adds later. The ALL_CAPS
+   convention PEP 8 gives is for constants, "usually defined on a module level and written
+   in all capital letters with underscores", which is exactly what the loose register names
+   are and why they keep that spelling. The register attributes INSIDE the group stay
+   ALL_CAPS for the same reason, which also keeps them identical to the datasheet names, so
+   the group stays a pure regrouping.
+
+   The counter-argument to CapWords is that it makes a namespace look instantiable, and
+   `Timer1()` reads like a constructor to anyone. That is answered by decision 5, which
+   refuses the call with a message that says exactly that and what to write instead. Without
+   that refusal the ALL_CAPS spelling would have been the safer one; with it, PEP 8 wins.
+
+3. **The register names are the datasheet's.** `Timer1.TCCR1A`, not `Timer1.TCCRA` and not
+   `Timer1.control_a`. Two reasons, and the second is the decisive one: a name that matches
    the datasheet is greppable against the datasheet, and it makes the grouped form a pure
    re-grouping of the loose list, which a generator can do with no per-chip mapping table.
 
-3. **Bit positions live in the same class.** `TIMER1.CS10`, `TIMER1.TOV1`. One import brings
+4. **Bit positions live in the same class.** `Timer1.CS10`, `Timer1.TOV1`. One import brings
    the whole peripheral, and no bit name reaches module scope. This is the answer to XC8's
-   `T1CONbits.TMR1ON` at zero cost: `TIMER1.TCCR1B[TIMER1.CS10] = 1` lowers to the same
+   `T1CONbits.TMR1ON` at zero cost: `Timer1.TCCR1B[Timer1.CS10] = 1` lowers to the same
    `SBI` the literal bit index lowers to. A `TCCR1Bbits.CS10 = 1` accessor would read better
    still, and it is NOT proposed here: it needs a two-level member access to lower to a
    single bit operation, which is new machinery, for a spelling that saves one subscript.
 
-4. **A group cannot be instantiated, and says so.** `TIMER1()` used to be accepted and
+5. **A group cannot be instantiated, and says so.** `Timer1()` used to be accepted and
    produce nothing at all: the name still resolved to the group, so the register accesses
    around the call worked and the meaningless call went unsaid. A group is a namespace over
    the silicon, not a type, so the call is now a located error naming the group and saying
@@ -76,15 +90,15 @@ CAN promise and keep still while the definitions underneath it move.
    the enforcement a singleton metaclass would provide, as a diagnostic, at no runtime cost
    and with no compile-time object model (see 3c).
 
-5. **Per instance, not per kind.** `TIMER0`, `TIMER1`, `TIMER2` are three classes, because on
+6. **Per instance, not per kind.** `Timer0`, `Timer1`, `Timer2` are three classes, because on
    the ATmega328P they are three different register sets at three different widths. A
    `Timer(n)` abstraction over them is the HAL's job (`pymcu.hal.avr.timer`), and it already
    exists; this layer is the registers, not a driver.
 
-6. **The addresses ARE the loose names, not copies of them.**
+7. **The addresses ARE the loose names, not copies of them.**
 
    ```python
-   class TIMER1:
+   class Timer1:
        TCCR1A: ptr[uint8] = ptr(TCCR1A)
    ```
 
@@ -92,7 +106,7 @@ CAN promise and keep still while the definitions underneath it move.
    one. This is what makes decision 2 pay: the group is mechanically derivable and
    mechanically checkable.
 
-7. **The loose names stay, and they stay undocumented.** They are not deprecated with a
+8. **The loose names stay, and they stay undocumented.** They are not deprecated with a
    diagnostic: the HAL itself uses them, on every chip, so a diagnostic would fire on our own
    stdlib on every build. The contract is stated instead, in the chip file and in the
    language docs: **the grouped classes are the surface the project keeps stable; the
@@ -127,19 +141,19 @@ all three let the program compile and do the wrong thing.
    declaration one scope deeper.
 
 2. **The compile-time class-dict accumulator claimed every `Class.attr[k] = v`.** The
-   receiver naming a class was the whole test, so `TIMER1.TIFR1[TIMER1.TOV1] = 1` built a
+   receiver naming a class was the whole test, so `Timer1.TIFR1[Timer1.TOV1] = 1` built a
    phantom dict entry and emitted nothing. The same hole swallowed `Store.buf[0] = 5` on a
    class-level `bytearray`, which is a pre-existing silent-wrongcode bug of its own: the
    matching read folded to the value just "written" while the array in SRAM kept its zeros,
    so the program agreed with itself at that one subscript and read zeros from a loop, a
    runtime index or another function.
 
-3. **A class constant as a bit index missed the direct bit test.** `if TIFR1[TIMER1.TOV1]:`
+3. **A class constant as a bit index missed the direct bit test.** `if TIFR1[Timer1.TOV1]:`
    materialized the bit into a register and compared it, ten bytes where `SBIS` answers in
    one, while the same condition written `if TIFR1[0]:` was free.
 
 An address the scan cannot resolve is now a located error naming the attribute, instead of
-the group being filed as a dead SRAM variable. A fourth silence, `TIMER1()` compiling to
+the group being filed as a dead SRAM variable. A fourth silence, `Timer1()` compiling to
 nothing, is refused by decision 4 above.
 
 ## 3b. The ptr-over-a-base-address view, and why it is the ARM shape
@@ -224,7 +238,7 @@ do nothing, so a program that relies on either is silently wrong. They deserve a
 
 **The two things a metaclass would buy, weighed.** ENFORCEMENT is buying a guard against a
 thing that cannot happen: a class of class-level constants has no instantiation to control, and
-measured, `t = TIMER1()` followed by `t.TCCR1A.value = 0x82` compiles and still writes 0x80,
+measured, `t = Timer1()` followed by `t.TCCR1A.value = 0x82` compiles and still writes 0x80,
 because the call produces nothing at all. The only wart is that the meaningless call is accepted
 in silence, and the answer to that is a located refusal of a call on a register group, which is
 a diagnostic and not an object model. FAITHFULNESS is buying compatibility with programs that

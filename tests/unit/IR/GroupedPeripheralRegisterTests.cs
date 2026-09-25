@@ -13,11 +13,11 @@ namespace PyMCU.UnitTests;
 /// The grouped form declares the same registers as attributes of a class named after the
 /// peripheral:
 ///
-///     class TIMER1:
+///     class Timer1:
 ///         TCCR1A: ptr[uint8] = ptr(0x80)
 ///         TCNT1: ptr[uint16] = ptr(0x84)
 ///
-///     TIMER1.TCCR1A.value = 0x82
+///     Timer1.TCCR1A.value = 0x82
 ///
 /// A class-level ptr declaration is a REGISTER, not a class constant: it carries an address
 /// AND a width, and both have to survive to the MMIO paths. Folded to a plain Constant it
@@ -37,7 +37,7 @@ public class GroupedPeripheralRegisterTests
     private const string GroupHeader =
         "from pymcu.types import ptr, uint8, uint16\n" +
         "\n" +
-        "class TIMER1:\n" +
+        "class Timer1:\n" +
         "    TCCR1A: ptr[uint8] = ptr(0x80)\n" +
         "    TCCR1B: ptr[uint8] = ptr(0x81)\n" +
         "    TCNT1: ptr[uint16] = ptr(0x84)\n" +
@@ -66,7 +66,7 @@ public class GroupedPeripheralRegisterTests
     {
         var ir = Gen(GroupHeader +
             "def main():\n" +
-            "    TIMER1.TCCR1A.value = 0x82\n");
+            "    Timer1.TCCR1A.value = 0x82\n");
 
         Assert.Contains(
             Code(ir).OfType<Copy>(),
@@ -81,7 +81,7 @@ public class GroupedPeripheralRegisterTests
         // which is only reachable when the symbol carried UINT16 rather than a bare int.
         var ir = Gen(GroupHeader +
             "def main():\n" +
-            "    TIMER1.OCR1A.value = 1500\n");
+            "    Timer1.OCR1A.value = 1500\n");
 
         var stores = Code(ir).OfType<Copy>()
             .Where(c => c.Dst is MemoryAddress { Address: 0x88 or 0x89 })
@@ -96,7 +96,7 @@ public class GroupedPeripheralRegisterTests
     {
         var ir = Gen(GroupHeader +
             "def main():\n" +
-            "    c: uint16 = TIMER1.TCNT1.value\n");
+            "    c: uint16 = Timer1.TCNT1.value\n");
 
         Assert.Contains(
             Code(ir).OfType<Copy>(),
@@ -108,8 +108,8 @@ public class GroupedPeripheralRegisterTests
     {
         var ir = Gen(GroupHeader +
             "def main():\n" +
-            "    TIMER1.TIFR1[0] = 1\n" +
-            "    TIMER1.TIFR1[2] = 0\n");
+            "    Timer1.TIFR1[0] = 1\n" +
+            "    Timer1.TIFR1[2] = 0\n");
 
         Assert.Contains(Code(ir).OfType<BitSet>(),
             b => b.Target is MemoryAddress { Address: 0x36 } && b.Bit == 0);
@@ -123,8 +123,8 @@ public class GroupedPeripheralRegisterTests
         var ir = Gen(GroupHeader +
             "from pymcu.types import uint8\n" +
             "def main():\n" +
-            "    if TIMER1.TIFR1[0]:\n" +
-            "        TIMER1.TCCR1B.value = 1\n");
+            "    if Timer1.TIFR1[0]:\n" +
+            "        Timer1.TCCR1B.value = 1\n");
 
         Assert.Contains(Code(ir).OfType<JumpIfBitClear>(),
             j => j.Source is MemoryAddress { Address: 0x36 } && j.Bit == 0);
@@ -148,11 +148,11 @@ public class GroupedPeripheralRegisterTests
 
         var loose = Code(Gen(LooseHeader + body));
         var grouped = Code(Gen(GroupHeader + body
-            .Replace("TCCR1A", "TIMER1.TCCR1A")
-            .Replace("TCCR1B", "TIMER1.TCCR1B")
-            .Replace("OCR1A", "TIMER1.OCR1A")
-            .Replace("TCNT1", "TIMER1.TCNT1")
-            .Replace("TIFR1", "TIMER1.TIFR1")));
+            .Replace("TCCR1A", "Timer1.TCCR1A")
+            .Replace("TCCR1B", "Timer1.TCCR1B")
+            .Replace("OCR1A", "Timer1.OCR1A")
+            .Replace("TCNT1", "Timer1.TCNT1")
+            .Replace("TIFR1", "Timer1.TIFR1")));
 
         Assert.NotEmpty(loose);
         Assert.Equal(
@@ -171,15 +171,15 @@ public class GroupedPeripheralRegisterTests
             "TCCR1A: ptr[uint8] = ptr(0x80)\n" +
             "TCNT1: ptr[uint16] = ptr(0x84)\n" +
             "\n" +
-            "class TIMER1:\n" +
+            "class Timer1:\n" +
             "    TCCR1A: ptr[uint8] = ptr(TCCR1A)\n" +
             "    TCNT1: ptr[uint16] = ptr(TCNT1)\n" +
             "    TCCR1B: ptr[uint8] = ptr(TCCR1A + 1)\n" +
             "\n" +
             "def main():\n" +
-            "    TIMER1.TCCR1A.value = 0x82\n" +
-            "    TIMER1.TCCR1B.value = 0x19\n" +
-            "    TIMER1.TCNT1.value = 0\n");
+            "    Timer1.TCCR1A.value = 0x82\n" +
+            "    Timer1.TCCR1B.value = 0x19\n" +
+            "    Timer1.TCNT1.value = 0\n");
 
         var stores = Code(ir).OfType<Copy>()
             .Where(c => c.Dst is MemoryAddress)
@@ -202,11 +202,11 @@ public class GroupedPeripheralRegisterTests
             "def base() -> uint8:\n" +
             "    return 0x80\n" +
             "\n" +
-            "class TIMER1:\n" +
+            "class Timer1:\n" +
             "    TCCR1A: ptr[uint8] = ptr(base())\n" +
             "\n" +
             "def main():\n" +
-            "    TIMER1.TCCR1A.value = 0x82\n"));
+            "    Timer1.TCCR1A.value = 0x82\n"));
 
         Assert.Contains("TCCR1A", ex.Message);
         Assert.Contains("known while compiling", ex.Message);
@@ -220,13 +220,13 @@ public class GroupedPeripheralRegisterTests
         // the register accesses after it worked and the meaningless call went unsaid.
         var ex = Assert.Throws<CompilerError>(() => Gen(GroupHeader +
             "def main():\n" +
-            "    t = TIMER1()\n" +
+            "    t = Timer1()\n" +
             "    t.TCCR1A.value = 0x82\n"));
 
-        Assert.Contains("TIMER1", ex.Message);
+        Assert.Contains("Timer1", ex.Message);
         Assert.Contains("not a class to instantiate", ex.Message);
         // The message says what to write instead.
-        Assert.Contains("TIMER1.<REGISTER>.value", ex.Message);
+        Assert.Contains("Timer1.<REGISTER>.value", ex.Message);
     }
 
     [Fact]

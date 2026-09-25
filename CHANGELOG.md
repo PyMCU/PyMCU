@@ -7,8 +7,8 @@
 - **ir/stdlib**: grouped peripherals (RFC 0012). A `ptr[T]` declaration works in a CLASS
   body, so a peripheral's registers can be reached as attributes of one named class the way
   an XC8 program reaches T1CON through the Timer1 SFR block:
-  `TIMER1.TCCR1A.value = 0x82`, `TIMER1.ICR1.value = 19999`,
-  `TIMER1.TCCR1B[TIMER1.CS10] = 1`, `if TIMER1.TIFR1[TIMER1.TOV1]:`. Bit positions are
+  `Timer1.TCCR1A.value = 0x82`, `Timer1.ICR1.value = 19999`,
+  `Timer1.TCCR1B[Timer1.CS10] = 1`, `if Timer1.TIFR1[Timer1.TOV1]:`. Bit positions are
   members of the same class, so one import brings the whole peripheral and no bit name
   reaches module scope. The address may be a literal, constant arithmetic, or another
   register's name -- `ptr(TCCR1A)` -- which keeps ONE copy of every address in the chip
@@ -19,10 +19,10 @@
   measured over the whole access surface (both widths, byte halves, read-modify-write,
   augmented assignment, constant and runtime bit index, the register inside an `@inline`
   helper and inside an ISR) and pinned in the AVR suite by two fixtures whose `.hex` must
-  match. `pymcu.chips.atmega328p` ships the first group, `TIMER1`. The grouped classes are
+  match. `pymcu.chips.atmega328p` ships the first group, `Timer1`. The grouped classes are
   the surface the project keeps stable; the loose module-level register names are an
   implementation detail of the HAL and may change in any release.
-  Calling a group -- `TIMER1()` -- is refused with a located message naming it: a group is
+  Calling a group -- `Timer1()` -- is refused with a located message naming it: a group is
   a namespace over the silicon, not a type, and the call used to be accepted and produce
   nothing at all while the register accesses around it still worked.
 
@@ -125,7 +125,7 @@
   index, from another function. The accumulator now runs only when the attribute IS a dict
   or set binding.
 - **ir/avr**: a class constant used as a bit index missed the direct bit test, so
-  `if TIFR1[TIMER1.TOV1]:` materialized the bit into a register and compared it -- ten bytes
+  `if TIFR1[Timer1.TOV1]:` materialized the bit into a register and compared it -- ten bytes
   where `SBIS` answers in one -- while the same condition written `if TIFR1[0]:` was free.
 - **hal/avr**: `I2C.writebyte()` returned nothing, so a NACKed transaction was invisible
   to the caller. It now returns `1` on success, the failing TWI status (`0x20`/`0x30`) on

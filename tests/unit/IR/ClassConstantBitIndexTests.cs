@@ -9,7 +9,7 @@ namespace PyMCU.UnitTests;
 /// <summary>
 /// `if REG[BIT]:` lowers to a single SBIS/SBIC when the bit index is known while compiling.
 /// The resolver behind that only knew an integer literal and a bare module constant, so a
-/// CLASS constant -- `if TIFR1[TIMER1.TOV1]:`, the spelling a grouped peripheral asks for
+/// CLASS constant -- `if TIFR1[Timer1.TOV1]:`, the spelling a grouped peripheral asks for
 /// because it keeps its bit positions next to its registers -- missed it: the bit was
 /// materialized into a register as 0 or 1 and then compared, ten bytes on AVR where the
 /// direct test needs one instruction.
@@ -29,7 +29,7 @@ public class ClassConstantBitIndexTests
         "\n" +
         "TIFR1: ptr[uint8] = ptr(0x36)\n" +
         "\n" +
-        "class TIMER1:\n" +
+        "class Timer1:\n" +
         "    TOV1: int = 0\n" +
         "    ICF1: int = 5\n" +
         "\n";
@@ -42,8 +42,8 @@ public class ClassConstantBitIndexTests
     {
         var ir = Gen(Header +
             "def main():\n" +
-            "    if TIFR1[TIMER1.ICF1]:\n" +
-            "        TIFR1[TIMER1.ICF1] = 1\n");
+            "    if TIFR1[Timer1.ICF1]:\n" +
+            "        TIFR1[Timer1.ICF1] = 1\n");
 
         Assert.Contains(Code(ir).OfType<JumpIfBitClear>(),
             j => j.Source is MemoryAddress { Address: 0x36 } && j.Bit == 5);
@@ -56,8 +56,8 @@ public class ClassConstantBitIndexTests
         // the presence of an answer would get wrong.
         var ir = Gen(Header +
             "def main():\n" +
-            "    if TIFR1[TIMER1.TOV1]:\n" +
-            "        TIFR1[TIMER1.TOV1] = 1\n");
+            "    if TIFR1[Timer1.TOV1]:\n" +
+            "        TIFR1[Timer1.TOV1] = 1\n");
 
         Assert.Contains(Code(ir).OfType<JumpIfBitClear>(),
             j => j.Source is MemoryAddress { Address: 0x36 } && j.Bit == 0);
@@ -68,8 +68,8 @@ public class ClassConstantBitIndexTests
     {
         var named = Code(Gen(Header +
             "def main():\n" +
-            "    if TIFR1[TIMER1.ICF1]:\n" +
-            "        TIFR1[TIMER1.TOV1] = 1\n"));
+            "    if TIFR1[Timer1.ICF1]:\n" +
+            "        TIFR1[Timer1.TOV1] = 1\n"));
         var literal = Code(Gen(Header +
             "def main():\n" +
             "    if TIFR1[5]:\n" +

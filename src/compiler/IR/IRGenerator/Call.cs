@@ -173,7 +173,7 @@ public partial class IRGenerator
             expr = new CallExpr(new VariableExpr(clsCtorMapped), expr.Args)
                 { Line = expr.Line, Column = expr.Column, Length = expr.Length };
 
-        // RFC 0012: `TIMER1()` on a grouped peripheral. A register group is a namespace over
+        // RFC 0012: `Timer1()` on a grouped peripheral. A register group is a namespace over
         // the silicon, not a type: no fields, no constructor, no instance. The call used to be
         // accepted and produce nothing at all -- the name still resolved to the group, so the
         // register accesses that followed worked and the meaningless call went unsaid. Refused
@@ -183,9 +183,11 @@ public partial class IRGenerator
             && (registerGroupClasses.Contains(regGroupVe.Name)
                 || registerGroupClasses.Contains(ResolveCallee(regGroupVe.Name))))
             throw UserError(
-                $"'{regGroupVe.Name}' is a peripheral's registers, not a class to instantiate: "
-                + $"it has no constructor and no instance. Reach the registers through the name "
-                + $"itself ({regGroupVe.Name}.<REGISTER>.value, {regGroupVe.Name}.<REGISTER>[bit]).",
+                $"'{regGroupVe.Name}' is a peripheral's registers, not a class to instantiate. It "
+                + "is named like a type because PEP 8 names classes that way, and it is a namespace "
+                + "over the silicon: no fields, no constructor, nothing to construct. Drop the call "
+                + $"and reach the registers through the name itself ({regGroupVe.Name}.<REGISTER>"
+                + $".value, {regGroupVe.Name}.<REGISTER>[bit]).",
                 expr.Callee);
 
         if (TryEmitCompileTimeSetattr(expr) is { } setattrResult) return setattrResult;

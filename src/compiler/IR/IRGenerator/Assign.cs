@@ -4514,7 +4514,7 @@ public partial class IRGenerator
         // program agreed with itself at the one spot and disagreed everywhere else (a
         // runtime index, a loop, another function). A class-level register declaration
         // (`TIFR1: ptr[uint8] = ptr(0x36)`, RFC 0012) fell into the same hole and dropped
-        // `TIMER1.TIFR1[0] = 1` in silence. The empty `cls.string = {}` that opens the
+        // `Timer1.TIFR1[0] = 1` in silence. The empty `cls.string = {}` that opens the
         // Adafruit CV pattern registers the binding in EmitMemberAssign, and a class-body
         // dict/set literal registers in ScanClassBodyAttributes, so both arrive here known.
         if (indexExpr.Target is MemberAccessExpr dictMem
