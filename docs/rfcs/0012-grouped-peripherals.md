@@ -132,6 +132,123 @@ all three let the program compile and do the wrong thing.
 An address the scan cannot resolve is now a located error naming the attribute, instead of
 the group being filed as a dead SRAM variable.
 
+## 3b. The ptr-over-a-base-address view, and why it is the ARM shape
+
+A C header describes a peripheral as a struct at a fixed address, and the obvious question is
+whether a group should be that: a `ptr` view over a base, so that Timer0, Timer1 and Timer2
+become ONE type at three bases instead of three hand-written classes. Measured, the answer
+splits by architecture, and the split is not a matter of taste.
+
+**On AVR no peripheral is a contiguous block.** Timer/Counter1's fourteen registers run from
+TIFR1 at 0x36 to OCR1BH at 0x8B, an 86-byte span holding 14 registers and 72 holes, with
+TIMSK1 at 0x6F sitting between TCNT0's block and TCCR1A's. Timer0 spans 58 bytes for 8
+registers, Timer2 128 bytes for 9. Only TWI (0xB8..0xBD), SPI (0x4C..0x4E) and each PORT
+triple are dense. Worse for the "one type" claim, the three timers do not have the same
+SHAPE at different offsets: TCCR1C, ICR1 and a 16-bit TCNT1 exist only on Timer1, ASSR only
+on Timer2, the counters are 8 bits on Timer0 and Timer2 and 16 on Timer1, and all three share
+one GTCCR. There is no base and no stride that turns one into another, so on AVR "the same
+type at three base addresses" is not a spelling problem; it is not expressible.
+
+**On the RP parts it is exactly the right model, and the chip file already writes it that
+way.** `lib/src/pymcu/chips/rp2040.py` carries 60 `*_BASE` constants and spells every register
+as `ptr(BASE + offset)`, with real strides (IO_BANK0 is 8 bytes per pin) and the atomic
+XOR/SET/CLR aliases at +0x1000/+0x2000/+0x3000. There a group IS a view over a base and the
+"one type, N instances" buy is real.
+
+The grouped-class spelling accommodates both without change, because the address expression is
+free: `ptr(0x80)`, `ptr(TCCR1A)`, `ptr(TCCR1A + 1)` and `ptr(T1_BASE + 0x04)` are all resolved
+by the same scan-time evaluator. What decides the cost is WHERE the base lives:
+
+| Base held as | Result | Measured |
+|---|---|---|
+| A module-level `const` | Folds to a constant address | Byte-identical to the loose program |
+| A `const[uint16]` parameter of an `@inline` function | Folds to a constant address | Byte-identical to the loose program, 146 B, one body serving any base |
+| A field of a ZCA instance (`ptr(self._base + 4)`) | Does NOT fold; degrades to a runtime pointer | 156 B against 146 B on a three-access program, an `LDI` pair and an indirect `LD`/`ST` per access |
+
+So "one body, N bases" is available today at zero cost through a `const` parameter, and only
+"one TYPE, N instances" is blocked. The blockage has one cause and one location:
+`TryEvalConstAddress` (`src/compiler/IR/IRGenerator/Call.cs:9857`) has cases for
+`IntegerLiteral`, `BinaryExpr`, `UnaryExpr` and `VariableExpr`; a `MemberAccessExpr` matches
+none of them and the whole address expression returns null. Closing it means folding a field
+whose value is a compile-time constant, and only such a field, which is a change with a real
+risk of folding a field that is not one. It is not done here, and it is the first thing to do
+if the RP backends want peripheral instances rather than peripheral classes.
+
+## 3c. Metaprogramming, and what the ecosystem actually uses
+
+The Python way to express a singleton is a metaclass, and in an AOT compiler a metaclass runs
+at class-creation time, which is compile time, so the idea deserves a measurement rather than
+a preference. Every claim below is one.
+
+**Nothing of the machinery exists.** `class X(metaclass=M):` does not parse on the C# front
+end, which refuses the keyword in the class header ("Expected ')'"). On the Python front end
+it parses, because CPython's `ast` accepts it, and then fails in the IR generator on the
+metaclass itself: `class M(type)` reports that the base `type` is not defined. Two front ends,
+two different refusals, one conclusion.
+
+**`CompileTimeEvaluator` is not a general evaluator.** It is 303 lines that syntactically match
+a fixed table of shapes: `__CHIP__.*`, `__FREQ__`/`F_CPU`, `__name__`, `sys.platform`,
+`sys.implementation.*` and `os.uname().*`, combined with and/or/not, equality, ordering, `in`
+over a uname call and `.startswith`. What it returns is whether a CONDITION is true, so a dead
+branch can be removed. It has no environment, no values other than the ints and strings in that
+table, no function call, no dict and no class object. A metaclass body needs a class object as
+a first-class value, dispatch through `type.__call__`, `super().__call__(*args, **kwargs)`, a
+mutable dict keyed by class objects and identity over them. None of that is a step away from
+this evaluator; it is a compile-time object model, and the roadmap already records the adjacent
+limits (`@staticmethod` unsupported because calling through the class object is what is
+missing, and `cls` is not a runtime object).
+
+**The cheaper spellings, measured on the same program** (two register writes and a read in a
+loop):
+
+| Spelling | Bytes | Verdict |
+|---|---|---|
+| Class with class-level `ptr` constants | 146 | Byte-identical to the loose program. Zero |
+| Module-level instance with `ptr` fields | 158 | Twelve bytes, and a spurious `TCCR1B = 0` store before the real one, which momentarily stops the timer |
+| Module-level instance with methods returning `ptr[uint8]` | refused | `f().value = x` is not an assignable target |
+| `__new__` returning a cached instance | compiles | NEVER RUNS. The probe prints 0 where CPython prints 1, with no diagnostic |
+| `__init_subclass__` counting its subclasses | compiles | NEVER RUNS. The probe prints 0 where CPython prints 2, with no diagnostic |
+
+The last two are a finding of their own and are not fixed here: both hooks compile clean and
+do nothing, so a program that relies on either is silently wrong. They deserve a refusal.
+
+**The two things a metaclass would buy, weighed.** ENFORCEMENT is buying a guard against a
+thing that cannot happen: a class of class-level constants has no instantiation to control, and
+measured, `t = TIMER1()` followed by `t.TCCR1A.value = 0x82` compiles and still writes 0x80,
+because the call produces nothing at all. The only wart is that the meaningless call is accepted
+in silence, and the answer to that is a located refusal of a call on a register group, which is
+a diagnostic and not an object model. FAITHFULNESS is buying compatibility with programs that
+do not exist: see the counts.
+
+**Who demands it.** Counted over 493 Python files of library and layer source, the 265 in the
+23 `cp-*` library projects plus 159 in `pymcu-circuitpython` and 69 in `pymcu-micropython`,
+excluding virtualenvs, uv caches and site-packages (those hold pytest, packaging and pygments,
+which are host tools and not code this compiler ever sees):
+
+| Construct | Files | Occurrences |
+|---|---|---|
+| `metaclass=` | 0 | 0 |
+| `type(name, bases, dict)` | 0 | 0 |
+| `__new__` | 0 | 0 |
+| `__init_subclass__` | 0 | 0 |
+| `__set_name__` | 0 | 0 |
+| `__slots__` | 0 | 0 |
+| `abstractmethod` / `ABCMeta` | 0 | 0 |
+| `__get__` | 19 | 25 |
+| `__set__` | 15 | 27 |
+| `namedtuple` | 4 | 13 |
+
+Every descriptor is in the six modules of `adafruit_register` (`i2c_bit`, `i2c_bits`,
+`i2c_struct`, `i2c_struct_array`, `i2c_bcd_datetime`, `i2c_bcd_alarm`) and their copies in the
+library projects. Those already compile: `cp-register`, whose program reaches a PCA9685 through
+`Struct(0x06, "<HH")` as a class attribute and assigns to it, builds unmodified at 2386 bytes
+with seven TWCR accesses in the emitted assembly.
+
+So the decision this RFC takes: a metaclass is the right Python answer to the question "how do
+I express a singleton", and a poor use of effort as a compiler feature, because the shape it
+would control does not occur in the code we compile and the group it would guard has nothing to
+instantiate. Descriptors are where the ecosystem is, and they work.
+
 ## 4. Generalising
 
 The grouped form is mechanically derivable from the loose list: a group is a name, a set of
