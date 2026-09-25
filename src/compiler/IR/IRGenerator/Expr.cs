@@ -722,12 +722,19 @@ public partial class IRGenerator
     /// </summary>
     private IEnumerable<string> ScopedNameKeys(string name)
     {
-        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + name;
+        // Inside an expansion the prefix is the WHOLE scope: a local of the expanded body is
+        // filed under it, and `currentFunction` still names the CALLER. Falling through to the
+        // caller's spelling answered the `w: uint32` counter of pymcu.hal.rp.cyw43.init with
+        // the caller's `w = CYW43()`, and refused `while w > 0:` as an ordering on an object.
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            yield return currentInlinePrefix + name;
+            yield break;
+        }
         if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
-        if (string.IsNullOrEmpty(currentInlinePrefix)
-            && (string.IsNullOrEmpty(currentFunction)
-                || currentFunction == "main"
-                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal)))
+        if (string.IsNullOrEmpty(currentFunction)
+            || currentFunction == "main"
+            || currentFunction.EndsWith("___module_init", StringComparison.Ordinal))
         {
             if (!string.IsNullOrEmpty(currentModulePrefix)) yield return currentModulePrefix + name;
             yield return name;
