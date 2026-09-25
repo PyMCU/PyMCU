@@ -2282,6 +2282,16 @@ public partial class IRGenerator
                                 }
 
                                 RefuseUnsupportedMethodDecorators(func, classDef.Name);
+                                RefuseUnrunnableConstructionHooks(func, classDef.Name);
+
+                                // A destructor is dead code on this target, and saying so at the
+                                // definition site alone would report every layer class that
+                                // mirrors an upstream __del__ to a program that never builds one
+                                // (machine.Timer, for one, in every MicroPython-layer build). The
+                                // site is filed here and reported at the end, for the classes the
+                                // program actually constructs (#491).
+                                if (func.Name == "__del__")
+                                    destructorSites[classKey] = (classDef.Name, func.Line);
 
                                 string fullName = currentModulePrefix + func.Name;
                                 // A property setter shares the getter's fullName, and
@@ -4084,6 +4094,38 @@ public partial class IRGenerator
     ///
     /// Refusing is the minimum honest answer for @extern rather than the finished one: making it
     /// work needs the class path to register the symbol and skip the body, which is its own job.
+    /// <summary>
+    /// The two construction hooks PyMCU has no step to run them in.
+    ///
+    /// Both compiled clean and never executed: `__new__` returning a cached instance and
+    /// `__init_subclass__` counting subclasses produced the same firmware as a program without
+    /// them (#491). There is nothing to intercept. An instance is laid out in static storage
+    /// with no allocation call, so `__new__` has no allocation to replace and no object to
+    /// return instead; and a class is a compile-time layout with no class object and no
+    /// creation event, so `__init_subclass__` has no moment to be called at.
+    ///
+    /// Refused where the method is written rather than implemented: measured across the stdlib,
+    /// both compatibility layers and the whole AVR example and fixture corpus, not one file
+    /// defines either, so nothing asks for them today and a refusal costs nothing, while a
+    /// half-answer would be a trap.
+    /// </summary>
+    private void RefuseUnrunnableConstructionHooks(FunctionDef func, string className)
+    {
+        if (func.Name == "__new__")
+            throw UserError(
+                $"'{className}.__new__' is defined, but PyMCU never calls it: an instance is laid "
+                + "out in static storage, there is no allocation step to intercept and no object "
+                + "to hand back in its place. Move the work into __init__, or build the instance "
+                + "in a module-level factory function that returns it.", func);
+
+        if (func.Name == "__init_subclass__")
+            throw UserError(
+                $"'{className}.__init_subclass__' is defined, but PyMCU never calls it: a class is "
+                + "a compile-time layout with no class object and no creation event to hook. Do "
+                + "the work in each subclass's __init__, or at module level where the subclass is "
+                + "declared.", func);
+    }
+
     private void RefuseUnsupportedMethodDecorators(FunctionDef func, string className)
     {
         bool hasSelf = func.Params.Count > 0 && func.Params[0].Name == "self";

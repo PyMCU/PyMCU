@@ -1979,6 +1979,84 @@ public class IRGeneratorTests
         Assert.Contains("no run-time string formatting", warnings);
     }
 
+    // ── The construction hooks are refused where they are written ─────────
+    // PyMCU#491: both compiled clean and never ran, producing the same firmware as a program
+    // without them. Neither the stdlib, nor either compatibility layer, nor the whole AVR
+    // example and fixture corpus defines one, so refusing costs nothing.
+    [Fact]
+    public void NewHook_IsRefusedAtItsDefinition()
+    {
+        const string src =
+            "class C:\n" +
+            "    def __new__(cls, n: uint8):\n        return 0\n" +
+            "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+            "def main():\n    c = C(5)\n    x: uint8 = c.n\n";
+
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("C.__new__", ex.Message);
+        Assert.Contains("never calls it", ex.Message);
+        Assert.Equal(2, ex.Line);
+    }
+
+    [Fact]
+    public void InitSubclassHook_IsRefusedAtItsDefinition()
+    {
+        const string src =
+            "class Base:\n" +
+            "    def __init__(self):\n        self.n: uint8 = 0\n" +
+            "    def __init_subclass__(cls):\n        return 0\n" +
+            "class Child(Base):\n" +
+            "    def __init__(self):\n        self.n: uint8 = 1\n" +
+            "def main():\n    c = Child()\n    x: uint8 = c.n\n";
+
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("Base.__init_subclass__", ex.Message);
+        Assert.Contains("no class object", ex.Message);
+        Assert.Equal(4, ex.Line);
+    }
+
+    // ── A destructor is dead, and says so for the classes built ───────────
+    // PyMCU#491: __del__ was emitted nowhere and nothing was said. It cannot be run -- storage
+    // is static, nothing collects an instance, and `del` is refused for the same reason -- so
+    // it is reported rather than implemented.
+    [Fact]
+    public void Destructor_OnAConstructedClass_Warns()
+    {
+        const string src =
+            "class C:\n" +
+            "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+            "    def __del__(self):\n        self.n = 0\n" +
+            "def main():\n    c = C(5)\n    x: uint8 = c.n\n";
+
+        var warnings = CaptureStderr(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("C.__del__", warnings);
+        Assert.Contains("never collects one", warnings);
+    }
+
+    // And stays quiet for a class the program never builds: a compatibility layer mirrors its
+    // upstream's __del__ (machine.Timer does), and every MicroPython-layer program imports that
+    // module without constructing one.
+    [Fact]
+    public void Destructor_OnAClassNeverConstructed_IsNotWarnedAbout()
+    {
+        const string src =
+            "class Unused:\n" +
+            "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+            "    def __del__(self):\n        self.n = 0\n" +
+            "class C:\n" +
+            "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+            "def main():\n    c = C(5)\n    x: uint8 = c.n\n";
+
+        var warnings = CaptureStderr(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.DoesNotContain("Unused.__del__", warnings);
+    }
+
     [Fact]
     public void IteratorDunder_GetsTheIteratorReason()
     {

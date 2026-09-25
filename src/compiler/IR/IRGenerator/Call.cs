@@ -2089,6 +2089,7 @@ public partial class IRGenerator
         var argValues = new List<Val>();
 
         bool isConstructor = callee.EndsWith("___init__") || callee.Contains("___init____");
+        if (isConstructor) NoteConstructedClass(callee);
         int paramOffset = 0;
 
         if (!isConstructor)

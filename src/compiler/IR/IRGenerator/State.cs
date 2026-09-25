@@ -209,6 +209,12 @@ public partial class IRGenerator
     //                     (excludes methods inherited via the toInherit copy loop).
     private Dictionary<string, HashSet<string>> classChildren      = new();
     private Dictionary<string, HashSet<string>> classDirectMethods = new();
+
+    // A class that defines __del__, by the key instanceClasses uses, with the name the source
+    // spells and the method's line. Reported only for classes the program constructs, which is
+    // what constructedClasses records (#491).
+    private readonly Dictionary<string, (string Name, int Line)> destructorSites = new();
+    private readonly HashSet<string> constructedClasses = new();
     // Classes that list `Protocol` as a base. A Union member that names one of these is a
     // structural type: an argument matches if it has the protocol's members, not if it is
     // the protocol class itself (#465, adafruit_debouncer's ROValueIO).

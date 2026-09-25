@@ -1589,11 +1589,51 @@ public partial class IRGenerator
         irProgram.CompileTimeNames = CompileTimeOnlyNames(irProgram);
         irProgram.CanonicalTemps = new Dictionary<string, string>(canonicalTemps);
 
+        // A class the program constructs and that defines __del__: the method is emitted
+        // nowhere, so say it once, now that construction is known.
+        WarnAboutUnrunnableDestructors();
+
         // Between-passes verifier (PYMCU_VERIFY_IR): the raw generator output is the
         // stage every later pass trusts, so it is the first thing worth checking.
         Verifier.Check(irProgram, "generate");
 
         return irProgram;
+    }
+
+    /// <summary>
+    /// The class key a constructor's symbol names, filed as constructed.
+    ///
+    /// The symbol is `&lt;classKey&gt;___init__`, with an overload suffix appended after a further
+    /// `__` when the constructor is overloaded, which is why the suffix is cut at the FIRST
+    /// occurrence rather than the last.
+    /// </summary>
+    private void NoteConstructedClass(string callee)
+    {
+        int at = callee.IndexOf("___init__", StringComparison.Ordinal);
+        if (at > 0) constructedClasses.Add(callee[..at]);
+    }
+
+    /// <summary>
+    /// `__del__` is never called on this target, and a program that defines one is entitled to
+    /// hear so. Storage is static: an instance holds its slot for the whole run, nothing
+    /// collects it, and `del` is refused for the same reason, so there is no moment a
+    /// destructor could run at. Reported for the classes the program CONSTRUCTS, because a
+    /// compatibility layer faithfully mirroring an upstream `__del__` (machine.Timer) would
+    /// otherwise report against every program that merely imports the module (#491).
+    /// </summary>
+    private void WarnAboutUnrunnableDestructors()
+    {
+        foreach (string clsKey in constructedClasses)
+        {
+            string owner = ResolveMROMethod(clsKey, "__del__");
+            if (!destructorSites.TryGetValue(owner, out var site)) continue;
+            Console.Error.WriteLine(
+                $"[pymcuc] warning: line {site.Line}: '{site.Name}.__del__' is defined but never "
+                + "called -- PyMCU lays every instance out in static storage and never collects "
+                + "one, and `del` is refused, so there is no moment at which a destructor could "
+                + "run. Release what the object holds from a method you call by name (deinit(), "
+                + "close()) or from a `with` block's __exit__.");
+        }
     }
 
     /// <summary>
