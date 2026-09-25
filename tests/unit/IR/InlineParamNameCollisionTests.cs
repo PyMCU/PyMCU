@@ -16,14 +16,20 @@ namespace PyMCU.UnitTests;
 /// the user's own global and a parameter inside a library they did not write and cannot see
 /// from the call site.
 ///
-/// `len(param)` asked the bare name before the frame's own binding, so the global's length
-/// was emitted as a constant.
+/// Two resolutions were wrong, and they had DIFFERENT reach:
+///
+///   len(param)     the bare name was asked before the frame's binding, so the global's
+///                  length was emitted as a constant. Wrong from anywhere.
+///   param[i]       the ENCLOSING FUNCTION's spelling was followed before the expansion's.
+///                  At module level that spelling is `main.<name>`, which for a module
+///                  global really is an alias to it, so the expansion read a different
+///                  object entirely. Inside a function the same program was correct,
+///                  because `&lt;fn&gt;.&lt;name&gt;` binds nothing.
 ///
 /// Found through I2C: `machine.I2C.writeto` is `def writeto(self, addr, buf: bytearray)` and
 /// calls `write_bytes(addr, buf, len(buf))`, so a program with its own module-level `buf` put
-/// that buffer's length on the wire instead of the one it passed. The bytes were right and
-/// there was the wrong number of them, which on a bus is indistinguishable from a wiring
-/// fault.
+/// that buffer's length -- and, at module level, its contents -- on the wire instead of what
+/// it passed. On a bus that is indistinguishable from a wiring fault.
 ///
 /// The discriminating experiment in every case is a RENAME: the layout does not move and the
 /// answer changes, which a shared storage slot could not do.
@@ -69,6 +75,46 @@ public class InlineParamNameCollisionTests
 
         Assert.True(Stores(ir, 23), "len(buf) must be 2, the argument's length");
         Assert.False(Stores(ir, 93), "the colliding global's length must not be measured");
+    }
+
+    // DISCRIMINATING, and the worse of the two: at MODULE level the expansion did not merely
+    // count wrong, it READ a different object. Inside a function the same program was already
+    // correct, which is the asymmetry that named the cause.
+    [Fact]
+    public void AParameterSubscriptAtModuleLevelReadsTheArgument()
+    {
+        var ir = Gen(Head +
+            "@inline\n" +
+            "def takes(buf: bytearray) -> uint8:\n" +
+            "    return buf[0]\n" +
+            "small = bytearray(2)\n" +
+            "buf = bytearray(9)\n" +
+            "small[0] = 7\n" +
+            "G.value = takes(small)\n");
+
+        Assert.Contains("small", ArraysRead(ir));
+        Assert.DoesNotContain("buf", ArraysRead(ir));
+    }
+
+    // INVARIANT, not discriminating: this spelling was already correct, and it is the control
+    // that separated "the name decides" from "the storage slot decides". It is kept so that
+    // reordering the module-level resolution cannot move it.
+    [Fact]
+    public void AParameterSubscriptInsideAFunctionStillReadsTheArgument()
+    {
+        var ir = Gen(Head +
+            "@inline\n" +
+            "def takes(buf: bytearray) -> uint8:\n" +
+            "    return buf[0]\n" +
+            "small = bytearray(2)\n" +
+            "buf = bytearray(9)\n" +
+            "def run() -> None:\n" +
+            "    small[0] = 7\n" +
+            "    G.value = takes(small)\n" +
+            "run()\n");
+
+        Assert.Contains("small", ArraysRead(ir));
+        Assert.DoesNotContain("buf", ArraysRead(ir));
     }
 
     // INVARIANT: a module global read from inside an expansion that does NOT bind that name
