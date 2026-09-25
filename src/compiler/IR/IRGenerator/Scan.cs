@@ -544,6 +544,34 @@ public partial class IRGenerator
             try
             {
                 var val = EvaluateConstantExpr(innerInit);
+
+                // A class-level `TCCR1A: ptr[uint8] = ptr(0x80)` is a REGISTER, not a
+                // class constant: the name carries an address and a width, and every
+                // `.value` / `[bit]` access on it has to reach the MMIO paths. Folding
+                // it to a plain Constant lost the width and left the write side with a
+                // Constant target it refuses ("Cannot assign to .value of this
+                // expression type"). Module level has recognised this shape since the
+                // first chip definition; a grouped peripheral (RFC 0012) is the same
+                // declaration one scope deeper, so it is recognised the same way and
+                // BEFORE the ALL-CAPS gate -- a register has no storage whatever its
+                // name looks like.
+                var isRegisterAttr = (innerInit is CallExpr regCall
+                                      && regCall.Callee is VariableExpr regCallee
+                                      && ((regCallee.Name == "ptr" && intrinsicNames.Contains("ptr"))
+                                          || regCallee.Name == "PIORegister"))
+                                     || (!string.IsNullOrEmpty(innerType)
+                                         && (innerType.Contains("ptr") || innerType.Contains("PIORegister")));
+
+                if (isRegisterAttr && !isEnum)
+                {
+                    globals[currentModulePrefix + innerName] = new SymbolInfo
+                    {
+                        IsMemoryAddress = true, Value = val,
+                        Type = DataTypeExtensions.StringToDataType(innerType),
+                    };
+                    continue;
+                }
+
                 // A name this program WRITES is not a constant, whatever it is
                 // called: the fold left the write nowhere to land and it was
                 // dropped in silence (#272). Module level has had this same gate
