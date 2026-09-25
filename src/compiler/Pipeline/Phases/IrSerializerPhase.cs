@@ -42,9 +42,11 @@ public class IrSerializerPhase : CompilerPhaseBase
 
         var dir = Path.GetDirectoryName(output);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
+            OutputFile.Guard(output, "create the directory of", () => Directory.CreateDirectory(dir));
 
-        IrSerializer.Serialize(ir, output);
+        // Serialize's only filesystem contact is this one file, so the guard around the whole
+        // call still names exactly what failed.
+        OutputFile.Guard(output, "write", () => IrSerializer.Serialize(ir, output));
         Logger.Verbose("pymcuc", $"IR written to {output}");
         Logger.BuildSuccess(output);
     }

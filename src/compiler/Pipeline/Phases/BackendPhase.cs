@@ -52,13 +52,24 @@ public class BackendPhase : CompilerPhaseBase
 
         var outputParent = Path.GetDirectoryName(options.OutputPath);
         if (!string.IsNullOrEmpty(outputParent) && !Directory.Exists(outputParent))
-            Directory.CreateDirectory(outputParent);
+            OutputFile.Guard(options.OutputPath, "create the directory of",
+                () => Directory.CreateDirectory(outputParent));
 
         Logger.Verbose("pymcuc",
             $"Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
 
-        using var asmFile = new StreamWriter(options.OutputPath);
-        backend.Compile(ir, asmFile);
+        StreamWriter asmFile = null!;
+        OutputFile.Guard(options.OutputPath, "open", () => asmFile = new StreamWriter(options.OutputPath));
+
+        using (asmFile)
+        {
+            backend.Compile(ir, asmFile);
+
+            // Flushed here rather than left to the `using`, so that a disk that fills on the
+            // last buffer is a named failure of this path and not an IOException out of a
+            // dispose that no guard is watching.
+            OutputFile.Guard(options.OutputPath, "write", asmFile.Flush);
+        }
 
         Logger.Verbose("pymcuc", $"Output written to {options.OutputPath}");
     }

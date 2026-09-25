@@ -83,3 +83,47 @@ public class NameError(string message, int line, int column = CompilerError.Unlo
 
 public class IndexError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("IndexError", message, line, column, length);
+/// Filesystem failures on a path the compiler was TOLD to write: the output assembly and the
+/// `--emit-ir` file.
+///
+/// Every one of them used to surface as `InternalCompilerError: IOException: <.NET's words>`,
+/// which is wrong twice over. It is not an internal error -- nothing in the compiler is
+/// broken, the environment refused the write -- and the header names the SOURCE file, so the
+/// one fact the reader needs, WHICH path could not be written, appears nowhere in the
+/// diagnostic. That is how #498 hid: two test suites in parallel handed pymcuc the same
+/// output path, the loser of the race reported a compiler crash on the user's main.py, and
+/// the failure looked like a miscompilation of whatever test happened to lose.
+///
+/// A read of an INPUT file must not come through here. The message asserts the path is an
+/// output, and a guard drawn wide enough to catch a runtime fragment the backend reads would
+/// make that assertion a lie -- so each guard wraps the call that opens or writes the named
+/// file and nothing else. See <see cref="Guard"/> for what that leaves out.
+public static class OutputFile
+{
+    /// Runs <paramref name="write"/>, reporting a filesystem refusal of <paramref name="path"/>
+    /// as a user diagnostic that names the path and says which of the two things failed.
+    ///
+    /// The location is line 0, column <see cref="CompilerError.Unlocated"/>: no line of the
+    /// source is responsible for this and none is pointed at. `PythonAstReader` reports a
+    /// python that will not start the same way.
+    ///
+    /// What this does NOT cover: a buffer that fills mid-codegen and flushes early. The write
+    /// syscall then happens inside the backend, outside this guard, and a disk that fills at
+    /// that exact moment is still reported as an internal error. Widening the guard to the
+    /// whole of codegen would put every IOException the backend can raise -- reading a runtime
+    /// `.S`, say -- under a message that swears the output file was at fault, which trades a
+    /// rare wrong label for a common one.
+    public static void Guard(string path, string action, Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                  or NotSupportedException or ArgumentException)
+        {
+            throw new CompilerError("OSError",
+                $"cannot {action} the output file '{path}': {e.Message}", 0, CompilerError.Unlocated);
+        }
+    }
+}
