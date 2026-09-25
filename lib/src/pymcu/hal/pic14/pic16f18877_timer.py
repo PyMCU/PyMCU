@@ -1,8 +1,11 @@
 from pymcu.chips.pic16f18877 import T0CON0, T0CON1, TMR0L, TMR0H
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, uint16, inline
 
 @inline
-def timer0_init(prescaler: uint8):
+def timer0_init(prescaler: uint16):
+    # uint16, not uint8: the top prescaler this chip offers is 256, which a
+    # uint8 cannot hold. Timer.__init__ declares uint16 and pic12 and the AVR
+    # timers already agree; here the 256 arm was unreachable.
     T0CON0.value = 0x00
     if prescaler == 1:
         T0CON1.value = 0x40

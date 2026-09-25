@@ -3,7 +3,10 @@ from pymcu.chips import __FREQ__
 from pymcu.types import uint8, uint16, uint32, inline, compile_isr
 
 @inline
-def timer0_init(prescaler: uint8):
+def timer0_init(prescaler: uint16):
+    # uint16, not uint8: the top prescaler this chip offers is 256, which a
+    # uint8 cannot hold. Timer.__init__ declares uint16 and pic12 and the AVR
+    # timers already agree; here the 256 arm was unreachable.
     if prescaler == 2:
         T0CON.value = 0x00
     elif prescaler == 4:

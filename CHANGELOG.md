@@ -135,7 +135,14 @@
   said it should, so the writers it emits unconditionally no longer drag the refusal in.
   The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` -- already dispatched inside
   the class body for this reason; the UART was the one that did not. Firmware for every PIC
-  program that does have a UART is byte-identical.=======
+  program that does have a UART is byte-identical.==============
+- **stdlib**: `timer0_init` takes a `uint16` prescaler on the PIC14, PIC14E and PIC18 HALs,
+  as it already did on PIC12 and AVR. The three declared `uint8` while testing
+  `prescaler == 256`, an arm a uint8 can never take, and `Timer.__init__` hands them a
+  `uint16`. The mismatch was invisible while an `@inline` argument reached the body
+  unnarrowed: 256 matched an arm the declaration says is unreachable, and the register was
+  configured by luck. Narrowed, 256 became 0, no arm matched, and `Timer(0, 256)` configured
+  nothing at all -- which is how the dead arm was found.
 - **stdlib**: `delay_ms` is declared `uint16`, and now every architecture behind it is. The
   per-architecture helpers (`_delay_ms_pic12`, `_delay_ms_pic14`, `_delay_ms_pic14e`,
   `_delay_ms_pic18`, `_delay_ms_riscv`) each took a `uint8` and walked a `uint8` counter, so
