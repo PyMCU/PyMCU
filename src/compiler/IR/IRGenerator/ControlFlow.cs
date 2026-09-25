@@ -2800,11 +2800,24 @@ public partial class IRGenerator
         // A bare `raise` (no type) re-raises the exception currently being handled. Re-signal from
         // the handler's saved code variable (SignalError reloads R22 from it), so it is correct even
         // if the handler clobbered R22. Outside a handler (no saved code) fall back to keeping R22.
-        Val code = !string.IsNullOrEmpty(stmt.ErrorType)
-            ? ResolveBinding(stmt.ErrorType)
-            : handlerCodeStack.Count > 0
-                ? new Variable(handlerCodeStack[^1], DataType.UINT8)
-                : new Constant(0);
+        // `raise e` naming the exception this handler bound (`except X as e`) is the
+        // same re-raise in CPython's spelling: no exception object exists here, but
+        // the code and message word it stands for are exactly what a bare `raise`
+        // re-signals -- so take the bare-raise path for it.
+        bool reraisesBound = false;
+        Val code;
+        if (stmt.ErrorType.Length > 0
+            && TryGetExceptionBinding(stmt.ErrorType, out var reraiseBinding))
+        {
+            code = new Variable(reraiseBinding.CodeVar, DataType.UINT8);
+            reraisesBound = true;
+        }
+        else if (stmt.ErrorType.Length > 0)
+            code = ResolveBinding(stmt.ErrorType);
+        else if (handlerCodeStack.Count > 0)
+            code = new Variable(handlerCodeStack[^1], DataType.UINT8);
+        else
+            code = new Constant(0);
 
         // The message, alongside the code. A string literal is one store of the flash address
         // of the interned text (#369). A non-literal (f-string, concatenation, call) stores
@@ -2812,14 +2825,16 @@ public partial class IRGenerator
         // dispatches on the id and replays that site's print sequence (#435).
         //
         // A bare re-raise writes nothing: the word still holds the message of the exception
-        // being handled, which is the one being re-raised.
+        // being handled, which is the one being re-raised. `raise e` on the bound name is
+        // the same re-raise, so it writes nothing either.
+        bool writesMessage = !string.IsNullOrEmpty(stmt.ErrorType) && !reraisesBound;
         bool dynamicStored = false;
-        if (dynamicMessage != null && programRecordsRaiseMessages && !string.IsNullOrEmpty(stmt.ErrorType))
+        if (dynamicMessage != null && programRecordsRaiseMessages && writesMessage)
         {
             EmitDynamicRaiseMessage(dynamicMessage, stmt);
             dynamicStored = true;
         }
-        else if (programHasDynamicRaiseMessage && !string.IsNullOrEmpty(stmt.ErrorType))
+        else if (programHasDynamicRaiseMessage && writesMessage)
         {
             // A literal raise in a program that also has a deferred-print raise must clear
             // the site id, or print(e) would replay the previous raise's pieces.
@@ -2827,7 +2842,7 @@ public partial class IRGenerator
             Emit(new Copy(new Constant(0), new Variable(ExceptionSiteVar, DataType.UINT8)));
         }
 
-        if (programRecordsRaiseMessages && !string.IsNullOrEmpty(stmt.ErrorType)
+        if (programRecordsRaiseMessages && writesMessage
             && !string.IsNullOrEmpty(resolvedMessage) && !dynamicStored)
         {
             DeclareExceptionMessageVar();
@@ -2836,7 +2851,7 @@ public partial class IRGenerator
             sawRaiseMessageStore = true;
         }
         else if (programRecordsRaiseMessages && programReportsRaiseMessage
-                 && !string.IsNullOrEmpty(stmt.ErrorType)
+                 && writesMessage
                  && string.IsNullOrEmpty(resolvedMessage) && dynamicMessage == null)
         {
             // A typed raise with no message must not leave the previous raise's message

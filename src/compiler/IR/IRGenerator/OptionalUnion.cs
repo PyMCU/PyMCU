@@ -351,9 +351,38 @@ public partial class IRGenerator
         if (TagOfVal(v) == null) return;
         if (ValNameOf(v) is { } nm
             && (narrowedOptionals.ContainsKey(nm) || noneValuedNames.Contains(nm))) return;
-        string who = DescribeOperand(src) ?? ValNameOf(v) ?? "the value";
+        // When the stored value is a composite (`v + 1`) its result temp names nothing the
+        // user wrote; name the live-optional operand inside it instead of the temp.
+        string who = DescribeOperand(src) ?? OptionalOperandName(src)
+                     ?? ValNameOf(v) ?? "the value";
+        // A union with no None member can't be None -- the honest statement is that the
+        // value is still a union, not that it may be absent.
+        if (TagOfVal(v) is not null
+            && ValNameOf(v) is { } tnm
+            && optionalMembersByName.TryGetValue(tnm, out var vmembers)
+            && NoneIndex(vmembers) < 0)
+            throw UserError(
+                $"'{who}' is still a union ({UnionDisplay(vmembers)}); " +
+                "narrow it to one member first.", src);
         throw UserError(
             $"'{who}' may be None here; narrow it first (`if {who} is not None:`).", src);
+    }
+
+    /// The name of a live-optional VariableExpr reachable inside <paramref name="e"/> --
+    /// the operand whose tag makes a composite result (`v + 1`) still tagged.
+    private string? OptionalOperandName(Expression? e)
+    {
+        switch (e)
+        {
+            case VariableExpr ve when OptionalNameKeys(ve.Name).Any(optionalTagSlots.ContainsKey):
+                return ve.Name;
+            case BinaryExpr b: return OptionalOperandName(b.Left) ?? OptionalOperandName(b.Right);
+            case UnaryExpr u: return OptionalOperandName(u.Operand);
+            case CallExpr c: return OptionalOperandName(c.Callee);
+            case MemberAccessExpr m: return OptionalOperandName(m.Object);
+            case IndexExpr ix: return OptionalOperandName(ix.Target) ?? OptionalOperandName(ix.Index);
+            default: return null;
+        }
     }
 
     /// Evaluate an expression whose bare-name read is a tag CARRY, not a payload use:
