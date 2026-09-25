@@ -22,16 +22,14 @@ def _ow_reset(bit: uint8) -> uint8:
     mask: uint8 = 1 << bit
     DDRD.value = DDRD.value | mask      # output
     PORTD.value = PORTD.value & ~mask   # drive LOW
-    delay_us(240)
-    delay_us(240)                        # 480 us total reset pulse
+    delay_us(480)                        # reset pulse
     DDRD.value = DDRD.value & ~mask     # input (release bus)
     PORTD.value = PORTD.value | mask    # weak pull-up
     delay_us(70)                         # wait for presence pulse
     present: uint8 = 0
     if (PIND.value & mask) == 0:
         present = 1
-    delay_us(200)
-    delay_us(210)                        # complete ~480 us release window
+    delay_us(410)                        # complete the 480 us release window
     return present
 
 
