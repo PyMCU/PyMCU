@@ -2478,8 +2478,11 @@ public class IRGeneratorTests
             i => i is Copy { Src: Constant { Value: 7 } });
     }
 
-    // And a second name for the SAME object is the same object, which is why the alias chain
-    // is followed to its end rather than to the first key that carries a class.
+    // And a second name for the SAME object still answers true. `b = a` files main.b as an
+    // alias whose own key carries no class, so the fold does not claim to know the pair; the
+    // comparison keeps the path it had, which copies a into b and compares equal. That is why
+    // the fold refuses a NAME on the other side and takes only a literal: answering "different
+    // objects" here would be as wrong as the handle comparison it replaces.
     [Fact]
     public void Equality_OfAnInstanceAndItsAlias_IsTrueByIdentity()
     {
@@ -2502,7 +2505,9 @@ public class IRGeneratorTests
     }
 
     // The other side does not have to be an instance: nothing that is not one is ever the same
-    // object as one, and CPython raises TypeError for an ordering whatever sits opposite.
+    // object as one, and CPython raises TypeError for an ordering whatever sits opposite. A
+    // LITERAL only, because a name carrying no class here may still be a second spelling of
+    // the same object.
     [Fact]
     public void Equality_OfAnInstanceAndAScalar_IsFalseByIdentity()
     {

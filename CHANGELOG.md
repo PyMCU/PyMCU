@@ -232,9 +232,8 @@
   (`b = a` is recognised as the same object, and nothing that is not an instance is ever
   equal to one); an ordering has no fallback, so it is refused with a located diagnostic
   naming the method the class would need, as CPython raises `TypeError` for it. The other
-  operand has to be one the compiler can be certain about -- a literal, another instance, or
-  a name carrying no class in that scope -- so a field, a call result or a subscript keeps
-  the path it had.
+  operand has to be one the compiler can be certain about -- another instance, or a literal --
+  so a plain name, a field, a call result or a subscript keeps the path it had.
 - **ir**: `max()` and `min()` over instances compared the flattened handles and reduced to
   whichever zero won, so `max(a, b).n` printed 0 even for a class defining `__lt__` and
   `__gt__`. Refused with a located diagnostic, in the pairwise spelling and over a sequence

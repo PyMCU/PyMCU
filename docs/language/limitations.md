@@ -413,9 +413,9 @@ raises `TypeError` -- and is refused, naming the method the class would need. `m
 `min()` never consult a class at all, so an instance argument, or a sequence of instances, is
 refused too; `sorted()` and `in` over a list of instances were already refused.
 
-The other operand has to be one the compiler can be certain about: a literal, another
-instance, or a name that carries no class in that scope. A field, a call result or a
-subscript keeps the path it had.
+The other operand has to be one the compiler can be certain about: another instance, or a
+literal. A plain name is not enough -- it may be a second spelling of the same object -- and
+neither is a field, a call result or a subscript, so those keep the path they had.
 
 An unannotated field takes its width from the widest value the constructor assigns — a
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic

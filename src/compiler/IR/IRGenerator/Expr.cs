@@ -735,36 +735,30 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// The storage a name stands for when it is bound to an instance IN THIS SCOPE, or null
-    /// when it is not bound to one.
+    /// The storage a name stands for when THIS scope files it as an instance, or null.
     ///
-    /// The alias chain is followed twice over: inward, to find the key that carries the class
-    /// (`b = a` files `main.b` as an alias of `main.a`, and only the second carries it), and
-    /// then to its end, because identity is a question about the storage rather than about the
-    /// spelling.
+    /// The name's own scoped key has to carry the class. An alias chain is not evidence of
+    /// one: `absent = self._io.value` aliases the value read to the FIELD's storage, and that
+    /// storage carries DigitalInOut, so following the chain inward concluded that a bool named
+    /// `absent` was an object and folded `absent != 0` to true, deciding a run-time test of a
+    /// pin. Aliases are followed only OUTWARD from a key that already carries the class, to
+    /// canonicalize the storage two spellings of one object share.
     /// </summary>
     private string? InstanceStorageName(Expression e)
     {
         if (e is not VariableExpr ve) return null;
         foreach (string key in ScopedNameKeys(ve.Name))
         {
-            string n = key;
+            if (!instanceClasses.TryGetValue(key, out var cls) || string.IsNullOrEmpty(cls))
+                continue;
+            string storage = key;
             for (int depth = 0; depth < 20; depth++)
             {
-                if (instanceClasses.TryGetValue(n, out var cls) && !string.IsNullOrEmpty(cls))
-                {
-                    string storage = n;
-                    for (int d2 = 0; d2 < 20; d2++)
-                    {
-                        if (!variableAliases.TryGetValue(storage, out var onward)
-                            || string.IsNullOrEmpty(onward)) break;
-                        storage = onward;
-                    }
-                    return storage;
-                }
-                if (!variableAliases.TryGetValue(n, out var next) || string.IsNullOrEmpty(next)) break;
-                n = next;
+                if (!variableAliases.TryGetValue(storage, out var onward)
+                    || string.IsNullOrEmpty(onward)) break;
+                storage = onward;
             }
+            return storage;
         }
         return null;
     }
@@ -801,9 +795,12 @@ public partial class IRGenerator
 
         if (lname == null || rname == null)
         {
+            // Only a LITERAL on the other side. A name that carries no class here may still be
+            // a second spelling of the same object (`b = a` files main.b as an alias and only
+            // main.a carries the class), and answering "different objects" for that pair would
+            // be as wrong as the handle comparison this replaces.
             Expression other = lname == null ? expr.Left : expr.Right;
-            if (other is not (IntegerLiteral or FloatLiteral or StringLiteral or VariableExpr))
-                return null;
+            if (other is not (IntegerLiteral or FloatLiteral or StringLiteral)) return null;
         }
 
         if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
