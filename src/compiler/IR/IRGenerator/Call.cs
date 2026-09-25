@@ -4090,6 +4090,46 @@ public partial class IRGenerator
         return b;
     }
 
+    /// The bare class name inside a mangled class key (`mod_TCS34725` -> `TCS34725`).
+    private string ShortClassNameOf(string fullKey)
+    {
+        foreach (var cn in classNames)
+        {
+            if (fullKey == cn) return cn;
+            if (fullKey.Length > cn.Length && fullKey[fullKey.Length - cn.Length - 1] == '_' &&
+                fullKey.EndsWith(cn, StringComparison.Ordinal)) return cn;
+        }
+
+        return fullKey;
+    }
+
+    /// <summary>
+    /// The class a field access reads a member of -- written on the class itself
+    /// (<c>D.BUF</c>) or reached through an instance (<c>self.BUF</c>). Null when the receiver
+    /// is neither.
+    /// </summary>
+    private string? FieldOwnerClass(MemberAccessExpr field)
+    {
+        if (field.Object is not VariableExpr recv) return null;
+
+        string written = AliasOriginal(recv.Name);
+        if (classNames.Contains(written)) return written;
+        string shortWritten = ShortClassNameOf(written);
+        if (classNames.Contains(shortWritten)) return shortWritten;
+
+        string key = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + recv.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + recv.Name : recv.Name);
+        for (int d = 0; d < 20; d++)
+        {
+            if (instanceClasses.TryGetValue(key, out var cls)) return ShortClassNameOf(cls);
+            if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
+            else break;
+        }
+
+        return null;
+    }
+
     private string ResolveOverloadedCallee(string callee, CallExpr expr)
     {
         if (overloadedFunctions.Contains(callee))
@@ -4124,17 +4164,7 @@ public partial class IRGenerator
                     $"{written}(name=value)", expr.Callee);
             }
 
-            string ShortClassName(string fullKey)
-            {
-                foreach (var cn in classNames)
-                {
-                    if (fullKey == cn) return cn;
-                    if (fullKey.Length > cn.Length && fullKey[fullKey.Length - cn.Length - 1] == '_' &&
-                        fullKey.EndsWith((string)cn)) return cn;
-                }
-
-                return fullKey;
-            }
+            string ShortClassName(string fullKey) => ShortClassNameOf(fullKey);
 
             string ArgTypeSuffix(Expression arg)
             {
@@ -4203,6 +4233,15 @@ public partial class IRGenerator
                         if (variableAliases.TryGetValue(flat, out string fak)) flat = fak;
                         else break;
                     }
+
+                    // A CLASS attribute (`BUF = bytearray(2)` written in the class body) has no
+                    // per-instance storage: it is registered once under the class-canonical
+                    // name, which is neither the name the instance spells (`d_BUF`) nor the one
+                    // the class spells (`D_BUF`) -- it is `main.D_BUF`. Both spellings reach one
+                    // buffer and both took the scalar overload.
+                    if (FieldOwnerClass(fieldArg) is { } ownerCls
+                        && IsBufferStorageName(ownerCls + "_" + fieldArg.Member))
+                        return "bytearray";
                 }
 
                 return IRGenerator.DataTypeToSuffixStr(InferExprType(arg));

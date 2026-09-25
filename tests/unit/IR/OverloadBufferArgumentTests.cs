@@ -140,6 +140,27 @@ public class OverloadBufferArgumentTests
         AssertBufferBodyRan(ir);
     }
 
+    // DISCRIMINATING, both spellings of one buffer. A class attribute has no per-instance
+    // storage: it is registered once under the class-canonical name, which is neither the name
+    // the instance spells nor the one the class spells, so both reads took the scalar body.
+    [Theory]
+    [InlineData("D.BUF")]
+    [InlineData("self.BUF")]
+    public void AClassAttributeBufferTakesTheBytearrayOverload(string spelling)
+    {
+        var ir = Gen(Preamble +
+            "class D:\n" +
+            "    BUF = bytearray(2)\n" +
+            "    def go(self, c: uint8) -> uint8:\n" +
+            $"        {spelling}[0] = c\n" +
+            $"        return sink({spelling})\n" +
+            "def main():\n" +
+            "    d = D()\n" +
+            "    G.value = d.go(G.value)\n");
+
+        AssertBufferBodyRan(ir);
+    }
+
     // INVARIANT, not discriminating: a buffer in a local already picked the bytearray overload
     // before the fix. It is the control that made the field the suspect rather than the
     // argument, and it is kept so that teaching the field branch cannot move the local one.
