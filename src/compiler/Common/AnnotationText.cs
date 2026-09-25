@@ -41,6 +41,26 @@ public static class AnnotationText
     {
         if (string.IsNullOrEmpty(annotation)) return annotation ?? "";
 
+        // A PEP 484 FORWARD REFERENCE: the type named as a string literal, because the name is
+        // not bound yet where the annotation is written. `def __enter__(self) -> "BH1750":` on
+        // the class's own methods is how every Adafruit driver spells its context manager, and
+        // CPython, MicroPython and CircuitPython all take it, because at run time it is just a
+        // string nobody evaluates. Quoted or not is a statement about the ORDER of the file,
+        // never about the type, so the quotes come off here and the name inside is judged like
+        // any other -- including inside a bracketed form, which the recursion below reaches.
+        // Without this the compiler answered "unknown type '\"BH1750\"' (did you mean
+        // 'BH1750'?)", which names the answer and refuses it in the same sentence.
+        if (annotation.Length >= 2
+            && (annotation[0] == '"' || annotation[0] == '\'')
+            && annotation[^1] == annotation[0])
+        {
+            string inner = annotation[1..^1].Trim();
+            // Only a single quoted name (or bracketed form) is a forward reference; a string
+            // that still carries a quote is not one, and goes on to be refused as it was.
+            if (inner.Length > 0 && !inner.Contains('"') && !inner.Contains('\''))
+                return Normalize(inner);
+        }
+
         int lb = annotation.IndexOf('[');
         string head = lb >= 0 ? annotation[..lb] : annotation;
         string bare = head[(head.LastIndexOf('.') + 1)..];
