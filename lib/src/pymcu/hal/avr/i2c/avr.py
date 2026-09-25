@@ -296,6 +296,37 @@ def i2c_write_to(addr: uint8, data: uint8) -> uint8:
     return 0
 
 
+# The transfer counts below are uint16, and the indexes that walk them are too.
+#
+# They were uint8, so a count arrived as len & 0xFF: 256 bytes sent nothing at
+# all, 300 sent forty-four, and the 513 of an SSD1306 frame sent one. Nothing
+# was said, on the bus or while compiling -- the count is a folded len(), not a
+# literal, so the narrowing refusal never looked at it.
+#
+# Widening them is not paid for by programs that do not need it: with a small
+# constant count the 16-bit counter folds back to the 8-bit one, and the ROM
+# gate is byte-identical across 19 programs, examples/i2c-scanner and
+# compat-cp-bitbangio-i2c among them. The one program that does need it, an
+# SSD1306 frame written in full, grows 62 bytes and goes from putting one byte
+# on the bus to putting the whole 513-byte frame there.
+#
+# Both hops matter. The wrapper in __init__.py takes the same count, and
+# widening only this one leaves a 512-byte frame arriving as a single byte.
+# That is the simplification to resist.
+#
+# Only the WRITE path is measured on the wire (tests/integration/fixtures/
+# i2c-write-long in the pymcu-avr checkout, and spi-write-long for SPI). The
+# read counts here are widened for symmetry and are NOT verified: asserting
+# them needs a slave script the recorder does not offer yet. Neither is the
+# RP2 path, which has no emulator with an observable bus in this repo.
+#
+# Why the CircuitPython layer never had this: busio.py does not come through
+# here at all. It carries its own loop, `_i2c_writeto(address, buffer,
+# n: uint16)` with `k: uint16`, and was already 16-bit. The MicroPython layer
+# shares this HAL, so the two layers had diverged on exactly this width -- part
+# of why the CircuitPython SSD1306 drew on silicon and the MicroPython one did
+# not. Those two facts sat apart for months without being put together.
+
 @inline
 def i2c_write_bytes(addr: uint8, buf, n: uint16) -> uint8:
     # Send START, SLA+W, n bytes from buf[], then STOP.
