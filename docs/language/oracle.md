@@ -98,7 +98,7 @@ up as a hard XPASS rather than a silent pass.
 | `self.field = bytearray(...)` inside `__init__` is refused, though the identical call to a local compiles | [#392](https://github.com/PyMCU/PyMCU/issues/392) | `049` |
 | `hex()`/`bin()`/`str()` folding prints the folded string's flash address instead of its text | [#393](https://github.com/PyMCU/PyMCU/issues/393) | `056` |
 | List comprehensions beyond one clause: nested `for`s compute all zeros, a compile-time-foldable filter is refused unconditionally, one used directly as a `for` loop's iterable is refused | [#394](https://github.com/PyMCU/PyMCU/issues/394) | `063`, `064`, `065` |
-| Operator dunders on a ZCA class (`__add__`, `__lt__`, and -- widened by this sweep -- `__eq__`, `__le__`, `__sub__`, `__mul__`) all return wrong results | [#395](https://github.com/PyMCU/PyMCU/issues/395) | `075`, `146` |
+| Operator dunders on a ZCA class (`__add__`, `__lt__`, and -- widened by this sweep -- `__eq__`, `__le__`, `__sub__`, `__mul__`) all return wrong results | [#395](https://github.com/PyMCU/PyMCU/issues/395) | `075`, `146` (`146` untracked 2026-09-25 by the #491 fix: a module-level instance is a dunder receiver now. `075` stays tracked: a CONSTRUCTOR CALL as the left operand, `Num(2) + a`, still reaches no method) |
 | An explicit `len(instance)` call returns 0, though the same `__len__` dispatches correctly for implicit truthiness | [#396](https://github.com/PyMCU/PyMCU/issues/396) | `076` |
 | A two-index `__setitem__`/`__getitem__` round trip returns 0, though both calls compile | [#397](https://github.com/PyMCU/PyMCU/issues/397) | `078` |
 | `list[T].append()` on a heap-allocated list does not store the element | [#398](https://github.com/PyMCU/PyMCU/issues/398) | `084`, `153` |
@@ -355,3 +355,28 @@ probes went red on main, in both front ends. Bisecting each to its introducing c
 The corpus now has a gate: `just test-oracle` in pymcu-avr builds the runner and runs
 the suite under both front ends, and it is named among the suites a commit must keep
 green in `AGENTS.md`/`CLAUDE.md`.
+
+## Comparison dunders and the construction hooks, 2026-09-25 (#491)
+
+Eleven probes, `281` to `291`, added with the fix for the five silent divergences of
+[#491](https://github.com/PyMCU/PyMCU/issues/491). What they pin:
+
+- `281`, `282`, `283` -- all six comparison dunders reach their method as a condition
+  (`if`, `while`, both operands of `and` / `or`) and in value position. Before the fix
+  the condition path lowered the comparison as a conditional jump over the flattened
+  instance handles, which are never written, so every `if a == b:` answered "equal" while
+  the same comparison assigned to a name dispatched correctly.
+- `284` -- a module-level instance is a dunder receiver. `print(a + b)` at top level
+  answered 0 for any operator dunder, arithmetic included, because the receiver was
+  looked up under the synthesized module body's scope while the binding is filed under
+  its bare name. This is the half of #395 that closed, which is why `146` is untracked.
+- `285` -- a class-typed field receiver, `self.lhs == self.rhs`.
+- `286` -- two instances of a class with no comparison dunder compare by IDENTITY, as
+  CPython does, with `b = a` recognised as the same object.
+- `287`, `288` -- an ordering between two such instances, and `max()` / `min()` over
+  instances, are refused rather than answered from the never-written handles.
+- `289`, `290` -- `__new__` and `__init_subclass__` are refused where the method is
+  written.
+- `291` -- a documented divergence rather than a fix: `__del__` is emitted nowhere, so
+  whatever its body prints is absent from the firmware's output. The transform registered
+  against `docs/language/limitations.md:383` drops exactly those lines from CPython's.
