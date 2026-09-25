@@ -378,6 +378,9 @@ branch is refused, naming the branch.
 | Runtime polymorphism (vtable dispatch) | Requires vtable + heap class objects | Compile-time `match / case` dispatch |
 | `isinstance()` / `type()` | No type tags at runtime | `isinstance(x, T)` on a ZCA instance folds (#424); `isinstance(x, (tuple, list))` folds from the receiver's known shape (#423) -- through an inline-parameter alias, a keyword argument, or a module-level string's own text (adafruit_neopixel `pixel_order`); `isinstance(x, slice)` folds too -- nothing here is a runtime slice, so it is always False (adafruit_pixelbuf `__setitem__`); a `None`-bound name answers False to every builtin. `type()` is still refused |
 | `__repr__`, `__str__` | No runtime string formatting | `uart.println()` with explicit fields |
+| `__new__` | An instance is laid out in static storage with no allocation call, so there is nothing to intercept and no object to hand back | Do the work in `__init__`, or a module-level factory function that returns the instance. Refused where the method is written |
+| `__init_subclass__` | A class is a compile-time layout with no class object and no creation event | Do the work in each subclass's `__init__`. Refused where the method is written |
+| `__del__` | Storage is static, nothing collects an instance, and `del` is refused for the same reason, so there is no moment a destructor could run at | `deinit()` / `close()` called by name, or a `with` block's `__exit__`. The method compiles and is reported as a warning for every class the program constructs |
 | `dataclass` | Metaclass + runtime heap | Manual `@inline` class |
 | `namedtuple` **defaults / rename / module** | Extra factory kwargs | `Name = namedtuple("Name", ("a", "b"))` -- two positional arguments. The assignment is a ZCA class |
 | `namedtuple` index `p[0]` | Not a tuple subclass | Field access `p.x`; `__match_args__` is set so a class pattern binds in field order |
@@ -386,7 +389,9 @@ branch is refused, naming the branch.
 single-level class inheritance with `super()`, `with obj:` context managers
 (`__enter__`/`__exit__`), operator dunder methods (`__add__`, `__sub__`,
 `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, all comparison / bitwise
-dunders). A class-typed field dispatches correctly through a **value-returning** method too
+dunders). A comparison dunder is dispatched wherever the comparison is written -- as a
+condition, as a value, at module level, and on a class-typed field receiver.
+A class-typed field dispatches correctly through a **value-returning** method too
 (`self.pin.read()` on a nested ZCA field), which is what the compat layers are built on —
 `machine.Pin` wrapping the HAL `Pin` is exactly this shape.
 
@@ -398,6 +403,14 @@ A call argument that holds a compile-time constant is passed as that constant, s
 that dispatches on it takes the same path whether the caller wrote the value at the call or
 put it in a local first. The value has to be one the compiler can still see: a name a branch
 or a loop can change is not one, and neither is anything read from a register.
+
+**Comparing two instances of a class that defines no comparison dunder** answers what CPython
+answers. `==`, `!=`, `is` and `is not` fall back to IDENTITY, which is a compile-time fact
+here because every instance owns its own static slot: two separately constructed objects are
+never equal, and `b = a` is the same object. An ordering (`<`, `<=`, `>`, `>=`) has no
+fallback -- CPython raises `TypeError` -- and is refused, naming the method the class would
+need. `max()` and `min()` never consult a class at all, so an instance argument is refused
+too; `sorted()` and `in` over a list of instances were already refused.
 
 An unannotated field takes its width from the widest value the constructor assigns — a
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic

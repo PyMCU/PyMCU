@@ -213,6 +213,28 @@
   subroutine stored 0xF4 and kept its exit test, which is the disagreement the fix removes.
   Only the four explicit fixed-width spellings narrow (`uint8`, `int8`, `uint16`, `int16`):
   an unannotated parameter has no declared width and is left alone.
+- **ir**: the six comparison dunders were never dispatched from the position a reader
+  writes them in. An `if` (and a `while`, and each operand of an `and` / `or`) does not
+  lower its comparison through the expression path; it becomes a conditional jump straight
+  over the flattened instance handles, which are never written, so `if a == b:` compared
+  two zeroed slots and answered "equal" for every pair of objects while the same comparison
+  assigned to a name dispatched correctly. `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`
+  and `__ge__` now reach their method in every position. Two further receivers reached no
+  method either and now do: an instance bound at MODULE level, whose binding is filed under
+  its bare name while the lookup asked for the synthesized module body's scope (`print(a + b)`
+  at top level answered 0 for any operator dunder, arithmetic included), and a class-typed
+  FIELD (`self.lhs == self.rhs`), which is the shape a driver writes.
+- **ir**: a comparison between two instances of a class that defines no comparison dunder
+  answered from the same never-written handles: `a == b` was true for every pair, `a is b`
+  likewise, and `a < b` was false for every pair. It now answers what CPython answers.
+  `==`, `!=`, `is` and `is not` fall back to identity, which is decided at compile time
+  because every instance owns its own static slot (and `b = a` is recognised as the same
+  object); an ordering has no fallback, so it is refused with a located diagnostic naming
+  the method the class would need, as CPython raises `TypeError` for it.
+- **ir**: `max()` and `min()` over instances compared the flattened handles and reduced to
+  whichever zero won, so `max(a, b).n` printed 0 even for a class defining `__lt__` and
+  `__gt__`. Refused with a located diagnostic. `sorted()` and `in` over a list of instances
+  already refused.
 - **ir**: a `match` class-pattern capture whose name collides with a module global did not
   bind. The capture was filed under `main.<name>` while every read of the name resolved the
   global, so the arm read the global's old value, with no diagnostic and correct-looking
@@ -279,6 +301,22 @@
   (PyMCU#489). A return the pass cannot type -- a member read, a subscript,
   `return None` on a reached path -- still leaves the method unannotated, the
   RFC 0009 case unchanged.
+
+### Changed
+
+- **ir**: `__new__` and `__init_subclass__` are refused where the method is written. Both
+  compiled clean and ran nowhere: a class returning a cached instance from `__new__` got a
+  fresh one, and a base counting its subclasses counted none. There is nothing to intercept
+  -- an instance is laid out in static storage with no allocation call, and a class is a
+  compile-time layout with no class object and no creation event -- and no file in the
+  stdlib, either compatibility layer, or the AVR example and fixture corpus defines either
+  hook.
+- **ir**: `__del__` is reported as a warning at its definition, for every class the program
+  constructs. It is emitted nowhere and cannot be run: storage is static, nothing collects
+  an instance, and `del` is refused for that same reason, so there is no moment a destructor
+  could run at. It is not refused, because the MicroPython layer mirrors upstream's
+  `machine.Timer.__del__` faithfully; the warning fires only where an instance is actually
+  built, so a program that merely imports the module stays quiet.
 
 ## 0.1.0b1 (Unreleased, prepared 2026-09-15)
 
