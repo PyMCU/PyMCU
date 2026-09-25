@@ -24,7 +24,7 @@
 #   rx  = i2c.read_from(0x48)            # single-byte read
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, uint16, inline
 from pymcu.hal.gpio import Pin
 from pymcu.time import delay_us
 
@@ -165,7 +165,7 @@ class SoftI2C:
         return 0
 
     @inline
-    def write_bytes(self, addr: uint8, buf, n: uint8) -> uint8:
+    def write_bytes(self, addr: uint8, buf, n: uint16) -> uint8:
         """Send START, SLA+W, n bytes from buf[], STOP.
 
         Returns 1 if address and all data bytes were ACK'd, 0 on any NACK.
@@ -174,7 +174,7 @@ class SoftI2C:
         sla_w: uint8 = (addr << 1) & 0xFE
         addr_ack: uint8 = self.write(sla_w)
         if addr_ack == 0:     # 0 = ACK
-            i: uint8 = 0
+            i: uint16 = 0
             all_ack: uint8 = 1
             while i < n:
                 byte_ack: uint8 = self.write(buf[i])

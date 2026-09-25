@@ -10,7 +10,7 @@
 #
 # Single implementation covers all AVR chips with hardware TWI.
 # -----------------------------------------------------------------------------
-from pymcu.types import uint8, uint32, inline, const, Callable
+from pymcu.types import uint8, uint16, uint32, inline, const, Callable
 from pymcu.hal.avr.i2c.avr import (
     i2c_init, i2c_frequency, i2c_start, i2c_stop, i2c_write, i2c_read_ack, i2c_read_nack,
     i2c_bus_idle, i2c_ping, i2c_write_to, i2c_write_byte, i2c_write_bytes,
@@ -129,7 +129,7 @@ class I2C:
         return 0
 
     @inline
-    def write_bytes(self, addr: uint8, buf, n: uint8) -> uint8:
+    def write_bytes(self, addr: uint8, buf, n: uint16) -> uint8:
         if self._mode == "c":
             return i2c_write_bytes(addr, buf, n)
         return 0
@@ -141,7 +141,7 @@ class I2C:
         return 0
 
     @inline
-    def read_n(self, addr: uint8, buf, n: uint8) -> uint8:
+    def read_n(self, addr: uint8, buf, n: uint16) -> uint8:
         if self._mode == "c":
             return i2c_read_n(addr, buf, n)
         return 0
@@ -153,7 +153,7 @@ class I2C:
         return 0
 
     @inline
-    def readfrom_mem(self, addr: uint8, reg: uint8, buf, n: uint8) -> uint8:
+    def readfrom_mem(self, addr: uint8, reg: uint8, buf, n: uint16) -> uint8:
         if self._mode == "c":
             return i2c_readfrom_mem(addr, reg, buf, n)
         return 0

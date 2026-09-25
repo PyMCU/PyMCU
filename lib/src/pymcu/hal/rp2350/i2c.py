@@ -19,7 +19,7 @@ from pymcu.chips.rp2350 import (
     IO_BANK0_BASE, PADS_BANK0_BASE, GPIO_FUNC_I2C,
     I2C_CMD_STOP, I2C_STATUS_TFNF, I2C_STATUS_TFE,
 )
-from pymcu.types import ptr, uint8, uint32, const, inline
+from pymcu.types import ptr, uint8, uint16, uint32, const, inline
 
 
 class I2C:
@@ -67,7 +67,7 @@ class I2C:
             pass
 
     @inline
-    def write_bytes(self, addr: uint8, data: bytearray, n: uint8):
+    def write_bytes(self, addr: uint8, data: bytearray, n: uint16):
         # Multi-byte write; STOP is asserted with the final byte.
         self._set_target(addr)
         i: uint8 = 0

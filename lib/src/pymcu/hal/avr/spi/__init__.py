@@ -10,7 +10,7 @@
 #
 # Single implementation covers all AVR chips with hardware SPI.
 # -----------------------------------------------------------------------------
-from pymcu.types import uint8, uint32, inline, Callable, const
+from pymcu.types import uint8, uint16, uint32, inline, Callable, const
 from pymcu.hal.avr.spi.avr import (
     spi_init, spi_configure, spi_frequency, spi_select, spi_deselect, spi_transfer,
     spi_write_bytes, spi_readinto_n, spi_write_readinto_n,
@@ -82,17 +82,17 @@ class SPI:
             spi_transfer(data)
 
     @inline
-    def write_bytes(self, buf, n: uint8):
+    def write_bytes(self, buf, n: uint16):
         if self._mode == "c":
             spi_write_bytes(buf, n)
 
     @inline
-    def readinto_n(self, buf, n: uint8, write_byte: uint8):
+    def readinto_n(self, buf, n: uint16, write_byte: uint8):
         if self._mode == "c":
             spi_readinto_n(buf, n, write_byte)
 
     @inline
-    def write_readinto_n(self, write_buf, read_buf, n: uint8):
+    def write_readinto_n(self, write_buf, read_buf, n: uint16):
         if self._mode == "c":
             spi_write_readinto_n(write_buf, read_buf, n)
 

@@ -297,7 +297,7 @@ def i2c_write_to(addr: uint8, data: uint8) -> uint8:
 
 
 @inline
-def i2c_write_bytes(addr: uint8, buf, n: uint8) -> uint8:
+def i2c_write_bytes(addr: uint8, buf, n: uint16) -> uint8:
     # Send START, SLA+W, n bytes from buf[], then STOP.
     # Returns 1 if all bytes were ACK'd, 0 on any NACK or bus error.
     TWCR.value = 0xA4           # START: TWINT|TWSTA|TWEN
@@ -313,7 +313,7 @@ def i2c_write_bytes(addr: uint8, buf, n: uint8) -> uint8:
             return 0xFF
         ack_status: uint8 = TWSR.value & 0xF8
         if ack_status == 0x18:  # address ACK received
-            i: uint8 = 0
+            i: uint16 = 0
             all_ack: uint8 = 1
             while i < n:
                 TWDR.value = buf[i]
@@ -362,7 +362,7 @@ def i2c_read_from(addr: uint8) -> uint8:
 
 
 @inline
-def i2c_read_n(addr: uint8, buf, n: uint8) -> uint8:
+def i2c_read_n(addr: uint8, buf, n: uint16) -> uint8:
     # Send START, SLA+R, read n bytes (ACK for first n-1, NACK for last), STOP.
     # Returns 1 on success, 0 if device NACKs the address.
     TWCR.value = 0xA4               # START
@@ -383,7 +383,7 @@ def i2c_read_n(addr: uint8, buf, n: uint8) -> uint8:
     if st1 != 0x40:                 # SLA+R NACK - no device
         TWCR.value = 0x94
         return 0
-    i: uint8 = 0
+    i: uint16 = 0
     while i < n:
         remaining: uint8 = n - i
         if remaining > 1:
@@ -435,7 +435,7 @@ def i2c_writeto_mem(addr: uint8, reg: uint8, data: uint8) -> uint8:
 
 
 @inline
-def i2c_readfrom_mem(addr: uint8, reg: uint8, buf, n: uint8) -> uint8:
+def i2c_readfrom_mem(addr: uint8, reg: uint8, buf, n: uint16) -> uint8:
     # START, SLA+W, register, repeated START, SLA+R, read n bytes into buf, STOP.
     # ACK for first n-1 bytes; NACK for the last byte.
     # Returns 1 on success, 0 on any bus error.
@@ -483,7 +483,7 @@ def i2c_readfrom_mem(addr: uint8, reg: uint8, buf, n: uint8) -> uint8:
     if st4 != 0x40:                 # SLA+R NACK
         TWCR.value = 0x94
         return 0
-    i: uint8 = 0
+    i: uint16 = 0
     while i < n:
         remaining: uint8 = n - i
         if remaining > 1:

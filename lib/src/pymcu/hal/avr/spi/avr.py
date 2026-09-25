@@ -25,7 +25,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.atmega328p import DDRB, PORTB, SPCR, SPSR, SPDR, SREG
-from pymcu.types import uint8, uint32, inline, const, compile_isr, Callable
+from pymcu.types import uint8, uint16, uint32, inline, const, compile_isr, Callable
 from pymcu.chips import __FREQ__
 from pymcu.exceptions import CompileError
 
@@ -134,27 +134,27 @@ def spi_transfer(data: uint8) -> uint8:
 
 
 @inline
-def spi_write_bytes(buf, n: uint8):
+def spi_write_bytes(buf, n: uint16):
     # Send n bytes from buf[]. No return value (full-duplex receive is discarded).
-    i: uint8 = 0
+    i: uint16 = 0
     while i < n:
         spi_transfer(buf[i])
         i = i + 1
 
 
 @inline
-def spi_readinto_n(buf, n: uint8, write_byte: uint8):
+def spi_readinto_n(buf, n: uint16, write_byte: uint8):
     # Receive n bytes into buf[] by clocking write_byte as dummy output.
-    i: uint8 = 0
+    i: uint16 = 0
     while i < n:
         buf[i] = spi_transfer(write_byte)
         i = i + 1
 
 
 @inline
-def spi_write_readinto_n(write_buf, read_buf, n: uint8):
+def spi_write_readinto_n(write_buf, read_buf, n: uint16):
     # Full-duplex: transmit write_buf[i], receive into read_buf[i], n bytes.
-    i: uint8 = 0
+    i: uint16 = 0
     while i < n:
         read_buf[i] = spi_transfer(write_buf[i])
         i = i + 1
