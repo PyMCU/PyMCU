@@ -10,7 +10,6 @@
 # module-level conditional imports (same pattern as the AVR uart facade).
 # -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
-from pymcu.exceptions import CompileError
 from pymcu.types import uint8, const
 
 if __CHIP__.name == "pic16f628a":
@@ -26,6 +25,12 @@ elif __CHIP__.name == "pic16f18877":
         uart_init, uart_write, uart_read, uart_read_ready, uart_write_byte,
     )
 else:
-    raise CompileError("UART is not implemented for this PIC14 chip")
+    # A part with no USART gets entry points that refuse when they are called, not a
+    # refusal at import. pymcu/hal/__init__.py pulls this dispatcher into every PIC14
+    # build through its UART re-export, so raising here failed programs -- a plain
+    # blink among them -- that never asked for a UART at all.
+    from pymcu.hal.pic14.pic14_uart_unsupported import (
+        uart_init, uart_write, uart_read, uart_read_ready, uart_write_byte,
+    )
 
 

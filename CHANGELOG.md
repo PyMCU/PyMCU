@@ -106,6 +106,17 @@
 
 ### Fixed
 
+- **stdlib**: an LED blink for the PIC16F84A stopped compiling over a UART it never mentions.
+  `pymcu/hal/__init__.py` re-exports all five peripherals, so `from pymcu.hal.gpio import Pin`
+  alone reaches `pymcu.hal.uart` and, on a PIC14 target, the `pic14_uart` dispatcher. That
+  dispatcher answered a part with no USART with a module-level `raise`, which fires on the
+  import rather than on a UART operation, and the 84A has no USART. The refusal is right and
+  stays; what moves is when it fires. The `else` arm now binds entry points that refuse when
+  they are called, so the message lands next to what the program actually asked for and names
+  the part, where a `UART(9600)` on the 84A used to be answered with "call to undefined
+  function 'uart_init'". The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` --
+  already dispatched inside the class body for this reason; the UART was the one that did
+  not. Firmware for every PIC program that does have a UART is byte-identical.
 - **ir**: a `match` class-pattern capture whose name collides with a module global did not
   bind. The capture was filed under `main.<name>` while every read of the name resolved the
   global, so the arm read the global's old value, with no diagnostic and correct-looking
