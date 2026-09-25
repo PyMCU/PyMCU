@@ -29,8 +29,18 @@ elif __CHIP__.name == "atmega32u4":
     from pymcu.hal.avr.uart.atmega32u4 import uart_write
 elif __CHIP__.arch == "avr":
     from pymcu.hal.avr.uart.avr import uart_write
+elif __CHIP__.name == "pic16f628a":
+    from pymcu.hal.pic14.pic16f628a_uart import uart_write
+elif __CHIP__.name == "pic16f877a":
+    from pymcu.hal.pic14.pic16f877a_uart import uart_write
+elif __CHIP__.name == "pic16f18877":
+    from pymcu.hal.pic14.pic16f18877_uart import uart_write
 elif __CHIP__.arch == "pic14":
-    from pymcu.hal.pic14.pic14_uart import uart_write
+    # A PIC14 with no USART. The writers below are emitted whether or not the program
+    # calls them, so this arm binds an inert sink rather than the dispatcher's uart_write,
+    # which refuses. Reaching the chip module directly is also what the note at the top of
+    # this file says to do; the pic14 arm used to go through the facade instead.
+    from pymcu.hal.pic14.pic14_uart_unsupported import uart_write_text_sink as uart_write
 elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.pic18_uart import uart_write
 elif __CHIP__.name == "rp2040" or __CHIP__.name == "rp2350":

@@ -113,10 +113,15 @@
   import rather than on a UART operation, and the 84A has no USART. The refusal is right and
   stays; what moves is when it fires. The `else` arm now binds entry points that refuse when
   they are called, so the message lands next to what the program actually asked for and names
-  the part, where a `UART(9600)` on the 84A used to be answered with "call to undefined
-  function 'uart_init'". The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` --
-  already dispatched inside the class body for this reason; the UART was the one that did
-  not. Firmware for every PIC program that does have a UART is byte-identical.
+  the parts that do have a USART, where a `UART(9600)` on the 84A used to be answered with
+  "call to undefined function 'uart_init'". Reaching past `UART` into the chip HAL --
+  `from pymcu.hal.pic14.pic14_uart import uart_write` -- is refused too, so no route to a
+  byte on the wire builds clean on a part that cannot send one; `hal/uart_text.py` takes its
+  write primitive from the chip module directly, as the note at the top of that file already
+  said it should, so the writers it emits unconditionally no longer drag the refusal in.
+  The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` -- already dispatched inside
+  the class body for this reason; the UART was the one that did not. Firmware for every PIC
+  program that does have a UART is byte-identical.
 - **ir**: a `match` class-pattern capture whose name collides with a module global did not
   bind. The capture was filed under `main.<name>` while every read of the name resolved the
   global, so the arm read the global's old value, with no diagnostic and correct-looking

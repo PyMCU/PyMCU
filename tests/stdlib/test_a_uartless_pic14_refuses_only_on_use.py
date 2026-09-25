@@ -98,14 +98,32 @@ def test_asking_for_a_uart_on_a_pic14_without_a_usart_is_still_refused(tmp_path)
         "the refusal has to name the part the reader is building for")
 
 
-def test_printing_on_a_pic14_without_a_usart_is_still_refused(tmp_path):
-    """The gate the inert uart_write depends on, pinned instead of argued.
+def test_calling_the_hal_primitive_directly_is_still_refused(tmp_path):
+    """The hole a use-time refusal can leave, and the reason uart_write itself must raise.
 
-    uart_write in pic14_uart_unsupported.py cannot raise, because hal/uart_text.py emits
-    uart_write_str as a shared subroutine whether or not the program calls it. That is only
-    safe while every path to a byte on the wire passes through uart_init first. print() is
-    the widest of those paths -- the driver injects UART(baud) for it -- so if this test ever
-    starts passing a build through, uart_write has become a silent no-op on real output.
+    Reaching past UART into the chip HAL -- `from pymcu.hal.pic14.pic14_uart import
+    uart_write` -- skips uart_init, so no constructor gates it. A first cut of this fix left
+    uart_write inert so that uart_write_str in hal/uart_text.py could still be lowered, and
+    this program built clean and assembled to firmware that drove nothing. Silent wrong code
+    on a part with no USART is the one outcome worse than the blink that would not compile.
+
+    What makes both possible is that hal/uart_text.py now takes its primitive from a sink of
+    its own rather than from the dispatcher, so the writers it emits unconditionally do not
+    drag the refusal in with them.
+    """
+    source = 'from pymcu.hal.pic14.pic14_uart import uart_write\n\nuart_write(65)\n'
+    rc, out = _compile(tmp_path, source, "pic16f84a")
+
+    assert rc != 0, "a direct HAL write on a chip with no USART must not compile:\n" + out
+    assert "no hardware UART" in out, out
+    assert not (tmp_path / "out.mir").exists(), "nothing may be emitted for it"
+
+
+def test_printing_on_a_pic14_without_a_usart_is_still_refused(tmp_path):
+    """print() reaches the refusal through the driver's injected UART(baud), not by accident.
+
+    The widest path to real output, and the one a user is most likely to take, so it is worth
+    pinning on its own rather than trusting that it shares a route with UART(9600).
     """
     rc, out = _compile(tmp_path, PRINTS, "pic16f84a")
 

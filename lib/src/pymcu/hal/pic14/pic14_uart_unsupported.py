@@ -25,11 +25,17 @@ from pymcu.types import uint8, uint16, inline, const
 def _no_usart():
     # The one line in this module a reader is ever meant to see. The entry points
     # funnel here so the sentence is written once and cannot drift apart.
+    # The sentence cannot name the chip it is refusing: a raise message is built while
+    # compiling, and an f-string over __CHIP__.name degrades to the payload's class name,
+    # so the reader gets "CompileError: CompileError" and nothing else. It therefore names
+    # the parts that DO have a USART, which is the list that answers "what do I do now",
+    # and treats the 16F84A as an example rather than as the whole of the else arm.
     raise CompileError(
-        "this chip has no hardware UART. The PIC16F84A has no USART peripheral, so "
-        "pymcu.hal.uart cannot drive one, and print() has nowhere to write. Use a part "
-        "that has one (the PIC16F628A, 16F877A and 16F18877 do), or carry the data over "
-        "another peripheral this chip has.")
+        "this PIC14 chip has no hardware UART, so pymcu.hal.uart cannot drive one and "
+        "print() has nowhere to write. The PIC14 parts whose USART this HAL programs are "
+        "the PIC16F628A, the 16F877A and the 16F18877; every other PIC14 part, the "
+        "16F84A among them, reaches this refusal. Use one of those, or carry the data "
+        "over another peripheral this chip has.")
 
 
 @inline
@@ -39,17 +45,22 @@ def uart_init(baud: const[uint16]):
 
 @inline
 def uart_write(data: uint8):
-    # The one entry point that cannot refuse, and the reason is worth knowing before
-    # changing it. uart_write_str in hal/uart_text.py is deliberately NOT @inline: it
-    # is emitted once as a shared subroutine whether or not the program calls it, and
-    # lowering its body lowers this call. A raise here fires on that library function
-    # and takes down the same blink all over again.
+    _no_usart()
+
+
+@inline
+def uart_write_text_sink(data: uint8):
+    # NOT an entry point. hal/uart_text.py builds uart_write_str and the decimal writers
+    # on one uart_write primitive, and those writers are deliberately not @inline: they
+    # are emitted as shared subroutines whether or not the program calls them. Lowering
+    # their bodies lowers this call, so the primitive THEY are built on cannot refuse --
+    # a raise here takes down a blink that never asked for a UART, which is the bug this
+    # module exists to fix.
     #
-    # Inert is not silent here. Every way to reach a byte on the wire goes through
-    # uart_init first -- UART.__init__ calls it, and print() is the driver injecting
-    # UART(baud) as _pymcu_stdout -- and uart_init refuses. Nothing that survives the
-    # gate can arrive at this line, and test_a_uartless_pic14_refuses_only_on_use.py
-    # pins the gate rather than leaving it as an argument.
+    # The refusal lives on uart_write above instead, which is the name the dispatcher
+    # re-exports and the only one user code and UART.write ever reach. Nothing can call
+    # this sink except those library writers, and nothing can reach those writers without
+    # first constructing a UART or calling print(), both of which go through uart_init.
     pass
 
 
