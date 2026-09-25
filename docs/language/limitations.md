@@ -609,6 +609,7 @@ This means the following operations are **not supported**:
 | Runtime **bit** index through a ptr variable | `p[i]` where `i` is a runtime variable | rejected with a clear error (constant-index bits and chip registers are fine) |
 | Pointer difference | `p - q` | Not in IR |
 | Bare assignment | `PORTB = 0xFF` | rebinds the name, never writes — the compiler rejects it; use `PORTB.value = 0xFF` |
+| `ptr()` of an array | `ptr(buf)` where `buf` is a `bytearray`/`uint8[N]` | an array lives at a label the assembler assigns, not at an address the compiler resolves; refused by name (it used to compile to a read of `buf[0]`) |
 
 The following, previously listed here as unsupported, **do work**:
 
@@ -628,7 +629,13 @@ The following, previously listed here as unsupported, **do work**:
   {doc}`../library/authoring`.
 - **`ptr` as a function parameter and return type** — `def f(reg: ptr[uint8])` and
   compile-time selectors returning `-> ptr[uint8]` are used throughout the HAL; a bare
-  register name in those positions contributes its address.
+  register name in those positions contributes its address. The element width travels with
+  the address through all of them, so `.value` on the receiving name is an access of that
+  width and not of some default.
+- **`ptr` as an instance field, in every spelling**. `self.reg = ptr(base + 1)`,
+  `self.reg = TCCR1B`, a field bound from a `ptr[T]` parameter, and the annotated
+  `self.reg: ptr[uint8] = TCCR1B`, which is the spelling that states the width outright:
+  `self.cnt: ptr[uint16] = ptr(0x84)` makes every `.value` on the field a 16-bit access.
 - **Runtime-offset dereference** — `ptr(BASE + off).value` with a runtime `off`
   compiles to indirect loads/stores (register-base + runtime offset remains
   unsupported).
