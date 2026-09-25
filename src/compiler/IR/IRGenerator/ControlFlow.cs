@@ -386,6 +386,37 @@ public partial class IRGenerator
                 or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
                 or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq;
 
+            // The same two texts VisitBinary compares, asked on the path an `if` takes. A
+            // condition never goes through VisitBinary: it becomes a conditional jump right
+            // here, over the VALUES, and the value of a name bound to a multi-character string
+            // is its storage slot, not its interned id. `str` is a one-byte slot and an id
+            // needs two, so `x = "abc"` stored 256 into a uint8 and read 0 back; the
+            // comparison against the literal's own 256 then had two disjoint ranges,
+            // FoldComparisonByRange ruled it always-false, and the `then` branch was deleted
+            // from the image with nothing said (#438). The compiler was holding both texts
+            // the whole time -- StaticStringOf answers "abc" for that name -- and only this
+            // path never asked.
+            //
+            // BOTH sides, never one, exactly as the Constant pair below: deciding a mixed
+            // pair as "a string is never equal to a non-string" breaks the compile-time
+            // guards whose other side carries no text. A multiStr operand is excluded for
+            // the opposite reason -- its text is whatever the branch that ran left, so the
+            // run-time id comparison IS the test (the same exclusion VisitBinary makes).
+            if (isComparison && binExpr.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                && !IsMultiStrOperand(binExpr.Left) && !IsMultiStrOperand(binExpr.Right))
+            {
+                string? condLeftText = StaticStringOf(binExpr.Left) ?? (v1 as Constant)?.Text;
+                string? condRightText = StaticStringOf(binExpr.Right) ?? (v2 as Constant)?.Text;
+                if (condLeftText != null && condRightText != null)
+                {
+                    bool strRes = (condLeftText == condRightText)
+                                  == (binExpr.Op == Frontend.BinaryOp.Equal);
+                    if (jumpIfTrue) { if (strRes) Emit(new Jump(targetLabel)); }
+                    else            { if (!strRes) Emit(new Jump(targetLabel)); }
+                    return strRes ? 2 : -1;
+                }
+            }
+
             if (v1 is Constant c1 && v2 is Constant c2 && isComparison)
             {
                 // Two Constants standing for STRINGS compare by their text, not by their value.

@@ -2914,6 +2914,14 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Whether an operand names a string decided at run time. Its compile-time text, when
+    /// any table still holds one, is whatever the last branch lowered happened to leave, so
+    /// a comparison against it has to be the run-time id test rather than a fold.
+    /// </summary>
+    private bool IsMultiStrOperand(Expression e) =>
+        e is VariableExpr ve && TryGetMultiStr(ve.Name, out _, out _, out _);
+
+    /// <summary>
     /// The candidate texts of a name whose string value is decided at run time, if it is one.
     /// <paramref name="materialized"/> says whether the id is actually stored at every binding
     /// site: only then can a read dispatch on it -- otherwise the slot holds whatever the RAM
