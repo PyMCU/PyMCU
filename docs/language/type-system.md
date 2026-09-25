@@ -189,6 +189,19 @@ x: uint8 = 300          # CompileError: 300 does not fit in uint8
 y: uint8 = 200 + 100    # CompileError: folded constant 300 overflows uint8
 ```
 
+The same refusal applies to an ARGUMENT that does not fit its parameter -- `take(300)`
+against `def take(n: uint8)` names the 44 that would arrive -- but only for a literal the
+parser built. A computed value of the same 300 is narrowed with nothing said:
+
+```python
+big = bytearray(300)
+take(300)               # CompileError: 300 does not fit in 'n', declared uint8
+take(len(big))          # compiles; the parameter receives 44
+```
+
+See the note in [limitations](limitations.md) for what this cost and what it means for a
+library author.
+
 ## Division — `/` vs `//`
 
 PyMCU matches Python 3 division semantics:

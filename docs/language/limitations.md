@@ -565,6 +565,19 @@ whichever overload the registry enumerated first read the buffer's address as a 
 (PyMCU#503). Widening one number into another is untouched: a `uint8` argument still selects
 a `uint16` parameter.
 
+**An argument is narrowed to its parameter's declared width, and only a LITERAL that does
+not fit is refused.** `take(300)` against `def take(n: uint8)` is a located error naming the
+44 that would arrive and offering `uint8(300)` if that is what was meant. A COMPUTED value
+of the same 300 is not refused: `take(len(big))` for a `big = bytearray(300)` compiles and
+the parameter receives the same 44, silently. The refusal fires on a literal the parser
+built, and a computed value has no line and column to point at, so it cannot see one. This
+is a real hole and it has been paid for: the AVR I2C entry point declared its byte count
+`uint8`, the MicroPython layer handed it `len(buf)`, and a 128x32 display's 512-byte
+framebuffer arrived as zero, so the panel stayed blank while every command byte before it
+was correct (PyMCU#511). Until the check reaches computed values, a width a value must fit
+in is the author's to get right: declare the parameter for the values it will receive, not
+for the ones the tests happen to pass.
+
 An annotation may also be written through an alias: `ColorUnion = Union[int, uint8]` binds
 the name at compile time (inside a discarded `if TYPE_CHECKING:` / compat-layer guard too),
 and a parameter annotated `x: ColorUnion` reads it exactly as if the union were spelled out
