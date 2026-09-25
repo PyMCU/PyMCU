@@ -1598,6 +1598,44 @@ public partial class IRGenerator
                 throw NumericReceiverError(numRecv.Name, numKind, numMem.Member, expr.Callee);
             }
 
+            // `mod.member()` where mod really is an imported module. "call to undefined function
+            // 'utime_localtime' (typo, or a missing import?)" names a symbol the program never
+            // wrote and offers two answers that are both wrong: the spelling is right and the
+            // import is already there. A compat module that resolves and does not carry the
+            // member is the case behind issue #475, and what the reader needs is which module
+            // was asked and what it does carry.
+            if (expr.Callee is MemberAccessExpr { Object: VariableExpr modRecv } modMem
+                && modules.ContainsKey(modRecv.Name))
+            {
+                string realMod = TryImportedAlias(modRecv.Name, out var rmName) && rmName != null
+                    ? rmName : modRecv.Name;
+                string spelled = realMod == modRecv.Name
+                    ? $"'{modRecv.Name}'"
+                    : $"'{modRecv.Name}' ({realMod})";
+                string prefix = realMod.Replace('.', '_') + "_";
+                // The module's own functions, not its classes' methods: both are filed under
+                // `<module>_<name>`, and `Pin_high` is not something to write after `machine.`.
+                // A method is recognised by the class in front of it, never by holding an
+                // underscore -- `sleep_ms` and `ticks_diff` are most of what utime offers, and
+                // a list that drops them advertises one name out of eight.
+                var has = functionReturnTypes.Keys
+                    .Concat(inlineFunctions.Keys)
+                    .Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(k => k[prefix.Length..])
+                    .Where(n => n.Length > 0 && n[0] != '_' && !NamesAMethodOfAClass(prefix, n))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+                string carries = has.Count > 0
+                    ? $" It does define {string.Join(", ", has.Take(8))}"
+                      + (has.Count > 8 ? ", ..." : "") + "."
+                    : "";
+                throw UserError(
+                    $"module {spelled} does not define '{modMem.Member}'. The import resolved, so "
+                    + $"this is not a missing import: the module is here and this name is not part "
+                    + $"of what it provides on this chip.{carries}", expr.Callee);
+            }
+
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)",
                             expr.Callee);
         }
@@ -8648,6 +8686,22 @@ public partial class IRGenerator
                 return modText;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Is `name`, read under a module's mangling prefix, one of that module's CLASSES' methods
+    /// rather than a function of the module itself? Both are filed as `&lt;module&gt;_&lt;name&gt;`, and
+    /// only the class in front tells them apart.
+    /// </summary>
+    private bool NamesAMethodOfAClass(string modulePrefix, string name)
+    {
+        for (int cut = name.IndexOf('_'); cut > 0; cut = name.IndexOf('_', cut + 1))
+        {
+            string maybeClass = name[..cut];
+            if (classNames.Contains(modulePrefix + maybeClass) || classNames.Contains(maybeClass))
+                return true;
+        }
+        return false;
     }
 
     // The name a variable actually stores under, following the alias chain. Capped, since an
