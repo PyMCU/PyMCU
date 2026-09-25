@@ -3410,6 +3410,15 @@ public partial class IRGenerator
             if (mi.Symbols.Contains(symbol) && !mi.Aliases.ContainsKey(symbol))
                 return ResolveReExport(importedModules, mi.ModuleName, symbol, depth + 1);
 
+        // The name can BE a submodule the package binds: both `from . import sub` and
+        // `from pkg import sub` inside pkg/__init__.py arrive here as `import pkg.sub as sub`,
+        // which no symbol list mentions. Without this the chase stopped at the package and
+        // `sub.f()` mangled to pkg_f, a function nothing emits.
+        foreach (var mi in mAst.Imports)
+            if (mi.Symbols.Count == 0 && mi.ModuleAlias == symbol
+                && mi.ModuleName.EndsWith("." + symbol, StringComparison.Ordinal))
+                return mi.ModuleName;
+
         return moduleName;
     }
 
