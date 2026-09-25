@@ -490,10 +490,12 @@ is always the last tag state). A local that binds the result keeps the tag byte 
 the readers ask it directly: `r is None` / `r is not None` / `if r:` emit the tag test, `r
 or default` picks the payload or the default on it, and `if r is None: return` narrows `r`
 to `X` on the fall-through the same way `if r is not None:` narrows inside its arm. Reading
-an unnarrowed runtime-tagged name is refused at the line wherever the use site cannot
-represent both outcomes (`r + 1`, `buf[r]`, `r == x`, or passing `r` to a non-Optional
-parameter): CPython raises `TypeError` there, and a provable run-time type error is a
-compile-time refusal here. The sites that CAN represent both read the tag instead:
+an unnarrowed runtime-tagged name dispatches on its tag wherever CPython faults on None
+(`r + 1`, `buf[r]`, `r < x`, `-r`, `len(r)`, or passing `r` to a non-Optional parameter):
+each live member runs the operation at its own width, and a leaf that lands on the None
+member raises `TypeError` at run time with CPython's wording, reported through the RFC
+0005 deferred-print channel like any unhandled raise. The sites that CAN represent both
+read the tag instead:
 `print(r)` and `f"{r}"` emit the payload through the member's own writer when a real member
 is active and the text `None` when it is not, exactly as CPython prints the value. When
 every reached path is provable -- the annotation is wider than the body,

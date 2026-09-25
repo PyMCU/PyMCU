@@ -67,6 +67,20 @@
   nothing grows. Per-call the stub costs one extra CALL/RET pair — a character
   write on `examples/lcd` is +17 cycles (+0.7%), a 513-byte SSD1306 frame write is
   +9 cycles (+0.02%).
+- **ir**: RFC 0009 decision 7, runtime form — an unnarrowed `Optional`/`Union`
+  value used where CPython faults on None lowers to a member dispatch instead of
+  a compile-time refusal. Arithmetic (`+ - * / // % **`), unary `-`/`~`, the
+  ordering comparisons, `len()`, a subscript, and an argument bound for a
+  non-Optional parameter each emit one leaf per member combination; a live
+  member runs the operation at its own width and the None leaf raises TypeError
+  with CPython's exact wording through the RFC 0005 deferred-print channel
+  (`unsupported operand type(s) for *: 'NoneType' and 'float'`). Union fields in
+  Model B slots and instance-array elements store the payload at the widest
+  member plus a sibling tag byte, and `-> Union[...]` methods may outline.
+  The unmodified `adafruit_dht` simpletest compiles and prints
+  `Temp: 74.3 F / 23.5 C    Humidity: 55.0% ` — identical to CPython; a sensor
+  read that produces None faults at `temperature_c * (9 / 5) + 32` the same way
+  CPython faults. A value proven non-None still emits byte-identical code.
 
 ### Fixed
 

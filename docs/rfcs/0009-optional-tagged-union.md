@@ -77,10 +77,19 @@
    beside the payload saying which member is live. The difference is decision 2 --
    those languages pay it on every value of the type, and PyMCU pays it only where the
    None-ness is a run-time fact, so a compile-time-decidable Optional still emits
-   byte-identical code. Sites that cannot represent both -- arithmetic, an index, a
-   comparison other than `is None`/`is not None`, a parameter that is not Optional --
-   keep the located refusal: CPython raises TypeError there and this target has no
-   exception to raise it with, so the honest answer stays the CompileError.
+   byte-identical code. Amended (implemented): sites that cannot represent both do not
+   refuse either -- they dispatch on the tag. Arithmetic (`+ - * / // % **`), unary `-`
+   and `~`, the ordering comparisons, `len()`, a subscript, and an argument bound for a
+   parameter that is not Optional each lower to one leaf per member combination: a live
+   member runs the operation with the payload read at its own width, and a leaf that
+   lands on the None member raises TypeError at run time through the RFC 0005
+   deferred-print channel, worded exactly as CPython words it
+   (`unsupported operand type(s) for *: 'NoneType' and 'float'`). That is the same
+   bargain C# and C++ strike -- arithmetic on an empty `Nullable<T>`/`std::optional` is
+   a run-time fault, not a compile error -- paid only where the None-ness is a run-time
+   fact: a proven non-None operand still emits byte-identical code. Sites that stay
+   refused: a member read or a call on the Optional itself (`r.field`, `r()`), a format
+   spec on an unnarrowed value (`{r:.1f}` reads the payload), and bitwise ops.
 
 ## 1. The measured problem
 
@@ -221,7 +230,8 @@ zero while the pair is register-resident.
 | `r or default` / `a = r if r is not None else d` | tag test selecting payload or default |
 | `isinstance(r, T)` on a union | `CPI tag, <index of T>` + branch; tuple-of-types is a compare per member |
 | `match r:` with `case None:` / `case <type>():` | dispatches on the tag; note for phase 3 |
-| `r + 1`, `r.field`, `r()` on an unnarrowed Optional | **CompileError**: "r may be None here; narrow it first (`if r is not None:`)." CPython raises TypeError at run time; a provable run-time type error is a compile-time refusal in PyMCU |
+| `r + 1` (arithmetic, ordering compare), unary `-`/`~`, `len(r)`, `t[i]`, `f(r)` to a non-Optional param | member dispatch: each live member runs the op at its own width; a leaf landing on None raises TypeError at run time (RFC 0005 deferred print, CPython's wording). Was a CompileError before the decision-7 amendment |
+| `r.field`, `r()`, `{r:.1f}` on an unnarrowed Optional | still a CompileError: "r may be None here; narrow it first (`if r is not None:`)" -- a member read, a call, or a format spec cannot name which member to dispatch to |
 | inside `if r is not None:` | `r` reads as the payload type; the tag is not consulted again in that arm |
 | `print(r)` | one tag compare per real member, then the member's own writer; the None member writes the literal `None` |
 | `f"{r}"` | same dispatch at the interpolation site; a format spec (`{r:.1f}`) is a payload read and stays refused unnarrowed |
@@ -235,7 +245,7 @@ zero while the pair is register-resident.
 | runtime Optional across a call boundary | the tag byte after the payload in the return/argument run (section 4) |
 | `print(r)` / `f"{r}"` on a runtime Optional | a `CPI`/`BRNE` per real member plus the member writer the program already had; `None` is the fall-through |
 | a name proven None on this path | the literal `None` write only -- the fold, no tag read |
-| arithmetic, index, non-`is` comparison, non-Optional parameter on an unnarrowed Optional | CompileError (unchanged; the site cannot represent both outcomes) |
+| arithmetic, unary `-`/`~`, ordering compare, `len`, index, non-Optional parameter on an unnarrowed Optional | a `CPI`/`BREQ` per member combination plus each leaf's own code; the None leaf is a `TypeError` raise through the deferred-print channel. A proven non-None operand never reaches the dispatch |
 
 A return of an already-tagged name (`return self._temperature`, the dht shape) copies the
 field's tag byte to the tag register and the payload to the result registers -- the tag is
@@ -354,7 +364,7 @@ from the measured scratch builds.
 | `-> Union[int, float, None]` | "a union type annotation is not supported. PyMCU needs one concrete type, because the storage for a value is decided at compile time and two types do not share a size" | compiles; 3-state tag + float-wide payload |
 | `-> X` (no None member), reached `return None` | **silent garbage** | "this return gives None at run time, and 'f' is declared to return X. If the None is real, write `-> Optional[X]`; if this path should not be reached, guard it." |
 | `self._x: Optional[X] = None` + runtime write | silently drops both stores | field carries a tag byte |
-| `r + 1` on an unnarrowed runtime Optional | n/a (r was garbage) | "r may be None here; narrow it first (`if r is not None:`)." |
+| `r + 1` on an unnarrowed runtime Optional | n/a (r was garbage) | compiles; the None leaf raises `TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'` at run time -- uncaught, it prints through the RFC 0005 channel and halts like any unhandled raise |
 | `Optional[Pin]` (instance member) | reads as `Pin` (compile-time None) | refused on a runtime-tagged path: "Optional of an instance type is not supported; an instance is not a value that can be present or absent in storage" |
 | `Optional[list]`/`Optional[bytes]` return | reads as the buffer type | phase 1: refused, naming that buffers travel as names; open question below |
 | `@export_c`/`@extern` boundary | n/a | refused like the CanFail export rule: "an exported function cannot return `Optional[X]`; a C caller has no tag to read." `@extern` declarations stay untagged by construction. |
