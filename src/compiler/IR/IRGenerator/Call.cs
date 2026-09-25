@@ -279,6 +279,27 @@ public partial class IRGenerator
                     string mangledMod = realMod.Replace('.', '_');
                     string modFn = mangledMod + "_" + memC.Member;
 
+                    // A package that only RE-EXPORTS the callee: `pkg/__init__.py` doing
+                    // `from pkg.mod import f` compiles f under the DEFINING module, so
+                    // `pkg.f()` has no `pkg_f` to reach and reported it as undefined. The
+                    // member read of the same name already chased this (`usys.maxsize`);
+                    // the call did not, so `import pkg` bound a package whose functions
+                    // could be read and not called (#468).
+                    if (!inlineFunctions.ContainsKey(modFn) && !overloadedFunctions.Contains(modFn)
+                        && !methodAstByName.ContainsKey(modFn) && !functionReturnTypes.ContainsKey(modFn)
+                        && TryResolveModuleReExport(mangledMod, memC.Member, out var reExportedFn)
+                        && (inlineFunctions.ContainsKey(reExportedFn)
+                            || overloadedFunctions.Contains(reExportedFn)
+                            || methodAstByName.ContainsKey(reExportedFn)
+                            || functionReturnTypes.ContainsKey(reExportedFn)
+                            || classNames.Contains(reExportedFn)
+                            || inlineFunctions.ContainsKey(reExportedFn + "___init__")
+                            || overloadedFunctions.Contains(reExportedFn + "___init__")
+                            || methodAstByName.ContainsKey(reExportedFn + "___init__")))
+                    {
+                        modFn = reExportedFn;
+                    }
+
                     // The module's own definition wins over the builtin fallback:
                     // `math.pow` must reach `math`'s software-float pow, not the
                     // constant-integer builtin, once the module defines it. A builtin the
