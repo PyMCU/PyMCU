@@ -110,4 +110,31 @@ public class ConstStrParameterPrintTests
 
         Assert.True(WritesADecimal(Fn(ir, "take")));
     }
+
+    // PINNED FAILURE, PyMCU#506. The other half of the one-byte `str` slot: a function
+    // declared `-> str` returns the text's INTERNED ID, and the name that receives it is a
+    // one-byte global, so 262 & 255 = 6 is what the program prints. Nothing here is desirable
+    // -- this test asserts the WRONG behaviour on purpose, so that the day the slot is
+    // widened it turns red and whoever does it is sent to this file instead of finding a
+    // silent gap. Delete it with the fix; do not "repair" it.
+    //
+    // Pinned rather than left absent because an absent case looks identical to a covered one
+    // six months later, and the two forms print a plausible small number either way.
+    [Fact]
+    public void AStrReturnedFromAFunction_StillGoesThroughTheNarrowSlot()
+    {
+        var ir = Gen(
+            "def give() -> str:\n" +
+            "    return \"given\"\n" +
+            "g = give()\n" +
+            "print(g)\n");
+
+        // The id crosses the return as a plain constant, not as a flash address.
+        Assert.Contains(Fn(ir, "give").Body,
+            i => i is Return { Value: Constant { Value: > 255 } });
+        // And the slot that receives it is one byte wide, which is what truncates it.
+        Assert.Contains(ir.Globals, g => g.Name == "g" && g.Type.SizeOf() == 1);
+        // So the caller prints a number. When #506 lands, this line is the one that fails.
+        Assert.True(WritesADecimal(Fn(ir, "main")));
+    }
 }
