@@ -145,6 +145,24 @@
 
 ### Fixed
 
+- **ir**: a field holding a register pointer lost its element width, so `.value` on it
+  wrote TWO bytes into I/O space and landed the second one on the neighbouring register.
+  Three of the four ways to bind such a field dropped the width -- a bare `ptr(addr)`, a
+  `ptr[T]` parameter, and a register name the chip file exports -- and the field then kept
+  whatever the class scan had guessed for it, which is UINT16 because what such a field
+  holds is an address. A `tccrb` field at 0x81 wrote TCCR1C on every access, a `timsk`
+  field at 0x6F wrote TIMSK2, with no diagnostic. The one binding that worked was a
+  `-> ptr[T]`-annotated selector function, because there the width travelled with the
+  return annotation; that is why the PWM HAL's `pwm_select_ocr()` pattern never tripped on
+  it. The width now travels with the address on all four. The same omission made a
+  `ptr[uint16]` PARAMETER write only one byte of its pair.
+- **ir**: `self.reg: ptr[uint8] = TCCR1B` is accepted. An annotated instance member whose
+  type is a subscripted generic was read as an array annotation, so the element type was
+  taken for a size expression and the program was refused with "Array size 'uint8' is not a
+  compile-time constant" -- about a program with no array and no size in it. The same
+  subscript on a parameter and at module level was already accepted. The annotation now
+  also FIXES the field's element width, which is the direct spelling for what previously
+  needed a selector function: `self.cnt: ptr[uint16] = ptr(0x84)` writes the pair.
 - **ir/avr/stdlib**: a 16-bit AVR register write put the LOW byte out first, so the value
   that reached the hardware was built from a stale latch. An 8-bit core reaches a 16-bit
   peripheral register pair through one shared TEMP byte: writing the high half only fills
