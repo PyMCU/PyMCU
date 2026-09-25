@@ -201,12 +201,19 @@ public class OptionalPrintTests
     // ── what stays refused ────────────────────────────────────────────────────
 
     [Fact]
-    public void ArithmeticOnAnUnnarrowedOptional_KeepsTheRefusal()
+    public void ArithmeticOnAnUnnarrowedOptional_DispatchesOnTheTag()
     {
-        Refusal(ReadFn +
+        // RFC 0009 decision 7 (runtime form): `r + 1` lowers to a member dispatch --
+        // the payload member adds, the None leaf raises TypeError where CPython faults.
+        var main = Main(ReadFn +
             "def main():\n" +
             "    r = read(GPIOR0.value)\n" +
-            "    print(r + 1)\n").Should().Contain("may be None here");
+            "    print(r + 1)\n");
+        main.Body.OfType<Binary>().Any(b => b.Op == PyMCU.IR.BinaryOp.Add)
+            .Should().BeTrue("the payload member's leaf is the add");
+        main.Body.Any(i => i is SignalError
+                or Call { FunctionName: "__pymcu_unhandled_exn" or "__pymcu_raise" })
+            .Should().BeTrue("the None leaf raises TypeError");
     }
 
     [Fact]

@@ -986,6 +986,14 @@ public partial class IRGenerator
         if (TryEmitOptionalNoneTest(expr) is { } noneTest)
             return noneTest;
 
+        // RFC 0009 decision 7, second half: a live Optional operand on an op
+        // CPython faults on None for lowers to a member dispatch whose None
+        // leaf raises TypeError. Runs before the dunder paths so `inst + opt`
+        // still reaches the dunder through a leaf, and before the literal-None
+        // refusal so `r + None` dispatches on r's tag.
+        if (TryEmitGuardedBinary(expr) is { } guarded)
+            return guarded;
+
         // None comparisons resolve at compile time with real null semantics: an
         // integer or a concrete instance is never None; only a name bound to None
         // (or the None literal itself) is. This replaces the old None==-1 model,
@@ -2124,7 +2132,10 @@ public partial class IRGenerator
             Emit(new Label(notDone));
             return notRes;
         }
-        // `-r`, `~r` and friends need the payload -- an unnarrowed optional refuses.
+        // `-r`, `~r` and friends need the payload -- a live optional dispatches
+        // on its tag and raises TypeError on the None member.
+        if (TryEmitGuardedUnary(expr) is { } guardedUnary)
+            return guardedUnary;
         if (expr.Op != AstUnOp.Not && unaryOperand is VariableExpr uv
             && OptionalKeyOf(uv.Name) is { } unKey && !narrowedOptionals.ContainsKey(unKey))
             throw UserError(

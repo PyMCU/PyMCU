@@ -440,14 +440,24 @@ public class OptionalIsTheTypeTests
     }
 
     [Fact]
-    public void APayloadReadOutsideNarrowingIsRefused()
+    public void APayloadReadOutsideNarrowingDispatchesOnTheTag()
     {
-        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(OptRead +
+        // RFC 0009 decision 7 (runtime form): an unnarrowed Optional in arithmetic lowers to a
+        // member dispatch -- each scalar member runs the op at its own width, and the None leaf
+        // raises TypeError where CPython faults, instead of a compile-time refusal.
+        var ir = Gen(OptRead +
             "def main():\n" +
             "    v = read(GPIOR0.value)\n" +
-            "    GPIOR1.value = v + 1\n"));
-        Assert.Contains("'v' may be None here", ex.Message);
-        Assert.Contains("is not None", ex.Message);
+            "    GPIOR1.value = v + 1\n");
+        var main = ir.Functions.Single(fn => fn.Name == "main");
+        // The payload member's leaf is the add itself.
+        Assert.Contains(main.Body.OfType<Binary>(), b => b.Op == PyMCU.IR.BinaryOp.Add);
+        // The dispatch reads v's tag.
+        Assert.Contains(main.Body, i =>
+            i is JumpIfEqual or JumpIfNotEqual or JumpIfZero or JumpIfNotZero);
+        // ...and the None leaf raises (SignalError feeds the deferred-print report).
+        Assert.Contains(main.Body, i => i is SignalError
+            or Call { FunctionName: "__pymcu_unhandled_exn" or "__pymcu_raise" });
     }
 
     [Fact]
@@ -479,14 +489,18 @@ public class OptionalIsTheTypeTests
     public void AJoinWhereOneArmLeftItNoneStaysOptional()
     {
         // `if v is None: <arm>` -- the arm ran with v None and the fall-through ran
-        // with v present, so past the join v is optional again and the read refuses.
-        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(OptRead +
+        // with v present, so past the join v is optional again. The unnarrowed use
+        // lowers to a tag dispatch whose None leaf raises TypeError at run time.
+        var ir = Gen(OptRead +
             "def main():\n" +
             "    v = read(GPIOR0.value)\n" +
             "    if v is None:\n" +
             "        GPIOR1.value = 0\n" +
-            "    GPIOR1.value = v + 1\n"));
-        Assert.Contains("'v' may be None here", ex.Message);
+            "    GPIOR1.value = v + 1\n");
+        var main = ir.Functions.Single(fn => fn.Name == "main");
+        Assert.Contains(main.Body.OfType<Binary>(), b => b.Op == PyMCU.IR.BinaryOp.Add);
+        Assert.Contains(main.Body, i => i is SignalError
+            or Call { FunctionName: "__pymcu_unhandled_exn" or "__pymcu_raise" });
     }
 
     [Fact]

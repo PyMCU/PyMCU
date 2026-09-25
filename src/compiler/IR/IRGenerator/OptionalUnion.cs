@@ -3475,4 +3475,573 @@ public partial class IRGenerator
         if (CurrentReturnMembers is not { } members) return null;
         return ReturnTagVal(expr, val, members);
     }
+
+    // ── RFC 0009 decision 7, second half: guarded operator reads ────────────
+    //
+    // An unnarrowed runtime Optional used where CPython faults on None -- the
+    // arithmetic ops `+ - * / // % **`, unary - and ~, the ordering
+    // comparisons, len(), a subscript, or an argument to a parameter that is
+    // not Optional -- lowers to a member dispatch instead of a compile error:
+    // each non-None member runs the operation with the payload read at ITS
+    // width, and a leaf that lands on the None member raises TypeError with the
+    // message CPython prints for that operator and operand types. The fault
+    // fires where CPython fires it -- after both operands are evaluated.
+    //
+    // A name already proven non-None never reaches here (narrowedOptionals
+    // filters it out of LiveOptionalTag), so a proven value pays zero bytes,
+    // and a program with no runtime Optional emits nothing new.
+
+    /// One operand position of a guarded operation. A live Optional fills Tag /
+    /// Members / Key / Payload; a bare-name operand (FromAst) keeps its AST node
+    /// and reads its member inside a leaf through a narrowedOptionals mark, while
+    /// an already-evaluated operand carries its payload Val for MemberRead. A
+    /// non-optional operand stays null in those fields: pure nodes keep their AST
+    /// and everything else was evaluated once into Evaluated (so a call inside an
+    /// operand still runs exactly once, before the dispatch -- CPython's order).
+    private sealed class GuardedOperand
+    {
+        internal Expression Ast = null!;
+        internal Val? Evaluated;
+        internal Val? Tag;
+        internal List<string>? Members;
+        internal string? Key;
+        internal Val? Payload;
+        internal bool FromAst;
+        internal bool AlwaysNone;   // a provable-None operand: every leaf raises
+        internal bool IsOptional => Tag != null || AlwaysNone;
+    }
+
+    /// <summary>
+    /// Classify one operand of a guarded operation. Bare names and union fields
+    /// answer through the tag tables; every other non-literal node is evaluated
+    /// once here, so the caller must route the returned Evaluated value into the
+    /// leaf (or the single re-lowered op) rather than evaluating the node again.
+    /// A provable-None operand reports AlwaysNone -- the operation on it is a
+    /// compile-time-certain TypeError, still raised at run time where CPython
+    /// raises it.
+    /// </summary>
+    private GuardedOperand ClassifyGuardedOperand(Expression e)
+    {
+        var g = new GuardedOperand { Ast = e };
+        if (e is VariableExpr ve)
+        {
+            if (IsNoneValued(ve)) { g.AlwaysNone = true; return g; }
+            if (LiveOptionalTag(ve) is { } lv)
+            {
+                g.Tag = lv.tag;
+                g.Members = lv.members;
+                g.Key = lv.key;
+                g.Payload = EvalOptionalCarry(ve);
+                g.FromAst = true;
+            }
+            return g;
+        }
+        if (e is IntegerLiteral or FloatLiteral or StringLiteral
+            or BooleanLiteral or NoneLiteral or PreEvaluatedExpr)
+            return g;
+        // Member access takes the carry path too: a union field or a getter
+        // returning Optional is read through the same refusal VisitVariable has,
+        // so it must be read once, here, with the read allowed.
+        g.Evaluated = e is MemberAccessExpr ? EvalOptionalCarry(e) : VisitExpression(e);
+        if (g.Evaluated is NoneVal)
+        {
+            g.AlwaysNone = true;
+            return g;
+        }
+        if (TagOfVal(g.Evaluated) is { } t && ValNameOf(g.Evaluated) is { } vn)
+        {
+            if (noneValuedNames.Contains(vn))
+            {
+                g.AlwaysNone = true;
+                return g;
+            }
+            if (!narrowedOptionals.ContainsKey(vn)
+                && optionalMembersByName.TryGetValue(vn, out var m) && m.Count > 0)
+            {
+                g.Tag = t;
+                g.Members = m;
+                g.Key = vn;
+                g.Payload = g.Evaluated;
+            }
+        }
+        return g;
+    }
+
+    /// Whether lowering <paramref name="e"/> could produce a runtime-tagged
+    /// Optional -- the probe a caller runs before ClassifyGuardedOperand so a
+    /// program with no Optional in play skips the whole path unchanged.
+    private bool CouldBeGuardedOperand(Expression e)
+    {
+        if (LiveOptionalTag(e) != null) return true;
+        return ExprMayBeOptional(e);
+    }
+
+    /// <summary>
+    /// Emit the member dispatch for an operation over <paramref name="operands"/>.
+    /// Each operand position lists its member names -- a live Optional's own list,
+    /// a provable-None operand's ["None"], a definite operand's single CPython type
+    /// name. For every member combination a leaf is lowered into a scratch buffer:
+    /// a combination touching the None member emits the TypeError raise
+    /// (<paramref name="raiseMessage"/> computes its text from the per-operand
+    /// member names); any other combination calls <paramref name="emitLeaf"/> with
+    /// the operand expressions to evaluate -- a kept-AST name runs under a
+    /// narrowedOptionals mark, an evaluated operand arrives as a member-typed
+    /// PreEvaluatedExpr. emitLeaf returns the leaf's result Val, or null for a
+    /// leaf that emits no value (a raise or a stream write).
+    ///
+    /// The result is collected in a temp of the leaves' widest type; when leaf
+    /// results differ in type the temp is itself tagged with the member list the
+    /// result can be, so a following read or guarded op still sees member-correct
+    /// values. When every non-raise leaf produced the same member the result is a
+    /// plain temp. An operand whose only non-None member the dispatch just proved
+    /// is marked narrowed for the code that follows -- `r + 1` on Optional[int]
+    /// leaves `r` an int on the continuation path, which is why a second guarded
+    /// use in the same straight line costs no guard at all.
+    /// </summary>
+    private Val EmitGuardedOptionalOp(
+        List<GuardedOperand> operands,
+        List<List<string>> memberNames,
+        Func<Expression[], int[], Val?> emitLeaf,
+        Func<string?[], string> raiseMessage)
+    {
+        // Enumerate every member combination, optional operands first so a leaf's
+        // check order reads left-to-right the way the operands do.
+        var combos = new List<int[]>();
+        void Enumerate(int pos, int[] cur)
+        {
+            if (pos == operands.Count) { combos.Add((int[])cur.Clone()); return; }
+            for (int mi = 0; mi < memberNames[pos].Count; ++mi)
+            {
+                cur[pos] = mi;
+                Enumerate(pos + 1, cur);
+            }
+        }
+        Enumerate(0, new int[operands.Count]);
+
+        // Lower each leaf into its own buffer: the result temp's type is only
+        // known once every leaf has produced a value, and the messages are
+        // per-combination literals.
+        var savedInstrs = currentInstructions;
+        var leaves = new List<(List<Instruction> Body, Val? Result, List<string>? ResultMembers, bool Raised)>();
+        foreach (var combo in combos)
+        {
+            currentInstructions = new List<Instruction>();
+            bool raises = false;
+            for (int k = 0; k < operands.Count; ++k)
+                if (memberNames[k][combo[k]] == "None") { raises = true; break; }
+
+            Val? result = null;
+            List<string>? leafMembers = null;
+            if (raises)
+            {
+                var names = new string?[operands.Count];
+                for (int k = 0; k < operands.Count; ++k)
+                    names[k] = memberNames[k][combo[k]];
+                EmitGuardedTypeErrorRaise(raiseMessage(names));
+            }
+            else
+            {
+                // Build the leaf's operand expressions and mark the kept-AST
+                // names narrowed for exactly this member.
+                var leafExprs = new Expression[operands.Count];
+                var marked = new List<string>();
+                for (int k = 0; k < operands.Count; ++k)
+                {
+                    var op = operands[k];
+                    int mi = combo[k];
+                    if (op.Tag == null)
+                        leafExprs[k] = op.Evaluated != null
+                            ? new PreEvaluatedExpr(op.Evaluated, null) { Line = op.Ast.Line }
+                            : op.Ast;
+                    else if (op.FromAst)
+                    {
+                        narrowedOptionals[op.Key!] = mi;
+                        marked.Add(op.Key!);
+                        leafExprs[k] = op.Ast;
+                    }
+                    else
+                    {
+                        leafExprs[k] = new PreEvaluatedExpr(
+                            MemberRead(op.Payload!, mi, op.Members!), null) { Line = op.Ast.Line };
+                    }
+                }
+                result = emitLeaf(leafExprs, combo);
+                foreach (var key in marked)
+                    narrowedOptionals.Remove(key);
+                if (result != null)
+                    leafMembers = GuardedLeafMembers(result);
+            }
+            leaves.Add((currentInstructions, result, leafMembers, raises));
+        }
+        currentInstructions = savedInstrs;
+
+        // The value a non-raise leaf produced, as member names for the result
+        // union. All-raise dispatches (len() of a scalar union) produce nothing.
+        // None stays the last member so NoneIndex keeps answering right.
+        var resultMembers = new List<string>();
+        foreach (var leaf in leaves)
+            if (leaf.ResultMembers != null)
+                foreach (var rm in leaf.ResultMembers)
+                    if (!resultMembers.Contains(rm))
+                        resultMembers.Add(rm);
+        if (resultMembers.Remove("None")) resultMembers.Add("None");
+
+        if (resultMembers.Count == 0)
+        {
+            // Every path raises: replay the dispatch with no result plumbing. The
+            // value this expression "returns" never materializes.
+            EmitGuardedDispatchBody(operands, combos, leaves, null, null, null);
+            return new Constant(0);
+        }
+
+        var dst = MakeTemp(UnionPayloadType(resultMembers));
+        Val? resTag = null;
+        if (resultMembers.Count > 1 || resultMembers.Contains("None"))
+        {
+            resTag = TagStorageFor(dst.Name);
+            MarkOptional(dst.Name, resTag, resultMembers);
+        }
+        EmitGuardedDispatchBody(operands, combos, leaves, dst, resTag, resultMembers);
+
+        // A surviving path proved each single-real-member operand's member: mark
+        // it narrowed so the next read is unguarded (the raise path is gone).
+        foreach (var op in operands)
+        {
+            if (op.Tag == null || op.Members == null || op.Key == null) continue;
+            int noneIdx = NoneIndex(op.Members);
+            var real = Enumerable.Range(0, op.Members.Count).Where(i => i != noneIdx).ToList();
+            if (real.Count == 1) narrowedOptionals[op.Key] = real[0];
+        }
+        return dst;
+    }
+
+    /// <summary>
+    /// Replay the lowered leaves as a tag dispatch: every leaf but the last gets
+    /// `JumpIfNotEqual(tag, member)` guards on each optional operand's tag, then
+    /// its body, the result copy and a jump to the end; the last leaf is the
+    /// fallthrough (no check -- the tag must hold one of the members). Raise
+    /// leaves end in SignalError / the unhandled call, so they take no jump.
+    /// </summary>
+    private void EmitGuardedDispatchBody(
+        List<GuardedOperand> operands,
+        List<int[]> combos,
+        List<(List<Instruction> Body, Val? Result, List<string>? ResultMembers, bool Raised)> leaves,
+        Temporary? dst, Val? resTag, List<string>? resultMembers)
+    {
+        string done = MakeLabel();
+        for (int k = 0; k < leaves.Count; ++k)
+        {
+            var leaf = leaves[k];
+            void EmitLeaf()
+            {
+                currentInstructions.AddRange(leaf.Body);
+                if (leaf.Result == null || dst == null || resultMembers == null
+                    || leaf.ResultMembers == null) return;
+                if (leaf.ResultMembers.Count > 1
+                    && TagOfVal(leaf.Result) is { } leafTag)
+                {
+                    // The leaf produced a tagged union itself (an Optional
+                    // element read, say): move each member at its own width and
+                    // carry the leaf tag across into the result tag.
+                    string ldone = MakeLabel();
+                    for (int li = 0; li < leaf.ResultMembers.Count; ++li)
+                    {
+                        string lsk = MakeLabel();
+                        bool lLast = li == leaf.ResultMembers.Count - 1;
+                        if (!lLast)
+                            Emit(new JumpIfNotEqual(leafTag, new Constant(li), lsk));
+                        int rmi = resultMembers.IndexOf(leaf.ResultMembers[li]);
+                        Emit(new Copy(MemberRead(leaf.Result, li, leaf.ResultMembers),
+                                      MemberRead(dst, rmi, resultMembers)));
+                        if (resTag != null)
+                            Emit(new Copy(new Constant(rmi), resTag));
+                        if (!lLast) { Emit(new Jump(ldone)); Emit(new Label(lsk)); }
+                    }
+                    Emit(new Label(ldone));
+                    return;
+                }
+                if (leaf.ResultMembers.Count == 1)
+                {
+                    int rmi = resultMembers.IndexOf(leaf.ResultMembers[0]);
+                    Emit(new Copy(leaf.Result, MemberRead(dst, rmi, resultMembers)));
+                    if (resTag != null)
+                        Emit(new Copy(new Constant(rmi), resTag));
+                }
+            }
+            if (k < leaves.Count - 1)
+            {
+                string skip = MakeLabel();
+                for (int s = 0; s < operands.Count; ++s)
+                {
+                    var op = operands[s];
+                    if (op.Tag == null) continue;
+                    Emit(new JumpIfNotEqual(op.Tag, new Constant(combos[k][s]), skip));
+                }
+                EmitLeaf();
+                if (!leaf.Raised) Emit(new Jump(done));
+                Emit(new Label(skip));
+            }
+            else
+                EmitLeaf();
+        }
+        Emit(new Label(done));
+    }
+
+    /// The member names a leaf result takes in the dispatch's result union: a
+    /// leaf that produced a tagged value contributes its own member list, a
+    /// plain value its type name, with constants folding to int/float by value.
+    private List<string> GuardedLeafMembers(Val result)
+    {
+        if (TagOfVal(result) != null && ValNameOf(result) is { } rn
+            && optionalMembersByName.TryGetValue(rn, out var rm) && rm.Count > 0)
+            return new List<string>(rm);
+        return new List<string>
+        {
+            result switch
+            {
+                FloatConstant => "float",
+                Constant => "int",
+                _ => TypeNameFor(result),
+            }
+        };
+    }
+
+    /// <summary>
+    /// The TypeError a guarded leaf raises, in the exact shape a literal
+    /// `raise TypeError("...")` emits: the message interned to flash and stored
+    /// in __exn_msg so the unhandled report and `except ... as e` print it, then
+    /// SignalError to the local catch or the unhandled-exn report. The raise is
+    /// compiler-generated, so the program-level flags that were scanned before
+    /// lowering may be off -- they are turned on here, which only ever happens
+    /// in a program that contains a guarded Optional read (a shape that did not
+    /// compile before, so no previously-compilable image changes).
+    /// </summary>
+    private void EmitGuardedTypeErrorRaise(string message)
+    {
+        Val code = ResolveBinding("TypeError");
+        if (programRecordsRaiseMessages || programReportsRaiseMessage
+            || ResolveRuntimeWriteStrFn() != "uart_write_str")
+        {
+            programRecordsRaiseMessages = true;
+            programReportsRaiseMessage = true;
+            DeclareExceptionMessageVar();
+            Emit(new Copy(new FlashStrAddr(InternStringAsFlash(message)),
+                          new Variable(ExceptionMessageVar, DataType.UINT16)));
+            sawRaiseMessageStore = true;
+            if (programHasDynamicRaiseMessage)
+            {
+                // A literal raise clears the site id so print(e) takes the
+                // flash-string path, not a previous raise's deferred pieces.
+                DeclareExceptionSiteVar();
+                Emit(new Copy(new Constant(0),
+                              new Variable(ExceptionSiteVar, DataType.UINT8)));
+            }
+        }
+        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
+        if (localCatch == null && currentFunction == "main")
+        {
+            string unhandled = MakeLabel();
+            Emit(new SignalError(code, unhandled));
+            Emit(new Label(unhandled));
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+            return;
+        }
+        Emit(new SignalError(code, localCatch));
+    }
+
+    /// <summary>
+    /// The CPython type name a member or operand reports inside a TypeError
+    /// message: PyMCU's int-family member names are all 'int' to Python, a
+    /// definite operand's name comes from its expression or evaluated value.
+    /// </summary>
+    private static string GuardedPyMemberName(string member) => member switch
+    {
+        "None" => "NoneType",
+        "float" => "float",
+        "bool" => "bool",
+        "str" or "const[str]" => "str",
+        "bytes" => "bytes",
+        "bytearray" => "bytearray",
+        _ => IsIntMember(member) ? "int" : member,
+    };
+
+    /// The CPython type name a definite (non-Optional) operand reports: a string
+    /// literal or str constant is 'str', a float literal or FLOAT value 'float',
+    /// a bool literal 'bool', an instance its class name; anything else 'int'.
+    private string GuardedPyTypeOf(Expression? ast, Val? v)
+    {
+        if (ast is NoneLiteral) return "NoneType";
+        if (ast is StringLiteral) return "str";
+        if (ast is FloatLiteral || v is FloatConstant) return "float";
+        if (ast is BooleanLiteral) return "bool";
+        if (v != null && GetValClass(v) is { Length: > 0 } cls)
+            return cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
+        if (v != null && GetValType(v) == DataType.FLOAT) return "float";
+        if (ast is VariableExpr ve && ResolveStrConstant(ve.Name) != null)
+            return "str";
+        return "int";
+    }
+
+    /// The single-entry member-name list a definite operand contributes to a
+    /// guarded dispatch: its CPython type name, for the raise message.
+    private List<string> DefiniteMemberNames(GuardedOperand g)
+        => new() { GuardedPyTypeOf(g.Ast, g.Evaluated) };
+
+    /// The member-name list a classified operand contributes: a live Optional's
+    /// own list, a provable-None operand's single "None", a definite operand's
+    /// CPython type name.
+    private List<string> GuardedMemberNames(GuardedOperand g)
+        => g.Tag != null ? g.Members!
+           : g.AlwaysNone ? new List<string> { "None" }
+           : DefiniteMemberNames(g);
+
+    /// CPython's operator spelling for a TypeError message.
+    private static string GuardedOpSymbol(AstBinOp op) => op switch
+    {
+        AstBinOp.Add => "+",
+        AstBinOp.Sub => "-",
+        AstBinOp.Mul => "*",
+        AstBinOp.Div => "/",
+        AstBinOp.FloorDiv => "//",
+        AstBinOp.Mod => "%",
+        AstBinOp.Pow => "**",
+        AstBinOp.LShift => "<<",
+        AstBinOp.RShift => ">>",
+        AstBinOp.BitAnd => "&",
+        AstBinOp.BitOr => "|",
+        AstBinOp.BitXor => "^",
+        AstBinOp.Less => "<",
+        AstBinOp.LessEq => "<=",
+        AstBinOp.Greater => ">",
+        AstBinOp.GreaterEq => ">=",
+        AstBinOp.Equal => "==",
+        AstBinOp.NotEqual => "!=",
+        _ => op.ToString(),
+    };
+
+    /// <summary>
+    /// The message a None-member leaf of a binary op raises -- the sentence
+    /// CPython prints for that operator and operand types:
+    /// `unsupported operand type(s) for +: 'NoneType' and 'int'`, the
+    /// `** or pow()` spelling for Pow, and the `'<=' not supported between
+    /// instances of ...` shape for the ordering comparisons.
+    /// </summary>
+    private static string GuardedBinaryMessage(AstBinOp op, string lMember, string rMember)
+    {
+        string l = GuardedPyMemberName(lMember);
+        string r = GuardedPyMemberName(rMember);
+        if (op == AstBinOp.Pow)
+            return $"unsupported operand type(s) for ** or pow(): '{l}' and '{r}'";
+        if (op is AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq)
+            return $"'{GuardedOpSymbol(op)}' not supported between instances of '{l}' and '{r}'";
+        return $"unsupported operand type(s) for {GuardedOpSymbol(op)}: '{l}' and '{r}'";
+    }
+
+    /// <summary>
+    /// RFC 0009 decision 7's second half at a binary operator: when either side
+    /// can be a live Optional and the operator is one CPython faults on None
+    /// for, lower through the member dispatch instead of refusing -- or
+    /// silently dropping the tag, which is what `read(3) + 1` did before. The
+    /// ops NOT in this list (`is`, `is not`, `==`, `!=`, `and`, `or`, `in`,
+    /// bitwise ops) keep whatever handling they already had -- None compares
+    /// equal-unequal in CPython without a fault, and bitwise ops are still a
+    /// compile-time refusal per the existing diagnostics.
+    /// </summary>
+    private Val? TryEmitGuardedBinary(BinaryExpr expr)
+    {
+        bool isArith = expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul
+            or AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod or AstBinOp.Pow;
+        bool isCmp = expr.Op is AstBinOp.Less or AstBinOp.LessEq
+            or AstBinOp.Greater or AstBinOp.GreaterEq;
+        if (!isArith && !isCmp) return null;
+        if (!CouldBeGuardedOperand(expr.Left) && !CouldBeGuardedOperand(expr.Right))
+            return null;
+
+        var lhs = ClassifyGuardedOperand(expr.Left);
+        var rhs = ClassifyGuardedOperand(expr.Right);
+        if (!lhs.IsOptional && !rhs.IsOptional)
+        {
+            // The probe said maybe and the values said no -- the only cost is a
+            // non-pure operand already evaluated. Rewrap it so its value is
+            // reused and let the normal lowering run once on the same op.
+            if (lhs.Evaluated == null && rhs.Evaluated == null) return null;
+            return VisitExpression(new BinaryExpr(
+                lhs.Evaluated != null
+                    ? new PreEvaluatedExpr(lhs.Evaluated, null) { Line = expr.Left.Line }
+                    : expr.Left,
+                expr.Op,
+                rhs.Evaluated != null
+                    ? new PreEvaluatedExpr(rhs.Evaluated, null) { Line = expr.Right.Line }
+                    : expr.Right) { Line = expr.Line });
+        }
+
+        var ops = new List<GuardedOperand> { lhs, rhs };
+        var names = new List<List<string>>
+        {
+            GuardedMemberNames(lhs),
+            GuardedMemberNames(rhs),
+        };
+        return EmitGuardedOptionalOp(ops, names,
+            emitLeaf: (exprs, _) =>
+            {
+                var leafExpr = new BinaryExpr(exprs[0], expr.Op, exprs[1]) { Line = expr.Line };
+                return VisitExpression(leafExpr);
+            },
+            raiseMessage: n => GuardedBinaryMessage(expr.Op, n[0]!, n[1]!));
+    }
+
+    /// <summary>
+    /// Unary `-` (and `~`) on a live Optional: the member dispatch over one
+    /// operand, with `bad operand type for unary -: 'NoneType'` on the None
+    /// leaf. `not` never reaches here -- it folds to a tag test before this
+    /// probe runs.
+    /// </summary>
+    private Val? TryEmitGuardedUnary(UnaryExpr expr)
+    {
+        if (expr.Op is not (AstUnOp.Negate or AstUnOp.BitNot)) return null;
+        if (!CouldBeGuardedOperand(expr.Operand)) return null;
+        var g = ClassifyGuardedOperand(expr.Operand);
+        if (!g.IsOptional)
+        {
+            if (g.Evaluated == null) return null;
+            return VisitExpression(new UnaryExpr(expr.Op,
+                new PreEvaluatedExpr(g.Evaluated, null) { Line = expr.Operand.Line })
+                { Line = expr.Line });
+        }
+        string sym = expr.Op == AstUnOp.Negate ? "-" : "~";
+        var ops = new List<GuardedOperand> { g };
+        var names = new List<List<string>> { GuardedMemberNames(g) };
+        return EmitGuardedOptionalOp(ops, names,
+            emitLeaf: (exprs, _) =>
+            {
+                var leafExpr = new UnaryExpr(expr.Op, exprs[0]) { Line = expr.Line };
+                return VisitExpression(leafExpr);
+            },
+            raiseMessage: n => $"bad operand type for unary {sym}: '{GuardedPyMemberName(n[0]!)}'");
+    }
+
+    /// <summary>
+    /// `len(x)` on a live Optional: every scalar member raises
+    /// `object of type '<member>' has no len()` -- a scalar union has no
+    /// len-able member, so the dispatch is all raise leaves and produces no
+    /// result value.
+    /// </summary>
+    private Val? TryEmitGuardedLen(CallExpr expr)
+    {
+        if (expr.Args.Count != 1 || !CouldBeGuardedOperand(expr.Args[0])) return null;
+        var g = ClassifyGuardedOperand(expr.Args[0]);
+        if (!g.IsOptional) return null;
+        var ops = new List<GuardedOperand> { g };
+        var names = new List<List<string>> { GuardedMemberNames(g) };
+        return EmitGuardedOptionalOp(ops, names,
+            emitLeaf: (exprs, combo) =>
+            {
+                EmitGuardedTypeErrorRaise(
+                    $"object of type '{GuardedPyMemberName(names[0][combo[0]])}' has no len()");
+                return null;
+            },
+            raiseMessage: n => $"object of type '{GuardedPyMemberName(n[0]!)}' has no len()");
+    }
+
 }

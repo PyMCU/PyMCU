@@ -5277,6 +5277,12 @@ public partial class IRGenerator
         if (ResolveGridKey(expr.Args[0]) is { } lenGridKey)
             return new Constant(gridDims[lenGridKey].H);
 
+        // RFC 0009: len() on a live Optional dispatches on its tag -- every
+        // member raises `object of type '<member>' has no len()` (the union's
+        // members are scalars), the None member's wording included.
+        if (TryEmitGuardedLen(expr) is { } lenGuarded)
+            return lenGuarded;
+
         // RFC 0008: len() on a read view is its avail count; on a readline buffer the
         // line's length variable; on os.listdir()'s result the entry count. A direct
         // len(f.read(n)) mints the view and takes its avail.
@@ -8479,6 +8485,31 @@ public partial class IRGenerator
     // Emit an interpolated value formatted per its spec, via the generic uart_write_fmt helper.
     private void EmitFormattedExpr(Expression e, string spec)
     {
+        // RFC 0009: `{v:.1f}` on a live Optional dispatches on its tag -- each
+        // member formats at its own width through the same spec, and the None
+        // member raises the TypeError CPython's format protocol raises:
+        // `unsupported format string passed to NoneType.__format__`.
+        if (CouldBeGuardedOperand(e))
+        {
+            var fg = ClassifyGuardedOperand(e);
+            if (fg.IsOptional)
+            {
+                var fops = new List<GuardedOperand> { fg };
+                var fnames = new List<List<string>> { GuardedMemberNames(fg) };
+                EmitGuardedOptionalOp(fops, fnames,
+                    emitLeaf: (exprs, _) =>
+                    {
+                        EmitFormattedExpr(exprs[0], spec);
+                        return null;
+                    },
+                    raiseMessage: _ =>
+                        "unsupported format string passed to NoneType.__format__");
+                return;
+            }
+            if (fg.Evaluated != null)
+                e = new PreEvaluatedExpr(fg.Evaluated, null) { Line = e.Line };
+        }
+
         Val v = VisitExpression(e);
         DataType vt = GetValType(v);
         if (vt == DataType.FLOAT || v is FloatConstant || spec.EndsWith("f", StringComparison.Ordinal))
@@ -8765,7 +8796,9 @@ public partial class IRGenerator
                 continue;
             }
             Flush();
-            EmitStreamVal(floatFn, VisitExpression(part.Expr!));
+            Val partFinal = VisitExpression(part.Expr!);
+            if (!TryEmitOptionalStreamVal(writeStrFn, floatFn, partFinal))
+                EmitStreamVal(floatFn, partFinal);
         }
         Flush();
     }
@@ -9298,7 +9331,11 @@ public partial class IRGenerator
 
             // The declared width of a NAME travels with its value, because a folded constant no
             // longer carries one (#331): `lo: int32 = -2147483648` printed its low byte.
-            EmitStreamVal(floatWriteFn, VisitExpression(arg), DeclaredWidthOfName(arg));
+            Val argV = VisitExpression(arg);
+            // A guarded Optional op result is a tagged temp: print it member-wise
+            // (`print(x + 1)` on Optional reads the tag, not the widest width).
+            if (TryEmitOptionalStreamVal(writeStrFn, floatWriteFn, argV)) return;
+            EmitStreamVal(floatWriteFn, argV, DeclaredWidthOfName(arg));
         }
 
         if (posArgs.Count == 0)
