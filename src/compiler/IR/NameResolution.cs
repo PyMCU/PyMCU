@@ -231,17 +231,21 @@ public sealed class NameResolution
     public static string SpellingOf(string key, string modulePrefix, string function,
                                     string inlinePrefix)
     {
+        // Order matters, and the reason is worth stating: the heuristic spellings (a sequence
+        // element ends in a digit, a flattened field carries an underscore) match plenty of
+        // ordinary names. The spellings a SCOPE produces are exact, so they are tested first
+        // and the heuristics only ever see what is left.
         if (key.Length == 0) return "empty";
         if (inlinePrefix.Length > 0 && key.StartsWith(inlinePrefix, StringComparison.Ordinal))
             return "inline-prefix";
         if (key.StartsWith("__lam", StringComparison.Ordinal)) return "lambda-prefix";
         if (key.Contains('|')) return "class-member";
-        if (key.Contains("__") && char.IsDigit(key[^1])) return "sequence-element";
         if (function.Length > 0
             && key.StartsWith(function + ".", StringComparison.Ordinal)) return "function-qualified";
         if (modulePrefix.Length > 0
             && key.StartsWith(modulePrefix, StringComparison.Ordinal)) return "module-qualified";
         if (key.StartsWith("tmp_", StringComparison.Ordinal)) return "temporary";
+        if (key.Contains("__") && char.IsDigit(key[^1])) return "sequence-element";
         if (key.Contains('.')) return "other-dotted";
         if (key.Contains('_')) return "flattened-field";
         return "bare";

@@ -115,5 +115,11 @@ public class NameResolutionObserverTests
         Assert.Equal("module-qualified",
                      NameResolution.SpellingOf("pymcu_hal_gpio_port", "pymcu_hal_gpio_", "", ""));
         Assert.Equal("bare", NameResolution.SpellingOf("px", "", "main", ""));
+        // A scope spelling wins over the heuristics: `board___module_init.D0` ends in a digit
+        // and carries a double underscore, and it is still the function's qualification.
+        Assert.Equal("function-qualified",
+                     NameResolution.SpellingOf("board___module_init.D0", "board_",
+                                               "board___module_init", ""));
+        Assert.Equal("sequence-element", NameResolution.SpellingOf("base__3", "", "", ""));
     }
 }
