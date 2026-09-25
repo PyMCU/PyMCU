@@ -1864,6 +1864,7 @@ public partial class IRGenerator
 
             functionParams[fullName] = @params;
             functionParamTypes[fullName] = paramTypes;
+            functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
             functionParamDefaults[fullName] = func.Params.Select(p => p.DefaultValue).ToList();
             functionModulePrefix[fullName] = currentModulePrefix ?? "";
 
@@ -2317,6 +2318,7 @@ public partial class IRGenerator
 
                                 functionParams[fullName] = @params;
                                 functionParamTypes[fullName] = paramTypes;
+                                functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
                                 // Methods need their defaults recorded too. Only top-level
                                 // functions were, so an outlined method called with an argument
                                 // omitted got nothing for that parameter and its body read zero
@@ -5057,6 +5059,7 @@ public partial class IRGenerator
 
                 functionParams[fullName] = @params;
                 functionParamTypes[fullName] = paramTypes;
+                functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
 
                 if (func.IsPropertySetter)
                 {

@@ -38,6 +38,12 @@ public partial class IRGenerator
     private Dictionary<string, string?> functionReturnTypes = new();
     private Dictionary<string, List<string>> functionParams = new();
     private Dictionary<string, List<DataType>> functionParamTypes = new();
+    // The parameter annotations AS WRITTEN, aligned with functionParams, so a call site can
+    // ask what a parameter DECLARES and not only what it lowered to. `uint8` and
+    // `const[uint8]` both lower to the same DataType and behave differently at a call: a
+    // const parameter carries its literal through, a bare one is narrowed to its width.
+    // Only the diagnostic in CheckConstantArgFitsParam reads this; nothing lowers from it.
+    private Dictionary<string, List<string>> functionParamDeclared = new();
     // Per-function default value expressions (null where a param has no default).
     // Lets a non-inline call site fill in omitted trailing arguments, so defaults
     // work for real subroutines and not just @inline functions.

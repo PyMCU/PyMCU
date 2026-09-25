@@ -1135,9 +1135,97 @@ public partial class IRGenerator
         if (externFunctionMap.TryGetValue(callee, out string cSym))
             return EmitExternCall(expr, callee, cSym);
 
+        // Before the split, so that BOTH paths are covered. The two lose the value in
+        // different places -- an @inline expansion narrows the constant into the IR, a real
+        // call keeps it in the IR and the backend truncates it loading the parameter's
+        // registers -- and a check on either side alone would cover one of them, four times
+        // over for the real one, once per backend.
+        CheckConstantArgFitsParam(expr, callee);
+
         if (inlineFunctions.TryGetValue(callee, out var func)) return EmitInlineFunctionCall(expr, callee, func);
 
         return EmitRegularFunctionCall(expr, callee);
+    }
+
+    /// The widest value each declared width holds, or null for a spelling that narrows nothing.
+    private static long? WidestValueOf(string? declared) => declared switch
+    {
+        "uint8" => byte.MaxValue,
+        "int8" => sbyte.MaxValue,
+        "uint16" => ushort.MaxValue,
+        "int16" => short.MaxValue,
+        _ => null,
+    };
+
+    /// Refuses a literal argument that its parameter's declared width cannot hold.
+    ///
+    /// `delay_us(480)` against `def delay_us(us: uint8)` used to compile clean and wait 224 us:
+    /// the argument is narrowed to the parameter's width, no arm of the body can see the 480,
+    /// and nothing said so. It is the same silence `AvrCodeGen.Compile` already refuses at the
+    /// top -- a .mir with no geometry is rejected rather than compiled against zeros -- applied
+    /// to a literal that does not fit. Measured cost of that silence: the CircuitPython 1-Wire
+    /// reset holds its line low for 224 us where the protocol needs 480 (#501), and two UART
+    /// layers ran at 50000 baud having been asked for 115200.
+    ///
+    /// Only a BARE width narrows. `const[uint16]` carries its literal through untouched, which
+    /// is why the live PIC UARTs compare a `const[uint16]` baud against 115200 and are right to;
+    /// reporting those would send someone to widen a parameter that needs no widening.
+    ///
+    /// A deliberate mask stays available and already compiles: `f(uint8(0xFFFF))` passes 255 and
+    /// says so. That is the whole reason this can refuse instead of warn.
+    ///
+    /// Silent where it cannot be sure. A callee whose declarations were never recorded, an
+    /// argument list that does not line up with the signature, a keyword naming no parameter:
+    /// each returns without a word, because a diagnostic that fires on a misalignment is worse
+    /// than one that misses.
+    private void CheckConstantArgFitsParam(CallExpr expr, string callee)
+    {
+        if (!functionParamDeclared.TryGetValue(callee, out var declared)) return;
+        if (!functionParams.TryGetValue(callee, out var names)) return;
+        if (declared.Count != names.Count) return;
+
+        // A method's signature carries the receiver, the call does not. Keyed on the name
+        // rather than on the callee's syntax because a constructor reaches __init__ through a
+        // plain VariableExpr and still has one.
+        int offset = names.Count > 0 && (names[0] == "self" || names[0] == "cls") ? 1 : 0;
+
+        var positional = expr.Args.Where(a => a is not KeywordArgExpr).ToList();
+        if (positional.Count + offset > declared.Count) return;
+
+        for (int i = 0; i < positional.Count; ++i)
+            RefuseIfTooWide(positional[i], declared[i + offset], names[i + offset]);
+
+        foreach (var arg in expr.Args)
+        {
+            if (arg is not KeywordArgExpr kw) continue;
+            int idx = names.IndexOf(kw.Key);
+            if (idx >= 0) RefuseIfTooWide(kw.Value, declared[idx], names[idx]);
+        }
+    }
+
+    private void RefuseIfTooWide(Expression arg, string? declared, string paramName)
+    {
+        if (arg is not IntegerLiteral lit) return;
+
+        // Only a literal the PARSER built from a token, which is the only kind a reader wrote.
+        // A desugaring synthesises IntegerLiterals that stand for something else and carry no
+        // position: `[Led(p) for p in ["PD2", ...]]` expands to calls whose argument is the
+        // string's interned id, and 256 as an id is not 256 as a number. Reporting those told
+        // an author their string did not fit in a uint8.
+        if (lit.Line <= 0 && lit.Column <= 0) return;
+
+        if (WidestValueOf(declared) is not { } widest) return;
+        if (lit.Value >= 0 && lit.Value <= widest) return;
+        if (lit.Value < 0 && declared is "int8" or "int16"
+            && lit.Value >= (declared == "int8" ? sbyte.MinValue : short.MinValue)) return;
+
+        int arrives = NarrowConstantArgToParam(lit.Value, declared);
+        throw UserError(
+            $"{lit.Value} does not fit in '{paramName}', which is declared {declared}: the "
+            + $"argument is narrowed to the parameter's width, so the function would receive "
+            + $"{arrives}. Widen the parameter to the type the values need, or write "
+            + $"`{declared}({lit.Value})` if narrowing it to {arrives} is what you meant.",
+            arg);
     }
 
     // Resolve keyword arguments in a call to a regular (non-@inline) function into a flat
