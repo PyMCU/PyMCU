@@ -63,6 +63,10 @@ public static class StandardModuleNames
         ["typing_extensions"] = (Origin.Python, "PyMCU reads annotations straight from the source, so nothing needs importing; the width names live in pymcu.types."),
         ["__future__"]  = (Origin.Python, "PyMCU already reads annotations from the source; this import is a compiler pragma that enables nothing here."),
         ["dataclasses"] = (Origin.Python, "Write a plain class with an __init__; PyMCU flattens it to fields at zero cost."),
+        // Not `pymcu.types`, which is a different module with the width names in it. A library
+        // asking for TracebackType writes the import inside `try: ... except ImportError`, and
+        // that guard is what this refusal feeds.
+        ["types"]       = (Origin.Python, "Its names describe interpreter objects (TracebackType, FunctionType, ModuleType) and there is no interpreter here; the width names and `ptr` live in pymcu.types, which is a different module."),
 
         ["re"]          = (Origin.Python, NotImplemented),
         ["ure"]         = (Origin.MicroPython, NotImplemented),
