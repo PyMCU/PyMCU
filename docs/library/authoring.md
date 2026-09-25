@@ -199,6 +199,45 @@ class DHT11:
 are eliminated, so this costs nothing at runtime — the same two-level dispatch the HAL
 itself uses.
 
+### Which surface carries a promise
+
+The section above sends you to the native HAL, so it owes you the other half of the
+answer: what you may rely on, and what can move under you without warning.
+
+**Write your library against `pymcu.hal.*`, `pymcu.types` and `__CHIP__`.** That is the
+surface this guide is about, it is the only vocabulary the three layers share, and for the
+facts a portable library actually needs there is no alternative. `__CHIP__.arch` is the
+clearest case: MicroPython and CircuitPython have no API that says `avr` or `riscv`,
+because neither of them compiles for those parts, and `sys.platform` names a port rather
+than an architecture family. `ram_size` and `flash_size` are the same, since `gc.mem_free()`
+is a runtime number and not the part's static total. A library that has to branch by
+architecture has nowhere else to ask.
+
+**Reach a peripheral's registers through its grouped class**, `Timer1.TCCR1A.value` rather
+than the loose `TCCR1A`. The group is a name the project commits to and keeps pointing at
+the right silicon; the loose module-level register names, the bit-position constants and
+the rest of a chip file are how the HAL reaches the hardware and can be renamed, regrouped
+or rewidened in any release. See `docs/rfcs/0012-grouped-peripherals.md` for why
+grouping costs nothing and what the group is derived from.
+
+So, in order of how much you may lean on it:
+
+| Surface | What you may rely on |
+|---|---|
+| `pymcu.hal.*`, `pymcu.types`, `__CHIP__` | The vocabulary this guide tells you to use. It is where a portable library belongs, and `supports.arch` in `pymcu.toml` is defined in terms of `__CHIP__.arch`. |
+| Grouped peripherals (`Timer1` and the groups that follow) | The register surface for programs. Named after the datasheet, and derived from the loose names rather than copied from them. |
+| Loose register names, bit constants, per-chip internals | Nothing. They are the HAL's own plumbing and change with it. |
+
+One thing this does **not** say, because the project is not there yet. PyMCU is beta on
+AVR and alpha on ARM, PIC and RISC-V (see the supported-hardware section of the
+documentation index), so nothing here is frozen: signatures will still change while the
+standard library is aligned with the MicroPython and CircuitPython APIs. What the first
+two rows promise is that such a change arrives with a changelog entry and a migration
+note, and the third row promises the opposite, that it can change in any release with
+neither. The alpha note on the ARM, PIC and RISC-V backends
+is a separate statement about which chips are ready, not about this vocabulary:
+`__CHIP__.arch` means the same thing on every backend, including the ones that are alpha.
+
 ### End the dispatch with `CompileError`, never a sentinel
 
 The `case _:` branch must raise. A driver that returns `0xFFFF` on an unsupported

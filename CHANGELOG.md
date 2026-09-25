@@ -4,6 +4,20 @@
 
 ### Added
 
+- **docs**: which surface carries which promise, written down for the first time. The
+  library authoring guide already sent authors to the native HAL and defines
+  `supports.arch` in `pymcu.toml` in terms of `__CHIP__.arch`, while nothing anywhere said
+  what an author could lean on, so the answer to "the native HAL can change under you, then
+  what do I use" existed only as folklore. Three tiers now: `pymcu.hal.*`, `pymcu.types` and
+  `__CHIP__` are the vocabulary a portable library is written against, and for the facts one
+  actually needs there is no Python spelling to use instead (`__CHIP__.arch` above all, since
+  neither MicroPython nor CircuitPython compiles for AVR or PIC and `sys.platform` names a
+  port rather than an architecture family); the grouped peripherals are the register surface
+  for programs; the loose register names, the bit constants and the rest of a chip file carry
+  no promise. Beta is not frozen, so what the first two tiers promise is a changelog entry
+  and a migration note, and what the third promises is the opposite. The alpha note on the
+  ARM, PIC and RISC-V backends is about which chips are ready and not about this vocabulary.
+
 - **ir/stdlib**: grouped peripherals (RFC 0012). A `ptr[T]` declaration works in a CLASS
   body, so a peripheral's registers can be reached as attributes of one named class the way
   an XC8 program reaches T1CON through the Timer1 SFR block:

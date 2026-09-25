@@ -605,7 +605,9 @@ The following, previously listed here as unsupported, **do work**:
   is a namespace and not a type, so `Timer1()` is refused with a located message.
   The grouped classes in `pymcu.chips.<chip>` are the surface the project keeps stable; the
   loose module-level register names are an implementation detail of the HAL and may change
-  in any release.
+  in any release. Which surface carries which promise, including where `pymcu.hal.*` and
+  `__CHIP__` sit, is written once in the library authoring guide; see
+  {doc}`../library/authoring`.
 - **`ptr` as a function parameter and return type** — `def f(reg: ptr[uint8])` and
   compile-time selectors returning `-> ptr[uint8]` are used throughout the HAL; a bare
   register name in those positions contributes its address.
