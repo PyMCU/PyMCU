@@ -917,6 +917,32 @@ public partial class IRGenerator
             { File = LocatedFile };
     }
 
+    /// The same located error, carrying the three things a machine reader needs and a sentence
+    /// cannot hold: a stable code, the fixes the message proposes in prose, and the other sites
+    /// it names.
+    ///
+    /// It DELEGATES to the located overload rather than building a second error beside it, so
+    /// the rules about which line and which file a diagnostic gets are stated once. A site that
+    /// adopts this keeps every positional decision it already had.
+    private PyMCU.Common.CompilerError UserError(
+        string message,
+        PyMCU.Frontend.ASTNode? at,
+        string code,
+        IReadOnlyList<PyMCU.Common.SuggestedFix>? fixes = null,
+        IReadOnlyList<PyMCU.Common.RelatedSpan>? related = null)
+    {
+        var located = UserError(message, at);
+        return new PyMCU.Common.CompilerError(
+            located.TypeName, located.Message, located.Line, located.Column, located.Length)
+        {
+            File = located.File,
+            LocationIsFinal = located.LocationIsFinal,
+            Code = code,
+            Fixes = fixes ?? [],
+            Related = related ?? [],
+        };
+    }
+
     /// A refusal raised by a module guard, reported where the reader can act on it.
     ///
     /// TWO ANSWERS, and which one is right depends on where the failing use is.
@@ -953,7 +979,26 @@ public partial class IRGenerator
         PyMCU.Frontend.ASTNode? reachedFrom)
     {
         if (string.IsNullOrEmpty(currentSourcePath) || string.IsNullOrEmpty(guard.Path))
-            return UserError($"{guard.Msg} (module guard at {guard.File}:{guard.Line})", reachedFrom);
+        {
+            // The sentence already names the second site, "(module guard at adc/__init__.py:36)",
+            // and that is where the fact goes to die for a machine: the driver has a regular
+            // expression in core/compiler.py whose only job is to renumber line citations inside
+            // message text, and no editor can make one clickable. Carried as data as well, the
+            // same fact is a second squiggle on the guard that refused the call. The text does
+            // not change: a message people already recognise keeps its words, and the structure
+            // is added beside it rather than carved out of it.
+            var related = string.IsNullOrEmpty(guard.Path)
+                ? []
+                : new[]
+                {
+                    new PyMCU.Common.RelatedSpan(
+                        guard.Path, guard.Line, guard.Column,
+                        guard.Length > 0 ? guard.Length : 1,
+                        "the module guard that refuses it"),
+                };
+            return UserError($"{guard.Msg} (module guard at {guard.File}:{guard.Line})",
+                             reachedFrom, code: "module-guard", related: related);
+        }
 
         // No "reached from" clause on this branch. The intermediate line is library plumbing the
         // reader did not write and cannot act on, and naming it is what the old message did

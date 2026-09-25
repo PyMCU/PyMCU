@@ -1220,12 +1220,46 @@ public partial class IRGenerator
             && lit.Value >= (declared == "int8" ? sbyte.MinValue : short.MinValue)) return;
 
         int arrives = NarrowConstantArgToParam(lit.Value, declared);
+
+        // The message names two routes, and only one of them is an edit at THIS position. The
+        // other, "widen the parameter", is an edit at the callee's `def` -- in another file
+        // whenever the callee is a library, which is the case that produced #501 -- and the
+        // generator does not hold that position: `functionParamDeclared` maps a name to its
+        // declared widths and keeps no node. So the fix offered here is the narrowing one, and
+        // the widening stays prose until the callee's parameter carries a span.
+        //
+        // MaybeIncorrect, deliberately, and NOT because this particular fix is unreliable.
+        //
+        // It is reliable. A cast truncates to the low bits rather than saturating, so
+        // `uint8(480)` passes 224, which is the number this very message promised the reader
+        // two sentences earlier. Measured in the IR: `pulse(uint8(480))` lowers to
+        // `const 224`, and `pulse(uint8(0xFFFF))` to `const 255`. (The 255 belongs to the
+        // second of those and to the commit that added this refusal; reading it as 480's
+        // answer is the mistake this comment exists to stop someone repeating.)
+        //
+        // The default is conservative because the FORMAT cannot tell which fixes are the
+        // reliable ones. PyMCU#280 measured that one in three user-facing refusals leads
+        // somewhere worse when followed literally, so while that stands, `machine-applicable`
+        // is a promise no site can make on the others' behalf, and an editor that applies
+        // fixes in bulk is the fastest way to pay that rate. A site earns the stronger grade
+        // by being measured, one at a time, not by arguing for it.
+        var narrow = new PyMCU.Common.SuggestedFix(
+            Label: $"narrow it on purpose: {declared}({lit.Value}), which passes {arrives}",
+            File: LocatedFile ?? string.Empty,
+            Line: lit.Line,
+            Column: lit.Column,
+            Length: lit.Value.ToString().Length,
+            Replacement: $"{declared}({lit.Value})",
+            Applicability: PyMCU.Common.FixApplicability.MaybeIncorrect);
+
         throw UserError(
             $"{lit.Value} does not fit in '{paramName}', which is declared {declared}: the "
             + $"argument is narrowed to the parameter's width, so the function would receive "
             + $"{arrives}. Widen the parameter to the type the values need, or write "
             + $"`{declared}({lit.Value})` if narrowing it to {arrives} is what you meant.",
-            arg);
+            arg,
+            code: "literal-too-wide-for-parameter",
+            fixes: [narrow]);
     }
 
     // Resolve keyword arguments in a call to a regular (non-@inline) function into a flat

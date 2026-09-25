@@ -93,7 +93,7 @@ public class DiagnosticJsonTests
     {
         var err = new CompilerError("CompileError", "480 does not fit in 'us'", 1, 14, 3)
         {
-            Code = "literal-too-wide-for-param",
+            Code = "literal-too-wide-for-parameter",
             Fixes =
             [
                 new SuggestedFix("narrow it on purpose", "", 1, 14, 3, "uint8(480)",
@@ -102,7 +102,7 @@ public class DiagnosticJsonTests
         };
         var json = Emit(err, "    return f(480)");
 
-        Assert.Equal("literal-too-wide-for-param", json.GetProperty("code").GetString());
+        Assert.Equal("literal-too-wide-for-parameter", json.GetProperty("code").GetString());
         var fix = Assert.Single(json.GetProperty("fixes").EnumerateArray().ToList());
         Assert.Equal("maybe-incorrect", fix.GetProperty("applicability").GetString());
 
