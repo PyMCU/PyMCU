@@ -3275,6 +3275,15 @@ public partial class IRGenerator
             if (value is MemoryAddress ma2)
             {
                 constantAddressVariables[flattenedName] = ma2.Address;
+                // The element width travels with the address, exactly as it does on the
+                // aliased path below. Without this the field kept whatever width the class
+                // scan had guessed for it -- UINT16, because what it holds is an address --
+                // and every `.value` on the field became a TWO-BYTE access into I/O space:
+                // `self.tccrb = ptr(base + 1)` wrote TCCR1B and then TCCR1C, `self.timsk =
+                // ptr(0x6F)` wrote TIMSK2 on top of TIMSK1. Silent, and against the chip's
+                // own register map. A ptr[uint16] register name keeps its two bytes because
+                // its MemoryAddress carries UINT16.
+                variableTypes[flattenedName] = ma2.Type;
                 return;
             }
 
