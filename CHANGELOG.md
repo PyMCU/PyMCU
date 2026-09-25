@@ -145,6 +145,37 @@
 
 ### Fixed
 
+- **ir**: `ptr(buf)` on an ordinary array is refused instead of compiling to a read of the
+  array's first byte. ptr()'s constant-base arm exists for a hardware register, where the
+  base is an address the compiler resolves; an array name is an ordinary variable and fell
+  past it into the runtime-address path, which EVALUATES its argument. The pointer then held
+  `buf[0]` widened to 16 bits -- a small number that looks plausible -- and a write through
+  it landed that many bytes up from address 0: register space, another global, the stack,
+  with no diagnostic anywhere. An SRAM array lives at a label the assembler assigns, not at
+  a number this pass can compute, so the refusal is what can be offered: located, naming the
+  array, and saying that ptr() takes a hardware register or a numeric address.
+- **ir**: `print()` of a 16-bit register printed its LOW BYTE alone -- `TCNT1.value` holding
+  0x1234 printed as 52, with nothing said. print picks its formatter from the argument's
+  width and had arms for a variable, a temporary and a constant with a uint8 default for
+  everything else; a register read is none of the three. Assigning the same read to a
+  `uint16` local first printed it whole, which is what made the truncation look like the
+  register's fault.
+- **ir**: a field holding a runtime-sized `bytearray(n)` stores the arena OFFSET, and stored
+  it in one byte. The class layout is derived from the original class body, where such a
+  field is recognized as a buffer field and kept out of the layout, so the write took the
+  uint8 default; the lowering that synthesizes it already asked for uint16 and nothing read
+  the annotation. On any part with more than 256 bytes of arena the second runtime-sized
+  buffer in a class starts past 255: an offset of 300 wrapped to 44 and the two buffers
+  silently aliased, a write to `self.b[0]` landing inside `self.a`. A width written on an
+  assignment now widens the field's and never narrows it.
+- **ir**: the message for a member of an instance that collapsed to a number names the
+  parameter instead of the number. An instance passed to a parameter that declares no type
+  arrives as a plain number, so every member access on it fails -- `o.a[i] = v`, `o.a[i]`
+  and a bare `o.x` alike. "'a' is not a member of a numeric value" described the number and
+  left the one thing that makes the difference, a `: C` on the parameter, off screen. When
+  the member is a field some class writes, the message now names the parameter, names the
+  classes that declare the member, and spells the annotation. The collapse itself is
+  unchanged.
 - **ir**: a field holding a register pointer lost its element width, so `.value` on it
   wrote TWO bytes into I/O space and landed the second one on the neighbouring register.
   Three of the four ways to bind such a field dropped the width -- a bare `ptr(addr)`, a
