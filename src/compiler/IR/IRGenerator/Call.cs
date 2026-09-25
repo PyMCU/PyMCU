@@ -1929,6 +1929,35 @@ public partial class IRGenerator
         dictLiteralBindings[dictKey] = new DictExpr(entries);
     }
 
+    /// <summary>
+    /// An integer constant bound to a parameter of declared width, narrowed to that width.
+    /// A call to a real subroutine gets this from the ABI: the value is copied into the
+    /// parameter's slot and the slot is exactly as wide as the declaration says. An @inline
+    /// expansion has no slot -- the parameter IS the constant -- so the narrowing has to
+    /// happen at the binding, or the same callee body sees a different value depending on
+    /// which way it was called.
+    ///
+    /// What that cost: `_delay_ms_pic14e(ms: uint8)` is `while i < ms` over a uint8 counter.
+    /// Bound to 500 rather than to 244, the range fold reads the test as one the counter can
+    /// never fail, removes it, and the Curiosity Nano blink became a loop with no exit --
+    /// one LATA write and then 600 million cycles of nothing. The subroutine form of the
+    /// same function had always stored 0xF4.
+    ///
+    /// Only the four explicit fixed-width spellings are narrowed. An UNANNOTATED parameter
+    /// must be left alone: its annotation is the empty string, which StringToDataType maps
+    /// to uint8, and narrowing on that would truncate `f(300)` for a `def f(x):` that never
+    /// declared a width. `int` is left alone for the same reason -- it is the width-free
+    /// spelling. A const[...] parameter never reaches these sites; it is bound earlier.
+    /// </summary>
+    private static int NarrowConstantArgToParam(int value, string? declaredType) => declaredType switch
+    {
+        "uint8" => (byte)value,
+        "int8" => (sbyte)value,
+        "uint16" => (ushort)value,
+        "int16" => (short)value,
+        _ => value,
+    };
+
     // Expand a known @inline function/ZCA method call in place: bind positional,
     // keyword and defaulted args into a fresh inline frame, alias self for instance
     // methods, run the body, and yield the (possibly tuple) result. The big ZCA
@@ -2753,7 +2782,7 @@ public partial class IRGenerator
                 bool fcIsInt = fcPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
                 if (fcIsInt)
                 {
-                    constantVariables[paramName] = (int)fcArg.Value;
+                    constantVariables[paramName] = NarrowConstantArgToParam((int)fcArg.Value, fcPType);
                     floatConstantVariables.Remove(paramName);
                 }
                 else
@@ -2816,7 +2845,7 @@ public partial class IRGenerator
                     bool fvIsInt = fvPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
                     if (fvIsInt)
                     {
-                        constantVariables[paramName] = (int)fv;
+                        constantVariables[paramName] = NarrowConstantArgToParam((int)fv, fvPType);
                         floatConstantVariables.Remove(paramName);
                     }
                     else
@@ -2880,7 +2909,8 @@ public partial class IRGenerator
                 if (TryArgumentConstant(vArg.Name, out int argConst)
                     && !ParameterIsAssignedIn(func, func.Params[paramIdx].Name))
                 {
-                    constantVariables[paramName] = argConst;
+                    constantVariables[paramName] =
+                        NarrowConstantArgToParam(argConst, func.Params[paramIdx].Type);
                     strConstantVariables.Remove(paramName);
                     floatConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);
@@ -2946,7 +2976,8 @@ public partial class IRGenerator
                 && TryFoldArgumentExpression(rawArg, func.Params[paramIdx].Type, savedPrefix, out int foldedArg)
                 && !ParameterIsAssignedIn(func, func.Params[paramIdx].Name))
             {
-                constantVariables[paramName] = foldedArg;
+                constantVariables[paramName] =
+                    NarrowConstantArgToParam(foldedArg, func.Params[paramIdx].Type);
                 strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
@@ -2972,7 +3003,8 @@ public partial class IRGenerator
                 }
                 if (constantVariables.TryGetValue(tArg.Name, out int tNum))
                 {
-                    constantVariables[paramName] = tNum;
+                    constantVariables[paramName] =
+                        NarrowConstantArgToParam(tNum, func.Params[paramIdx].Type);
                     strConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);
                     continue;
@@ -3070,7 +3102,8 @@ public partial class IRGenerator
             }
             if (argValues[i] is Constant cArg3)
             {
-                constantVariables[paramName] = cArg3.Value;
+                constantVariables[paramName] =
+                    NarrowConstantArgToParam(cArg3.Value, func.Params[paramIdx].Type);
                 // A string literal arrives here as a number: an interned id, or -- for a
                 // ONE-CHARACTER string -- the character's own code, since that is what makes
                 // `c == 'x'` and uart.write('A') work. A use site can ask stringIdToStr what an
@@ -3263,7 +3296,8 @@ public partial class IRGenerator
                     }
                     else if (kvp.Value is Constant ckw2)
                     {
-                        constantVariables[paramName] = ckw2.Value;
+                        constantVariables[paramName] =
+                            NarrowConstantArgToParam(ckw2.Value, func.Params[pi].Type);
                         if (func.Params[pi].Type == "str")
                         {
                             string? kwText = rawKwStrArgs.TryGetValue(kvp.Key, out var rawKw) ? rawKw : null;
@@ -3391,7 +3425,8 @@ public partial class IRGenerator
 
                 if (defaultVal is Constant cdf2)
                 {
-                    constantVariables[paramName] = cdf2.Value;
+                    constantVariables[paramName] =
+                        NarrowConstantArgToParam(cdf2.Value, func.Params[i].Type);
                     strConstantVariables.Remove(paramName);
                     floatConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);

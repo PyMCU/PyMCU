@@ -136,6 +136,20 @@
   The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` -- already dispatched inside
   the class body for this reason; the UART was the one that did not. Firmware for every PIC
   program that does have a UART is byte-identical.
+- **ir**: an integer constant bound to an `@inline` parameter of declared width arrived
+  unnarrowed, so the same callee body saw a different value depending on whether it was
+  expanded or called. A real subroutine gets the narrowing from the ABI -- the value is
+  copied into the parameter's slot and the slot is as wide as the declaration -- but an
+  inline expansion has no slot, and the literal was substituted as written. The cost was
+  silent wrong code, not a wrong number: `delay_ms(500)` reaches the stdlib's
+  `_delay_ms_pic14e(ms: uint8)`, whose body is `while i < ms` over a uint8 counter, and
+  bound to 500 instead of 244 the range fold read the test as one the counter can never
+  fail, deleted it, and deleted the rest of the enclosing loop with it. The Curiosity Nano
+  blink wrote its LED once and then span forever; the LED-off half of the blink was not in
+  the hex at all. Measured on a PIC16F877A, the same program compiled through a real
+  subroutine stored 0xF4 and kept its exit test, which is the disagreement the fix removes.
+  Only the four explicit fixed-width spellings narrow (`uint8`, `int8`, `uint16`, `int16`):
+  an unannotated parameter has no declared width and is left alone.
 - **ir**: a `match` class-pattern capture whose name collides with a module global did not
   bind. The capture was filed under `main.<name>` while every read of the name resolved the
   global, so the arm read the global's old value, with no diagnostic and correct-looking
