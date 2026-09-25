@@ -469,7 +469,7 @@ def _delay_ms_rp2040(ms: uint16):
 
 
 @inline
-def delay_us(us: uint8):
+def delay_us(us: uint16):
     """Delay for approximately the given number of microseconds."""
     match __CHIP__.arch:
         case "pic14":
@@ -488,35 +488,35 @@ def delay_us(us: uint8):
             _delay_us_arm(us)
 
 @inline
-def _delay_us_pic14(us: uint8):
+def _delay_us_pic14(us: uint16):
     """Software microsecond delay loop for PIC14 architecture."""
     # PIC14 at 4MHz: Tcy=1us. 1us ~= 1 NOP.
     # Loop overhead is ~7 Tcy so each iteration ~ 8us at 4MHz.
     # For approximate us-level delays.
-    i: uint8 = 0
+    i: uint16 = 0
     while i < us:
         asm("    NOP")
         i = i + 1
 
 @inline
-def _delay_us_pic14e(us: uint8):
+def _delay_us_pic14e(us: uint16):
     """Software microsecond delay loop for PIC14E architecture."""
-    i: uint8 = 0
+    i: uint16 = 0
     while i < us:
         asm("    NOP")
         asm("    NOP")
         i = i + 1
 
 @inline
-def _delay_us_pic18(us: uint8):
+def _delay_us_pic18(us: uint16):
     """Software microsecond delay loop for PIC18 architecture."""
-    i: uint8 = 0
+    i: uint16 = 0
     while i < us:
         asm("    NOP")
         asm("    NOP")
         i = i + 1
 
-def _delay_us_avr(us: uint8):
+def _delay_us_avr(us: uint16):
     """Software microsecond delay loop for AVR architecture.
 
     NON-inline on purpose: the 12-NOP loop body is emitted once as a shared
@@ -526,7 +526,7 @@ def _delay_us_avr(us: uint8):
     The fixed CALL/RET overhead (~9 cycles, <0.6 us) is within the documented
     <0.1%-at-typical-counts accuracy budget."""
     # AVR at 16MHz: 1us = 16 cycles. Loop overhead ~4, so 12 NOPs needed.
-    i: uint8 = 0
+    i: uint16 = 0
     while i < us:
         asm("    NOP")
         asm("    NOP")
@@ -543,9 +543,9 @@ def _delay_us_avr(us: uint8):
         i = i + 1
 
 @inline
-def _delay_us_riscv(us: uint8):
+def _delay_us_riscv(us: uint16):
     """Software microsecond delay loop for RISC-V architecture."""
-    i: uint8 = 0
+    i: uint16 = 0
     while i < us:
         asm("    NOP")
         asm("    NOP")
@@ -554,9 +554,9 @@ def _delay_us_riscv(us: uint8):
         i = i + 1
 
 @inline
-def _delay_us_pic12(us: uint8):
+def _delay_us_pic12(us: uint16):
     """Software microsecond delay loop for PIC12 architecture."""
-    i: uint8 = 0
+    i: uint16 = 0
     while i < us:
         asm("    NOP")
         i = i + 1
