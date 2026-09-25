@@ -8120,6 +8120,55 @@ public partial class IRGenerator
     // nothing is formatted. Returns false when the name is not such a string.
     private bool TryEmitMultiStrStream(string writeStrFn, Expression arg)
     {
+        // `print("mono" if k == 0 else "none")`. A conditional EXPRESSION never reaches the
+        // if/else merge that records a name's several texts: it is lowered as a value, and the
+        // value of a string literal on this target is its interned id, so a number arrived at
+        // the writer and the numeric branch took it -- 260 and 261 where "mono" and "none"
+        // were meant, on a real Uno (#378). The arms' texts are known; only WHICH one is
+        // decided at run time, exactly as for a name holding several texts, so it is written
+        // the same way: the condition once, and a write_str of a literal on each side. Here
+        // rather than in print's own ladder, so uart.write_str and println get it too.
+        if (arg is TernaryExpr tern
+            && StaticStringOf(tern.TrueVal) is { } ternTrue
+            && StaticStringOf(tern.FalseVal) is { } ternFalse)
+        {
+            string ternElse = MakeLabel(), ternEnd = MakeLabel();
+            int ternCond = EmitOptimizedConditionalJump(tern.Condition, ternElse, false);
+            if (ternCond == 0)
+            {
+                Val ternVal = VisitExpression(tern.Condition);
+                if (ternVal is Constant ternConst)
+                {
+                    ternCond = ternConst.Value != 0 ? 2 : -1;
+                    if (ternCond == -1) Emit(new Jump(ternElse));
+                }
+                else
+                {
+                    Emit(new JumpIfZero(ternVal, ternElse));
+                    ternCond = 1;
+                }
+            }
+            if (ternCond == 2)
+            {
+                // Decided true: only the taken arm is lowered. The labels are still defined --
+                // a condition ruled true may have jumped to the else label on a path it then
+                // ruled out, and that jump needs somewhere to land.
+                EmitStreamStr(writeStrFn, ternTrue);
+                Emit(new Label(ternElse));
+                Emit(new Label(ternEnd));
+                return true;
+            }
+            if (ternCond != -1)
+            {
+                EmitStreamStr(writeStrFn, ternTrue);
+                Emit(new Jump(ternEnd));
+            }
+            Emit(new Label(ternElse));
+            EmitStreamStr(writeStrFn, ternFalse);
+            Emit(new Label(ternEnd));
+            return true;
+        }
+
         string shown;
         string key;
         List<string> values;

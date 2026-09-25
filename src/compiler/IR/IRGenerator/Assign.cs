@@ -243,6 +243,25 @@ public partial class IRGenerator
                 multiStrVariables.Remove(strKey);
                 multiStrVariables.Remove(StrBindingKey(strTgt.Name));
             }
+
+            // `label = "mono" if k == 0 else "none"`: the name holds one of two texts, decided
+            // at run time. That is the binding an if/else STATEMENT makes, and that one goes
+            // through the merge in ControlFlow which records the alternatives so a read can
+            // dispatch on the stored id. A conditional EXPRESSION reaches no merge, so the
+            // name kept a single compile-time value and the read folded one arm's id into a
+            // bare number -- 260 and 261 where "mono" and "none" were meant (#378).
+            //
+            // After the two removals above, not before: they exist to stop a NON-LITERAL
+            // right-hand side selecting a const[str] overload, and a conditional expression
+            // whose arms are texts is the one non-literal that has something to record.
+            // StaticStringOf of the whole expression answers whenever the CONDITION folds,
+            // and then the name really does hold one text and nothing here applies.
+            if (stmt.Value is TernaryExpr strTern && StaticStringOf(stmt.Value) == null
+                && StaticStringOf(strTern.TrueVal) is { } ternArmA
+                && StaticStringOf(strTern.FalseVal) is { } ternArmB)
+            {
+                MarkMultiStr(StrBindingKey(strTgt.Name), new[] { ternArmA, ternArmB });
+            }
         }
 
         // `objs = [A(s), A(s + 1)]`: a list of instances. Build each element as an instance of
@@ -2012,7 +2031,15 @@ public partial class IRGenerator
         // name's 16-bit slot, whatever scope the name lives in. Without this the store either
         // resolved to the id it was storing (a copy with no destination) or landed in a slot
         // one byte wide, which printed the id truncated.
-        if (stmt.Value is StringLiteral && MultiStrStoreTarget(varExpr.Name) is Variable strSlot)
+        // A conditional expression whose arms are texts stores its id in the SAME slot a
+        // literal binding stores into. Without it the store took the ordinary module-global
+        // path, which writes the name's own slot, while a read dispatches on the multi-str
+        // slot -- the id landed in one and the comparison chain read the other, matched none
+        // of the texts and wrote nothing at all (#378).
+        if ((stmt.Value is StringLiteral
+             || (stmt.Value is TernaryExpr
+                 && multiStrVariables.ContainsKey(StrBindingKey(varExpr.Name))))
+            && MultiStrStoreTarget(varExpr.Name) is Variable strSlot)
         {
             Emit(new Copy(value, strSlot));
             constantVariables.Remove(strSlot.Name);

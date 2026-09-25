@@ -359,6 +359,17 @@ public partial class IRGenerator
 
         void Bind(string name, Expression? value)
         {
+            // `label = "mono" if k == 0 else "none"` binds the name to TWO texts in one
+            // statement, which is the same shape as two binding statements under an if/else
+            // and wants the same answer. Only the literal form was counted, so the name kept
+            // a single compile-time value, every read folded the first arm's id and a bare
+            // number reached the writer (#378).
+            if (value is TernaryExpr tern)
+            {
+                Bind(name, tern.TrueVal);
+                Bind(name, tern.FalseVal);
+                return;
+            }
             if (value is not StringLiteral sl) return;
             if (!seen.TryGetValue(name, out var vals)) seen[name] = vals = new List<string>();
             if (!vals.Contains(sl.Value)) vals.Add(sl.Value);
