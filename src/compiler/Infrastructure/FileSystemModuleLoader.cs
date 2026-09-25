@@ -204,7 +204,13 @@ public class FileSystemModuleLoader : IModuleLoader
         // The same module under the name every Python program types. `import math` used to
         // report "Module not found: math -- install it with `pymcu install math`", advice
         // nobody could follow: math is not a library, it is the stdlib under another name.
-        if (!moduleName.Contains('.'))
+        // `pymcu.types` and `pymcu.chips` are resolved by the TYPE SYSTEM, not by this loader:
+        // BuiltinModuleNames lists them and every phase skips them. Answering the bare `types`
+        // with pymcu/types.py sent that file through the file path instead, where the parser
+        // met `class ptr(Generic[T])` and reported a SyntaxError inside the stdlib against a
+        // program that only wrote `import types` (#482). They are also not the Python modules
+        // of those names, so the alias would be wrong even if it parsed.
+        if (!moduleName.Contains('.') && !BuiltinModuleNames.IsBuiltin("pymcu." + moduleName))
         {
             var stdlibRel = Path.Combine("pymcu", pathRel);
             foreach (var baseDir in includePaths)
