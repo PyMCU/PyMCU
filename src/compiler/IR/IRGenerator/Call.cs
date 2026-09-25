@@ -5829,16 +5829,15 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(currentFunction) &&
                 arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2))
                 return new Constant(LogicalArrayLen(currentFunction + "." + vLen.Name, s2));
-            if (arraySizes.TryGetValue(vLen.Name, out int s3))
-                return new Constant(LogicalArrayLen(vLen.Name, s3));
-
-            string lenStrKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + vLen.Name
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
-            if (ResolveStrConstant(lenStrKey) is string svLen) return new Constant(svLen.Length);
-
-            // Follow variableAliases to resolve through @inline parameter bindings
-            // (e.g. len(buf) inside write(buf: bytearray) where buf aliases main.out_buf).
+            // The BINDING of this frame answers before the bare name does. A parameter is
+            // spelled with the expansion's prefix and aliased to the caller's array, so the
+            // bare lookup below is about a MODULE GLOBAL -- and when the program happens to
+            // have a global of the parameter's name, the bare lookup used to run first and
+            // answer with the global's length. `len(buf)` inside a shim written
+            // `def writeto(self, addr, buf: bytearray)` then measured the caller's own `buf`
+            // rather than what it was handed: the bytes on the wire were right and there was
+            // the wrong number of them. The name is bound HERE, so what it is bound to is the
+            // more specific answer and has to be asked for first. PyMCU#512.
             string lenKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + vLen.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
@@ -5850,6 +5849,14 @@ public partial class IRGenerator
                 if (TryResolveArrayStorageKey(lenResolved, out var lenStored))
                     return new Constant(LogicalArrayLen(lenStored, arraySizes[lenStored]));
             }
+
+            if (arraySizes.TryGetValue(vLen.Name, out int s3))
+                return new Constant(LogicalArrayLen(vLen.Name, s3));
+
+            string lenStrKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + vLen.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
+            if (ResolveStrConstant(lenStrKey) is string svLen) return new Constant(svLen.Length);
         }
 
         // A compile-time sequence held in a field: `len(self._pins)` / `len(self._levels)`.
