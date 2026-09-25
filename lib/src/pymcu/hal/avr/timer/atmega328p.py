@@ -115,8 +115,13 @@ def timer1_stop():
 
 @inline
 def timer1_clear():
-    TCNT1L.value = 0
+    # AVR 16-bit write rule, same as timer1_set_compare below: HIGH byte first (into
+    # TEMP), then the LOW byte, whose write commits the pair. Clearing low-first
+    # committed TCNT1 as (stale TEMP << 8) | 0 -- after a set_compare(0x0B34) the
+    # counter came out of clear() holding 0x0B00 -- and the TCNT1H = 0 that followed
+    # only refilled TEMP.
     TCNT1H.value = 0
+    TCNT1L.value = 0
 
 @inline
 def timer1_counter() -> uint16:
