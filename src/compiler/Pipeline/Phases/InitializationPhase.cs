@@ -58,11 +58,24 @@ public class InitializationPhase : CompilerPhaseBase
                 context.SourceLines.Add(line);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or NotSupportedException or ArgumentException)
         {
-            Console.Error.WriteLine($"Fatal Error: {ex.Message}");
-            context.HasErrors = true;
-            return;
+            // The INPUT counterpart of OutputFile.Guard, and raised the same way: as a
+            // diagnostic rather than a bare line on stderr.
+            //
+            // It used to print `Fatal Error: <what .NET said>` directly, which has two costs.
+            // It is the one error an IDE hits most, because the file it hands the compiler is
+            // a temporary copy of a buffer, and under `--error-format json` that line is the
+            // only thing on stderr that is not JSON, so the consumer sees a parse failure
+            // instead of a message. And .NET's sentence does not always name the path.
+            //
+            // Thrown, so CompilerPhaseBase reports it through Diagnostic and it comes out in
+            // whichever format was asked for. Line 0 with no column: no line of the source is
+            // responsible, and there is no source to quote.
+            throw new CompilerError("OSError",
+                $"cannot read the source file '{options.FilePath}': {ex.Message}",
+                0, CompilerError.Unlocated);
         }
 
         context.IncludePaths.AddRange(options.Includes);

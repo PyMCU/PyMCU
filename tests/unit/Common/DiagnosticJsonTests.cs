@@ -150,6 +150,30 @@ public class DiagnosticJsonTests
     }
 
     [Fact]
+    public void InternalError_IsJsonToo_AndBlamesNoLineOfTheUsersFile()
+    {
+        // A compiler bug must not also break the consumer's parser: under `--error-format
+        // json` EVERY line of stderr is JSON, including this one. And it carries no span. The
+        // text form has to write `1:1` because its header cannot leave the fields out, which
+        // is how a crash of ours ends up underlined on the first line of somebody's main.py.
+        var buf = new StringWriter();
+        var prevErr = Console.Error;
+        var prevFormat = Diagnostic.Format;
+        Console.SetError(buf);
+        Diagnostic.Format = ErrorFormat.Json;
+        try { Diagnostic.ReportInternal("something gave way", "main.py"); }
+        finally { Console.SetError(prevErr); Diagnostic.Format = prevFormat; }
+
+        var json = JsonDocument.Parse(buf.ToString().Trim()).RootElement;
+        Assert.Equal("internal-compiler-error", json.GetProperty("code").GetString());
+        Assert.Equal("InternalCompilerError", json.GetProperty("type").GetString());
+        var span = json.GetProperty("span");
+        Assert.Equal("main.py", span.GetProperty("file").GetString());
+        Assert.Equal(0, span.GetProperty("line").GetInt32());
+        Assert.False(span.TryGetProperty("column", out _));
+    }
+
+    [Fact]
     public void HumanFormat_IsUnchangedWhenJsonIsNotAskedFor()
     {
         // The regression this whole change has to avoid. Both shipped plugins parse the text

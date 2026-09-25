@@ -152,6 +152,16 @@ public static class Diagnostic
     /// user's face.
     public static void ReportInternal(Exception e, string filename)
     {
+        if (Format == ErrorFormat.Json)
+        {
+            // A compiler bug must not also break the consumer's parser. Under `--error-format
+            // json` every line of stderr is JSON, including this one, and the code says what
+            // it is so an IDE can present it as "the compiler crashed" rather than as a defect
+            // in the line it happens to name.
+            ReportInternalJson($"{e.GetType().Name}: {e.Message}", filename);
+            return;
+        }
+
         Console.Error.WriteLine(
             $"{filename}:1:1: error: InternalCompilerError: {e.GetType().Name}: {e.Message}");
 
@@ -162,7 +172,25 @@ public static class Diagnostic
     /// Overload for a bare message, where no exception was caught.
     public static void ReportInternal(string message, string filename)
     {
+        if (Format == ErrorFormat.Json)
+        {
+            ReportInternalJson(message, filename);
+            return;
+        }
+
         Console.Error.WriteLine($"{filename}:1:1: error: InternalCompilerError: {message}");
+    }
+
+    /// An internal error as a diagnostic of its own kind.
+    ///
+    /// It carries NO span, deliberately. The text form has to write `1:1` because its header
+    /// cannot leave the fields out, and that is how a crash of ours ends up underlined on the
+    /// first line of somebody's main.py. Here the absence is sayable, so it is said.
+    private static void ReportInternalJson(string message, string filename)
+    {
+        var err = new CompilerError("InternalCompilerError", message, 0, CompilerError.Unlocated)
+            { Code = "internal-compiler-error", File = filename };
+        DiagnosticJson.Report(err, ReadOnlySpan<char>.Empty, filename);
     }
 
     /// Builds the blank run that puts the caret under column <paramref name="column"/> of
