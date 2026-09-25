@@ -39,6 +39,24 @@
   Calling a group -- `Timer1()` -- is refused with a located message naming it: a group is
   a namespace over the silicon, not a type, and the call used to be accepted and produce
   nothing at all while the register accesses around it still worked.
+- **stdlib**: `math.sqrt`, `math.exp`, `math.log`, `math.log10`, `math.radians` and
+  `math.degrees` on run-time software floats. `sqrt` is Newton-Raphson after a scale
+  reduction into `[1, 4)`; `log` and `exp` are the range reduction and the two series
+  `__pymcu_powf` already carried, lifted out so each has one implementation; `radians`
+  and `degrees` are a scaling multiply that folds outright for a constant angle. Every
+  body lives in the compiler's embedded runtime helpers and lowers LAZILY, so a program
+  that never calls one carries none of the series. Values checked against CPython
+  running the same program on the emulator (oracle probe 278 in the pymcu-avr repo).
+  Measured on unmodified upstream libraries: adafruit_max31865's simpletest went from
+  `call to undefined function 'math_sqrt'` to a 9060-byte build. `math.pi` and `math.e`
+  are deliberately NOT defined: a module-level float constant in an imported module
+  becomes storage nothing initialises, so they would read back 0.0 instead of refusing.
+- **parser**: a PEP 484 forward-reference annotation -- the type named as a string
+  literal, `def __enter__(self) -> "BH1750":` -- is the type it names. The quotes come
+  off in `AnnotationText`, the one place both front ends reach, and the name inside is
+  resolved and refused exactly like a bare one. The compiler used to answer
+  `unknown type '"BH1750"' (did you mean 'BH1750'?)`, naming the answer and refusing it
+  in the same sentence; adafruit_bh1750's simpletest now builds unmodified at 6488 bytes.
 
 - **ir**: compile-time 2-D grids the way CircuitPython writes them:
   `g = [[v] * W for _ in range(H)]`, `g = [bytearray(W) for _ in range(H)]` and

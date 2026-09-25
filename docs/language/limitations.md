@@ -975,6 +975,8 @@ never parks.
 | `sum(genexp)` / `min(genexp)` / `max(genexp)` | ✅ Supported | Same compile-time unroll; `sum` honours its `start` argument and a `for ... if` clause filters. Nowhere else does a generator expression exist -- there is no iterator object to pass around |
 | `divmod(a, b)` | ✅ Supported | Compile-time or runtime |
 | `pow(x, n)` / `x ** n` / `math.pow(x, n)` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float via `__pymcu_powf` (#463) |
+| `math.sqrt/exp/log/log10/radians/degrees(x)` | ✅ Supported | Software float, run-time argument. `sqrt` is Newton-Raphson after a scale reduction; `log` and `exp` are the two halves of `__pymcu_powf`'s series; `radians`/`degrees` are a scaling multiply that folds for a constant angle. Each body lowers LAZILY, so a program that never calls one carries none of it. `math.pi` / `math.e` are not defined: a module-level float constant in an imported module is storage nothing initialises |
+| Forward-reference annotation `"Name"` | ✅ Supported | A type named as a string literal (PEP 484), the spelling every Adafruit driver uses for its own `__enter__` return. The quotes come off and the name inside is resolved and checked like any other, in `AnnotationText` so both front ends read it the same way |
 | `hex(n)` / `bin(n)` | ✅ Supported | Compile-time only |
 | `str(n)` | ✅ Supported | Compile-time only |
 | `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
