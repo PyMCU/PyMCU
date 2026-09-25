@@ -8027,6 +8027,24 @@ public partial class IRGenerator
     /// parameter to a literal at compile time, so it has no symbol and no pointer. The
     /// exception message is an address decided by whichever raise ran, so it needs the shared
     /// subroutine `uart_write_str`, which already reads flash through a register pair (#369).
+    /// <summary>
+    /// Whether a name is a `const[str]` PARAMETER of the function being compiled, which
+    /// holds the flash address of its text in a 16-bit slot. The declared annotation is the
+    /// question, not the lowered DataType: `str` and `const[str]` lower differently and only
+    /// the second keeps the whole pointer.
+    /// </summary>
+    private bool IsConstStrParameter(string name)
+    {
+        if (string.IsNullOrEmpty(currentFunction)) return false;
+        if (!functionParams.TryGetValue(currentFunction, out var names)) return false;
+        if (!functionParamDeclared.TryGetValue(currentFunction, out var declared)) return false;
+        string qualified = currentFunction + "." + name;
+        for (int i = 0; i < names.Count && i < declared.Count; ++i)
+            if (names[i] == qualified || names[i] == name)
+                return declared[i] == "const[str]";
+        return false;
+    }
+
     private string ResolveRuntimeWriteStrFn()
     {
         string fn = ResolveCallee("uart_write_str");
@@ -9900,6 +9918,30 @@ public partial class IRGenerator
                 && StaticStringOf(joinM.Object) is { } joinSep)
             {
                 EmitJoinStream(writeStrFn, floatWriteFn, joinSep, joinCall);
+                return;
+            }
+
+            // A `const[str]` PARAMETER of a real subroutine. The argument arrives as the
+            // flash ADDRESS of the text, and it arrives whole -- `const[str]` lowers to a
+            // 16-bit slot -- so the value was right the entire time and only this writer was
+            // wrong: it sent the address to the decimal writer and `take("passed")` printed
+            // 538. The shared write_str subroutine already walks flash from a pointer in
+            // registers, which is the same call print makes for an exception's message.
+            //
+            // This is the 23rd branch of a 22-branch ladder that dispatches on the SYNTACTIC
+            // SHAPE of the argument, which is why each of these holes had to be found one
+            // program at a time. The fix that scales is the one #393 took: ask the VALUE
+            // whether it stands for text, not the tree. Adding branch 24 without doing that
+            // is feeding the problem rather than fixing it.
+            //
+            // A bare `str` parameter is NOT this case and is deliberately left alone: it
+            // lowers to a one-byte slot, so the address is already truncated before print
+            // sees it, and writing it here would stream from a pointer whose high byte was
+            // lost. That one is the storage width, not the writer.
+            if (arg is VariableExpr strParam && IsConstStrParameter(strParam.Name))
+            {
+                Emit(new Call(ResolveRuntimeWriteStrFn(),
+                    new List<Val> { VisitExpression(arg) }, new NoneVal()));
                 return;
             }
 
