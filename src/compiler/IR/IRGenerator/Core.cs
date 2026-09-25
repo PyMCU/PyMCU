@@ -1954,6 +1954,46 @@ public partial class IRGenerator
     /// own to reach.
     private Val? ProbeBinding(string name) => ResolveBindingCore(name, null, probe: true);
 
+    /// <summary>
+    /// The storage key a statement BINDING <paramref name="bareName"/> writes: the same
+    /// spelling every read of that name resolves to, so that the write is visible.
+    ///
+    /// An expansion owns its locals, so its prefix comes first. Below that, a binding at
+    /// module level binds the module GLOBAL of the same name when one exists, because
+    /// "main" IS the module's top level and that is where every read of the name lands;
+    /// minting `main.x` beside a global `x` splits one source name into two keys, and the
+    /// write then goes to a slot nobody reads. A name no global claims stays
+    /// function-scoped, where the reads resolve the qualified spelling.
+    /// </summary>
+    private string QualifyBoundName(string bareName)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+            return currentInlinePrefix + bareName;
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            if ((currentFunction == "main"
+                    || currentFunction.EndsWith("___module_init", StringComparison.Ordinal))
+                && mutableGlobals.ContainsKey(currentModulePrefix + bareName))
+                return currentModulePrefix + bareName;
+            return currentFunction + "." + bareName;
+        }
+        return bareName;
+    }
+
+    /// <summary>
+    /// The width a bound name is stored at. When the name IS a module global its slot width
+    /// lives in mutableGlobals: a wider incoming type must widen the slot (the same rule a
+    /// `x = &lt;wide&gt;` rebind follows), a narrower one widens on store into the existing slot.
+    /// </summary>
+    private DataType BoundNameStorageType(string key, DataType dt)
+    {
+        if (!mutableGlobals.TryGetValue(key, out var gdt)) return dt;
+        if (gdt.SizeOf() >= dt.SizeOf()) return gdt;
+        widenableGlobals.Remove(key);
+        mutableGlobals[key] = dt;
+        return dt;
+    }
+
     private Val? ResolveBindingCore(string name, PyMCU.Frontend.ASTNode? at, bool probe)
     {
         if (globals.TryGetValue(name, out var symInfo))

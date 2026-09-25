@@ -1446,42 +1446,15 @@ public partial class IRGenerator
         return null;
     }
 
-    // The key a loop variable is stored under: the same qualification the body uses to read it.
-    private string QualifyLoopVar(string bareName)
-    {
-        if (!string.IsNullOrEmpty(currentInlinePrefix))
-            return currentInlinePrefix + bareName;
-        if (!string.IsNullOrEmpty(currentFunction))
-        {
-            // A loop variable at module level binds the module GLOBAL of the same
-            // name when one exists -- `for j in ...` writes `j`, the spelling
-            // ResolveBindingCore answers for every read in the body ("main" IS
-            // the module's top level). Minting `main.j` split the name: the
-            // counter advanced one slot while `pulses[j]` kept reading the
-            // untouched global, so a `p[j] = ...` store always hit element 0.
-            // A name no global claims stays function-scoped, where the body's
-            // reads resolve `main.j` the way they always did.
-            if ((currentFunction == "main"
-                    || currentFunction.EndsWith("___module_init", StringComparison.Ordinal))
-                && mutableGlobals.ContainsKey(currentModulePrefix + bareName))
-                return currentModulePrefix + bareName;
-            return currentFunction + "." + bareName;
-        }
-        return bareName;
-    }
+    // The key a loop variable is stored under: the same qualification the body uses to read
+    // it, which is the general rule for any name a statement binds (QualifyBoundName).
+    // `for j in ...` at module level writes the global `j` when one exists; minting `main.j`
+    // split the name, so the counter advanced one slot while `pulses[j]` kept reading the
+    // untouched global and a `p[j] = ...` store always hit element 0.
+    private string QualifyLoopVar(string bareName) => QualifyBoundName(bareName);
 
-    // The type a possibly-global loop variable is stored at. When the loop var
-    // IS a module global its slot width lives in mutableGlobals: a wider element
-    // type must widen the slot (the same rule a `x = <wide>` rebind follows), a
-    // narrower one widens on store into the existing slot.
-    private DataType LoopVarStorageType(string key, DataType dt)
-    {
-        if (!mutableGlobals.TryGetValue(key, out var gdt)) return dt;
-        if (gdt.SizeOf() >= dt.SizeOf()) return gdt;
-        widenableGlobals.Remove(key);
-        mutableGlobals[key] = dt;
-        return dt;
-    }
+    // The type a possibly-global loop variable is stored at.
+    private DataType LoopVarStorageType(string key, DataType dt) => BoundNameStorageType(key, dt);
 
     private (long Lo, long Hi) OperandRange(Val v)
         => v is Constant or Temporary or Variable ? ValRange(v) : RangeOfType(GetValType(v));

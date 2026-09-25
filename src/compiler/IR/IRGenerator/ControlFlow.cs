@@ -1069,9 +1069,12 @@ public partial class IRGenerator
             positional++;
         }
 
-        string Qualify(string name) => string.IsNullOrEmpty(currentFunction)
-            ? name
-            : currentFunction + "." + name;
+        // A capture is a BINDING, so it takes the key every read of that name resolves to
+        // (QualifyBoundName). Qualifying with currentFunction alone wrote `main.px` at module
+        // level while every read of `px` answered the module global, so the arm bound nothing
+        // and printed the global's old value with no diagnostic; and it never consulted
+        // currentInlinePrefix, so two expansions of one @inline shared a single capture slot.
+        string Qualify(string name) => QualifyBoundName(name);
 
         // Comparisons first, binds after: a half-matched pattern must bind nothing.
         var binds = new List<(string Field, string Target)>();
@@ -1100,6 +1103,14 @@ public partial class IRGenerator
                 Temporary t => t.Type,
                 _ => DataType.UINT8,
             };
+            ForgetBeforePatternBind(qname);
+            // A sub-pattern capture holds the FIELD's value, a scalar. Whatever the key held
+            // before -- an alias, a class -- belongs to the name it is shadowing, not to this
+            // binding: leaving the class behind refused `f"{px}"` inside the arm as "an
+            // instance of 'P'" when px is the captured number.
+            variableAliases.Remove(qname);
+            instanceClasses.Remove(qname);
+            dt = BoundNameStorageType(qname, dt);
             Emit(new Copy(fieldVal, new Variable(qname, dt)));
             variableTypes[qname] = dt;
         }
@@ -1107,8 +1118,17 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(branch.CaptureName))
         {
             string qname = Qualify(branch.CaptureName);
-            variableAliases[qname] = targetVal is Variable tv ? tv.Name : qname;
+            ForgetBeforePatternBind(qname);
+            // `case P() as a` on the subject `a` itself resolves the capture to the key the
+            // subject already occupies. Filing `a -> a` there is a SELF-alias, and the alias
+            // chases that have no depth guard (TryGetMultiStrMember, Call.cs) spin on it
+            // forever: the compiler hung instead of emitting. A name that already is the
+            // binding needs no alias.
+            string aliasTarget = targetVal is Variable tv ? tv.Name : qname;
+            if (aliasTarget != qname) variableAliases[qname] = aliasTarget;
+            else variableAliases.Remove(qname);
             if (!string.IsNullOrEmpty(subjectClass)) instanceClasses[qname] = subjectClass;
+            else instanceClasses.Remove(qname);
         }
 
         if (branch.Guard != null)
@@ -1127,6 +1147,25 @@ public partial class IRGenerator
         Emit(new Jump(endLabel));
         Emit(new Label(nextCaseLabel));
         return true;
+    }
+
+    /// <summary>
+    /// A match capture WRITES the captured name at run time, so every belief the key carried
+    /// from the binding it shadows is stale for the rest of the arm. Without this the folded
+    /// value of the shadowed global survived the bind and the arm printed it instead of the
+    /// captured one, silently and with correct-looking firmware.
+    /// </summary>
+    private void ForgetBeforePatternBind(string key)
+    {
+        constantVariables.Remove(key);
+        strConstantVariables.Remove(key);
+        floatConstantVariables.Remove(key);
+        localConstantValues.Remove(key);
+        noneValuedNames.Remove(key);
+        narrowedOptionals.Remove(key);
+        // Removing alone lets a later constant write re-fold the name, and the arm is one of
+        // several: the key is runtime-mutable from here on, which is what killedConstants says.
+        killedConstants.Add(key);
     }
 
     private void VisitMatch(MatchStmt stmt)

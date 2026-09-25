@@ -177,4 +177,132 @@ public class ClassPatternTests
         Assert.Contains(MainBody(ir), i =>
             i is Copy { Src: Constant { Value: 1 }, Dst: Variable { Name: "main.q" } });
     }
+
+    // ---- a capture is a binding, so it takes the key every read of the name resolves to ----
+    //
+    // VisitClassPattern qualified the bind target with currentFunction alone. At module level
+    // that minted `main.px` while every read of `px` answered the module global: the arm bound
+    // nothing, printed the global's old value, and the firmware looked right. CPython binds the
+    // global there, so the bare spelling is the correct key at module level and the qualified
+    // one inside a function -- the distinction QualifyBoundName now makes for both loop
+    // variables and captures.
+
+    [Fact]
+    public void AModuleLevelCaptureThatCollidesWithAGlobal_WritesTheGlobalsKey()
+    {
+        var ir = Gen(PointWithArgs +
+            "\npx: uint8 = 99\n" +
+            "p = Point(3, 5)\n" +
+            "match p:\n" +
+            "    case Point(x=px):\n" +
+            "        p.y = px\n");
+
+        Assert.Contains(MainBody(ir), i =>
+            i is Copy { Src: Constant { Value: 3 }, Dst: Variable { Name: "px" } });
+        Assert.DoesNotContain(MainBody(ir), i =>
+            i is Copy { Dst: Variable { Name: "main.px" } });
+    }
+
+    // A capture WRITES the name, so the folded value the shadowed global carried is stale for
+    // the rest of the arm. It outlived the bind, so `out = px` stored 99 where the capture
+    // holds 3.
+    [Fact]
+    public void AModuleLevelCapture_DropsTheFoldedValueOfTheNameItShadows()
+    {
+        var ir = Gen(PointWithArgs +
+            "\npx: uint8 = 99\n" +
+            "out: uint8 = 0\n" +
+            "p = Point(3, 5)\n" +
+            "match p:\n" +
+            "    case Point(x=px):\n" +
+            "        out = px\n");
+
+        // The store reads the capture instead of folding the shadowed global's 99.
+        Assert.Contains(MainBody(ir), i =>
+            i is Copy { Src: Variable { Name: "px" }, Dst: Variable { Name: "out" } });
+        Assert.DoesNotContain(MainBody(ir), i =>
+            i is Copy { Src: Constant { Value: 99 }, Dst: Variable { Name: "out" } });
+    }
+
+    // The control for the rule above: the module-level case must not leak into function scope.
+    // No global claims `px` there, so the reads resolve `f.px` and the bind writes that key.
+    [Fact]
+    public void ACaptureInsideAFunction_KeepsTheQualifiedKey()
+    {
+        var ir = Gen(PointWithArgs +
+            "\nq = Point(3, 5)\n" +
+            "\ndef f() -> uint8:\n" +
+            "    px: uint8 = 4\n" +
+            "    match q:\n" +
+            "        case Point(x=px):\n" +
+            "            return px\n" +
+            "    return px\n" +
+            "\nr: uint8 = f()\n");
+
+        var body = Assert.Single(ir.Functions, fn => fn.Name == "f").Body;
+        Assert.Contains(body, i => i is Copy { Dst: Variable { Name: "f.px" } });
+        Assert.DoesNotContain(body, i => i is Return { Value: Constant { Value: 4 } });
+    }
+
+    // The only one of the seven scope qualifiers that never consulted currentInlinePrefix, so
+    // two expansions of one @inline wrote a single capture slot and the second overwrote the
+    // first.
+    [Fact]
+    public void ACaptureInsideAnInline_IsKeyedByItsExpansion()
+    {
+        var ir = Gen(PointWithArgs +
+            "\n@inline\n" +
+            "def show(p: Point) -> None:\n" +
+            "    match p:\n" +
+            "        case Point(x=px):\n" +
+            "            p.y = px\n" +
+            "\na = Point(3, 5)\n" +
+            "b = Point(4, 6)\n" +
+            "show(a)\n" +
+            "show(b)\n");
+
+        var keys = MainBody(ir)
+            .OfType<Copy>()
+            .Select(c => c.Dst)
+            .OfType<Variable>()
+            .Select(v => v.Name)
+            .Where(n => n.EndsWith(".px", StringComparison.Ordinal))
+            .Distinct()
+            .ToList();
+
+        Assert.DoesNotContain("show.px", keys);
+        Assert.DoesNotContain("main.px", keys);
+    }
+
+    // A sub-pattern capture holds the FIELD's value, a scalar. Inheriting the instanceClasses
+    // entry of the global it shadows refused `f"{px}"` inside the arm as "an instance of
+    // 'Point'", a spurious rejection of a program CPython runs.
+    [Fact]
+    public void ACaptureThatShadowsAnInstanceGlobal_IsNotItselfAnInstance()
+    {
+        var ir = Gen(PointWithArgs +
+            "\npx = Point(1, 2)\n" +
+            "p = Point(3, 5)\n" +
+            "match p:\n" +
+            "    case Point(x=px):\n" +
+            "        p.y = px\n");
+
+        Assert.Contains(MainBody(ir), i =>
+            i is Copy { Src: Constant { Value: 3 }, Dst: Variable { Name: "px" } });
+    }
+
+    // `case Point() as p` on the subject `p` itself resolves the capture to the key the
+    // subject already holds. Filing `p -> p` there is a SELF-alias, and the alias chases that
+    // carry no depth guard spin on it: the compiler hung instead of emitting.
+    [Fact]
+    public void AnAsCaptureOfTheSubjectItself_FilesNoSelfAlias()
+    {
+        var ir = Gen(PointWithArgs +
+            "\np = Point(3, 5)\n" +
+            "match p:\n" +
+            "    case Point() as p:\n" +
+            "        p.y = p.x\n");
+
+        Assert.NotEmpty(MainBody(ir));
+    }
 }
