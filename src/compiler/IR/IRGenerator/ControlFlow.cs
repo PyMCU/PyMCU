@@ -245,6 +245,16 @@ public partial class IRGenerator
             if (expr is IntegerLiteral num) return num.Value;
             if (expr is VariableExpr v && globals.TryGetValue(v.Name, out var sym) && !sym.IsMemoryAddress)
                 return sym.Value;
+            // A class constant as the bit index: `if TIFR1[TIMER1.TOV1]:`. A grouped
+            // peripheral keeps its bit positions next to its registers, so this is the
+            // spelling that form asks for, and without it the test fell to the generic
+            // path -- the bit was materialized into a register as 0 or 1 and then
+            // compared, ten bytes where SBIS answers in one. Reading `globals` emits
+            // nothing, which is what lets this run inside a condition lowering.
+            if (expr is MemberAccessExpr mem && ClassNameOf(mem.Object) is { } memCls
+                && globals.TryGetValue(ClassAttrKey(memCls, mem.Member), out var clsSym)
+                && !clsSym.IsMemoryAddress)
+                return clsSym.Value;
             return null;
         }
 
