@@ -1824,6 +1824,10 @@ public partial class IRGenerator
             }
 
             functionReturnTypes[fullName] = func.ReturnType;
+            // `def make(n): return chr(n)`: what crosses the return IS a character, and the
+            // byte it lowers to says nothing about that. Recorded beside the return TYPE
+            // because a caller is often lowered before the callee's body is (#436).
+            if (ReturnsOnlyChars(func)) charReturningFunctions.Add(fullName);
             // `return <seq>` in an outlined function: record the returned name so a
             // call site compiled before this body can still resolve the element
             // type -- a module-level `x = f()` precedes f's emission, when
@@ -4884,6 +4888,23 @@ public partial class IRGenerator
     // `return tuple(v)` / `return list(v)` / `return v` all answer "v". A name the
     // body assigns is a local the caller cannot resolve, and returns naming
     // different sequences have no one answer -- both refuse by answering null.
+    /// <summary>
+    /// True when every value a function returns is a `chr(...)` call, so the byte it hands
+    /// back stands for a CHARACTER and not for a number. A char IS its byte on this target,
+    /// so the value cannot say which it is, and the one site that ever wrote a character
+    /// recognised the `chr(...)` CALL by its syntax -- which a `return` hides, so the caller
+    /// printed the code point (#436). At least one return with a value, none without one,
+    /// and no path that falls off the end: on such a path the function hands back whatever
+    /// the return register held, which is not a character.
+    /// </summary>
+    private static bool ReturnsOnlyChars(FunctionDef func)
+    {
+        var returns = TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>().ToList();
+        if (returns.Count == 0 || !AlwaysLeaves(func.Body)) return false;
+        return returns.All(r =>
+            r.Value is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 });
+    }
+
     private static string? SeqNameReturnedBy(FunctionDef func)
     {
         var assigned = new HashSet<string>();

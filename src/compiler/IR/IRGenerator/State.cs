@@ -97,6 +97,11 @@ public partial class IRGenerator
     private readonly Dictionary<FunctionDef, string> functionSourcePath = new();
 
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
+
+    /// Emitted names of the functions whose every `return` hands back a `chr(...)`, so the
+    /// byte a call to one produces is a CHARACTER. Filled by the scan, read where a value
+    /// has to be written as text (#436).
+    private HashSet<string> charReturningFunctions = new();
     // Names currently bound to None (the real null, not the integer -1). Used to
     // resolve `x is None` / `x is not None` at compile time: a name here IS None,
     // an integer or a concrete instance is NOT. This is what keeps None from

@@ -6781,6 +6781,13 @@ public partial class IRGenerator
         if (v is Constant c && (c.Value < 0 || c.Value > 255))
             throw new ValueError($"chr() arg not in range(256): {c.Value}",
                 expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+        // The byte IS the character on this target, and that is the whole reason the
+        // char-ness kept being lost: a bare code is indistinguishable from any other number,
+        // so only the one site that recognised the `chr(...)` CALL by syntax -- print's own
+        // ladder -- ever wrote a character. Bind the text to the value instead, and it
+        // survives being assigned to a name, folded through an @inline, and returned (#436).
+        if (v is Constant cc)
+            return new Constant(cc.Value, ((char)cc.Value).ToString());
         return v;
     }
 
@@ -8520,6 +8527,13 @@ public partial class IRGenerator
             return null;
         }
 
+        // `c = chr(65)`: a character IS a one-character string, and the name holds that
+        // text. Without this the name held a bare code and `print(c)` wrote 65 (#436).
+        if (e is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 } chrStrCall
+            && TryEvalElemConst(chrStrCall.Args[0], out int chrStrCode)
+            && chrStrCode is >= 0 and <= 255)
+            return ((char)chrStrCode).ToString();
+
         // `po = "GRB" if bpp == 3 else "GRBW"` (adafruit_pixelbuf's pixel_order, then
         // NeoPixel's byteorder= argument): when the condition is a compile-time
         // expression the name holds whichever branch it selects, so the text is the
@@ -9471,6 +9485,17 @@ public partial class IRGenerator
     }
 
     /// <summary>Streams one byte that is only known at run time, as a character.</summary>
+    // The same raw byte write, from a value the lowering already has. The byte is copied
+    // into a temporary first: a call whose declared result is void leaves its answer in the
+    // return register, and the copy is what pins it before anything else can overwrite it.
+    private void EmitStreamCharVal(Val code)
+    {
+        Temporary charTmp = MakeTemp(DataType.UINT8);
+        Emit(new Copy(code, charTmp));
+        VisitCall(new CallExpr(new VariableExpr(ResolveByteWriteFn()),
+            new List<Expression> { new PreEvaluatedExpr(charTmp, DataType.UINT8) }));
+    }
+
     private void EmitStreamCharExpr(Expression code)
     {
         VisitCall(new CallExpr(new VariableExpr(ResolveByteWriteFn()),
@@ -9746,6 +9771,23 @@ public partial class IRGenerator
                 // original expression, because the writer is @inline and a direct Call
                 // instruction to it would reference a symbol nobody emits.
                 EmitStreamCharExpr(chrCall.Args[0]);
+                return;
+            }
+
+            // The same character, handed back by a FUNCTION. `def make(n): return chr(n)` then
+            // `print(make(66))` sent 66: the branch above recognises the `chr(...)` call by
+            // its syntax, and a `return` hides it, so the caller saw a bare byte and the
+            // decimal writer took it. The scan recorded which functions hand back a
+            // character, so the call itself is what the raw byte writer takes (#436).
+            if (arg is CallExpr { Callee: VariableExpr charFn } charCall
+                && (charReturningFunctions.Contains(ResolveCallee(charFn.Name))
+                    || charReturningFunctions.Contains(charFn.Name)))
+            {
+                // Through the VALUE, not through the expression: an unannotated callee hands
+                // its result back in the return register with a `none` destination, and
+                // passing the CALL as the writer's argument left that register to be read by
+                // whatever came next -- the previous call's character came out instead.
+                EmitStreamCharVal(VisitExpression(charCall));
                 return;
             }
 
