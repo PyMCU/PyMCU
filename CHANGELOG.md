@@ -84,6 +84,17 @@
 
 ### Fixed
 
+- **ir**: a `match` class-pattern capture whose name collides with a module global did not
+  bind. The capture was filed under `main.<name>` while every read of the name resolved the
+  global, so the arm read the global's old value, with no diagnostic and correct-looking
+  firmware. A capture now takes the key every read of that name resolves to — the module
+  global at module level, as CPython binds it there, and the function-qualified spelling
+  inside a function — and consults the inline prefix, so two expansions of one `@inline` no
+  longer share one capture slot. The bind also drops the folded value, the alias and the
+  class of the binding it shadows: `f"{captured}"` was refused as "an instance of 'C'" when
+  the shadowed global held an instance, and the arm's reads folded to the global's constant.
+  `case C() as name` on the subject itself no longer files a self-alias, which made the
+  compiler spin instead of emitting.
 - **hal/avr**: `I2C.writebyte()` returned nothing, so a NACKed transaction was invisible
   to the caller. It now returns `1` on success, the failing TWI status (`0x20`/`0x30`) on
   a NACK and `0xFF` on a bus timeout, with an early STOP — the same contract
