@@ -30,6 +30,27 @@ ERROR = "error"      # will not compile in PyMCU's subset
 WARN = "warn"        # supported only in a limited form / needs care
 INFO = "info"        # fine -- supported via a compat layer or trivially
 
+# What this command looked at, carried in every report so a consumer never has to remember.
+#
+# It exists because the absence of findings was being read as "this program is fine", and it
+# is not: `pymcu lint` walks CPython's `ast` and recognises a fixed list of porting idioms.
+# It resolves no name, knows no type, follows no import and does not know the target. Measured
+# on four programs the compiler refuses -- an undefined call, a literal too wide for its
+# parameter, an unknown type, a write to a field that does not exist -- this command reports
+# nothing for all four, and says about a broken program exactly what it says about a good one.
+#
+# Every place that renders a green state reads this instead of writing its own sentence.
+# Three of them had written their own, in three repositories, and they did not agree: the
+# driver and the JetBrains plugin both promised "this should port cleanly", which is a claim
+# about compiling, and the VS Code plugin said "0 finding(s)", which is a claim about the
+# findings and is true. One report, one wording.
+LINT_SCOPE = {
+    "checked": ["portability-idioms"],
+    "not_checked": ["syntax-of-pymcu", "names", "types", "imports", "target"],
+    "summary": "porting idioms only; no names, types or imports were resolved",
+    "for_correctness_run": "pymcu build",
+}
+
 _STYLE = {ERROR: "bold red", WARN: "yellow", INFO: "cyan"}
 
 # Compat-layer module surfaces that map ~1:1 (reported as INFO, not blockers).
@@ -371,6 +392,7 @@ def lint(
         print(json.dumps({
             "flavor": detected_flavor,
             "files": json_files,
+            "scope": LINT_SCOPE,
             "summary": {"errors": totals[ERROR], "warnings": totals[WARN],
                         "info": totals[INFO], "file_count": len(files)},
         }))
@@ -384,5 +406,10 @@ def lint(
         f"[yellow]{totals[WARN]} warnings[/], [cyan]{totals[INFO]} info[/] "
         f"across {len(files)} file(s).")
     if totals[ERROR] == 0:
-        console.print("[bold green]No hard blockers -- this should port cleanly.[/]")
+        # NOT "this should port cleanly", which is what stood here and is a claim about
+        # compiling that nothing in this file checked. A program that does not build reached
+        # that sentence, and two IDE plugins repeated it.
+        console.print("[bold green]No porting blockers found.[/] "
+                      f"[dim]{LINT_SCOPE['summary']}; "
+                      f"run `{LINT_SCOPE['for_correctness_run']}` to check it compiles.[/]")
     raise typer.Exit(1 if totals[ERROR] else 0)
