@@ -1088,6 +1088,10 @@ public partial class IRGenerator
     private HashSet<string> exnExterns = new();
 
     private List<FunctionEntry> functionsToCompile = new();
+
+    // Observer-mode name resolution (PYMCU_RESOLVE_OBSERVE=1). Null on a normal build, and
+    // every call through it is guarded, so a build without the flag never touches it.
+    private NameResolution? nameResolution;
     private Dictionary<string, int> stringLiteralIds = new();
     private Dictionary<int, string?> stringIdToStr = new(); // reverse map: id → string value
 

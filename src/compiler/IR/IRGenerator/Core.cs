@@ -1337,6 +1337,24 @@ public partial class IRGenerator
         // with an init needs. A program without one lowers exactly as it always did.
         //
         // Only the ORDER OF LOWERING changes. Emission order is restored below.
+        // Observer-mode resolution. The last point at which every AST rewrite that BINDS a
+        // name has happened (the async and namedtuple transforms, the loop-else desugar and
+        // the module-level splice into main) and the first at which nothing has been lowered
+        // yet. It decides each name's binding once and compares its key against the ladder's;
+        // nothing downstream reads it. Off unless PYMCU_RESOLVE_OBSERVE=1.
+        if (NameResolution.Enabled)
+        {
+            nameResolution = new NameResolution();
+            // The module GLOBALS come from each module's top-level statements, not from
+            // functionsToCompile: a module whose top level needs no __module_init has no
+            // entry there at all, and its globals would go unseen.
+            nameResolution.AddModuleLevel("", mainAst);
+            foreach (var modAst in importedModules.Values)
+                nameResolution.AddModuleLevel(
+                    astToCanonicalPrefix.TryGetValue(modAst, out var p) ? p : "", modAst);
+            nameResolution.Build(functionsToCompile);
+        }
+
         var lowered = new Function?[functionsToCompile.Count];
         var lowerOrder = new List<int>(functionsToCompile.Count);
         var initFirst = new List<int>();
@@ -1377,6 +1395,8 @@ public partial class IRGenerator
         foreach (var fn in lowered)
             if (fn != null)
                 irProgram.Functions.Add(fn);
+
+        nameResolution?.ReportTotals();
 
         // The report flags are AST-level: a raise with a message inside an imported but
         // never-called function sets them even though nothing reachable can record one.
@@ -1967,6 +1987,13 @@ public partial class IRGenerator
     /// </summary>
     private string QualifyBoundName(string bareName)
     {
+        string key = QualifyBoundNameCore(bareName);
+        ObserveResolution("QualifyBoundName", bareName, key);
+        return key;
+    }
+
+    private string QualifyBoundNameCore(string bareName)
+    {
         if (!string.IsNullOrEmpty(currentInlinePrefix))
             return currentInlinePrefix + bareName;
         if (!string.IsNullOrEmpty(currentFunction))
@@ -1994,7 +2021,32 @@ public partial class IRGenerator
         return dt;
     }
 
+    /// <summary>
+    /// Hands one ladder decision to the observer, with the ambient scope it was taken in.
+    /// A no-op unless PYMCU_RESOLVE_OBSERVE=1.
+    /// </summary>
+    private void ObserveResolution(string site, string bare, string ladderKey)
+    {
+        if (nameResolution == null) return;
+        nameResolution.Observe(site, currentModulePrefix ?? "", currentFunction,
+                               currentInlinePrefix, bare, ladderKey,
+                               currentSourceFile, currentStmtLine);
+    }
+
     private Val? ResolveBindingCore(string name, PyMCU.Frontend.ASTNode? at, bool probe)
+    {
+        // The observer watches the READ path too: whichever Variable the ladder answers with
+        // is the key this read will load from.
+        if (nameResolution != null)
+        {
+            var observed = ResolveBindingLadder(name, at, probe);
+            if (observed is Variable ov) ObserveResolution("ResolveBinding", name, ov.Name);
+            return observed;
+        }
+        return ResolveBindingLadder(name, at, probe);
+    }
+
+    private Val? ResolveBindingLadder(string name, PyMCU.Frontend.ASTNode? at, bool probe)
     {
         if (globals.TryGetValue(name, out var symInfo))
         {

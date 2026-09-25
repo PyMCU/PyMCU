@@ -3918,10 +3918,14 @@ public partial class IRGenerator
         return dstVar;
     }
 
-    private string QualifyHelperName(string name) =>
-        !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
-        : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
-        : name;
+    private string QualifyHelperName(string name)
+    {
+        string key = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
+            : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
+            : name;
+        ObserveResolution("QualifyHelperName", name, key);
+        return key;
+    }
 
     /// `[e for v in xs if cond]` where `xs` is a runtime heap list: the result
     /// is a fresh heap list. Capacity is the source length -- the filter can

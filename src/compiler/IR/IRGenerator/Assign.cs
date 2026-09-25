@@ -52,11 +52,13 @@ public partial class IRGenerator
         // read of `x` would look exactly like a typo.
         if (stmt.Target is VariableExpr bindTgt)
         {
-            boundNames.Add(!string.IsNullOrEmpty(currentInlinePrefix)
+            string bindKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + bindTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction)
                     ? currentFunction + "." + bindTgt.Name
-                    : bindTgt.Name));
+                    : bindTgt.Name);
+            ObserveResolution("AssignTarget", bindTgt.Name, bindKey);
+            boundNames.Add(bindKey);
             // `r = <not a row>` ends a row alias bound earlier in the block --
             // the scan stopped at this statement, and what binds now is an
             // ordinary value.
@@ -9203,9 +9205,11 @@ public partial class IRGenerator
 
         string QualifyTarget(string name)
         {
-            if (!string.IsNullOrEmpty(currentInlinePrefix)) return currentInlinePrefix + name;
-            if (!string.IsNullOrEmpty(currentFunction)) return currentFunction + "." + name;
-            return name;
+            string key = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
+                : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
+                : name;
+            ObserveResolution("QualifyTarget", name, key);
+            return key;
         }
 
         // Every target is bound here, whichever shape the right-hand side takes; the

@@ -3217,10 +3217,14 @@ public partial class IRGenerator
 
     /// The key an `except ... as` name is held under, qualified the way every other local is,
     /// so a name bound in one @inline expansion is not the name bound in another.
-    private string QualifyExceptionBinding(string name) =>
-        !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
-        : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
-        : name;
+    private string QualifyExceptionBinding(string name)
+    {
+        string key = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
+            : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
+            : name;
+        ObserveResolution("QualifyExceptionBinding", name, key);
+        return key;
+    }
 
     /// The binding an `except ... as` name is currently in scope under, if any. The lookup
     /// walks the same qualifications ResolveNameKey does, because the name may be read from
