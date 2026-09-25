@@ -154,6 +154,25 @@
 
 ### Fixed
 
+- **stdlib**: a bus transfer's byte count holds a buffer longer than 255. The AVR I2C entry
+  point declared `n: uint8` and the layer handed it `len(buf)`, so a 128x32 SSD1306's
+  512-byte framebuffer arrived as `512 & 0xFF == 0`: the loop ran zero times, `show()` put
+  one byte on the wire, and the display stayed blank while every command byte before it was
+  correct. Measured on the emulated Uno, 4 -> 4, 255 -> 255, 256 -> **0**, 300 -> **44**,
+  512 -> **0**, and now every one of them arrives whole. This is the PASS-THROUGH form of a
+  lying width declaration: the parameter is compared with nothing, it is used at its declared
+  width on a value that comes from the CALL SITE, so the body reads as blameless and the
+  source sweep for the comparison form cannot see it. Neither can the compiler's own refusal,
+  which fires on a literal the parser built: `take(300)` against `def take(n: uint8)` is
+  refused naming the 44 that would arrive, while `take(len(big))` for the same 300 compiles
+  and receives the same 44. Fourteen entry points across I2C, SPI, soft-I2C and the
+  RP2040/RP2350 buses carried it, with their loop counters; a new source sweep
+  (`tests/stdlib/test_bus_transfer_count_holds_a_buffer.py`) is what found the fourteenth
+  after twelve had been fixed by hand, and an AVR fixture pins what a device receives. Four
+  programs in the tree grow, all four of them users of the feature, and every byte is one
+  16-bit counter's `CLR`, `CPC` and `ADIW`: i2c-readfrom-mem +14, compat-mp-i2c-rw +32,
+  compat-mp-spi-rw +38, compat-mp-uart-readline +12. PyMCU#511.
+
 - **ir**: a parameter of an `@inline` expansion lost to a module global of the same name.
   Every shim in the compatibility layers takes parameters with ordinary names -- `buf`,
   `data`, `addr`, `value`, `n`, `pin` -- so a program that bound a module-level name matching
