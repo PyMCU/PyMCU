@@ -5573,19 +5573,9 @@ public partial class IRGenerator
             // facade: `usys.maxsize` resolves to `sys_maxsize`.
             if (!globals.ContainsKey(mangledName) && !mutableGlobals.ContainsKey(mangledName)
                 && modules.ContainsKey(varExpr.Name)
-                && perModuleImportedAliases.TryGetValue(moduleBase + "_", out var reExports)
-                && reExports.TryGetValue(expr.Member, out var reExportedMod) && reExportedMod != null)
+                && TryResolveModuleReExport(moduleBase, expr.Member, out var reExportedName))
             {
-                // The member can BE a submodule (`alarm.time` where the package's
-                // `from . import time` binds `time` to module `alarm.time`): its
-                // spelling is the module's own mangled name -- appending the member
-                // again produced `alarm_time_time` and the placeholder below then
-                // named the wrong variable.
-                bool memberIsSubmodule = modules.ContainsKey(reExportedMod)
-                    && reExportedMod.EndsWith("." + expr.Member, StringComparison.Ordinal);
-                mangledName = memberIsSubmodule
-                    ? reExportedMod.Replace('.', '_')
-                    : reExportedMod.Replace('.', '_') + "_" + expr.Member;
+                mangledName = reExportedName;
             }
 
             if (globals.TryGetValue(mangledName, out var sym))

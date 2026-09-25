@@ -2860,6 +2860,32 @@ public partial class IRGenerator
         otbl[name] = original;
     }
 
+    /// <summary>
+    /// The mangled name `&lt;module&gt;.&lt;member&gt;` resolves to when the module merely RE-EXPORTS
+    /// the member instead of defining it: the compat shims' `from .sys import maxsize` inside
+    /// usys.py, and a package `__init__.py` doing `from pkg.mod import f`. The name binds to the
+    /// DEFINING module in the re-exporting module's own import table, so no `usys_maxsize` /
+    /// `pkg_f` global or function is ever emitted and the defining module's spelling is the only
+    /// name there is. False when the module does not re-export that name.
+    /// </summary>
+    private bool TryResolveModuleReExport(string moduleBase, string member, out string mangled)
+    {
+        mangled = "";
+        if (!perModuleImportedAliases.TryGetValue(moduleBase + "_", out var reExports)
+            || !reExports.TryGetValue(member, out var reExportedMod) || reExportedMod == null)
+            return false;
+
+        // The member can BE a submodule (`alarm.time` where the package's `from . import time`
+        // binds `time` to module `alarm.time`): its spelling is the module's own mangled name --
+        // appending the member again produced `alarm_time_time`.
+        bool memberIsSubmodule = modules.ContainsKey(reExportedMod)
+            && reExportedMod.EndsWith("." + member, StringComparison.Ordinal);
+        mangled = memberIsSubmodule
+            ? reExportedMod.Replace('.', '_')
+            : reExportedMod.Replace('.', '_') + "_" + member;
+        return true;
+    }
+
     // --- Strings whose value is decided at run time (issue #145) -------------------------
     //
     // A str is a compile-time value in PyMCU: there is no string type, only an interned id
