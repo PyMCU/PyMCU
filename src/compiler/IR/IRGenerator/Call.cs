@@ -1618,17 +1618,35 @@ public partial class IRGenerator
                 // A method is recognised by the class in front of it, never by holding an
                 // underscore -- `sleep_ms` and `ticks_diff` are most of what utime offers, and
                 // a list that drops them advertises one name out of eight.
-                var has = functionReturnTypes.Keys
+                var callables = functionReturnTypes.Keys
                     .Concat(inlineFunctions.Keys)
                     .Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
                     .Select(k => k[prefix.Length..])
+                    // A class is filed under its BARE name, with its module kept beside it.
+                    .Concat(classModuleMap.Where(kv => kv.Value == prefix).Select(kv => kv.Key))
                     .Where(n => n.Length > 0 && n[0] != '_' && !NamesAMethodOfAClass(prefix, n))
                     .Distinct(StringComparer.Ordinal)
                     .OrderBy(n => n, StringComparer.Ordinal)
                     .ToList();
+
+                // Module-level constants, after the callables. `framebuf` is classes and
+                // constants and nothing else, so a list built from functions alone came out
+                // EMPTY on it -- and sorting the two together put eight format constants in
+                // front of FrameBuffer, which is the name the reader was reaching for.
+                var constants = globals.Keys
+                    .Concat(mutableGlobals.Keys)
+                    .Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(k => k[prefix.Length..])
+                    .Where(n => n.Length > 0 && n[0] != '_' && !NamesAMethodOfAClass(prefix, n))
+                    .Where(n => !callables.Contains(n, StringComparer.Ordinal))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+
+                var has = callables.Concat(constants).ToList();
                 string carries = has.Count > 0
-                    ? $" It does define {string.Join(", ", has.Take(8))}"
-                      + (has.Count > 8 ? ", ..." : "") + "."
+                    ? $" It does define {string.Join(", ", has.Take(10))}"
+                      + (has.Count > 10 ? ", ..." : "") + "."
                     : "";
                 throw UserError(
                     $"module {spelled} does not define '{modMem.Member}'. The import resolved, so "
