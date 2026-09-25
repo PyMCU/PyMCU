@@ -154,6 +154,25 @@
 
 ### Fixed
 
+- **ir**: a parameter of an `@inline` expansion lost to a module global of the same name.
+  Every shim in the compatibility layers takes parameters with ordinary names -- `buf`,
+  `data`, `addr`, `value`, `n`, `pin` -- so a program that bound a module-level name matching
+  one of them silently changed what a library it did not write computed, with nothing to see
+  at the call site. Two resolutions were wrong and they had different reach. `len(param)`
+  asked the bare name before the frame's own binding, so the global's length was emitted as a
+  constant, from anywhere. A subscript `param[i]` followed the ENCLOSING FUNCTION's spelling
+  first, which inside a function binds nothing and is harmless, but at MODULE level is
+  `main.<name>` -- a real alias to a module global of that name -- so the expansion read and
+  transmitted a different object entirely. That is why the same shim was correct from inside
+  a function and wrong from module level with the source identical. Both now ask the
+  expansion's own binding first; the bare and enclosing lookups keep their places one step
+  later and still resolve names the expansion does not bind. Found through I2C:
+  `machine.I2C.writeto` is `def writeto(self, addr, buf: bytearray)` and calls
+  `write_bytes(addr, buf, len(buf))`, so a program with its own `buf` put that buffer's
+  length, and at module level its contents, on the wire. The discriminating experiment
+  throughout is a RENAME: the layout does not move and the answer changes, which a shared
+  storage slot could not do. PyMCU#512.
+
 - **ir**: a buffer held anywhere but a local picked the SCALAR `@inline` overload, and the
   call sent the buffer's ADDRESS truncated to eight bits. `i2c.writeto(self.addr, self.temp)`
   put `3C 02` on an emulated Uno's TWI lines where the program says `3C 80ae`, and the `02`
