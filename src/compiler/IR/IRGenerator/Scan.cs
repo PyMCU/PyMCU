@@ -640,6 +640,8 @@ public partial class IRGenerator
                     IsMemoryAddress = true, Value = regAddr,
                     Type = DataTypeExtensions.StringToDataType(innerType),
                 };
+                registerGroupClasses.Add(className);
+                registerGroupClasses.Add(enclosingPrefix + className);
                 continue;
             }
 

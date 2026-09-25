@@ -211,4 +211,38 @@ public class GroupedPeripheralRegisterTests
         Assert.Contains("TCCR1A", ex.Message);
         Assert.Contains("known while compiling", ex.Message);
     }
+
+    [Fact]
+    public void ARegisterGroupCannotBeInstantiated_AndSaysSo()
+    {
+        // The group is a namespace over the silicon, not a type. The call used to be
+        // accepted and produce nothing at all: the name still resolved to the group, so
+        // the register accesses after it worked and the meaningless call went unsaid.
+        var ex = Assert.Throws<CompilerError>(() => Gen(GroupHeader +
+            "def main():\n" +
+            "    t = TIMER1()\n" +
+            "    t.TCCR1A.value = 0x82\n"));
+
+        Assert.Contains("TIMER1", ex.Message);
+        Assert.Contains("not a class to instantiate", ex.Message);
+        // The message says what to write instead.
+        Assert.Contains("TIMER1.<REGISTER>.value", ex.Message);
+    }
+
+    [Fact]
+    public void AnOrdinaryClassIsStillInstantiable()
+    {
+        // The refusal is keyed on the class declaring a register, not on being a class.
+        var ir = Gen(
+            "from pymcu.types import ptr, uint8\n" +
+            "\n" +
+            "class Counter:\n" +
+            "    def __init__(self, n: uint8):\n" +
+            "        self.n = n\n" +
+            "\n" +
+            "def main():\n" +
+            "    c = Counter(7)\n");
+
+        Assert.NotEmpty(Code(ir));
+    }
 }

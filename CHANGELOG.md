@@ -22,6 +22,9 @@
   match. `pymcu.chips.atmega328p` ships the first group, `TIMER1`. The grouped classes are
   the surface the project keeps stable; the loose module-level register names are an
   implementation detail of the HAL and may change in any release.
+  Calling a group -- `TIMER1()` -- is refused with a located message naming it: a group is
+  a namespace over the silicon, not a type, and the call used to be accepted and produce
+  nothing at all while the register accesses around it still worked.
 
 - **ir**: compile-time 2-D grids the way CircuitPython writes them:
   `g = [[v] * W for _ in range(H)]`, `g = [bytearray(W) for _ in range(H)]` and

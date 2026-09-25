@@ -156,6 +156,13 @@ public partial class IRGenerator
     private Dictionary<string, string> classmethodClsAlias = new();
     private HashSet<string> valueClasses = new(); // @value-decorated classes: always use ZCA path, never heap-allocated
 
+    // RFC 0012: classes whose body declares at least one register (`TCCR1A: ptr[uint8] =
+    // ptr(0x80)`). A grouped peripheral is a namespace over the silicon, not a type: it has
+    // no fields, no constructor and no instance, so calling it means nothing. Recorded here
+    // under both the bare and the module-qualified name, because a call site resolves the
+    // callee either way depending on how the group was imported.
+    private HashSet<string> registerGroupClasses = new();
+
     // Maps "ClassName.property_name" -> qualified setter inline function key.
     // Populated by scan_functions when a @name.setter method is encountered.
     // Used by visitAssign to desugar "obj.attr = val" into an inline setter call.
