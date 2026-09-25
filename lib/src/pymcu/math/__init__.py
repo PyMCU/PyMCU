@@ -136,3 +136,57 @@ def ceil(x: float) -> int32:
 def pow(x: float, y: float) -> float:
     """x raised to y. Software-float power: 2 ** (y * log2(x))."""
     return __pymcu_powf(x, y)
+
+
+# sqrt / log / log10 / exp -- the rest of the real-valued surface every upstream has.
+#
+# Same arrangement as pow(): the algorithm lives in the compiler's embedded runtime
+# helpers (__pymcu_sqrtf, __pymcu_logf, __pymcu_expf) and these are thin @inline
+# wrappers, so there is one implementation and it lowers as a REAL subroutine, once,
+# and only in a program that calls it. A program that never mentions sqrt pays nothing.
+#
+# The values are float32, not CPython's float64: that is the width this target has, and
+# it is the width every other float in a PyMCU program already carries.
+@inline
+def sqrt(x: float) -> float:
+    """The square root of x. Raises ValueError for a negative argument, as CPython does."""
+    return __pymcu_sqrtf(x)
+
+
+@inline
+def log(x: float) -> float:
+    """The natural logarithm of x. Raises ValueError for x <= 0, as CPython does."""
+    return __pymcu_logf(x)
+
+
+@inline
+def log10(x: float) -> float:
+    """The base-10 logarithm of x."""
+    return __pymcu_logf(x) * 0.4342944819032518
+
+
+@inline
+def exp(x: float) -> float:
+    """e raised to x."""
+    return __pymcu_expf(x)
+
+
+# radians / degrees. Pure scaling, so no runtime helper: the multiply is smaller than a
+# call would be, and it folds outright for a constant angle.
+#
+# math.pi and math.e are NOT defined here, and that is deliberate. A module-level FLOAT
+# constant in an imported module becomes storage that nothing initialises: `math.pi` read
+# back 0.0 instead of refusing, which is worse than not having it. Leaving the names out
+# keeps the honest "Unknown module member" until the module-init gap is closed.
+
+
+@inline
+def radians(x: float) -> float:
+    """x degrees in radians."""
+    return x * 0.017453292519943295
+
+
+@inline
+def degrees(x: float) -> float:
+    """x radians in degrees."""
+    return x * 57.29577951308232

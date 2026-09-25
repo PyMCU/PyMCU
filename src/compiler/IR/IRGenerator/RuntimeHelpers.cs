@@ -84,6 +84,82 @@ public partial class IRGenerator
                 __pwf_r = __pwf_r * 0.5
                 __pwf_n = __pwf_n + 1
             return __pwf_r
+
+        def __pymcu_sqrtf(x: float) -> float:
+            # Newton-Raphson on the square root, after reducing x into [1, 4) by moving
+            # whole steps of 4 (one step of 4 in the argument is one step of 2 in the
+            # result, so the scale comes back exactly and precision is decided by the
+            # iteration alone). Six iterations from a seed within a factor of two is more
+            # than the 24 bits of a float32: the error squares each time.
+            if x < 0.0:
+                raise ValueError("math.sqrt: negative argument")
+            if x == 0.0:
+                return 0.0
+            __sqf_m: float = x
+            __sqf_e: int16 = 0
+            while __sqf_m >= 4.0:
+                __sqf_m = __sqf_m / 4.0
+                __sqf_e = __sqf_e + 1
+            while __sqf_m < 1.0:
+                __sqf_m = __sqf_m * 4.0
+                __sqf_e = __sqf_e - 1
+            __sqf_r: float = (__sqf_m + 1.0) * 0.5
+            for __sqf_i in range(6):
+                __sqf_r = 0.5 * (__sqf_r + __sqf_m / __sqf_r)
+            while __sqf_e > 0:
+                __sqf_r = __sqf_r * 2.0
+                __sqf_e = __sqf_e - 1
+            while __sqf_e < 0:
+                __sqf_r = __sqf_r * 0.5
+                __sqf_e = __sqf_e + 1
+            return __sqf_r
+
+        def __pymcu_logf(x: float) -> float:
+            # ln(x). The same range reduction and atanh series __pymcu_powf uses: x is
+            # halved into [1, 2) counting the halvings, and ln(m) = 2*(t + t^3/3 + ...)
+            # with t = (m-1)/(m+1) converges fast there because |t| <= 1/3.
+            if x <= 0.0:
+                raise ValueError("math.log: non-positive argument")
+            __lgf_m: float = x
+            __lgf_e: int16 = 0
+            while __lgf_m >= 2.0:
+                __lgf_m = __lgf_m / 2.0
+                __lgf_e = __lgf_e + 1
+            while __lgf_m < 1.0:
+                __lgf_m = __lgf_m * 2.0
+                __lgf_e = __lgf_e - 1
+            __lgf_t: float = (__lgf_m - 1.0) / (__lgf_m + 1.0)
+            __lgf_t2: float = __lgf_t * __lgf_t
+            __lgf_s: float = __lgf_t
+            __lgf_term: float = __lgf_t
+            for __lgf_i in range(3, 20, 2):
+                __lgf_term = __lgf_term * __lgf_t2
+                __lgf_s = __lgf_s + __lgf_term / float(__lgf_i)
+            return float(__lgf_e) * 0.6931471805599453 + 2.0 * __lgf_s
+
+        def __pymcu_expf(x: float) -> float:
+            # e ** x, the second half of __pymcu_powf on its own: split x/ln2 into an
+            # integer n and a fraction f in [0, 1), Taylor the fraction (|z| <= ln2, so
+            # twelve terms are past float32 precision) and scale by 2 ** n exactly.
+            __exf_tt: float = x * 1.4426950408889634
+            __exf_n: int16 = int16(int(__exf_tt))
+            __exf_f: float = __exf_tt - float(__exf_n)
+            if __exf_f < 0.0:
+                __exf_f = __exf_f + 1.0
+                __exf_n = __exf_n - 1
+            __exf_z: float = __exf_f * 0.6931471805599453
+            __exf_r: float = 1.0
+            __exf_term: float = 1.0
+            for __exf_i in range(1, 13):
+                __exf_term = __exf_term * __exf_z / float(__exf_i)
+                __exf_r = __exf_r + __exf_term
+            while __exf_n > 0:
+                __exf_r = __exf_r * 2.0
+                __exf_n = __exf_n - 1
+            while __exf_n < 0:
+                __exf_r = __exf_r * 0.5
+                __exf_n = __exf_n + 1
+            return __exf_r
         """;
 
     /// <summary>
