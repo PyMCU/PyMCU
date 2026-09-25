@@ -138,12 +138,27 @@ def pow(x: float, y: float) -> float:
     return __pymcu_powf(x, y)
 
 
-# sqrt / log / log10 / exp -- the rest of the real-valued surface every upstream has.
+# sqrt / log / exp / radians -- and ONLY these four.
+#
+# Each one is here because a library measured in this tree stops without it, named by
+# the diagnostic the compiler gave on main:
+#
+#   sqrt     adafruit_max31865   "call to undefined function 'math_sqrt'"
+#   log      adafruit_thermistor "call to undefined function 'math_log'"
+#   exp      adafruit_sgp30      "cannot import 'exp' from 'math'"
+#   radians  adafruit_mpu6050    "cannot import 'radians' from 'math'"
+#            adafruit_lsm6ds     same
+#
+# log10 and degrees are NOT here. A sweep of 66 upstream CircuitPython and MicroPython
+# libraries found neither name in any of them, and a shim exists because something needs
+# it, not because the module has it upstream. They go in the day a library asks.
 #
 # Same arrangement as pow(): the algorithm lives in the compiler's embedded runtime
 # helpers (__pymcu_sqrtf, __pymcu_logf, __pymcu_expf) and these are thin @inline
 # wrappers, so there is one implementation and it lowers as a REAL subroutine, once,
-# and only in a program that calls it. A program that never mentions sqrt pays nothing.
+# and only in a program that calls it. `import math` with no call costs 0 bytes, and
+# each function's own body (measured on top of the 910 bytes of software float that any
+# float arithmetic already pays) is: radians 8, exp 918, log 1062, sqrt 1452.
 #
 # The values are float32, not CPython's float64: that is the width this target has, and
 # it is the width every other float in a PyMCU program already carries.
@@ -160,19 +175,13 @@ def log(x: float) -> float:
 
 
 @inline
-def log10(x: float) -> float:
-    """The base-10 logarithm of x."""
-    return __pymcu_logf(x) * 0.4342944819032518
-
-
-@inline
 def exp(x: float) -> float:
     """e raised to x."""
     return __pymcu_expf(x)
 
 
-# radians / degrees. Pure scaling, so no runtime helper: the multiply is smaller than a
-# call would be, and it folds outright for a constant angle.
+# radians. Pure scaling, so no runtime helper: the multiply is smaller than a call would
+# be, and it folds outright for a constant angle -- 8 bytes on top of the float runtime.
 #
 # math.pi and math.e are NOT defined here, and that is deliberate. A module-level FLOAT
 # constant in an imported module becomes storage that nothing initialises: `math.pi` read
@@ -184,9 +193,3 @@ def exp(x: float) -> float:
 def radians(x: float) -> float:
     """x degrees in radians."""
     return x * 0.017453292519943295
-
-
-@inline
-def degrees(x: float) -> float:
-    """x radians in degrees."""
-    return x * 57.29577951308232

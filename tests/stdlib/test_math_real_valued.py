@@ -1,4 +1,4 @@
-"""math.sqrt, exp, log, log10, radians and degrees exist and take a run-time float.
+"""math.sqrt, exp, log and radians exist and take a run-time float.
 
 They did not exist, and four unmodified upstream libraries stopped on that alone:
 
@@ -6,6 +6,7 @@ They did not exist, and four unmodified upstream libraries stopped on that alone
     adafruit_lsm6ds/__init__.py:59:1: error: ImportError: cannot import 'radians' from 'math'
     adafruit_sgp30.py:29:1: error: ImportError: cannot import 'exp' from 'math'
     adafruit_max31865.py:286:22: error: CompileError: call to undefined function 'math_sqrt'
+    adafruit_thermistor.py:128:26: error: CompileError: call to undefined function 'math_log'
 
 What this file checks is that the names resolve, that each takes a run-time float, and
 that they lower LAZILY: a program that never calls one carries none of the series. The
@@ -26,7 +27,7 @@ STDLIB = REPO / "lib" / "src"
 pytestmark = pytest.mark.skipif(
     not PYMCUC.exists(), reason="compiler binary not built (run `just build`)")
 
-REAL_VALUED = ["sqrt", "exp", "log", "log10", "radians", "degrees"]
+REAL_VALUED = ["sqrt", "exp", "log", "radians"]
 
 
 def build(tmp_path: Path, body: str):
@@ -114,8 +115,18 @@ def test_only_the_called_helper_is_lowered(tmp_path):
     assert "__pymcu_expf" not in names
 
 
+@pytest.mark.parametrize("name", ["log10", "degrees", "sin", "cos", "atan2"])
+def test_a_name_with_no_demandant_is_absent(tmp_path, name):
+    """A shim exists because something needs it, not because the module has it upstream.
+    A sweep of 66 upstream CircuitPython and MicroPython libraries found none of these
+    names in any of them, so none of them is here. They go in the day a library asks."""
+    out, ir = build(tmp_path, f"    r: int32 = int32(math.{name}(float(seed) + 1.0))\n"
+                              "    GPIOR1.value = uint8(r & 0xFF)\n")
+    assert ir is None, f"math.{name} has no demandant in the measured corpus"
+
+
 def test_a_name_math_really_does_not_have_still_fails(tmp_path):
-    """The guard: adding six names must not make every name resolve."""
+    """The guard: adding four names must not make every name resolve."""
     out, ir = build(tmp_path, "    r: int32 = int32(math.arctan(float(seed)))\n"
                               "    GPIOR1.value = uint8(r & 0xFF)\n")
     assert ir is None, "math.arctan does not exist and must not build"

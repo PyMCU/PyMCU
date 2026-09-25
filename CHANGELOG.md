@@ -39,16 +39,23 @@
   Calling a group -- `Timer1()` -- is refused with a located message naming it: a group is
   a namespace over the silicon, not a type, and the call used to be accepted and produce
   nothing at all while the register accesses around it still worked.
-- **stdlib**: `math.sqrt`, `math.exp`, `math.log`, `math.log10`, `math.radians` and
-  `math.degrees` on run-time software floats. `sqrt` is Newton-Raphson after a scale
+- **stdlib**: `math.sqrt`, `math.log`, `math.exp` and `math.radians` on run-time
+  software floats, and only those four: each is there because a library measured in
+  this tree stops without it (adafruit_max31865, adafruit_thermistor, adafruit_sgp30,
+  adafruit_mpu6050 and adafruit_lsm6ds), named by the diagnostic main gives. `log10`
+  and `degrees` appear in none of the 66 upstream libraries swept, so they are not
+  shipped. `sqrt` is Newton-Raphson after a scale
   reduction into `[1, 4)`; `log` and `exp` are the range reduction and the two series
   `__pymcu_powf` already carried, lifted out so each has one implementation; `radians`
   and `degrees` are a scaling multiply that folds outright for a constant angle. Every
   body lives in the compiler's embedded runtime helpers and lowers LAZILY, so a program
   that never calls one carries none of the series. Values checked against CPython
   running the same program on the emulator (oracle probe 278 in the pymcu-avr repo).
-  Measured on unmodified upstream libraries: adafruit_max31865's simpletest went from
-  `call to undefined function 'math_sqrt'` to a 9060-byte build. `math.pi` and `math.e`
+  `import math` with no call costs 0 bytes; on top of the 910 bytes of software float
+  that any float arithmetic already pays, each body costs radians 8, exp 918, log 1062,
+  sqrt 1452. Measured on unmodified upstream libraries: adafruit_max31865's simpletest
+  went from `call to undefined function 'math_sqrt'` to a 9060-byte build, and
+  adafruit_thermistor's from `call to undefined function 'math_log'` to 3374 bytes. `math.pi` and `math.e`
   are deliberately NOT defined: a module-level float constant in an imported module
   becomes storage nothing initialises, so they would read back 0.0 instead of refusing.
 - **parser**: a PEP 484 forward-reference annotation -- the type named as a string
