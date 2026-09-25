@@ -41,22 +41,29 @@ else:
 #
 # A layer reporting a size had nowhere to ask, so microcontroller.nvm reported the
 # ATmega328P's 1024 on every chip: an ATtiny85 has 512 and an ATmega2560 has 4096.
-if __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a" or __CHIP__.name == "attiny25":
+# Grouped by the size itself, and every value is E2END + 1 from the part's avr-libc
+# header, checked by tests/stdlib/test_chip_constants_match_the_vendor_header.py.
+# Five of these were wrong (PyMCU#493): the ATtiny 25, 45, 44 and 4313 reported half
+# their EEPROM, and the ATmega32U4 reported four times its own because it was grouped
+# with the ATmega2560, which really does have 4096. The over-report is the dangerous
+# direction and it is the case this constant exists to prevent.
+if __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a":
     EEPROM_SIZE: uint16 = 64
-elif (__CHIP__.name == "attiny24" or __CHIP__.name == "attiny2313"
-      or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny4313"
-      or __CHIP__.name == "attiny44"):
+elif (__CHIP__.name == "attiny24" or __CHIP__.name == "attiny25"
+      or __CHIP__.name == "attiny2313"):
     EEPROM_SIZE: uint16 = 128
-elif __CHIP__.name == "attiny85" or __CHIP__.name == "attiny84":
-    EEPROM_SIZE: uint16 = 512
-elif __CHIP__.name == "atmega48" or __CHIP__.name == "atmega48p":
+elif (__CHIP__.name == "attiny44" or __CHIP__.name == "attiny45"
+      or __CHIP__.name == "attiny4313" or __CHIP__.name == "atmega48"
+      or __CHIP__.name == "atmega48p"):
     EEPROM_SIZE: uint16 = 256
-elif (__CHIP__.name == "atmega88" or __CHIP__.name == "atmega88p"
+elif (__CHIP__.name == "attiny84" or __CHIP__.name == "attiny85"
+      or __CHIP__.name == "atmega88" or __CHIP__.name == "atmega88p"
       or __CHIP__.name == "atmega168" or __CHIP__.name == "atmega168p"):
     EEPROM_SIZE: uint16 = 512
-elif __CHIP__.name == "atmega2560" or __CHIP__.name == "atmega32u4":
+elif __CHIP__.name == "atmega2560":
     EEPROM_SIZE: uint16 = 4096
 else:
+    # The ATmega328P and the ATmega328, and the ATmega32U4, all carry 1024.
     EEPROM_SIZE: uint16 = 1024
 
 
