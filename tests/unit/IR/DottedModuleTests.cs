@@ -117,4 +117,49 @@ public class DottedModuleTests
         Assert.True(Calls(ir, "time__delay_us_avr"),
             "the alias expansion should still reach the canonical module's helper");
     }
+
+    [Fact]
+    public void PackageInitReExportsAFunction_ImportPackage_CallsTheDefiningModule()
+    {
+        // #468. `pkg/__init__.py` doing `from pkg.mod import f` compiles f under the
+        // DEFINING module, so `pkg.f()` has no pkg_f to reach. The member READ of the
+        // same name already chased the re-export; the CALL reported it undefined.
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["pkg.mod"] = Parse("def twice(n: uint8) -> uint8:\n    return n * 2\n"),
+            ["pkg"] = Parse("from pkg.mod import twice\n"),
+        };
+
+        var ir = Gen(
+            "import pkg\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = pkg.twice(3)\n", mods);
+
+        Assert.True(Calls(ir, "pkg_mod_twice"),
+            "pkg.twice() should reach the module that defines it");
+        Assert.False(Calls(ir, "pkg_twice"),
+            "no pkg_twice is ever emitted, so the call must not name it");
+    }
+
+    [Fact]
+    public void AModuleThatDefinesTheFunctionItself_IsStillCalledUnderItsOwnName()
+    {
+        // The chase must not fire on a module that defines the name: a package whose
+        // __init__ both re-exports a name AND defines one of its own keeps its own.
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["pkg.mod"] = Parse("def twice(n: uint8) -> uint8:\n    return n * 2\n"),
+            ["pkg"] = Parse(
+                "from pkg.mod import twice\n" +
+                "def thrice(n: uint8) -> uint8:\n    return n * 3\n"),
+        };
+
+        var ir = Gen(
+            "import pkg\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = pkg.thrice(3)\n", mods);
+
+        Assert.True(Calls(ir, "pkg_thrice"),
+            "a function the package defines itself keeps the package's own name");
+    }
 }
