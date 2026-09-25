@@ -2480,6 +2480,12 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // RFC 0009: a live Optional as the subscript target or the index
+        // dispatches on its tag -- the None member raises the TypeError CPython
+        // raises for that side.
+        if (TryEmitGuardedIndex(expr) is { } guardedIndex)
+            return guardedIndex;
+
         // `g[y][x]` on a compile-time 2-D grid: the flat load at g[y*W + x],
         // the same arithmetic the hand-flattened spelling emits. A single index
         // `g[y]` names a ROW -- a view, not a value -- and only `g[y][x]`,

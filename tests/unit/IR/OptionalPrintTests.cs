@@ -226,23 +226,41 @@ public class OptionalPrintTests
     }
 
     [Fact]
-    public void ANonOptionalParameter_KeepsTheRefusal()
+    public void ANonOptionalParameter_DispatchesOnTheTag()
     {
-        Refusal(ReadFn +
+        // RFC 0009 decision 7 (runtime form): `takes(r)` marshals per member --
+        // the payload leaf is the call itself, the None leaf raises TypeError.
+        var main = Main(ReadFn +
             "def takes(v: uint8) -> uint8:\n" +
             "    return v\n\n" +
             "def main():\n" +
             "    r = read(GPIOR0.value)\n" +
-            "    print(takes(r))\n").Should().Contain("may be None here");
+            "    print(takes(r))\n");
+        TagReads(main, "main.r$tag").Should().NotBeEmpty(
+            "the call boundary must consult the tag byte instead of refusing");
+        main.Body.OfType<Call>().Any(c => c.FunctionName == "takes")
+            .Should().BeTrue("the payload leaf is the call with the member marshalled");
+        main.Body.Any(i => i is SignalError
+                or Call { FunctionName: "__pymcu_unhandled_exn" or "__pymcu_raise" })
+            .Should().BeTrue("the None leaf raises TypeError");
     }
 
     [Fact]
-    public void AnIndex_KeepsTheRefusal()
+    public void AnIndex_DispatchesOnTheTag()
     {
-        Refusal(ReadFn +
+        // `xs[r]` dispatches on r's tag: the int member indexes, None raises
+        // the TypeError CPython raises for a None subscript.
+        var main = Main(ReadFn +
             "def main():\n" +
             "    r = read(GPIOR0.value)\n" +
             "    xs: list[uint8] = [1, 2, 3]\n" +
-            "    print(xs[r])\n").Should().Contain("may be None here");
+            "    print(xs[r])\n");
+        TagReads(main, "main.r$tag").Should().NotBeEmpty(
+            "the subscript must consult the tag byte instead of refusing");
+        main.Body.Any(i => i is LoadIndirect or ArrayLoad)
+            .Should().BeTrue("the int-member leaf performs the element load");
+        main.Body.Any(i => i is SignalError
+                or Call { FunctionName: "__pymcu_unhandled_exn" or "__pymcu_raise" })
+            .Should().BeTrue("the None leaf raises TypeError");
     }
 }

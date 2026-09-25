@@ -3661,6 +3661,15 @@ public partial class IRGenerator
                     }
                     else
                     {
+                        // The member read reuses the payload's name -- without
+                        // the narrowed mark a re-entered guarded site (a call
+                        // arg scan, say) would see the same tag and dispatch
+                        // again forever.
+                        if (op.Key != null)
+                        {
+                            narrowedOptionals[op.Key] = mi;
+                            marked.Add(op.Key);
+                        }
                         leafExprs[k] = new PreEvaluatedExpr(
                             MemberRead(op.Payload!, mi, op.Members!), null) { Line = op.Ast.Line };
                     }
@@ -4044,4 +4053,106 @@ public partial class IRGenerator
             raiseMessage: n => $"object of type '{GuardedPyMemberName(n[0]!)}' has no len()");
     }
 
+    /// <summary>
+    /// A subscript with a live Optional on either side: `target[i]` dispatches
+    /// over the target's members for a subscriptable member and raises
+    /// `'<member>' object is not subscriptable` on int/float members, or
+    /// dispatches over the index's members and raises the container's
+    /// `indices must be integers or slices` sentence on the non-int members.
+    /// </summary>
+    private Val? TryEmitGuardedIndex(IndexExpr expr)
+    {
+        if (!CouldBeGuardedOperand(expr.Target) && !CouldBeGuardedOperand(expr.Index))
+            return null;
+        var tgt = ClassifyGuardedOperand(expr.Target);
+        var idx = ClassifyGuardedOperand(expr.Index);
+        if (!tgt.IsOptional && !idx.IsOptional)
+        {
+            if (tgt.Evaluated == null && idx.Evaluated == null) return null;
+            return VisitExpression(new IndexExpr(
+                tgt.Evaluated != null
+                    ? new PreEvaluatedExpr(tgt.Evaluated, null) { Line = expr.Target.Line }
+                    : expr.Target,
+                idx.Evaluated != null
+                    ? new PreEvaluatedExpr(idx.Evaluated, null) { Line = expr.Index.Line }
+                    : expr.Index) { Line = expr.Line });
+        }
+
+        // The container word CPython puts in an index-type complaint: 'list'
+        // for every array-like PyMCU stores, 'bytearray' for a mutable byte
+        // buffer, and a str target uses its own 'not ...' sentence.
+        bool strTarget = expr.Target is StringLiteral
+            || (expr.Target is VariableExpr sv && ResolveStrConstant(sv.Name) != null)
+            || (tgt.Evaluated != null && GetValType(tgt.Evaluated) == DataType.UNKNOWN
+                && ResolveStrConstant(ValNameOf(tgt.Evaluated) ?? "") != null);
+        bool byteTarget = expr.Target is VariableExpr bv && bytearrayParams.Contains(bv.Name);
+        string containerWord = byteTarget ? "bytearray" : "list";
+
+        var ops = new List<GuardedOperand> { tgt, idx };
+        var names = new List<List<string>>
+        {
+            GuardedMemberNames(tgt),
+            GuardedMemberNames(idx),
+        };
+        return EmitGuardedOptionalOp(ops, names,
+            emitLeaf: (exprs, combo) =>
+            {
+                // A leaf fires only when the subscript itself is legal for the
+                // member pair: an int-kind index into a subscriptable target.
+                // Everything else is CPython's TypeError for that member.
+                string tName = names[0][combo[0]];
+                string iName = names[1][combo[1]];
+                string iPy = GuardedPyMemberName(iName);
+                bool indexIsInt = iName == "bool" || IsIntMember(iName);
+                if (tName != "None" && indexIsInt)
+                    return VisitExpression(new IndexExpr(exprs[0], exprs[1]) { Line = expr.Line });
+                if (tName == "None")
+                    EmitGuardedTypeErrorRaise("'NoneType' object is not subscriptable");
+                else if (!indexIsInt)
+                    EmitGuardedTypeErrorRaise(strTarget
+                        ? $"string indices must be integers, not '{iPy}'"
+                        : $"{containerWord} indices must be integers or slices, not {iPy}");
+                else
+                    EmitGuardedTypeErrorRaise(
+                        $"'{GuardedPyMemberName(tName)}' object is not subscriptable");
+                return null;
+            },
+            raiseMessage: n =>
+            {
+                if (n[0] == "None")
+                    return "'NoneType' object is not subscriptable";
+                if (n[1] == "None")
+                    return strTarget
+                        ? "string indices must be integers, not 'NoneType'"
+                        : $"{containerWord} indices must be integers or slices, not NoneType";
+                return "'NoneType' object is not subscriptable";
+            });
+    }
+
+    /// <summary>
+    /// An unnarrowed Optional passed where the callee's parameter is not
+    /// Optional: the call runs under the member dispatch so the argument leaves
+    /// at its member width on the real-member paths, and the None leaf raises a
+    /// TypeError at the call boundary -- where CPython would fault inside the
+    /// callee on a value its parameter can hold, PyMCU's typed ABI cannot hand
+    /// None across, so the fault fires at the boundary instead. The type is
+    /// what `except TypeError` tests; the message names the parameter.
+    /// </summary>
+    private Val? TryEmitGuardedCallArg(CallExpr expr, int argIndex, string paramName,
+        string paramType, GuardedOperand g, Expression[] stagedArgs)
+    {
+        var ops = new List<GuardedOperand> { g };
+        var names = new List<List<string>> { GuardedMemberNames(g) };
+        return EmitGuardedOptionalOp(ops, names,
+            emitLeaf: (exprs, _) =>
+            {
+                stagedArgs[argIndex] = exprs[0];
+                return VisitExpression(new CallExpr(expr.Callee,
+                    new List<Expression>(stagedArgs)) { Line = expr.Line });
+            },
+            raiseMessage: n => n[0] == "None"
+                ? $"argument for parameter '{paramName}' must be {paramType}, not NoneType"
+                : $"argument for parameter '{paramName}' must be {paramType}, not "
+                  + $"{GuardedPyMemberName(n[0]!)}");
+    }
 }

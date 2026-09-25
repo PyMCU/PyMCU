@@ -1440,8 +1440,10 @@ public partial class IRGenerator
             var arg = callArgs[ai];
             // A tagged union parameter reads a live Optional's tag byte, not just its
             // payload -- so the bare-name read that would otherwise refuse is allowed.
+            // A possibly-Optional argument to ANY parameter also reads free: the
+            // dispatch below the loop hands its member to an untagged parameter.
             bool argIsTagged = IsTaggedParam(tagCallee, ai);
-            if (argIsTagged) optionalReadAllowed++;
+            if (argIsTagged || CouldBeGuardedOperand(arg)) optionalReadAllowed++;
             try
             {
             RefuseGridArgument(arg);
@@ -1544,7 +1546,46 @@ public partial class IRGenerator
             }
             argValuesL.Add(argEvaluated);
             }
-            finally { if (argIsTagged) optionalReadAllowed--; }
+            finally { if (argIsTagged || CouldBeGuardedOperand(arg)) optionalReadAllowed--; }
+        }
+
+        // RFC 0009: a live Optional argument bound for a parameter that is not
+        // Optional dispatches on the tag -- each member marshals at its own
+        // width into the same call; the None member raises TypeError at the
+        // call boundary. The args were each evaluated once above; the leaf
+        // recursion hands them to VisitCall as PreEvaluatedExpr so nothing
+        // runs twice. Only the first such arg dispatches here -- a second
+        // optional arg is caught by the same scan inside the leaf's call.
+        for (int ai = 0; ai < argValuesL.Count && ai < callArgs.Count; ++ai)
+        {
+            if (IsTaggedParam(callee, ai)) continue;
+            // The arg is already evaluated -- build its dispatch entry from the
+            // value, never by re-lowering the expression (a call in it would
+            // run twice).
+            var argG = new GuardedOperand { Ast = callArgs[ai], Evaluated = argValuesL[ai] };
+            if (argValuesL[ai] is NoneVal)
+                argG.AlwaysNone = true;
+            else if (TagOfVal(argValuesL[ai]) is { } at
+                     && ValNameOf(argValuesL[ai]) is { } avn
+                     && !narrowedOptionals.ContainsKey(avn) && !noneValuedNames.Contains(avn)
+                     && optionalMembersByName.TryGetValue(avn, out var avm) && avm.Count > 0)
+            {
+                argG.Tag = at;
+                argG.Members = avm;
+                argG.Key = avn;
+                argG.Payload = argValuesL[ai];
+            }
+            else
+                continue;
+            var staged = new Expression[argValuesL.Count];
+            for (int sj = 0; sj < argValuesL.Count; ++sj)
+                staged[sj] = new PreEvaluatedExpr(argValuesL[sj], null)
+                    { Line = callArgs[sj].Line };
+            string pName = functionParams.TryGetValue(callee, out var fp) && ai < fp.Count
+                ? fp[ai] : $"arg{ai + 1}";
+            string pType = functionParamTypes.TryGetValue(callee, out var fpt) && ai < fpt.Count
+                ? DataTypeToSuffixStr(fpt[ai]) : "int";
+            return TryEmitGuardedCallArg(expr, ai, pName, pType, argG, staged)!;
         }
 
         int dotPos2 = callee.IndexOf('.');
