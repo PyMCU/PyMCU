@@ -6203,6 +6203,10 @@ public partial class IRGenerator
         return VisitExpression(new VariableExpr(best));
     }
 
+    /// The class name as the source spells it, without the module prefix the tables carry.
+    private static string Unqualified(string classKey) =>
+        classKey.Contains('_') ? classKey[(classKey.LastIndexOf('_') + 1)..] : classKey;
+
     /// <summary>
     /// min() and max() compare their arguments numerically and never consult a class, so an
     /// instance argument was read as the flattened handle -- a slot nobody writes. The pair
@@ -6215,13 +6219,43 @@ public partial class IRGenerator
         foreach (var arg in expr.Args)
         {
             if (arg is not VariableExpr ve) continue;
+
+            // `max(xs)` over a SEQUENCE of instances is the same reduction spelled once: it
+            // expands to the pairwise form over the elements and answers from their handles.
+            // `max(xs)` over a SEQUENCE of instances is the same reduction spelled once, and it
+            // answers from the elements' handles just as the pairwise form did. A list of
+            // instances is filed either as an instance ARRAY or, when it is a compile-time
+            // sequence, under the per-element `<name>__<k>` keys.
+            string? seqCls = null;
+            foreach (var el in ElementsOfNamedSequence(ve.Name) ?? new List<Expression>())
+                if (el is VariableExpr elv && InstanceClassOfName(elv.Name) is { Length: > 0 } elCls)
+                    seqCls = elCls;
+            foreach (string key in new[]
+                     {
+                         string.IsNullOrEmpty(currentInlinePrefix) ? ve.Name : currentInlinePrefix + ve.Name,
+                         string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name,
+                         ve.Name,
+                     })
+            {
+                if (seqCls != null) break;
+                if (instanceArrayClass.TryGetValue(key, out var arrCls) && arrCls.Length > 0)
+                    seqCls = arrCls;
+                else if (instanceClasses.TryGetValue(key + "__0", out var ctCls) && !string.IsNullOrEmpty(ctCls))
+                    seqCls = ctCls;
+            }
+            if (seqCls != null)
+                throw UserError(
+                    $"{name}() compares the elements numerically and does not consult the class, "
+                    + $"so '{ve.Name}', a sequence of '{Unqualified(seqCls)}' instances, has no "
+                    + "values for it to compare. Reduce over the field you mean, or pick the "
+                    + "object with a loop of your own.", arg);
+
             if (InstanceClassOfName(ve.Name) is not { } cls || cls.Length == 0) continue;
-            string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
             throw UserError(
                 $"{name}() compares its arguments numerically and does not consult the class, so "
-                + $"'{ve.Name}', an instance of '{shown}', has no value for it to compare. Pass "
-                + $"the field you mean ({name}({ve.Name}.<field>, ...)), or pick the object with "
-                + "an `if` of your own.", arg);
+                + $"'{ve.Name}', an instance of '{Unqualified(cls)}', has no value for it to "
+                + $"compare. Pass the field you mean ({name}({ve.Name}.<field>, ...)), or pick "
+                + "the object with an `if` of your own.", arg);
         }
     }
 

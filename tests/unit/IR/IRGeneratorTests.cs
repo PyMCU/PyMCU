@@ -2554,6 +2554,28 @@ public class IRGeneratorTests
         Assert.Contains("does not consult the class", ex.Message);
     }
 
+    // The same reduction spelled over a sequence answers from the same handles.
+    [Fact]
+    public void MinMax_OverASequenceOfInstances_IsRefused()
+    {
+        const string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = C(3)\n" +
+            "    b = C(1)\n" +
+            "    xs = [a, b]\n" +
+            "    m = max(xs)\n" +
+            "    x: uint8 = m.v\n";
+
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("sequence of 'C' instances", ex.Message);
+    }
+
     // A class-typed FIELD is a receiver too, in both positions. `self.lhs == self.rhs` is the
     // shape a driver writes, and it resolved through neither table, so the operator lowered
     // numerically over the field's flattened slot.
