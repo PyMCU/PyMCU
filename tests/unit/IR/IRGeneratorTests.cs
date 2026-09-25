@@ -2525,6 +2525,35 @@ public class IRGeneratorTests
         Assert.Contains("TypeError", ex.Message);
     }
 
+    // max() and min() compare numerically and never consult a class, so an instance argument
+    // was read as the flattened handle -- a slot nobody writes -- and `max(a, b).n` printed 0
+    // even for a class that defines __lt__ and __gt__ (#491).
+    [Theory]
+    [InlineData("max")]
+    [InlineData("min")]
+    public void MinMax_OverInstances_IsRefused(string builtin)
+    {
+        string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            "    def __lt__(self, other) -> uint8:\n" +
+            "        return 1\n" +
+            "def main():\n" +
+            "    a = C(3)\n" +
+            "    b = C(1)\n" +
+            $"    m = {builtin}(a, b)\n" +
+            "    x: uint8 = m.v\n";
+
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains($"{builtin}()", ex.Message);
+        Assert.Contains("does not consult the class", ex.Message);
+    }
+
     // A class-typed FIELD is a receiver too, in both positions. `self.lhs == self.rhs` is the
     // shape a driver writes, and it resolved through neither table, so the operator lowered
     // numerically over the field's flattened slot.

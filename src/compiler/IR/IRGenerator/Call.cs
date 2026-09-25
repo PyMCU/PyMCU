@@ -6203,10 +6203,33 @@ public partial class IRGenerator
         return VisitExpression(new VariableExpr(best));
     }
 
+    /// <summary>
+    /// min() and max() compare their arguments numerically and never consult a class, so an
+    /// instance argument was read as the flattened handle -- a slot nobody writes. The pair
+    /// came back as whichever zero won, and `max(a, b).n` printed 0 with nothing said (#491).
+    /// A comparison dunder does not help: the reduction is emitted as a Binary, not as the
+    /// comparison expression the dunder path sees.
+    /// </summary>
+    private void RefuseMinMaxOverInstances(CallExpr expr, string name)
+    {
+        foreach (var arg in expr.Args)
+        {
+            if (arg is not VariableExpr ve) continue;
+            if (InstanceClassOfName(ve.Name) is not { } cls || cls.Length == 0) continue;
+            string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
+            throw UserError(
+                $"{name}() compares its arguments numerically and does not consult the class, so "
+                + $"'{ve.Name}', an instance of '{shown}', has no value for it to compare. Pass "
+                + $"the field you mean ({name}({ve.Name}.<field>, ...)), or pick the object with "
+                + "an `if` of your own.", arg);
+        }
+    }
+
     // min(a, b): compile-time fold for constants, else compare-and-select.
     // min(xs): expanded to the above over the array's elements.
     private Val EmitMinBuiltin(CallExpr expr)
     {
+        RefuseMinMaxOverInstances(expr, "min");
         if (expr.Args.Count > 0 && expr.Args[0] is GeneratorExpr)
             return EmitGenExpReduction(expr, "min");
         var (minArgs, minKey) = SplitMinMaxKey(expr, "min");
@@ -6246,6 +6269,7 @@ public partial class IRGenerator
     // max(xs): expanded to the above over the array's elements.
     private Val EmitMaxBuiltin(CallExpr expr)
     {
+        RefuseMinMaxOverInstances(expr, "max");
         if (expr.Args.Count > 0 && expr.Args[0] is GeneratorExpr)
             return EmitGenExpReduction(expr, "max");
         var (maxArgs, maxKey) = SplitMinMaxKey(expr, "max");
