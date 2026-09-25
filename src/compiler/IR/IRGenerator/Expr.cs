@@ -741,6 +741,13 @@ public partial class IRGenerator
     private bool BinaryDispatchesToDunder(Expression left, AstBinOp op)
     {
         if (BinaryOpDunder(op) is not { } dunder) return false;
+
+        // A class-typed FIELD is a receiver too: `self.lhs == self.rhs` is the shape a driver
+        // writes, and it resolved through neither table because only a bare name was looked up.
+        if (left is MemberAccessExpr fieldRecv)
+            return FieldInstanceClass(fieldRecv) is { } fieldCls
+                   && ClassDefinesMethod(ResolveMROMethod(fieldCls, dunder), dunder);
+
         if (left is not VariableExpr lv) return false;
         string qname = BinaryDunderReceiver(lv.Name);
         if (!instanceClasses.TryGetValue(qname, out var cls) || string.IsNullOrEmpty(cls))
@@ -1069,6 +1076,19 @@ public partial class IRGenerator
         }
 
         string? dunder = BinaryOpDunder(expr.Op);
+
+        // `self.lhs + self.rhs` / `self.lhs == self.rhs`: the receiver is a class-typed FIELD,
+        // which neither the instance table nor the method table answers for under a bare name,
+        // so the operator lowered numerically over the field's flattened slot. Written as the
+        // method call it stands for, which is the path a field receiver already dispatches
+        // through (`self.pin.read()`).
+        if (dunder != null && expr.Left is MemberAccessExpr fieldLhs
+            && FieldInstanceClass(fieldLhs) is { } fieldLhsCls
+            && ClassDefinesMethod(ResolveMROMethod(fieldLhsCls, dunder), dunder))
+            return VisitCall(new CallExpr(
+                new MemberAccessExpr(fieldLhs, dunder),
+                new List<Expression> { expr.Right }) { Line = expr.Line });
+
         if (dunder != null && expr.Left is VariableExpr lv)
         {
             string qname = BinaryDunderReceiver(lv.Name);

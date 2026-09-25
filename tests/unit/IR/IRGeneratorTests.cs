@@ -2452,6 +2452,40 @@ public class IRGeneratorTests
         Assert.DoesNotContain(body, i => ComparesTheseHandles(i, "main.a", "main.b"));
     }
 
+    // A class-typed FIELD is a receiver too, in both positions. `self.lhs == self.rhs` is the
+    // shape a driver writes, and it resolved through neither table, so the operator lowered
+    // numerically over the field's flattened slot.
+    [Fact]
+    public void ComparisonDunder_OnAFieldReceiver_Dispatches()
+    {
+        const string src =
+            "seen: uint8 = 0\n" +
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            "    def __eq__(self, other) -> uint8:\n" +
+            "        global seen\n" +
+            "        seen = 41\n" +
+            "        return 0\n" +
+            "class Owner:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        self.lhs = Acc(1)\n" +
+            "        self.rhs = Acc(2)\n" +
+            "def main():\n" +
+            "    o = Owner()\n" +
+            "    x: uint8 = 3\n" +
+            "    if o.lhs == o.rhs:\n" +
+            "        x = 7\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 41 } });
+    }
+
     // A comparison between two plain scalars keeps the jump it always had: the dunder lookup
     // must not turn every `if x == y:` in the program into a value plus a truth test.
     [Fact]
