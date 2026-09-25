@@ -2452,6 +2452,79 @@ public class IRGeneratorTests
         Assert.DoesNotContain(body, i => ComparesTheseHandles(i, "main.a", "main.b"));
     }
 
+    // ── Without a dunder, CPython's own fallback decides ──────────────────
+    // PyMCU#491: the comparison lowered numerically over the flattened handles, which are
+    // never written, so `a == b` answered "equal" for every pair of objects. CPython falls
+    // back to identity, and identity is a compile-time fact here: every instance owns a
+    // distinct static slot.
+    [Fact]
+    public void Equality_OfTwoDistinctInstances_IsFalseByIdentity()
+    {
+        const string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = C(3)\n" +
+            "    b = C(3)\n" +
+            "    x: uint8 = 3\n" +
+            "    if a == b:\n" +
+            "        x = 7\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.DoesNotContain(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 7 } });
+    }
+
+    // And a second name for the SAME object is the same object, which is why the alias chain
+    // is followed to its end rather than to the first key that carries a class.
+    [Fact]
+    public void Equality_OfAnInstanceAndItsAlias_IsTrueByIdentity()
+    {
+        const string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = C(3)\n" +
+            "    b = a\n" +
+            "    x: uint8 = 3\n" +
+            "    if a is b:\n" +
+            "        x = 7\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 7 } });
+    }
+
+    // An ordering has no fallback to fold to: CPython raises TypeError, and answering "not
+    // less" over two zeroed slots was the silent version of that.
+    [Fact]
+    public void Ordering_OfTwoInstancesWithoutTheDunder_IsRefused()
+    {
+        const string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = C(3)\n" +
+            "    b = C(4)\n" +
+            "    x: uint8 = 3\n" +
+            "    if a < b:\n" +
+            "        x = 7\n";
+
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("__lt__", ex.Message);
+        Assert.Contains("TypeError", ex.Message);
+    }
+
     // A class-typed FIELD is a receiver too, in both positions. `self.lhs == self.rhs` is the
     // shape a driver writes, and it resolved through neither table, so the operator lowered
     // numerically over the field's flattened slot.

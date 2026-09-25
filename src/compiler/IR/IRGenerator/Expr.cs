@@ -711,6 +711,64 @@ public partial class IRGenerator
     };
 
     /// <summary>
+    /// The storage a name stands for when it is bound to an instance, or null when it is not
+    /// bound to one.
+    ///
+    /// The alias chain is followed to its end, not to the first key that carries a class:
+    /// `b = a` files a SECOND key against the same object, and identity is a question about
+    /// the storage rather than about the spelling.
+    /// </summary>
+    private string? InstanceStorageName(Expression e)
+    {
+        if (e is not VariableExpr ve) return null;
+        string key = BinaryDunderReceiver(ve.Name);
+        if (!instanceClasses.TryGetValue(key, out var cls) || string.IsNullOrEmpty(cls))
+            return null;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(key, out var next) || string.IsNullOrEmpty(next)) break;
+            key = next;
+        }
+        return key;
+    }
+
+    /// <summary>
+    /// A comparison between two instances that dispatches to no dunder.
+    ///
+    /// The operator used to lower numerically over the flattened instance handles, which are
+    /// never written, so `a == b` answered "equal" for every pair of objects and `a &lt; b`
+    /// answered "not less" for every pair (#491). CPython answers neither of those: without
+    /// `__eq__` it falls back to IDENTITY, and without an ordering dunder it raises TypeError.
+    ///
+    /// Identity is a compile-time fact here, since every instance owns a distinct static slot,
+    /// so `==` / `!=` / `is` / `is not` fold to the answer CPython gives. An ordering has no
+    /// answer to fold to and is refused by name.
+    /// </summary>
+    private Val? TryCompareTwoInstances(BinaryExpr expr)
+    {
+        if (expr.Op is not (AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot
+                            or AstBinOp.Less or AstBinOp.LessEq
+                            or AstBinOp.Greater or AstBinOp.GreaterEq))
+            return null;
+        if (InstanceStorageName(expr.Left) is not { } lname) return null;
+        if (InstanceStorageName(expr.Right) is not { } rname) return null;
+
+        if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
+        {
+            bool wantSame = expr.Op is AstBinOp.Equal or AstBinOp.Is;
+            return new Constant((lname == rname) == wantSame ? 1 : 0);
+        }
+
+        string cls = instanceClasses[BinaryDunderReceiver(((VariableExpr)expr.Left).Name)] ?? "";
+        string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
+        string needed = BinaryOpDunder(expr.Op) ?? "the comparison method";
+        throw UserError(
+            $"'{shown}' defines no {needed}, so '{BinaryOpSymbol(expr.Op)}' between two of its "
+            + "instances has no meaning; CPython raises TypeError for it. Define "
+            + $"{needed} on the class, or compare a field of each object instead.", expr);
+    }
+
+    /// <summary>
     /// The name an operator dunder's `self` has to alias, for the instance named on one side
     /// of a binary operator.
     ///
@@ -1145,6 +1203,10 @@ public partial class IRGenerator
                         new List<Expression> { expr.Left }) { Line = expr.Line });
             }
         }
+
+        // Neither operator dunder claimed this comparison and both sides are instances, so
+        // CPython's fallback decides it: identity for equality, TypeError for an ordering.
+        if (TryCompareTwoInstances(expr) is { } instCmp) return instCmp;
 
         if (expr.Op == AstBinOp.In || expr.Op == AstBinOp.NotIn)
         {

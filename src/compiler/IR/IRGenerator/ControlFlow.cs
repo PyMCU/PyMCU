@@ -338,7 +338,13 @@ public partial class IRGenerator
             // path, which already dispatches it, and let the caller test the answer's
             // truthiness. Nothing has been lowered yet, so the operands are not evaluated
             // twice.
-            if (BinaryDispatchesToDunder(binExpr.Left, binExpr.Op)) return 0;
+            // ... and the same for a comparison between two instances that dispatches to no
+            // dunder at all: CPython answers it by identity, or refuses it, and the value path
+            // is where both of those live.
+            if (BinaryDispatchesToDunder(binExpr.Left, binExpr.Op)
+                || (InstanceStorageName(binExpr.Left) != null
+                    && InstanceStorageName(binExpr.Right) != null))
+                return 0;
 
             RejectBareRegisterOperands(binExpr);
 
