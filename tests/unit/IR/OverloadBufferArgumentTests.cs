@@ -161,6 +161,23 @@ public class OverloadBufferArgumentTests
         AssertBufferBodyRan(ir);
     }
 
+    // DISCRIMINATING, and the one form here that was never about fields: a view over a
+    // module-level buffer was wrong in the same way as a view over a field. The window has no
+    // name until the argument is visited, so both typed as the element.
+    [Theory]
+    [InlineData("memoryview(g)")]
+    [InlineData("memoryview(g)[0:2]")]
+    public void AMemoryviewTakesTheBytearrayOverload(string spelling)
+    {
+        var ir = Gen(Preamble +
+            "g = bytearray(4)\n" +
+            "def main():\n" +
+            "    g[0] = G.value\n" +
+            $"    G.value = sink({spelling})\n");
+
+        AssertBufferBodyRan(ir);
+    }
+
     // INVARIANT, not discriminating: a buffer in a local already picked the bytearray overload
     // before the fix. It is the control that made the field the suspect rather than the
     // argument, and it is kept so that teaching the field branch cannot move the local one.

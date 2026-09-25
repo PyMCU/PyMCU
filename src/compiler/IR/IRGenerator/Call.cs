@@ -4169,6 +4169,15 @@ public partial class IRGenerator
             string ArgTypeSuffix(Expression arg)
             {
                 if (arg is StringLiteral) return "str";
+                // A memoryview, and a slice of one, travel as a base address plus an offset --
+                // the same way the array they look into travels. Neither has a name at this
+                // point (the window is created when the argument is visited), so both typed as
+                // their element and took the scalar overload. This one was never about fields:
+                // a view over a module-level buffer was wrong in exactly the same way.
+                if (arg is CallExpr { Callee: VariableExpr { Name: "memoryview" } }) return "bytearray";
+                if (arg is IndexExpr { Index: SliceExpr } viewSlice
+                    && ArgTypeSuffix(viewSlice.Target) == "bytearray")
+                    return "bytearray";
                 // A nested constructor call types as its class: ADC(Pin(14)) must select
                 // the Pin overload, not fall through to a numeric suffix and land on
                 // the const[uint8] channel overload.
