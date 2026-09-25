@@ -154,6 +154,20 @@
 
 ### Fixed
 
+- **stdlib**: the counter that walks a bus transfer's byte count is as wide as the count.
+  The RP2040 and RP2350 `write_bytes` had the count widened to `uint16` and the counter left
+  at `uint8`, which is worse than the truncation it replaced, and worse than "the loop never
+  ends": measured on a probe of exactly that shape rather than assumed, **there is no loop
+  at all**. The compiler folds `i < n` to always-true, because a `uint8` cannot reach 300,
+  so what is emitted is a body ending in a bare backward jump with no compare -- and the
+  statement after the loop is deleted as dead code, so the failure takes everything behind
+  it with it. The `if i == n - 1` that asserts STOP is never reached either. The truncation
+  at least returned control. This is the same shape as `delay_ms(500)` against a `uint8`
+  parameter on PIC: a range fold decides the comparison, the loop disappears, and the code
+  after it goes with it. The source sweep could not see this end of the loop, since it read
+  the parameter list and the counter is a local; it now checks both, with a probe for each
+  shape it must catch and two it must leave alone.
+
 - **stdlib**: a bus transfer's byte count holds a buffer longer than 255. The AVR I2C entry
   point declared `n: uint8` and the layer handed it `len(buf)`, so a 128x32 SSD1306's
   512-byte framebuffer arrived as `512 & 0xFF == 0`: the loop ran zero times, `show()` put
