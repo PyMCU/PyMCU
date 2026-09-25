@@ -38,6 +38,7 @@ PROGRAM = (
 # 256 arm selects on that part.
 TARGETS = [
     ("pic14", "pic16f877a", "pic14", 0x0081, 0x87),    # OPTION_REG, PS = 1:256
+    ("pic14-84a", "pic16f84a", "pic14", 0x0081, 0x87),  # OPTION_REG, PS = 1:256
     ("pic14e", "pic16f18877", "pic14", 0x001F, 0x48),  # T0CON1, CKPS = 1:256
     ("pic18", "pic18f45k50", "pic18", 0x0FD5, 0x07),   # T0CON, T0PS = 1:256
     ("pic12", "pic10f200", "pic12", 0x0081, 0xC7),     # OPTION, PS = 1:256
