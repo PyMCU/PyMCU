@@ -455,7 +455,75 @@ public partial class IRGenerator
     /// about the hop rather than about the constant. It is how CircuitPython spells the UART
     /// parity (`busio.UART.Parity.ODD`), so the canonical spelling did not compile.
     /// </summary>
-    private void ScanClassBodyAttributes(ProgramNode ast, string className, Block block, bool isEnum)
+    /// <summary>
+    /// The address a class-level register declaration names, resolved during the scan.
+    /// <para>
+    /// A grouped peripheral (RFC 0012) re-groups registers the module already declares:
+    /// <c>TCCR1A: ptr[uint8] = ptr(TCCR1A)</c> keeps ONE copy of every address, so the
+    /// grouped surface cannot drift from the loose one. EvaluateConstantExpr cannot answer
+    /// that: it refuses a memory-address symbol as an operand, on purpose, so a register
+    /// read never folds into an array size. This resolver answers only for an ADDRESS, and
+    /// only from symbols the scan has already filed, so it emits nothing and needs no
+    /// expression machinery.
+    /// </para>
+    /// </summary>
+    private int? TryScanRegisterAddress(Expression e, string enclosingPrefix)
+    {
+        switch (e)
+        {
+            case IntegerLiteral il:
+                return il.Value;
+
+            case CallExpr { Args.Count: 1 } call when call.Callee is VariableExpr callee
+                && ((callee.Name == "ptr" && intrinsicNames.Contains("ptr"))
+                    || callee.Name == "PIORegister" || callee.Name == "const"):
+                return TryScanRegisterAddress(call.Args[0], enclosingPrefix);
+
+            case UnaryExpr ue when ue.Op is PyMCU.Frontend.UnaryOp.Negate
+                                         or PyMCU.Frontend.UnaryOp.BitNot:
+                if (TryScanRegisterAddress(ue.Operand, enclosingPrefix) is not int uv) return null;
+                return ue.Op == PyMCU.Frontend.UnaryOp.Negate ? -uv : ~uv;
+
+            case BinaryExpr be:
+            {
+                if (TryScanRegisterAddress(be.Left, enclosingPrefix) is not int l) return null;
+                if (TryScanRegisterAddress(be.Right, enclosingPrefix) is not int r) return null;
+                return be.Op switch
+                {
+                    PyMCU.Frontend.BinaryOp.Add => l + r,
+                    PyMCU.Frontend.BinaryOp.Sub => l - r,
+                    PyMCU.Frontend.BinaryOp.Mul => l * r,
+                    PyMCU.Frontend.BinaryOp.Div or PyMCU.Frontend.BinaryOp.FloorDiv
+                        => r != 0 ? l / r : (int?)null,
+                    PyMCU.Frontend.BinaryOp.Mod => r != 0 ? l % r : (int?)null,
+                    PyMCU.Frontend.BinaryOp.BitAnd => l & r,
+                    PyMCU.Frontend.BinaryOp.BitOr => l | r,
+                    PyMCU.Frontend.BinaryOp.BitXor => l ^ r,
+                    PyMCU.Frontend.BinaryOp.LShift => l << r,
+                    PyMCU.Frontend.BinaryOp.RShift => l >> r,
+                    _ => null,
+                };
+            }
+
+            case VariableExpr ve:
+            {
+                // The class's own prefix first (a register declared earlier in the same
+                // group), then the module the class is written in, then the flat name.
+                foreach (var key in new[] { currentModulePrefix + ve.Name, enclosingPrefix + ve.Name, ve.Name })
+                {
+                    if (!string.IsNullOrEmpty(key) && globals.TryGetValue(key, out var sym)) return sym.Value;
+                }
+                return null;
+            }
+
+            default:
+                try { return EvaluateConstantExpr(e); }
+                catch { return null; }
+        }
+    }
+
+    private void ScanClassBodyAttributes(ProgramNode ast, string className, Block block, bool isEnum,
+                                         string enclosingPrefix = "")
     {
         foreach (var innerStmt in block.Statements)
         {
@@ -541,36 +609,43 @@ public partial class IRGenerator
                 continue;
             }
 
+            // A class-level `TCCR1A: ptr[uint8] = ptr(0x80)` is a REGISTER, not a class
+            // constant: the name carries an address and a width, and every `.value` /
+            // `[bit]` access on it has to reach the MMIO paths. Folded to a plain Constant
+            // it lost the width and left the write side with a Constant target it refuses
+            // ("Cannot assign to .value of this expression type"). Module level has
+            // recognised this shape since the first chip definition; a grouped peripheral
+            // (RFC 0012) is the same declaration one scope deeper, so it is recognised the
+            // same way, BEFORE the ALL-CAPS gate -- a register has no storage whatever its
+            // name looks like -- and before the generic fold, because
+            // EvaluateConstantExpr refuses a register SYMBOL as an operand and the catch
+            // below then filed the group as a dead SRAM variable, in silence.
+            if (!isEnum
+                && ((innerInit is CallExpr regCall
+                     && regCall.Callee is VariableExpr regCallee
+                     && ((regCallee.Name == "ptr" && intrinsicNames.Contains("ptr"))
+                         || regCallee.Name == "PIORegister"))
+                    || (!string.IsNullOrEmpty(innerType)
+                        && (innerType.Contains("ptr") || innerType.Contains("PIORegister")))))
+            {
+                if (TryScanRegisterAddress(innerInit, enclosingPrefix) is not int regAddr)
+                    throw UserError(
+                        $"'{innerName}' declares a register, so its address must be known while "
+                        + "compiling -- a literal (ptr(0x80)), constant arithmetic on one, or the "
+                        + "name of a register already declared in this module",
+                        innerInit.Line > 0 ? innerInit : innerStmt);
+
+                globals[currentModulePrefix + innerName] = new SymbolInfo
+                {
+                    IsMemoryAddress = true, Value = regAddr,
+                    Type = DataTypeExtensions.StringToDataType(innerType),
+                };
+                continue;
+            }
+
             try
             {
                 var val = EvaluateConstantExpr(innerInit);
-
-                // A class-level `TCCR1A: ptr[uint8] = ptr(0x80)` is a REGISTER, not a
-                // class constant: the name carries an address and a width, and every
-                // `.value` / `[bit]` access on it has to reach the MMIO paths. Folding
-                // it to a plain Constant lost the width and left the write side with a
-                // Constant target it refuses ("Cannot assign to .value of this
-                // expression type"). Module level has recognised this shape since the
-                // first chip definition; a grouped peripheral (RFC 0012) is the same
-                // declaration one scope deeper, so it is recognised the same way and
-                // BEFORE the ALL-CAPS gate -- a register has no storage whatever its
-                // name looks like.
-                var isRegisterAttr = (innerInit is CallExpr regCall
-                                      && regCall.Callee is VariableExpr regCallee
-                                      && ((regCallee.Name == "ptr" && intrinsicNames.Contains("ptr"))
-                                          || regCallee.Name == "PIORegister"))
-                                     || (!string.IsNullOrEmpty(innerType)
-                                         && (innerType.Contains("ptr") || innerType.Contains("PIORegister")));
-
-                if (isRegisterAttr && !isEnum)
-                {
-                    globals[currentModulePrefix + innerName] = new SymbolInfo
-                    {
-                        IsMemoryAddress = true, Value = val,
-                        Type = DataTypeExtensions.StringToDataType(innerType),
-                    };
-                    continue;
-                }
 
                 // A name this program WRITES is not a constant, whatever it is
                 // called: the fold left the write nowhere to land and it was
@@ -614,7 +689,8 @@ public partial class IRGenerator
             var savedPrefix = currentModulePrefix;
             currentModulePrefix += deeper.Name + "_";
             ScanClassBodyAttributes(ast, className + "_" + deeper.Name, deeperBlock,
-                                    deeper.Bases.Contains("Enum") || deeper.Bases.Contains("IntEnum"));
+                                    deeper.Bases.Contains("Enum") || deeper.Bases.Contains("IntEnum"),
+                                    savedPrefix);
             currentModulePrefix = savedPrefix;
         }
     }
@@ -874,7 +950,7 @@ public partial class IRGenerator
                 }
 
                 if (classDef.Body is Block block)
-                    ScanClassBodyAttributes(ast, classDef.Name, block, isEnum);
+                    ScanClassBodyAttributes(ast, classDef.Name, block, isEnum, oldPrefix);
 
                 currentModulePrefix = oldPrefix;
             }

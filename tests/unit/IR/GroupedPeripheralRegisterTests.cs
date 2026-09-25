@@ -1,3 +1,4 @@
+using PyMCU.Common;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
@@ -157,5 +158,57 @@ public class GroupedPeripheralRegisterTests
         Assert.Equal(
             loose.Select(i => i.ToString()).ToList(),
             grouped.Select(i => i.ToString()).ToList());
+    }
+
+    [Fact]
+    public void AGroupedRegister_TakesItsAddressFromTheLooseName()
+    {
+        // One copy of every address. The grouped surface re-groups what the module
+        // already declares, so the two spellings cannot drift apart.
+        var ir = Gen(
+            "from pymcu.types import ptr, uint8, uint16\n" +
+            "\n" +
+            "TCCR1A: ptr[uint8] = ptr(0x80)\n" +
+            "TCNT1: ptr[uint16] = ptr(0x84)\n" +
+            "\n" +
+            "class TIMER1:\n" +
+            "    TCCR1A: ptr[uint8] = ptr(TCCR1A)\n" +
+            "    TCNT1: ptr[uint16] = ptr(TCNT1)\n" +
+            "    TCCR1B: ptr[uint8] = ptr(TCCR1A + 1)\n" +
+            "\n" +
+            "def main():\n" +
+            "    TIMER1.TCCR1A.value = 0x82\n" +
+            "    TIMER1.TCCR1B.value = 0x19\n" +
+            "    TIMER1.TCNT1.value = 0\n");
+
+        var stores = Code(ir).OfType<Copy>()
+            .Where(c => c.Dst is MemoryAddress)
+            .Select(c => ((MemoryAddress)c.Dst).Address)
+            .ToList();
+
+        // 0x80, 0x81, then the two byte halves of the 16-bit 0x84.
+        Assert.Equal(new List<int> { 0x80, 0x81, 0x84, 0x85 }, stores);
+    }
+
+    [Fact]
+    public void AGroupedRegisterWhoseAddressIsNotKnown_IsRefusedAndNotFiledAsAVariable()
+    {
+        // It used to fall to the generic fold, throw inside it, and be filed as a
+        // mutable class attribute: every write then landed in a dead SRAM byte and
+        // nothing was said.
+        var ex = Assert.Throws<CompilerError>(() => Gen(
+            "from pymcu.types import ptr, uint8\n" +
+            "\n" +
+            "def base() -> uint8:\n" +
+            "    return 0x80\n" +
+            "\n" +
+            "class TIMER1:\n" +
+            "    TCCR1A: ptr[uint8] = ptr(base())\n" +
+            "\n" +
+            "def main():\n" +
+            "    TIMER1.TCCR1A.value = 0x82\n"));
+
+        Assert.Contains("TCCR1A", ex.Message);
+        Assert.Contains("known while compiling", ex.Message);
     }
 }
