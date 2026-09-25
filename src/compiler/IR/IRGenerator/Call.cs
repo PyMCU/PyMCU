@@ -9807,6 +9807,19 @@ public partial class IRGenerator
                 return;
             }
 
+            // The same character, out of a RUNTIME string. `s = f"t={x:04d}"` then
+            // `print(s[2])` sent 48 -- the code of '0' -- because the lookup above is the only
+            // one that ever ran and a run-time string has no compile-time text to look up.
+            // Python has no char type either way: `s[2]` is the one-character string at that
+            // position, and on this target that string IS the byte, so the raw writer is the
+            // whole answer for a constant index and a run-time one alike (#399).
+            if (arg is IndexExpr { Index: not SliceExpr, Target: VariableExpr rsTarget } rsSub
+                && TryGetRuntimeStr(rsTarget.Name, out _))
+            {
+                EmitStreamCharExpr(rsSub);
+                return;
+            }
+
             // A string held in a FIELD. `print(o.n)` and `print(self.n)` sent 256, the string's
             // interned id, because the read fell through to the numeric writer: the plain-name
             // case knew about string constants and the field case did not.
