@@ -141,6 +141,38 @@ public static class Diagnostic
         }
     }
 
+    /// A warning, through the same door as every other diagnostic.
+    ///
+    /// Seven sites in the IR generator used to call `Console.Error.WriteLine` themselves, so
+    /// a warning was plain text on stderr whatever `--error-format` said, and `stderr is the
+    /// machine` was false for any program that compiles and warns. A float on AVR is enough
+    /// to trigger one, so that is not a corner.
+    ///
+    /// It was invisible in the obvious test because the probes for the JSON format were all
+    /// programs that FAIL, and a program that fails never reaches a warning.
+    ///
+    /// The three prefixes those sites used between them (`[pymcuc] warning:`, `warning:` and
+    /// `[Warning]`) become one here. Nothing parses them: none has the `file:line:column:`
+    /// shape the IDE problem matchers require, which is the other half of the same defect --
+    /// a warning never reached the Problems panel at all.
+    ///
+    /// <paramref name="text"/> is everything after the prefix, exactly as the site wrote it,
+    /// including any `line N:` clause it already carried. <paramref name="line"/> repeats that
+    /// number as data for the JSON consumer, and stays 0 where the site does not know one; the
+    /// duplication is deliberate, so that adopting this changes no terminal output.
+    public static void Warning(string text, int line = 0, string? file = null, string? code = null)
+    {
+        if (Format == ErrorFormat.Json)
+        {
+            var warn = new CompilerError("Warning", text, line, CompilerError.Unlocated)
+                { Code = code, File = file };
+            DiagnosticJson.Report(warn, ReadOnlySpan<char>.Empty, file ?? string.Empty);
+            return;
+        }
+
+        Console.Error.WriteLine($"[pymcuc] warning: {text}");
+    }
+
     /// Overload for internal compiler errors (no source location).
     ///
     /// An InternalCompilerError is by definition a compiler bug, and its message alone is

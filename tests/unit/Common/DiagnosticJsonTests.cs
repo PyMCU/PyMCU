@@ -174,6 +174,47 @@ public class DiagnosticJsonTests
     }
 
     [Fact]
+    public void Warning_IsJsonToo_AndCarriesItsOwnSeverity()
+    {
+        // The hole this closes. Seven sites in the IR generator wrote warnings straight to
+        // stderr, so `stderr is the machine` was false for any program that COMPILES and
+        // warns -- a float on AVR is enough. It survived the first round of probes because
+        // every one of them was a program that fails, and a program that fails never reaches
+        // a warning.
+        var buf = new StringWriter();
+        var prevErr = Console.Error;
+        var prevFormat = Diagnostic.Format;
+        Console.SetError(buf);
+        Diagnostic.Format = ErrorFormat.Json;
+        try { Diagnostic.Warning("line 7: '/' is floating-point division", 7, code: "truediv-links-float"); }
+        finally { Console.SetError(prevErr); Diagnostic.Format = prevFormat; }
+
+        var json = JsonDocument.Parse(buf.ToString().Trim()).RootElement;
+        Assert.Equal("warning", json.GetProperty("severity").GetString());
+        Assert.Equal("truediv-links-float", json.GetProperty("code").GetString());
+        Assert.Equal(7, json.GetProperty("span").GetProperty("line").GetInt32());
+    }
+
+    [Fact]
+    public void Warning_HumanTextIsByteForByteWhatTheSitesPrintedBefore()
+    {
+        // The prefix is unified here now, and this is what pins that the unification did not
+        // change the line a person reads. Nothing parses these: none has the
+        // `file:line:column:` shape the IDE problem matchers require, which is the other half
+        // of the same defect -- a warning never reached the Problems panel at all.
+        var buf = new StringWriter();
+        var prevErr = Console.Error;
+        var prevFormat = Diagnostic.Format;
+        Console.SetError(buf);
+        Diagnostic.Format = ErrorFormat.Human;
+        try { Diagnostic.Warning("time.monotonic() uses the software floating-point runtime"); }
+        finally { Console.SetError(prevErr); Diagnostic.Format = prevFormat; }
+
+        Assert.Equal("[pymcuc] warning: time.monotonic() uses the software floating-point runtime",
+                     buf.ToString().TrimEnd());
+    }
+
+    [Fact]
     public void HumanFormat_IsUnchangedWhenJsonIsNotAskedFor()
     {
         // The regression this whole change has to avoid. Both shipped plugins parse the text

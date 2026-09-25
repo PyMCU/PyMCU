@@ -2814,8 +2814,8 @@ public partial class IRGenerator
                   + "decided only when every value in its condition is fixed at compile time: a "
                   + "literal, a parameter declared `const` and passed a literal at every call "
                   + "site, a chip fact such as `__CHIP__`, or an `@inline` call over those.";
-            Console.Error.WriteLine(
-                $"warning: CompileError guard could not be verified at compile time " +
+            PyMCU.Common.Diagnostic.Warning(line: stmt.Line, code: "guard-unverified", text:
+                $"CompileError guard could not be verified at compile time " +
                 $"(line {stmt.Line}): {msg}. " + advice);
             return;
         }

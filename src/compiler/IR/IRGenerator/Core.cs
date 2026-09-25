@@ -1629,8 +1629,8 @@ public partial class IRGenerator
         {
             string owner = ResolveMROMethod(clsKey, "__del__");
             if (!destructorSites.TryGetValue(owner, out var site)) continue;
-            Console.Error.WriteLine(
-                $"[pymcuc] warning: line {site.Line}: '{site.Name}.__del__' is defined but never "
+            PyMCU.Common.Diagnostic.Warning(line: site.Line, code: "destructor-never-runs", text:
+                $"line {site.Line}: '{site.Name}.__del__' is defined but never "
                 + "called -- PyMCU lays every instance out in static storage and never collects "
                 + "one, and `del` is refused, so there is no moment at which a destructor could "
                 + "run. Release what the object holds from a method you call by name (deinit(), "

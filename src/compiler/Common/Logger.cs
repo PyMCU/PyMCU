@@ -156,8 +156,19 @@ public static class Logger
     }
 
     // Warnings always go to stderr — never pollute the stdout token stream.
+    //
+    // Under --error-format json they go through Diagnostic, like everything else on stderr:
+    // a consumer promised machine-readable output gets it for warnings too. The human
+    // renderings below are untouched, colour included, which is why this is a branch here
+    // rather than one call in both modes.
     public static void Warning(string component, string message)
     {
+        if (Diagnostic.Format == ErrorFormat.Json)
+        {
+            Diagnostic.Warning($"[{component}] {message}", code: "compiler-warning");
+            return;
+        }
+
         if (!Console.IsErrorRedirected)
             Console.Error.WriteLine($"\x1b[33m\u26a0\x1b[0m  [{component}] {message}");
         else
@@ -167,6 +178,14 @@ public static class Logger
     // Non-located errors (complement to Diagnostic.Report for positioned errors).
     public static void Error(string component, string message)
     {
+        if (Diagnostic.Format == ErrorFormat.Json)
+        {
+            // An error, not a warning: this is the channel CompilerDriver uses for an
+            // unhandled exception in a phase, and it fails the build.
+            Diagnostic.ReportInternal($"[{component}] {message}", string.Empty);
+            return;
+        }
+
         Console.Error.WriteLine($"[{component}] Error: {message}");
     }
 }

@@ -1751,7 +1751,7 @@ public partial class IRGenerator
         {
             int dline = expr.Line > 0 ? expr.Line : lastLine;
             if (warningNoticed.Add($"truediv:{dline}"))
-                Console.Error.WriteLine($"[pymcuc] warning: line {dline}: '/' is floating-point "
+                PyMCU.Common.Diagnostic.Warning(line: dline, code: "truediv-links-float", text: $"line {dline}: '/' is floating-point "
                     + "(true) division in Python and always yields a float; it links float "
                     + "routines into the firmware — use '//' for integer division if that is what you meant");
 

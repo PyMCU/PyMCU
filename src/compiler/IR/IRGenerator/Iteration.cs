@@ -3930,8 +3930,8 @@ public partial class IRGenerator
         // module being LOWERED, so a name-resolved node yields a plausible cursor naming the
         // wrong file; a warning printed here has no better source of truth, so it does not
         // claim one.
-        Console.Error.WriteLine(
-            $"warning: assert on line {stmt.Line} is not checked. Its condition is not known at "
+        PyMCU.Common.Diagnostic.Warning(line: stmt.Line, code: "assert-not-checked", text:
+            $"assert on line {stmt.Line} is not checked. Its condition is not known at "
             + "compile time, and PyMCU emits no run-time check, the way `python -O` drops "
             + "asserts. Use `if <cond>: raise ...` for a check that survives to run time.");
     }

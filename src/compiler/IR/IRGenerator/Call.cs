@@ -1107,8 +1107,8 @@ public partial class IRGenerator
 
         if (callee == "ptr" && !intrinsicNames.Contains("ptr"))
         {
-            Console.Error.WriteLine(
-                "[Warning] 'ptr' is not recognized as an intrinsic. Did you forget to import from pymcu.types?");
+            PyMCU.Common.Diagnostic.Warning(code: "ptr-not-an-intrinsic", text:
+                "'ptr' is not recognized as an intrinsic. Did you forget to import from pymcu.types?");
             return new Constant(0);
         }
 
@@ -2107,7 +2107,7 @@ public partial class IRGenerator
         // reduced bare-metal behaviour) still build.
         if (func != null && !string.IsNullOrEmpty(func.WarningMessage) && warningNoticed.Add(func.Name))
         {
-            Console.Error.WriteLine($"[pymcuc] warning: {func.WarningMessage}");
+            PyMCU.Common.Diagnostic.Warning(func.WarningMessage);
         }
 
         // Read and cleared here, before the arguments are visited: a call nested in an argument

@@ -2277,8 +2277,8 @@ public partial class IRGenerator
                                             + "you call by name instead",
                                     };
 
-                                    Console.Error.WriteLine(
-                                        $"[pymcuc] warning: line {func.Line}: '{classDef.Name}.{func.Name}' is "
+                                    PyMCU.Common.Diagnostic.Warning(line: func.Line, code: "method-never-called", text:
+                                        $"line {func.Line}: '{classDef.Name}.{func.Name}' is "
                                         + $"defined but never called -- {why}.");
                                 }
 
