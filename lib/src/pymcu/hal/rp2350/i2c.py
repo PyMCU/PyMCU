@@ -69,9 +69,13 @@ class I2C:
     @inline
     def write_bytes(self, addr: uint8, data: bytearray, n: uint16):
         # Multi-byte write; STOP is asserted with the final byte. The index is as
-        # wide as the count: a uint8 here does not truncate a transfer past 255,
-        # it never ends, because i wraps to 0 while i < n stays true and the
-        # i == n - 1 that asserts STOP is never reached.
+        # wide as the count, and a uint8 here is worse than a truncated transfer.
+        # The comparison is not evaluated at run time at all: range folding settles
+        # `i < n` while compiling, because a uint8 cannot reach 300, and what is
+        # emitted is a bare backward jump with no compare. Do not go looking for a
+        # CP/CPC in the asm, there is none. Everything after the loop is then dead
+        # code and is deleted, so the STOP, and any cleanup a caller put after the
+        # transfer, are not in the program either.
         self._set_target(addr)
         i: uint16 = 0
         while i < n:
