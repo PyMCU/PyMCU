@@ -1,8 +1,14 @@
 from pymcu.chips.pic16f18877 import TX1STA, RC1STA, TX1REG, RC1REG, SP1BRGL, SP1BRGH, BAUD1CON, RC6PPS, RXPPS, TRISC, PIR3
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, uint16, inline
 
 @inline
-def uart_init(baud: uint8):
+def uart_init(baud: uint16):
+    # uint16, not uint8: the baud selector is the rate in hundreds, so 38400,
+    # 57600 and 115200 arrive as 384, 576 and 1152 and a uint8 holds none of
+    # them. Those three arms were unreachable by the declaration and reachable
+    # in practice only while an @inline argument arrived unnarrowed; once it is
+    # narrowed, 1152 becomes 128, no arm matches and SP1BRGL/SP1BRGH are never
+    # written at all.
     RC6PPS.value = 0x10
     RXPPS.value = 0x17
     TRISC[6] = 0
