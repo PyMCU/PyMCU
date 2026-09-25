@@ -169,12 +169,21 @@ public static class ImportedNameCheck
     /// Every name <paramref name="module"/> can bind at module level, or null when the set
     /// cannot be known and no question should be asked of it.
     /// </summary>
-    internal static HashSet<string>? BoundNames(ProgramNode module)
+    /// <param name="ignoring">
+    /// An import statement OF THIS MODULE whose own bindings are not counted. A package that
+    /// writes its own absolute name (`from pkg import sub` inside pkg/__init__.py) asks this
+    /// question about a statement that is itself one of the answers, and a binding cannot be
+    /// its own reason. Everything else the module binds still counts, so a name the package
+    /// really does define keeps it.
+    /// </param>
+    internal static HashSet<string>? BoundNames(ProgramNode module, ImportStmt? ignoring = null)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var imp in module.Imports)
         {
+            if (ReferenceEquals(imp, ignoring)) continue;
+
             // A star this build never expanded could bind anything. Say nothing about a
             // module that has one.
             if (imp.Symbols.Count == 1 && imp.Symbols[0] == StarImportExpander.Star) return null;

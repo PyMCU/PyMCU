@@ -119,7 +119,15 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
                 if (imp.IsOptional && !currentAst.Imports.Contains(imp))
                     currentAst.Imports.Add(imp);
 
-                graph.AddDependencyEdge(importedAst, currentAst);
+                // A module that imports ITSELF is a no-op in Python: the name is already in
+                // sys.modules, partially initialised, and the statement binds what is there.
+                // A package writing its own absolute name -- `from pkg import sub` inside
+                // pkg/__init__.py, the spelling a package uses to re-export its submodules --
+                // produced a self-edge whose in-degree never fell to zero, and the whole build
+                // stopped with "Cyclic dependency detected" on a layout CPython runs. The
+                // submodule rewrite above still adds the real pkg.sub -> pkg edge.
+                if (!ReferenceEquals(importedAst, currentAst))
+                    graph.AddDependencyEdge(importedAst, currentAst);
 
                 if (visitedModules.Add(imp.ModuleName))
                     queue.Enqueue((importedAst, importedPath));
@@ -144,7 +152,13 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
 
         // Null means the module's bindings cannot be known (a star it never expanded, or a
         // module-level CompileError). Asking nothing is the same answer the name check gives.
-        var bound = ImportedNameCheck.BoundNames(importedAst);
+        // A package that writes its own absolute name -- `from pkg import sub` inside
+        // pkg/__init__.py -- reads its own bindings here, and this very statement is one of
+        // them. The name then looked bound and the submodule beside it was never loaded, so
+        // `pkg.sub.f()` came out as an unknown member of pkg. A binding cannot be its own
+        // reason, so this statement is left out of the question it is asking.
+        var bound = ImportedNameCheck.BoundNames(
+            importedAst, ReferenceEquals(importedAst, currentAst) ? imp : null);
         if (bound == null) yield break;
 
         foreach (var sym in imp.Symbols.ToList())
