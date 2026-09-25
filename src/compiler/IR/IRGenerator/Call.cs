@@ -4033,6 +4033,25 @@ public partial class IRGenerator
     // Resolve an overloaded call to its concrete mangled name: build a type suffix
     // from the positional arg types, prefer the exact match, else a default-aware
     // arity fallback. Returns callee unchanged when it is not overloaded.
+    /// <summary>
+    /// True when a resolved name stands for a contiguous buffer that a call marshals by its
+    /// BASE ADDRESS -- the same three sets the argument-marshalling step consults before it
+    /// rewrites the argument into an <c>ArrayBase</c>, plus the memoryview windows, which take
+    /// the base of the array they look into. Overload selection has to ask exactly this
+    /// question: an argument that travels as a pointer must never be typed as its element.
+    /// </summary>
+    private bool IsBufferStorageName(string key)
+    {
+        if (arraysWithVariableIndex.Contains(key) || moduleSramArrays.Contains(key)
+            || bytearrayParams.Contains(key) || arrayViewBase.ContainsKey(key))
+            return true;
+        // A flat sequence (`s__0`, `s__1`, a slice temp) is in arraySizes too and has no `s:`
+        // label, so requiring the resolved storage to be one of the contiguous sets is what
+        // keeps a compile-time sequence out of the bytearray overload.
+        return TryResolveArrayStorageKey(key, out var storage)
+               && (arraysWithVariableIndex.Contains(storage) || moduleSramArrays.Contains(storage));
+    }
+
     private string ResolveOverloadedCallee(string callee, CallExpr expr)
     {
         if (overloadedFunctions.Contains(callee))
@@ -4141,6 +4160,7 @@ public partial class IRGenerator
                     {
                         if (instanceClasses.TryGetValue(flat, out string fic)) return ShortClassName(fic);
                         if (strConstantVariables.ContainsKey(flat)) return "str";
+                        if (IsBufferStorageName(flat)) return "bytearray";
                         if (variableAliases.TryGetValue(flat, out string fak)) flat = fak;
                         else break;
                     }
