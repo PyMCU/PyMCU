@@ -710,6 +710,45 @@ public partial class IRGenerator
         _ => op.ToString(),
     };
 
+    /// <summary>
+    /// The name an operator dunder's `self` has to alias, for the instance named on one side
+    /// of a binary operator.
+    ///
+    /// The scoped spelling is the ordinary answer and is tried first, so nothing that already
+    /// resolved changes. It is not the only one: a module-level instance is filed under its
+    /// BARE name while `currentFunction` already reads "main", the synthesized module body, so
+    /// `a + b` written at top level found no class and lowered numerically over a handle that
+    /// is never written -- `print(a + b)` answered 0 while the same two lines inside a function
+    /// answered what __add__ returns. ProbeBinding answers with the binding THIS scope sees, so
+    /// a local of the same name still shadows the module-level one.
+    /// </summary>
+    private string BinaryDunderReceiver(string name)
+    {
+        string qname = string.IsNullOrEmpty(currentInlinePrefix)
+            ? (string.IsNullOrEmpty(currentFunction) ? name : currentFunction + "." + name)
+            : currentInlinePrefix + name;
+        if (instanceClasses.ContainsKey(qname)) return qname;
+        if (ProbeBinding(name) is Variable probed && ResolveClassCarryingName(probed) is { } carried)
+            return carried;
+        return qname;
+    }
+
+    /// <summary>
+    /// True when a binary operator over <paramref name="left"/> is a dunder call rather than a
+    /// numeric operation, under exactly the conditions <see cref="VisitBinary"/> dispatches on.
+    /// The condition path asks this before lowering a comparison as a jump (#491).
+    /// </summary>
+    private bool BinaryDispatchesToDunder(Expression left, AstBinOp op)
+    {
+        if (BinaryOpDunder(op) is not { } dunder) return false;
+        if (left is not VariableExpr lv) return false;
+        string qname = BinaryDunderReceiver(lv.Name);
+        if (!instanceClasses.TryGetValue(qname, out var cls) || string.IsNullOrEmpty(cls))
+            return false;
+        return inlineFunctions.ContainsKey(cls + "_" + dunder)
+               || TryResolveInstanceMethodAst(lv.Name, dunder) != null;
+    }
+
     private string? BinaryOpDunder(AstBinOp op)
     {
         return op switch
@@ -1032,9 +1071,7 @@ public partial class IRGenerator
         string? dunder = BinaryOpDunder(expr.Op);
         if (dunder != null && expr.Left is VariableExpr lv)
         {
-            string qname = string.IsNullOrEmpty(currentInlinePrefix)
-                ? (string.IsNullOrEmpty(currentFunction) ? lv.Name : currentFunction + "." + lv.Name)
-                : currentInlinePrefix + lv.Name;
+            string qname = BinaryDunderReceiver(lv.Name);
             if (instanceClasses.TryGetValue(qname, out var cls) && !string.IsNullOrEmpty(cls))
             {
                 string funcKey = cls + "_" + dunder;
@@ -1071,9 +1108,7 @@ public partial class IRGenerator
         string? rDunder = ReflectedOpDunder(expr.Op);
         if (rDunder != null && expr.Right is VariableExpr rvRefl)
         {
-            string rqname = string.IsNullOrEmpty(currentInlinePrefix)
-                ? (string.IsNullOrEmpty(currentFunction) ? rvRefl.Name : currentFunction + "." + rvRefl.Name)
-                : currentInlinePrefix + rvRefl.Name;
+            string rqname = BinaryDunderReceiver(rvRefl.Name);
             if (instanceClasses.TryGetValue(rqname, out var rcls) && !string.IsNullOrEmpty(rcls))
             {
                 string rFuncKey = rcls + "_" + rDunder;

@@ -2288,6 +2288,33 @@ public class IRGeneratorTests
             i => i is Copy { Src: Constant { Value: 80 } });
     }
 
+    // ── A module-level instance is a dunder receiver too ──────────────────
+    // PyMCU#491: the receiver was looked up under ONE spelling, `currentFunction + "." + name`.
+    // At module level currentFunction already reads "main" -- the synthesized module body --
+    // while the binding is filed under its bare name, so the lookup missed and the operator
+    // lowered numerically over a handle nobody writes. The same two lines inside a function
+    // dispatched, which is what made it hard to see.
+    [Fact]
+    public void Dunder_OnAModuleLevelInstance_Dispatches()
+    {
+        const string src =
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            "    def __add__(self, other: uint8) -> uint8:\n" +
+            "        return self.v + other + 11\n" +
+            "a = Acc(1)\n" +
+            "x: uint8 = a + 2\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        // 1 + 2 + 11 = 14, and 14 can only come from __add__'s body.
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 14 } });
+    }
+
     // `a /= 2` was the only augmented assignment that errored, and it named a dunder the class
     // had. AugOp.Div was simply missing from the in-place map.
     [Fact]
