@@ -67,12 +67,21 @@ CAN promise and keep still while the definitions underneath it move.
    still, and it is NOT proposed here: it needs a two-level member access to lower to a
    single bit operation, which is new machinery, for a spelling that saves one subscript.
 
-4. **Per instance, not per kind.** `TIMER0`, `TIMER1`, `TIMER2` are three classes, because on
+4. **A group cannot be instantiated, and says so.** `TIMER1()` used to be accepted and
+   produce nothing at all: the name still resolved to the group, so the register accesses
+   around the call worked and the meaningless call went unsaid. A group is a namespace over
+   the silicon, not a type, so the call is now a located error naming the group and saying
+   what to write instead. The refusal is keyed on the class declaring at least one register,
+   so an ordinary class is untouched. This is what decision 1 buys instead of a metaclass:
+   the enforcement a singleton metaclass would provide, as a diagnostic, at no runtime cost
+   and with no compile-time object model (see 3c).
+
+5. **Per instance, not per kind.** `TIMER0`, `TIMER1`, `TIMER2` are three classes, because on
    the ATmega328P they are three different register sets at three different widths. A
    `Timer(n)` abstraction over them is the HAL's job (`pymcu.hal.avr.timer`), and it already
    exists; this layer is the registers, not a driver.
 
-5. **The addresses ARE the loose names, not copies of them.**
+6. **The addresses ARE the loose names, not copies of them.**
 
    ```python
    class TIMER1:
@@ -83,7 +92,7 @@ CAN promise and keep still while the definitions underneath it move.
    one. This is what makes decision 2 pay: the group is mechanically derivable and
    mechanically checkable.
 
-6. **The loose names stay, and they stay undocumented.** They are not deprecated with a
+7. **The loose names stay, and they stay undocumented.** They are not deprecated with a
    diagnostic: the HAL itself uses them, on every chip, so a diagnostic would fire on our own
    stdlib on every build. The contract is stated instead, in the chip file and in the
    language docs: **the grouped classes are the surface the project keeps stable; the
@@ -130,7 +139,8 @@ all three let the program compile and do the wrong thing.
    one, while the same condition written `if TIFR1[0]:` was free.
 
 An address the scan cannot resolve is now a located error naming the attribute, instead of
-the group being filed as a dead SRAM variable.
+the group being filed as a dead SRAM variable. A fourth silence, `TIMER1()` compiling to
+nothing, is refused by decision 4 above.
 
 ## 3b. The ptr-over-a-base-address view, and why it is the ARM shape
 
