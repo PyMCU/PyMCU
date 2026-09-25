@@ -210,6 +210,40 @@
   worth a release note rather than an internal correction is RFC 0012: the grouped peripheral
   surface puts the 16-bit name within reach of user code (`Timer1.OCR1A.value = 1500`), and
   that surface is the one the project promises to keep.
+
+- **ir/frontend**: a package's own `__init__.py` reaches its names. Three shapes CPython runs
+  did not compile. `import pkg` followed by `pkg.f()`, where the `__init__` only re-exports
+  `f`, was reported as a call to an undefined `pkg_f`: the function is compiled under the
+  module that DEFINES it, and the member read of the same name already chased that while the
+  call did not (#468). `from pkg import sub` written inside `pkg/__init__.py`, the absolute
+  spelling of a submodule re-export, ended the whole build in "Cyclic dependency detected"
+  with no line to look at -- a module that imports itself is a no-op in Python, and the
+  self-edge in the dependency graph was not -- and the same statement then answered the
+  question "does the package bind this name?" with itself, so the submodule beside it was
+  never loaded. And `from pkg import sub` at the use site, where the package really does bind
+  `sub` as its submodule, stopped the re-export chase at the package and mangled `sub.f()` to
+  `pkg_f`: both spellings of the package's own line arrive as `import pkg.sub as sub`, which
+  no symbol list mentions. Measured against CPython over fourteen package layouts; the one
+  shape still refused, `import pkg` then `pkg.sub` with an empty `__init__`, is the one
+  CPython refuses too.
+
+- **frontend**: `import types` no longer resolves to `pymcu/types.py`. The stdlib alias that
+  answers `import time` with the pymcu file of that name answered `types` with PyMCU's own
+  type-system module, which is read by the compiler rather than loaded -- so it went through
+  the file path, was parsed as ordinary source, and reported `class ptr(Generic[T])` as a
+  SyntaxError inside the stdlib against a program whose only line was the import (#482). The
+  Adafruit guard `try: from types import TracebackType / except ImportError` does not catch a
+  SyntaxError, so the rest of the guard never bound either. The refusal now says what `types`
+  is and that the width names live in `pymcu.types`, a different module.
+
+- **ir**: a call to a name an imported module does not carry says so. `utime.localtime()`
+  came out as "call to undefined function 'utime_localtime' (typo, or a missing import?)",
+  which names a symbol the program never wrote and offers two answers that are both wrong:
+  the spelling is right and the import is already there and worked. A compat module that
+  resolves and does not carry a member is a decision its layer records in its parity
+  allowlist -- no RTC on this part, no interpreter to report on -- not an omission. The
+  message names the module and the member, and lists what the module does define, its
+  classes' methods excluded (#475).
 - **stdlib**: an LED blink for the PIC16F84A stopped compiling over a UART it never mentions.
   `pymcu/hal/__init__.py` re-exports all five peripherals, so `from pymcu.hal.gpio import Pin`
   alone reaches `pymcu.hal.uart` and, on a PIC14 target, the `pic14_uart` dispatcher. That

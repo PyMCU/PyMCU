@@ -936,6 +936,17 @@ An alias is kept (`from adafruit_motor import servo as s`).
 An import alias belongs to the file that writes it. Two modules that alias different things
 to the same name each keep their own, the way Python scopes them.
 
+`import <package>` reaches what the package's `__init__.py` binds, including the names it
+only RE-EXPORTS: a package whose `__init__` writes `from pkg.mod import f` answers `pkg.f()`
+with the function `pkg.mod` defines, since that is the only copy of it there is (#468). The
+same holds for a submodule the package binds, by either spelling of its own line
+(`from . import mod` or `from pkg import mod`), so `from pkg import mod` at the use site
+reaches `pkg.mod` and not the package.
+
+A package may name ITSELF: `from pkg import mod` written inside `pkg/__init__.py`, which is
+how a package re-exports its submodules without the relative form. It is a no-op in Python,
+since `pkg` is already in `sys.modules` while its own body runs, and it is a no-op here.
+
 `from __future__ import X` (#452) is a no-op: `__future__`'s members are CPython compiler
 pragmas that change how CPython parses the source, and PyMCU already reads annotations
 straight from the source unconditionally, so there is nothing to enable. The import is
@@ -948,6 +959,13 @@ module-level variables, minus the ones whose name starts with `_`, which are pri
 which a star never binds in CPython either. A module that declares `__all__` gets exactly
 that list instead. A name `foo` re-exports (one it imported itself) resolves through the
 star as well.
+
+`import types` does NOT resolve, although `pymcu/types.py` exists. That file is PyMCU's own
+type-system module (`ptr`, the width names), not the Python `types` module, and it is read by
+the compiler rather than loaded like a module. Answering the bare name with it parsed it as
+ordinary source and reported a SyntaxError inside the stdlib, against a program whose only
+line was the import (#482); the refusal now names what `types` is. A library asking for
+`TracebackType` writes that import under `except ImportError`, which the refusal satisfies.
 
 `import os` / `from os import uname` resolve to `pymcu/os.py`, the same stdlib-alias
 fallback `import time` already uses. `uname()`, `os.name` and `os.sep` are compile-time
