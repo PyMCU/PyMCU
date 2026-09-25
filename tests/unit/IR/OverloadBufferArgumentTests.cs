@@ -1,3 +1,4 @@
+using PyMCU.Common;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
@@ -220,6 +221,60 @@ public class OverloadBufferArgumentTests
 
         Assert.True(Uses(ir, 7), "the scalar body must run for a scalar return");
         Assert.False(Uses(ir, 100), "the bytearray body must not run for a scalar return");
+    }
+
+    // THE CASE THAT CANNOT BE DECIDED, and the reason the silence was the defect rather than
+    // the choice. When no overload takes a buffer at all, there is nothing to select: what
+    // used to happen was that the first key the registry enumerated won and read the buffer's
+    // address as a number. The call is refused instead, at the line the caller can change.
+    [Fact]
+    public void ABufferWithNoBufferOverloadOnOfferIsRefusedAtTheCall()
+    {
+        var ex = Assert.Throws<CompilerError>(() => Gen(
+            "from pymcu.types import uint8, inline, ptr\n" +
+            "G: ptr[uint8] = ptr(0x3E)\n" +
+            "@inline\n" +
+            "def sink(b: uint8) -> uint8:\n" +
+            "    return b + 7\n" +
+            "@inline\n" +
+            "def sink(b: float) -> uint8:\n" +
+            "    return uint8(b) + 100\n" +
+            "class D:\n" +
+            "    def __init__(self):\n" +
+            "        self.temp = bytearray(2)\n" +
+            "    def go(self, c: uint8) -> uint8:\n" +
+            "        self.temp[0] = c\n" +
+            "        return sink(self.temp)\n" +
+            "def main():\n" +
+            "    d = D()\n" +
+            "    G.value = d.go(G.value)\n"));
+
+        Assert.Contains("takes a buffer as argument 1", ex.Message);
+        Assert.Contains("sink", ex.Message);
+    }
+
+    // INVARIANT: widening one number into another is not an undecidable case and must keep
+    // compiling. Every non-exact selection goes through the same check, so a uint8 argument
+    // against a uint16 parameter -- which is what machine.PWM.freq takes in the MicroPython
+    // layer -- has to pass it.
+    [Fact]
+    public void ANarrowerNumberStillWidensIntoAWiderParameter()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8, uint16, inline, ptr\n" +
+            "G: ptr[uint8] = ptr(0x3E)\n" +
+            "@inline\n" +
+            "def wide(v: uint16) -> uint16:\n" +
+            "    return v + 100\n" +
+            "@inline\n" +
+            "def wide(v: float) -> uint16:\n" +
+            "    return uint16(v) + 7\n" +
+            "def main():\n" +
+            "    n: uint8 = G.value\n" +
+            "    G.value = uint8(wide(n))\n");
+
+        Assert.True(Uses(ir, 100), "the uint16 body must run for a uint8 argument");
+        Assert.False(Uses(ir, 7), "the float body must not run for a uint8 argument");
     }
 
     // INVARIANT, not discriminating: a buffer in a local already picked the bytearray overload

@@ -4347,6 +4347,7 @@ public partial class IRGenerator
                 string? pick = null;
                 string? sameShape = null;
                 string? arityOnly = null;
+                string? exactPick = null;
                 foreach (var kvp in inlineFunctions)
                 {
                     if (!kvp.Key.StartsWith(callee + "___")) continue;
@@ -4357,7 +4358,7 @@ public partial class IRGenerator
                     if (argCount == 0
                         || string.Join("_", ps.Select(p => NormType(p.Type))) == suffix)
                     {
-                        pick = kvp.Key;
+                        pick = exactPick = kvp.Key;
                         break;
                     }
                 }
@@ -4394,12 +4395,54 @@ public partial class IRGenerator
                         string lead = string.Join("_", ps.Take(argCount).Select(p => NormType(p.Type)));
                         if (argCount == 0 || lead == suffix) { typed = kvp.Key; break; }
                     }
+                    if (typed != null) exactPick = typed;
                     pick = typed ?? anyArity;
                 }
 
                 // Nothing matched on types: keep the old arity-only choice rather than failing to
                 // resolve at all, so a call whose argument types we cannot name still compiles.
                 pick ??= arityOnly;
+
+                // A choice that was not an exact type match is a choice made on SHAPE, and a
+                // shape the candidate does not have is not a choice at all: it is whichever key
+                // the registry enumerated first. Widening one number into another is fine and is
+                // what the steps above are for. A BUFFER against a parameter that is not one is
+                // not: the buffer arrives as an address and the parameter reads it as its own
+                // type, which is the silent wrong byte on the wire PyMCU#503 was reported for.
+                // Say so at the call, which is the line the caller can change.
+                if (pick != null && pick != exactPick
+                    && inlineFunctions.TryGetValue(pick, out var picked))
+                {
+                    var pps = picked.Params.Where(p => p.Name != "self").ToList();
+                    string ShapeOf(string t) => DeclaredTypeIsBuffer(t) ? "a buffer"
+                        : IsInstanceType(t) ? "an instance of " + t
+                        : IsFloatType(t) ? "a float" : "a number";
+
+                    for (int i = 0; i < argSuffixes.Count && i < pps.Count; i++)
+                    {
+                        string want = NormType(pps[i].Type), got = argSuffixes[i];
+                        if (DeclaredTypeIsBuffer(want) == DeclaredTypeIsBuffer(got)) continue;
+
+                        string writtenName = expr.Callee switch
+                        {
+                            VariableExpr nv => nv.Name,
+                            MemberAccessExpr nm => nm.Member,
+                            _ => callee,
+                        };
+                        var offered = inlineFunctions.Keys
+                            .Where(k => k.StartsWith(callee + "___", StringComparison.Ordinal))
+                            .Select(k => k[(callee.Length + 3)..].Replace("_", ", "))
+                            .ToList();
+                        throw UserError(
+                            $"no @inline overload of '{writtenName}' takes {ShapeOf(got)} as " +
+                            $"argument {i + 1}. The overloads on offer take " +
+                            string.Join(" / ", offered.Select(o => $"({o})")) +
+                            $", and the closest one wants {ShapeOf(want)} there. Selection is by " +
+                            "the types of the positional arguments, so declare an overload for " +
+                            "the type being passed, or pass a value of a type one of them takes",
+                            expr.Callee);
+                    }
+                }
 
                 if (pick != null) callee = pick;
             }
