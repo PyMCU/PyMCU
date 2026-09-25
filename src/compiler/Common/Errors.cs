@@ -55,6 +55,74 @@ public class CompilerError(string typeName, string message, int line, int column
     /// raised had no way to say so except by leaving the null alone and hoping. This property
     /// says it. Issue #230.
     public bool LocationIsFinal { get; init; }
+
+    /// A stable identifier for THIS refusal, in kebab case, or null where the site has not
+    /// been given one yet.
+    ///
+    /// The message text is not one. It is edited whenever it reads badly, and every edit
+    /// breaks whatever was keyed on it: an editor's "never show me this again", a docs anchor,
+    /// a project-wide suppression, an issue that quotes it. A code separates the two promises
+    /// -- the sentence may improve freely, the identifier may not change -- and it is the only
+    /// field an IDE can offer "suppress" or "explain" against.
+    ///
+    /// Null is the honest default. A code invented per call site as the sites are touched
+    /// would collide and drift; the ones that carry a code carry it because somebody decided
+    /// what it names.
+    public string? Code { get; init; }
+
+    /// The other places the reader has to look, each with what it contributes.
+    ///
+    /// Some refusals already name a second site inside their sentence -- "module guard at
+    /// adc/__init__.py:36", "already 3 for PD6 at line 43" -- and a sentence is where that
+    /// fact goes to die for a machine: the driver has a regular expression whose only job is
+    /// to renumber line citations inside message text (core/compiler.py), and an editor cannot
+    /// make either one clickable. Carried as data, the same fact is a second squiggle.
+    public IReadOnlyList<RelatedSpan> Related { get; init; } = [];
+
+    /// The edits the message already proposes in prose, as edits.
+    ///
+    /// Our refusals routinely end in "or write `uint8(480)` if narrowing it to 224 is what you
+    /// meant". That sentence IS a quick fix; today it exists only as text that the reader
+    /// retypes. Carried as an edit, an IDE offers it as one keystroke.
+    ///
+    /// Applicability travels with it, because it is what keeps a wrong fix from being applied
+    /// silently. PyMCU#280 measured that one in three user-facing refusals leads somewhere
+    /// worse when followed literally, so a route this compiler is not sure about must arrive
+    /// marked `maybe-incorrect` and never be applied by a "fix all".
+    public IReadOnlyList<SuggestedFix> Fixes { get; init; } = [];
+}
+
+/// A second location a diagnostic points at, with the sentence fragment that says why.
+///
+/// `File` is a path that can be opened, not a display label: a related span whose file cannot
+/// be resolved is a squiggle an editor cannot place.
+public sealed record RelatedSpan(string File, int Line, int Column, int Length, string Label);
+
+/// One proposed rewrite, as the text to put in place of a range.
+///
+/// `MaybeIncorrect` is the default and not `MachineApplicable`, so a site that does not think
+/// about applicability gets the answer that cannot silently corrupt a program.
+public sealed record SuggestedFix(
+    string Label,
+    string File,
+    int Line,
+    int Column,
+    int Length,
+    string Replacement,
+    FixApplicability Applicability = FixApplicability.MaybeIncorrect);
+
+/// How far an editor may go with a <see cref="SuggestedFix"/>, in rustc's three grades.
+public enum FixApplicability
+{
+    /// Safe to apply without asking, including in a "fix all in file".
+    MachineApplicable,
+
+    /// Offer it, apply it only on an explicit choice. The compiler believes it, and PyMCU#280
+    /// is the measurement of how often that belief is wrong.
+    MaybeIncorrect,
+
+    /// The replacement contains something the reader has to fill in.
+    HasPlaceholders,
 }
 
 public class SyntaxError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
