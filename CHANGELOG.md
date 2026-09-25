@@ -135,7 +135,28 @@
   said it should, so the writers it emits unconditionally no longer drag the refusal in.
   The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` -- already dispatched inside
   the class body for this reason; the UART was the one that did not. Firmware for every PIC
-  program that does have a UART is byte-identical.
+  program that does have a UART is byte-identical.=======
+- **stdlib**: `delay_ms` is declared `uint16`, and now every architecture behind it is. The
+  per-architecture helpers (`_delay_ms_pic12`, `_delay_ms_pic14`, `_delay_ms_pic14e`,
+  `_delay_ms_pic18`, `_delay_ms_riscv`) each took a `uint8` and walked a `uint8` counter, so
+  a delay longer than 255 ms could not be expressed at all: `delay_ms(500)` was 244 ms on the
+  five of them, against the `uint16` the AVR and ARM paths already honoured. With the inline
+  narrowing missing on top of that (see the `ir` entry below), it was not 244 ms either -- it
+  was a loop with no exit. The counters are `uint16`, which costs one byte of RAM and about
+  ten instruction cycles per millisecond on the PIC cores.
+- **stdlib**: `_delay_ms_pic14e` derives its loop counts from `__FREQ__`, the way
+  `_delay_ms_pic14` already did. It was a single table calibrated for 32 MHz by a comment
+  that described a different count from the one in the code (11 outer turns, not the 10 the
+  comment worked from), so it ran 5.8% long there and was wrong by the frequency ratio
+  everywhere else. There are now cases for 1, 2, 4, 8, 12, 16 and 32 MHz -- the HFINTOSC
+  speeds this family offers -- with 32 MHz as the fallback, because that is what RSTOSC
+  selects out of reset and what the Curiosity Nano's default config word leaves running.
+  Each case carries its cycle arithmetic and the error it measures; the worst is -0.40% at
+  1 MHz, where 16 cycles of loop frame are already 6.4% of a millisecond, and 32 MHz lands at
+  +0.013%. Verified on a simulated PIC16F15244: 4,000,261 Tcy between LED edges for a
+  requested 500 ms, which is 500.033 ms. `_delay_ms_pic14`'s four cases are recalibrated for
+  the wider counter by the same arithmetic, and all four now land inside 0.1% where 4 MHz
+  used to be 0.8% long.
 - **ir**: an integer constant bound to an `@inline` parameter of declared width arrived
   unnarrowed, so the same callee body saw a different value depending on whether it was
   expanded or called. A real subroutine gets the narrowing from the ABI -- the value is

@@ -78,21 +78,26 @@ def delay_ms(ms: uint16):
             _delay_ms_arm(ms)
 
 @inline
-def _delay_ms_pic14(ms: uint8):
+def _delay_ms_pic14(ms: uint16):
     """Software millisecond delay loop for PIC14 architecture."""
-    # PIC14: Tcy = Fosc/4. Nested loop costs outer*(3*inner + 4) + 2 Tcy;
-    # with inner=165 each outer turn is ~499 Tcy, so outer = Tcy_per_ms/500.
+    # PIC14: Tcy = Fosc/4, so one millisecond is Fosc/4000 instruction cycles.
+    # The nested block costs outer * (3*inner + 4) + 1 Tcy -- see the derivation
+    # over _delay_ms_pic14e, which the legacy core shares instruction for
+    # instruction -- and the `while i < ms` frame around it costs 20 Tcy on this
+    # core: a two-byte compare with the bank select the legacy core needs, and a
+    # two-byte increment through the carry. Counts are chosen to land the sum on
+    # Fosc/4000; each case states what it measures.
     # match __FREQ__ is dead-code-eliminated at compile time -- only the
     # matching branch survives in the assembled output.
-    i: uint8 = 0
+    i: uint16 = 0
     while i < ms:
         match __FREQ__:
             case 4_000_000:
-                # 2 * 499 = 998 Tcy ~ 1 ms
+                # 2 * (3*162 + 4) + 1 + 20 = 1001 Tcy vs 1000 (+0.10%)
                 asm("    MOVLW 0x02")
                 asm("    MOVWF __dly_c2")
                 asm("_dly_o4m:")
-                asm("    MOVLW 0xA5")
+                asm("    MOVLW 0xA2")
                 asm("    MOVWF __dly_c1")
                 asm("_dly_i4m:")
                 asm("    DECFSZ __dly_c1, F")
@@ -100,11 +105,11 @@ def _delay_ms_pic14(ms: uint8):
                 asm("    DECFSZ __dly_c2, F")
                 asm("    GOTO _dly_o4m")
             case 8_000_000:
-                # 4 * 499 = 1996 Tcy ~ 1 ms
-                asm("    MOVLW 0x04")
+                # 9 * (3*72 + 4) + 1 + 20 = 2001 Tcy vs 2000 (+0.05%)
+                asm("    MOVLW 0x09")
                 asm("    MOVWF __dly_c2")
                 asm("_dly_o8m:")
-                asm("    MOVLW 0xA5")
+                asm("    MOVLW 0x48")
                 asm("    MOVWF __dly_c1")
                 asm("_dly_i8m:")
                 asm("    DECFSZ __dly_c1, F")
@@ -112,11 +117,11 @@ def _delay_ms_pic14(ms: uint8):
                 asm("    DECFSZ __dly_c2, F")
                 asm("    GOTO _dly_o8m")
             case 20_000_000:
-                # 10 * 499 = 4990 Tcy ~ 1 ms
-                asm("    MOVLW 0x0A")
+                # 12 * (3*137 + 4) + 1 + 20 = 5001 Tcy vs 5000 (+0.02%)
+                asm("    MOVLW 0x0C")
                 asm("    MOVWF __dly_c2")
                 asm("_dly_o20m:")
-                asm("    MOVLW 0xA5")
+                asm("    MOVLW 0x89")
                 asm("    MOVWF __dly_c1")
                 asm("_dly_i20m:")
                 asm("    DECFSZ __dly_c1, F")
@@ -124,11 +129,12 @@ def _delay_ms_pic14(ms: uint8):
                 asm("    DECFSZ __dly_c2, F")
                 asm("    GOTO _dly_o20m")
             case _:
-                # 16 MHz table (also the fallback): 8 * 499 = 3992 Tcy ~ 1 ms
-                asm("    MOVLW 0x08")
+                # 16 MHz table, and the fallback:
+                # 9 * (3*146 + 4) + 1 + 20 = 3999 Tcy vs 4000 (-0.03%)
+                asm("    MOVLW 0x09")
                 asm("    MOVWF __dly_c2")
                 asm("_dly_o16m:")
-                asm("    MOVLW 0xA5")
+                asm("    MOVLW 0x92")
                 asm("    MOVWF __dly_c1")
                 asm("_dly_i16m:")
                 asm("    DECFSZ __dly_c1, F")
@@ -138,32 +144,129 @@ def _delay_ms_pic14(ms: uint8):
         i = i + 1
 
 @inline
-def _delay_ms_pic14e(ms: uint8):
+def _delay_ms_pic14e(ms: uint16):
     """Software millisecond delay loop for PIC14E architecture."""
-    # PIC14E: Same instruction timing as PIC14, often higher Fosc.
-    # At 32MHz internal: Tcy = 125ns, 1ms = 8000 Tcy.
-    # Need nested loop: outer 10 x inner 255 x 3 = 7650 Tcy ~ 0.96ms
-    i: uint8 = 0
+    # PIC14E: Tcy = Fosc/4, so one millisecond is Fosc/4000 instruction cycles.
+    #
+    # The nested block below costs outer * (3*inner + 4) + 1 Tcy. The inner turn
+    # is DECFSZ (1) + GOTO (2) = 3 Tcy except the last, where the DECFSZ skip
+    # costs 2 and the GOTO does not run, so the inner loop is 3*inner - 1; the
+    # outer turn wraps it in MOVLW + MOVWF + DECFSZ + GOTO, which is +4, and the
+    # two setup instructions carry the +1 left over from the last outer turn's
+    # missing GOTO. The `while i < ms` frame around it costs 16 Tcy per
+    # millisecond on a uint16 counter -- an 8-cycle two-byte compare and an
+    # 8-cycle two-byte increment -- 15 while the counter's high byte still
+    # differs from the bound's, which is 1 Tcy in 8000 at 32 MHz and below the
+    # accuracy this module claims.
+    #
+    # Counts are chosen to land the sum on Fosc/4000; each case states what it
+    # measures. 1 and 2 MHz cannot be hit exactly because 16 Tcy of frame is
+    # already 6.4% of a millisecond at 1 MHz and the inner loop moves in steps
+    # of 3.
+    #
+    # match __FREQ__ is dead-code-eliminated at compile time -- only the
+    # matching branch survives in the assembled output.
+    i: uint16 = 0
     while i < ms:
-        asm("    MOVLW 0x0B")
-        asm("    MOVWF __dly_c2")
-        asm("_dly_outer_e:")
-        asm("    MOVLW 0xFF")
-        asm("    MOVWF __dly_c1")
-        asm("_dly_inner_e:")
-        asm("    DECFSZ __dly_c1, F")
-        asm("    GOTO _dly_inner_e")
-        asm("    DECFSZ __dly_c2, F")
-        asm("    GOTO _dly_outer_e")
+        match __FREQ__:
+            case 1_000_000:
+                # 1 * (3*76 + 4) + 1 + 16 = 249 Tcy vs 250 (-0.40%)
+                asm("    MOVLW 0x01")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o1e:")
+                asm("    MOVLW 0x4C")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i1e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i1e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o1e")
+            case 2_000_000:
+                # 1 * (3*160 + 4) + 1 + 16 = 501 Tcy vs 500 (+0.20%)
+                asm("    MOVLW 0x01")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o2e:")
+                asm("    MOVLW 0xA0")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i2e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i2e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o2e")
+            case 4_000_000:
+                # 3 * (3*108 + 4) + 1 + 16 = 1001 Tcy vs 1000 (+0.10%)
+                asm("    MOVLW 0x03")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o4e:")
+                asm("    MOVLW 0x6C")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i4e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i4e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o4e")
+            case 8_000_000:
+                # 3 * (3*219 + 4) + 1 + 16 = 2000 Tcy vs 2000 (exact)
+                asm("    MOVLW 0x03")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o8e:")
+                asm("    MOVLW 0xDB")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i8e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i8e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o8e")
+            case 12_000_000:
+                # 19 * (3*51 + 4) + 1 + 16 = 3000 Tcy vs 3000 (exact)
+                asm("    MOVLW 0x13")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o12e:")
+                asm("    MOVLW 0x33")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i12e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i12e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o12e")
+            case 16_000_000:
+                # 6 * (3*220 + 4) + 1 + 16 = 4001 Tcy vs 4000 (+0.03%)
+                asm("    MOVLW 0x06")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o16e:")
+                asm("    MOVLW 0xDC")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i16e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i16e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o16e")
+            case _:
+                # 32 MHz table, and the fallback: 16 * (3*165 + 4) + 1 + 16 =
+                # 8001 Tcy vs 8000 (+0.01%). 32 MHz is the fallback because it
+                # is what this family's RSTOSC selects out of reset and what the
+                # Curiosity Nano's default config word leaves running, so an
+                # unlisted frequency is most likely to be near it rather than
+                # near the 16 MHz the legacy core falls back to.
+                asm("    MOVLW 0x10")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o32e:")
+                asm("    MOVLW 0xA5")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i32e:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i32e")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o32e")
         i = i + 1
 
 @inline
-def _delay_ms_pic18(ms: uint8):
+def _delay_ms_pic18(ms: uint16):
     """Software millisecond delay loop for PIC18 architecture."""
     # PIC18: Tcy = 4 clocks, DECFSZ+BRA = 3 Tcy/iter (BRA = 2 on taken).
     # Typically 48MHz: Tcy = 83.3ns, 1ms = 12000 Tcy.
     # Nested: 16 x 255 x 3 = 12240 Tcy ~ 1.02ms
-    i: uint8 = 0
+    i: uint16 = 0
     while i < ms:
         match __FREQ__:
             case 4_000_000:
@@ -324,19 +427,19 @@ def _delay_1ms_riscv():
     asm("    BNEZ t0, _dly_outer_rv")
 
 @inline
-def _delay_ms_riscv(ms: uint8):
+def _delay_ms_riscv(ms: uint16):
     """Software millisecond delay loop for RISC-V architecture."""
-    i: uint8 = 0
+    i: uint16 = 0
     while i < ms:
         _delay_1ms_riscv()
         i = i + 1
 
 @inline
-def _delay_ms_pic12(ms: uint8):
+def _delay_ms_pic12(ms: uint16):
     """Software millisecond delay loop for PIC12 architecture."""
     # PIC12 baseline: Same Tcy as PIC14, very limited RAM.
     # DECFSZ+GOTO = 3 Tcy/iter. At 4MHz: 1ms = 1000 Tcy.
-    i: uint8 = 0
+    i: uint16 = 0
     while i < ms:
         asm("    MOVLW 0xFF")
         asm("    MOVWF __dly_c1")
