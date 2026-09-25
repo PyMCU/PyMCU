@@ -135,7 +135,7 @@
   said it should, so the writers it emits unconditionally no longer drag the refusal in.
   The sibling PIC14 facades -- `adc.py`, `pwm.py`, `timer.py` -- already dispatched inside
   the class body for this reason; the UART was the one that did not. Firmware for every PIC
-  program that does have a UART is byte-identical.=====================
+  program that does have a UART is byte-identical.
 - **stdlib**: `uart_init` on the PIC16F18877 takes a `uint16` baud selector. The selector is
   the rate in hundreds, so 38400, 57600 and 115200 arrive as 384, 576 and 1152 and the
   declared `uint8` holds none of them. Those three arms were unreachable by the declaration
