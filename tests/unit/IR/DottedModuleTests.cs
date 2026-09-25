@@ -162,4 +162,29 @@ public class DottedModuleTests
         Assert.True(Calls(ir, "pkg_thrice"),
             "a function the package defines itself keeps the package's own name");
     }
+
+    [Fact]
+    public void APackageThatBindsASubmodule_IsImportedFromUnderTheSubmodulesName()
+    {
+        // `from pkg import sub` in the entry file, where pkg/__init__.py already binds `sub`
+        // as its submodule. The binding is real, so the submodule rewrite leaves the symbol
+        // import alone -- and the re-export chase then stopped at the package, mangling
+        // `sub.f()` to pkg_f. Both spellings of the package's own line arrive here as
+        // `import pkg.sub as sub`, which no symbol list mentions.
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["pkg.mod"] = Parse("def twice(n: uint8) -> uint8:\n    return n * 2\n"),
+            ["pkg"] = Parse("import pkg.mod as mod\n"),
+        };
+
+        var ir = Gen(
+            "from pkg import mod\n" +
+            "buf = bytearray(1)\n" +
+            "buf[0] = mod.twice(3)\n", mods);
+
+        Assert.True(Calls(ir, "pkg_mod_twice"),
+            "mod.twice() should reach the submodule the package binds");
+        Assert.False(Calls(ir, "pkg_twice"),
+            "the chase must not stop at the package");
+    }
 }
