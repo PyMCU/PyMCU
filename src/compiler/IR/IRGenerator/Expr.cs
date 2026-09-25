@@ -711,25 +711,62 @@ public partial class IRGenerator
     };
 
     /// <summary>
-    /// The storage a name stands for when it is bound to an instance, or null when it is not
-    /// bound to one.
+    /// Every spelling a bare name can be filed under in THIS scope, most specific first.
     ///
-    /// The alias chain is followed to its end, not to the first key that carries a class:
-    /// `b = a` files a SECOND key against the same object, and identity is a question about
-    /// the storage rather than about the spelling.
+    /// An expansion owns its locals, then the function's own qualified spelling. Below that,
+    /// and only at module level, the module-global spelling: "main" (and
+    /// `&lt;mod&gt;___module_init`) IS the module's top level, and QualifyBoundName binds a name
+    /// there as the module global of that name. Nothing looks OUTWARD from inside a real
+    /// function, because a local `c` in uart_write_decimal_u16 is not the calling program's
+    /// module-level object of the same name.
+    /// </summary>
+    private IEnumerable<string> ScopedNameKeys(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
+        if (string.IsNullOrEmpty(currentInlinePrefix)
+            && (string.IsNullOrEmpty(currentFunction)
+                || currentFunction == "main"
+                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal)))
+        {
+            if (!string.IsNullOrEmpty(currentModulePrefix)) yield return currentModulePrefix + name;
+            yield return name;
+        }
+    }
+
+    /// <summary>
+    /// The storage a name stands for when it is bound to an instance IN THIS SCOPE, or null
+    /// when it is not bound to one.
+    ///
+    /// The alias chain is followed twice over: inward, to find the key that carries the class
+    /// (`b = a` files `main.b` as an alias of `main.a`, and only the second carries it), and
+    /// then to its end, because identity is a question about the storage rather than about the
+    /// spelling.
     /// </summary>
     private string? InstanceStorageName(Expression e)
     {
         if (e is not VariableExpr ve) return null;
-        string key = BinaryDunderReceiver(ve.Name);
-        if (!instanceClasses.TryGetValue(key, out var cls) || string.IsNullOrEmpty(cls))
-            return null;
-        for (int depth = 0; depth < 20; depth++)
+        foreach (string key in ScopedNameKeys(ve.Name))
         {
-            if (!variableAliases.TryGetValue(key, out var next) || string.IsNullOrEmpty(next)) break;
-            key = next;
+            string n = key;
+            for (int depth = 0; depth < 20; depth++)
+            {
+                if (instanceClasses.TryGetValue(n, out var cls) && !string.IsNullOrEmpty(cls))
+                {
+                    string storage = n;
+                    for (int d2 = 0; d2 < 20; d2++)
+                    {
+                        if (!variableAliases.TryGetValue(storage, out var onward)
+                            || string.IsNullOrEmpty(onward)) break;
+                        storage = onward;
+                    }
+                    return storage;
+                }
+                if (!variableAliases.TryGetValue(n, out var next) || string.IsNullOrEmpty(next)) break;
+                n = next;
+            }
         }
-        return key;
+        return null;
     }
 
     /// <summary>
@@ -777,7 +814,7 @@ public partial class IRGenerator
         }
 
         var instExpr = (VariableExpr)(lname != null ? expr.Left : expr.Right);
-        string cls = instanceClasses[BinaryDunderReceiver(instExpr.Name)] ?? "";
+        string cls = InstanceClassOfName(instExpr.Name) ?? "";
         string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
         string needed = BinaryOpDunder(expr.Op) ?? "the comparison method";
         throw UserError(
@@ -800,13 +837,11 @@ public partial class IRGenerator
     /// </summary>
     private string BinaryDunderReceiver(string name)
     {
-        string qname = string.IsNullOrEmpty(currentInlinePrefix)
+        foreach (string key in ScopedNameKeys(name))
+            if (instanceClasses.ContainsKey(key)) return key;
+        return string.IsNullOrEmpty(currentInlinePrefix)
             ? (string.IsNullOrEmpty(currentFunction) ? name : currentFunction + "." + name)
             : currentInlinePrefix + name;
-        if (instanceClasses.ContainsKey(qname)) return qname;
-        if (ProbeBinding(name) is Variable probed && ResolveClassCarryingName(probed) is { } carried)
-            return carried;
-        return qname;
     }
 
     /// <summary>
