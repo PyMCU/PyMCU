@@ -4506,11 +4506,24 @@ public partial class IRGenerator
         }
 
         // `cls.string[k] = v` inside a @classmethod: accumulate a compile-time class dict.
+        //
+        // Only when the attribute IS one. The branch used to claim EVERY subscript write
+        // whose receiver names a class, so `Store.buf[0] = 5` on a class-level bytearray
+        // built a phantom dict entry and emitted no store: the SRAM array kept its zeros
+        // while a read of the same subscript folded to the value just "written", so the
+        // program agreed with itself at the one spot and disagreed everywhere else (a
+        // runtime index, a loop, another function). A class-level register declaration
+        // (`TIFR1: ptr[uint8] = ptr(0x36)`, RFC 0012) fell into the same hole and dropped
+        // `TIMER1.TIFR1[0] = 1` in silence. The empty `cls.string = {}` that opens the
+        // Adafruit CV pattern registers the binding in EmitMemberAssign, and a class-body
+        // dict/set literal registers in ScanClassBodyAttributes, so both arrive here known.
         if (indexExpr.Target is MemberAccessExpr dictMem
-            && ClassNameOf(dictMem.Object) is { } dictCls)
+            && ClassNameOf(dictMem.Object) is { } dictCls
+            && ClassAttrKey(dictCls, dictMem.Member) is { } dictAttrKey
+            && (dictLiteralBindings.ContainsKey(dictAttrKey)
+                || setLiteralBindings.ContainsKey(dictAttrKey)))
         {
-            AccumulateClassDictEntry(ClassAttrKey(dictCls, dictMem.Member),
-                indexExpr.Index, stmt.Value);
+            AccumulateClassDictEntry(dictAttrKey, indexExpr.Index, stmt.Value);
             return;
         }
 
