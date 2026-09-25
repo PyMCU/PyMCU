@@ -116,6 +116,30 @@ public class OverloadBufferArgumentTests
         AssertBufferBodyRan(ir);
     }
 
+    // DISCRIMINATING. A field of a field, which is how Adafruit's drivers reach their buffer
+    // (`self.i2c_device.buffer`). Only the outermost member was read, so the argument fell to
+    // InferExprType one hop further in and took the scalar body even after the direct field
+    // stopped doing so.
+    [Fact]
+    public void ABufferOneObjectDownTakesTheBytearrayOverload()
+    {
+        var ir = Gen(Preamble +
+            "class Inner:\n" +
+            "    def __init__(self):\n" +
+            "        self.temp = bytearray(2)\n" +
+            "class D:\n" +
+            "    def __init__(self):\n" +
+            "        self.inner = Inner()\n" +
+            "    def go(self, c: uint8) -> uint8:\n" +
+            "        self.inner.temp[0] = c\n" +
+            "        return sink(self.inner.temp)\n" +
+            "def main():\n" +
+            "    d = D()\n" +
+            "    G.value = d.go(G.value)\n");
+
+        AssertBufferBodyRan(ir);
+    }
+
     // INVARIANT, not discriminating: a buffer in a local already picked the bytearray overload
     // before the fix. It is the control that made the field the suspect rather than the
     // argument, and it is kept so that teaching the field branch cannot move the local one.

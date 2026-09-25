@@ -4052,6 +4052,44 @@ public partial class IRGenerator
                && (arraysWithVariableIndex.Contains(storage) || moduleSramArrays.Contains(storage));
     }
 
+    /// <summary>
+    /// The flat storage name a field access stands for -- <c>self.temp</c> in a method of `d`
+    /// is <c>d_temp</c>, and <c>self.inner.temp</c> is <c>d_inner_temp</c>. Aliases are
+    /// followed at the root and at every hop, so a field that is itself another instance's
+    /// name resolves before the next member is appended. Returns null when the chain does not
+    /// start at a plain name (a subscript or a call in the middle has no flat name).
+    /// </summary>
+    private string? FlattenFieldChain(MemberAccessExpr field)
+    {
+        var members = new List<string>();
+        Expression node = field;
+        while (node is MemberAccessExpr m)
+        {
+            members.Add(m.Member);
+            node = m.Object;
+        }
+
+        if (node is not VariableExpr root) return null;
+        members.Reverse();
+
+        string b = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + root.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + root.Name : root.Name);
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var ba); d++) b = ba;
+
+        // Every hop but the last is followed through its aliases here; the last one is left
+        // alone so the caller's own alias walk keeps asking its questions in the order it
+        // asked them before this chain existed.
+        for (int i = 0; i < members.Count; i++)
+        {
+            b = b + "_" + members[i];
+            if (i + 1 == members.Count) break;
+            for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var ba); d++) b = ba;
+        }
+
+        return b;
+    }
+
     private string ResolveOverloadedCallee(string callee, CallExpr expr)
     {
         if (overloadedFunctions.Contains(callee))
@@ -4149,13 +4187,14 @@ public partial class IRGenerator
                 // as `_Pin(self._name, mode)`, and every pin came out as whichever overload was
                 // declared first. Fields flatten to `<base>_<member>`, so resolve that name the
                 // same way a plain variable is resolved.
-                if (arg is MemberAccessExpr fieldArg && fieldArg.Object is VariableExpr fieldBase)
+                // A field of a field (`self.i2c_device.buffer`) is the same argument one hop
+                // further in, and it flattens the same way -- `d_inner_temp`. Reading only the
+                // outermost member left every such argument to InferExprType, which is how a
+                // buffer held one object down still reached the scalar overload after the
+                // direct field stopped doing so.
+                if (arg is MemberAccessExpr fieldArg && FlattenFieldChain(fieldArg) is { } chainFlat)
                 {
-                    string b = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + fieldBase.Name
-                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fieldBase.Name : fieldBase.Name);
-                    for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var ba); d++) b = ba;
-                    string flat = b + "_" + fieldArg.Member;
+                    string flat = chainFlat;
                     for (int depth = 0; depth < 20; depth++)
                     {
                         if (instanceClasses.TryGetValue(flat, out string fic)) return ShortClassName(fic);
