@@ -5930,6 +5930,27 @@ public partial class IRGenerator
                 if (ownerLay.Count == 1 && ownerLay[0].Field == expr.Member)
                     return objVal;
             }
+            // The member is a field SOME class writes, so the program is not asking a number
+            // for an attribute: what it has is an instance that collapsed to a scalar on the
+            // way in. The one reachable way to do that is to pass it to a parameter with no
+            // type annotation, and the bare sentence named the number instead of the
+            // parameter, which is where the fix goes (PyMCU#472, and PyMCU#256 for the
+            // collapse itself). Name the classes that do declare the member, so the
+            // annotation to write is on screen.
+            var ownersOfMember = assignedMemberNamesByClass
+                .Where(kv => kv.Value.Contains(expr.Member))
+                .Select(kv => kv.Key[(kv.Key.LastIndexOf('.') + 1)..])
+                .Distinct()
+                .OrderBy(n => n)
+                .ToList();
+            if (ownersOfMember.Count > 0 && expr.Object is VariableExpr numVe)
+                throw UserError(
+                    $"'{numVe.Name}' is a number here, so it has no member '{expr.Member}'. "
+                    + $"'{expr.Member}' is a field of {string.Join(", ", ownersOfMember)}, and an "
+                    + "instance passed to a parameter that declares no type arrives as a plain "
+                    + $"number. Annotate the parameter with its class, e.g. "
+                    + $"`{numVe.Name}: {ownersOfMember[0]}`.",
+                    expr);
             throw UserError($"'{expr.Member}' is not a member of a numeric value", expr);
         }
 
