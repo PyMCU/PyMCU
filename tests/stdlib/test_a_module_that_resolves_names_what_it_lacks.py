@@ -54,6 +54,7 @@ def build(tmp_path: Path, files: dict, py_parser: bool = False) -> str:
 
 CLOCK = (
     "from pymcu.types import uint8\n\n\n"
+    "PERIODIC: uint8 = 1\n\n\n"
     "def sleep_ms(ms: uint8) -> uint8:\n"
     "    return ms\n\n\n"
     "def ticks_diff(a: uint8, b: uint8) -> uint8:\n"
@@ -89,6 +90,31 @@ def test_it_lists_the_module_functions_underscores_and_all(tmp_path, py_parser):
 
     assert "sleep_ms" in out, "a name with an underscore is still a module function:\n" + out
     assert "ticks_diff" in out, out
+
+
+@pytest.mark.parametrize("py_parser", [False, True], ids=["own-parser", "py-parser"])
+def test_it_lists_the_classes_and_constants_too(tmp_path, py_parser):
+    # A module can offer nothing but classes and constants -- the MicroPython layer's
+    # `framebuf` is exactly that -- and a list built from functions alone comes out empty
+    # on it, telling a reader who misremembered a name nothing about FrameBuffer.
+    out = build(tmp_path, {"clock.py": CLOCK, "main.py": MAIN}, py_parser)
+
+    assert "Timer" in out, "a class the module defines is something to write after it:\n" + out
+    assert "PERIODIC" in out, "so is a module-level constant:\n" + out
+
+
+@pytest.mark.parametrize("py_parser", [False, True], ids=["own-parser", "py-parser"])
+def test_the_callables_come_before_the_constants(tmp_path, py_parser):
+    # The refusal is about a CALL, so what can be called is what the reader is reaching for.
+    # Sorting everything together put the ALL-CAPS constants first, and the cut at ten hid
+    # the classes behind them on a module with many format constants.
+    out = build(tmp_path, {"clock.py": CLOCK, "main.py": MAIN}, py_parser)
+
+    listed = re.search(r"It does define ([^.]+)", out)
+    assert listed, out
+    names = [n.strip() for n in listed.group(1).split(",")]
+    assert names.index("Timer") < names.index("PERIODIC"), names
+    assert names.index("sleep_ms") < names.index("PERIODIC"), names
 
 
 @pytest.mark.parametrize("py_parser", [False, True], ids=["own-parser", "py-parser"])
