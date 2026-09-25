@@ -8385,6 +8385,20 @@ public partial class IRGenerator
             EmitStreamStr(ResolveWriteStrFn(), "None");
             return;
         }
+        // A Constant that stands for a compile-time STRING is that string, whatever
+        // expression shape produced it. This writer asked the value only how WIDE it is and
+        // never whether it was a string at all, so `print(hex(255))` sent 257 -- the interned
+        // id of "0xff" -- while `print(str(42))` came out right for the unrelated reason that
+        // str() is one of the shapes print's ladder recognises by syntax (#393).
+        // Text is set exactly where a Constant stands for text and nowhere else, which is
+        // what makes this safe for the one-character case: `'A'` carries both its code 65 and
+        // its text, and printing it is printing the character, the same answer the ladder's
+        // literal branch already gives.
+        if (val is Constant { Text: { } constText })
+        {
+            EmitStreamStr(ResolveWriteStrFn(), constText);
+            return;
+        }
         bool isFloat = val is FloatConstant ||
                        (val is Variable vf && vf.Type == DataType.FLOAT) ||
                        (val is Temporary tf && tf.Type == DataType.FLOAT);
