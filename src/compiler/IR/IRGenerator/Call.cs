@@ -654,8 +654,11 @@ public partial class IRGenerator
                                 return new NoneVal(LiveCallResult: true);
                             }
 
-                            Temporary oDst = MakeTemp(DataTypeExtensions.StringToDataType(
-                                functionReturnTypes[callee]));
+                            Temporary oDst = MakeTemp(
+                                functionReturnMembers.TryGetValue(callee, out var oMembers)
+                                    ? UnionPayloadType(oMembers)
+                                    : DataTypeExtensions.StringToDataType(
+                                        functionReturnTypes[callee]));
                             EmitMaybeTaggedCall(callee, oArgs, oDst);
                             InvalidateFieldsWrittenByCall(callee, instName);
                             return oDst;
@@ -4931,7 +4934,10 @@ public partial class IRGenerator
             Emit(new Call(iaMethod, iaArgs, new NoneVal()));
             return new NoneVal(LiveCallResult: true);
         }
-        Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
+        Temporary iaDst = MakeTemp(
+            functionReturnMembers.TryGetValue(iaMethod, out var iaMembers)
+                ? UnionPayloadType(iaMembers)
+                : DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
         EmitMaybeTaggedCall(iaMethod, iaArgs, iaDst);
         return iaDst;
     }
@@ -5079,7 +5085,10 @@ public partial class IRGenerator
         bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
                      || tRt == "void" || tRt == "None";
         if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(LiveCallResult: true); }
-        Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
+        Temporary tDst = MakeTemp(
+            functionReturnMembers.TryGetValue(target, out var tMembers)
+                ? UnionPayloadType(tMembers)
+                : DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
         EmitMaybeTaggedCall(target, fwdArgs, tDst);
         return tDst;
     }

@@ -1408,14 +1408,17 @@ public partial class IRGenerator
         if (slotInstances.ContainsKey(qn)) return;   // already a slot
 
         // Snapshot current field values (flattened/aliased) before we repoint the instance.
-        var fieldVals = new List<(int Off, DataType Ty, Val V)>();
+        // A union field reads as a tagged val -- payload var plus its `$tag` -- and the
+        // slot keeps both: payload at the payload width, then the tag byte beside it.
+        var fieldVals = new List<(string Field, int Off, DataType Ty, int TagOff, Val V)>();
         int off = 0;
         foreach (var (field, type, _) in layout)
         {
-            DataType dt = DataTypeExtensions.StringToDataType(type);
+            DataType dt = SlotFieldPayloadType(cls, field, type);
             Val v = VisitExpression(new MemberAccessExpr(new VariableExpr(name), field));
-            fieldVals.Add((off, dt, v));
-            off += dt.SizeOf();
+            bool un = IsUnionField(cls, field, out _);
+            fieldVals.Add((field, off, dt, un ? off + dt.SizeOf() : -1, v));
+            off += dt.SizeOf() + (un ? 1 : 0);
         }
 
         int total = off;
@@ -1432,8 +1435,14 @@ public partial class IRGenerator
         instanceClasses[qn] = cls;
         slotInstances[qn] = slot;
 
-        foreach (var (foff, fty, fv) in fieldVals)
-            EmitSlotFieldStore(slot, false, foff, fty, fv, total, byteWise: true);
+        foreach (var (ffield, foff, fty, ftag, fv) in fieldVals)
+        {
+            if (ftag >= 0)
+                EmitSlotUnionFieldStore(slot, false, foff, fty, ftag, cls, ffield,
+                    null, fv, total, byteWise: true);
+            else
+                EmitSlotFieldStore(slot, false, foff, fty, fv, total, byteWise: true);
+        }
     }
 
     // A name that stands for an INSTANCE has no byte of its own to copy: a flattened
@@ -2835,6 +2844,16 @@ public partial class IRGenerator
             && slotMethodFieldOffsets.TryGetValue(currentFunction, out var slotOffs)
             && slotOffs.TryGetValue(memExpr2.Member, out int slotOff))
         {
+            // RFC 0009 Model B: a union field's slot record carries the tag byte
+            // next to the payload -- the write keeps both in step.
+            if (methodInstanceTypes.TryGetValue(currentFunction, out var mthCls) && mthCls != null
+                && IsUnionField(mthCls, memExpr2.Member, out var mthDecl))
+            {
+                var mPayTy = mthDecl != null ? UnionPayloadType(mthDecl) : DataType.FLOAT;
+                EmitSlotUnionFieldStore(currentFunction + ".self", true, slotOff, mPayTy,
+                    slotOff + mPayTy.SizeOf(), mthCls, memExpr2.Member, stmt.Value, value, 0);
+                return;
+            }
             EmitSlotFieldStore(currentFunction + ".self", true, slotOff,
                 SlotMethodFieldType(currentFunction, memExpr2.Member), value, 0);
             return;
@@ -2858,11 +2877,16 @@ public partial class IRGenerator
             if (sb == null || !slotInstances.ContainsKey(sb)) sb = Chase(slotInst.Name);
             if (sb != null && slotInstances.TryGetValue(sb, out var slotArrW)
                 && instanceClasses.TryGetValue(sb, out var slotClsW)
-                && TryGetSlotFieldOffset(slotClsW, memExpr2.Member, out int slotOffW, out var slotTyW))
+                && TryGetSlotFieldLayout(slotClsW, memExpr2.Member, out int slotOffW,
+                    out var slotTyW, out int slotTagW))
             {
                 // Direct SRAM array (not a pointer): byte-offset store, matching construction.
                 int slotTotW = arraySizes.TryGetValue(slotArrW, out var tszW) ? tszW : 0;
-                EmitSlotFieldStore(slotArrW, false, slotOffW, slotTyW, value, slotTotW);
+                if (slotTagW >= 0)
+                    EmitSlotUnionFieldStore(slotArrW, false, slotOffW, slotTyW, slotTagW,
+                        slotClsW, memExpr2.Member, stmt.Value, value, slotTotW);
+                else
+                    EmitSlotFieldStore(slotArrW, false, slotOffW, slotTyW, value, slotTotW);
                 return;
             }
         }
@@ -2870,8 +2894,16 @@ public partial class IRGenerator
         // RFC 0001 Model B (Class[N]): a direct field write on an instance-array element,
         // `arr[i].x = v`. Store through the computed element field address.
         if (memExpr2.Object is IndexExpr iaIdxW
-            && TryInstanceArrayFieldAddr(iaIdxW, memExpr2.Member, out _) is { } iaAddrW)
+            && TryInstanceArrayFieldAddr(iaIdxW, memExpr2.Member, out var iaWTy,
+                out var iaWCls) is { } iaAddrW)
         {
+            // A union field's record is payload + trailing tag byte.
+            if (iaWCls != null && IsUnionField(iaWCls, memExpr2.Member, out _))
+            {
+                EmitSlotUnionFieldStoreAddr(iaAddrW, iaWTy, iaWCls, memExpr2.Member,
+                    stmt.Value, value);
+                return;
+            }
             Emit(new StoreIndirect(value, iaAddrW));
             return;
         }
@@ -3444,14 +3476,17 @@ public partial class IRGenerator
     // RFC 0001 Model B (Class[N]): the runtime address of `arr[idx].<member>` for an instance
     // array -- base + idx*stride + fieldOffset. Returns null when arr is not an instance array.
     // Mirrors the element-address computation used for arr[i].method() calls.
-    private Val? TryInstanceArrayFieldAddr(IndexExpr idx, string member, out DataType fieldType)
+    private Val? TryInstanceArrayFieldAddr(IndexExpr idx, string member, out DataType fieldType,
+        out string? elemCls)
     {
         fieldType = DataType.UINT8;
+        elemCls = null;
         if (idx.Target is not VariableExpr arrVe) return null;
         string q = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name;
         if (!instanceArrayClass.ContainsKey(q) && instanceArrayClass.ContainsKey(arrVe.Name)) q = arrVe.Name;
         if (!instanceArrayClass.TryGetValue(q, out var cls)) return null;
-        if (!TryGetSlotFieldOffset(cls, member, out int fieldOff, out fieldType)) return null;
+        if (!TryGetSlotFieldLayout(cls, member, out int fieldOff, out fieldType, out _)) return null;
+        elemCls = cls;
 
         int stride = instanceArrayStride[q];
         Val idxV = VisitExpression(idx.Index);
@@ -3471,20 +3506,7 @@ public partial class IRGenerator
     // matching the layout order used by EmitSlotConstruction and the outlined methods. Used to
     // resolve a direct field access on a slot instance (outside a method) to a slot load/store.
     private bool TryGetSlotFieldOffset(string? cls, string field, out int offset, out DataType type)
-    {
-        offset = 0;
-        type = DataType.UINT8;
-        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return false;
-        int off = 0;
-        foreach (var (f, ty, _) in layout)
-        {
-            var dt = DataTypeExtensions.StringToDataType(ty);
-            if (f == field) { offset = off; type = dt; return true; }
-            off += dt.SizeOf();
-        }
-
-        return false;
-    }
+        => TryGetSlotFieldLayout(cls, field, out offset, out type, out _);
 
     // The declared type of an outlined slot method's field (for multi-byte slot access). The
     // method's field layout carries the types; slotMethodFieldOffsets only carries offsets.
@@ -6057,7 +6079,7 @@ public partial class IRGenerator
         string slot = qn + "__slot";
 
         var layout = classFieldLayout[cls];
-        int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+        int total = layout.Sum(f => SlotFieldFootprint(cls, f.Field, f.Type));
 
         arraySizes[slot] = total;
         bufferLogicalLen[slot] = total;
@@ -6075,10 +6097,23 @@ public partial class IRGenerator
                 if (pIdx >= 1) argIdx = pIdx - 1; // drop implicit self
             }
 
-            Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
-            EmitSlotFieldStore(slot, false, off, DataTypeExtensions.StringToDataType(type), v, total,
-                byteWise: true);
-            off += DataTypeExtensions.StringToDataType(type).SizeOf();
+            Expression? argExpr = argIdx < args.Count ? args[argIdx] : null;
+            // A union field no ctor parameter feeds initialized to None in
+            // __init__ (the write that makes it a union); the args[0] fallback
+            // would stamp it a live scalar member instead.
+            if (string.IsNullOrEmpty(srcParam)
+                && IsUnionField(cls, field, out _)
+                && fieldNoneWrites.TryGetValue(cls, out var scNoneSet)
+                && scNoneSet.Contains(field))
+                argExpr = new NoneLiteral();
+            Val v = argExpr != null ? VisitExpression(argExpr) : new Constant(0);
+            var payTy = SlotFieldPayloadType(cls, field, type);
+            if (IsUnionField(cls, field, out _))
+                EmitSlotUnionFieldStore(slot, false, off, payTy, off + payTy.SizeOf(),
+                    cls, field, argExpr, v, total, byteWise: true);
+            else
+                EmitSlotFieldStore(slot, false, off, payTy, v, total, byteWise: true);
+            off += payTy.SizeOf() + (IsUnionField(cls, field, out _) ? 1 : 0);
         }
 
         instanceClasses[qn] = cls;
@@ -6096,7 +6131,7 @@ public partial class IRGenerator
         string slot = qn + "__slot";
 
         var layout = classFieldLayout[cls];
-        int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+        int total = layout.Sum(f => SlotFieldFootprint(cls, f.Field, f.Type));
         arraySizes[slot] = total;
         bufferLogicalLen[slot] = total;
         arrayElemTypes[slot] = DataType.UINT8;
@@ -6136,7 +6171,16 @@ public partial class IRGenerator
                 if (p >= 1) argIdx = p - 1;
             }
 
-            Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
+            Expression? argExprI = argIdx < args.Count ? args[argIdx] : null;
+            // A union field no ctor parameter feeds initialized to None in
+            // __init__ (the write that makes it a union); the args[0] fallback
+            // would stamp it a live scalar member instead.
+            if (string.IsNullOrEmpty(srcParam)
+                && IsUnionField(cls, field, out _)
+                && fieldNoneWrites.TryGetValue(cls, out var arrNoneSet)
+                && arrNoneSet.Contains(field))
+                argExprI = new NoneLiteral();
+            Val v = argExprI != null ? VisitExpression(argExprI) : new Constant(0);
             Val byteOff;
             if (idxConst != null)
             {
@@ -6151,14 +6195,63 @@ public partial class IRGenerator
                 byteOff = addr;
             }
 
+            // The field's record width in the slot: payload bytes (+ a tag byte
+            // for a union field, stored at byteOff + payload size below).
+            DataType fdt = SlotFieldPayloadType(cls, field, type);
+            DataType storeTy = fdt;
+            int tagIdx = -1;
+            List<string>? iaMembers = null;
+            Val? iaSrcTag = null;
+            List<string>? iaSrcMembers = null;
+            if (IsUnionField(cls, field, out _))
+            {
+                iaMembers = ClassUnionMembers(cls, field);
+                if (argExprI is NoneLiteral || v is NoneVal)
+                {
+                    int ni = NoneIndex(iaMembers);
+                    tagIdx = ni >= 0 ? ni : 0;   // payload bytes stay unread
+                    storeTy = fdt;
+                }
+                else if (TagOfVal(v) != null && ValNameOf(v) is { } srcNm
+                    && optionalMembersByName.TryGetValue(srcNm, out var srcMs))
+                {
+                    foreach (var m in srcMs)
+                        if (!iaMembers.Contains(m)) iaMembers.Add(m);
+                    iaSrcTag = TagOfVal(v); iaSrcMembers = srcMs;
+                    storeTy = fdt;   // member bytes ride low; copy at payload width
+                }
+                else
+                {
+                    var midx = MemberIndexFor(argExprI, v, iaMembers);
+                    if (midx == null)
+                    {
+                        var mn = UnionMemberNameFor(v, argExprI);
+                        if (mn == null)
+                            throw UserError(
+                                $"field '{field}' already holds None -- a tagged union member "
+                                + "-- and this value is not a scalar the payload can hold "
+                                + "(RFC 0009 decision 4)", argExprI);
+                        iaMembers.Add(mn);
+                        midx = iaMembers.Count - 1;
+                    }
+                    tagIdx = midx.Value;
+                    storeTy = MemberDataType(iaMembers[tagIdx]);
+                }
+            }
+
+            // A None write carries no payload bytes -- the tag alone says what the
+            // field holds, and whatever the payload region contains stays unread.
+            bool iaSkipPayload = argExprI is NoneLiteral || v is NoneVal;
+
             // Store the field at its declared width, splitting a multi-byte value into
             // consecutive bytes (a uint16/uint32 element field was otherwise truncated to 1 byte).
-            DataType fdt = DataTypeExtensions.StringToDataType(type);
-            int fsz = fdt.SizeOf();
+            int fsz = iaSkipPayload ? 0 : storeTy.SizeOf();
             // Same reinterpretation as the single-instance slot: a float's bytes are its
             // IEEE-754 representation, so they are split as an integer and not shifted as a
             // float. This is the second site of the one rule, and both call one helper.
-            var (vBits, vBitsTy) = AsStorableBits(v, fdt);
+            var (vBits, vBitsTy) = iaSkipPayload
+                ? (new Constant(0), storeTy)
+                : AsStorableBits(v, storeTy);
             for (int k = 0; k < fsz; ++k)
             {
                 Temporary b = MakeTemp(DataType.UINT8);
@@ -6188,7 +6281,45 @@ public partial class IRGenerator
                 Emit(new ArrayStore(arrQ, offK, b, DataType.UINT8, total));
             }
 
-            off += fdt.SizeOf();
+            // The union field's tag byte trails the payload inside the record.
+            if (iaMembers != null)
+            {
+                Val tagOffV;
+                int tdelta = fdt.SizeOf();
+                if (byteOff is Constant tbc) tagOffV = new Constant(tbc.Value + tdelta);
+                else
+                {
+                    Temporary ta = MakeTemp(DataType.UINT16);
+                    Emit(new Binary(BinaryOp.Add, byteOff, new Constant(tdelta), ta));
+                    tagOffV = ta;
+                }
+                if (iaSrcTag != null && iaSrcMembers != null
+                    && !ReferenceEquals(iaSrcMembers, iaMembers)
+                    && !iaSrcMembers.SequenceEqual(iaMembers))
+                {
+                    // Source and field order their members differently: remap the
+                    // tag by dispatching on it.
+                    string tagDone = MakeLabel();
+                    for (int mi = 0; mi < iaSrcMembers.Count; ++mi)
+                    {
+                        string mskip = MakeLabel();
+                        Emit(new JumpIfNotEqual(iaSrcTag, new Constant(mi), mskip));
+                        int di = iaMembers.IndexOf(iaSrcMembers[mi]);
+                        Emit(new ArrayStore(arrQ, tagOffV, new Constant(di >= 0 ? di : 0),
+                            DataType.UINT8, total));
+                        Emit(new Jump(tagDone));
+                        Emit(new Label(mskip));
+                    }
+                    Emit(new Label(tagDone));
+                }
+                else
+                {
+                    Emit(new ArrayStore(arrQ, tagOffV,
+                        iaSrcTag ?? (Val)new Constant(tagIdx), DataType.UINT8, total));
+                }
+            }
+
+            off += fdt.SizeOf() + (iaMembers != null ? 1 : 0);
         }
     }
 
@@ -7610,7 +7741,7 @@ public partial class IRGenerator
         {
             int n = int.Parse(inner);
             var layout = classFieldLayout[elemAnno];
-            int stride = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+            int stride = layout.Sum(f => SlotFieldFootprint(elemAnno, f.Field, f.Type));
             string arrQ = string.IsNullOrEmpty(currentFunction)
                 ? stmt.Target : currentFunction + "." + stmt.Target;
             arraySizes[arrQ] = n * stride;

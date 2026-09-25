@@ -3074,6 +3074,7 @@ public partial class IRGenerator
                 case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): localTypes[vd.Name] = vd.VarType; break;
                 case AnnAssign an when !string.IsNullOrEmpty(an.Annotation): localTypes[an.Target] = an.Annotation; break;
             }
+        InferMethodLocalTypes(init, paramTypes, localTypes);
 
         // Index into layout for every field that has one, so a write ANYWHERE in the body --
         // inside a loop, a branch, a try, a with -- can widen the entry the first write
@@ -3380,6 +3381,7 @@ public partial class IRGenerator
                     case VarDecl vd when !string.IsNullOrEmpty(vd.VarType): mLocalTypes[vd.Name] = vd.VarType; break;
                     case AnnAssign an when !string.IsNullOrEmpty(an.Annotation): mLocalTypes[an.Target] = an.Annotation; break;
                 }
+            InferMethodLocalTypes(m, mParamTypes, mLocalTypes);
 
             foreach (var ms in TypeInference.WalkStatements(m.Body.Statements))
             {
@@ -3805,6 +3807,43 @@ public partial class IRGenerator
     /// else (a call to a function, a field read, an index) answers null and leaves the field
     /// at the width it already had.
     /// </summary>
+    /// <summary>
+    /// Give an UNANNOTATED method local a scan-time type when its own assignments
+    /// reveal one: `x = a / b` is float (ExprCouldBeFloat), `x = 100000` is uint32,
+    /// `x = p` is p's type. Iterate to a fixpoint so `b = a` settles after
+    /// `a = x / 10`. Without it `self.f = tmp` (tmp unannotated) filed no member
+    /// evidence and no width: a union field kept a byte-wide payload and a member
+    /// list missing 'float' -- both fatal to a slot layout, which is fixed before
+    /// any body lowers. Annotations always win; among inferred writes the widest
+    /// keeps the entry.
+    /// </summary>
+    private void InferMethodLocalTypes(FunctionDef m, Dictionary<string, string> paramTypes,
+        Dictionary<string, string> localTypes)
+    {
+        var inferred = new HashSet<string>();
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            bool grew = false;
+            foreach (var ls in TypeInference.WalkStatements(m.Body.Statements))
+            {
+                if (ls is not AssignStmt la || la.Target is not VariableExpr lv
+                    || paramTypes.ContainsKey(lv.Name)) continue;
+                if (localTypes.ContainsKey(lv.Name) && !inferred.Contains(lv.Name)) continue;
+                string? t = ExprCouldBeFloat(la.Value) ? "float"
+                    : InferAssignedFieldType(la.Value, paramTypes, localTypes);
+                if (t == null) continue;
+                if (!inferred.Contains(lv.Name)
+                    || ScalarWidthRank(t) > ScalarWidthRank(localTypes[lv.Name]))
+                {
+                    localTypes[lv.Name] = t;
+                    inferred.Add(lv.Name);
+                    grew = true;
+                }
+            }
+            if (!grew) break;
+        }
+    }
+
     private string? InferAssignedFieldType(Expression? e,
                                            Dictionary<string, string> paramTypes,
                                            Dictionary<string, string> localTypes,
@@ -4139,7 +4178,7 @@ public partial class IRGenerator
             foreach (var (fld, ty, _) in layout)
             {
                 offsets[fld] = off;
-                off += DataTypeExtensions.StringToDataType(ty).SizeOf();
+                off += SlotFieldFootprint(classKey, fld, ty);
             }
             slotMethods.Add(fullName);
             slotMethodFieldOffsets[fullName] = offsets;
@@ -4225,6 +4264,11 @@ public partial class IRGenerator
             // refused earlier, on the method, because a vector entry into a body that reads
             // parameters no caller ever writes is worse than the dropped flag.
             IsNaked = func.IsNaked,
+            // RFC 0009: `-> Union[...]`/`-> Optional[...]` on the user method rides the synth
+            // into functionsToCompile, where DecideOptionalReturns reads it off Func -- without
+            // it the shared body returned the payload bare and the call site got no tag.
+            ReturnMembers = func.ReturnMembers,
+            ReturnMembersInferred = func.ReturnMembersInferred,
         };
         compiledAsSubroutine.Add(func);
         functionsToCompile.Add(new FunctionEntry
@@ -4340,7 +4384,18 @@ public partial class IRGenerator
         string rt = (method.ReturnType ?? "").Trim().Trim('"');
         var returnScalars = new HashSet<string>(scalarTypes)
             { "int", "str", "bytes", "bytearray", "memoryview", "None", "void", "" };
-        if (!returnScalars.Contains(rt))
+        // RFC 0009: a `-> Union[...]`/`-> Optional[...]` return is payload-plus-tag over scalar
+        // members -- the shared body's ABI already carries it via functionReturnMembers, so it
+        // is as returnable as a bare scalar. The capital-U spelling used to read as a class
+        // name here, which kept every union-returning method force-inline; on a slot-class
+        // receiver (`arr[i].m()`) that left the call site emitting a `call` to a function that
+        // was never generated.
+        if (method.ReturnMembers is { Count: > 0 } rmSafe)
+        {
+            if (rmSafe.Any(m => m != "None" && m != "int" && !scalarTypes.Contains(m)))
+                return false;
+        }
+        else if (!returnScalars.Contains(rt))
         {
             int nameStart = rt.LastIndexOf('.') + 1;
             if (ClassKeyFromAnnotation(rt) != null

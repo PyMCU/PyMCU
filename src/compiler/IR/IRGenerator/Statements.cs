@@ -1504,12 +1504,15 @@ public partial class IRGenerator
                         if (pIdx >= 1) argIdx = pIdx - 1;
                     }
 
-                    Val v = argIdx < facCall.Args.Count
-                        ? VisitExpression(facCall.Args[argIdx])
-                        : new Constant(0);
-                    EmitSlotFieldStore(selfPtr, true, off,
-                        DataTypeExtensions.StringToDataType(type), v, 0);
-                    off += DataTypeExtensions.StringToDataType(type).SizeOf();
+                    Expression? facArg = argIdx < facCall.Args.Count ? facCall.Args[argIdx] : null;
+                    Val v = facArg != null ? VisitExpression(facArg) : new Constant(0);
+                    var sPayTy = SlotFieldPayloadType(facCls, field, type);
+                    if (IsUnionField(facCls, field, out _))
+                        EmitSlotUnionFieldStore(selfPtr, true, off, sPayTy,
+                            off + sPayTy.SizeOf(), facCls, field, facArg, v, 0);
+                    else
+                        EmitSlotFieldStore(selfPtr, true, off, sPayTy, v, 0);
+                    off += sPayTy.SizeOf() + (IsUnionField(facCls, field, out _) ? 1 : 0);
                 }
 
                 var selfVar = new Variable(selfPtr, DataType.UINT16);

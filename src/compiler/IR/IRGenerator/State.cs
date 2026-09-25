@@ -529,6 +529,15 @@ public partial class IRGenerator
     // self_<field> parameter -- orders the same tag values.
     private Dictionary<string, List<string>> fieldUnionMemberEvidence = new();
 
+    // RFC 0009 phase 3 (slot fields): the ONE member list a union field carries,
+    // keyed "class|field" where class is the field's declaring class (the topmost
+    // ancestor whose layout still carries it). Every storage form of the same
+    // field -- a flattened `<inst>_<field>`, a slot's payload bytes, a tagged val
+    // produced by a slot read -- interprets the tag byte through this shared list,
+    // so a write lowered inside an outlined method and a read lowered at the call
+    // site agree on tag values no matter which lowers first.
+    private Dictionary<string, List<string>> classUnionMembers = new();
+
     // RFC 0001 Model B (Class[N]): an array of boxed ZCA instances laid out contiguously in
     // SRAM. arr[i] is the slot at base + i*stride; arr[i].method() passes that element address
     // as the self pointer. Maps the array's qualified name to its element class and byte stride.

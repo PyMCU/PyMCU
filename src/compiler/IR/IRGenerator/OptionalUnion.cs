@@ -2515,7 +2515,7 @@ public partial class IRGenerator
         if (!IsUnionField(cls, field, out var declared)) return false;
         if (!optionalMembersByName.TryGetValue(flat, out members))
         {
-            members = declared != null ? new List<string>(declared) : EvidenceUnionMembers(cls, field);
+            members = ClassUnionMembers(cls, field);
             optionalMembersByName[flat] = members;
             variableTypes[flat] = UnionPayloadType(members);
             // A union field is always runtime storage: never a compile-time fold.
@@ -2557,7 +2557,314 @@ public partial class IRGenerator
         return members;
     }
 
-    /// Whether a union field's flattened name is a module-level instance's storage:
+    /// <summary>
+    /// The ONE member list a union field carries, shared by every storage form:
+    /// flattened `<inst>_<field>` names, a slot's payload bytes, the tagged val a
+    /// slot read produces, a write-back subroutine's `self_<field>` parameter.
+    /// Keyed by the field's DECLARING class -- the topmost ancestor whose layout
+    /// still carries the field -- so `self.f` inside an inherited outlined method
+    /// (keyed by the method's class) and `obj.f` at the call site (keyed by the
+    /// instance's class) land on the same list and read the tag byte identically.
+    /// Emit-time writes grow the list in place; append-only means a member's tag
+    /// index is fixed the moment it joins.
+    /// </summary>
+    private List<string> ClassUnionMembers(string cls, string field)
+    {
+        string anchor = cls;
+        for (string? c = cls; c != null;)
+        {
+            if (!classBasePrefixes.TryGetValue(c, out var parent) || string.IsNullOrEmpty(parent))
+                break;
+            string p = parent.EndsWith("_") ? parent[..^1] : parent;
+            if (p == c) break;
+            if (classFieldLayout.TryGetValue(p, out var lay) && lay.Any(f => f.Field == field))
+            {
+                anchor = p;
+                c = p;
+            }
+            else
+                break;
+        }
+
+        string key = anchor + "|" + field;
+        if (classUnionMembers.TryGetValue(key, out var cached)) return cached;
+
+        IsUnionField(anchor, field, out var declared);
+        var members = declared != null
+            ? new List<string>(declared)
+            : EvidenceUnionMembers(anchor, field);
+
+        // A subclass's own methods can write the inherited field too -- that
+        // evidence filed under the subclass's key and joins the shared list.
+        var pending = new Queue<string>();
+        var seen = new HashSet<string>();
+        if (classChildren.TryGetValue(anchor, out var seeds))
+            foreach (var k in seeds) pending.Enqueue(k);
+        while (pending.Count > 0)
+        {
+            var c = pending.Dequeue();
+            if (!seen.Add(c)) continue;
+            if (fieldUnionMemberEvidence.TryGetValue(c + "|" + field, out var ev))
+                foreach (var x in ev)
+                    if (!members.Contains(x)) members.Add(x);
+            if (classChildren.TryGetValue(c, out var kids))
+                foreach (var k in kids) pending.Enqueue(k);
+        }
+
+        classUnionMembers[key] = members;
+        return members;
+    }
+
+    /// The payload type a field occupies in a class's slot record. A union field's
+    /// payload is its widest member's width: for a declared union that list is
+    /// fixed; for an evidence union the scan may not have named every member (an
+    /// unannotated local's write joins only at emit time), so the payload reserves
+    /// the widest scalar the tag domain can hold.
+    private DataType SlotFieldPayloadType(string cls, string field, string layoutType)
+    {
+        if (IsUnionField(cls, field, out var declared))
+            return declared != null ? UnionPayloadType(declared) : DataType.FLOAT;
+        return DataTypeExtensions.StringToDataType(layoutType);
+    }
+
+    /// The bytes one field occupies in the slot: payload plus, for a union field,
+    /// one trailing tag byte. Every offset walk over the layout (construction,
+    /// materialization, method access, instance-array stride) uses this footprint
+    /// so caller and callee agree on the record's shape.
+    private int SlotFieldFootprint(string cls, string field, string layoutType)
+    {
+        int n = SlotFieldPayloadType(cls, field, layoutType).SizeOf();
+        return IsUnionField(cls, field, out _) ? n + 1 : n;
+    }
+
+    /// Byte offset, payload type, and tag-byte offset (-1 when not a union field)
+    /// of <paramref name="field"/> in <paramref name="cls"/>'s slot record.
+    private bool TryGetSlotFieldLayout(string? cls, string field,
+        out int offset, out DataType type, out int tagOff)
+    {
+        offset = 0; type = DataType.UINT8; tagOff = -1;
+        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return false;
+        int off = 0;
+        foreach (var (f, ty, _) in layout)
+        {
+            var dt = SlotFieldPayloadType(cls, f, ty);
+            bool un = IsUnionField(cls, f, out _);
+            if (f == field)
+            {
+                offset = off; type = dt;
+                tagOff = un ? off + dt.SizeOf() : -1;
+                return true;
+            }
+            off += dt.SizeOf() + (un ? 1 : 0);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Load a union field out of a slot: the payload at the payload width plus the
+    /// tag byte, registered on the result temp so `TagOfVal` answers and the value
+    /// rides the ordinary tagged-union machinery (member reads, narrowing, the
+    /// guarded-op dispatch) exactly like a flattened `<inst>_<field>` load.
+    /// </summary>
+    private Val EmitSlotUnionFieldLoad(string arrName, bool isPtr, int off, DataType payloadTy,
+        int tagOff, string cls, string field, int slotTotal)
+    {
+        Val payload = EmitSlotFieldLoad(arrName, isPtr, off, payloadTy, slotTotal);
+        Temporary tag = MakeTemp(DataType.UINT8);
+        if (isPtr) Emit(new BytearrayLoad(arrName, new Constant(tagOff), tag));
+        else Emit(new ArrayLoad(arrName, new Constant(tagOff), tag, DataType.UINT8, slotTotal));
+        if (ValNameOf(payload) is { } pn)
+            MarkOptional(pn, tag, ClassUnionMembers(cls, field));
+        return payload;
+    }
+
+    /// <summary>
+    /// `self.f = v` / `obj.f = v` where f is a union field living in a slot:
+    /// payload bytes at the member's own width plus the tag byte. A None write
+    /// stores only the tag. A live-union source copies its payload across at the
+    /// full payload width and carries its tag over, remapping member indices when
+    /// the source's list differs from the field's.
+    /// </summary>
+    private void EmitSlotUnionFieldStore(string arrName, bool isPtr, int off, DataType payloadTy,
+        int tagOff, string cls, string field, Expression? srcExpr, Val value, int slotTotal,
+        bool byteWise = false)
+    {
+        var members = ClassUnionMembers(cls, field);
+        void StoreTagByte(Val tv)
+        {
+            if (isPtr) Emit(new BytearrayStore(arrName, new Constant(tagOff), tv));
+            else Emit(new ArrayStore(arrName, new Constant(tagOff), tv, DataType.UINT8, slotTotal));
+        }
+
+        bool noneWrite = srcExpr is NoneLiteral || (srcExpr != null && IsNoneValued(srcExpr))
+            || (value is NoneVal && srcExpr is not CallExpr);
+        if (noneWrite)
+        {
+            int ni = NoneIndex(members);
+            StoreTagByte(new Constant(ni >= 0 ? ni : 0));
+            return;
+        }
+
+        // A live-union source forwards its members and its tag.
+        if (TagOfVal(value) != null && ValNameOf(value) is { } srcNm
+            && !narrowedOptionals.ContainsKey(srcNm) && !noneValuedNames.Contains(srcNm)
+            && optionalMembersByName.TryGetValue(srcNm, out var srcMembers))
+        {
+            foreach (var m in srcMembers)
+            {
+                if (members.Contains(m)) continue;
+                if (IsUnionField(cls, field, out var decl) && decl != null)
+                    throw UserError(
+                        $"a member of the source union has no place here: '{m}' is not a "
+                        + $"member of field '{field}'s {UnionDisplay(members)}. Widen the "
+                        + "annotation to include it.", srcExpr);
+                members.Add(m);
+            }
+            if (members.Count > 4)
+                throw UserError(
+                    $"field '{field}' would need {members.Count} members -- a tagged union "
+                    + "carries at most 4 (RFC 0009 section 6.1)", srcExpr);
+            // Member bytes ride low in the payload; copying at full payload width
+            // moves whichever member is live without a dispatch on the source tag.
+            EmitSlotFieldStore(arrName, isPtr, off, payloadTy, value, slotTotal, byteWise);
+            Val tagV = TagOfVal(value)!;
+            if (ReferenceEquals(srcMembers, members) || srcMembers.SequenceEqual(members))
+                StoreTagByte(tagV);
+            else
+                EmitSlotUnionTagRemap(arrName, isPtr, tagOff, tagV, srcMembers, members, slotTotal);
+            return;
+        }
+
+        int? idx = MemberIndexFor(srcExpr, value, members);
+        if (idx == null)
+        {
+            string? mn = UnionMemberNameFor(value, srcExpr);
+            if (mn == null || value is ArrayBase or MemoryAddress
+                || !string.IsNullOrEmpty(GetValClass(value)))
+                throw UserError(
+                    $"field '{field}' already holds None -- a tagged union member -- and "
+                    + "this value is not a scalar the payload can hold (an instance or a "
+                    + "buffer has no member slot; RFC 0009 decision 4)", srcExpr);
+            if (IsUnionField(cls, field, out var decl2) && decl2 != null)
+                throw UserError(
+                    $"field '{field}' is declared {UnionDisplay(members)} -- this write's "
+                    + $"'{mn}' is not a member of it. Widen the annotation or keep the "
+                    + "stored types within it.", srcExpr);
+            members.Add(mn);
+            idx = members.Count - 1;
+        }
+        if (members.Count > 4)
+            throw UserError(
+                $"field '{field}' would need {members.Count} members -- a tagged union "
+                + "carries at most 4 (RFC 0009 section 6.1)", srcExpr);
+
+        // Payload at the member's own width; the tag byte tells readers which
+        // width is live, so stale high bytes in a wider payload stay unread.
+        EmitSlotFieldStore(arrName, isPtr, off, MemberDataType(members[idx.Value]),
+            value, slotTotal, byteWise);
+        StoreTagByte(new Constant(idx.Value));
+    }
+
+    /// Address-based variant of the union slot load: `arr[i].f` on an instance
+    /// array, where the field's address is already a computed pointer.
+    private Val EmitSlotUnionFieldLoadAddr(Val addr, DataType payloadTy, string cls, string field)
+    {
+        Temporary payload = MakeTemp(payloadTy);
+        Emit(new LoadIndirect(addr, payload, payloadTy));
+        Temporary tagAddr = MakeTemp(FlashPtrType);
+        Emit(new Binary(BinaryOp.Add, addr, new Constant(payloadTy.SizeOf()), tagAddr));
+        Temporary tag = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(tagAddr, tag, DataType.UINT8));
+        MarkOptional(payload.Name, tag, ClassUnionMembers(cls, field));
+        return payload;
+    }
+
+    /// Address-based union field store: payload at the member's width plus the
+    /// tag byte at addr + payloadSize. Mirrors EmitSlotUnionFieldStore for the
+    /// computed-address case (`arr[i].f = v`).
+    private void EmitSlotUnionFieldStoreAddr(Val addr, DataType payloadTy, string cls,
+        string field, Expression? srcExpr, Val value)
+    {
+        var members = ClassUnionMembers(cls, field);
+        Temporary tagAddrT = MakeTemp(FlashPtrType);
+        Emit(new Binary(BinaryOp.Add, addr, new Constant(payloadTy.SizeOf()), tagAddrT));
+        Val tagAddr = tagAddrT;
+
+        bool noneWrite = srcExpr is NoneLiteral || (srcExpr != null && IsNoneValued(srcExpr))
+            || (value is NoneVal && srcExpr is not CallExpr);
+        if (noneWrite)
+        {
+            int ni = NoneIndex(members);
+            Emit(new StoreIndirect(new Constant(ni >= 0 ? ni : 0), tagAddr, DataType.UINT8));
+            return;
+        }
+
+        if (TagOfVal(value) != null && ValNameOf(value) is { } srcNm
+            && !narrowedOptionals.ContainsKey(srcNm) && !noneValuedNames.Contains(srcNm)
+            && optionalMembersByName.TryGetValue(srcNm, out var srcMembers))
+        {
+            foreach (var m in srcMembers)
+                if (!members.Contains(m)) members.Add(m);
+            Emit(new StoreIndirect(value, addr, payloadTy));
+            Val tagV = TagOfVal(value)!;
+            if (ReferenceEquals(srcMembers, members) || srcMembers.SequenceEqual(members))
+                Emit(new StoreIndirect(tagV, tagAddr, DataType.UINT8));
+            else
+            {
+                string done = MakeLabel();
+                for (int i = 0; i < srcMembers.Count; ++i)
+                {
+                    string skip = MakeLabel();
+                    Emit(new JumpIfNotEqual(tagV, new Constant(i), skip));
+                    int di = members.IndexOf(srcMembers[i]);
+                    Emit(new StoreIndirect(new Constant(di >= 0 ? di : 0), tagAddr,
+                        DataType.UINT8));
+                    Emit(new Jump(done));
+                    Emit(new Label(skip));
+                }
+                Emit(new Label(done));
+            }
+            return;
+        }
+
+        int? idx = MemberIndexFor(srcExpr, value, members);
+        if (idx == null)
+        {
+            string? mn = UnionMemberNameFor(value, srcExpr);
+            if (mn == null || value is ArrayBase or MemoryAddress
+                || !string.IsNullOrEmpty(GetValClass(value)))
+                throw UserError(
+                    $"field '{field}' already holds None -- a tagged union member -- and "
+                    + "this value is not a scalar the payload can hold (RFC 0009 decision 4)",
+                    srcExpr);
+            members.Add(mn);
+            idx = members.Count - 1;
+        }
+        Emit(new StoreIndirect(value, addr, MemberDataType(members[idx.Value])));
+        Emit(new StoreIndirect(new Constant(idx.Value), tagAddr, DataType.UINT8));
+    }
+
+    /// The tag store for a live-union source whose member ORDER differs from the
+    /// field's: dispatch on the source tag and store the field's index for the
+    /// same member. (The payload copy is already unconditional -- member bytes
+    /// sit low in the slot either way.)
+    private void EmitSlotUnionTagRemap(string arrName, bool isPtr, int tagOff, Val srcTag,
+        List<string> srcMembers, List<string> dstMembers, int slotTotal)
+    {
+        string done = MakeLabel();
+        for (int i = 0; i < srcMembers.Count; ++i)
+        {
+            string skip = MakeLabel();
+            Emit(new JumpIfNotEqual(srcTag, new Constant(i), skip));
+            int di = dstMembers.IndexOf(srcMembers[i]);
+            Val tv = new Constant(di >= 0 ? di : 0);
+            if (isPtr) Emit(new BytearrayStore(arrName, new Constant(tagOff), tv));
+            else Emit(new ArrayStore(arrName, new Constant(tagOff), tv, DataType.UINT8, slotTotal));
+            Emit(new Jump(done));
+            Emit(new Label(skip));
+        }
+        Emit(new Label(done));
+    }
     /// a `<inst>_<field>` name where `<inst>` is an instance constructed at module
     /// level. Such a field's writes and reads can live in different functions (a
     /// bound-outlined method writes from its own body), so it must be a global --

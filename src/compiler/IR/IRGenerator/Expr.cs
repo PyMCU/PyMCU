@@ -5262,18 +5262,31 @@ public partial class IRGenerator
             && slotMethodFieldOffsets.TryGetValue(currentFunction, out var fieldOffs)
             && fieldOffs.TryGetValue(expr.Member, out int fieldOff))
         {
+            // RFC 0009 Model B: a union field's slot record carries the tag byte
+            // next to the payload -- the read returns a tagged val.
+            var mthCls = methodInstanceTypes.GetValueOrDefault(currentFunction);
+            if (mthCls != null && IsUnionField(mthCls, expr.Member, out var mthDecl))
+            {
+                var mPayTy = mthDecl != null ? UnionPayloadType(mthDecl) : DataType.FLOAT;
+                return EmitSlotUnionFieldLoad(currentFunction + ".self", true, fieldOff, mPayTy,
+                    fieldOff + mPayTy.SizeOf(), mthCls, expr.Member, 0);
+            }
             return TagSlotFieldClass(
                 EmitSlotFieldLoad(currentFunction + ".self", true, fieldOff,
                     SlotMethodFieldType(currentFunction, expr.Member), 0),
-                methodInstanceTypes.GetValueOrDefault(currentFunction), expr.Member);
+                mthCls, expr.Member);
         }
 
         // RFC 0001 Model B (Class[N]): a direct field read on an instance-array element,
         // `arr[i].x`. Compute the element field address and load through it. Without this the
         // member access fell through to a flattened name and read 0.
         if (expr.Object is IndexExpr iaIdxRead
-            && TryInstanceArrayFieldAddr(iaIdxRead, expr.Member, out var iaFieldTy) is { } iaAddr)
+            && TryInstanceArrayFieldAddr(iaIdxRead, expr.Member, out var iaFieldTy,
+                out var iaCls) is { } iaAddr)
         {
+            // A union field's record is payload + trailing tag byte.
+            if (iaCls != null && IsUnionField(iaCls, expr.Member, out _))
+                return EmitSlotUnionFieldLoadAddr(iaAddr, iaFieldTy, iaCls, expr.Member);
             Temporary iaLoaded = MakeTemp(iaFieldTy);
             Emit(new LoadIndirect(iaAddr, iaLoaded));
             return iaLoaded;
@@ -5624,13 +5637,18 @@ public partial class IRGenerator
         // undefined-symbol link error once the dead var was DCE'd.
         if (baseName != null && slotInstances.TryGetValue(baseName, out var slotArrR)
             && instanceClasses.TryGetValue(baseName, out var slotClsR)
-            && TryGetSlotFieldOffset(slotClsR, expr.Member, out int slotOffR, out DataType slotTyR))
+            && TryGetSlotFieldLayout(slotClsR, expr.Member, out int slotOffR, out DataType slotTyR,
+                out int slotTagR))
         {
             // The slot is a direct SRAM array here (not a pointer as inside a method), so use a
             // byte-offset ArrayLoad -- matching EmitSlotConstruction's ArrayStore. (A BytearrayLoad
             // would dereference main.p__slot as a pointer and read 0.) Multi-byte fields assemble
-            // from consecutive bytes.
+            // from consecutive bytes. A union field also loads its tag byte, so the val the read
+            // returns carries the member choice.
             int slotTotR = arraySizes.TryGetValue(slotArrR, out var tszR) ? tszR : 0;
+            if (slotTagR >= 0)
+                return EmitSlotUnionFieldLoad(slotArrR, false, slotOffR, slotTyR, slotTagR,
+                    slotClsR, expr.Member, slotTotR);
             return TagSlotFieldClass(
                 EmitSlotFieldLoad(slotArrR, false, slotOffR, slotTyR, slotTotR),
                 slotClsR, expr.Member);
