@@ -73,5 +73,9 @@ public sealed record CompilerOptions(
     // generation phase and handed to the optimizer; a file that does not parse
     // or whose block names share nothing with this program is warned about and
     // ignored -- a profile must never fail a build. Optional, like Board.
-    string? ProfilePath = null
+    string? ProfilePath = null,
+    // How diagnostics are printed. Default Human: every shipped IDE integration parses the
+    // text form with a regular expression, so the machine-readable form is opt-in and the
+    // existing one never moves under a plugin that was built against it.
+    ErrorFormat ErrorFormat = ErrorFormat.Human
 );

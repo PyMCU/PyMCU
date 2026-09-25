@@ -156,6 +156,17 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => null
         };
 
+        // Named `--error-format` with the values rustc uses, because a reader who has seen one
+        // machine-readable compiler has seen that flag, and an IDE author reaches for it by
+        // name. `human` stays the default: every shipped plugin parses the text form today.
+        Option<string> errorFormatOption = new("--error-format")
+        {
+            Description = "How diagnostics are printed: 'human' (header, snippet and caret) "
+                        + "or 'json' (one JSON object per diagnostic, per line, on stderr)",
+            DefaultValueFactory = parseResult => "human"
+        };
+        errorFormatOption.AcceptOnlyFromAmong("human", "json");
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -176,6 +187,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(stdlibOption);
         rootCommand.Options.Add(embedOption);
         rootCommand.Options.Add(profileOption);
+        rootCommand.Options.Add(errorFormatOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -205,8 +217,15 @@ public static class CompilerCliBuilder
                 Library: parseResult.GetValue(libraryOption),
                 Stdlib: parseResult.GetValue(stdlibOption) ?? string.Empty,
                 Embeds: parseResult.GetValue(embedOption) ?? [],
-                ProfilePath: parseResult.GetValue(profileOption)
+                ProfilePath: parseResult.GetValue(profileOption),
+                ErrorFormat: parseResult.GetValue(errorFormatOption) == "json"
+                    ? Common.ErrorFormat.Json
+                    : Common.ErrorFormat.Human
             );
+
+            // Before the runner, because a diagnostic can be raised by the very first phase and
+            // the reporting sites read this statically. Issue: the options never reach them.
+            Common.Diagnostic.Format = options.ErrorFormat;
 
             // Return the exit code so Invoke() (and thus the process) actually fails
             // on a compile error. Setting Environment.ExitCode alone was ignored

@@ -18,10 +18,26 @@ using System.Text;
 
 namespace PyMCU.Common;
 
+/// How a diagnostic leaves the compiler.
+public enum ErrorFormat
+{
+    /// The GCC-style header plus source snippet and caret. What a person reads, and what
+    /// every shipped IDE integration parses today with a regular expression.
+    Human,
+
+    /// One JSON object per diagnostic, one per line, on stderr. What a machine reads.
+    Json,
+}
+
 public static class Diagnostic
 {
+    /// The format every diagnostic of this run is emitted in. Set once from the command line
+    /// before the pipeline starts, exactly like <see cref="Logger.Initialize"/>: the reporting
+    /// sites are spread across every phase and none of them holds the options.
+    public static ErrorFormat Format { get; set; } = ErrorFormat.Human;
+
     /// Maps CompilerError type_name to a VS Code severity string.
-    private static string SeverityFor(string typeName)
+    internal static string SeverityFor(string typeName)
     {
         if (typeName == "Warning") return "warning";
         if (typeName == "Info" || typeName == "Note") return "info";
@@ -40,9 +56,27 @@ public static class Diagnostic
     /// and prints NO caret, because a caret on a guess is worse than no caret at all.
     public static void Report(CompilerError err, ReadOnlySpan<char> source, string filename)
     {
+        if (Format == ErrorFormat.Json)
+        {
+            DiagnosticJson.Report(err, source, filename);
+            return;
+        }
+
+        ReportHuman(err, source, filename, Console.Error, !Console.IsErrorRedirected);
+    }
+
+    /// The human rendering, with the destination and the colouring passed in.
+    ///
+    /// Both are parameters rather than read from the console, because the JSON format carries
+    /// this same text in its `rendered` field: a consumer that wants to show exactly what the
+    /// terminal shows should not have to re-derive it, and a consumer that shows its own
+    /// squiggle drops the field. Capturing it by swapping <c>Console.Error</c> would have made
+    /// the two formats race each other in a process that reports twice.
+    internal static void ReportHuman(CompilerError err, ReadOnlySpan<char> source, string filename,
+                                     TextWriter output, bool useColor)
+    {
         bool columnKnown = err.HasColumn;
         string severity = SeverityFor(err.TypeName);
-        bool useColor = !Console.IsErrorRedirected;
 
         // Machine-readable header (VS Code problem matcher).
         //
@@ -56,9 +90,9 @@ public static class Diagnostic
         int column = columnKnown ? err.Column : 1;
         string header = $"{filename}:{err.Line}:{column}: {severity}: {err.TypeName}: {err.Message}";
         if (useColor)
-            Console.Error.WriteLine($"\x1b[1;31m{header}\x1b[0m");
+            output.WriteLine($"\x1b[1;31m{header}\x1b[0m");
         else
-            Console.Error.WriteLine(header);
+            output.WriteLine(header);
 
         string lineContent = GetLine(source, err.Line);
         if (string.IsNullOrEmpty(lineContent)) return;
@@ -70,11 +104,11 @@ public static class Diagnostic
         if (!string.IsNullOrEmpty(prevLine))
         {
             string prevFmt = $"{(err.Line - 1).ToString().PadLeft(lineNumWidth)} | {prevLine}";
-            Console.Error.WriteLine(useColor ? $"\x1b[2m{prevFmt}\x1b[0m" : prevFmt);
+            output.WriteLine(useColor ? $"\x1b[2m{prevFmt}\x1b[0m" : prevFmt);
         }
 
         // Current line
-        Console.Error.WriteLine($"{err.Line.ToString().PadLeft(lineNumWidth)} | {lineContent}");
+        output.WriteLine($"{err.Line.ToString().PadLeft(lineNumWidth)} | {lineContent}");
 
         // Pointer, drawn only when the column is a measurement rather than a placeholder.
         if (columnKnown)
@@ -93,9 +127,9 @@ public static class Diagnostic
             string pointerPad = CaretPad(lineContent, lineNumWidth + 3, caretColumn);
             string underline = length <= 1 ? "^" : "^" + new string('~', length - 1);
             if (useColor)
-                Console.Error.WriteLine($"{pointerPad}\x1b[31m{underline}\x1b[0m");
+                output.WriteLine($"{pointerPad}\x1b[31m{underline}\x1b[0m");
             else
-                Console.Error.WriteLine($"{pointerPad}{underline}");
+                output.WriteLine($"{pointerPad}{underline}");
         }
 
         // Context line N+1 (dimmed)
@@ -103,7 +137,7 @@ public static class Diagnostic
         if (!string.IsNullOrEmpty(nextLine))
         {
             string nextFmt = $"{(err.Line + 1).ToString().PadLeft(lineNumWidth)} | {nextLine}";
-            Console.Error.WriteLine(useColor ? $"\x1b[2m{nextFmt}\x1b[0m" : nextFmt);
+            output.WriteLine(useColor ? $"\x1b[2m{nextFmt}\x1b[0m" : nextFmt);
         }
     }
 
