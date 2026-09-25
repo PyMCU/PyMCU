@@ -18,6 +18,15 @@
   and a migration note, and what the third promises is the opposite. The alpha note on the
   ARM, PIC and RISC-V backends is about which chips are ready and not about this vocabulary.
 
+- **ir**: a call that hands a buffer to a name whose `@inline` overloads all take numbers is
+  refused at that line, naming the argument position and listing the overloads on offer.
+  There is nothing to select in that case, and what used to happen was that whichever
+  overload the registry enumerated first read the buffer's address as a number and said
+  nothing. Widening one number into another is untouched, so a `uint8` argument still selects
+  a `uint16` parameter. Measured over the 566 AVR fixtures and examples before it was
+  written: four calls reach a non-exact selection and all four widen a number, so no program
+  in the tree changes.
+
 - **ir/stdlib**: grouped peripherals (RFC 0012). A `ptr[T]` declaration works in a CLASS
   body, so a peripheral's registers can be reached as attributes of one named class the way
   an XC8 program reaches T1CON through the Timer1 SFR block:
@@ -144,6 +153,23 @@
   CPython faults. A value proven non-None still emits byte-identical code.
 
 ### Fixed
+
+- **ir**: a buffer held anywhere but a local picked the SCALAR `@inline` overload, and the
+  call sent the buffer's ADDRESS truncated to eight bits. `i2c.writeto(self.addr, self.temp)`
+  put `3C 02` on an emulated Uno's TWI lines where the program says `3C 80ae`, and the `02`
+  was `lo8(&self.temp)`: putting a module array in front of the buffer moved the byte to `05`
+  and `09` with it. Nothing was said at any point. `self.buf = bytearray(n)` is the shape
+  every MicroPython I2C driver is written in -- `ssd1306` and `sh1106` carry it literally --
+  so a driver written that way compiled, ran, talked to the bus and sent garbage, and the
+  source gave a reader nothing to see, because the same buffer in a LOCAL already picked the
+  right overload and the call is spelled identically in both places. Overload selection typed
+  the argument with `InferExprType`, which for a buffer answers with its ELEMENT type. Six
+  spellings of one buffer were wrong this way and all six are fixed: a field built by
+  `bytearray()`, a field declared with a size, a field one object down
+  (`self.i2c_device.buffer`), a buffer written in the class body and read either way
+  (`D.BUF`, `self.BUF`), a `memoryview` and a slice of one -- which was never about fields,
+  a view over a module-level buffer was wrong too -- and a buffer returned from a method.
+  Firmware is byte-identical across all 566 AVR fixtures and examples. PyMCU#503.
 
 - **ir**: `ptr(buf)` on an ordinary array is refused instead of compiling to a read of the
   array's first byte. ptr()'s constant-base arm exists for a hardware register, where the

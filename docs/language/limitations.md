@@ -553,6 +553,18 @@ untagged code it had before. What is still refused is a union position with no s
 ABI for a tag at all -- a buffer member (`list`/`tuple`/array or class instance), or a tag
 that would have to cross a function reference's fixed signature.
 
+**An `@inline` overload is chosen by the argument's type, and a BUFFER is one of those
+types.** A `bytearray`, a sized array, a `memoryview` or a slice of one reaches a call as its
+base address, so it selects an overload whose parameter is a buffer, wherever the buffer is
+held: a local, a module global, an instance field, a field of a field
+(`self.i2c_device.buffer`), a buffer written in the class body and read as `D.BUF` or
+`self.BUF`, or the result of a method declared `-> bytearray`. When NO overload of the name
+takes a buffer, the call is refused at that line, naming the argument position and listing
+the overloads on offer -- there is nothing to select, and what used to happen was that
+whichever overload the registry enumerated first read the buffer's address as a number
+(PyMCU#503). Widening one number into another is untouched: a `uint8` argument still selects
+a `uint16` parameter.
+
 An annotation may also be written through an alias: `ColorUnion = Union[int, uint8]` binds
 the name at compile time (inside a discarded `if TYPE_CHECKING:` / compat-layer guard too),
 and a parameter annotated `x: ColorUnion` reads it exactly as if the union were spelled out
