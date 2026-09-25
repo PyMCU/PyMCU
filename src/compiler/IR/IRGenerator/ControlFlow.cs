@@ -328,6 +328,18 @@ public partial class IRGenerator
                                    or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq))
                 return 0;
 
+            // A comparison whose left operand is an instance of a class that defines the
+            // operator's dunder is a METHOD CALL, not a numeric test, and it never reached the
+            // method from here: an `if` does not go through VisitBinary, it becomes a
+            // conditional jump right below, over the flattened instance handles. Those handles
+            // are never written, so `if a == b:` compared two zeroed slots and answered "equal"
+            // for every pair of instances, while the same comparison assigned to a name
+            // dispatched correctly (PyMCU#491). Hand the whole comparison back to the value
+            // path, which already dispatches it, and let the caller test the answer's
+            // truthiness. Nothing has been lowered yet, so the operands are not evaluated
+            // twice.
+            if (BinaryDispatchesToDunder(binExpr.Left, binExpr.Op)) return 0;
+
             RejectBareRegisterOperands(binExpr);
 
             // `if s == "running":` where s holds one of several texts. Interning gives equal

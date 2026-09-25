@@ -2315,6 +2315,86 @@ public class IRGeneratorTests
             i => i is Copy { Src: Constant { Value: 14 } });
     }
 
+    // ── A comparison used as a CONDITION dispatches its dunder ────────────
+    // PyMCU#491: an `if` does not lower its comparison through VisitBinary; it becomes a
+    // conditional jump over the flattened instance handles, which are never written. So
+    // `if a == b:` compared two zeroed slots and answered "equal" for every pair of
+    // instances, and all six comparison dunders were dead in the position readers write
+    // them in, while the same comparison assigned to a name dispatched.
+    private static bool ComparesTheseHandles(Instruction i, string left, string right)
+    {
+        (Val S1, Val S2)? pair = i switch
+        {
+            JumpIfEqual j => (j.Src1, j.Src2),
+            JumpIfNotEqual j => (j.Src1, j.Src2),
+            JumpIfLessThan j => (j.Src1, j.Src2),
+            JumpIfLessOrEqual j => (j.Src1, j.Src2),
+            JumpIfGreaterThan j => (j.Src1, j.Src2),
+            JumpIfGreaterOrEqual j => (j.Src1, j.Src2),
+            _ => null,
+        };
+        return pair is { } p
+               && p.S1 is Variable lv && lv.Name == left
+               && p.S2 is Variable rv && rv.Name == right;
+    }
+
+    [Theory]
+    [InlineData("__eq__", "==")]
+    [InlineData("__ne__", "!=")]
+    [InlineData("__lt__", "<")]
+    [InlineData("__le__", "<=")]
+    [InlineData("__gt__", ">")]
+    [InlineData("__ge__", ">=")]
+    public void ComparisonDunder_InACondition_Dispatches(string dunder, string op)
+    {
+        string src =
+            "seen: uint8 = 0\n" +
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            $"    def {dunder}(self, other) -> uint8:\n" +
+            "        global seen\n" +
+            "        seen = 41\n" +
+            "        return 0\n" +
+            "def main():\n" +
+            "    a = Acc(1)\n" +
+            "    b = Acc(2)\n" +
+            "    x: uint8 = 3\n" +
+            $"    if a {op} b:\n" +
+            "        x = 7\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+
+        // The method body ran: 41 is written nowhere else in the program.
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 41 } });
+        // And the raw handles are not what decided the branch.
+        Assert.DoesNotContain(body, i => ComparesTheseHandles(i, "main.a", "main.b"));
+    }
+
+    // A comparison between two plain scalars keeps the jump it always had: the dunder lookup
+    // must not turn every `if x == y:` in the program into a value plus a truth test.
+    [Fact]
+    public void Comparison_BetweenScalars_StillLowersAsAJump()
+    {
+        const string src =
+            "def main():\n" +
+            "    a: uint8 = 0\n" +
+            "    b: uint8 = 0\n" +
+            "    for i in range(4):\n" +
+            "        a = a + i\n" +
+            "        b = b + 1\n" +
+            "        if a == b:\n" +
+            "            a = 7\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => ComparesTheseHandles(i, "main.a", "main.b"));
+    }
+
     // `a /= 2` was the only augmented assignment that errored, and it named a dunder the class
     // had. AugOp.Div was simply missing from the in-place map.
     [Fact]
