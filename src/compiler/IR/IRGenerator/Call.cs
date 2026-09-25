@@ -179,9 +179,11 @@ public partial class IRGenerator
         // register accesses that followed worked and the meaningless call went unsaid. Refused
         // here, before any constructor path can claim it, because the stable surface should not
         // accept a call that means nothing.
+        // ResolveCallee is what decides, and its first question is whether the module being
+        // lowered defines a class of that name, so a user's own `class Timer1` shadows the
+        // chip's exactly as it does in Python and never reaches this refusal.
         if (expr.Callee is VariableExpr regGroupVe
-            && (registerGroupClasses.Contains(regGroupVe.Name)
-                || registerGroupClasses.Contains(ResolveCallee(regGroupVe.Name))))
+            && registerGroupClasses.Contains(ResolveCallee(regGroupVe.Name)))
             throw UserError(
                 $"'{regGroupVe.Name}' is a peripheral's registers, not a class to instantiate. It "
                 + "is named like a type because PEP 8 names classes that way, and it is a namespace "

@@ -640,7 +640,12 @@ public partial class IRGenerator
                     IsMemoryAddress = true, Value = regAddr,
                     Type = DataTypeExtensions.StringToDataType(innerType),
                 };
-                registerGroupClasses.Add(className);
+                // The QUALIFIED name only. Registering the bare spelling too reserved it
+                // for the whole program: the target's chip file is scanned whether or not
+                // the program imports it, so its `class Timer1` made a user's own
+                // `class Timer1` unconstructible, with a message about silicon and
+                // registers the user never named. A group is refused where the name
+                // RESOLVES to it, not where the spelling matches.
                 registerGroupClasses.Add(enclosingPrefix + className);
                 continue;
             }

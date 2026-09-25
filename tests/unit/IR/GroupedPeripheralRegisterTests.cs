@@ -34,6 +34,14 @@ public class GroupedPeripheralRegisterTests
             new Dictionary<string, ProgramNode>(),
             new DeviceConfig { Arch = "avr" });
 
+    private static ProgramIR GenWithModule(string mainSrc, string moduleName, string moduleSrc) =>
+        new IRGenerator().Generate(
+            new Parser(new Lexer(mainSrc).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>
+                { [moduleName] = new Parser(new Lexer(moduleSrc).Tokenize()).ParseProgram() },
+            new DeviceConfig { Arch = "avr" },
+            projectModules: new HashSet<string> { moduleName });
+
     private const string GroupHeader =
         "from pymcu.types import ptr, uint8, uint16\n" +
         "\n" +
@@ -244,5 +252,86 @@ public class GroupedPeripheralRegisterTests
             "    c = Counter(7)\n");
 
         Assert.NotEmpty(Code(ir));
+    }
+
+    [Fact]
+    public void AUserClassNamedLikeAGroup_IsStillTheUsersClass()
+    {
+        // The regression this pins: the target's chip file is scanned whether or not the
+        // program imports it, so registering the group's BARE spelling reserved the name
+        // for every program. A user who called their own class Timer1 was told it was a
+        // peripheral's registers, about silicon they never named.
+        // The group has to EXIST for this to measure anything: with no chip module in the
+        // build nothing is registered and the test passes on the broken compiler too. The
+        // module here stands in for the target's chip file, which a real build always scans.
+        var ir = GenWithModule(
+            "from pymcu.types import uint8\n" +
+            "\n" +
+            "class Timer1:\n" +
+            "    def __init__(self, n: uint8):\n" +
+            "        self.n = n\n" +
+            "\n" +
+            "def main():\n" +
+            "    t = Timer1(7)\n",
+            "chipmod",
+            "from pymcu.types import ptr, uint8\n" +
+            "\n" +
+            "class Timer1:\n" +
+            "    TCCR1A: ptr[uint8] = ptr(0x80)\n");
+
+        Assert.NotEmpty(Code(ir));
+        Assert.Contains(Code(ir).OfType<Copy>(), c => c.Src is Constant { Value: 7 });
+    }
+
+    [Fact]
+    public void AUserClassShadowingAnImportedGroup_Wins()
+    {
+        // The uncomfortable case: the program imports the group AND defines a class of the
+        // same name. Python rebinds the name, so the class wins, and the constructor call
+        // never reaches the group's refusal.
+        const string chip =
+            "from pymcu.types import ptr, uint8\n" +
+            "\n" +
+            "class Timer1:\n" +
+            "    TCCR1A: ptr[uint8] = ptr(0x80)\n";
+
+        var ir = GenWithModule(
+            "from chipmod import Timer1\n" +
+            "from pymcu.types import uint8\n" +
+            "\n" +
+            "class Timer1:\n" +
+            "    def __init__(self, n: uint8):\n" +
+            "        self.n = n\n" +
+            "\n" +
+            "def main():\n" +
+            "    t = Timer1(7)\n",
+            "chipmod", chip);
+
+        // It compiled at all, which is the half that used to throw, and the 7 the user's
+        // constructor stores is what reaches the program.
+        Assert.NotEmpty(Code(ir));
+        Assert.Contains(Code(ir).OfType<Copy>(), c => c.Src is Constant { Value: 7 });
+    }
+
+    [Fact]
+    public void TheGroupItselfIsStillRefused_WhenItIsTheNameThatResolves()
+    {
+        // The other half. Fixing the shadowing by dropping the refusal would pass the test
+        // above and lose the diagnostic, so both are pinned in the same file.
+        const string chip =
+            "from pymcu.types import ptr, uint8\n" +
+            "\n" +
+            "class Timer1:\n" +
+            "    TCCR1A: ptr[uint8] = ptr(0x80)\n";
+
+        var ex = Assert.Throws<CompilerError>(() => GenWithModule(
+            "from chipmod import Timer1\n" +
+            "\n" +
+            "def main():\n" +
+            "    t = Timer1()\n",
+            "chipmod", chip));
+
+        Assert.Contains("Timer1", ex.Message);
+        Assert.Contains("not a class to instantiate", ex.Message);
     }
 }
