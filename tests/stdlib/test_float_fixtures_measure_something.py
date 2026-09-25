@@ -33,7 +33,7 @@ def float_ops(tmp_path: Path, expr: str) -> int:
     src.write_text(program(expr))
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic18",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic18",
          "--target", "pic18f45k50", "--freq", "16000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

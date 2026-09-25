@@ -45,7 +45,7 @@ def const_stores(tmp_path, baud):
     src.write_text(PROGRAM.format(baud=baud))
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic14e",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic14e",
          "--target", "pic16f18877", "--freq", "32000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

@@ -40,7 +40,7 @@ def bit_tests(tmp_path: Path, chip: str, port: str):
     src.write_text(program(chip, port))
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic14",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic14",
          "--target", chip, "--freq", "8000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

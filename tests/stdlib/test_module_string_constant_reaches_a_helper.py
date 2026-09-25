@@ -39,7 +39,7 @@ REFUSAL = "is not a string constant known at compile time"
 def build(tmp_path: Path, source: str, py_parser: bool = False) -> str:
     (tmp_path / "main.py").write_text(source)
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "atmega328p", "--freq", "16000000",
          "-I", str(tmp_path), "-I", str(STDLIB)],
         capture_output=True, text=True,

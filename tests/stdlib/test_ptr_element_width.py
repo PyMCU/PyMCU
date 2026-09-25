@@ -35,7 +35,7 @@ def mmio_types(tmp_path: Path, source: str) -> dict[int, set[int]]:
     mir = tmp_path / "firmware.mir"
 
     result = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "riscv",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "riscv",
          "--target", "ch32v003", "--freq", "48000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

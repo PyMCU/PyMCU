@@ -41,9 +41,9 @@ def compile_(tmp_path: Path, body: str, py_parser: bool = False):
     if py_parser:
         env["PYMCU_PY_PARSER"] = "1"
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "atmega328p", "--freq", "16000000",
-         "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", "/dev/null"],
+         "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", str(tmp_path / "out.mir")],
         capture_output=True, text=True, env=env,
     )
     return "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr
@@ -140,9 +140,9 @@ def test_a_user_function_already_answered_and_still_does(tmp_path):
     be changed in a way that regresses the binder's own message."""
     (tmp_path / "main.py").write_text(USER_FUNCTION)
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "atmega328p", "--freq", "16000000",
-         "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", "/dev/null"],
+         "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", str(tmp_path / "out.mir")],
         capture_output=True, text=True,
     )
     out = proc.stdout + proc.stderr

@@ -23,7 +23,7 @@ def build_ir(tmp_path: Path, source: str, freq: int = 4_000_000):
     src.write_text(source)
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic14",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic14",
          "--target", "pic16f628a", "--freq", str(freq), "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,
@@ -129,7 +129,7 @@ def test_the_build_emits_a_config_word(tmp_path):
     src.write_text(BLINK_UART)
     mir = tmp_path / "firmware.mir"
     subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic14",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic14",
          "--target", "pic16f628a", "--freq", "4000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)], capture_output=True, text=True, check=False)
     asm = tmp_path / "firmware.asm"

@@ -68,7 +68,7 @@ def emit_ir(tmp_path: Path, source: str, chip: str, freq: int = 16_000_000) -> P
     src.write_text(source)
     mir = tmp_path / "firmware.mir"
     subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "avr", "--target", chip,
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "avr", "--target", chip,
          "--freq", str(freq), "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", str(mir)],
         capture_output=True, text=True,
     )

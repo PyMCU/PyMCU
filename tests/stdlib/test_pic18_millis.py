@@ -63,7 +63,7 @@ def build(tmp_path: Path, source: str, freq: int = 16_000_000):
     src.write_text(source)
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic18",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic18",
          "--target", "pic18f45k50", "--freq", str(freq), "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

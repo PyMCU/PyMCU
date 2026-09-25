@@ -33,7 +33,7 @@ def frontend(tmp_path: Path, arch: str, chip: str, freq: int, source: str = PROG
     src.write_text(source)
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", arch,
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", arch,
          "--target", chip, "--freq", str(freq), "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

@@ -42,9 +42,9 @@ def test_every_spelling_of_the_pio_import_builds(tmp_path, line):
     lib/src/pymcu/pio.py:9 -- a file the reader did not write."""
     (tmp_path / "main.py").write_text(line + "\n\n\ndef main():\n    pass\n")
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "rp2350", "--freq", "125000000",
-         "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", "/dev/null"],
+         "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", str(tmp_path / "out.mir")],
         capture_output=True, text=True,
     )
     out = proc.stdout + proc.stderr

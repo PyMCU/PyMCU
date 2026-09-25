@@ -69,7 +69,7 @@ def _compile(tmp_path, source, chip):
     src = tmp_path / "main.py"
     src.write_text(source)
     return subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "avr", "--target", chip,
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "avr", "--target", chip,
          "--freq", "16000000", "-I", str(STDLIB), "--emit-ir", str(tmp_path / "fw.mir")],
         capture_output=True, text=True,
     )

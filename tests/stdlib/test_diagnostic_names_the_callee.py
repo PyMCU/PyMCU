@@ -59,7 +59,7 @@ def build(tmp_path: Path, files: dict, py_parser: bool = False):
     for name, text in files.items():
         (tmp_path / name).write_text(text)
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "atmega328p", "--freq", "16000000",
          "-I", str(tmp_path), "-I", str(STDLIB),
          "--emit-ir", str(tmp_path / "firmware.mir")],

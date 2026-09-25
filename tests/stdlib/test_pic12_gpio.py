@@ -19,7 +19,7 @@ def build_ir(tmp_path: Path, body: str):
     src.write_text("from pymcu.hal.gpio import Pin\n\n\ndef main():\n" + body)
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic12",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic12",
          "--target", "pic10f200", "--freq", "4000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

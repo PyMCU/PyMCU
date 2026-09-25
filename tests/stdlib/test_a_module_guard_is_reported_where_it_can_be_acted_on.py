@@ -46,7 +46,7 @@ def _diagnose(tmp_path: Path, source: str, target: str, py_parser: bool):
         env.pop("PYMCU_PY_PARSER", None)
     proc = subprocess.run(
         [str(PYMCUC), str(src), "--target", target,
-         "-I", str(tmp_path), "-I", str(STDLIB), "-o", "/dev/null"],
+         "-I", str(tmp_path), "-I", str(STDLIB), "-o", str(tmp_path / "out.bin")],
         capture_output=True, text=True, env=env,
     )
     out = proc.stdout + proc.stderr
@@ -203,7 +203,7 @@ def test_the_shape_of_the_helper_does_not_move_the_caret(tmp_path, helper, py_pa
         env.pop("PYMCU_PY_PARSER", None)
     proc = subprocess.run(
         [str(PYMCUC), str(src), "--target", "atmega328p", "-I", str(proj),
-         "-I", str(lib.parent), "-I", str(STDLIB), "-o", "/dev/null"],
+         "-I", str(lib.parent), "-I", str(STDLIB), "-o", str(tmp_path / "out.bin")],
         capture_output=True, text=True, env=env,
     )
     out = proc.stdout + proc.stderr

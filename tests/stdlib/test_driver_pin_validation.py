@@ -92,7 +92,7 @@ def build(tmp_path: Path, program: str, pin: str):
     src = tmp_path / "main.py"
     src.write_text(program.format(pin=pin))
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--target", "atmega328p",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--target", "atmega328p",
          "--freq", "16000000", "-I", str(tmp_path), "-I", str(STDLIB),
          "--emit-ir", str(tmp_path / "firmware.mir")],
         capture_output=True, text=True,

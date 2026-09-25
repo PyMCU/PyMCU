@@ -26,7 +26,7 @@ def build_ir(tmp_path: Path, body: str):
     )
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic12",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic12",
          "--target", "pic10f200", "--freq", "4000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,
@@ -132,7 +132,7 @@ def test_what_the_chip_cannot_do_does_not_compile(tmp_path, call, why):
             "from pymcu.chips.pic10f200 import GPIO\n\n" + body)
         mir = tmp_path / "firmware.mir"
         proc = subprocess.run(
-            [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "pic12",
+            [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "pic12",
              "--target", "pic10f200", "--freq", "4000000", "-I", str(STDLIB),
              "--emit-ir", str(mir)], capture_output=True, text=True)
     else:

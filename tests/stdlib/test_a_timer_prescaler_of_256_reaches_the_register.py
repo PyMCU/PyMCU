@@ -50,7 +50,7 @@ def const_stores(tmp_path, arch, chip, hal):
     src.write_text(PROGRAM.format(hal=hal))
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", arch,
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", arch,
          "--target", chip, "--freq", "4000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

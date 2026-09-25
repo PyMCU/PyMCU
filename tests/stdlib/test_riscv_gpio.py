@@ -29,7 +29,7 @@ def compile_asm(tmp_path: Path, source: str, chip: str) -> str:
     asm = tmp_path / "firmware.asm"
 
     frontend = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--arch", "riscv",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--arch", "riscv",
          "--target", chip, "--freq", "48000000", "-I", str(STDLIB),
          "--emit-ir", str(mir)],
         capture_output=True, text=True,

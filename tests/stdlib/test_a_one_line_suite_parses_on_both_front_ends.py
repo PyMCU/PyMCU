@@ -54,10 +54,10 @@ def compile_(tmp_path: Path, source: str, py_parser: bool, mir: Path | None = No
     if py_parser:
         env["PYMCU_PY_PARSER"] = "1"
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "atmega328p", "--freq", "16000000",
          "-I", str(tmp_path), "-I", str(STDLIB),
-         "--emit-ir", str(mir) if mir else "/dev/null"],
+         "--emit-ir", str(mir) if mir else str(tmp_path / "out.mir")],
         capture_output=True, text=True, env=env,
     )
     return "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr

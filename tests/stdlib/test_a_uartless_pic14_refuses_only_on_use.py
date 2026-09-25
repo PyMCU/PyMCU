@@ -57,7 +57,7 @@ def _compile(tmp_path: Path, source: str, target: str):
     proc = subprocess.run(
         [str(PYMCUC), str(src), "--target", target,
          "-I", str(tmp_path), "-I", str(STDLIB),
-         "--emit-ir", str(tmp_path / "out.mir"), "-o", "/dev/null"],
+         "--emit-ir", str(tmp_path / "out.mir"), "-o", str(tmp_path / "out.bin")],
         capture_output=True, text=True, env=dict(os.environ),
     )
     return proc.returncode, proc.stdout + proc.stderr

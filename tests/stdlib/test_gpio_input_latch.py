@@ -28,7 +28,7 @@ def build(tmp_path: Path, body: str):
                    + "    while True:\n        pass\n")
     mir = tmp_path / "firmware.mir"
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "-o", "/dev/null", "--target", "atmega328p",
+        [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--target", "atmega328p",
          "--freq", "16000000", "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", str(mir)],
         capture_output=True, text=True)
     out = proc.stdout + proc.stderr

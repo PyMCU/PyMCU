@@ -81,7 +81,7 @@ def _diagnose(tmp_path: Path, py_parser: bool):
         env.pop("PYMCU_PY_PARSER", None)
     proc = subprocess.run(
         [str(PYMCUC), str(tmp_path / "main.py"), "--target", "atmega328p",
-         "--freq", "16000000", "-I", str(tmp_path), "-I", str(STDLIB), "-o", "/dev/null"],
+         "--freq", "16000000", "-I", str(tmp_path), "-I", str(STDLIB), "-o", str(tmp_path / "out.bin")],
         capture_output=True, text=True, env=env,
     )
     out = proc.stdout + proc.stderr

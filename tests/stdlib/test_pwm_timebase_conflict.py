@@ -33,7 +33,7 @@ def build(tmp_path: Path, pin: str, freq: int, timebase: bool) -> subprocess.Com
     )
     # --emit-ir stops the frontend before the backend it does not carry; the driver would
     # hand the .mir to pymcuc-avr, and everything under test happens before that.
-    cmd = [str(PYMCUC), str(src), "-o", "/dev/null", "--target", "atmega328p",
+    cmd = [str(PYMCUC), str(src), "-o", str(tmp_path / "out.bin"), "--target", "atmega328p",
            "--freq", "16000000", "-I", str(tmp_path), "-I", str(STDLIB),
            "--emit-ir", str(tmp_path / "firmware.mir")]
     if timebase:

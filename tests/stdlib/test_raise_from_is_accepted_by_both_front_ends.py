@@ -31,9 +31,9 @@ def compile_(tmp_path: Path, source: str, py_parser: bool, ir_path: Path | None 
     env = dict(os.environ)
     if py_parser:
         env["PYMCU_PY_PARSER"] = "1"
-    ir_out = str(ir_path) if ir_path is not None else "/dev/null"
+    ir_out = str(ir_path) if ir_path is not None else str(tmp_path / "out.mir")
     proc = subprocess.run(
-        [str(PYMCUC), str(tmp_path / "main.py"), "-o", "/dev/null",
+        [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--target", "atmega328p", "--freq", "16000000",
          "-I", str(tmp_path), "-I", str(STDLIB), "--emit-ir", ir_out],
         capture_output=True, text=True, env=env,
