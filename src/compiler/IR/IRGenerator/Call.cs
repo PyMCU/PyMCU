@@ -3305,6 +3305,17 @@ public partial class IRGenerator
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
+                // The ELEMENT width the parameter declares, or the argument's own when the
+                // parameter is a bare `ptr`. Only the address was recorded, so every use of
+                // the parameter fell back to the UINT8 default: a `ptr[uint16]` parameter
+                // holding TCNT1 wrote one byte of the pair, and a field bound from a
+                // `ptr[uint8]` parameter took its width from the class scan instead (UINT16,
+                // because what the field holds is an address) and wrote over the neighbouring
+                // register. The width has to travel with the address, the way it does when the
+                // value arrives from a `-> ptr[T]` selector.
+                variableTypes[paramName] = mPType.StartsWith("ptr[") && mPType.EndsWith("]")
+                    ? DataTypeExtensions.StringToDataType(mPType[4..^1])
+                    : mArg.Type;
                 continue;
             }
 
