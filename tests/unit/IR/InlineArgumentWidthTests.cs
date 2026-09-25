@@ -12,6 +12,16 @@ namespace PyMCU.UnitTests;
 /// parameter's slot -- but an @inline expansion substituted the literal as written, so the
 /// same callee saw a different value depending on how it was called.
 ///
+/// The literals here are written through an explicit `uint8(...)` / `int8(...)` because
+/// CheckConstantArgFitsParam now REFUSES the implicit form: a caller asking for 500 and a
+/// callee seeing 244 is the silence that cost the blink below, and it is a diagnostic now
+/// rather than a compiled program. The cast is not a way around that check, it is the way to
+/// say the narrowing is meant, and it goes through the same narrowing: `wait(uint8(500))`
+/// and `wait(244)` produce identical IR once the debug text is stripped. So these still
+/// measure exactly what they measured -- that the narrowing happens, and that the inline
+/// expansion agrees with the real subroutine -- while the refusal of the implicit form is
+/// pinned by tests/stdlib/test_a_literal_that_does_not_fit_its_parameter_is_refused.py.
+///
 /// What it cost: `delay_ms(500)` reaches `_delay_ms_pic14e(ms: uint8)` in the stdlib, whose
 /// body is `while i < ms` with i: uint8. Bound to 500 instead of 244, the range fold reads
 /// the test as one a uint8 counter can never fail, deletes it, and everything after the loop
@@ -43,14 +53,14 @@ public class InlineArgumentWidthTests
     [Fact]
     public void AnInlineLoopBoundedByAnOversizedLiteral_KeepsItsExitTest()
     {
-        var body = Body(Prelude + InlineCounter + "wait(500)\n", "main");
+        var body = Body(Prelude + InlineCounter + "wait(uint8(500))\n", "main");
         Assert.Contains(body, i => i is JumpIfGreaterOrEqual);
     }
 
     [Fact]
     public void AnOversizedLiteral_IsNarrowedToTheParametersWidth()
     {
-        var body = Body(Prelude + InlineCounter + "wait(500)\n", "main");
+        var body = Body(Prelude + InlineCounter + "wait(uint8(500))\n", "main");
         var jump = body.OfType<JumpIfGreaterOrEqual>().Single();
         Assert.Equal(244, ((Constant)jump.Src2).Value);
     }
@@ -58,7 +68,7 @@ public class InlineArgumentWidthTests
     [Fact]
     public void TheStatementAfterTheInlineCall_SurvivesTheExpansion()
     {
-        var body = Body(Prelude + InlineCounter + "wait(500)\nPORTB.value = 0xAA\n", "main");
+        var body = Body(Prelude + InlineCounter + "wait(uint8(500))\nPORTB.value = 0xAA\n", "main");
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 0xAA } });
     }
 
@@ -71,8 +81,8 @@ public class InlineArgumentWidthTests
             "    while i < n:\n" +
             "        PORTB.value = i\n" +
             "        i = i + 1\n\n";
-        var sub = Body(Prelude + outlined + "wait(500)\n", "wait");
-        var expansion = Body(Prelude + InlineCounter + "wait(500)\n", "main");
+        var sub = Body(Prelude + outlined + "wait(uint8(500))\n", "wait");
+        var expansion = Body(Prelude + InlineCounter + "wait(uint8(500))\n", "main");
         // The subroutine compares against its parameter slot, the expansion against the
         // constant the same argument narrows to. Both must still compare.
         Assert.Contains(sub, i => i is JumpIfGreaterOrEqual);
@@ -98,7 +108,7 @@ public class InlineArgumentWidthTests
             "def sink(n: int8):\n" +
             "    if n < 0:\n" +
             "        PORTB.value = 1\n\n" +
-            "sink(200)\n", "main");
+            "sink(int8(200))\n", "main");
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 1 }, Dst: MemoryAddress { Address: 6 } });
     }
 }
