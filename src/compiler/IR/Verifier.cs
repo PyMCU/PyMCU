@@ -70,7 +70,7 @@ public static class Verifier
 
         var violations = Verify(program, pass);
         foreach (var v in violations)
-            Logger.Warning("ir-verify", $"[{pass}] {v}");
+            Logger.Tool("ir-verify", $"[{pass}] {v}");
 
         if (Strict && violations.Count > 0)
             throw new CompilerError("VerifyError",

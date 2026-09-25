@@ -332,7 +332,7 @@ public sealed class NameResolution
         string signature = $"{site}|{bare}|{ladderKey}|{mine}";
         if (!reported.Add(signature)) return;
 
-        Logger.Warning("resolve-observe",
+        Logger.Tool("resolve-observe",
             $"[{site}] {file}:{line}: '{bare}' ladder={ladderKey} ({ladderSpelling}) "
             + $"resolution={mine} ({mineSpelling}) "
             + $"scope=fn:{(function.Length == 0 ? "-" : function)} "
@@ -344,7 +344,7 @@ public sealed class NameResolution
     public void ReportTotals()
     {
         var parts = counters.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}");
-        Logger.Warning("resolve-observe",
+        Logger.Tool("resolve-observe",
             $"[totals] scopes={scopes.Count} globals={moduleGlobals.Count} "
             + $"distinct={reported.Count} " + string.Join(" ", parts));
     }

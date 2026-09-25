@@ -175,6 +175,32 @@ public static class Logger
             Console.Error.WriteLine($"[Warning] [{component}] {message}");
     }
 
+    // Instrumentation, not a diagnostic: the output of a debugging tool a compiler developer
+    // switches on by hand (PYMCU_VERIFY_IR, PYMCU_RESOLVE_OBSERVE). Nothing here is about the
+    // user's program, and nobody but the person who set the variable is meant to read it.
+    //
+    // So under --error-format json it does NOT go to stderr, as an object or otherwise:
+    // stderr is the diagnostics of the program being compiled, and a verifier's chatter is
+    // not one of them. It goes to stdout with the other Logger tokens, where the driver's
+    // parser ignores what it does not recognise (a chain of startswith with no default
+    // branch, commands/build.py), so a consumer that was not asking for it never sees it.
+    //
+    // In human mode it is byte-identical to a warning, which is what it was until now, so
+    // nobody's PYMCU_VERIFY_IR workflow changes.
+    public static void Tool(string component, string message)
+    {
+        if (Diagnostic.Format == ErrorFormat.Json)
+        {
+            Console.WriteLine($"[TOOL] [{component}] {message}");
+            return;
+        }
+
+        if (!Console.IsErrorRedirected)
+            Console.Error.WriteLine($"\x1b[33m\u26a0\x1b[0m  [{component}] {message}");
+        else
+            Console.Error.WriteLine($"[Warning] [{component}] {message}");
+    }
+
     // Non-located errors (complement to Diagnostic.Report for positioned errors).
     public static void Error(string component, string message)
     {
