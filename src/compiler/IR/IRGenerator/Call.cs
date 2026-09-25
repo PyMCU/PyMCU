@@ -8135,6 +8135,12 @@ public partial class IRGenerator
         {
             Variable v2 => v2.Type,
             Temporary t2 => t2.Type,
+            // A register read is a MemoryAddress carrying the width its `ptr[T]` declared.
+            // It fell to the UINT8 default below, so `print(TCNT1.value)` on a ptr[uint16]
+            // name formatted the LOW BYTE alone and dropped the high one with nothing said:
+            // 0x1234 printed as 52. Assigning the same read to a uint16 local first printed
+            // it whole, which is what made the truncation look like the register's fault.
+            MemoryAddress ma2 => ma2.Type,
             Constant cc => cc.Value < 0
                          ? (cc.Value >= short.MinValue ? DataType.INT16 : DataType.INT32)
                          : cc.Value <= 0xFF ? DataType.UINT8
