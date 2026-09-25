@@ -74,7 +74,7 @@ Everything in this section is shipped and tested in the current alpha build.
 |---------|-------|
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Annotation for variables; unannotated `def` params/returns of outlined functions are inferred from call sites (v0.14) |
 | `int` (built-in) | Maps to `int16`; no import required |
-| `ptr[T]` | Memory-mapped I/O pointer. Declared at module level or in a class body; the class body is a grouped peripheral (RFC 0012) and costs nothing |
+| `ptr[T]` | Memory-mapped I/O pointer. Declared at module level, in a class body or on an instance field; the class body is a grouped peripheral (RFC 0012) and costs nothing. The element width travels with the address wherever it is bound |
 | `const[T]` | Compile-time constant enforcement; accepts integer, string and **float** constants (`Timer(freq=2.5)`). A runtime-varying argument is a located `CompileError` naming the parameter, not a silent fold — this is what makes `Pin(n)` with a runtime `n` an honest error |
 | `asm("instr")` | Inline assembly emission |
 | `delay_ms(n)` / `delay_us(n)` | Intrinsic timing |
