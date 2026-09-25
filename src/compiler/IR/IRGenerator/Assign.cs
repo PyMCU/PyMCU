@@ -3373,6 +3373,23 @@ public partial class IRGenerator
             // Store the flattened field at its declared width; hard-coding uint8 truncated a
             // uint16/uint32 field (a no-method multi-field struct's `total` read back as total&0xFF).
             DataType fdt = FlattenedFieldType(baseName, memExpr2.Member);
+
+            // A width written on the STATEMENT widens the layout's, and cannot narrow it. The
+            // class layout is derived from the original class body, and a field the layout has
+            // no entry for takes the uint8 default: `self.buf = bytearray(n)` is filed as a
+            // BUFFER field and kept out of the layout, so the arena OFFSET it actually holds
+            // was stored in one byte. The second runtime-sized buffer in a class starts past
+            // 255 on any part with more than 256 bytes of arena, and its offset wrapped --
+            // 300 became 44 and the two buffers silently aliased (PyMCU#418). The lowering
+            // that synthesizes that write already says `uint16`; nothing read it.
+            // Widen only: a per-statement `self.x: uint8 = 0` must not narrow a field the
+            // layout widened from another write.
+            if (!string.IsNullOrEmpty(stmt.AnnotatedType) && IsNumericWidthName(stmt.AnnotatedType)
+                && IsNumericWidth(fdt))
+            {
+                DataType annotated = DataTypeExtensions.StringToDataType(stmt.AnnotatedType);
+                if (IsNumericWidth(annotated) && annotated.SizeOf() > fdt.SizeOf()) fdt = annotated;
+            }
             // A field of a module-level instance that some function assigns needs real storage:
             // without it the write is a dead store to a name nothing else in that function
             // reads, and the reader in another function folds the constructor's value instead.
@@ -3460,6 +3477,13 @@ public partial class IRGenerator
 
     // Declared type of a flattened (non-slot) ZCA field `<inst>.<member>`, from the owning class's
     // layout. The flattened store path otherwise hard-codes uint8, truncating a uint16/uint32 field.
+    // An integer width, the only kind a per-statement annotation may widen a field to.
+    private static bool IsNumericWidth(DataType t) => t is DataType.UINT8 or DataType.UINT16
+        or DataType.UINT32 or DataType.INT8 or DataType.INT16 or DataType.INT32;
+
+    private static bool IsNumericWidthName(string t) => t is "uint8" or "uint16" or "uint32"
+        or "int8" or "int16" or "int32";
+
     private DataType FlattenedFieldType(string? baseName, string member)
     {
         string? key = baseName;
