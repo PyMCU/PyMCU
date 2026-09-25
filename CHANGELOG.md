@@ -322,6 +322,43 @@
   allowlist -- no RTC on this part, no interpreter to report on -- not an omission. The
   message names the module and the member, and lists what the module does define, its
   classes' methods excluded (#475).
+- **ir**: five ways a string stopped being a string once it left the place it was written.
+  Each one printed a number where CPython prints text, or -- worse -- decided a branch on
+  that number, and none of them said anything. They were one shape seen from five sites:
+  the value of a string on this target is its interned id (or, for a one-character literal,
+  its character code), and each site asked the value what WIDTH it was instead of whether it
+  stood for text at all.
+
+  - `if x == "abc":` on a name bound to a multi-character string deleted the `then` branch
+    from the image (#438). A condition does not go through the value path where two string
+    operands are already compared by text; it becomes a conditional jump over the values,
+    and `str` is a one-byte slot while an interned id needs two, so the slot read back 0
+    against the literal's own 256 and the always-false range fold fired. The one-character
+    case, whose id IS its character code and so fits the byte, answered correctly the whole
+    time, which is what kept it hidden. Both texts were in the compiler's own tables;
+    only that path never asked for them.
+  - `print(hex(255))` wrote 257 and `print(bin(10))` wrote 258, the interned ids of `"0xff"`
+    and `"0b1010"` (#393). `print(str(42))` was right for the unrelated reason that `str()`
+    is one of the shapes print recognised by syntax. A value carrying its compile-time text
+    is now written as that text whatever expression produced it; `pow()` and `**`, which
+    fold to numbers, still print numbers.
+  - `print(s[2])` on a runtime string wrote 48 instead of `0` (#399). The character at a
+    position is a one-character string in Python, which print knew for a compile-time string
+    and could not look up for a runtime one. A `bytearray` element stays a number, as in
+    CPython.
+  - `chr(n)` lost its character across a name and a `return`: `c = chr(69); print(c)` wrote
+    69 and `print(make(66))` wrote 66 (#436). A constant `chr()` now carries its
+    one-character text on the value, and the functions whose every `return` is a `chr()` are
+    recorded, so a call to one goes to the byte writer.
+  - `print("mono" if k == 0 else "none")` wrote 260 and 261 on a real Uno, and binding the
+    expression to a name first did not help (#378). The same two texts chosen by an if/else
+    STATEMENT always printed correctly: that one goes through the merge which records the
+    alternatives. Written into a write, a conditional expression now lowers as the condition
+    plus a literal write on each side, in the shared streaming helper so `uart.write_str`
+    and `println` get it too; bound to a name, both arms count as bindings and the id is
+    stored in the slot a read dispatches on. A condition the compiler can decide still folds
+    to the chosen arm.
+
 - **stdlib**: an LED blink for the PIC16F84A stopped compiling over a UART it never mentions.
   `pymcu/hal/__init__.py` re-exports all five peripherals, so `from pymcu.hal.gpio import Pin`
   alone reaches `pymcu.hal.uart` and, on a PIC14 target, the `pic14_uart` dispatcher. That

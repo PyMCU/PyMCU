@@ -122,8 +122,12 @@ if s == "running":    # compares the ids, also at run time
 ```
 
 The two texts stay in flash and the name costs one 16-bit slot; nothing is copied into RAM.
-This covers the three ways a name can end up with more than one text: a run-time branch, a
-loop body that rebinds it, and a module-level `str` that a function rebinds through `global`.
+This covers the four ways a name gets more than one text: a run-time branch, a loop body
+that rebinds it, a module-level `str` a function rebinds through `global`, and a conditional
+expression (`s = "running" if seed > 10 else "idle"`), which binds both arms in one
+statement. Written straight into a write instead -- `print("running" if seed > 10 else
+"idle")` -- the condition is lowered once and each arm writes its own literal, so no slot is
+needed; a condition the compiler can decide still folds to the chosen arm.
 
 Only `print()`, `uart.write_str()` / `println()` and `==` / `!=` against a literal can read
 such a name. Anything else (`len(s)`, `s[i]`, `s + t`, passing it to a `const[str]`
@@ -136,7 +140,8 @@ to hand over.
 lowers each piece to a direct write (no heap, no format buffer) — **and as a value**:
 `s = f"t={t} C"` builds the string into a compiler-managed fixed `bytearray` whose size is
 statically bounded per part (`pymcu.strfmt` lowering, auto-injected by the build). On the
-value form, `len(s)` is the formatted length, `s[i]` indexes bytes, `print(s)` /
+value form, `len(s)` is the formatted length, `s[i]` is the one-character string at that
+position (`print(s[i])` writes the character, as CPython does), `print(s)` /
 `uart.write_str(s)` stream it, and re-assigning `s` in a loop reuses the buffer (assign the
 longest f-string first — the buffer is sized at the first assignment). An int
 interpolation with a format spec (`{v:X}`, `{v:04d}`, `{v:b}`, `{v:o}`) folds to its
@@ -1047,7 +1052,7 @@ never parks.
 | Forward-reference annotation `"Name"` | ✅ Supported | A type named as a string literal (PEP 484), the spelling every Adafruit driver uses for its own `__enter__` return. The quotes come off and the name inside is resolved and checked like any other, in `AnnotationText` so both front ends read it the same way |
 | `hex(n)` / `bin(n)` | ✅ Supported | Compile-time only |
 | `str(n)` | ✅ Supported | Compile-time only |
-| `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
+| `ord('A')` / `chr(n)` | ✅ Supported | `ord()` compile-time only. `chr()` of a constant keeps its character through a name and a `return`; a run-time code point prints as its character out of a function whose every `return` is a `chr()` |
 | `int.from_bytes(b, e)` | ✅ Supported | Compile-time fold or runtime |
 | `memoryview(buf)` | ✅ Supported | Compile-time alias of a fixed-size buffer (bytearray or fixed array): `memoryview(buf)[k]` indexes it, `memoryview(buf)[a:]` as a value is a writable window (offset + shorter `len`), and the same slice inside `struct.unpack`/`unpack_from` adds its start to the read offset. A plain `buf[a:b]` is still a copy. The name is a CPython builtin type this compiler stores, so `-> memoryview` is the same view the call already wraps. No run-time buffer protocol |
 | `sorted()` | ❌ Not supported | No dynamic allocation |

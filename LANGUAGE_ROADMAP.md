@@ -54,7 +54,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `all/any/sum/min/max(x ... for x in it)` | A generator expression as the DIRECT argument of a reduction unrolls it at compile time over an iterable whose length is known: tuple/list literal, const sequence, `range` of constants, compile-time string, fixed-size array. `all`/`any` short-circuit like CPython (a deciding element ends the walk, later elements are never evaluated); `sum` honours `start`; a `for ... if` clause filters (adafruit_pixelbuf `all(0 <= c <= 255 for c in val)`). Anywhere else a generator expression is refused naming the five reductions -- there is no iterator object |
 | Compile-time string methods | On a name bound to ONE text (literal, module constant, parameter receiving one -- through `super().__init__` and nested `@inline` calls, `Union[str, ...]` parameters included): `len(s)`, `s[i]`, `needle in s`, `s == "lit"`, `s[a:b]` slices, `str(x)` of a constant, and `s.strip()`/`lstrip()`/`rstrip()`, `s.index()`/`s.find()` (miss: catchable `ValueError` / -1), `s.startswith()`/`s.endswith()`, `s.count()`, `s.replace()`, `s.upper()`, `s.lower()` all fold |
 | `len(arr)` / `len([...])` | Compile-time constant fold |
-| `ord('A')`, `chr(n)` | Compile-time constant only |
+| `ord('A')`, `chr(n)` | `ord()` compile-time only; `chr()` of a constant keeps its character through a name and a `return`, and a run-time code point prints as its character out of a function whose every `return` is a `chr()` |
 | Multiple assignment `a = b = 0` | Left-to-right Copy chain |
 | Walrus `:=` | Assign-and-return; essential for UART / sensor polling loops |
 | Bit indexing `port[n]` | `n` must be compile-time constant |
