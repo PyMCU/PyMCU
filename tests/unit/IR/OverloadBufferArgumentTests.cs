@@ -178,6 +178,50 @@ public class OverloadBufferArgumentTests
         AssertBufferBodyRan(ir);
     }
 
+    // DISCRIMINATING. A method that hands its buffer back. The call has not been visited when
+    // the overload is chosen, so the declared return type is the only thing that can answer,
+    // and it was not being read.
+    [Fact]
+    public void ABufferReturnedFromAMethodTakesTheBytearrayOverload()
+    {
+        var ir = Gen(Preamble +
+            "class D:\n" +
+            "    def __init__(self):\n" +
+            "        self.temp = bytearray(2)\n" +
+            "    def buf(self) -> bytearray:\n" +
+            "        return self.temp\n" +
+            "    def go(self, c: uint8) -> uint8:\n" +
+            "        self.temp[0] = c\n" +
+            "        return sink(self.buf())\n" +
+            "def main():\n" +
+            "    d = D()\n" +
+            "    G.value = d.go(G.value)\n");
+
+        AssertBufferBodyRan(ir);
+    }
+
+    // INVARIANT: a method declared to return a number must keep taking the scalar overload.
+    // The check above reads declared return types, so a scalar one has to answer no.
+    [Fact]
+    public void AScalarReturnedFromAMethodStillTakesTheScalarOverload()
+    {
+        var ir = Gen(Preamble +
+            "class D:\n" +
+            "    def __init__(self):\n" +
+            "        self.temp = bytearray(2)\n" +
+            "    def first(self) -> uint8:\n" +
+            "        return self.temp[0]\n" +
+            "    def go(self, c: uint8) -> uint8:\n" +
+            "        self.temp[0] = c\n" +
+            "        return sink(self.first())\n" +
+            "def main():\n" +
+            "    d = D()\n" +
+            "    G.value = d.go(G.value)\n");
+
+        Assert.True(Uses(ir, 7), "the scalar body must run for a scalar return");
+        Assert.False(Uses(ir, 100), "the bytearray body must not run for a scalar return");
+    }
+
     // INVARIANT, not discriminating: a buffer in a local already picked the bytearray overload
     // before the fix. It is the control that made the field the suspect rather than the
     // argument, and it is kept so that teaching the field branch cannot move the local one.

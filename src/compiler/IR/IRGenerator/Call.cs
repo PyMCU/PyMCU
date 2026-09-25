@@ -4090,6 +4090,21 @@ public partial class IRGenerator
         return b;
     }
 
+    /// <summary>
+    /// True when a DECLARED type names a buffer rather than a scalar -- `bytearray`, `bytes`,
+    /// or a sized array spelling such as `uint8[4]`. A value of such a type reaches a call as a
+    /// base address, so overload selection has to spell it "bytearray".
+    /// </summary>
+    private static bool DeclaredTypeIsBuffer(string? declared)
+    {
+        if (string.IsNullOrEmpty(declared)) return false;
+        if (declared is "bytearray" or "bytes") return true;
+        int open = declared.IndexOf('[');
+        return open > 0 && declared.EndsWith("]", StringComparison.Ordinal)
+               && declared[(open + 1)..^1].All(char.IsDigit)
+               && open + 1 < declared.Length - 1;
+    }
+
     /// The bare class name inside a mangled class key (`mod_TCS34725` -> `TCS34725`).
     private string ShortClassNameOf(string fullKey)
     {
@@ -4197,7 +4212,22 @@ public partial class IRGenerator
                         if (functionReturnTypes.TryGetValue(fnKey, out var frt)
                             && frt is "str" or "const[str]")
                             return "str";
+
+                    foreach (var fnKey in new[] { ResolveCallee(ctor.Name), ctorName, shortCtor })
+                        if (functionReturnTypes.TryGetValue(fnKey, out var frt)
+                            && DeclaredTypeIsBuffer(frt))
+                            return "bytearray";
                 }
+
+                // The same question for a METHOD that hands its buffer back -- `sink(self.buf())`
+                // against `def buf(self) -> bytearray`. The declared return type answers it
+                // without evaluating the call, which has not been visited at this point, and
+                // without it the argument typed as the element and took the scalar overload.
+                if (arg is CallExpr { Callee: MemberAccessExpr methodCallee }
+                    && FieldOwnerClass(methodCallee) is { } methodOwner
+                    && functionReturnTypes.TryGetValue(methodOwner + "_" + methodCallee.Member, out var mrt)
+                    && DeclaredTypeIsBuffer(mrt))
+                    return "bytearray";
                 if (arg is VariableExpr v)
                 {
                     string key = currentInlinePrefix + v.Name;
