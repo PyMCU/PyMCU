@@ -145,6 +145,22 @@
 
 ### Fixed
 
+- **ir/avr/stdlib**: a 16-bit AVR register write put the LOW byte out first, so the value
+  that reached the hardware was built from a stale latch. An 8-bit core reaches a 16-bit
+  peripheral register pair through one shared TEMP byte: writing the high half only fills
+  TEMP, and writing the LOW half is what commits both at once. Every 16-bit store did the
+  opposite -- a constant store was split into low-then-high byte copies by the IR generator,
+  and a runtime store lowered to `STS low`, `STS high` in the AVR code generator -- so
+  `TCNT1.value = 0x1234` committed the pair as (whatever TEMP held) | 0x34 and the high byte
+  that followed only refilled TEMP for the next access; measured on silicon it read back
+  0x0334. Nothing in the shipped stdlib tripped on it because the timer, PWM and servo HALs
+  write the byte halves by hand in the datasheet order, with one exception now fixed:
+  `timer1_clear()` cleared TCNT1L before TCNT1H, the order a READ takes, so the counter came
+  out of `clear()` holding the high byte of whichever 16-bit access ran before it. Reads are
+  unchanged and stay low-byte-first, which is what latches the high half. What makes this
+  worth a release note rather than an internal correction is RFC 0012: the grouped peripheral
+  surface puts the 16-bit name within reach of user code (`Timer1.OCR1A.value = 1500`), and
+  that surface is the one the project promises to keep.
 - **stdlib**: an LED blink for the PIC16F84A stopped compiling over a UART it never mentions.
   `pymcu/hal/__init__.py` re-exports all five peripherals, so `from pymcu.hal.gpio import Pin`
   alone reaches `pymcu.hal.uart` and, on a PIC14 target, the `pic14_uart` dispatcher. That
