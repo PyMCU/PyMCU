@@ -2501,6 +2501,49 @@ public class IRGeneratorTests
             i => i is Copy { Src: Constant { Value: 7 } });
     }
 
+    // The other side does not have to be an instance: nothing that is not one is ever the same
+    // object as one, and CPython raises TypeError for an ordering whatever sits opposite.
+    [Fact]
+    public void Equality_OfAnInstanceAndAScalar_IsFalseByIdentity()
+    {
+        const string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = C(7)\n" +
+            "    x: uint8 = 3\n" +
+            "    if a == 0:\n" +
+            "        x = 91\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.DoesNotContain(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 91 } });
+    }
+
+    [Fact]
+    public void Ordering_OfAnInstanceAndAScalar_IsRefused()
+    {
+        const string src =
+            "class C:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = C(7)\n" +
+            "    x: uint8 = 3\n" +
+            "    if a < 1:\n" +
+            "        x = 7\n";
+
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("__lt__", ex.Message);
+        Assert.Contains("TypeError", ex.Message);
+    }
+
     // An ordering has no fallback to fold to: CPython raises TypeError, and answering "not
     // less" over two zeroed slots was the silent version of that.
     [Fact]

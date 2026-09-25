@@ -733,39 +733,57 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// A comparison between two instances that dispatches to no dunder.
+    /// A comparison with an instance on at least one side that dispatches to no dunder.
     ///
-    /// The operator used to lower numerically over the flattened instance handles, which are
-    /// never written, so `a == b` answered "equal" for every pair of objects and `a &lt; b`
-    /// answered "not less" for every pair (#491). CPython answers neither of those: without
-    /// `__eq__` it falls back to IDENTITY, and without an ordering dunder it raises TypeError.
+    /// The operator used to lower numerically over the flattened instance handle, which is
+    /// never written, so `a == b` answered "equal" for every pair of objects, `a == 0` answered
+    /// true for any object, and `a &lt; 1` answered "less" for all of them (#491). CPython
+    /// answers none of those: without `__eq__` it falls back to IDENTITY, and without an
+    /// ordering dunder it raises TypeError, whatever sits on the other side.
     ///
     /// Identity is a compile-time fact here, since every instance owns a distinct static slot,
-    /// so `==` / `!=` / `is` / `is not` fold to the answer CPython gives. An ordering has no
-    /// answer to fold to and is refused by name.
+    /// so `==` / `!=` / `is` / `is not` fold to the answer CPython gives, and nothing that is
+    /// not an instance is ever the same object as one. An ordering has no answer to fold to and
+    /// is refused by name.
+    ///
+    /// The other side has to be one this resolver can be certain about: a literal, or a name
+    /// that carries no class in this scope. A field, a call result or a subscript could still
+    /// be an instance the tables answer for under a spelling this does not ask, so those keep
+    /// the path they had.
     /// </summary>
-    private Val? TryCompareTwoInstances(BinaryExpr expr)
+    private Val? TryCompareInstanceOperands(BinaryExpr expr)
     {
         if (expr.Op is not (AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot
                             or AstBinOp.Less or AstBinOp.LessEq
                             or AstBinOp.Greater or AstBinOp.GreaterEq))
             return null;
-        if (InstanceStorageName(expr.Left) is not { } lname) return null;
-        if (InstanceStorageName(expr.Right) is not { } rname) return null;
+
+        string? lname = InstanceStorageName(expr.Left);
+        string? rname = InstanceStorageName(expr.Right);
+        if (lname == null && rname == null) return null;
+
+        if (lname == null || rname == null)
+        {
+            Expression other = lname == null ? expr.Left : expr.Right;
+            if (other is not (IntegerLiteral or FloatLiteral or StringLiteral or VariableExpr))
+                return null;
+        }
 
         if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
         {
             bool wantSame = expr.Op is AstBinOp.Equal or AstBinOp.Is;
-            return new Constant((lname == rname) == wantSame ? 1 : 0);
+            bool same = lname != null && rname != null && lname == rname;
+            return new Constant(same == wantSame ? 1 : 0);
         }
 
-        string cls = instanceClasses[BinaryDunderReceiver(((VariableExpr)expr.Left).Name)] ?? "";
+        var instExpr = (VariableExpr)(lname != null ? expr.Left : expr.Right);
+        string cls = instanceClasses[BinaryDunderReceiver(instExpr.Name)] ?? "";
         string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
         string needed = BinaryOpDunder(expr.Op) ?? "the comparison method";
         throw UserError(
-            $"'{shown}' defines no {needed}, so '{BinaryOpSymbol(expr.Op)}' between two of its "
+            $"'{shown}' defines no {needed}, so '{BinaryOpSymbol(expr.Op)}' on one of its "
             + "instances has no meaning; CPython raises TypeError for it. Define "
-            + $"{needed} on the class, or compare a field of each object instead.", expr);
+            + $"{needed} on the class, or compare a field of the object instead.", expr);
     }
 
     /// <summary>
@@ -1204,9 +1222,10 @@ public partial class IRGenerator
             }
         }
 
-        // Neither operator dunder claimed this comparison and both sides are instances, so
-        // CPython's fallback decides it: identity for equality, TypeError for an ordering.
-        if (TryCompareTwoInstances(expr) is { } instCmp) return instCmp;
+        // Neither operator dunder claimed this comparison and an instance is on at least one
+        // side, so CPython's fallback decides it: identity for equality, TypeError for an
+        // ordering.
+        if (TryCompareInstanceOperands(expr) is { } instCmp) return instCmp;
 
         if (expr.Op == AstBinOp.In || expr.Op == AstBinOp.NotIn)
         {

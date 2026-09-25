@@ -404,13 +404,18 @@ that dispatches on it takes the same path whether the caller wrote the value at 
 put it in a local first. The value has to be one the compiler can still see: a name a branch
 or a loop can change is not one, and neither is anything read from a register.
 
-**Comparing two instances of a class that defines no comparison dunder** answers what CPython
+**Comparing an instance of a class that defines no comparison dunder** answers what CPython
 answers. `==`, `!=`, `is` and `is not` fall back to IDENTITY, which is a compile-time fact
 here because every instance owns its own static slot: two separately constructed objects are
-never equal, and `b = a` is the same object. An ordering (`<`, `<=`, `>`, `>=`) has no
-fallback -- CPython raises `TypeError` -- and is refused, naming the method the class would
-need. `max()` and `min()` never consult a class at all, so an instance argument is refused
-too; `sorted()` and `in` over a list of instances were already refused.
+never equal, `b = a` is the same object, and nothing that is not an instance is ever equal to
+one (`obj == 0` is False). An ordering (`<`, `<=`, `>`, `>=`) has no fallback -- CPython
+raises `TypeError` -- and is refused, naming the method the class would need. `max()` and
+`min()` never consult a class at all, so an instance argument, or a sequence of instances, is
+refused too; `sorted()` and `in` over a list of instances were already refused.
+
+The other operand has to be one the compiler can be certain about: a literal, another
+instance, or a name that carries no class in that scope. A field, a call result or a
+subscript keeps the path it had.
 
 An unannotated field takes its width from the widest value the constructor assigns — a
 conversion call says its own type, a literal the narrowest type that holds it, an arithmetic

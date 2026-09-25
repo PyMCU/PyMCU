@@ -224,17 +224,21 @@
   its bare name while the lookup asked for the synthesized module body's scope (`print(a + b)`
   at top level answered 0 for any operator dunder, arithmetic included), and a class-typed
   FIELD (`self.lhs == self.rhs`), which is the shape a driver writes.
-- **ir**: a comparison between two instances of a class that defines no comparison dunder
+- **ir**: a comparison involving an instance of a class that defines no comparison dunder
   answered from the same never-written handles: `a == b` was true for every pair, `a is b`
-  likewise, and `a < b` was false for every pair. It now answers what CPython answers.
-  `==`, `!=`, `is` and `is not` fall back to identity, which is decided at compile time
-  because every instance owns its own static slot (and `b = a` is recognised as the same
-  object); an ordering has no fallback, so it is refused with a located diagnostic naming
-  the method the class would need, as CPython raises `TypeError` for it.
+  likewise, `a == 0` was true for any object, and `a < b` / `a < 1` were false for all of
+  them. It now answers what CPython answers. `==`, `!=`, `is` and `is not` fall back to
+  identity, which is decided at compile time because every instance owns its own static slot
+  (`b = a` is recognised as the same object, and nothing that is not an instance is ever
+  equal to one); an ordering has no fallback, so it is refused with a located diagnostic
+  naming the method the class would need, as CPython raises `TypeError` for it. The other
+  operand has to be one the compiler can be certain about -- a literal, another instance, or
+  a name carrying no class in that scope -- so a field, a call result or a subscript keeps
+  the path it had.
 - **ir**: `max()` and `min()` over instances compared the flattened handles and reduced to
   whichever zero won, so `max(a, b).n` printed 0 even for a class defining `__lt__` and
-  `__gt__`. Refused with a located diagnostic. `sorted()` and `in` over a list of instances
-  already refused.
+  `__gt__`. Refused with a located diagnostic, in the pairwise spelling and over a sequence
+  (`max(xs)`) alike. `sorted()` and `in` over a list of instances already refused.
 - **ir**: a `match` class-pattern capture whose name collides with a module global did not
   bind. The capture was filed under `main.<name>` while every read of the name resolved the
   global, so the arm read the global's old value, with no diagnostic and correct-looking
