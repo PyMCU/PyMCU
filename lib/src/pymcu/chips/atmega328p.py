@@ -157,3 +157,86 @@ PINB3: int = 3; PINB2: int = 2; PINB1: int = 1; PINB0: int = 0
 # Status Register
 I: int = 7; T: int = 6; H: int = 5; S: int = 4
 V: int = 3; N: int = 2; Z: int = 1; C: int = 0
+
+
+# ==========================================
+#  Grouped Peripherals (stable surface)
+# ==========================================
+#
+# The module-level register names above are how the HAL reaches the silicon, and
+# they are an implementation detail: the set, the spelling and the widths follow
+# whatever the HAL needs and change with it. A program that writes TCCR1B by that
+# name is writing against a surface the project does not promise.
+#
+# A grouped peripheral is the promise. Every register of one peripheral is an
+# attribute of a class named after it, the way an XC8 program reaches T1CON
+# through the Timer1 SFR block, and the class is what the documentation covers:
+#
+#   from pymcu.chips.atmega328p import TIMER1
+#
+#   TIMER1.TCCR1A.value = 0x82                  # whole register
+#   TIMER1.ICR1.value = 19999                   # 16-bit, one name
+#   TIMER1.TCCR1B[TIMER1.CS10] = 1              # one bit, by its datasheet name
+#   if TIMER1.TIFR1[TIMER1.TOV1]:
+#       TIMER1.TIFR1[TIMER1.TOV1] = 1           # write 1 to clear
+#
+# Costs nothing: a class-level ptr declaration is a register, so every access
+# compiles to the same LDS/STS/SBI/CBI as the loose name and the class itself has
+# no runtime existence. The addresses are the loose names, not copies of them, so
+# the two spellings cannot drift apart.
+#
+# Register names are the datasheet's. Bit positions are members of the same class
+# so one import brings the whole peripheral and no bit name reaches module scope.
+
+
+class TIMER1:
+    """Timer/Counter1 of the ATmega328P: 16-bit, two compare units, input capture."""
+
+    # Control and status
+    TCCR1A: ptr[uint8] = ptr(TCCR1A)
+    TCCR1B: ptr[uint8] = ptr(TCCR1B)
+    TCCR1C: ptr[uint8] = ptr(TCCR1C)
+
+    # Counter and compare/capture, 16-bit
+    TCNT1: ptr[uint16] = ptr(TCNT1)
+    OCR1A: ptr[uint16] = ptr(OCR1A)
+    OCR1B: ptr[uint16] = ptr(OCR1B)
+    ICR1: ptr[uint16] = ptr(ICR1)
+
+    # The byte halves of the same four registers. The 16-bit names above are the
+    # ones to use: the AVR latches the high byte through a shared temporary
+    # register, and the compiler orders the halves for you.
+    TCNT1L: ptr[uint8] = ptr(TCNT1L)
+    TCNT1H: ptr[uint8] = ptr(TCNT1H)
+    OCR1AL: ptr[uint8] = ptr(OCR1AL)
+    OCR1AH: ptr[uint8] = ptr(OCR1AH)
+    OCR1BL: ptr[uint8] = ptr(OCR1BL)
+    OCR1BH: ptr[uint8] = ptr(OCR1BH)
+    ICR1L: ptr[uint8] = ptr(ICR1L)
+    ICR1H: ptr[uint8] = ptr(ICR1H)
+
+    # Interrupt mask and flags
+    TIMSK1: ptr[uint8] = ptr(TIMSK1)
+    TIFR1: ptr[uint8] = ptr(TIFR1)
+
+    # Prescaler control, shared with Timer/Counter0 and Timer/Counter2
+    GTCCR: ptr[uint8] = ptr(GTCCR)
+
+    # TCCR1A
+    COM1A1: int = 7; COM1A0: int = 6
+    COM1B1: int = 5; COM1B0: int = 4
+    WGM11: int = 1; WGM10: int = 0
+
+    # TCCR1B
+    ICNC1: int = 7; ICES1: int = 6
+    WGM13: int = 4; WGM12: int = 3
+    CS12: int = 2; CS11: int = 1; CS10: int = 0
+
+    # TCCR1C
+    FOC1A: int = 7; FOC1B: int = 6
+
+    # TIMSK1
+    ICIE1: int = 5; OCIE1B: int = 2; OCIE1A: int = 1; TOIE1: int = 0
+
+    # TIFR1 -- a flag is cleared by writing a ONE to it
+    ICF1: int = 5; OCF1B: int = 2; OCF1A: int = 1; TOV1: int = 0
