@@ -1093,6 +1093,23 @@ public partial class IRGenerator
             if (expr.Args[0] is StringLiteral or FStringExpr)
                 throw UserError("ptr() argument must be a numeric address, not a string", ArgAt(expr, 0));
 
+            // An ARRAY is not an address either, and this is the shape that used to go
+            // through in silence. `ptr(buf)` took the runtime-address path below, which
+            // evaluates its argument -- and evaluating an array name reads buf[0]. The
+            // pointer then held the first BYTE of the array widened to 16 bits, a small
+            // number that looks plausible, and `p.value = 42` wrote that many bytes up from
+            // address 0: register space, another global, the stack. No diagnostic anywhere.
+            // An SRAM array is addressed by an assembler label, not by a number this pass can
+            // resolve, so refusing is what can be done here and is what #413 asks for.
+            if (NamedArrayArgument(expr.Args[0]) is { } arrName)
+                throw UserError(
+                    $"ptr() cannot take the array '{arrName}': an array lives at an address "
+                    + "the assembler assigns, not at one this pass can compute, and taking it "
+                    + "here would read the array's first byte instead. ptr() accepts a "
+                    + "hardware register or a numeric address. Index the array directly "
+                    + $"(`{arrName}[i]`) when what you want is its elements.",
+                    ArgAt(expr, 0));
+
             // Runtime address, e.g. ptr(BASE + x) with a non-constant offset. Materialize
             // the address (at the chip's native pointer width -- 32-bit on Cortex-M /
             // RISC-V, 16-bit on AVR) into a temp and mark it a runtime pointer; a
@@ -10091,6 +10108,30 @@ public partial class IRGenerator
         Temporary extDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[callee]));
         Emit(new Call(cSym, extArgs, extDst));
         return extDst;
+    }
+
+    // The array an expression NAMES, when it names one: an ordinary array/bytearray, or an
+    // instance-member array. Used to refuse ptr(<array>), where evaluating the argument
+    // would read the array's first element instead of taking its address (#413). Resolving
+    // a name emits no IR.
+    private string? NamedArrayArgument(Expression e)
+    {
+        switch (e)
+        {
+            case VariableExpr ve:
+                foreach (string? key in new[]
+                         {
+                             string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                             string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                             ve.Name,
+                         })
+                    if (key != null && TryResolveArrayStorageKey(key, out _)) return ve.Name;
+                return null;
+            case MemberAccessExpr mem when ResolveMemberArrayName(mem) != null:
+                return (mem.Object is VariableExpr mv ? mv.Name + "." : "") + mem.Member;
+            default:
+                return null;
+        }
     }
 
     // Evaluate an expression as a compile-time address for ptr(...): an integer literal,
