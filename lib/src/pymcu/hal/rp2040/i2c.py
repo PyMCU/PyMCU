@@ -68,9 +68,12 @@ class I2C:
 
     @inline
     def write_bytes(self, addr: uint8, data: bytearray, n: uint16):
-        # Multi-byte write; STOP is asserted with the final byte.
+        # Multi-byte write; STOP is asserted with the final byte. The index is as
+        # wide as the count: a uint8 here does not truncate a transfer past 255,
+        # it never ends, because i wraps to 0 while i < n stays true and the
+        # i == n - 1 that asserts STOP is never reached.
         self._set_target(addr)
-        i: uint8 = 0
+        i: uint16 = 0
         while i < n:
             while ((I2C0_IC_STATUS.value >> I2C_STATUS_TFNF) & 1) == 0:
                 pass
