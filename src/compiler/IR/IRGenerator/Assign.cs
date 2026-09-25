@@ -2992,11 +2992,18 @@ public partial class IRGenerator
                     // aliases. Only split on 8-bit AVR (PointerWidth == 2).
                     if (value is Constant constVal && DataTypeExtensions.PointerWidth < 4)
                     {
+                        // HIGH byte first, LOW byte second. An 8-bit core reaches a 16-bit
+                        // peripheral register through a shared TEMP latch: the high half goes
+                        // to TEMP and the write of the LOW byte commits both at once. Storing
+                        // low first committed the pair with whatever TEMP held from an earlier
+                        // access, so `TCNT1.value = 0x1234` landed as 0x??34 and the high
+                        // store that followed only refilled TEMP. Reads keep the opposite
+                        // order (low first, which is what latches the high half to read back).
                         int fullValue = constVal.Value;
                         int lowByte = fullValue & 0xFF;
                         int highByte = (fullValue >> 8) & 0xFF;
-                        Emit(new Copy(new Constant(lowByte), new MemoryAddress(addr.Address, DataType.UINT8)));
                         Emit(new Copy(new Constant(highByte), new MemoryAddress(addr.Address + 1, DataType.UINT8)));
+                        Emit(new Copy(new Constant(lowByte), new MemoryAddress(addr.Address, DataType.UINT8)));
                     }
                     else
                     {

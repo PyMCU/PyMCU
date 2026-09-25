@@ -87,6 +87,7 @@ public class GroupedPeripheralRegisterTests
     {
         // 1500 = 0x05DC. On AVR a constant 16-bit store splits into the two byte halves,
         // which is only reachable when the symbol carried UINT16 rather than a bare int.
+        // The halves go out HIGH first: see TheHalvesOfASixteenBitStore_GoOutHighByteFirst.
         var ir = Gen(GroupHeader +
             "def main():\n" +
             "    Timer1.OCR1A.value = 1500\n");
@@ -96,7 +97,7 @@ public class GroupedPeripheralRegisterTests
             .Select(c => ((MemoryAddress)c.Dst).Address + "=" + ((Constant)c.Src).Value)
             .ToList();
 
-        Assert.Equal(new List<string> { "136=220", "137=5" }, stores);
+        Assert.Equal(new List<string> { "137=5", "136=220" }, stores);
     }
 
     [Fact]
@@ -194,8 +195,8 @@ public class GroupedPeripheralRegisterTests
             .Select(c => ((MemoryAddress)c.Dst).Address)
             .ToList();
 
-        // 0x80, 0x81, then the two byte halves of the 16-bit 0x84.
-        Assert.Equal(new List<int> { 0x80, 0x81, 0x84, 0x85 }, stores);
+        // 0x80, 0x81, then the two byte halves of the 16-bit 0x84, high half first.
+        Assert.Equal(new List<int> { 0x80, 0x81, 0x85, 0x84 }, stores);
     }
 
     [Fact]
