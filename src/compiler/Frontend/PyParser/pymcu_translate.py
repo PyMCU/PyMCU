@@ -950,12 +950,12 @@ def s_raise(node):
     # a deferred print will replay (#435).
     if node.exc is None:
         return {"k": "Raise", "errorType": "", "message": "", "messageName": None,
-                "messageExpr": None}
+                "messageExpr": None, "hasArg": False}
 
     exc = node.exc
     if isinstance(exc, ast.Name):
         return {"k": "Raise", "errorType": exc.id, "message": "", "messageName": None,
-                "messageExpr": None}
+                "messageExpr": None, "hasArg": False}
     if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
         message, message_name, message_expr = "", None, None
         if exc.args:
@@ -971,7 +971,8 @@ def s_raise(node):
                 # has (#369).
                 message_expr = expr(arg)
         return {"k": "Raise", "errorType": exc.func.id, "message": message,
-                "messageName": message_name, "messageExpr": message_expr}
+                "messageName": message_name, "messageExpr": message_expr,
+                "hasArg": bool(exc.args)}
     raise Unsupported("that raise form", node)
 
 

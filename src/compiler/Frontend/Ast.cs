@@ -645,6 +645,9 @@ public class RaiseStmt : Statement
     /// A non-literal message (f-string, concatenation, call) carried for deferred print (#435).
     /// Null when the message is a string literal, a module-level string name, or absent.
     public Expression? MessageExpr { get; }
+    /// Whether the constructor call was given an argument at all. `E()` and `E("")` both
+    /// carry an empty Message; only this tells `args == ()` from `args == ('',)`.
+    public bool HasArgument { get; init; }
 
     public RaiseStmt(string errorType, string message, string? messageName = null,
                      Expression? messageExpr = null)

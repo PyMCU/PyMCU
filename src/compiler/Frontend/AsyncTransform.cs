@@ -1040,7 +1040,8 @@ public static class AsyncTransform
                     return new AssertStmt(E(ast.Condition, from), ast.Message) { Line = ast.Line };
                 case RaiseStmt rs:
                     return new RaiseStmt(rs.ErrorType, rs.Message, rs.MessageName,
-                        rs.MessageExpr == null ? null : E(rs.MessageExpr, from)) { Line = rs.Line };
+                        rs.MessageExpr == null ? null : E(rs.MessageExpr, from))
+                        { Line = rs.Line, HasArgument = rs.HasArgument };
                 case Block b:
                 {
                     var nb = new Block();

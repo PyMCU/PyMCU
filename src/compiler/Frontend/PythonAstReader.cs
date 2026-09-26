@@ -367,7 +367,8 @@ public static class PythonAstReader
             {
                 Expression? msgExpr = Has(e, "messageExpr") ? ReadExpr(e.GetProperty("messageExpr")) : null;
                 return Located(new RaiseStmt(Str(e, "errorType"), Str(e, "message"),
-                    Has(e, "messageName") ? Str(e, "messageName") : null, msgExpr), e);
+                    Has(e, "messageName") ? Str(e, "messageName") : null, msgExpr)
+                    { HasArgument = Has(e, "hasArg") && e.GetProperty("hasArg").GetBoolean() }, e);
             }
             case "Assert":
                 return Located(new AssertStmt(ReadExpr(e.GetProperty("condition"))!, Str(e, "message")), e);

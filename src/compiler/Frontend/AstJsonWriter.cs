@@ -355,6 +355,7 @@ public static class AstJsonWriter
                 w.WritePropertyName("messageExpr");
                 if (r2.MessageExpr == null) w.WriteNullValue();
                 else WriteExpr(w, r2.MessageExpr);
+                w.WriteBoolean("hasArg", r2.HasArgument);
                 w.WriteNumber("line", r2.Line);
                 w.WriteEndObject();
                 return;

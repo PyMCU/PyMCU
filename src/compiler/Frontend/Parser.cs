@@ -1279,6 +1279,7 @@ public class Parser
         string message = "";
         string? messageName = null;
         Expression? messageExpr = null;
+        bool hasArgument = false;
         if (Check(TokenType.Identifier))
         {
             errorType = Advance().Value;
@@ -1290,6 +1291,7 @@ public class Parser
                 // argument rather than report at wherever parsing stopped.
                 Token messageStart = Peek();
                 int messageStartPos = pos;
+                hasArgument = !Check(TokenType.RParen);
                 if (Check(TokenType.String))
                 {
                     var parts = new System.Text.StringBuilder();
@@ -1340,7 +1342,8 @@ public class Parser
         }
 
         ConsumeStatementEnd();
-        return Located(new RaiseStmt(errorType, message, messageName, messageExpr) { Line = line }, raiseKeyword);
+        return Located(new RaiseStmt(errorType, message, messageName, messageExpr)
+            { Line = line, HasArgument = hasArgument }, raiseKeyword);
     }
 
     private Statement ParseTryStatement()
