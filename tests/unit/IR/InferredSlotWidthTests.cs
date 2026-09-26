@@ -221,6 +221,56 @@ public class InferredSlotWidthTests
     }
 
     [Fact]
+    public void An_unannotated_inline_parameter_bound_to_a_variable_reads_at_its_width()
+    {
+        // `@inline def f(x): print(x)` with `t: uint32` printed t's low byte: the parameter
+        // aliased the variable but carried the uint8 default as its own type.
+        var ir = new IRGenerator().Generate(
+            new Parser(new Lexer(
+                "r: uint32 = 0\n" +
+                "@inline\n" +
+                "def f(x):\n" +
+                "    global r\n" +
+                "    r = x\n" +
+                "def g(t: uint32):\n" +
+                "    f(t)\n" +
+                "g(946684800)\n").Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(),
+            new DeviceConfig { Arch = "avr" });
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable { Name: "r" } && c.Src is Variable).ToList();
+        stores.Should().NotBeEmpty();
+        stores.Should().OnlyContain(c => ((Variable)c.Src).Type == DataType.UINT32);
+    }
+
+    [Fact]
+    public void A_field_stored_from_a_nested_inline_keeps_the_declared_result_width()
+    {
+        // mpbus: `self._top = top_of(freq)` where top_of is `-> uint16` and calls another
+        // @inline returning 1 or 8. The field took the byte width of that constant and kept
+        // 15999 & 0xFF = 127, even with an explicit uint16() cast around the division.
+        var (ir, _) = GenSeeded(
+            "@inline\n" +
+            "def divider(freq: uint16) -> uint16:\n" +
+            "    if freq > 244:\n" +
+            "        return 1\n" +
+            "    return 8\n" +
+            "@inline\n" +
+            "def top_of(freq: uint16) -> uint16:\n" +
+            "    return uint16(16000000 // (divider(freq) * freq) - 1)\n" +
+            "class P:\n" +
+            "    def __init__(self, freq: uint16):\n" +
+            "        self._top = top_of(freq)\n" +
+            "    @inline\n" +
+            "    def top(self) -> uint16:\n" +
+            "        return self._top\n" +
+            "p = P(1000)\n" +
+            "r: uint16 = p.top()\n");
+        ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Src is Constant { Value: 127 }).Should().BeEmpty();
+    }
+
+    [Fact]
     public void A_program_whose_slots_all_fit_compiles_once()
     {
         // The zero-cost half: nothing too narrow, no second run, the same IR as before.
