@@ -785,7 +785,7 @@ public partial class IRGenerator
                 // and `LIMIT: const = 10` was recorded nowhere and accepted one in silence,
                 // which is a const enforced or not depending on how it was spelled (#217).
                 if (IsConstType(type))
-                    declaredConstants.Add(name);
+                    declaredConstants.Add(currentModulePrefix + name);
 
                 if (type == "bytearray" && initializer != null)
                     TryRegisterModuleBytearray(name, initializer);
@@ -838,7 +838,7 @@ public partial class IRGenerator
                 // which (#217). Module-level declarations only reach here; VisitAnnAssign's own
                 // registration, which has always used IsConstType, is never called for them.
                 if (IsConstType(type))
-                    declaredConstants.Add(name);
+                    declaredConstants.Add(currentModulePrefix + name);
 
                 // A module-level string constant (`str` or `const[str]`). Register its
                 // compile-time value under the module-global key so ResolveStrConstant resolves

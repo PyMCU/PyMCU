@@ -390,25 +390,24 @@ public partial class IRGenerator
     // immutable by definition, so any later assignment to one is a user error. Distinct
     // from constantVariables, which also holds const-FOLDED locals (which ARE reassignable).
     //
-    // A local is filed under the key of the scope that declares it (DeclaredConstKey), never
-    // the bare name: a local `ms: const[uint32]` in one function refused `ms = ms - 1` in
-    // every other function of the program, the stdlib included. A MODULE-level declaration
-    // is still filed bare (ScanGlobals), so it is refused in every module: a plain name in
-    // one module can still resolve to another module's global, and the refusal is what
-    // keeps that from compiling to the wrong value for a const.
+    // Filed under the key of the scope that declares the name (DeclaredConstKey), never the
+    // bare name: a local `ms: const[uint32]` in one function refused `ms = ms - 1` in every
+    // other function of the program, the stdlib included, and a module's constant refused a
+    // name of the same spelling in every other module.
     private HashSet<string> declaredConstants = new();
 
     /// The key a local `const[...]` declaration of <paramref name="name"/> is filed under:
-    /// the inline expansion, else the function that declares it.
+    /// the inline expansion, else the function, else the module that declares it.
     private string DeclaredConstKey(string name) =>
         !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
         : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
-        : name;
+        : currentModulePrefix + name;
 
     /// Whether <paramref name="name"/>, written here, names a `const[...]` declaration:
-    /// a local of this scope, or a module-level one.
+    /// one of this scope, or one of the module the code belongs to.
     private bool IsDeclaredConst(string name) =>
-        declaredConstants.Contains(DeclaredConstKey(name)) || declaredConstants.Contains(name);
+        declaredConstants.Contains(DeclaredConstKey(name))
+        || declaredConstants.Contains(currentModulePrefix + name);
 
     /// Class methods with no `self` parameter, compiled as ordinary functions under the class
     /// prefix (#201). Kept so the duplicate-definition check can see them: they land in none of
