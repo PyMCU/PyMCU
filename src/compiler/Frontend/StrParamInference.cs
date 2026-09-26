@@ -17,7 +17,7 @@ namespace PyMCU.Frontend;
 /// </summary>
 public static class StrParamInference
 {
-    private enum Seen { None = 0, Str = 1, Other = 2, Char = 4 }
+    private enum Seen { None = 0, Str = 1, Other = 2, Char = 4, Num = 8 }
 
     public static void InferProgram(ProgramNode main, IEnumerable<ProgramNode> modules)
     {
@@ -40,7 +40,7 @@ public static class StrParamInference
                 s = new Seen[f.Params.Count];
                 for (int i = 0; i < f.Params.Count; i++)
                     if (f.Params[i].DefaultValue is { } d and not NoneLiteral)
-                        s[i] = d is StringLiteral ? Classify(d, new HashSet<string>()) : Seen.Other;
+                        s[i] = Classify(d, new HashSet<string>());
                 seen[f] = s;
             }
             return s;
@@ -105,6 +105,15 @@ public static class StrParamInference
                     || (s[i] == Seen.Char && !f.IsInline && !methodDefs.Contains(f));
                 if (text) f.Params[i].Type = "str";
             }
+
+        // The other direction: an annotation says nothing at run time, and a `str` parameter
+        // every call hands a number holds that number (`def add(x: str, y: str)` called as
+        // `add(2, 3)` returns 5). Only literal numbers decide it; a name may well hold text.
+        foreach (var (f, s) in seen)
+            for (int i = 0; i < s.Length; i++)
+                if (f.Params[i].Type == "str" && (s[i] & Seen.Num) != 0
+                    && (s[i] & (Seen.Str | Seen.Char)) == 0)
+                    f.Params[i].Type = "";
     }
 
     private static Seen Classify(Expression e, HashSet<string> strNames) => e switch
@@ -114,6 +123,7 @@ public static class StrParamInference
         // decision below.
         StringLiteral { Value.Length: 1 } => Seen.Char,
         StringLiteral => Seen.Str,
+        IntegerLiteral or FloatLiteral or BooleanLiteral => Seen.Num | Seen.Other,
         VariableExpr v when strNames.Contains(v.Name) => Seen.Str,
         // `"h" + "i"`: a sum of strings the compiler folds is one more string.
         BinaryExpr { Op: BinaryOp.Add } b when IsText(Classify(b.Left, strNames))
