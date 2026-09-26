@@ -107,6 +107,13 @@ jobs:
           # lib/src/pymcu the only stdlib the scan sees.
           pip install --pre --no-deps pymcu-circuitpython pymcu-micropython
 
+      # Before the scan, not after: a layer older than this tree fails the scan
+      # as four violations naming files and lines, which reads as a parity bug
+      # and is not one. This says so in one line instead, and goes quiet on its
+      # own when the layer publishes.
+      - name: Check the published layers are not older than this tree
+        run: python tools/check_compat_layer_versions.py
+
       # Pure ast/tomllib over lib/src/pymcu, no compiler and no stdlib install
       # needed. The compat layers installed above let the universality half of
       # hal_parity.py run against the pinned PyPI releases instead of skipping.
@@ -150,6 +157,11 @@ jobs:
           pip install ./extensions/pymcu-sdk
           pip install --pre --no-deps pymcu-avr
           pip install --no-deps ./lib
+
+      # The suite carries tests/stdlib/test_hal_parity.py too, so it hits the
+      # same stale-layer failure. Same check, same reason (see stdlib-parity).
+      - name: Check the published layers are not older than this tree
+        run: python tools/check_compat_layer_versions.py
 
       # The suite drives build/bin/pymcuc with --emit-ir, which replaces the
       # backend phase with the IR serializer, so no backend binary is needed --

@@ -22,6 +22,19 @@ LAYER_SPECS = {
     "micropython": ("pymcu_micropython", "PYMCU_COMPAT_MICROPYTHON", "pymcu-micropython"),
 }
 
+# The oldest RELEASE of each layer this tree's allowlist and universality rules
+# describe. It is not a runtime dependency and nothing installs against it: it
+# exists so that a layer resolved from PyPI can be compared with what the tree
+# expects BEFORE the scan runs. Measured against an older release the scan
+# reports the layer's fixed lines as violations and the tree's newer allowlist
+# entries as unused, which reads exactly like a parity bug and is not one.
+# Both numbers are the beta 1 both layers publish, per docs/release/beta1-checklist.md.
+# Raise it when a release lands that the tree's rules already assume.
+LAYER_MINIMUM = {
+    "circuitpython": "0.1.0b1",
+    "micropython": "0.1.0b1",
+}
+
 ARCH_COLUMNS = ("avr", "pic12", "pic14", "pic18", "riscv", "rp2040", "rp2350")
 CHIP_TO_COLUMN = {"rp2040": "rp2040", "rp2350": "rp2350"}
 DECORATORS = {"inline", "outline"}
