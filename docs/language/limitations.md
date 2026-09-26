@@ -636,12 +636,16 @@ This means the following operations are **not supported**:
 | Operation | Example | Why it fails |
 |---|---|---|
 | Pointer advance | `p = p + 1` | `ptr` has no runtime address value |
-| Runtime **bit** index through a ptr variable | `p[i]` where `i` is a runtime variable | rejected with a clear error (constant-index bits and chip registers are fine) |
 | Pointer difference | `p - q` | Not in IR |
 | Bare assignment | `PORTB = 0xFF` | rebinds the name, never writes — the compiler rejects it; use `PORTB.value = 0xFF` |
 | `ptr()` of an array | `ptr(buf)` where `buf` is a `bytearray`/`uint8[N]` | an array lives at a label the assembler assigns, not at an address the compiler resolves; refused by name (it used to compile to a read of `buf[0]`) |
 
 The following, previously listed here as unsupported, **do work**:
+
+- **A bit subscript through a pointer to a run-time address**, `p: ptr[uint8] = ptr(a)` then
+  `p[i] = 1`, `p[i]`, `p[i] ^= 1`, with a constant or a run-time `i`: the element at the
+  address is loaded, its bit changed or tested, and stored back. It used to change a bit of
+  the variable holding the address, with a constant index, and to refuse a run-time one.
 
 - **Grouped peripherals (RFC 0012)** - a `ptr[T]` declaration in a CLASS body is a register,
   the same declaration one scope deeper. `Timer1.TCCR1A.value`, `Timer1.TIFR1[Timer1.TOV1]`
