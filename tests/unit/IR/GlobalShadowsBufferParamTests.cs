@@ -92,6 +92,24 @@ public class GlobalShadowsBufferParamTests
     }
 
     [Fact]
+    public void InlineParam_Len_MeasuresTheArgument()
+    {
+        // A list: a bytearray parameter's length was already asked of the binding first
+        // (#512), the list and bytes spellings went on to `main.buf`.
+        var ir = Gen(
+            "@inline\n" +
+            "def size(buf: list[uint8]) -> uint8:\n" +
+            "    return len(buf)\n" +
+            "buf = [GPIOR0.value, GPIOR0.value, GPIOR0.value]\n" +
+            "rb = [GPIOR0.value, GPIOR0.value, GPIOR0.value, GPIOR0.value, GPIOR0.value]\n" +
+            "GPIOR1.value = size(rb)\n");
+
+        var copies = All(ir).OfType<Copy>().ToList();
+        Assert.Contains(copies, c => c.Src is Constant { Value: 5 });
+        Assert.DoesNotContain(copies, c => c.Src is Constant { Value: 3 });
+    }
+
+    [Fact]
     public void PlainFunctionBufferParam_IndexedStore_GoesThroughThePointer()
     {
         var ir = Gen(
@@ -104,5 +122,20 @@ public class GlobalShadowsBufferParamTests
         var fill = ir.Functions.Single(f => f.Name == "fill");
         Assert.Contains(fill.Body, i => i is BytearrayStore { PtrName: "fill.buf" });
         Assert.DoesNotContain(fill.Body, i => i is ArrayStore st && IsGlobalBuf(st.ArrayName));
+    }
+
+    [Fact]
+    public void PlainFunctionBufferParam_Len_IsNotTheModuleArraysLength()
+    {
+        // A buffer reached by pointer has no compile-time length here, which is refused;
+        // with a module array of the same name it compiled to that array's length.
+        var ex = Record.Exception(() => Gen(
+            "def size(buf: bytearray) -> uint8:\n" +
+            "    return len(buf)\n" +
+            "buf = bytearray(13)\n" +
+            "rb = bytearray(17)\n" +
+            "GPIOR1.value = size(rb)\n"));
+
+        Assert.NotNull(ex);
     }
 }

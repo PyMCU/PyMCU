@@ -5880,7 +5880,14 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(currentInlinePrefix) &&
                 arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1))
                 return new Constant(LogicalArrayLen(currentInlinePrefix + vLen.Name, s1));
-            if (!string.IsNullOrEmpty(currentFunction) &&
+            // A frame that binds the name answers alone: at a module-level expansion the
+            // enclosing `main.<name>` below IS the module global of the parameter's name, and
+            // in a real function the bare lookup is. A frame binding that is no array (a
+            // buffer parameter reached by pointer, a list) goes on to its own paths.
+            string? lenFrameStore = FrameArrayStorage(vLen.Name, out bool lenFrameBinds);
+            if (lenFrameStore != null && arraySizes.TryGetValue(lenFrameStore, out int sf))
+                return new Constant(LogicalArrayLen(lenFrameStore, sf));
+            if (!lenFrameBinds && !string.IsNullOrEmpty(currentFunction) &&
                 arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2))
                 return new Constant(LogicalArrayLen(currentFunction + "." + vLen.Name, s2));
             // The BINDING of this frame answers before the bare name does. A parameter is
@@ -5904,7 +5911,7 @@ public partial class IRGenerator
                     return new Constant(LogicalArrayLen(lenStored, arraySizes[lenStored]));
             }
 
-            if (arraySizes.TryGetValue(vLen.Name, out int s3))
+            if (!lenFrameBinds && arraySizes.TryGetValue(vLen.Name, out int s3))
                 return new Constant(LogicalArrayLen(vLen.Name, s3));
 
             string lenStrKey = !string.IsNullOrEmpty(currentInlinePrefix)
