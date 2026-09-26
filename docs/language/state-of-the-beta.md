@@ -61,9 +61,16 @@ makes it worth running: a probe exercises the construct an author already
 suspected, and a real driver exercises the combination nobody chose.
 
 On 2026-09-25 that harness opened 23 issues in one day. Eleven are fixed and
-in the tree, and a string campaign closed five older ones alongside them. What follows is what is still open and can reach a beta-1
-program, with the ones that give a wrong answer and no diagnostic listed
-first, because that is the category this page exists to disclose.
+in the tree, and a string campaign closed five older ones alongside them.
+
+What follows is what is still open and can reach a beta-1 program, with the
+ones that give a wrong answer and no diagnostic listed first, because that is
+the category this page exists to disclose. Three of the rows below came from
+the day after, on 2026-09-26, when this list was cross-checked against the
+probes the oracle still tracks rather than against the issues opened that
+week. Two of those three had been open for longer than any issue in the
+first draft of this table, and were missed for the dull reason that the
+draft was written by looking at recent work instead of at the measurement.
 
 | Issue | What it does to a program | Reaches |
 |---|---|---|
@@ -73,6 +80,9 @@ first, because that is the category this page exists to disclose.
 | [#510](https://github.com/PyMCU/PyMCU/issues/510) | A method with a single call site is inlined, and the filled ellipse it expands draws the wrong pixels | every target |
 | [#495](https://github.com/PyMCU/PyMCU/issues/495) | A compile-time chip predicate stops folding once it is bound to a name in another module, so both branches are compiled into the firmware | every target |
 | [#500](https://github.com/PyMCU/PyMCU/issues/500) | Two per-chip HAL modules exist twice; the facade wires one copy and the other has drifted, so reading the unwired copy describes behaviour the compiler does not have | every target |
+| [#449](https://github.com/PyMCU/PyMCU/issues/449) | A type annotation reached through a module alias, `t.uint8` after `import pymcu.types as t`, wraps where the bare name promotes: the same program prints `44` one way and `300` the other, with nothing said | every target |
+| [#446](https://github.com/PyMCU/PyMCU/issues/446) | A constructor reading a field off another instance it was handed reads `0` instead of the value: a driver whose `__init__` takes a configured object and copies one field out of it gets a zero | every target |
+| [#439](https://github.com/PyMCU/PyMCU/issues/439) | `match` on a tuple pattern compiles under the Python front end where the C# one refuses it, and takes the wrong branch | `PYMCU_PY_PARSER=1` |
 
 Two more are about the toolchain rather than a program, and belong here
 because they decide whether the numbers on this page can be trusted at all.
