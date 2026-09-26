@@ -1843,6 +1843,18 @@ public partial class IRGenerator
                 }
                 if (arraySizes.ContainsKey(argQualified))
                 {
+                    // `z = b"QR"` then `f(z)`: a literal bound by name is a compile-time
+                    // sequence, sized in arraySizes but with no contiguous storage, so its
+                    // base named a label nothing defines and the link failed with
+                    // `undefined reference to main_z`. Lay the elements out under a hidden
+                    // name and pass that base, as the parameter-bound sequence below does.
+                    if (!IsBufferStorageName(argQualified)
+                        && ResolveConstSequenceExpr(argVe) is { } namedSeq
+                        && MaterializeSequenceArg(namedSeq) is { } namedSeqBuf)
+                    {
+                        argValuesL.Add(namedSeqBuf);
+                        continue;
+                    }
                     argValuesL.Add(new ArrayBase(argQualified));
                     continue;
                 }
