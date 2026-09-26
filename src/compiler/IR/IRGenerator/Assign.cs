@@ -6308,6 +6308,53 @@ public partial class IRGenerator
                 qualified = stmt.Name;
             }
 
+            // A fresh buffer is a rebinding: whatever the name held before -- None from a
+            // parameter an inline call site bound to None, or an alias to the caller's
+            // buffer -- no longer answers for it. `if b is None: b = bytearray(8)` in an
+            // inlined method laid out the array and then `b[k]` still read the None
+            // record and raised TypeError at run time for a program CPython runs.
+            //
+            // Under a condition decided at run time the rebinding holds on one path only, and a
+            // buffer travels as a NAME: after the merge `b` would have to be the caller's buffer
+            // (or None) on one path and this one on the other, and there is no run-time handle
+            // to choose between them. The merge used to keep whichever binding survived the
+            // join, so reads went to the fresh buffer on both paths without a word.
+            //
+            // A real subroutine's `Optional[bytearray]` parameter is different: it arrives as a
+            // pointer plus a member tag, so it CAN name either buffer at run time. The fresh
+            // buffer gets storage of its own, and the pointer and the tag are pointed at it --
+            // the reads after the merge already dispatch on the tag and load through the pointer.
+            if (bytearrayParams.Contains(qualified) && count > 0
+                && optionalTagSlots.TryGetValue(qualified, out var rebindTag)
+                && optionalMembersByName.TryGetValue(qualified, out var rebindMembers)
+                && rebindMembers.FindIndex(m => m is "bytearray" or "bytes") is int bufIdx
+                && bufIdx >= 0)
+            {
+                string storage = stmt.Name + "__rebind" + (tempCounter++);
+                VisitVarDecl(new VarDecl(storage, stmt.VarType, stmt.Init) { Line = stmt.Line });
+                string storageQ = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + storage
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + storage : storage);
+                Emit(new Copy(new ArrayBase(storageQ), new Variable(qualified, DataType.UINT16)));
+                Emit(new Copy(new Constant(bufIdx), rebindTag));
+                narrowedOptionals[qualified] = bufIdx;
+                noneValuedNames.Remove(qualified);
+                return;
+            }
+            int rebindBaseDepth = inlineStack.Count > 0 ? inlineStack[^1].EntryBranchDepth : 0;
+            bool heldOther = noneValuedNames.Contains(qualified)
+                || (variableAliases.TryGetValue(qualified, out var priorAlias)
+                    && !string.IsNullOrEmpty(priorAlias) && priorAlias != qualified);
+            if (heldOther && !replayingModuleLevel && _runtimeBranchDepth > rebindBaseDepth)
+                throw UserError(
+                    $"'{stmt.Name}' is rebound to a new buffer under a condition decided at run "
+                    + "time, so after the branch it would name one buffer on one path and another "
+                    + "(or None) on the other; a buffer travels as a name, with no run-time "
+                    + "handle to choose between the two. Give the new buffer its own name, or "
+                    + "make the condition one the compiler can decide.", stmt);
+            noneValuedNames.Remove(qualified);
+            if (!replayingModuleLevel) variableAliases.Remove(qualified);
+
             if (count <= 0)
             {
                 // A compile-time-shaped size that does not fold (`n * len(self.devs)` where

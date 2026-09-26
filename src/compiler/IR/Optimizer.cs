@@ -2568,11 +2568,16 @@ private static Function CloneFunction(Function f)
                 register(ast.Index);
                 register(ast.Src);
                 break;
+            // The pointer is READ, by name: a parameter rebound inside the body
+            // (`b = bytearray(8)` on an Optional[bytearray] parameter) is written by a
+            // Copy the load has to keep alive.
             case BytearrayStore bst:
+                register(new Variable(bst.PtrName, DataType.UINT16));
                 register(bst.Index);
                 register(bst.Src);
                 break;
             case BytearrayLoad bld:
+                register(new Variable(bld.PtrName, DataType.UINT16));
                 register(bld.Index);
                 break;
             case SignalError se:
