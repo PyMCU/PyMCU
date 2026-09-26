@@ -4463,6 +4463,36 @@ public partial class IRGenerator
 
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
+        // Every path below visits the subscript before the value, and CPython evaluates the
+        // value first: `a[i()] = v()` calls v, then i. When both can have an effect the value
+        // is evaluated here and carried as held. The elements of a sequence value are pinned
+        // either way: `s[0] = (bump(), 2, 3)` binds them to a __setitem__ parameter that reads
+        // them where it uses them, once per use.
+        Expression pinnedValue = stmt.Value switch
+        {
+            ListExpr le => PinEffectfulElements(le),
+            TupleExpr te when PinEffectfulElements(new ListExpr(te.Elements)) is var pte
+                              && !ReferenceEquals(pte.Elements, te.Elements)
+                => new TupleExpr(pte.Elements) { Line = te.Line },
+            var v when OperandCanHaveAnEffect(v) && ValueCanBeHeld(v)
+                       && (OperandCanHaveAnEffect(indexExpr.Index)
+                           || OperandCanHaveAnEffect(indexExpr.Target)
+                           || ReadsARegister(indexExpr.Index)
+                           || indexExpr.Index is TupleExpr { Elements: var keyElems }
+                              && keyElems.Any(k => OperandCanHaveAnEffect(k) || ReadsARegister(k)))
+                => HeldAssignedValue(v),
+            var v => v,
+        };
+        if (!ReferenceEquals(pinnedValue, stmt.Value))
+            stmt = new AssignStmt(stmt.Target, pinnedValue)
+                { Line = stmt.Line, Column = stmt.Column, AnnotatedType = stmt.AnnotatedType };
+        // `m[bump(), 2] = v`: the key pair is bound to the dunder's parameter as a sequence.
+        if (indexExpr.Index is TupleExpr keyPair
+            && PinEffectfulElements(new ListExpr(keyPair.Elements)) is var pinnedKey
+            && !ReferenceEquals(pinnedKey.Elements, keyPair.Elements))
+            indexExpr = new IndexExpr(indexExpr.Target, new TupleExpr(pinnedKey.Elements) { Line = keyPair.Line })
+                { Line = indexExpr.Line, Column = indexExpr.Column, Length = indexExpr.Length };
+
         // docs/rfcs/0004-arena-allocator.md: `buf[i] = v` on an arena-allocated runtime-sized
         // bytearray. `buf` is a plain uint16 holding an offset (not a pointer -- see
         // TryLowerArenaBytearray), so `buf + i` is ordinary integer arithmetic the normal
@@ -5018,6 +5048,32 @@ public partial class IRGenerator
         Temporary res = MakeTemp(elem);
         Emit(new Binary(BinaryOp.BitOr, cleared, vmask, res));
         Emit(new StoreIndirect(res, ptrVal, elem));
+    }
+
+    // The value of an item assignment, evaluated ahead of its subscript. A call is asked for
+    // its tuple slots, the way the __setitem__ path asks, so `pixels[i()] = wheel(x)` still
+    // binds the three colour values as a sequence.
+    // Whether evaluating the value ahead of its use hands back something to hold. A plain
+    // @inline function returns its expansion's result even undeclared; an undeclared METHOD
+    // leaves it in the return register for the next instruction (PyMCU#292), and moving it
+    // ahead of a subscript that makes a call would lose it.
+    private bool ValueCanBeHeld(Expression value) =>
+        OperandYieldsARealValue(value)
+        || value is CallExpr { Callee: VariableExpr fv }
+           && inlineFunctions.ContainsKey(ResolveCallee(fv.Name));
+
+    private Expression HeldAssignedValue(Expression value)
+    {
+        if (value is not CallExpr) return PinOnce(value);
+        lastTupleResults = new List<string>();
+        pendingTupleCount = -1;
+        Val held = VisitExpression(value);
+        pendingTupleCount = 0;
+        if (lastTupleResults.Count > 0)
+            return new ListExpr(lastTupleResults
+                .Select(s => (Expression)new VariableExpr(s) { Line = value.Line }).ToList())
+                { Line = value.Line };
+        return HeldValue(held, value);
     }
 
     // Folds a literal integer expression to its value for the out-of-range check. Handles direct
@@ -8953,6 +9009,18 @@ public partial class IRGenerator
             return;
         }
 
+        // `a[i()] += v()`: CPython evaluates the subscript once, loads the element, and only
+        // then the value. The read below and the store-back after it each visited the
+        // subscript, so a call in it ran twice and the two halves could name different
+        // elements; and the value ran first. The subscript is pinned, and when the value can
+        // have an effect the element is loaded ahead of it.
+        IndexExpr? augIe = stmt.Target as IndexExpr;
+        if (augIe is { Index: not SliceExpr and not TupleExpr }
+            && (OperandCanHaveAnEffect(augIe.Index) || ReadsARegister(augIe.Index)))
+            augIe = new IndexExpr(augIe.Target, PinOnce(augIe.Index))
+                { Line = augIe.Line, Column = augIe.Column, Length = augIe.Length };
+        Val? augCurrent = augIe != null && OperandCanHaveAnEffect(stmt.Value) ? VisitIndex(augIe) : null;
+
         Val operand = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr ve)
@@ -9001,9 +9069,9 @@ public partial class IRGenerator
 
             Emit(new AugAssign(IRGenerator.MapAugOp(stmt.Op), target, operand));
         }
-        else if (stmt.Target is IndexExpr ie)
+        else if (augIe is { } ie)
         {
-            Val current = VisitIndex(ie);
+            Val current = augCurrent ?? VisitIndex(ie);
             // The read-modify-write result takes the ELEMENT's width, not a blanket
             // uint8: `xs[i] += v` on a list[uint16] or a uint16 array would otherwise
             // truncate the sum before the store-back.
