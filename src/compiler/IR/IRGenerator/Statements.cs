@@ -646,7 +646,7 @@ public partial class IRGenerator
             // a 16-bit flash byte-pointer (callers pass a FlashStrAddr); s[i] in the body
             // lowers to FlashLoadPtr. (@inline functions still bind the literal at compile
             // time via strConstantVariables, so this only applies to real subroutines.)
-            if (param.Type == "const[str]" && !funcNode.IsInline)
+            if (param.Type is "const[str]" or "str" && !funcNode.IsInline)
             {
                 paramDt = FlashPtrType;   // 16-bit on AVR/PIC, 32-bit on ARM/RISC-V
                 flashStrPtrVars.Add(qualifiedParam);

@@ -601,6 +601,17 @@ public partial class IRGenerator
                                         || moduleSramArrays.Contains(oStorage)))
                                     av = new ArrayBase(oStorage);
                                 if (!oArgTagged) RefuseOptionalPayloadStore(av, a);
+                                Expression oValExpr = a is KeywordArgExpr oStrKw ? oStrKw.Value : a;
+                                string oPname = oKwPnames != null && oPidx >= 0 && oPidx < oKwPnames.Count
+                                    ? oKwPnames[oPidx] : "?";
+                                if (IsStrParamSlot(callee, oPidx))
+                                    av = BindStrParamArg(callee, oPname, oValExpr, av, expr);
+                                // One character is also its code, and a method has always
+                                // received it that way; a longer text has no such reading.
+                                else if (!IsBufferParam(callee, oPidx, oPname)
+                                         && (StaticStringOf(oValExpr) is { Length: not 1 }
+                                             || IsRuntimeStrArgument(oValExpr)))
+                                    RefuseTextForNonStrParam(callee, oPname, oValExpr, expr);
                                 // The same width coercion a plain call gets. An outlined
                                 // method is marshalled by each argument's own width too, and
                                 // `o.add(s + 300)` handed a uint16 parameter the uint32 temp
@@ -628,6 +639,11 @@ public partial class IRGenerator
                                         break;
                                     Val dv = VisitExpression(defaultExpr);
                                     dv = CoerceOutlinedArg(callee, di, dv);
+                                    if (IsStrParamSlot(callee, di))
+                                        dv = BindStrParamArg(callee,
+                                            functionParams.TryGetValue(callee, out var dNames)
+                                                && di < dNames.Count ? dNames[di] : "?",
+                                            defaultExpr, dv, expr);
                                     oArgs.Add(CoerceToParam(callee, di, dv));
                                 }
                             }
@@ -1999,6 +2015,22 @@ public partial class IRGenerator
                 // A flash-string-by-reference argument is a 16-bit flash address, regardless
                 // of how the const[str] param's nominal type folds.
                 if (argVal is FlashStrAddr) ptype = FlashPtrType;
+
+                if (IsStrParamSlot(callee, i))
+                {
+                    Expression? strArgExpr = i < callArgs.Count ? callArgs[i]
+                        : functionParamDefaults.TryGetValue(callee, out var strDefs) && i < strDefs.Count
+                            ? strDefs[i] : null;
+                    argVal = BindStrParamArg(callee, paramNames[i], strArgExpr, argVal, expr);
+                    argValuesL[i] = argVal;
+                    ptype = FlashPtrType;
+                }
+                else if (functionParamDeclared.ContainsKey(callee)
+                         && !IsBufferParam(callee, i, paramNames[i])
+                         && (argVal is FlashStrAddr
+                             || IsRuntimeStrArgument(i < callArgs.Count ? callArgs[i] : null)))
+                    RefuseTextForNonStrParam(callee, paramNames[i],
+                        i < callArgs.Count ? callArgs[i] : null, expr);
 
                 // A buffer parameter takes an ADDRESS. A chip register evaluates to its
                 // CONTENTS, so `f(PORTB)` hands the callee whatever happens to be in the port,
@@ -8402,22 +8434,80 @@ public partial class IRGenerator
     /// exception message is an address decided by whichever raise ran, so it needs the shared
     /// subroutine `uart_write_str`, which already reads flash through a register pair (#369).
     /// <summary>
-    /// Whether a name is a `const[str]` PARAMETER of the function being compiled, which
-    /// holds the flash address of its text in a 16-bit slot. The declared annotation is the
-    /// question, not the lowered DataType: `str` and `const[str]` lower differently and only
-    /// the second keeps the whole pointer.
+    /// Whether a name is a string PARAMETER of the subroutine being compiled (`str` or
+    /// `const[str]`), which holds the flash address of its text in a pointer-wide slot.
+    /// Asked of the slot the signature laid out, not of the annotation text: a bound
+    /// method's synthesized body has no declared list of its own.
     /// </summary>
-    private bool IsConstStrParameter(string name)
+    // Whether parameter `idx` of `callee` is a string slot of a real subroutine: it holds
+    // the flash address of its text (ParamStorageType), not the text's interned id.
+    private bool IsStrParamSlot(string callee, int idx) => strParamSlots.Contains(callee + "#" + idx);
+
+    /// <summary>
+    /// The argument a string slot receives: the flash address of a text known at compile time,
+    /// or another string slot's address passed on. Nothing else fits it -- a string built at
+    /// run time lives in RAM and None has no address -- and either one reached the callee as a
+    /// number it then printed, so both are refused where the call is written.
+    /// </summary>
+    private Val BindStrParamArg(string callee, string param, Expression? argExpr, Val argVal,
+                                Expression site)
     {
-        if (string.IsNullOrEmpty(currentFunction)) return false;
-        if (!functionParams.TryGetValue(currentFunction, out var names)) return false;
-        if (!functionParamDeclared.TryGetValue(currentFunction, out var declared)) return false;
-        string qualified = currentFunction + "." + name;
-        for (int i = 0; i < names.Count && i < declared.Count; ++i)
-            if (names[i] == qualified || names[i] == name)
-                return declared[i] == "const[str]";
-        return false;
+        string shown = CalleeDisplayName(callee);
+        if (argVal is FlashStrAddr) return argVal;
+        if (argVal is Variable passed && flashStrPtrVars.Contains(passed.Name)) return argVal;
+        if (argExpr != null && argVal is not NoneVal && StaticStringOf(argExpr) is { } text)
+            return new FlashStrAddr(InternStringAsFlash(text));
+        throw UserError(argVal is NoneVal
+            ? $"'{param}' of '{shown}' is a str parameter of a subroutine: it holds the flash "
+              + $"address of a string, and None has none. Make '{shown}' @inline, or pass a string"
+            : $"'{param}' of '{shown}' is a str parameter of a subroutine: it holds the flash "
+              + "address of a string known when the program is compiled, and this argument is "
+              + $"built at run time. Make '{shown}' @inline, or pass a string literal or constant",
+            argExpr ?? site);
     }
+
+    // A parameter that takes the ADDRESS of some bytes: a string built at run time is exactly
+    // that (`_fs_text(buf: bytearray, ...)` fills the buffer an f-string assignment builds).
+    private bool IsBufferParam(string callee, int idx, string param) =>
+        bytearrayParams.Contains(callee + "." + param)
+        || (functionParamDeclared.TryGetValue(callee, out var declared) && idx >= 0
+            && idx < declared.Count
+            && (declared[idx] is "bytearray" or "bytes" or "memoryview" or "ptr"
+                || declared[idx].StartsWith("ptr[", StringComparison.Ordinal)));
+
+    // The name a diagnostic shows for a callee: a method's own, not the `Class_method` key.
+    private string CalleeDisplayName(string callee)
+    {
+        foreach (var cls in classNames)
+            if (callee.StartsWith(cls + "_", StringComparison.Ordinal)
+                && functionParams.ContainsKey(callee))
+                return cls + "." + callee[(cls.Length + 1)..];
+        return callee;
+    }
+
+    // A name holding a string built at run time (`s = f"..."`, a RAM buffer).
+    private bool IsRuntimeStrArgument(Expression? e) =>
+        e is VariableExpr ve && TryGetRuntimeStr(ve.Name, out _);
+
+    // A string handed to a parameter that is not a string slot reached the callee as a number
+    // (the text's address or interned id) and was printed or compared as one.
+    private void RefuseTextForNonStrParam(string callee, string param, Expression? arg,
+                                          Expression site)
+    {
+        string shown = CalleeDisplayName(callee);
+        throw UserError(IsRuntimeStrArgument(arg)
+            ? $"'{param}' of '{shown}' receives a string built at run time, which lives in RAM, "
+              + "and a subroutine parameter holds only a string known when the program is "
+              + $"compiled (by its flash address). Make '{shown}' @inline"
+            : $"'{param}' of '{shown}' receives a string here, and it is not a str parameter "
+              + "(another call passes it something else, or it is annotated otherwise), so the "
+              + "subroutine would read the text's address as a number. Annotate it `str` and "
+              + $"pass only strings, or make '{shown}' @inline", arg ?? site);
+    }
+
+    private bool IsConstStrParameter(string name) =>
+        !string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix)
+        && flashStrPtrVars.Contains(currentFunction + "." + name);
 
     private string ResolveRuntimeWriteStrFn()
     {
@@ -10499,6 +10589,15 @@ public partial class IRGenerator
                 return;
             }
 
+            // And out of a string PARAMETER of a subroutine, whose text is in flash behind the
+            // address the slot holds: `print(msg[0])` sent 104 for "hi".
+            if (arg is IndexExpr { Index: not SliceExpr, Target: VariableExpr fsTarget } fsSub
+                && IsConstStrParameter(fsTarget.Name))
+            {
+                EmitStreamCharExpr(fsSub);
+                return;
+            }
+
             // A string held in a FIELD. `print(o.n)` and `print(self.n)` sent 256, the string's
             // interned id, because the read fell through to the numeric writer: the plain-name
             // case knew about string constants and the field case did not.
@@ -10533,7 +10632,8 @@ public partial class IRGenerator
                 return;
             }
 
-            // A `const[str]` PARAMETER of a real subroutine. The argument arrives as the
+            // A string PARAMETER of a real subroutine (`const[str]` or `str`, declared or
+            // inferred from the call sites). The argument arrives as the
             // flash ADDRESS of the text, and it arrives whole -- `const[str]` lowers to a
             // 16-bit slot -- so the value was right the entire time and only this writer was
             // wrong: it sent the address to the decimal writer and `take("passed")` printed
@@ -10546,10 +10646,9 @@ public partial class IRGenerator
             // whether it stands for text, not the tree. Adding branch 24 without doing that
             // is feeding the problem rather than fixing it.
             //
-            // A bare `str` parameter is NOT this case and is deliberately left alone: it
-            // lowers to a one-byte slot, so the address is already truncated before print
-            // sees it, and writing it here would stream from a pointer whose high byte was
-            // lost. That one is the storage width, not the writer.
+            // A `str` parameter lowered to a one-byte slot until it got the same pointer-wide
+            // slot (ParamStorageType), so its address arrived truncated and could not be
+            // streamed; it now can.
             if (arg is VariableExpr strParam && IsConstStrParameter(strParam.Name))
             {
                 Emit(new Call(ResolveRuntimeWriteStrFn(),

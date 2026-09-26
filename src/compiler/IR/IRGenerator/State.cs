@@ -1434,6 +1434,31 @@ public partial class IRGenerator
     // Flash byte-pointers (const[str] by-reference params / FlashStrAddr values) carry the
     // TARGET's pointer width: 16-bit on AVR/PIC, 32-bit on ARM/RISC-V. Typing them UINT16
     // everywhere truncated the 0x1000xxxx flash addresses on ARM.
+    // What a parameter's slot holds. A `str` or `const[str]` parameter of a real subroutine
+    // receives the flash ADDRESS of its text (callers pass a FlashStrAddr), so it is pointer
+    // wide; `str` alone lowered to one byte, the address lost its high byte, and
+    // `def g(msg: str): print(msg)` printed a number. An @inline body binds the text itself.
+    private DataType ParamStorageType(FunctionDef func, string? type) =>
+        !func.IsInline && type is "str" or "const[str]"
+            ? FlashPtrType
+            : DataTypeExtensions.StringToDataType(type ?? "");
+
+    // "{callee}#{index}" of every parameter ParamStorageType laid out as a string slot, by
+    // position in the list the call site fills (an outlined method's includes its leading
+    // self_<field> parameters). A pointer-wide type alone does not say it: a bytearray is
+    // pointer-wide too.
+    private readonly HashSet<string> strParamSlots = new();
+
+    private void NoteStrParamSlots(string callee, FunctionDef func, IReadOnlyList<Param> ps)
+    {
+        for (int i = 0; i < ps.Count; i++)
+        {
+            string key = callee + "#" + i;
+            if (!func.IsInline && ps[i].Type is "str" or "const[str]") strParamSlots.Add(key);
+            else strParamSlots.Remove(key);
+        }
+    }
+
     private DataType FlashPtrType =>
         deviceConfig != null && deviceConfig.PointerWidth == 4 ? DataType.UINT32 : DataType.UINT16;
 }

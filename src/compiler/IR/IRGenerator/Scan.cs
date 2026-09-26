@@ -1874,11 +1874,12 @@ public partial class IRGenerator
                     bytearrayParams.Add(fullName + "." + p.Name);
 
                 @params.Add(p.Name);
-                paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
+                paramTypes.Add(ParamStorageType(func, p.Type));
             }
 
             functionParams[fullName] = @params;
             functionParamTypes[fullName] = paramTypes;
+            NoteStrParamSlots(fullName, func, func.Params);
             functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
             functionParamDefaults[fullName] = func.Params.Select(p => p.DefaultValue).ToList();
             functionModulePrefix[fullName] = currentModulePrefix ?? "";
@@ -2332,11 +2333,12 @@ public partial class IRGenerator
                                         && IsSubscriptedInBody(func.Body, p.Name))
                                         bytearrayParams.Add(fullName + "." + p.Name);
                                     @params.Add(p.Name);
-                                    paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
+                                    paramTypes.Add(ParamStorageType(func, p.Type));
                                 }
 
                                 functionParams[fullName] = @params;
                                 functionParamTypes[fullName] = paramTypes;
+                                NoteStrParamSlots(fullName, func, func.Params);
                                 functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
                                 // Methods need their defaults recorded too. Only top-level
                                 // functions were, so an outlined method called with an argument
@@ -4501,7 +4503,8 @@ public partial class IRGenerator
         // Aligned with synthParams (the leading self_<field> ones included), so the call site
         // can index them by position when an argument is omitted.
         functionParamDefaults[fullName] = synthParams.Select(p => p.DefaultValue).ToList();
-        functionParamTypes[fullName] = synthParams.Select(p => DataTypeExtensions.StringToDataType(p.Type)).ToList();
+        functionParamTypes[fullName] = synthParams.Select(p => ParamStorageType(synth, p.Type)).ToList();
+        NoteStrParamSlots(fullName, synth, synthParams);
     }
 
     // RFC 0001 F4: is a method safe to outline (compile once, share) instead of force-inline?

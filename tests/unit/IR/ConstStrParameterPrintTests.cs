@@ -20,10 +20,9 @@ namespace PyMCU.UnitTests;
 /// the argument. The fix that scales is the one #393 took: ask the VALUE whether it stands
 /// for text, not the tree.
 ///
-/// A bare `str` parameter is a different defect and is NOT covered here: it lowers to a
-/// one-byte slot, so the address is truncated before print ever sees it. That one is the
-/// storage width, and the control test below pins it as still-numeric so this fix cannot be
-/// mistaken for covering it.
+/// A bare `str` parameter was a different defect: it lowered to a one-byte slot, so the
+/// address was truncated before print ever saw it. It now has the const[str] slot too
+/// (PyMCU#436); see StrParameterSlotTests.
 /// </summary>
 public class ConstStrParameterPrintTests
 {
@@ -82,12 +81,11 @@ public class ConstStrParameterPrintTests
         Assert.False(WritesADecimal(take));
     }
 
-    // The control that keeps the two defects apart: a bare `str` parameter is a one-byte
-    // slot, so the address reaching print is already truncated and streaming from it would
-    // read flash from a pointer that lost its high byte. It keeps the numeric writer until
-    // the storage width is fixed.
+    // A bare `str` parameter used to be a one-byte slot, so the address reaching print was
+    // truncated and this pinned it as numeric. It now gets the same pointer-wide slot as
+    // const[str] (PyMCU#436), and streams the same way.
     [Fact]
-    public void PrintingABareStrParameter_IsUntouched()
+    public void PrintingABareStrParameter_StreamsItAsText()
     {
         var ir = Gen(
             "def take(s: str) -> None:\n" +
@@ -95,8 +93,8 @@ public class ConstStrParameterPrintTests
             "take(\"plain\")\n");
 
         var take = Fn(ir, "take");
-        Assert.True(WritesADecimal(take));
-        Assert.False(StreamsTheParameter(take, "take.s"));
+        Assert.True(StreamsTheParameter(take, "take.s"));
+        Assert.False(WritesADecimal(take));
     }
 
     // A numeric parameter is not text and must not be streamed.

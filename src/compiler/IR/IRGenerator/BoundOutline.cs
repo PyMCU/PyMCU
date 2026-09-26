@@ -1379,6 +1379,7 @@ public partial class IRGenerator
                     ? srcTypes.Skip(1).ToList() : srcTypes.ToList())
                 : userParams.Select(p => DataTypeExtensions.StringToDataType(p.Type ?? ""))
                             .ToList();
+        NoteStrParamSlots(synthName, func, userParams);
         functionReturnTypes[synthName] = func.ReturnType;
         functionModulePrefix[synthName] =
             functionModulePrefix.TryGetValue(callee, out var mp) ? mp : "";
@@ -1513,6 +1514,8 @@ public partial class IRGenerator
                 || bytearrayParams.Contains(callee + "." + p.Name))
                 bytearrayParams.Add(qn);
             variableTypes[qn] = pdt;
+            // A string parameter holds its text's flash address, as in any subroutine.
+            if (p.Type is "str" or "const[str]") flashStrPtrVars.Add(qn);
 
             if (functionParamTags.TryGetValue(synthName, out var sTags)
                 && i < sTags.Count && sTags[i] is { } tagMembers)
