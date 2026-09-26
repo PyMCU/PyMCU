@@ -10672,6 +10672,15 @@ public partial class IRGenerator
             // RejectInstanceInterpolation so a live union FIELD prints too.
             if (TryEmitOptionalStreamOperand(writeStrFn, floatWriteFn, arg)) return;
 
+            // A name bound to None that is not an Optional: an @inline parameter whose
+            // default is None and whose call passed nothing. Its slot holds whatever the
+            // last expansion left, and the number writer printed that (`g()` printed 0).
+            if (arg is VariableExpr or MemberAccessExpr && IsNoneValued(arg))
+            {
+                EmitStreamStr(writeStrFn, "None");
+                return;
+            }
+
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
 
