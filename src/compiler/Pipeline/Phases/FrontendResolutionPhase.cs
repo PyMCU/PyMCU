@@ -112,7 +112,26 @@ public class FrontendResolutionPhase(
 
                     // Load the module if not yet loaded
                     if (!context.NamedModules.ContainsKey(imp.ModuleName))
-                        moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context, imp.Symbols);
+                    {
+                        try
+                        {
+                            moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context, imp.Symbols);
+                        }
+                        catch (CompilerError e) when (e.File == null)
+                        {
+                            // Same relocation DependencyGraphBuilder does: the loader knows what
+                            // failed, this loop knows where the import is written. The imports
+                            // reaching here are the ones conditional compilation hoisted, a
+                            // function-local import among them (adafruit_seesaw's `from
+                            // adafruit_seesaw.crickit import ...` inside Seesaw.__init__), and
+                            // without it the failure was printed at line 1 of the entry file.
+                            string importer = item.Name == "__main__"
+                                ? context.Options.FilePath
+                                : context.ModulePaths.GetValueOrDefault(item.Name, context.Options.FilePath);
+                            throw new CompilerError(e.TypeName, e.Message,
+                                imp.Line > 0 ? imp.Line : 1, imp.Column) { File = importer };
+                        }
+                    }
 
                     var importedModule = context.NamedModules[imp.ModuleName];
 

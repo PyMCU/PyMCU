@@ -350,6 +350,7 @@ public class ConditionalCompilator(DeviceConfig config)
             WasStarImport = src.WasStarImport,
             IsOptional = src.IsOptional,
             Line = src.Line,
+            Column = src.Column,
         };
 
     // `if TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` -- the bare name (however it was
