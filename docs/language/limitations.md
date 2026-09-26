@@ -34,6 +34,14 @@ expanded at each call site, the same mechanism a class-instance parameter alread
 because `list[T]` has no fixed-width ABI to give it a standalone one. It is **AVR-only** -- on
 ARM, PIC and RISC-V it is refused at build time, naming AVR; use a fixed `uint8[N]` array
 there. `bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
+A name bound to `[]` or to a list literal that the same function later `.append()`s to is
+this same heap list without an annotation: `x = []` learns its element type at the first
+append, `v = [a, b, c]` takes it from its elements, and an append of a value those elements
+cannot hold is refused, naming the `v: list[T] = [...]` declaration to write instead.
+A function or method compiled as a real subroutine that returns a local list needs
+`-> list[T]` on its def whenever the caller cannot see the body first (a module-level
+caller, or an outlined method); without it the call is refused rather than read as a
+scalar.
 **`import array`** / **`array.array(typecode)`** is this same `list[T]`, one call spelling
 later: the typecode decides T (`B`/`b` uint8/int8, `H`/`h` uint16/int16, `I`/`L`/`i`/`l`
 uint32/int32; `f`/`d`/`q` are refused by name, there is no float/double/64-bit element width
