@@ -668,13 +668,13 @@ public partial class IRGenerator
                 if (p.DefaultValue is NoneLiteral) maybeNone.Add(p.Name);
             }
             CollectUnionParamEvidence(fn.Body.Statements, assigns, maybeUnion, maybeNone,
-                fnAsValue, unionParamsOf);
+                fnAsValue, unionParamsOf, ScanLocallyBoundNames(fn.Params, fn.Body.Statements));
         }
         CollectUnionParamEvidence(mainAst.GlobalStatements, assigns, maybeUnion, maybeNone,
-            fnAsValue, unionParamsOf);
+            fnAsValue, unionParamsOf, ScanLocallyBoundNames(null, mainAst.GlobalStatements));
         foreach (var mod in importedModules.Values)
             CollectUnionParamEvidence(mod.GlobalStatements, assigns, maybeUnion, maybeNone,
-                fnAsValue, unionParamsOf);
+                fnAsValue, unionParamsOf, ScanLocallyBoundNames(null, mod.GlobalStatements));
         foreach (var kv in fieldDeclaredUnionMembers)
             maybeUnion.Add(kv.Key[(kv.Key.IndexOf('|') + 1)..]);
 
@@ -935,13 +935,17 @@ public partial class IRGenerator
     private void CollectUnionParamEvidence(IEnumerable<Statement>? stmts,
         List<(string name, Expression? value)> assigns,
         HashSet<string> maybeUnion, HashSet<string> maybeNone, HashSet<string> fnAsValue,
-        Dictionary<string, List<List<string>?>> unionParamsOf)
+        Dictionary<string, List<List<string>?>> unionParamsOf, HashSet<string> locals)
     {
         WalkScanStmts(stmts, e =>
         {
             // A bare function name anywhere but callee position is an address-taken
-            // function; check it against the union-param name set.
-            if (e is VariableExpr v && ResolvesToUnionParamFn(v.Name, unionParamsOf))
+            // function; check it against the union-param name set. A name the scope
+            // binds itself is a variable, not the function: the float `f` local of
+            // the stdlib's decimal printer refused every program whose union-param
+            // function was also called `f`.
+            if (e is VariableExpr v && !locals.Contains(v.Name)
+                && ResolvesToUnionParamFn(v.Name, unionParamsOf))
                 fnAsValue.Add(v.Name);
             if (e is MemberAccessExpr mav)
             {
@@ -980,6 +984,31 @@ public partial class IRGenerator
                     break;
             }
         });
+    }
+
+    /// The names a scope binds for itself -- parameters, assignment and loop
+    /// targets -- which shadow a function of the same name inside that scope.
+    private static HashSet<string> ScanLocallyBoundNames(IEnumerable<Param>? ps,
+        IEnumerable<Statement>? stmts)
+    {
+        var bound = new HashSet<string>(StringComparer.Ordinal);
+        if (ps != null) foreach (var p in ps) bound.Add(p.Name);
+        WalkScanStmts(stmts, _ => { }, s =>
+        {
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr tv }: bound.Add(tv.Name); break;
+                case AugAssignStmt { Target: VariableExpr av }: bound.Add(av.Name); break;
+                case VarDecl vd: bound.Add(vd.Name); break;
+                case AnnAssign aa when !aa.Target.Contains('.'): bound.Add(aa.Target); break;
+                case TupleUnpackStmt tu: foreach (var t in tu.Targets) bound.Add(t); break;
+                case ForStmt fs:
+                    bound.Add(fs.VarName);
+                    if (fs.Var2Name.Length > 0) bound.Add(fs.Var2Name);
+                    break;
+            }
+        });
+        return bound;
     }
 
     /// <summary>
