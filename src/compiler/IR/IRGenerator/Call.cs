@@ -2529,6 +2529,13 @@ public partial class IRGenerator
                         argValues.Add(new Variable(inlineBuf.ArrayName, DataType.UINT16));
                     else
                         argValues.Add(EvalOptionalCarry(arg));
+                    // A register read is a load the parameter binding performs, after every
+                    // argument has been evaluated. When a later argument can have an effect
+                    // -- one that may write the register -- the load happens here, in order.
+                    if (argValues[^1] is MemoryAddress && ReadsARegister(arg)
+                        && expr.Args.SkipWhile(a => !ReferenceEquals(a, rawArg)).Skip(1)
+                            .Any(a => OperandCanHaveAnEffect(a is KeywordArgExpr ka ? ka.Value : a)))
+                        argValues[^1] = ((PreEvaluatedExpr)HeldValue(argValues[^1], arg)).Value;
                     // Always restore: same reason as kwarg case above.
                     pendingConstructorTarget = savedOuterPct;
                 }
@@ -3413,13 +3420,19 @@ public partial class IRGenerator
                 string mPType = func.Params[paramIdx].Type;
                 bool mIsNumeric = mPType is "uint8" or "uint16" or "uint32"
                     or "int8" or "int16" or "int32" or "int" or "bool";
-                if (mIsNumeric)
+                // `twice(GPIOR0.value)` hands over the register's CONTENTS whatever the
+                // parameter says: aliased, `v + v` read the register twice and an unused
+                // parameter never read it, where Python reads it once, at the call.
+                bool mIsContents = i < rawArgExprs.Count && rawArgExprs[i] is { } mRaw
+                    && ReadsARegister(mRaw) && !mPType.StartsWith("ptr");
+                if (mIsNumeric || mIsContents)
                 {
                     constantVariables.Remove(paramName);
                     strConstantVariables.Remove(paramName);
                     floatConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);
-                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(mPType);
+                    variableTypes[paramName] = mIsNumeric
+                        ? DataTypeExtensions.StringToDataType(mPType) : mArg.Type;
                     Emit(new Copy(argValues[i], new Variable(paramName, variableTypes[paramName])));
                     continue;
                 }
