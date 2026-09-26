@@ -964,6 +964,14 @@ public partial class IRGenerator
 
             if (!string.IsNullOrEmpty(name) && initializer != null)
             {
+                // `wake_alarm = None` in an INSTALLED module: its top level never runs (only
+                // the project's modules get a __module_init), so the None was never recorded
+                // and `alarm.wake_alarm is None` answered False from a byte nobody wrote. A
+                // name the module never writes again is None for good, which is a fact this
+                // scan can record for every module alike.
+                if (initializer is NoneLiteral && !reassigned.Contains(name))
+                    noneValuedNames.Add(currentModulePrefix + name);
+
                 // Dict/set literals bind their AST as a compile-time lookup table -- no
                 // storage, no constant fold (EvaluateConstantExpr would throw and the
                 // fallback would mis-register them as 1-byte mutable globals).
