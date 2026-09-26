@@ -515,6 +515,8 @@ public partial class IRGenerator
                 or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
                 or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq)
             {
+                (v1, v2) = FlashStrComparisonOperands(binExpr.Op, binExpr.Left, binExpr.Right,
+                                                      v1, v2, binExpr);
                 if (FoldComparisonByRange(binExpr.Op, v1, v2) is { } known)
                 {
                     if (jumpIfTrue) { if (known) Emit(new Jump(targetLabel)); }

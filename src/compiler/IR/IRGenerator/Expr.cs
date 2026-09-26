@@ -2186,6 +2186,7 @@ public partial class IRGenerator
         if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Less
             or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq)
         {
+            (v1, v2) = FlashStrComparisonOperands(expr.Op, expr.Left, expr.Right, v1, v2, expr);
             if (FoldComparisonByRange(expr.Op, v1, v2) is { } known)
                 return new Constant(known ? 1 : 0);
             DataType cmp = ComparisonType(v1, v2);
@@ -2232,6 +2233,39 @@ public partial class IRGenerator
     // with count: uint8 is always true, `count == 300` never. Python says so, and the
     // alternative -- reading 300 at count's width as 44 -- was wrong code. Null when the
     // ranges overlap and the test is a real one.
+    /// <summary>
+    /// A string parameter of a subroutine holds the flash ADDRESS of its text, and a string
+    /// literal lowers to its interned id: comparing the two compared an address with an id
+    /// and was never equal (`if msg == "hi"` took the else branch for "hi"). Every text a
+    /// string slot can hold is interned once (InternStringAsFlash deduplicates), so two equal
+    /// texts share one address and `==`/`!=` is the address comparison: the literal side is
+    /// read as its own flash address. Ordering, or a side that is not a known string, has no
+    /// such answer and is refused.
+    /// </summary>
+    private (Val, Val) FlashStrComparisonOperands(Frontend.BinaryOp op, Frontend.Expression left,
+        Frontend.Expression right, Val v1, Val v2, Frontend.Expression at)
+    {
+        bool f1 = v1 is Variable a && flashStrPtrVars.Contains(a.Name);
+        bool f2 = v2 is Variable b && flashStrPtrVars.Contains(b.Name);
+        if (!f1 && !f2) return (v1, v2);
+        string name = ((Variable)(f1 ? v1 : v2)).Name;
+        string shown = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+        if (op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual)
+        {
+            if (f1 && f2) return (v1, v2);
+            if (StaticStringOf(f1 ? right : left) is { } text)
+            {
+                Temporary addr = MakeTemp(FlashPtrType);
+                Emit(new Copy(new FlashStrAddr(InternStringAsFlash(text)), addr));
+                return f1 ? (v1, addr) : (addr, v2);
+            }
+        }
+        throw UserError(
+            $"'{shown}' is a str parameter of a subroutine: it holds the flash address of its "
+            + "text, which answers == and != against another string known at compile time and "
+            + "nothing else. Make the function @inline so the text is known where it is used", at);
+    }
+
     private bool? FoldComparisonByRange(Frontend.BinaryOp op, Val v1, Val v2)
     {
         if (!IsIntegerType(GetValType(v1)) || !IsIntegerType(GetValType(v2))) return null;
