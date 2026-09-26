@@ -6022,6 +6022,21 @@ public partial class IRGenerator
                           + $"spelling. Assigned members: {recvMembers}",
                     expr);
 
+            // A receiver that is only a temporary (a call's result, an expression) has no
+            // storage its fields were written to: `tmp_N_<field>` is a name no store can
+            // target, because a store evaluates its own receiver into a fresh temporary. Every
+            // shape that does carry its fields through a temporary has answered above. Reading
+            // on would fabricate that name and read 0 with no diagnostic (#526), while a METHOD
+            // on the same receiver is already refused -- so refuse the field the same way.
+            if (objVal is Temporary recvTmp && baseName == recvTmp.Name
+                && !variableTypes.ContainsKey(flattenedName)
+                && !mutableGlobals.ContainsKey(flattenedName))
+                throw UserError(
+                    $"'.{expr.Member}' cannot be read: its receiver is not a name bound to an "
+                    + "object, so there is no storage the field was written to. Bind the value "
+                    + $"to a name first (`x = ...` then `x.{expr.Member}`)",
+                    expr);
+
             // RFC 0009 phase 3: a field that can hold BOTH None and a scalar is a
             // tagged union -- payload in `flattenedName`, member index in its
             // `<flat>$tag` sibling. EnsureUnionField mints the bookkeeping on the
