@@ -4683,6 +4683,15 @@ public partial class IRGenerator
                 && TryResolveArrayStorageKey(qualified, out var storeKey))
                 qualified = storeKey;
 
+            // Every probe above starts from a spelling some OUTER scope may own: `main.buf`
+            // is the module's `buf` when a module-level call expands `fill(rb, v)`, and a
+            // real function's unresolved `f.buf` normalizes to the bare global. A parameter
+            // or local of the frame being lowered is the only thing its name can mean here.
+            if (FrameArrayStorage(ve.Name, out bool frameBinds) is { } frameStore)
+                qualified = frameStore;
+            else if (frameBinds)
+                qualified = ShadowingFrameKey(ve.Name)!;
+
             // Bytearray parameter: indirect store through pointer.
             if (bytearrayParams.Contains(qualified))
             {

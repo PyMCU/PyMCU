@@ -3641,6 +3641,14 @@ public partial class IRGenerator
                 && TryResolveArrayStorageKey(qualified, out var storedKey))
                 qualified = storedKey;
 
+            // The frame's own binding wins over every spelling probed above, the enclosing
+            // `main.<name>` included: a module-level expansion of `first(rb)` read the
+            // module's `buf` through it (the store path does the same).
+            if (FrameArrayStorage(ve.Name, out bool frameBindsRead) is { } frameRead)
+                qualified = frameRead;
+            else if (frameBindsRead)
+                qualified = ShadowingFrameKey(ve.Name)!;
+
             // A module-level list written without an annotation is filed under the synthesized
             // main that runs the module's statements, so neither `<fn>.<name>` nor the bare name
             // finds it from an ordinary function, and the subscript fell through to the register

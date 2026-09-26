@@ -1888,17 +1888,76 @@ public partial class IRGenerator
         })
         {
             if (k == null) continue;
-            if (variableTypes.ContainsKey(k) || constantVariables.ContainsKey(k)
-                || constantAddressVariables.ContainsKey(k) || strConstantVariables.ContainsKey(k)
-                || floatConstantVariables.ContainsKey(k) || variableAliases.ContainsKey(k)
-                || listLiteralParams.ContainsKey(k) || dictLiteralBindings.ContainsKey(k)
-                || setLiteralBindings.ContainsKey(k) || runtimeStrVars.ContainsKey(k)
-                || funcrefReturnTypes.ContainsKey(k) || loopFunctionAliases.ContainsKey(k)
-                || noneValuedNames.Contains(k) || bytearrayParams.Contains(k)
-                || boundNames.Contains(k))
-                return true;
+            if (FrameKeyBinds(k)) return true;
         }
         return false;
+    }
+
+    private bool FrameKeyBinds(string k) =>
+        variableTypes.ContainsKey(k) || constantVariables.ContainsKey(k)
+        || constantAddressVariables.ContainsKey(k) || strConstantVariables.ContainsKey(k)
+        || floatConstantVariables.ContainsKey(k) || variableAliases.ContainsKey(k)
+        || listLiteralParams.ContainsKey(k) || dictLiteralBindings.ContainsKey(k)
+        || setLiteralBindings.ContainsKey(k) || runtimeStrVars.ContainsKey(k)
+        || funcrefReturnTypes.ContainsKey(k) || loopFunctionAliases.ContainsKey(k)
+        || noneValuedNames.Contains(k) || bytearrayParams.Contains(k)
+        || boundNames.Contains(k);
+
+    /// <summary>
+    /// The key <paramref name="name"/> is bound under in the innermost frame that binds it
+    /// -- the @inline expansion being lowered, then the real function around it -- or null
+    /// when neither does and the name means the module's. A frame that binds the name owns
+    /// it: every spelling further out (`main.buf`, the bare `buf`) is a different object,
+    /// however many tables it is registered in. The lookups that walk those spellings in a
+    /// fixed order found the module global first whenever the program had one of the
+    /// parameter's name: `buf = bytearray(2); fill(rb, v)` wrote the global, because the
+    /// module-level expansion's enclosing spelling `main.buf` IS that global.
+    ///
+    /// Module-level code (`main`, an imported module's `___module_init`) has no frame of
+    /// its own: there the qualified spelling and the global are one binding.
+    /// </summary>
+    private string? ShadowingFrameKey(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            string k = currentInlinePrefix + name;
+            if (FrameKeyBinds(k) || arraySizes.ContainsKey(k)) return k;
+        }
+        if (!string.IsNullOrEmpty(currentFunction) && currentFunction != "main"
+            && !currentFunction.EndsWith("___module_init", StringComparison.Ordinal)
+            && !currentFunctionGlobals.Contains(name))
+        {
+            string k = currentFunction + "." + name;
+            if (FrameKeyBinds(k) || arraySizes.ContainsKey(k)) return k;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The array storage the innermost frame's binding of <paramref name="name"/> reaches
+    /// (see <see cref="ShadowingFrameKey"/>), following the alias a bound parameter
+    /// carries. The result is an <c>arraySizes</c> key or a <c>bytearrayParams</c> one (a
+    /// real function's buffer parameter, reached by pointer). <c>found</c> is false when no
+    /// frame binds the name, and the caller's module-scope lookups apply; true with a null
+    /// result when a frame binds it to something that is not array storage -- a scalar, a
+    /// list -- which the module's array of the same name must not stand in for.
+    /// </summary>
+    private string? FrameArrayStorage(string name, out bool found)
+    {
+        found = false;
+        if (ShadowingFrameKey(name) is not { } fk) return null;
+        found = true;
+        string end = FollowAliases(fk);
+        if (arraySizes.ContainsKey(end) || bytearrayParams.Contains(end)) return end;
+        // The storage-key normalization strips a function-qualified spelling to the bare
+        // module name; a key some frame binds (the parameter itself, or the caller's own
+        // parameter the alias ends at) is not a spelling of the module's array.
+        int dot = end.LastIndexOf('.');
+        bool frameLocal = dot > 0 && end[..dot] != "main"
+            && !end[..dot].EndsWith("___module_init", StringComparison.Ordinal)
+            && FrameKeyBinds(end);
+        if (!frameLocal && TryResolveArrayStorageKey(end, out var stored)) return stored;
+        return null;
     }
 
     /// <summary>
