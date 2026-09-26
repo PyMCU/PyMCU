@@ -1715,8 +1715,9 @@ public partial class IRGenerator
             currentSourceFile = SourceFileLabel(currentSourcePath);
         }
 
-        inlineStack.Add(new InlineContext { ExitLabel = exitLabel,
-            CallerSourcePath = savedSourcePath, FinallyDepth = finallyStack.Count });
+        var setterCtx = new InlineContext { ExitLabel = exitLabel,
+            CallerSourcePath = savedSourcePath, FinallyDepth = finallyStack.Count };
+        inlineStack.Add(setterCtx);
         bool savedSeqTerminated = _seqTerminated;
         _seqTerminated = false;
         if (setter?.Body != null) VisitBlock(setter.Body);
@@ -1753,6 +1754,7 @@ public partial class IRGenerator
         currentModulePrefix = savedModulePrefix;
         currentSourcePath = savedSourcePath;
         currentSourceFile = savedSourceFile;
+        EmitRaiseLandings(setterCtx);
 
         return true;
     }

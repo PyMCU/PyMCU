@@ -454,9 +454,7 @@ public partial class IRGenerator
     {
         string ok = MakeLabel();
         Emit(new JumpIfLessThan(idx, new Constant(n), ok));
-        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-        EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
-        Emit(new SignalError(new Constant(4 /* KeyError */), localCatch));
+        EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: false);
         Emit(new Label(ok));
     }
 

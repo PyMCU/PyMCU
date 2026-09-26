@@ -128,6 +128,12 @@ public class InlineContext
     // never the CALLER's pending finallys, which the jump to ExitLabel does not escape.
     public int FinallyDepth { get; set; } = 0;
 
+    // Raises inside the body whose unwinding crosses the CALLER's pending finallys (a `with`
+    // around the call). Each one runs the body's own finallys and jumps to its landing, which
+    // the expansion emits after it has restored the caller's frame and raises again from
+    // there. See EmitRaiseUnwind.
+    public List<(string Label, Val Code, bool UnhandledInMain)> RaiseLandings { get; } = new();
+
     // Per-expansion counter for the scratch keys MakeTemp hands the allocator inside
     // this frame. A `tmp_{n}` minted in the frame records canonicalTemps entry
     // "d{depth}_t{k}"; every expansion at the same depth mints the same keys, so the

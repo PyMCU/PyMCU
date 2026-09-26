@@ -2987,41 +2987,7 @@ public partial class IRGenerator
             Emit(new Copy(new Constant(0), new Variable(ExceptionMessageVar, DataType.UINT16)));
         }
 
-        // Inside a try body in the same function -> deliver to the local catch
-        // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
-        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-
-        // Pending finallys of the tries this raise escapes run first, innermost out
-        // (Python unwinds through them before the next handler sees the exception).
-        // The floor is the target try's own-finally slot: entries above it belong to
-        // lexically deeper scopes the raise leaves; the target's runs at its dispatch.
-        EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
-
-        // Except in the entry function, which has no caller. Propagating there emits
-        // `SET; RET`, and the RET pops a return address that was never pushed: the stack
-        // pointer is at the top of SRAM and execution goes wherever those bytes point.
-        // avr8sharp reports a stack underflow at that instruction and nothing reaches the
-        // UART, where the documented behaviour is `E:<TypeName>` and a halt (#339).
-        //
-        // The unhandled path was reached only by an exception RETURNING into main from a
-        // callee; a raise written in main's own body, or in an @inline expansion inside it
-        // -- a driver's `raise ValueError` in a method called from the top level -- took the
-        // propagate form. `currentFunction` stays "main" through an expansion, so both are
-        // this one test.
-        //
-        // The code still has to reach R22 for the handler to name the type, which is what
-        // the label form of SignalError does: it loads R22 and jumps. The jump lands on the
-        // next instruction, which is the call the exception runtime keys off.
-        if (localCatch == null && currentFunction == "main")
-        {
-            string unhandled = MakeLabel();
-            Emit(new SignalError(code, unhandled));
-            Emit(new Label(unhandled));
-            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
-            return;
-        }
-
-        Emit(new SignalError(code, localCatch));
+        EmitRaiseUnwind(code, unhandledInMain: true);
     }
 
     private void VisitTry(TryStmt stmt)
@@ -3814,6 +3780,80 @@ public partial class IRGenerator
             VisitStatement(s);
         }
         _seqTerminated = false;
+    }
+
+    // Deliver a raise: to the local catch dispatcher when it is inside a try body in the same
+    // function (jump, no T-flag, no return), otherwise to the caller through the T-flag.
+    //
+    // Pending finallys of the tries this raise escapes run first, innermost out (Python
+    // unwinds through them before the next handler sees the exception). The floor is the
+    // target try's own-finally slot: entries above it belong to lexically deeper scopes the
+    // raise leaves; the target's runs at its dispatch.
+    //
+    // A raise inside an @inline expansion leaves the callee before it reaches any finally the
+    // CALLER pushed. Expanding those here, inside the callee's frame, ran them in a frame they
+    // were not written in: a `with` whose `__exit__` calls the same method the body calls was
+    // refused as recursive, because the expansion was still marked active when the exit
+    // expanded it again (cp-servo's `with ContinuousServo(pwm)`, whose set_duty_u16 carries a
+    // run-time division). So the callee runs only its own finallys and jumps to a landing that
+    // the expansion emits once the caller's frame is back, and the landing raises again from
+    // there -- which is where Python runs the `__exit__`, once, as the exception leaves the
+    // `with`. A raise with no caller finally to cross keeps the direct form.
+    //
+    // `unhandledInMain` selects the entry-function form. Propagating there emits `SET; RET`,
+    // and the RET pops a return address that was never pushed: the stack pointer is at the
+    // top of SRAM and execution goes wherever those bytes point. avr8sharp reports a stack
+    // underflow at that instruction and nothing reaches the UART, where the documented
+    // behaviour is `E:<TypeName>` and a halt (#339). The unhandled path was reached only by an
+    // exception RETURNING into main from a callee; a raise written in main's own body, or in an
+    // @inline expansion inside it -- a driver's `raise ValueError` in a method called from the
+    // top level -- took the propagate form. `currentFunction` stays "main" through an
+    // expansion, so both are this one test. The code still has to reach R22 for the handler
+    // to name the type, which is what the label form of SignalError does: it loads R22 and
+    // jumps. The jump lands on the next instruction, which is the call the exception runtime
+    // keys off.
+    private void EmitRaiseUnwind(Val code, bool unhandledInMain)
+    {
+        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        int floor = localCatch != null ? tryFinallyFloor[^1] : 0;
+
+        if (inlineStack.Count > 0 && floor < inlineStack[^1].FinallyDepth)
+        {
+            var ctx = inlineStack[^1];
+            EmitPendingFinally(ctx.FinallyDepth);
+            string landing = MakeLabel();
+            ctx.RaiseLandings.Add((landing, code, unhandledInMain));
+            Emit(new Jump(landing));
+            return;
+        }
+
+        EmitPendingFinally(floor);
+        if (unhandledInMain && localCatch == null && currentFunction == "main")
+        {
+            string unhandled = MakeLabel();
+            Emit(new SignalError(code, unhandled));
+            Emit(new Label(unhandled));
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+            return;
+        }
+        Emit(new SignalError(code, localCatch));
+    }
+
+    // The landings the expansion's raises jumped to (EmitRaiseUnwind), emitted by the
+    // expansion once the caller's frame is restored. Normal flow jumps over them.
+    private void EmitRaiseLandings(InlineContext ctx)
+    {
+        if (ctx.RaiseLandings.Count == 0) return;
+        bool savedSeqTerminated = _seqTerminated;
+        string after = MakeLabel();
+        Emit(new Jump(after));
+        foreach (var (landing, code, unhandledInMain) in ctx.RaiseLandings)
+        {
+            Emit(new Label(landing));
+            EmitRaiseUnwind(code, unhandledInMain);
+        }
+        Emit(new Label(after));
+        _seqTerminated = savedSeqTerminated;
     }
 
     // Run the pending finally blocks above `floor` (innermost first) on a control-flow exit that

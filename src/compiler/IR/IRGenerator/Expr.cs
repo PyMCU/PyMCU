@@ -459,6 +459,7 @@ public partial class IRGenerator
         currentSourceFile = savedSourceFile;
         inlineTracksCalleeLine = savedTracksCallee;
         inlineCalleeStmtLine = savedCalleeLine;
+        EmitRaiseLandings(dunderCtx);
 
         // An unannotated dunder (`def __getitem__(self, key): return ...`, no `-> T`) makes
         // `func.ReturnType` "void", so `result` above is null and no result slot exists yet
@@ -1887,9 +1888,7 @@ public partial class IRGenerator
                 Emit(new Binary(BinaryOp.Equal, v2, new FloatConstant(0.0), isZero));
                 string divOk = MakeLabel();
                 Emit(new JumpIfZero(isZero, divOk));
-                string? localCatchF = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-                EmitPendingFinally(localCatchF != null ? tryFinallyFloor[^1] : 0);
-                Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatchF));
+                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: false);
                 Emit(new Label(divOk));
             }
 
@@ -1935,9 +1934,7 @@ public partial class IRGenerator
                 Emit(new Binary(BinaryOp.Equal, fb, new FloatConstant(0.0), isZeroI));
                 string divOkI = MakeLabel();
                 Emit(new JumpIfZero(isZeroI, divOkI));
-                string? localCatchI = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-                EmitPendingFinally(localCatchI != null ? tryFinallyFloor[^1] : 0);
-                Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatchI));
+                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: false);
                 Emit(new Label(divOkI));
             }
             Temporary fdst = MakeTemp(DataType.FLOAT);
@@ -2123,9 +2120,7 @@ public partial class IRGenerator
         {
             string divOk = MakeLabel();
             Emit(new JumpIfNotZero(v2, divOk));
-            string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-            EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
-            Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatch));
+            EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: false);
             Emit(new Label(divOk));
         }
 
@@ -2706,8 +2701,7 @@ public partial class IRGenerator
             // which is the same instruction the run-time key path emits for the same miss.
             if (tryCatchStack.Count > 0)
             {
-                EmitPendingFinally(tryFinallyFloor[^1]);
-                Emit(new SignalError(new Constant(4 /* KeyError */), tryCatchStack[^1]));
+                EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: false);
                 return MakeTemp(DataType.UINT8);
             }
 
@@ -2772,9 +2766,7 @@ public partial class IRGenerator
         else
         {
             // No key matched: raise KeyError (caught by an enclosing try, else propagates).
-            string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-            EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
-            Emit(new SignalError(new Constant(4 /* KeyError */), localCatch));
+            EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: false);
         }
         Emit(new Label(endL));
         return result;

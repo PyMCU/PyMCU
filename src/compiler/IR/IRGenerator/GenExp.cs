@@ -529,16 +529,6 @@ public partial class IRGenerator
     private void EmitRuntimeRaise(string errorType, string message)
     {
         Val code = ResolveBinding(errorType);
-        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-        EmitPendingFinally(localCatch != null ? tryFinallyFloor[^1] : 0);
-        if (localCatch == null && currentFunction == "main")
-        {
-            string unhandled = MakeLabel();
-            Emit(new SignalError(code, unhandled));
-            Emit(new Label(unhandled));
-            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
-            return;
-        }
-        Emit(new SignalError(code, localCatch));
+        EmitRaiseUnwind(code, unhandledInMain: true);
     }
 }

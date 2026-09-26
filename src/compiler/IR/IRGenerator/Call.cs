@@ -3960,6 +3960,7 @@ public partial class IRGenerator
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedModulePrefix;
         inlineDepth--;
+        EmitRaiseLandings(finishedCtx);
 
         if (resultWasNeverProduced) throw UnproducedResultError(func!);
 
@@ -5121,6 +5122,7 @@ public partial class IRGenerator
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedMod;
         inlineDepth = savedDepth;
+        EmitRaiseLandings(superCtx);
 
         // The base method is UNANNOTATED as often as not (`def describe(self): return
         // self.value`), which the parser reads as returning "void" -- so `superResult` above
