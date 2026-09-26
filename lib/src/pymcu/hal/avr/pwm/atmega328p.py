@@ -1,5 +1,6 @@
 from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A, OCR0B
 from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL, OCR1AH, OCR1BH, ICR1L, ICR1H
+from pymcu.chips.atmega328p import TCNT1L, TCNT1H
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
 from pymcu.chips import __TIMEBASE__, __FREQ__
@@ -576,6 +577,85 @@ def pwm_t1_exact_init(pin: const, freq: uint16, duty_u16: uint16, invert: const[
                 TCCR1A.value = (TCCR1A.value | 0x02) | (0x30 if invert else 0x20)
             case _:
                 raise CompileError("PWM: the exact-frequency path is Timer1 only -- PB1 or PB2")
+
+
+# This channel's 16-bit compare value, low byte first.
+@inline
+def pwm_t1_exact_read_ocr(pin: const) -> uint16:
+    match pin:
+        case "PB1":
+            lo: uint8 = OCR1AL.value
+            hi: uint8 = OCR1AH.value
+            return uint16(hi) * 256 + lo
+        case "PB2":
+            lo: uint8 = OCR1BL.value
+            hi: uint8 = OCR1BH.value
+            return uint16(hi) * 256 + lo
+        case _:
+            raise CompileError("PWM: the exact-frequency path is Timer1 only -- PB1 or PB2")
+
+
+# The period count (TOP + 1) for a frequency, with no compile-time guard in it: the same
+# divider choice pwm_t1_exact_divider makes, written as comparisons against compile-time
+# thresholds so a frequency that is only known at run time costs one division and raises no
+# "guard could not be verified" warning. With a constant frequency it folds to the constant
+# pwm_t1_exact_top(freq) + 1 is. Only a channel that set_freq() retunes ever reaches it with
+# a run-time frequency.
+@inline
+def pwm_t1_exact_period(freq: uint16) -> uint32:
+    f: uint32 = uint32(freq)
+    if f >= uint32(__FREQ__ // 65537 + 1):
+        return uint32(__FREQ__) // f
+    if f >= uint32(__FREQ__ // (8 * 65537) + 1):
+        return uint32(__FREQ__ // 8) // f
+    if f >= uint32(__FREQ__ // (64 * 65537) + 1):
+        return uint32(__FREQ__ // 64) // f
+    if f >= uint32(__FREQ__ // (256 * 65537) + 1):
+        return uint32(__FREQ__ // 256) // f
+    return uint32(__FREQ__ // 1024) // f
+
+
+# Retune an exact channel to a frequency that arrives at run time: the prescaler and the
+# period register, chosen the way pwm_t1_exact_divider and pwm_t1_exact_top choose them at
+# compile time. Each divider's lowest frequency is a compile-time constant (the smallest f
+# with clk // (divider * f) <= 65536), so picking one is four comparisons, and the period is
+# the one division left: (clk // divider) // freq, 32 by 16 bits. The counter restarts, so a
+# period shorter than where it stood cannot run it past TOP to the 16-bit wrap. Returns the
+# new TOP, which the caller keeps to rescale duty cycles against. freq must not be zero;
+# the layer above refuses it first.
+#
+# Both channels of the timer share the period, so a channel whose sibling also runs on this
+# path is refused, the way the bucket path refuses retuning a shared prescaler: the claim
+# below is the construction's claim on ICR1, made again with 0 for "set at run time".
+@inline
+def pwm_t1_exact_retune(pin: const, freq: uint16) -> uint16:
+    claim("Timer1 period (PB1 and PB2 share ICR1)", 0, pin,
+          "In the mode that honours a frequency exactly, the period is one register for both "
+          "of the timer's channels, so retuning one retunes the other and changes its duty "
+          "cycle. Retune only a channel that has Timer1 to itself, or move the other one to "
+          "PD5/PD6 (Timer0) or PB3/PD3 (Timer2)")
+    f: uint32 = uint32(freq)
+    top: uint32 = 0
+    if f >= uint32(__FREQ__ // 65537 + 1):
+        TCCR1B.value = 0x19
+        top = uint32(__FREQ__) // f - 1
+    elif f >= uint32(__FREQ__ // (8 * 65537) + 1):
+        TCCR1B.value = 0x1A
+        top = uint32(__FREQ__ // 8) // f - 1
+    elif f >= uint32(__FREQ__ // (64 * 65537) + 1):
+        TCCR1B.value = 0x1B
+        top = uint32(__FREQ__ // 64) // f - 1
+    elif f >= uint32(__FREQ__ // (256 * 65537) + 1):
+        TCCR1B.value = 0x1C
+        top = uint32(__FREQ__ // 256) // f - 1
+    else:
+        TCCR1B.value = 0x1D
+        top = uint32(__FREQ__ // 1024) // f - 1
+    ICR1H.value = uint8(top >> 8)
+    ICR1L.value = uint8(top)
+    TCNT1H.value = 0
+    TCNT1L.value = 0
+    return uint16(top)
 
 
 @inline

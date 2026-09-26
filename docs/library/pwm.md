@@ -29,9 +29,12 @@ asked for 50 Hz used to run at 61 and had about 16 steps of angle.
 every layer above used to report the request, so `PWMOut(board.D6, frequency=5000)` emitted
 7812 Hz and said 5000.
 
-A PWM at an exact frequency cannot be retuned at run time: its period is a register computed
-from the frequency, and so is every duty measured against it, so `set_freq()` is refused
-there with a message naming the five frequencies that can be retuned.
+A PWM at an exact frequency can be retuned at run time: `set_freq()` recomputes the
+prescaler and the period register (one 32-by-16 division when the frequency is not a
+compile-time constant), restarts the counter, and rescales the channel's compare value so
+the duty cycle is kept. The two Timer1 channels share the period, so retuning one retunes
+both. It used to be refused, which left `pwm.freq(50)` after `PWM(pin)`, the way servo
+drivers are written, without a way to compile.
 
 ### Supported pins (ATmega328P)
 

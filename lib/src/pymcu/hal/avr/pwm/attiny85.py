@@ -329,6 +329,26 @@ def pwm_t1_exact_write_ocr(pin: const, value: uint16):
 
 
 @inline
+def pwm_t1_exact_top(freq: uint16) -> uint16:
+    return 0
+
+
+@inline
+def pwm_t1_exact_period(freq: uint16) -> uint32:
+    return 1
+
+
+@inline
+def pwm_t1_exact_read_ocr(pin: const) -> uint16:
+    return 0
+
+
+@inline
+def pwm_t1_exact_retune(pin: const, freq: uint16) -> uint16:
+    return 0
+
+
+@inline
 def pwm_t1_exact_start_val(freq: uint16) -> uint8:
     return 0
 

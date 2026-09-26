@@ -11,7 +11,7 @@
 # Module-level conditional imports select the correct chip implementation.
 # -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, uint16, inline, const
+from pymcu.types import uint8, uint16, uint32, inline, const
 from pymcu.exceptions import CompileError
 
 if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
@@ -23,6 +23,7 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
         pwm_uses_exact_t1, pwm_t1_exact_init, pwm_t1_exact_steps,
         pwm_t1_exact_write_ocr, pwm_t1_exact_start_val, pwm_t1_exact_frequency,
         pwm_t1_exact_is_off, pwm_bucket_frequency,
+        pwm_t1_exact_period, pwm_t1_exact_retune, pwm_t1_exact_read_ocr,
     )
 elif (__CHIP__.name == "atmega32u4" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
           or __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny24"
@@ -44,6 +45,7 @@ else:
         pwm_uses_exact_t1, pwm_t1_exact_init, pwm_t1_exact_steps,
         pwm_t1_exact_write_ocr, pwm_t1_exact_start_val, pwm_t1_exact_frequency,
         pwm_t1_exact_is_off, pwm_bucket_frequency,
+        pwm_t1_exact_period, pwm_t1_exact_retune, pwm_t1_exact_read_ocr,
     )
 
 
@@ -119,11 +121,14 @@ class PWM:
         # binding of self._pin (it reached the chip module as a run-time value).
         if self._exact:
             # The whole 16-bit compare register, against a period of up to 65 536 counts.
-            if pwm_t1_exact_steps(self._freq, duty_u16) == 0:
+            # The period comes from self._freq, a compile-time constant unless set_freq()
+            # retunes this channel, so a program that never retunes folds this exactly as
+            # before and only a retuning one pays a division here.
+            if uint16(pwm_t1_exact_period(self._freq) * uint32(duty_u16) // 65536) == 0:
                 pwm_t1_exact_write_ocr(self._pin, 0)
                 pwm_disconnect(self._pin)
             else:
-                pwm_t1_exact_write_ocr(self._pin, pwm_t1_exact_steps(self._freq, duty_u16))
+                pwm_t1_exact_write_ocr(self._pin, uint16(pwm_t1_exact_period(self._freq) * uint32(duty_u16) // 65536))
                 pwm_connect(self._pin, self._invert)
         else:
             steps: uint16 = pwm_u16_steps(self._pin, duty_u16)
@@ -172,19 +177,21 @@ class PWM:
         # Retuning the timer retunes its other channel too; the selector claims the
         # prescaler on the way out, so a channel with a sibling is refused here.
         if self._exact:
-            # The exact path's period is a register whose value comes from a division by the
-            # frequency, and this frequency arrives at run time. Reprogramming it would need
-            # that division in the emitted code, and the compare value would have to be
-            # rescaled against the new period with it. Refused rather than half-done.
-            raise CompileError(
-                "a PWM running at an exact frequency cannot be retuned at run time. Its "
-                "period lives in a register computed from the frequency, and so does every "
-                "duty cycle measured against it, so changing one at run time needs a "
-                "division this HAL does not emit. Construct the PWM at the frequency you "
-                "want, or ask for one of the frequencies the fixed prescalers give "
-                "(62500, 7812, 976, 244 or 61 Hz on this timer), which can be retuned.")
-        self._start_val = pwm_prescaler_for_freq(self._pin, freq)
-        self._tccr_b.value = self._start_val
+            # The exact path takes any frequency: the prescaler and the period register
+            # are recomputed (a 32-by-16 division when the frequency arrives at run time)
+            # and the counter restarts. The compare value is rescaled to the new period so
+            # the duty cycle is kept, which is what both CircuitPython and MicroPython do
+            # on a frequency change; off stays off. Both channels of Timer1 share the
+            # period, so a channel whose sibling is also on this path is refused.
+            old_period: uint32 = pwm_t1_exact_period(self._freq)
+            ocr: uint16 = pwm_t1_exact_read_ocr(self._pin)
+            top: uint16 = pwm_t1_exact_retune(self._pin, freq)
+            pwm_t1_exact_write_ocr(self._pin, uint16(uint32(ocr) * (uint32(top) + 1) // old_period))
+            self._start_val = self._tccr_b.value
+            self._freq = freq
+        else:
+            self._start_val = pwm_prescaler_for_freq(self._pin, freq)
+            self._tccr_b.value = self._start_val
 
     # The frequency this channel actually emits, which is not always the one asked for.
     @inline

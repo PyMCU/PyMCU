@@ -385,8 +385,8 @@ fixed at 256 counts the frequencies on offer are a handful of buckets, so
 `board.D9` and `board.D10` are the exception: asking either for a frequency that is not one
 of those buckets reaches the timer mode whose period is a register, and it comes out exactly.
 `PWMOut(board.D9, frequency=50)` really is 50 Hz, with 40 000 steps of duty across the
-period instead of 256. It used to run at 61 Hz. A PWM on that path cannot be retuned at run
-time and says so.
+period instead of 256. It used to run at 61 Hz. A PWM on that path can be retuned at run
+time with `frequency =` (on a `variable_frequency=True` PWMOut); the duty cycle is kept.
 
 The first parameter is `pin`, as CircuitPython names it. It was `pin_name`, so
 `PWMOut(pin=board.D9, ...)` did not compile.
