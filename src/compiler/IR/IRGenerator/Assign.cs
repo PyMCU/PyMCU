@@ -1982,6 +1982,12 @@ public partial class IRGenerator
                 throw UserError(
                     $"assigning to '{varExpr.Name}' rebinds the name and never writes the register; " +
                     $"use {varExpr.Name}.value = ... to write the whole register, or {varExpr.Name}[bit] = ... for one bit", varExpr);
+
+            // `p = ptr(0x0620)` on a name that holds a RUN-TIME pointer rebinds it to that
+            // address: the slot receives the address itself. A MemoryAddress as a Copy source
+            // means the byte AT the address, so `p` was loaded with the contents of 0x0620.
+            if (value is MemoryAddress rebindAddr && runtimePtrVars.ContainsKey(q))
+                value = new Constant(rebindAddr.Address);
         }
 
         // RFC 0008: `x = open(...)` (or `x = f`, the same handle under another name) --
