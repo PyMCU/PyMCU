@@ -4383,6 +4383,19 @@ public partial class IRGenerator
     /// or a sized array spelling such as `uint8[4]`. A value of such a type reaches a call as a
     /// base address, so overload selection has to spell it "bytearray".
     /// </summary>
+    /// Whether <paramref name="e"/> is a @property read or a method call whose declared result
+    /// is a buffer.
+    private bool IsDeclaredBufferResult(Expression e)
+    {
+        if (e is MemberAccessExpr { Object: VariableExpr recv } prop && IsPropertyGetterRead(prop)
+            && InstanceClassOfName(recv.Name) is { } cls
+            && ResolveMROPropertyClass(cls, prop.Member) is { } propCls)
+            return DeclaredTypeIsBuffer(functionReturnTypes.GetValueOrDefault(propCls + "_" + prop.Member));
+        if (e is CallExpr { Callee: MemberAccessExpr mc } && FieldOwnerClass(mc) is { } owner)
+            return DeclaredTypeIsBuffer(functionReturnTypes.GetValueOrDefault(owner + "_" + mc.Member));
+        return false;
+    }
+
     private static bool DeclaredTypeIsBuffer(string? declared)
     {
         if (string.IsNullOrEmpty(declared)) return false;
@@ -6192,6 +6205,20 @@ public partial class IRGenerator
         // compile-time string (adafruit_ht16k33's _number measures stnum this way).
         if (expr.Args[0] is not StringLiteral && StaticStringOf(expr.Args[0]) is { } lenText)
             return new Constant(lenText.Length);
+
+        // `len(a.rom)` through a @property, `len(a.get())` through a method declared to return
+        // a buffer: the getter hands back the buffer's NAME (a `return self._rom` expansion),
+        // and its length is that array's. Asked only of the two declared-buffer shapes, so a
+        // call returning a string or a tuple keeps the paths below.
+        // The call is lowered here, once, so an answer this cannot give is the same refusal
+        // the end of this method gives rather than a second evaluation further down.
+        if (IsDeclaredBufferResult(expr.Args[0]))
+        {
+            if (VisitExpression(expr.Args[0]) is Variable { Name: var retBuf }
+                && arraySizes.TryGetValue(retBuf, out int retBufSize))
+                return new Constant(LogicalArrayLen(retBuf, retBufSize));
+            throw UserError("len() argument must be a fixed-size array or list literal", ArgAt(expr, 0));
+        }
 
         // 2-D grid lengths: len(g) is the row count H; len(g[y]) -- and len(r)
         // where r was bound to a row -- are the row width W. Both fold at

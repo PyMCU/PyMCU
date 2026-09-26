@@ -1232,6 +1232,24 @@ public partial class IRGenerator
         // generic aliasing in `x = f()` then makes `x[i]` and `len(x)` answer the callee's
         // storage (adafruit_bmp280's `_read_register`). Pending finally blocks -- which is
         // how a `with` body's __exit__ reaches here -- still run before the exit jump.
+        // `return self._rom` where the field was handed a buffer is the same value one name
+        // further in: without this the field read lowered as a scalar, and every caller that
+        // took the result as a buffer -- `len(a.rom)`, `bus.write(a.rom)` through a @property
+        // (adafruit_onewire's OneWireAddress) -- refused it as not a fixed-size array.
+        if (stmt.Value is MemberAccessExpr retMem && inlineStack.Count > 0
+            && inlineStack.Last().ResultVars.Count == 0
+            && ResolveMemberArrayName(retMem) is { } retMemArr)
+        {
+            var retCtx = inlineStack.Last();
+            retCtx.ReturnedBuffer = retMemArr;
+            retCtx.ResultAssigned = true;
+            if (_runtimeBranchDepth <= retCtx.EntryBranchDepth)
+                retCtx.ResultReturnedUnconditionally = true;
+            EmitPendingFinally(retCtx.FinallyDepth);
+            Emit(new Jump(retCtx.ExitLabel));
+            return;
+        }
+
         if (stmt.Value != null && IsSequenceObject(stmt.Value))
         {
             if (stmt.Value is VariableExpr retArr && inlineStack.Count > 0
