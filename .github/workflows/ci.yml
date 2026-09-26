@@ -140,9 +140,20 @@ jobs:
           # Compat layers for the HAL parity universality check in
           # tests/stdlib/test_hal_parity.py (see the stdlib-parity job).
           pip install --pre --no-deps pymcu-circuitpython pymcu-micropython
+          # tests/stdlib/test_a_cited_line_is_the_readers_line.py runs the whole
+          # `pymcu build` in a subprocess, because the preamble it is about is
+          # injected by the DRIVER and never exists when pymcuc is called alone.
+          # That subprocess needs everything the driver needs, in four layers it
+          # hits one after another: the CLI packages, the toolchain SDK, a
+          # backend that claims atmega328p, and a pymcu.chips to bootstrap from.
+          pip install pytest-mock tomlkit rich typer questionary pyyaml
+          pip install ./extensions/pymcu-sdk
+          pip install --pre --no-deps pymcu-avr
+          pip install --no-deps ./lib
 
       # The suite drives build/bin/pymcuc with --emit-ir, which replaces the
-      # backend phase with the IR serializer, so no backend binary is needed.
+      # backend phase with the IR serializer, so no backend binary is needed --
+      # except in the one file above, which goes through `pymcu build`.
       - name: Build the compiler
         run: dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
 
