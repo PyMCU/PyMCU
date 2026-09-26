@@ -62,7 +62,7 @@ class PWM:
         # set on compare match and cleared at BOTTOM, so duty counts the LOW time.
         self._pin = pin
         self._invert = invert
-        self._freq = freq
+        self._freq: uint16 = freq
         # A Timer1 channel asking for a frequency the eight-bit buckets do not already give
         # exactly takes the mode whose TOP is a register, which reaches any frequency the
         # prescaler can divide to and whose compare registers are the full 16 bits. That is
