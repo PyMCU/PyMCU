@@ -3668,6 +3668,19 @@ public partial class IRGenerator
                         }
                     }
 
+                    // A float default is as constant as an int one, and binds the way a
+                    // float argument to the same parameter does. It was refused as "not a
+                    // compile-time constant", so `interval: const[float] = 0.020` compiled
+                    // only when every call passed the argument.
+                    if (defaultVal is FloatConstant cfdf)
+                    {
+                        floatConstantVariables[paramName] = cfdf.Value;
+                        constantVariables.Remove(paramName);
+                        strConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        continue;
+                    }
+
                     if (!(defaultVal is Constant cdf))
                         throw UserError(
                             $"Default value for const parameter '{func.Params[i].Name}' must be a compile-time constant", expr.Callee);
