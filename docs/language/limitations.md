@@ -1169,7 +1169,7 @@ base, `pixels[i] = (r, g, b)` included, verified on the wire on the emulated Uno
 | `adafruit_ht16k33` (matrix) | **builds unmodified** (matrix simpletest 4 234 bytes) | (moved off the buffer-size and `Optional[bool]` pixel demandants: bound module-level instances outline to real subroutines, and `pixel`'s `Optional[bool]` color/return ride the tag) |
 | `adafruit_ht16k33` (segments) | **builds unmodified, 5 710 bytes** | (moved off `def print(self, value: Union[str, float], ...)`: a union parameter resolves the member at the call site) |
 | `adafruit_ina219` | **builds unmodified, 7 294 bytes** | (moved off `self.raw_bus_voltage`: `type(self)` in the descriptor rewrite is `INA219`, not the mangled `adafruit_ina219_INA219`) |
-| `adafruit_irremote` | `yield` in `NonblockingGenericDecode.read` | a generator has to be a module-level function today |
+| `adafruit_irremote` | `pulses` holds a tagged union with no member slot for its payload (RFC 0009 decision 4) | not the generator: a generator method compiles when its receiver is a bound name, and probe 294 holds that against CPython. The reason written here before outlived the rule that justified it |
 | `adafruit_lis3dh` | **builds unmodified, 2 522 bytes** | |
 | `adafruit_mcp230xx` | `Pin.high()` runtime bit index | same as `adafruit_character_lcd` |
 | `adafruit_mcp3xxx` | **builds unmodified, 3 094 bytes** | (moved off `with ... as`: the bound name now takes `__enter__`'s returned instance class) |
