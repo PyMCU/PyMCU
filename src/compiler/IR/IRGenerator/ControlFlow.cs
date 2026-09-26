@@ -286,6 +286,16 @@ public partial class IRGenerator
                     return null;
                 }
 
+                // The right operand is reached only on the path the left decided: `A and B`
+                // runs B when A held, `A or B` when it did not. That is the same proof
+                // `if A:` hands its then-branch, so it narrows a live optional for B and
+                // for nothing else -- `last is None or pos != last` reads the payload on
+                // the only path that evaluates it (PyMCU#513). The arms this chain guards
+                // belong to the WHOLE condition, which the caller narrows separately.
+                bool? EmitRightSub(Expression right, string label, bool ifTrue) =>
+                    UnderShortCircuitNarrowing(binExpr.Left, isAnd,
+                        () => EmitSub(right, label, ifTrue));
+
                 bool? leftTruth;
                 bool? rightTruth;
                 if ((!jumpIfTrue && isAnd) || (jumpIfTrue && !isAnd))
@@ -297,7 +307,7 @@ public partial class IRGenerator
                     // a membership test against the field being None (adafruit_ht16k33).
                     rightTruth = leftTruth is { } ltv && (isAnd ? !ltv : ltv)
                         ? leftTruth
-                        : EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
+                        : EmitRightSub(binExpr.Right, targetLabel, jumpIfTrue);
                 }
                 else
                 {
@@ -305,7 +315,7 @@ public partial class IRGenerator
                     leftTruth = EmitSub(binExpr.Left, skipLabel, !jumpIfTrue);
                     rightTruth = leftTruth is { } lt2 && (isAnd ? !lt2 : lt2)
                         ? leftTruth
-                        : EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
+                        : EmitRightSub(binExpr.Right, targetLabel, jumpIfTrue);
                     Emit(new Label(skipLabel));
                 }
 

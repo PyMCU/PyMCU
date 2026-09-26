@@ -1480,7 +1480,7 @@ public partial class IRGenerator
             Emit(new Copy(optPayload, optResult));
             if (resTag != null) Emit(new Copy(abTag.tag, resTag));
             EmitOptionalTruthJump(abTag.tag, optPayload, abTag.members, optEndLabel, isOr);
-            Val optRight = VisitExpression(expr.Right);
+            Val optRight = VisitShortCircuitRight(expr.Left, expr.Right, !isOr);
             Emit(new Copy(optRight is NoneVal ? new Constant(0) : optRight, optResult));
             if (resTag != null)
             {
@@ -1505,15 +1505,17 @@ public partial class IRGenerator
             // only tests truthiness; the difference shows in `x = a and b`.)
             // Deciding which operand to keep IS a truth test, so an instance operand goes
             // through its __bool__ here too.
-            Val v1a = VisitExpression(LowerInstanceTruthiness(expr.Left));
+            Expression andLeft = LowerInstanceTruthiness(expr.Left);
+            Val v1a = VisitExpression(andLeft);
             if (v1a is Constant c1a)
-                return c1a.Value == 0 ? c1a : VisitExpression(expr.Right);
+                return c1a.Value == 0 ? c1a
+                    : VisitShortCircuitRight(andLeft, expr.Right, true);
 
             Temporary result = MakeTemp(GetValType(v1a));
             string endLabel = MakeLabel();
             Emit(new Copy(v1a, result));                 // tentatively a
             Emit(new JumpIfZero(result, endLabel));      // a falsy -> keep a
-            Val v2b = VisitExpression(expr.Right);
+            Val v2b = VisitShortCircuitRight(andLeft, expr.Right, true);
             Emit(new Copy(v2b, result));                 // a truthy -> b
             Emit(new Label(endLabel));
             return result;
@@ -1523,15 +1525,17 @@ public partial class IRGenerator
         {
             // Python `a or b`: truthy a -> a, otherwise b. Short-circuits b. Choosing between
             // them is a truth test, so an instance operand goes through its __bool__.
-            Val v1a = VisitExpression(LowerInstanceTruthiness(expr.Left));
+            Expression orLeft = LowerInstanceTruthiness(expr.Left);
+            Val v1a = VisitExpression(orLeft);
             if (v1a is Constant c1a)
-                return c1a.Value != 0 ? c1a : VisitExpression(expr.Right);
+                return c1a.Value != 0 ? c1a
+                    : VisitShortCircuitRight(orLeft, expr.Right, false);
 
             Temporary result = MakeTemp(GetValType(v1a));
             string endLabel = MakeLabel();
             Emit(new Copy(v1a, result));                 // tentatively a
             Emit(new JumpIfNotZero(result, endLabel));   // a truthy -> keep a
-            Val v2b = VisitExpression(expr.Right);
+            Val v2b = VisitShortCircuitRight(orLeft, expr.Right, false);
             Emit(new Copy(v2b, result));                 // a falsy -> b
             Emit(new Label(endLabel));
             return result;

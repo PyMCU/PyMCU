@@ -2288,6 +2288,39 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Lower the right operand of a short-circuit `and`/`or` under the narrowing the
+    /// left operand decides. The right operand runs only when the left was truthy
+    /// (`and`) or falsy (`or`), so the left's condition effect holds for it:
+    /// `last is None or pos != last` reads the payload on the only path that reaches
+    /// it, exactly as `if last is not None:` does one statement later.
+    ///
+    /// The proof is the operand's alone. It is taken back before the value returns,
+    /// so the arms the whole expression guards keep whatever the WHOLE condition
+    /// proves and never inherit a fact that only one operand's path established --
+    /// the true arm of `if last is None or f():` may still hold None.
+    /// </summary>
+    private Val VisitShortCircuitRight(Expression left, Expression right, bool leftWasTrue) =>
+        UnderShortCircuitNarrowing(left, leftWasTrue, () => VisitExpression(right));
+
+    /// <summary>
+    /// The same borrowed proof for a caller that lowers the right operand itself --
+    /// the jump chain an `if`/`while` condition becomes never goes through
+    /// VisitExpression for its operands.
+    /// </summary>
+    private T UnderShortCircuitNarrowing<T>(Expression left, bool leftWasTrue, Func<T> lowerRight)
+    {
+        var savedNarrowed = new Dictionary<string, int>(narrowedOptionals);
+        var savedNoneValued = new HashSet<string>(noneValuedNames);
+        ApplyOptionalCondEffect(left, leftWasTrue);
+        try { return lowerRight(); }
+        finally
+        {
+            RestoreInto(narrowedOptionals, savedNarrowed);
+            RestoreInto(noneValuedNames, savedNoneValued);
+        }
+    }
+
     /// The live optional name and member list an `isinstance(v, T)` test decides,
     /// with the member indices T names. Null when the call is not an isinstance on
     /// a live optional, or T names no member (the comparison folds to Constant
