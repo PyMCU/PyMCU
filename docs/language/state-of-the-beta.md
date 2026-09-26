@@ -30,7 +30,7 @@ without hiding them:
 
 | Kind | Issues | What it means for a beta-1 program |
 |---|---|---|
-| Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364), [#390](https://github.com/PyMCU/PyMCU/issues/390), [#394](https://github.com/PyMCU/PyMCU/issues/394) (one of its three probes), [#395](https://github.com/PyMCU/PyMCU/issues/395), [#396](https://github.com/PyMCU/PyMCU/issues/396), [#397](https://github.com/PyMCU/PyMCU/issues/397), [#398](https://github.com/PyMCU/PyMCU/issues/398), [#401](https://github.com/PyMCU/PyMCU/issues/401) | An unannotated loop accumulator, a field read through `with ... as`, a nested comprehension, a ZCA `__add__`/`__lt__`, `len(instance)`, two-index `__setitem__`, `list[T].append()` on the heap, and `match` on an array can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. Two that were here, `#393` (folded `hex`/`bin`/`str`) and `#399` (a one-character index), were fixed on 2026-09-26 and their probes now match CPython. |
+| Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364), [#390](https://github.com/PyMCU/PyMCU/issues/390), [#394](https://github.com/PyMCU/PyMCU/issues/394) (one of its three probes), [#395](https://github.com/PyMCU/PyMCU/issues/395), [#396](https://github.com/PyMCU/PyMCU/issues/396), [#397](https://github.com/PyMCU/PyMCU/issues/397), [#401](https://github.com/PyMCU/PyMCU/issues/401) | An unannotated loop accumulator, a field read through `with ... as`, a nested comprehension, a ZCA `__add__`/`__lt__`, `len(instance)`, two-index `__setitem__`, and `match` on an array can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. Three that were here were fixed on 2026-09-26 and their probes now match CPython: `#393` (folded `hex`/`bin`/`str`), `#399` (a one-character index) and `#398` (`list[T].append()` on the heap, which now prints 2 and 5 where it printed 0 and 0). |
 | Correctly refused, misleading reason | [#391](https://github.com/PyMCU/PyMCU/issues/391), [#392](https://github.com/PyMCU/PyMCU/issues/392), [#400](https://github.com/PyMCU/PyMCU/issues/400) (plus two of #394's three probes) | The build fails with a `CompileError` rather than shipping a wrong answer, but the message names the wrong cause (a class with no explicit `__init__`, `bytearray()` assigned to `self.field`, and an `Enum` member read outside a plain assignment all give a diagnostic that points somewhere other than the real limitation). |
 
 The distinction from "silent" as the term is used for the beta-1 exit bar:
@@ -49,6 +49,12 @@ claim this page makes is the narrower and truer one. Beta 1 ships with
 every bug we know about written down on this page, and the honest reading
 of one day that produced 23 of them is that more instruments will find
 more.
+
+Maintaining this row by hand is how it goes wrong in both directions: on
+2026-09-26 it listed three bugs that were already fixed and omitted three that
+were not. The list of probes the oracle still tracks is the live answer, in the
+`# tracked: #N` headers under `tests/oracle/probes/` in the `pymcu-avr` repo.
+Regenerate this row from those headers rather than editing it by hand.
 
 ## What a second instrument found
 
