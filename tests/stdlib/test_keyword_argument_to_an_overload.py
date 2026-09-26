@@ -54,7 +54,10 @@ def build(tmp_path: Path, source: str, py_parser: bool = False):
         [str(PYMCUC), str(tmp_path / "main.py"), "--emit-ir", str(tmp_path / "f.mir"),
          "--target", "atmega328p", "--freq", "16000000", "-I", str(STDLIB)],
         capture_output=True, text=True,
-        env={**os.environ, **({"PYMCU_PY_PARSER": "1"} if py_parser else {})},
+        # The ambient environment carries PYMCU_PY_PARSER on the second pass, so the
+        # C# case has to drop it rather than merely not add it.
+        env={**{k: v for k, v in os.environ.items() if k != "PYMCU_PY_PARSER"},
+             **({"PYMCU_PY_PARSER": "1"} if py_parser else {})},
     )
     return proc.stdout + proc.stderr
 

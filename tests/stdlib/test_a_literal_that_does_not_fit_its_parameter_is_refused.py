@@ -43,6 +43,11 @@ def compile_(tmp_path: Path, source: str, py_parser: bool):
     env = dict(os.environ)
     if py_parser:
         env["PYMCU_PY_PARSER"] = "1"
+    else:
+        # The suite runs a second pass with PYMCU_PY_PARSER set in the ambient
+        # environment. Asking for the C# front end means clearing it, not merely
+        # not setting it, or this case runs the Python front end and says csharp.
+        env.pop("PYMCU_PY_PARSER", None)
     proc = subprocess.run(
         [str(PYMCUC), str(tmp_path / "main.py"), "-o", str(tmp_path / "out.bin"),
          "--arch", "avr", "--target", "atmega328p", "--freq", "16000000",
