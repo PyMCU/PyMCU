@@ -716,6 +716,12 @@ public class Param : ASTNode
     /// mapping rather than a run-time dictionary (#368).
     public bool IsKwArg { get; set; }
 
+    /// A parameter after a bare `*` or a `*args` (PEP 3102): a call can only reach it by name.
+    public bool IsKeywordOnly { get; set; }
+
+    /// A parameter before a `/` (PEP 570): a call can only reach it by position (#389).
+    public bool IsPositionalOnly { get; set; }
+
     public Param(string name, string type, Expression? defaultValue = null)
     {
         Name = name;

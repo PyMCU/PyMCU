@@ -541,6 +541,10 @@ public partial class IRGenerator
                         if (outlinedMethods.Contains(callee) && !needsVirtualInline
                             && !slotAbiUnavailable)
                         {
+                            if (instanceMethodDefs.TryGetValue(callee, out var oShapeDef)
+                                || methodAstByName.TryGetValue(callee, out oShapeDef))
+                                CheckSignatureShape(oShapeDef, expr.Args,
+                                    QualNameForCall(oShapeDef, callee), expr);
                             var oArgs = new List<Val>();
                             string instName = outlinedInst;
                             if (slotMethods.Contains(callee)
@@ -754,6 +758,8 @@ public partial class IRGenerator
                             && BoundMethodCallee(callee, boundRecv.Name, boundImpl,
                                                  expr.Args) is { } boundCallee)
                         {
+                            CheckSignatureShape(boundImpl, expr.Args,
+                                QualNameForCall(boundImpl, callee), expr);
                             // Same refusal as the outlined path above: the shared body is a
                             // subroutine, and without `-> list[T]` its list result is lost.
                             if (!ReferenceEquals(expr, discardedStatementCall)
@@ -1491,6 +1497,8 @@ public partial class IRGenerator
     {
         // An expression statement's call has nobody to hand a result to.
         bool regularResultDiscarded = ReferenceEquals(expr, discardedStatementCall);
+        if (shapedSignatures.TryGetValue(callee, out var shapeDef))
+            CheckSignatureShape(shapeDef, expr.Args, shapeDef.Name, expr);
         // A call that resolved to no known function (not inline, extern, a builtin or an
         // intrinsic — those return earlier) is a typo or a missing import. Report it now
         // instead of emitting a Call to an undefined symbol that fails much later with a
@@ -2321,6 +2329,9 @@ public partial class IRGenerator
             throw new RecursionError(at.Message, at.Line, at.Column, at.Length)
                 { File = at.File, LocationIsFinal = true };
         }
+
+        if (func != null)
+            CheckSignatureShape(func, expr.Args, QualNameForCall(func, callee), expr);
 
         // @warning("..."): print the author-supplied note (once per function)
         // when a call to this function is expanded. Informational only -- it
@@ -4804,6 +4815,60 @@ public partial class IRGenerator
     // The receiver of a method reaches its body either as `self`, or, for a method that got
     // the outlined ABI, as one `self_<field>` parameter per field. Neither is an argument the
     // caller writes, and both must be skipped when binding arguments.
+    /// <summary>
+    /// The shape a signature's `*` and `/` give a call (PEP 3102, PEP 570), refused with
+    /// CPython's own sentences. A keyword-only parameter was bound by position -- `f(x, 7)`
+    /// against `def f(size, *, order=3)` set `order` to 7 where CPython raises TypeError --
+    /// and a positional-only one by name, in the one front end that parsed `/` at all (#389).
+    /// Only a signature that has either marker is checked, so no other call changes.
+    /// </summary>
+    private void CheckSignatureShape(FunctionDef fn, List<Expression> args, string qualName,
+                                     ASTNode? at)
+    {
+        if (!fn.Params.Any(p => p.IsKeywordOnly || p.IsPositionalOnly)) return;
+        if (args.Any(a => a is StarArgExpr)) return;   // a spread's length is the call site's
+
+        int receivers = fn.Params.TakeWhile(p => IsReceiverParamName(p.Name)
+                                                 || (fn.IsClassMethod && p == fn.Params[0])).Count();
+        var declared = fn.Params.Skip(receivers).ToList();
+        bool hasVarArg = declared.Any(p => p.IsVarArg);
+        bool hasKwArg = declared.Any(p => p.IsKwArg);
+        var positionalParams = declared.Where(p => !p.IsKeywordOnly && !p.IsVarArg && !p.IsKwArg).ToList();
+        var positionalArgs = args.Where(a => a is not KeywordArgExpr).ToList();
+
+        if (!hasVarArg && positionalArgs.Count > positionalParams.Count)
+        {
+            int most = positionalParams.Count + receivers;
+            int least = positionalParams.Count(p => p.DefaultValue == null) + receivers;
+            string takes = least == most
+                ? $"{most} positional argument{(most == 1 ? "" : "s")}"
+                : $"from {least} to {most} positional arguments";
+            int given = positionalArgs.Count + receivers;
+            throw UserError($"{qualName}() takes {takes} but {given} " +
+                            $"{(given == 1 ? "was" : "were")} given",
+                positionalArgs[positionalParams.Count]);
+        }
+
+        if (!hasKwArg)
+        {
+            var misplaced = args.OfType<KeywordArgExpr>()
+                .Where(k => declared.Any(p => p.IsPositionalOnly && p.Name == k.Key)).ToList();
+            if (misplaced.Count > 0)
+                throw UserError($"{qualName}() got some positional-only arguments passed as " +
+                                $"keyword arguments: '{string.Join(", ", misplaced.Select(k => k.Key))}'",
+                    misplaced[0]);
+        }
+    }
+
+    /// The name CPython's call errors give a function: `f`, or `Cls.m` for a method.
+    private string QualNameForCall(FunctionDef fn, string callee)
+    {
+        bool isMethod = fn.Params.Count > 0 && (IsReceiverParamName(fn.Params[0].Name) || fn.IsClassMethod);
+        if (isMethod && callee.EndsWith("_" + fn.Name, StringComparison.Ordinal))
+            return ShortClassName(callee[..^(fn.Name.Length + 1)]) + "." + fn.Name;
+        return fn.Name;
+    }
+
     private static bool IsReceiverParamName(string name) =>
         name == "self" || name.StartsWith("self_", StringComparison.Ordinal);
 
@@ -4824,6 +4889,9 @@ public partial class IRGenerator
     /// </summary>
     private List<Expression> BindMethodArgs(FunctionDef fn, List<Expression> args, string spelling)
     {
+        CheckSignatureShape(fn, args,
+            spelling.EndsWith(fn.Name, StringComparison.Ordinal) ? spelling : spelling + "." + fn.Name,
+            args.FirstOrDefault());
         var parameters = fn.Params.Where(p => !IsReceiverParamName(p.Name)).ToList();
 
         // A `*args` or a `**kwargs` on the base is bound from what is left over, so the

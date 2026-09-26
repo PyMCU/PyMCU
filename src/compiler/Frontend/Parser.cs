@@ -914,12 +914,27 @@ public class Parser
 
         if (Check(TokenType.RParen)) return parameters;
 
+        // Everything after a bare `*` or a `*args` can only be passed by name.
+        bool keywordOnly = false;
+
         do
         {
+            // `/` (PEP 570): every parameter before it can only be passed by position. It was
+            // a syntax error here while the CPython front end accepted it (#389).
+            if (Check(TokenType.Slash))
+            {
+                Advance();
+                if (parameters.Count == 0 || keywordOnly || parameters.Any(p => p.IsPositionalOnly))
+                    Error("'/' must follow at least one parameter and come before '*'");
+                foreach (var p in parameters) p.IsPositionalOnly = true;
+                if (Check(TokenType.RParen)) break;
+                continue;
+            }
+
             // Bare '*' is the PEP 3102 keyword-only separator (common in
             // CircuitPython APIs, e.g. busio.UART(tx, rx, *, baudrate=9600)).
-            // PyMCU resolves arguments by name/position regardless, so we accept
-            // the marker and treat following parameters like any other.
+            // The parameters after it are marked keyword-only, and a call that reaches
+            // one of them by position is refused where the arguments are bound.
             //
             // `*args` is the other reading of the same token, and it is a PARAMETER: the
             // positions the call site did not give a declared parameter are known there, so
@@ -927,6 +942,7 @@ public class Parser
             if (Check(TokenType.Star))
             {
                 Advance();
+                keywordOnly = true;
                 if (Check(TokenType.Comma) || Check(TokenType.RParen))
                 {
                     if (Check(TokenType.RParen)) break;
@@ -978,7 +994,7 @@ public class Parser
             }
 
             parameters.Add(Located(new Param(name.Value, type, defaultVal)
-                { UnionMembers = unionMembers }, name));
+                { UnionMembers = unionMembers, IsKeywordOnly = keywordOnly }, name));
 
             // `!Check(RParen)` after the comma is the trailing comma, which `black` writes on
             // every multi-line signature and which the CPython front end already accepts -- so

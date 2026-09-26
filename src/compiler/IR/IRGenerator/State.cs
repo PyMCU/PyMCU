@@ -227,6 +227,9 @@ public partial class IRGenerator
     // inline/outline/force-inline. Lets super().<method>() inline-expand the base body even when
     // the base method is outlined (and thus absent from inlineFunctions).
     private Dictionary<string, FunctionDef> methodAstByName = new();
+    // Real subroutines whose signature has a `*` or a `/`, by full name, for the call-shape
+    // check at the call site (CheckSignatureShape).
+    private Dictionary<string, FunctionDef> shapedSignatures = new();
 
     // Class keys whose own __init__ delegates to the base via super().__init__(). Their slot
     // construction can't use the positional fast-path (a base-set field has no constructor

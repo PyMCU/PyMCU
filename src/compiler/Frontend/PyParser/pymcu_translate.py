@@ -1149,6 +1149,7 @@ STMT = {
 
 def params_of(args, default_type=""):
     positional = list(args.posonlyargs) + list(args.args)
+    posonly = len(args.posonlyargs)
     defaults = list(args.defaults)
     pad = len(positional) - len(defaults)
     out = []
@@ -1156,6 +1157,7 @@ def params_of(args, default_type=""):
         default = defaults[i - pad] if i >= pad else None
         out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
                     "default": expr(default) if default is not None else None,
+                    **({"posonly": True} if i < posonly else {}),
                     **param_position(a)})
     # `*args` sits between the positional parameters and the keyword-only ones, exactly where
     # Python puts it, so a keyword-only parameter after it keeps its position in the list.
@@ -1164,7 +1166,7 @@ def params_of(args, default_type=""):
                     "default": None, "vararg": True, **param_position(args.vararg)})
     for a, d in zip(args.kwonlyargs, args.kw_defaults):
         out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
-                    "default": expr(d) if d is not None else None,
+                    "default": expr(d) if d is not None else None, "kwonly": True,
                     **param_position(a)})
     if args.kwarg is not None:
         out.append({"name": args.kwarg.arg, "type": annotation_of(args.kwarg.annotation) or "",

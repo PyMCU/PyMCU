@@ -204,6 +204,8 @@ public static class PythonAstReader
             UnionMembers = PyMCU.Common.AnnotationText.UnionMembers(Str(e, "type")),
             IsVarArg = Flag(e, "vararg"),
             IsKwArg = Flag(e, "kwarg"),
+            IsKeywordOnly = Flag(e, "kwonly"),
+            IsPositionalOnly = Flag(e, "posonly"),
         }, e);
 
     private static FunctionDef ReadFunction(JsonElement e)

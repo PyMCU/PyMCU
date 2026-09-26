@@ -1882,6 +1882,8 @@ public partial class IRGenerator
             functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
             functionParamDefaults[fullName] = func.Params.Select(p => p.DefaultValue).ToList();
             functionModulePrefix[fullName] = currentModulePrefix ?? "";
+            if (func.Params.Any(p => p.IsKeywordOnly || p.IsPositionalOnly))
+                shapedSignatures[fullName] = func;
 
             if (scope != null)
             {
