@@ -5444,6 +5444,44 @@ public partial class IRGenerator
         _ => false,
     };
 
+    /// <summary>
+    /// The compile-time text of an RFC 0007 introspection read -- `sys.platform`,
+    /// `sys.implementation.name` and `uname().&lt;field&gt;`, in their `usys`/`uos` spellings
+    /// too -- or null when the expression is not one (or no compat layer is declared).
+    /// Every path that asks for the text of a member access asks here first: the compat
+    /// layer's sys.py declares a placeholder (`platform = "rp2"`) that the scan records as
+    /// the module global's text, so a reader that went to that record instead
+    /// (`print(sys.platform)`, `p = sys.platform`) printed "rp2" on a chip whose `if`
+    /// answered "atmega328p".
+    /// </summary>
+    private string? IntrospectionTextOf(MemberAccessExpr expr)
+    {
+        if (!IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib)) return null;
+
+        if (expr is { Member: "name", Object: MemberAccessExpr { Member: "implementation" } implObj }
+            && IsModuleAlias(implObj.Object, "sys", "usys"))
+            return IntrospectionTable.ImplementationName(deviceConfig);
+
+        if (expr is { Member: "platform" } && IsModuleAlias(expr.Object, "sys", "usys"))
+            return IntrospectionTable.SysPlatform(deviceConfig);
+
+        if (expr is { Object: CallExpr { Args.Count: 0 } unameCall, Member: var unameField }
+            && IsUnameCallee(unameCall.Callee))
+        {
+            var u = IntrospectionTable.GetUname(deviceConfig);
+            return unameField switch
+            {
+                "sysname" => u.Sysname,
+                "nodename" => u.Nodename,
+                "release" => u.Release,
+                "version" => u.Version,
+                "machine" => u.Machine,
+                _ => null,
+            };
+        }
+        return null;
+    }
+
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
         // `cls.string` inside a @classmethod: cls is the receiver class.
@@ -5471,16 +5509,11 @@ public partial class IRGenerator
         // IsKnownStdlib: with no compat layer declared, `sys`/`os` are whatever the
         // project made them (pymcu.os's uname() really does run inline) and the
         // member must resolve normally, not to a table meant for another module.
+        if (IntrospectionTextOf(expr) is { } introspected)
+            return InternedStringConstant(introspected);
+
         if (IntrospectionTable.IsKnownStdlib(deviceConfig.Stdlib))
         {
-            if (expr is MemberAccessExpr { Member: "name", Object: MemberAccessExpr { Member: "implementation" } implObj }
-                && IsModuleAlias(implObj.Object, "sys", "usys"))
-                return InternedStringConstant(IntrospectionTable.ImplementationName(deviceConfig));
-
-            if (expr is MemberAccessExpr { Member: "platform" }
-                && IsModuleAlias(expr.Object, "sys", "usys"))
-                return InternedStringConstant(IntrospectionTable.SysPlatform(deviceConfig));
-
             // `sys.implementation.version` bare: the (major, minor, micro) tuple has no
             // runtime object, so a read that is not `version[i]` cannot be answered --
             // index it (this is the member-access half of the IndexExpr rule below).
@@ -5492,20 +5525,9 @@ public partial class IRGenerator
 
             if (expr is { Object: CallExpr { Args.Count: 0 } unameCall, Member: var unameField }
                 && IsUnameCallee(unameCall.Callee))
-            {
-                var u = IntrospectionTable.GetUname(deviceConfig);
-                return unameField switch
-                {
-                    "sysname" => InternedStringConstant(u.Sysname),
-                    "nodename" => InternedStringConstant(u.Nodename),
-                    "release" => InternedStringConstant(u.Release),
-                    "version" => InternedStringConstant(u.Version),
-                    "machine" => InternedStringConstant(u.Machine),
-                    _ => throw UserError(
-                        $"'uname()' has no field '{unameField}' -- the fields are sysname, " +
-                        "nodename, release, version, machine", expr),
-                };
-            }
+                throw UserError(
+                    $"'uname()' has no field '{unameField}' -- the fields are sysname, " +
+                    "nodename, release, version, machine", expr);
         }
 
         // A constant two class names deep: `Outer.Inner.A`, where one level works. The access

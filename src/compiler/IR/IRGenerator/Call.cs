@@ -7424,6 +7424,7 @@ public partial class IRGenerator
         // nesting printed 256 again while one level printed the string.
         if (arg is MemberAccessExpr ma)
         {
+            if (IntrospectionTextOf(ma) is { } introspected) return introspected;
             (VariableExpr? recv, List<string> fields) = FieldChainOf(ma);
             if (recv == null) return null;
 
@@ -8593,7 +8594,7 @@ public partial class IRGenerator
                 ?? ResolveStrConstant(ve.Name);
         // A field holding a compile-time string IS statically a string; answering null for
         // one made `sep.join([...])` refuse a separator whose text the compiler was holding.
-        if (e is MemberAccessExpr ma) return StaticStringOfField(ma);
+        if (e is MemberAccessExpr ma) return IntrospectionTextOf(ma) ?? StaticStringOfField(ma);
         // `a + b` of two statically-known strings is itself statically known. This is the
         // same fold VisitBinary emits, answered without visiting: a name bound to the result
         // (`c = a + b`) records its text through the assign path, so print(c) writes
