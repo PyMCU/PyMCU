@@ -129,6 +129,25 @@ public class GlobalShadowsBufferParamTests
     }
 
     [Fact]
+    public void InlineParam_PassedOn_PassesTheArgument()
+    {
+        var ir = Gen(
+            "def hlp(x: bytearray) -> uint8:\n" +
+            "    return x[1]\n" +
+            "@inline\n" +
+            "def relay(buf: bytearray) -> uint8:\n" +
+            "    return hlp(buf)\n" +
+            "buf = bytearray(3)\n" +
+            "rb = bytearray(5)\n" +
+            "rb[GPIOR0.value] = 9\n" +
+            "GPIOR1.value = relay(rb)\n");
+
+        var args = All(ir).OfType<Call>().Where(c => c.FunctionName == "hlp").SelectMany(c => c.Args).ToList();
+        Assert.Contains(args, a => a is ArrayBase { ArrayName: "rb" or "main.rb" });
+        Assert.DoesNotContain(args, a => a is ArrayBase ab && IsGlobalBuf(ab.ArrayName));
+    }
+
+    [Fact]
     public void InlineParam_Slice_CopiesTheArgument()
     {
         var ir = Gen(
@@ -158,6 +177,25 @@ public class GlobalShadowsBufferParamTests
         var fill = ir.Functions.Single(f => f.Name == "fill");
         Assert.Contains(fill.Body, i => i is BytearrayStore { PtrName: "fill.buf" });
         Assert.DoesNotContain(fill.Body, i => i is ArrayStore st && IsGlobalBuf(st.ArrayName));
+    }
+
+    [Fact]
+    public void PlainFunctionBufferParam_PassedOn_PassesThePointer()
+    {
+        var ir = Gen(
+            "def hlp(x: bytearray) -> uint8:\n" +
+            "    return x[1]\n" +
+            "def relay(buf: bytearray) -> uint8:\n" +
+            "    return hlp(buf)\n" +
+            "buf = bytearray(3)\n" +
+            "rb = bytearray(5)\n" +
+            "rb[GPIOR0.value] = 9\n" +
+            "GPIOR1.value = relay(rb)\n");
+
+        var relay = ir.Functions.Single(f => f.Name == "relay");
+        var args = relay.Body.OfType<Call>().Where(c => c.FunctionName == "hlp").SelectMany(c => c.Args).ToList();
+        Assert.Contains(args, a => a is Variable { Name: "relay.buf" });
+        Assert.DoesNotContain(args, a => a is ArrayBase ab && IsGlobalBuf(ab.ArrayName));
     }
 
     [Fact]

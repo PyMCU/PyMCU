@@ -2230,7 +2230,12 @@ public partial class IRGenerator
         // global of the same name: `uart.write('hello')` inlines write(data=...) and a
         // user-level `data = 5` global must not hijack the body's reads of `data`
         // (the const[str] binding then went unseen and the call hard-errored).
-        if (mutableGlobals.ContainsKey(name) && !InlineScopeShadows(name))
+        //
+        // A real function's buffer parameter is the same case: it lives in bytearrayParams,
+        // not variableTypes, so the parameter check below never saw it and `hlp(buf)` inside
+        // `def f(buf: bytearray)` handed hlp the module's `buf`.
+        if (mutableGlobals.ContainsKey(name) && !InlineScopeShadows(name)
+            && !(ShadowingFrameKey(name) is { } fk && bytearrayParams.Contains(fk)))
         {
             if (!string.IsNullOrEmpty(currentFunction))
             {

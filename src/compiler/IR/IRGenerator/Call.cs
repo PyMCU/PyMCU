@@ -1728,7 +1728,10 @@ public partial class IRGenerator
                 string argQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix
                     : currentFunction + ".") + argVe.Name;
-                if (!arraySizes.ContainsKey(argQualified))
+                // A parameter or local of this frame is what the name passes, never the
+                // module array the fallback below would find under the same bare name. A
+                // bound parameter goes on to the general path, which follows its binding.
+                if (ShadowingFrameKey(argVe.Name) == null && !arraySizes.ContainsKey(argQualified))
                 {
                     // Fall back to unqualified / module-level name
                     string altQ = currentModulePrefix + argVe.Name;
@@ -1777,7 +1780,10 @@ public partial class IRGenerator
             // arraysWithVariableIndex/moduleSramArrays) has a base label to take --
             // a flat sequence (slice temp, `s__0`,`s__1`) is in arraySizes too but has
             // no `s:` storage, so marshaling its base would dangle.
+            // A real function's own buffer parameter is a pointer already, and the storage
+            // normalization would strip `f.buf` to a module array that shares the bare name.
             if (argEvaluated is Variable argArrayVar
+                && !bytearrayParams.Contains(argArrayVar.Name)
                 && TryResolveArrayStorageKey(argArrayVar.Name, out var argStorage)
                 && (arraysWithVariableIndex.Contains(argStorage)
                     || moduleSramArrays.Contains(argStorage)))
