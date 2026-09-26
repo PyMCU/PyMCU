@@ -1926,6 +1926,23 @@ public partial class IRGenerator
             finally { if (argIsTagged || CouldBeGuardedOperand(arg)) optionalReadAllowed--; }
         }
 
+        if (functionParamDeclared.TryGetValue(callee, out var declaredParamTypes)
+            && functionParams.TryGetValue(callee, out var declaredParamNames))
+        {
+            string written = expr.Callee switch
+            {
+                VariableExpr wv => wv.Name,
+                MemberAccessExpr wm => wm.Member,
+                _ => callee,
+            };
+            for (int ai = 0; ai < argValuesL.Count && ai < callArgs.Count
+                             && ai < declaredParamTypes.Count && ai < declaredParamNames.Count; ++ai)
+                RefuseBufferForNumberParam(written, declaredParamNames[ai], declaredParamTypes[ai],
+                    callArgs[ai] is KeywordArgExpr kwa ? kwa.Value : callArgs[ai], argValuesL[ai],
+                    unannotatedScalar: string.IsNullOrEmpty(declaredParamTypes[ai])
+                                       && !bytearrayParams.Contains(callee + "." + declaredParamNames[ai]));
+        }
+
         // RFC 0009: a live Optional argument bound for a parameter that is not
         // Optional dispatches on the tag -- each member marshals at its own
         // width into the same call; the None member raises TypeError at the
@@ -3076,6 +3093,9 @@ public partial class IRGenerator
             // typed from a scalar, or the reverse).
             CheckUnionArgumentMatchesAMember(
                 func, paramIdx, i < rawArgExprs.Count ? rawArgExprs[i] : null, argValues[i]);
+            RefuseBufferForNumberParam(SourceCalleeName(), func.Params[paramIdx].Name,
+                func.Params[paramIdx].Type, i < rawArgExprs.Count ? rawArgExprs[i] : null,
+                argValues[i]);
 
             // A register alias bound at an EARLIER call site to the same @inline function
             // survives in constantAddressVariables unless it is cleared here. The parameter key
@@ -4427,6 +4447,85 @@ public partial class IRGenerator
                && open + 1 < declared.Length - 1;
     }
 
+    /// <summary>
+    /// A declared parameter type that holds one number: the integer widths, `int`, `bool` and
+    /// `float`, bare or wrapped in `const[...]`. A buffer can never be one -- it travels as an
+    /// address, and a number parameter reads that address as its own value.
+    /// </summary>
+    private static bool DeclaredTypeIsNumber(string? declared)
+    {
+        if (string.IsNullOrEmpty(declared)) return false;
+        string t = declared.StartsWith("const[", StringComparison.Ordinal) && declared.EndsWith("]")
+            ? declared[6..^1] : declared;
+        return t is "uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32"
+            or "int" or "bool" or "float";
+    }
+
+    /// <summary>
+    /// A call argument that is a buffer rather than a number: a bytes or list literal
+    /// (`b"ab"` parses to a ListExpr), a `bytes(...)` / `bytearray(...)` / `memoryview(...)`
+    /// written in place, a name bound to a list literal, or a value the marshalling step
+    /// already turned into a base address. A tuple is not counted: it is a compile-time group
+    /// of values, not something a callee indexes as bytes.
+    /// </summary>
+    private bool ArgumentIsBuffer(Expression? arg, Val? evaluated)
+    {
+        if (evaluated is ArrayBase) return true;
+        if (evaluated is Variable ev && IsBufferStorageName(ev.Name)) return true;
+        return arg switch
+        {
+            ListExpr => true,
+            CallExpr { Callee: VariableExpr { Name: "bytes" or "bytearray" or "memoryview" } } => true,
+            VariableExpr ve => NameIsListLiteralSequence(ve.Name)
+                               || IsBufferStorageName((!string.IsNullOrEmpty(currentInlinePrefix)
+                                   ? currentInlinePrefix : currentFunction + ".") + ve.Name),
+            _ => false,
+        };
+    }
+
+    /// A name bound to a bytes or list literal of constants (`z = b"QR"`), which lives as a
+    /// compile-time sequence rather than as storage. A tuple or a range bound the same way is
+    /// a group of values and is left out.
+    private bool NameIsListLiteralSequence(string name)
+        => !IsTupleBound(name)
+           && ResolveConstSequence(name) != null
+           && !rangeBoundSequences.Contains(name)
+           && !(!string.IsNullOrEmpty(currentFunction) && rangeBoundSequences.Contains(currentFunction + "." + name))
+           && !(!string.IsNullOrEmpty(currentInlinePrefix) && rangeBoundSequences.Contains(currentInlinePrefix + name));
+
+    /// <summary>
+    /// `f(b"AB")` against `def f(x: uint8)`: the buffer arrives as its address and the
+    /// parameter reads that address as a number, so `print(x)` printed 0 and
+    /// `UART.write(b"DE\n")` put one 0x00 on the wire, with nothing said. Refused at the
+    /// argument, naming what was passed and what the parameter holds.
+    /// </summary>
+    /// <paramref name="unannotatedScalar"/> is a real subroutine's parameter written without
+    /// a type and never subscripted in its body: it is laid out as one byte, so the address is
+    /// cut to its low byte (`def f(x): print(x)` printed 0 for `f(b"AB")`).
+    private void RefuseBufferForNumberParam(string calleeName, string paramName, string? declared,
+                                            Expression? arg, Val? evaluated,
+                                            bool unannotatedScalar = false)
+    {
+        if (!(DeclaredTypeIsNumber(declared) || unannotatedScalar)
+            || !ArgumentIsBuffer(arg, evaluated)) return;
+        string what = arg switch
+        {
+            ListExpr => "a bytes or list literal",
+            CallExpr { Callee: VariableExpr cv } => $"a {cv.Name}",
+            VariableExpr ve => $"'{ve.Name}', a buffer,",
+            _ => "a buffer",
+        };
+        string holds = unannotatedScalar
+            ? $"which has no type and is never indexed in '{calleeName}', so it holds one number"
+            : $"which is declared '{declared}' and holds one number";
+        throw UserError(
+            $"'{calleeName}' is passed {what} for parameter '{paramName}', {holds}. A buffer "
+            + "travels as its address, so the parameter would read the address instead of the "
+            + "bytes. Pass one element (`buf[0]`), or declare the parameter 'bytes' or "
+            + "'bytearray' so it takes the whole buffer.",
+            arg);
+    }
+
     /// The bare class name inside a mangled class key (`mod_TCS34725` -> `TCS34725`).
     private string ShortClassNameOf(string fullKey)
     {
@@ -4506,6 +4605,14 @@ public partial class IRGenerator
             string ArgTypeSuffix(Expression arg)
             {
                 if (arg is StringLiteral) return "str";
+                // A bytes or list literal (`b"DE\n"` parses to a ListExpr), `bytes(...)` and
+                // `bytearray(...)` written in place, and a name bound to a list literal are
+                // buffers. They typed as their ELEMENT, so `UART.write(b"DE\n")` took the
+                // `write(data: uint8)` overload and put one 0x00 on the wire.
+                if (arg is ListExpr
+                    || arg is CallExpr { Callee: VariableExpr { Name: "bytes" or "bytearray" } }
+                    || (arg is VariableExpr seqVe && NameIsListLiteralSequence(seqVe.Name)))
+                    return "bytearray";
                 // A memoryview, and a slice of one, travel as a base address plus an offset --
                 // the same way the array they look into travels. Neither has a name at this
                 // point (the window is created when the argument is visited), so both typed as
@@ -4656,12 +4763,19 @@ public partial class IRGenerator
                 var argSuffixes = suffix == "void"
                     ? new List<string>()
                     : suffix.Split('_').ToList();
+                // A buffer argument wants a buffer parameter, and a number wants a number: with
+                // `write(data: uint8)` declared before `write(buf: bytes)`, a buffer took the
+                // first one here and the guard below then refused a call the second one takes.
+                bool IsBufferShape(string t) => DeclaredTypeIsBuffer(t)
+                    || t == "list" || t.StartsWith("list[", StringComparison.Ordinal)
+                    || t == "ptr" || t.StartsWith("ptr[", StringComparison.Ordinal);
                 bool SameShape(List<Param> ps)
                 {
                     if (ps.Count != argSuffixes.Count) return false;
                     for (int i = 0; i < ps.Count; i++)
                         if (IsInstanceType(NormType(ps[i].Type)) != IsInstanceType(argSuffixes[i])
-                            || IsFloatType(NormType(ps[i].Type)) != IsFloatType(argSuffixes[i]))
+                            || IsFloatType(NormType(ps[i].Type)) != IsFloatType(argSuffixes[i])
+                            || IsBufferShape(NormType(ps[i].Type)) != IsBufferShape(argSuffixes[i]))
                             return false;
                     return true;
                 }
@@ -4736,14 +4850,14 @@ public partial class IRGenerator
                     && inlineFunctions.TryGetValue(pick, out var picked))
                 {
                     var pps = picked.Params.Where(p => p.Name != "self").ToList();
-                    string ShapeOf(string t) => DeclaredTypeIsBuffer(t) ? "a buffer"
+                    string ShapeOf(string t) => IsBufferShape(t) ? "a buffer"
                         : IsInstanceType(t) ? "an instance of " + t
                         : IsFloatType(t) ? "a float" : "a number";
 
                     for (int i = 0; i < argSuffixes.Count && i < pps.Count; i++)
                     {
                         string want = NormType(pps[i].Type), got = argSuffixes[i];
-                        if (DeclaredTypeIsBuffer(want) == DeclaredTypeIsBuffer(got)) continue;
+                        if (IsBufferShape(want) == IsBufferShape(got)) continue;
 
                         string writtenName = expr.Callee switch
                         {

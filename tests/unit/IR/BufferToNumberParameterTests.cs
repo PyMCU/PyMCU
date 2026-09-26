@@ -45,6 +45,93 @@ public class BufferToNumberParameterTests
             i is Binary b && (b.Src1 is Constant c1 && c1.Value == marker
                               || b.Src2 is Constant c2 && c2.Value == marker));
 
+    // DISCRIMINATING. The reported program: before the fix it compiled and passed the
+    // literal's address to `x`.
+    [Fact]
+    public void ABytesLiteralToAUint8ParameterOfASubroutineIsRefused()
+    {
+        var ex = Assert.Throws<CompilerError>(() => Gen(Preamble +
+            "def f(x: uint8):\n" +
+            "    G.value = x\n" +
+            "f(b\"AB\")\n"));
+        Assert.Contains("bytes or list literal", ex.Message);
+        Assert.Contains("'uint8'", ex.Message);
+    }
+
+    // DISCRIMINATING. The same through an @inline callee, which binds the literal as a
+    // compile-time sequence and read it as 0.
+    [Fact]
+    public void ABytesLiteralToAUint8ParameterOfAnInlineFunctionIsRefused()
+    {
+        var ex = Assert.Throws<CompilerError>(() => Gen(Preamble +
+            "@inline\n" +
+            "def f(x: uint8):\n" +
+            "    G.value = x\n" +
+            "f(b\"AB\")\n"));
+        Assert.Contains("'uint8'", ex.Message);
+    }
+
+    // DISCRIMINATING. Bound to a name first: this one failed in the linker.
+    [Fact]
+    public void ANamedBytesLiteralToAUint8ParameterIsRefused()
+    {
+        var ex = Assert.Throws<CompilerError>(() => Gen(Preamble +
+            "def f(x: uint8):\n" +
+            "    G.value = x\n" +
+            "z = b\"QR\"\n" +
+            "f(z)\n"));
+        Assert.Contains("'z'", ex.Message);
+    }
+
+    // DISCRIMINATING. A parameter written without a type and never indexed is one byte, and
+    // the address was cut to its low byte.
+    [Fact]
+    public void ABytesLiteralToAnUnindexedUntypedParameterIsRefused()
+    {
+        var ex = Assert.Throws<CompilerError>(() => Gen(Preamble +
+            "def f(x):\n" +
+            "    G.value = x\n" +
+            "f(b\"AB\")\n"));
+        Assert.Contains("never indexed", ex.Message);
+    }
+
+    // DISCRIMINATING. With a buffer overload on offer, a bytes literal takes it: 7 marks the
+    // scalar body, and the buffer one stores its second byte plus 100. The scalar overload is declared FIRST, which is the
+    // order the HAL's UART declares write() in.
+    [Fact]
+    public void ABytesLiteralTakesTheBufferOverload()
+    {
+        var ir = Gen(Preamble +
+            "@inline\n" +
+            "def sink(b: uint8) -> uint8:\n" +
+            "    return b + 7\n" +
+            "@inline\n" +
+            "def sink(b: bytes) -> uint8:\n" +
+            "    return b[1] + 100\n" +
+            "G.value = sink(b\"AB\")\n");
+
+        Assert.True(Stores(ir, 66 + 100), "the bytes body must run for a bytes literal");
+        Assert.False(Uses(ir, 7), "the uint8 body must not run for a bytes literal");
+    }
+
+    // DISCRIMINATING. The same with the literal bound to a name.
+    [Fact]
+    public void ANamedBytesLiteralTakesTheBufferOverload()
+    {
+        var ir = Gen(Preamble +
+            "@inline\n" +
+            "def sink(b: uint8) -> uint8:\n" +
+            "    return b + 7\n" +
+            "@inline\n" +
+            "def sink(b: bytes) -> uint8:\n" +
+            "    return b[1] + 100\n" +
+            "z = b\"QR\"\n" +
+            "G.value = sink(z)\n");
+
+        Assert.True(Stores(ir, 82 + 100), "the bytes body must run for a named bytes literal");
+        Assert.False(Uses(ir, 7), "the uint8 body must not run for a named bytes literal");
+    }
+
     // DISCRIMINATING. A named literal passed to a subroutine's buffer parameter gets storage
     // of its own: before, the call passed the base of `main.z`, a label nothing defines.
     [Fact]
