@@ -1181,10 +1181,19 @@ public partial class IRGenerator
                 // on a result slot that never received one. Lower those operands and
                 // read the result -- an expansion whose returns all produced NoneVal
                 // is the None the source is testing for.
-                bool otherIsNone = leftNone && rightNone
-                    || (otherExpr is CallExpr or MemberAccessExpr
-                        ? VisitExpression(otherExpr) is NoneVal { LiveCallResult: false }
-                        : IsNoneValued(otherExpr));
+                //
+                // The lowered operand can also turn out to be a live optional that the
+                // AST-only guess in TryEmitOptionalNoneTest missed: a method's inferred
+                // union is registered by the expansion itself, so the FIRST `a.p() is None`
+                // of a program folded to False and every later one read the tag.
+                if (!(leftNone && rightNone) && otherExpr is CallExpr or MemberAccessExpr)
+                {
+                    Val otherVal = VisitExpression(otherExpr);
+                    if (EmitNoneTagTest(otherVal, isEq) is { } tagTest) return tagTest;
+                    return new Constant(
+                        (otherVal is NoneVal { LiveCallResult: false }) == isEq ? 1 : 0);
+                }
+                bool otherIsNone = leftNone && rightNone || IsNoneValued(otherExpr);
                 return new Constant(otherIsNone == isEq ? 1 : 0);
             }
             // A None LITERAL in arithmetic is a program error. A NAME bound to None can only

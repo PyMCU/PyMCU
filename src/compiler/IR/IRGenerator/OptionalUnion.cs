@@ -3368,11 +3368,17 @@ public partial class IRGenerator
         }
         else
             optV = VisitExpression(optSide);
+        return EmitNoneTagTest(optV, expr.Op is AstBinOp.Is or AstBinOp.Equal);
+    }
+
+    /// The tag half of <see cref="TryEmitOptionalNoneTest"/>, for an operand already
+    /// lowered: null when <paramref name="optV"/> carries no live tag.
+    private Val? EmitNoneTagTest(Val optV, bool isIs)
+    {
         if (TagOfVal(optV) is not { } liveTag) return null;
 
         string? vName = optV is Variable vv ? vv.Name
             : optV is Temporary tv ? tv.Name : null;
-        bool isIs = expr.Op is AstBinOp.Is or AstBinOp.Equal;
         if (vName != null && narrowedOptionals.ContainsKey(vName))
             return new Constant(isIs ? 0 : 1);
         int noneIdx = NoneIndexOfVal(optV);
