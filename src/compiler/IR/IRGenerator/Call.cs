@@ -2469,6 +2469,7 @@ public partial class IRGenerator
                     }
                     if (allElemsConst) seqLit = new ListExpr(foldedElems) { Line = seqLit.Line };
                     else if (arg is CallExpr) seqLit = null;
+                    else seqLit = PinEffectfulElements(seqLit);
                 }
 
                 // `Bar([Pin("PD5", Pin.OUT), Pin("PD6", Pin.OUT)])`: a list of INSTANCES is not
@@ -9323,6 +9324,60 @@ public partial class IRGenerator
         internal DataType? Declared { get; }
     }
 
+    // A sequence literal bound to an @inline parameter travels as its elements' AST, and every
+    // `seq[k]`, `len(seq)` or unrolled `for` in the body lowers them again where it stands. An
+    // element with an effect ran once per use instead of once at the call -- `s2([bump(), 5])`
+    // with a body of `seq[0] + seq[0]` called bump twice, a body that never read the element
+    // never called it, and `[bump(), bump()]` read backwards ran them in that order. Such an
+    // element is evaluated here, in the caller, where the argument stands, and the parameter
+    // carries its value. A register read is pinned too: two reads of a volatile register are
+    // two different values. Every other element keeps its AST, so a literal still folds.
+    private ListExpr PinEffectfulElements(ListExpr seq)
+    {
+        List<Expression>? pinned = null;
+        for (int k = 0; k < seq.Elements.Count; k++)
+        {
+            Expression el = seq.Elements[k];
+            bool pin = (OperandCanHaveAnEffect(el) || ReadsARegister(el)) && OperandYieldsARealValue(el);
+            if (pin) pinned ??= seq.Elements.Take(k).ToList();
+            pinned?.Add(pin ? PinOnce(el) : el);
+        }
+        return pinned == null ? seq : new ListExpr(pinned) { Line = seq.Line };
+    }
+
+    // Evaluate once and hold the value: a constant stays a literal so it still folds, an
+    // integer goes to a fresh temporary so a later write to the name it came from (the target
+    // of a walrus, a global the body bumps) cannot reach it, and anything else -- an instance,
+    // a buffer -- is carried as evaluated.
+    private Expression PinOnce(Expression e) => HeldValue(VisitExpression(e), e);
+
+    private Expression HeldValue(Val v, Expression e)
+    {
+        if (v is Constant c) return new IntegerLiteral(c.Value) { Line = e.Line };
+        if (v is MemoryAddress or Temporary or Variable && string.IsNullOrEmpty(GetValClass(v))
+            && GetValType(v) is var dt && dt <= DataType.INT32)
+        {
+            Temporary held = MakeTemp(dt);
+            Emit(new Copy(v, held));
+            return new PreEvaluatedExpr(held, null) { Line = e.Line };
+        }
+        return new PreEvaluatedExpr(v, null) { Line = e.Line };
+    }
+
+    // `REG.value` on a pointer, anywhere inside the expression: a volatile load.
+    private bool ReadsARegister(Expression? e) => e switch
+    {
+        MemberAccessExpr { Member: "value" } m =>
+            !IsKnownInstanceField(m.Object, "value") && !IsPropertyGetterRead(m),
+        MemberAccessExpr m => ReadsARegister(m.Object),
+        BinaryExpr b => ReadsARegister(b.Left) || ReadsARegister(b.Right),
+        UnaryExpr u => ReadsARegister(u.Operand),
+        TernaryExpr t => ReadsARegister(t.Condition) || ReadsARegister(t.TrueVal)
+                         || ReadsARegister(t.FalseVal),
+        IndexExpr ie => ReadsARegister(ie.Target) || ReadsARegister(ie.Index),
+        _ => false,
+    };
+
     // Run every operand of a printed line before any of its text is written (#371).
     //
     // CPython builds the whole line and writes it in one piece, so every side effect of every
@@ -9467,15 +9522,17 @@ public partial class IRGenerator
         return CalleeDeclaresAResult(cls + "_" + m.Member);
     }
 
-    // Whether evaluating this expression can do anything observable: a call, or a property
-    // read, which is a call written as an attribute. A plain name, a field, a literal and
-    // arithmetic over them cannot, so moving them earlier would only churn the output.
+    // Whether evaluating this expression can do anything observable: a call, a property
+    // read, which is a call written as an attribute, or a walrus, which writes a name. A plain
+    // name, a field, a literal and arithmetic over them cannot, so moving them earlier would
+    // only churn the output.
     private bool OperandCanHaveAnEffect(Expression? e)
     {
         switch (e)
         {
             case null: return false;
             case CallExpr: return true;
+            case WalrusExpr: return true;
             case MemberAccessExpr mem:
                 return IsPropertyGetterRead(mem) || OperandCanHaveAnEffect(mem.Object);
             case BinaryExpr b: return OperandCanHaveAnEffect(b.Left) || OperandCanHaveAnEffect(b.Right);

@@ -3129,7 +3129,7 @@ public partial class IRGenerator
                 if (expr.Index is TupleExpr keyTup)
                     return EmitDunderCall(callSelf, callCls, callCls + "___getitem__",
                         new List<Val> { new NoneVal() },
-                        new Dictionary<int, ListExpr> { { 0, new ListExpr(keyTup.Elements) } });
+                        new Dictionary<int, ListExpr> { { 0, PinEffectfulElements(new ListExpr(keyTup.Elements)) } });
                 Val getIdx = VisitExpression(expr.Index);
                 return EmitDunderCall(callSelf, callCls, callCls + "___getitem__",
                     new List<Val> { getIdx });
@@ -3861,7 +3861,7 @@ public partial class IRGenerator
                     // `key[0]`, and neither needs a tuple to exist at run time.
                     if (expr.Index is TupleExpr keyTup)
                         return EmitDunderCall(selfName, cls, funcKey, new List<Val> { new NoneVal() },
-                            new Dictionary<int, ListExpr> { { 0, new ListExpr(keyTup.Elements) } });
+                            new Dictionary<int, ListExpr> { { 0, PinEffectfulElements(new ListExpr(keyTup.Elements)) } });
                     Val idxVal = VisitExpression(expr.Index);
                     return EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal });
                 }
