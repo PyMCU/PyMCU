@@ -1617,7 +1617,7 @@ public partial class IRGenerator
         var setter = inlineFunctions[inlineKey];
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
-        var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
+        var newPrefix = $"inline{newDepth}.{InlineFrameScope(".")}{setter?.Name}__setter.";
 
         // Every expansion of this setter at this depth reuses the prefix: drop the
         // compile-time bindings the previous one left under it (see EmitDunderCall).

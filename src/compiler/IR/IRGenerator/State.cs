@@ -141,6 +141,16 @@ public partial class IRGenerator
     // fields in the same expansion depth do not collide.
     private int arenaFieldTempId = 0;
     private int inlineDepth = 0;
+
+    // The enclosing function's part of an inline frame's prefix. Every backend gives a
+    // variable ONE storage per name, program-wide (a register home, an SRAM slot), while
+    // an expansion's locals are frame-local: `inline1.__init__.base` in main and the same
+    // spelling inside a function main calls were one slot, so a value main held across
+    // the call came back as the callee's (`a = A(7)` whose __init__ calls a function that
+    // builds a B read B's argument). main keeps the bare spelling; every other function
+    // puts its own name in, so two frames never share a name.
+    private string InlineFrameScope(string sep) =>
+        currentFunction is "" or "main" ? "" : currentFunction + sep;
     private int ctorAnonId = 0; // Counter for synthetic ZCA constructor-as-arg targets
     private string currentInlinePrefix = "";
     private string? currentModulePrefix = "";

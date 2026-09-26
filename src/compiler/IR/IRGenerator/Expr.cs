@@ -335,7 +335,7 @@ public partial class IRGenerator
         var func = inlineFunctions[funcKey];
         string exitLabel = MakeLabel();
         int newDepth = inlineDepth + 1;
-        string newPrefix = $"inline{newDepth}.{func.Name}.";
+        string newPrefix = $"inline{newDepth}.{InlineFrameScope(".")}{func.Name}.";
 
         // The prefix repeats for every expansion of this dunder at this depth, so the
         // body's own locals file under the same keys each time. Start clean, as

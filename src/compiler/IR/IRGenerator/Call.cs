@@ -2220,7 +2220,7 @@ public partial class IRGenerator
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
-        var newPrefix = $"inline{newDepth}.{func?.Name}.";
+        var newPrefix = $"inline{newDepth}.{InlineFrameScope(".")}{func?.Name}.";
 
         // The prefix repeats for every expansion at this depth, and the callee's
         // own locals file under it (`inline2._parse_color.r`): a previous
@@ -4738,7 +4738,7 @@ public partial class IRGenerator
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
-        var newPrefix = $"inline{newDepth}_{funcSuper.Name}_";
+        var newPrefix = $"inline{newDepth}_{InlineFrameScope("_")}{funcSuper.Name}_";
 
         // Every expansion of this base method at this depth reuses the prefix: drop the
         // compile-time bindings the previous one left under it (see EmitDunderCall).
