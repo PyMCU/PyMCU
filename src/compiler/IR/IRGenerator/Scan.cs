@@ -1142,8 +1142,17 @@ public partial class IRGenerator
                         // module). Its concrete module isn't in classModuleMap yet (scan order),
                         // so record the import-resolved name; the dispatch maps it to the concrete
                         // class via ResolveConcreteClass once every class is scanned.
+                        // A FUNCTION imported the same way resolves to the same mangled shape
+                        // (`from mylib import plain` -> `mylib_plain`), and tagging its result
+                        // as an instance of `plain` refused `print(w)` as "cannot interpolate
+                        // an instance". The imported module is scanned before this one, so a
+                        // function it defines is already known here.
                         string rc = ResolveCallee(ctorVarInst.Name);
-                        if (rc.Contains('_') && rc != ctorVarInst.Name && !intrinsicNames.Contains(ctorVarInst.Name))
+                        bool rcIsFunction = functionParams.ContainsKey(rc)
+                                            || inlineFunctions.ContainsKey(rc)
+                                            || overloadedFunctions.Contains(rc);
+                        if (rc.Contains('_') && rc != ctorVarInst.Name && !rcIsFunction
+                            && !intrinsicNames.Contains(ctorVarInst.Name))
                             instanceClasses[fullKey] = rc;
                     }
                 }
