@@ -5519,9 +5519,12 @@ public partial class IRGenerator
     /// did not, for the same callee and the same array (#246).
     /// </param>
     private void ScanForVariableIndexedArrays(List<Statement> stmts, string prefix,
-                                              string? selfClass = null)
+                                              string? selfClass = null,
+                                              string? listDeclPrefix = null)
     {
         var localArrays = new HashSet<string>();
+        var declaredGlobalHere = TypeInference.WalkStatements(stmts).OfType<GlobalStmt>()
+            .SelectMany(g => g.Names).ToHashSet();
 
         // Pre-scan: collect local variable → class name for constructor calls, so we can
         // resolve method calls to inline functions without needing instanceClasses (which
@@ -5545,9 +5548,15 @@ public partial class IRGenerator
                     // (they resolve through ResolveNameKey, which never consults this
                     // table). The condition mirrors the emitter's: outside an inline
                     // expansion, a name mutableGlobals holds is module storage.
-                    string listDeclKey = prefix + ann.Target;
-                    if (!string.IsNullOrEmpty(currentFunction)
+                    // An inlined callee's arrays are scanned under the CALLER's prefix, but its
+                    // `x: list[T]` is filed by the emitter under the expansion's own prefix:
+                    // under the caller's it became a phantom `main.x` that a caller-side `x`
+                    // resolved to, so `x = f(); print(x)` read an empty list.
+                    string listDeclKey = (listDeclPrefix ?? prefix) + ann.Target;
+                    if (listDeclPrefix == null
+                        && !string.IsNullOrEmpty(currentFunction)
                         && string.IsNullOrEmpty(currentInlinePrefix)
+                        && (currentFunction == "main" || declaredGlobalHere.Contains(ann.Target))
                         && mutableGlobals.ContainsKey(currentModulePrefix + ann.Target))
                         listDeclKey = currentModulePrefix + ann.Target;
                     listVarElemTypes[listDeclKey] = elemDt;
@@ -5919,6 +5928,8 @@ public partial class IRGenerator
             }
         }
 
+        var declaredGlobal = TypeInference.WalkStatements(stmts).OfType<GlobalStmt>()
+            .SelectMany(g => g.Names).ToHashSet();
         foreach (var name in boundEmpty)
         {
             if (!appended.Contains(name)) continue;
@@ -5930,8 +5941,11 @@ public partial class IRGenerator
             // ResolveListVarQualified prefers over the real slot, so len(x)
             // dereferenced a header nobody writes and read 0 while x.append()
             // and x[i] used the right one.
+            // Only a name this body declares global: a function's local that shares a module
+            // global's name is a local (the same rule EmitListAnnAssign applies).
             if (!string.IsNullOrEmpty(currentFunction)
                 && string.IsNullOrEmpty(currentInlinePrefix)
+                && (currentFunction == "main" || declaredGlobal.Contains(name))
                 && mutableGlobals.ContainsKey(currentModulePrefix + name))
                 key = currentModulePrefix + name;
             promotableEmptyLists.Add(key);

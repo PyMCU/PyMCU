@@ -325,6 +325,7 @@ public partial class IRGenerator
             string promoKey = seqKey;
             if (!string.IsNullOrEmpty(currentFunction)
                 && string.IsNullOrEmpty(currentInlinePrefix)
+                && (currentFunction == "main" || currentFunctionGlobals.Contains(seqTgt.Name))
                 && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
                 promoKey = currentModulePrefix + seqTgt.Name;
             // A literal the function appends to is not a compile-time sequence even when
@@ -7626,7 +7627,11 @@ public partial class IRGenerator
         // declaration under `main.xs` grew a second slot -- the pointer lived there
         // while appends and reads used `xs`, so `xs[i]` always read an empty list.
         // This is the same global-name rule the scalar AnnAssign path applies above.
-        if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+        // Only for a name this scope declares global (module level declares all of its own):
+        // a function's local list that merely shares a module global's name is a local, and
+        // filing it under the global made `v = g()` at module level and g's own `v` one slot.
+        if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix)
+            && (currentFunction == "main" || currentFunctionGlobals.Contains(stmt.Target)))
         {
             string listGlobalKey = currentModulePrefix + stmt.Target;
             if (mutableGlobals.ContainsKey(listGlobalKey))

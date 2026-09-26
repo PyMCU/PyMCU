@@ -2762,7 +2762,8 @@ public partial class IRGenerator
                 // prescan never sees an inlined callee's body (see the note above).
                 callee.EndsWith("_" + func.Name, StringComparison.Ordinal)
                     ? callee[..^(func.Name.Length + 1)]
-                    : null);
+                    : null,
+                listDeclPrefix: newPrefix);
             // Unlike the array scan above, an `x = []` binding inside the expanded body
             // is spelled with the inline prefix at the emit site, so scan under newPrefix.
             ScanPromotableEmptyLists(func.Body.Statements, newPrefix);
