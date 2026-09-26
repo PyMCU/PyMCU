@@ -19,7 +19,7 @@ namespace PyMCU.UnitTests;
 // receiver is a NAME, so the temporary flattened to `tmp_N_base`, which nothing writes.
 //
 // WHAT DISCRIMINATES: no instruction reads a `tmp_*_base` name. Against the unfixed compiler
-// the unbound read is exactly such a name.
+// the unbound read is exactly such a name, and the refusal test compiles to a 0.
 //
 // WHAT IS INVARIANT: the bound spelling, which always read the call's result.
 //
@@ -72,5 +72,18 @@ public class FactoryTemporaryFieldTests
     {
         var ir = Gen(Factory + "bound = make(300)\nGPIOR1.value = bound.base\n");
         Assert.DoesNotContain(ReadNames(ir), n => n.EndsWith("_base", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AFieldOnAReceiverWithNoStorageIsRefused()
+    {
+        // The sink #526 fell into, reached by a shape the factory rule does not cover: a
+        // conditional expression's instance is a temporary with no fields behind it. It used
+        // to compile to a read of `tmp_N_base` and answer 0.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Factory +
+            "a = Src(300 + GPIOR0.value)\n" +
+            "b = Src(5 + GPIOR0.value)\n" +
+            "GPIOR1.value = (a if GPIOR0.value == 0 else b).base\n"));
+        Assert.Contains("not a name bound to an object", ex.Message);
     }
 }
