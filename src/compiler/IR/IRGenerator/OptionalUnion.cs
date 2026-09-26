@@ -311,8 +311,28 @@ public partial class IRGenerator
     private string? OptionalKeyOf(string name)
     {
         foreach (var k in OptionalNameKeys(name))
+        {
             if (optionalTagSlots.ContainsKey(k)) return k;
+            // The first scope that binds the name owns it. An @inline body's own
+            // `n: uint16 = 0` is not the caller's `n = uart.readinto(buf)`: asking
+            // past it answered with the caller's tag and refused `if n == 0:`
+            // inside the body as "'n' may be None here". The same holds for a body
+            // compiled once as a subroutine (a method bound to a module-level
+            // instance); the synthesized main is the module scope itself, whose
+            // globals carry their tag under the bare name.
+            if (IsOwnScopeKey(k, name) && FrameKeyBinds(k)) return null;
+        }
         return null;
+    }
+
+    /// Whether <paramref name="k"/> is the inline-prefixed or function-local spelling of
+    /// <paramref name="name"/> in a scope of its own -- not the module-level replay in main.
+    private bool IsOwnScopeKey(string k, string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) return k == currentInlinePrefix + name;
+        return !string.IsNullOrEmpty(currentFunction) && k == currentFunction + "." + name
+            && currentFunction != "main"
+            && !currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
     }
 
     /// The live-optional key a condition subject resolves to: a bare name for a
@@ -2375,6 +2395,17 @@ public partial class IRGenerator
     /// before `v = read()` was ever lowered would leave the tag byte from the other
     /// path stale at the join.
     /// </summary>
+    /// The capable names of an @inline body, filed under the expansion's own prefix. The
+    /// set holds SOURCE names, so merging the callee's bare names into the caller's let a
+    /// caller's `n = uart.readinto(buf)` make the body's unrelated local `n: uint16 = 0`
+    /// capable -- it minted a tag and `if n == 0:` in the body was refused as "may be None".
+    private void CollectExpansionOptionalCapable(List<Statement> stmts)
+    {
+        var own = new HashSet<string>(StringComparer.Ordinal);
+        CollectOptionalCapable(stmts, own);
+        foreach (var n in own) optionalCapable.Add(currentInlinePrefix + n);
+    }
+
     private void CollectOptionalCapable(List<Statement> stmts, HashSet<string> capable)
     {
         // `x = None` alone does not mint a tag slot. The slot exists so runtime
@@ -2569,7 +2600,11 @@ public partial class IRGenerator
     /// Whether the storage name is allowed to carry a tag at all in this function.
     private bool IsOptionalCapableName(string storageName, string sourceName)
         => optionalCapable.Contains(storageName)
-           || optionalCapable.Contains(sourceName)
+           // Inside an expansion the body's names were filed qualified; the bare source
+           // name belongs to the function the expansion sits in.
+           || (!(currentInlinePrefix.Length > 0
+                 && storageName.StartsWith(currentInlinePrefix, StringComparison.Ordinal))
+               && optionalCapable.Contains(sourceName))
            || optionalTagSlots.ContainsKey(storageName);
 
     // ── union fields ────────────────────────────────────────────────────────

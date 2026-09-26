@@ -1317,6 +1317,13 @@ public partial class IRGenerator
             q = a;
             if (noneValuedNames.Contains(q)) return true;
         }
+        // A scope's own binding of the name shadows the caller's: a local `n` in an @inline
+        // body (or a shared method body) assigned a number is not None because the caller's
+        // `n` is.
+        string ownKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : currentFunction + "." + ve.Name;
+        if (IsOwnScopeKey(ownKey, ve.Name) && FrameKeyBinds(ownKey)) return false;
         return bareNameFallback && noneValuedNames.Contains(ve.Name);
     }
 

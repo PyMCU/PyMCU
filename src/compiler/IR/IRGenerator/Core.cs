@@ -1975,6 +1975,7 @@ public partial class IRGenerator
         return null;
     }
 
+
     /// <summary>
     /// A module-level `main()` with no arguments: the call the runtime already makes. Written
     /// by hand or left by the `if __name__ == "__main__":` guard, it means the same thing.

@@ -2946,7 +2946,7 @@ public partial class IRGenerator
         // `x = None` inside an inline expansion is still a runtime-optional name,
         // and the caller's own body scan never saw it (the set holds source
         // names, so the expansion's qualified locals match through SourcePartOf).
-        CollectOptionalCapable(func.Body.Statements, optionalCapable);
+        CollectExpansionOptionalCapable(func.Body.Statements);
 
         var boundParams = new HashSet<int>();
 
@@ -5377,7 +5377,7 @@ public partial class IRGenerator
 
         // Same optional-capable scan the plain inline path runs: the base method's
         // `x = None` locals are runtime-optional names this expansion must tag.
-        CollectOptionalCapable(funcSuper.Body.Statements, optionalCapable);
+        CollectExpansionOptionalCapable(funcSuper.Body.Statements);
 
         // The base method's body is text in the file that method is DEFINED in, which is not
         // the file the `super().m()` / `Base.m(self)` call is written in. Without the switch
