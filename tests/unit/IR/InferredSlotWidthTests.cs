@@ -169,7 +169,7 @@ public class InferredSlotWidthTests
                 "g()\n").Tokenize()).ParseProgram(),
             new Dictionary<string, ProgramNode>(),
             new DeviceConfig { Arch = "avr" });
-        ShouldHold(ir, "inline1.f.x", 900, 65535 + 900L);
+        ShouldHold(ir, "inline1.g.f.x", 900, 65535 + 900L);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class InferredSlotWidthTests
             new Dictionary<string, ProgramNode>(),
             new DeviceConfig { Arch = "avr" });
         ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
-            .Where(c => c.Dst is Variable { Name: "inline1.f.n" })
+            .Where(c => c.Dst is Variable { Name: "inline1.g.f.n" })
             .Should().ContainSingle()
             .Which.Dst.Should().BeOfType<Variable>().Which.Type.Should().Be(DataType.UINT8);
     }
@@ -268,6 +268,41 @@ public class InferredSlotWidthTests
             "r: uint16 = p.top()\n");
         ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
             .Where(c => c.Src is Constant { Value: 127 }).Should().BeEmpty();
+    }
+
+    private static string WarningsOf(string src)
+    {
+        var saved = Console.Error;
+        var buf = new StringWriter();
+        Console.SetError(buf);
+        try { GenSeeded(src); return buf.ToString(); }
+        finally { Console.SetError(saved); }
+    }
+
+    private static string Accumulator(string decl) =>
+        "def f(d: uint8) -> uint16:\n" +
+        "    " + decl + "\n" +
+        "    i: uint8 = 0\n" +
+        "    while i < 10:\n" +
+        "        c += 1\n" +
+        "        i += 1\n" +
+        "    return c\n" +
+        "r: uint16 = f(3)\n";
+
+    [Fact]
+    public void An_unannotated_accumulator_in_a_loop_is_told_its_width()
+    {
+        // `c = GPIOR0.value` then `c += 1` three hundred times printed 44. No width holds
+        // every count a loop can reach, so the width stays -- and the program is told which
+        // one it is, and where, instead of wrapping in silence.
+        WarningsOf(Accumulator("c = d")).Should()
+            .Contain("'c' has no annotation").And.Contain("uint8 (0..255)").And.Contain("line 5");
+    }
+
+    [Fact]
+    public void An_annotated_accumulator_is_the_programs_decision_and_says_nothing()
+    {
+        WarningsOf(Accumulator("c: uint16 = d")).Should().NotContain("has no annotation");
     }
 
     [Fact]
