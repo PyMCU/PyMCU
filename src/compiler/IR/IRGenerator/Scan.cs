@@ -5807,6 +5807,10 @@ public partial class IRGenerator
     /// writes (`received = []`, then `received.append(pulse)`). A name in the
     /// set tells the `x = []` binding site to emit a real heap object with the
     /// element type left pending, instead of a compile-time empty sequence.
+    /// A NON-empty literal the function appends to (`value = [a, b, c]`, then
+    /// `value.append(d)` under a run-time condition, adafruit_pixelbuf's
+    /// `_getitem`) is collected too: its length is not a compile-time fact
+    /// either, so the binding site materializes it as a heap list.
     /// `prefix` is the qualification the emitted body will spell its locals
     /// with (`fullName.` for an outlined function, `inlineN.callee.` for an
     /// expansion), so the site and the prescan agree on the key.
@@ -5866,7 +5870,7 @@ public partial class IRGenerator
             switch (s)
             {
                 case AssignStmt asn:
-                    if (asn.Target is VariableExpr tv && asn.Value is ListExpr { Elements.Count: 0 })
+                    if (asn.Target is VariableExpr tv && asn.Value is ListExpr)
                         boundEmpty.Add(tv.Name);
                     ScanExpr(asn.Target);
                     ScanExpr(asn.Value);

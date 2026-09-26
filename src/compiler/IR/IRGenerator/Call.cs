@@ -11939,6 +11939,22 @@ public partial class IRGenerator
                 listInnerElemTypes[listVar.Name] = argElem;
         }
 
+        // The element type of a list bound to a literal was read off the literal's elements;
+        // nothing declared it. A value those elements cannot hold would be stored in their
+        // width -- `v = [1, 2]` then `v.append(300)` kept 44 -- so it is refused here, where
+        // declaring the list is the fix.
+        if (inferredLiteralLists.Contains(listVar.Name))
+        {
+            DataType valDt = InferListElemType(valExpr);
+            if (valDt != DataType.UNKNOWN && valDt != DataType.VOID && valDt != elemDt
+                && DataTypeExtensions.GetPromotedType(elemDt, valDt) != elemDt)
+                throw UserError(
+                    $"this value does not fit the elements of '{listVar.Name}': its element type " +
+                    $"was inferred as {elemDt.ToString().ToLowerInvariant()} from the literal " +
+                    "it was bound to. Declare the list with the wider type, like " +
+                    $"`x: list[{valDt.ToString().ToLowerInvariant()}] = [...]`", valExpr);
+        }
+
         // The promoted object was allocated with the ref-bearing flag clear
         // (the element type was unknowable then); an append of a GC_REF makes
         // the payload an array of pointers, so set bit6 of the mark byte the

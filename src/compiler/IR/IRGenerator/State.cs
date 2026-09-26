@@ -1329,6 +1329,10 @@ public partial class IRGenerator
     // alloc could not know at creation time.
     private HashSet<string> promotableEmptyLists = new();
     private HashSet<string> promotedEmptyLists = new();
+    // Heap lists whose element type was INFERRED from a non-empty literal (`v = [a, b]`
+    // that the function appends to). Nothing declared the width, so an append of a
+    // wider value is refused instead of being stored truncated.
+    private HashSet<string> inferredLiteralLists = new();
     // Set when a heap object's payload may hold GC_REFs -- GcAlloc(Ref) sites
     // and the inline flag write EmitRefPayloadFlag emits. Stamped onto
     // ProgramIR.UsesRefPayloads so the backend can drop the ref-tracing GC

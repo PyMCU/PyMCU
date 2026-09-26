@@ -395,6 +395,7 @@ public partial class IRGenerator
             RemoveDescendantsSet(tupleBoundNames, sep);
             RemoveDescendantsSet(promotableEmptyLists, sep);
             RemoveDescendantsSet(promotedEmptyLists, sep);
+            RemoveDescendantsSet(inferredLiteralLists, sep);
             RemoveDescendantsSet(noneValuedNames, sep);
             // The "different texts on different paths" mark is callee-local state
             // too: an earlier expansion at this depth filed it under this same

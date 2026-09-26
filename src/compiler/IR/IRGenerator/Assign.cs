@@ -319,7 +319,20 @@ public partial class IRGenerator
                 EmitOptionalTagWrite(new Variable(seqKey, DataType.GC_REF),
                     stmt.Value, new Constant(0));
 
+            // A module-level list is a global, spelled the way every other path names it --
+            // the same remap EmitListAnnAssign applies. The scan files the pending entry
+            // under this key too, so the gate and the emit must ask for it by the same name.
+            string promoKey = seqKey;
+            if (!string.IsNullOrEmpty(currentFunction)
+                && string.IsNullOrEmpty(currentInlinePrefix)
+                && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
+                promoKey = currentModulePrefix + seqTgt.Name;
+            // A literal the function appends to is not a compile-time sequence even when
+            // every element is a constant: its length changes at run time.
+            bool appendedLiteral = stmt.Value is ListExpr && promotableEmptyLists.Contains(promoKey);
+
             if (seqElements.Count is > 0 and <= ConstSequenceUnrollLimit
+                && !appendedLiteral
                 && seqElements.All(e => TryFoldConstElement(e, out _)))
             {
                 // Names bound to constants fold to their literal so every consumer of the
@@ -347,17 +360,7 @@ public partial class IRGenerator
                 // no payload -- and leave the element type pending; the append learns
                 // it and the grow path sizes the real buffer. A `x = []` nothing
                 // mutates stays the compile-time sequence it always was.
-                string promoKey = seqKey;
-                // A module-level list is a global, spelled the way every other path
-                // names it -- the same remap EmitListAnnAssign applies. The scan
-                // files the pending entry under this key too, so the gate and the
-                // emit must ask for it by the same name.
-                if (!string.IsNullOrEmpty(currentFunction)
-                    && string.IsNullOrEmpty(currentInlinePrefix)
-                    && mutableGlobals.ContainsKey(currentModulePrefix + seqTgt.Name))
-                    promoKey = currentModulePrefix + seqTgt.Name;
-                if (stmt.Value is ListExpr && seqElements.Count == 0
-                    && promotableEmptyLists.Contains(promoKey))
+                if (appendedLiteral && seqElements.Count == 0)
                 {
                     string listKey = promoKey;
                     if (listKey != seqKey)
@@ -372,6 +375,26 @@ public partial class IRGenerator
                     EmitListStore(emptyPtr, 0, new Constant(0));
                     EmitListStore(emptyPtr, 1, new Constant(0));
                     Emit(new Copy(emptyPtr, new Variable(listKey, DataType.GC_REF)));
+                    return;
+                }
+
+                // `value = [a, b, c]` that the function later appends to: the length is a
+                // run-time fact, so the literal is a heap list whose element type the
+                // elements give. An append of a wider value is refused at the append
+                // (inferredLiteralLists) rather than stored in the elements' width.
+                if (appendedLiteral)
+                {
+                    string listKey = promoKey;
+                    if (listKey != seqKey)
+                        mutableGlobals[listKey] = DataType.GC_REF;
+
+                    Variable litVar = MaterializeSequenceLiteral(seqElements, null, stmt.Value);
+                    listVarElemTypes[listKey] = listVarElemTypes[litVar.Name];
+                    if (listInnerElemTypes.TryGetValue(litVar.Name, out var litInner))
+                        listInnerElemTypes[listKey] = litInner;
+                    variableTypes[listKey] = DataType.GC_REF;
+                    inferredLiteralLists.Add(listKey);
+                    Emit(new Copy(litVar, new Variable(listKey, DataType.GC_REF)));
                     return;
                 }
 
