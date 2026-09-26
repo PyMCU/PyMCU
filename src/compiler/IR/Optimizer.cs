@@ -1497,7 +1497,11 @@ private static Function CloneFunction(Function f)
         // value between the store and a later read in the same basic block), and
         // never forward a temp that holds their value (each source-level read must
         // stay a single load — forwarding would duplicate or reorder reads).
-        bool IsVolatile(Val v) => v is Variable vv && volatileNames != null && volatileNames.Contains(vv.Name);
+        // A register read is volatile the same way: a temp holding `GPIOR0.value` is the value
+        // at the load, and forwarding the register into its uses moved the read past whatever
+        // sits in between -- a call that writes the register, an @inline body.
+        bool IsVolatile(Val v) => v is MemoryAddress
+            || v is Variable vv && volatileNames != null && volatileNames.Contains(vv.Name);
 
         for (var i = 0; i < func.Body.Count; ++i)
         {
