@@ -83,10 +83,24 @@ public partial class IRGenerator
             string key = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + walrus.VarName
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + walrus.VarName : walrus.VarName);
-            DataType dt = DataType.UINT8;
-            if (variableTypes.TryGetValue(key, out var t)) dt = t;
+            // At module level -- and under `global x` in a function -- the walrus binds the
+            // MODULE global, the storage every later read of the name resolves to. Filed as
+            // `main.x`, it wrote a slot nothing reads: `x = 1; (x := 2); print(x)` printed 1.
+            // Same rule the module-level declaration applies to its target.
+            bool moduleScope = string.IsNullOrEmpty(currentInlinePrefix)
+                && (currentFunction == "main"
+                    || (currentFunction ?? "").EndsWith("___module_init", StringComparison.Ordinal)
+                    || currentFunctionGlobals.Contains(walrus.VarName));
+            DataType? globalDt = null;
+            if (moduleScope && mutableGlobals.TryGetValue(currentModulePrefix + walrus.VarName, out var gdt))
+            {
+                key = currentModulePrefix + walrus.VarName;
+                globalDt = gdt;
+            }
+            DataType dt = globalDt ?? DataType.UINT8;
+            if (globalDt == null && variableTypes.TryGetValue(key, out var t)) dt = t;
             var vr = new Variable(key, dt);
-            variableTypes[key] = dt;
+            if (globalDt == null) variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
             // A walrus writes the name like any assignment; it carries a constant only when
             // the value it stores is one. A FUNCTION-WRITTEN module-global target is not
@@ -96,7 +110,12 @@ public partial class IRGenerator
             if (rhs is Constant walrusConst && !functionWrittenGlobals.Contains(key))
                 localConstantValues[key] = walrusConst.Value;
             else localConstantValues.Remove(key);
-            return vr;
+            // The expression's value is the value stored NOW, not the slot: handed back as
+            // the variable, each element of `[(z := i) for i in range(3)]` read z after the
+            // last iteration had written it.
+            Temporary stored = MakeTemp(dt);
+            Emit(new Copy(vr, stored));
+            return stored;
         }
 
         if (expr is LambdaExpr lam) return VisitLambdaExpr(lam);
@@ -1221,6 +1240,13 @@ public partial class IRGenerator
         if (expr.Left is IntegerLiteral) RejectBareRegisterRead(expr.Right);
     }
 
+    private static bool ContainsWalrus(Expression e)
+    {
+        bool found = false;
+        WalkScanExpr(e, x => found |= x is WalrusExpr);
+        return found;
+    }
+
     private Val VisitBinary(BinaryExpr expr)
     {
         RejectBareRegisterOperands(expr);
@@ -1663,6 +1689,15 @@ public partial class IRGenerator
         // root: the concat emitter roots it before anything else can allocate.
         if (expr.Op == AstBinOp.Add && ListKeyOfVal(v1) is not null)
             return EmitRuntimeListConcat(v1, expr.Right, expr);
+        // Python reads the left operand before the right one runs. A named slot is read where
+        // the operation uses it, which is AFTER a walrus on the right has stored into it:
+        // `x + (x := 2)` added 2 + 2. Take the value the left operand has now.
+        if (v1 is Variable v1Slot && ContainsWalrus(expr.Right))
+        {
+            Temporary v1Now = MakeTemp(v1Slot.Type);
+            Emit(new Copy(v1Slot, v1Now));
+            v1 = v1Now;
+        }
         Val v2 = VisitExpression(expr.Right);
         if (expr.Op == AstBinOp.Add && ListKeyOfVal(v2) is not null)
             throw new TypeError(

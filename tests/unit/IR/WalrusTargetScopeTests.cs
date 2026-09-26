@@ -40,6 +40,24 @@ public class WalrusTargetScopeTests
             new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" });
 
     [Fact]
+    public void ModuleLevelWalrus_StoresTheGlobal()
+    {
+        var ir = Gen(
+            "x = GPIOR0.value + 1\n" +
+            "GPIOR1.value = x + (x := GPIOR0.value + 2)\n" +
+            "GPIOR2.value = x\n");
+
+        var main = ir.Functions.Single(f => f.Name == "main");
+        Assert.DoesNotContain(main.Body, i => i is Copy { Dst: Variable { Name: "main.x" } });
+        int store = main.Body.FindLastIndex(i => i is Copy { Dst: Variable { Name: "x" }, Src: Temporary });
+        Assert.True(store >= 0);
+
+        // The left operand's value is taken before that store.
+        int snapshot = main.Body.FindIndex(i => i is Copy { Src: Variable { Name: "x" }, Dst: Temporary });
+        Assert.InRange(snapshot, 0, store - 1);
+    }
+
+    [Fact]
     public void CopyPropagation_DoesNotForwardAVariablePastItsRedefinition()
     {
         // `t0` holds x's value from before x is written again. Forwarding x into the add
