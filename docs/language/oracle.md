@@ -67,7 +67,44 @@ evidence about the compiler: it is filed as a GitHub issue, the probe is left ex
 it stands, and `# tracked: #<N>` is added so the suite reports it honestly instead of
 quietly skipping it.
 
-## Result of the last full run (2026-09-15, after the language-surface sweep)
+## Result of the last full run (2026-09-26, after the grammar and context sweep)
+
+**352 probes**: 268 `expect: match`, 80 `expect: refuse`, 4 `expect: divergence`, with 10
+distinct issues carried as `# tracked:`.
+
+    front end C#        326 passed, 13 skipped, 13 xfailed
+    front end Python    323 passed, 14 skipped, 15 xfailed
+
+The 2026-09-26 sweep added 50, from two measurements against **closed enumerations** rather
+than from picking constructs by hand:
+
+- **Grammar.** Every concrete node class CPython's `ast` can produce. The corpus covered 83
+  of 99 reachable ones; the 16 with no probe at all included `not`. After the sweep, 109 of
+  119 classes are covered and the 10 remaining cannot appear in a probe file (deprecated
+  stubs, and the roots of `eval`/`single`/`func_type` parse modes).
+- **Construct times context.** Scope (module / function / method / `@inline` / `@inline`
+  method) crossed with position (value / condition / argument / return / field / index /
+  f-string expression / ternary arm). 36 of 70 scope cells were empty and the `@inline`
+  method column was entirely so.
+
+The second axis is where the bugs were. None of the week's miscompilations was a broken
+construct: each was a construct the compiler lowers down two paths with only one of them
+right, which is why 302 probes and 83 of 99 grammar nodes did not catch them.
+
+Two properties every new probe has, both learned by getting them wrong first:
+
+- **A run-time seed.** With literal arguments constant folding crosses the call and the
+  declared width never matters, so the probe measures the folder. Three separate cells
+  looked healthy for this reason and were not.
+- **A value that would differ if the construct broke.** A probe whose expected output is
+  the same whether the construct works or not measures nothing.
+
+Probe `130` fails the first of those two: its arguments are literals, so the bool
+divergence it cites never happens. 221 of the 272 executing probes carry no run-time seed,
+which is an upper bound on what to review rather than a count of broken probes. Tracked as
+pymcu-avr#34.
+
+## Result of the run before it (2026-09-15, after the language-surface sweep)
 
 **178 probes** (120 before this sweep, +58: probes `121`-`178`, one per bullet of a
 Python-language-reference pass over builtins, integer semantics, strings, control flow,
