@@ -835,6 +835,91 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// `a is b` with an instance on at least one side, decided after both sides lowered:
+    /// true or false for the same or different objects, null when neither side is one.
+    ///
+    /// An instance has no run-time handle -- the slot the comparison below would read is
+    /// never written -- so the numeric compare answered "same object" for any instance
+    /// against any 0: `n is t` was True for `n = 0` and for every seed that read 0, and an
+    /// int handed back by a call "was" the alarm passed to it. TryCompareInstanceOperands
+    /// already folds the pairs it can name from the AST; this asks the lowered values, which
+    /// is what sees a module-level instance from inside an expansion and a field or call
+    /// result that IS an instance.
+    ///
+    /// A value that is not an instance is a number, a string or None here, and none of
+    /// those is ever the same object as an instance. The exception is a value that may be an
+    /// instance flattened to a number on the way in -- an unannotated parameter of a real
+    /// subroutine, or what a void-declared call left in the return register -- and there
+    /// the question has no answer, so it is refused rather than guessed.
+    /// </summary>
+    private bool? IdentityOfInstanceOperands(BinaryExpr expr, Val lhs, Val rhs)
+    {
+        // `b = t` files b as an alias of t, and `ta = alarm.time.TimeAlarm(...)` files ta as
+        // an alias of the construction's own target: only the far end carries the class, so
+        // a second spelling of an object is found by walking the alias inward. The strict
+        // lookup refuses that walk for a reason that does not apply here -- a value read
+        // aliased to a field's storage is not an object, but it is not the same object as
+        // any instance either, so the storages still differ.
+        string? li = InstanceIdentity(expr.Left, lhs) ?? AliasedInstanceStorage(lhs);
+        string? ri = InstanceIdentity(expr.Right, rhs) ?? AliasedInstanceStorage(rhs);
+        if (li == null && ri == null) return null;
+        if (li != null && ri != null) return li == ri;
+
+        Val other = li == null ? lhs : rhs;
+        Expression otherExpr = li == null ? expr.Left : expr.Right;
+        bool mayBeFlattenedInstance = other is NoneVal { LiveCallResult: true }
+            || (otherExpr is VariableExpr ov && IsUntypedSubroutineParam(ov.Name));
+        if (mayBeFlattenedInstance)
+            throw UserError(
+                $"'{(expr.Op == AstBinOp.Is ? "is" : "is not")}' compares an object with a value that may be an object "
+                + "passed through an unannotated parameter or an unannotated return, where it "
+                + "arrives as a plain number and its identity is lost. Annotate the parameter or "
+                + "the return with the class.", expr);
+        return false;
+    }
+
+    /// The storage that stands for the instance <paramref name="e"/> names or produces, or
+    /// null when it is not one. The AST answer comes first (the name's own scoped key); the
+    /// lowered value answers only through a name that carries the class itself, followed
+    /// outward to the storage every spelling of that object shares.
+    private string? InstanceIdentity(Expression e, Val v)
+    {
+        if (InstanceStorageName(e) is { } byName) return byName;
+        string? key = v switch { Variable vv => vv.Name, Temporary tt => tt.Name, _ => null };
+        if (key == null || !instanceClasses.TryGetValue(key, out var cls) || string.IsNullOrEmpty(cls))
+            return null;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(key, out var onward) || string.IsNullOrEmpty(onward)) break;
+            key = onward;
+        }
+        return key;
+    }
+
+    /// The canonical storage of the instance <paramref name="v"/> reaches through its alias
+    /// chain, or null.
+    private string? AliasedInstanceStorage(Val v)
+    {
+        if (ResolveClassCarryingName(v) is not { } key) return null;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(key, out var onward) || string.IsNullOrEmpty(onward)) break;
+            key = onward;
+        }
+        return key;
+    }
+
+    /// True for a parameter of the real subroutine being lowered that declares no type.
+    private bool IsUntypedSubroutineParam(string name)
+    {
+        if (inlineStack.Count > 0 || string.IsNullOrEmpty(currentFunction)) return false;
+        if (!functionParams.TryGetValue(currentFunction, out var ps)) return false;
+        int i = ps.IndexOf(name);
+        return i >= 0 && functionParamDeclared.TryGetValue(currentFunction, out var decl)
+               && i < decl.Count && decl[i].Length == 0;
+    }
+
+    /// <summary>
     /// The name an operator dunder's `self` has to alias, for the instance named on one side
     /// of a binary operator.
     ///
@@ -1466,6 +1551,9 @@ public partial class IRGenerator
             {
                 return new Constant(bop == PyMCU.IR.BinaryOp.Equal ? 0 : 1);
             }
+
+            if (IdentityOfInstanceOperands(expr, lhs, rhs) is { } same)
+                return new Constant(same == (bop == PyMCU.IR.BinaryOp.Equal) ? 1 : 0);
 
             Temporary dst2 = MakeTemp(DataType.UINT8);
             Emit(new Binary(bop, lhs, rhs, dst2));
