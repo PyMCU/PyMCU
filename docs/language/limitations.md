@@ -481,6 +481,28 @@ has a probe of this shape marked `# expect: divergence`, citing this paragraph.
 | `Union` of more than four members, or of non-scalar members | The member tag encodes at most four states and every member needs scalar storage | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
 
+**Unannotated widths.** A local, parameter, return, field or module global written without
+an annotation starts at the width its first evidence gives: a local its first store, a
+parameter the call sites the front end can type (a register read, a field, or a module global
+read inside a function it cannot), a field the writes its layout scan can read. Every later
+store into it is checked against that width, and a value that does not fit -- wider, or
+negative in an unsigned slot -- makes the compiler compile the whole program again with that
+slot declared wide enough, signed when a value can be negative. `e = d + 300` in one arm and
+`e = d - 1` in the other gives `e` a signed slot, `def f(x)` called with `GPIOR0.value + 900`
+gets a 16-bit `x`, and the countdown in adafruit_framebuf's `scroll()` (`y += dt_y` with
+`dt_y = -1`) reaches -1 and leaves its loop. An unannotated `@inline` parameter takes the width
+of the run-time value it is bound to. A program whose slots all hold what is stored into them
+compiles once. What this does not cover:
+
+- An accumulator does not grow with its count. `c = GPIOR0.value` and then `c += 1` three
+  hundred times prints 44, not 300: a store computed from the slot itself (`c += v`,
+  `c = c + v`, `self.c += v`) widens the slot for its sign and for the width of `v`, never for
+  the magnitude a loop reaches -- no width holds every value a loop can count to. A literal
+  start (`c = 0`) in a function is a 32-bit local already; annotate the accumulator
+  (`c: uint16 = ...`) where a runtime start can count past its width.
+- A slot that receives both a value past 2147483647 and a negative one has no 32-bit type
+  that holds both, and keeps wrapping.
+
 **`None` is a compile-time value.** It travels: passing it as an argument, assigning it
 through a property setter, binding it to a name, or storing it in a field binds that name as
 `None`, so `p is None` folds and a `match p:` is decided at compile time. `None` matches
