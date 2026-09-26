@@ -69,11 +69,12 @@ quietly skipping it.
 
 ## Result of the last full run (2026-09-26, after the grammar and context sweep)
 
-**352 probes**: 268 `expect: match`, 80 `expect: refuse`, 4 `expect: divergence`, with 10
-distinct issues carried as `# tracked:`.
+**368 probes**: 280 `expect: match`, 84 `expect: refuse`, 4 `expect: divergence`, with 14
+distinct issues carried as `# tracked:` (#364, #391, #394, #395, #400, #401, #426, #432,
+#439, #449, #520, #521, #522, #525).
 
-    front end C#        326 passed, 13 skipped, 13 xfailed
-    front end Python    323 passed, 14 skipped, 15 xfailed
+    front end C#        338 passed, 14 skipped, 16 xfailed
+    front end Python    335 passed, 14 skipped, 19 xfailed
 
 The 2026-09-26 sweep added 50, from two measurements against **closed enumerations** rather
 than from picking constructs by hand:
