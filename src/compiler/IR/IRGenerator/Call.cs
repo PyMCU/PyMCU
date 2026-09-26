@@ -3426,7 +3426,10 @@ public partial class IRGenerator
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
-                variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                // An unannotated parameter aliasing a variable is as wide as that variable:
+                // the uint8 default printed `f(t)` with `t: uint32` as its low byte.
+                variableTypes[paramName] = declParamT.Length == 0 && IsScalarIntType(vArg.Type)
+                    ? vArg.Type : declParamDt;
                 CarryOptionalTagToParam(paramName, vArg);
                 continue;
             }
