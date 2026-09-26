@@ -326,4 +326,51 @@ public class IntrospectionFoldTests
         var ex = Assert.ThrowsAny<CompilerError>(() => new IRGenerator().Generate(program, mods, config));
         Assert.Contains("Unknown module member", ex.Message);
     }
+
+    // The layer's own sys.py is imported for real: its `platform = "rp2"` placeholder is
+    // recorded as the module global's text, and print and a name bound to the read used to
+    // reach that record instead of the table -- `print(sys.platform)` wrote "rp2" on a chip
+    // whose `if sys.platform == "atmega328p"` held.
+
+    private const string PrintPrelude =
+        "from pymcu.types import const\n" +
+        "def uart_write_str(s: const[str]):\n" +
+        "    pass\n";
+
+    private static ProgramIR GenWithShim(string src)
+    {
+        var mods = new Dictionary<string, ProgramNode>
+        {
+            ["sys"] = new Parser(new Lexer(
+                "class _Implementation:\n" +
+                "    def __init__(self):\n" +
+                "        self.name = \"micropython\"\n" +
+                "implementation = _Implementation()\n" +
+                "platform = \"rp2\"\n").Tokenize()).ParseProgram(),
+        };
+        var config = new DeviceConfig { Arch = "avr", Chip = "atmega328p", Stdlib = "micropython" };
+        var program = new Parser(new Lexer(PrintPrelude + src).Tokenize()).ParseProgram();
+        new ConditionalCompilator(config).Process(program);
+        return new IRGenerator().Generate(program, mods, config);
+    }
+
+    private static bool EmitsText(ProgramIR ir, string text) =>
+        ir.Functions.SelectMany(f => f.Body).OfType<FlashData>()
+            .Any(d => new string(d.Bytes.TakeWhile(b => b != 0).Select(b => (char)b).ToArray()) == text);
+
+    [Fact]
+    public void SysPlatform_Printed_WithTheShimImported_WritesTheTableNotThePlaceholder()
+    {
+        var ir = GenWithShim("import sys\nprint(sys.platform)\n");
+        Assert.True(EmitsText(ir, "atmega328p"));
+        Assert.False(EmitsText(ir, "rp2"));
+    }
+
+    [Fact]
+    public void SysPlatform_BoundThenPrinted_WithTheShimImported_WritesTheTable()
+    {
+        var ir = GenWithShim("import sys\np = sys.platform\nprint(p)\n");
+        Assert.True(EmitsText(ir, "atmega328p"));
+        Assert.False(EmitsText(ir, "rp2"));
+    }
 }
