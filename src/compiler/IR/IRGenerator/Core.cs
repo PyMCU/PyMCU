@@ -2215,7 +2215,10 @@ public partial class IRGenerator
                 return new Variable(own, ownType);
         }
 
-        if (globals.TryGetValue(name, out var symInfo))
+        // A module-level compile-time symbol (a `ptr(...)` register, a constant) is the
+        // name's meaning only where no frame binds it: a `buf: ptr[uint8]` parameter read
+        // the module's `buf = ptr(0x4A)` instead of the register it was handed.
+        if (globals.TryGetValue(name, out var symInfo) && ShadowingFrameKey(name) == null)
         {
             if (symInfo.IsMemoryAddress)
                 return new MemoryAddress(symInfo.Value, symInfo.Type);

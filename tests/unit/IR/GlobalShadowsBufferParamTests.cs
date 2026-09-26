@@ -212,4 +212,21 @@ public class GlobalShadowsBufferParamTests
 
         Assert.NotNull(ex);
     }
+
+    [Fact]
+    public void PtrParam_Value_ReadsTheRegisterPassed()
+    {
+        var ir = Gen(
+            "R0: ptr[uint8] = ptr(0x3E)\n" +
+            "R2: ptr[uint8] = ptr(0x4B)\n" +
+            "@inline\n" +
+            "def rd(buf: ptr[uint8]) -> uint8:\n" +
+            "    return buf.value\n" +
+            "buf: ptr[uint8] = ptr(0x4A)\n" +
+            "R0.value = rd(R2)\n");
+
+        var copies = All(ir).OfType<Copy>().ToList();
+        Assert.Contains(copies, c => c.Src is MemoryAddress { Address: 0x4B });
+        Assert.DoesNotContain(copies, c => c.Src is MemoryAddress { Address: 0x4A });
+    }
 }
