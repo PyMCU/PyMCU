@@ -2256,11 +2256,17 @@ public partial class IRGenerator
         // recursion is unsupported — report it clearly instead of crashing.
         if (!activeInlineExpansions.Add(callee))
         {
+            // Located at the recursive call. The frame has not moved into the callee yet, so
+            // currentSourcePath still names the file this call is written in, and the call's
+            // own node gives the line in that file. `currentStmtLine` is a line of the ENTRY
+            // file's statement, and paired with a driver's path it pointed at a docstring of
+            // pwmio.py.
             string rn = func?.Name ?? callee;
-            throw new RecursionError(
+            var at = UserError(
                 $"function '{rn}' is recursive; PyMCU has no call frame for inlined " +
-                "or ZCA methods, so recursion is not supported — rewrite it as a loop",
-                currentStmtLine > 0 ? currentStmtLine : 1);
+                "or ZCA methods, so recursion is not supported — rewrite it as a loop", expr);
+            throw new RecursionError(at.Message, at.Line, at.Column, at.Length)
+                { File = at.File, LocationIsFinal = true };
         }
 
         // @warning("..."): print the author-supplied note (once per function)
