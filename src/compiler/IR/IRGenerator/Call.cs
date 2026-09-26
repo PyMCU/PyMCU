@@ -596,6 +596,13 @@ public partial class IRGenerator
                                         || moduleSramArrays.Contains(oStorage)))
                                     av = new ArrayBase(oStorage);
                                 if (!oArgTagged) RefuseOptionalPayloadStore(av, a);
+                                // The same width coercion a plain call gets. An outlined
+                                // method is marshalled by each argument's own width too, and
+                                // `o.add(s + 300)` handed a uint16 parameter the uint32 temp
+                                // the addition widened to: its high word landed in the
+                                // registers of the parameter before it, self_<field>, and the
+                                // method read the field as 0 on every call after the first.
+                                av = CoerceToParam(callee, oPidx, av);
                                 oArgs.Add(av);
                             }
                             }
@@ -616,7 +623,7 @@ public partial class IRGenerator
                                         break;
                                     Val dv = VisitExpression(defaultExpr);
                                     if (dv is FloatConstant dfc) dv = new Constant((int)Math.Round(dfc.Value));
-                                    oArgs.Add(dv);
+                                    oArgs.Add(CoerceToParam(callee, di, dv));
                                 }
                             }
 
@@ -1931,31 +1938,11 @@ public partial class IRGenerator
                     }
                 }
 
-                // Coerce a scalar argument to the callee's DECLARED param width. The Call
-                // instruction marshals by each arg Val's own type, so a wider temp (e.g. a
-                // `pos + 1` inferred u32 passed to a uint16 param) shifts every later argument
-                // out of its register slot on AVR -- the callee then reads garbage (this
-                // silently dropped the buf pointer in strfmt._fs_i32 -> _fs_u32). Narrow (or
-                // widen, with sign-correct Copy) into a temp of the param's type first.
+                // Coerce a scalar argument to the callee's DECLARED param width (see
+                // CoerceArgToParamWidth for why the backend needs it).
                 if (i < paramTypes.Count
-                    && IsScalarIntType(ptype) && argVal is Variable or Temporary
-                    && IsScalarIntType(GetValType(argVal))
-                    && GetValType(argVal).SizeOf() != ptype.SizeOf())
+                    && CoerceArgToParamWidth(argVal, ptype) is var coerced && !ReferenceEquals(coerced, argVal))
                 {
-                    var coerced = MakeTemp(ptype);
-                    Emit(new Copy(argVal, coerced));
-                    argValuesL[i] = coerced;
-                    argVal = coerced;
-                }
-                // Same for CONSTANT args wider params: a Constant's natural width is its
-                // magnitude (65535 -> UINT16), so the backend would marshal fewer bytes
-                // than the callee reads -- the high bytes arrive as register garbage
-                // (surfaced by a uint32 param receiving a 16-bit-looking literal).
-                else if (i < paramTypes.Count && IsScalarIntType(ptype) && argVal is Constant argC
-                         && GetValType(argVal).SizeOf() < ptype.SizeOf())
-                {
-                    var coerced = MakeTemp(ptype);
-                    Emit(new Copy(argC, coerced));
                     argValuesL[i] = coerced;
                     argVal = coerced;
                 }
@@ -5433,7 +5420,7 @@ public partial class IRGenerator
             }
             finally { if (iaTagged) optionalReadAllowed--; }
             if (!iaTagged) RefuseOptionalPayloadStore(iaAv, a);
-            iaArgs.Add(iaAv);
+            iaArgs.Add(CoerceToParam(iaMethod, iaPidx, iaAv));
             iaArgExprs.Add(a is KeywordArgExpr iaKw2 ? iaKw2.Value : a);
         }
 
@@ -5569,7 +5556,7 @@ public partial class IRGenerator
             }
             finally { if (fwdTagged) optionalReadAllowed--; }
             if (!fwdTagged) RefuseOptionalPayloadStore(fAv, a);
-            fwdArgs.Add(fAv);
+            fwdArgs.Add(CoerceToParam(target, fwdPidx, fAv));
             fwdArgExprs.Add(a is KeywordArgExpr fKw2 ? fKw2.Value : a);
         }
         fwdArgs = WithParamTags(target, fwdArgs, fwdArgExprs);
@@ -9541,6 +9528,40 @@ public partial class IRGenerator
         if (sm.Member == "println") EmitStreamStr(wfn, "\n");
         return new NoneVal();
     }
+
+    /// <summary>
+    /// An integer argument at the width of the parameter it binds. The Call instruction
+    /// marshals each argument by its own Val's width, so a wider temp (a `pos + 1` inferred
+    /// u32 passed to a uint16 param) shifts every later argument out of its register slot
+    /// on AVR and the callee reads garbage (this silently dropped the buf pointer in
+    /// strfmt._fs_i32 -> _fs_u32). Narrow (or widen, with a sign-correct Copy) into a temp
+    /// of the param's type. A Constant is widened only: its natural width is its magnitude
+    /// (65535 -> UINT16), so a wider param would get its high bytes from register garbage.
+    /// </summary>
+    private Val CoerceArgToParamWidth(Val argVal, DataType ptype)
+    {
+        if (!IsScalarIntType(ptype)) return argVal;
+        if (argVal is Variable or Temporary
+            && IsScalarIntType(GetValType(argVal))
+            && GetValType(argVal).SizeOf() != ptype.SizeOf())
+        {
+            var coerced = MakeTemp(ptype);
+            Emit(new Copy(argVal, coerced));
+            return coerced;
+        }
+        if (argVal is Constant argC && GetValType(argVal).SizeOf() < ptype.SizeOf())
+        {
+            var coerced = MakeTemp(ptype);
+            Emit(new Copy(argC, coerced));
+            return coerced;
+        }
+        return argVal;
+    }
+
+    // CoerceArgToParamWidth against parameter `index` of `callee`, when its type is known.
+    private Val CoerceToParam(string callee, int index, Val arg) =>
+        index >= 0 && functionParamTypes.TryGetValue(callee, out var pts) && index < pts.Count
+            ? CoerceArgToParamWidth(arg, pts[index]) : arg;
 
     private static bool IsScalarIntType(DataType t) => t is DataType.UINT8 or DataType.INT8
         or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
