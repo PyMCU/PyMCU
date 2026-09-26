@@ -28,6 +28,7 @@ public partial class IRGenerator
     // fills some of them in, and the seed key of each function they belong to.
     private readonly HashSet<Param> unannotatedParams = new();
     private readonly HashSet<FunctionDef> unannotatedReturns = new();
+    private readonly HashSet<FunctionDef> returnsNone = new();
     private readonly Dictionary<FunctionDef, string> defSeedKeys = new();
     // IR function name -> the def it was compiled from, for a store to find its seed key.
     private readonly Dictionary<string, FunctionDef> slotDefs = new();
@@ -64,6 +65,11 @@ public partial class IRGenerator
                 foreach (var p in f.Params)
                     if (p.Type.Length == 0 && !p.IsVarArg) unannotatedParams.Add(p);
                 if (f.ReturnType is "" or "void") unannotatedReturns.Add(f);
+                // A None return keeps the function on the RFC 0009 inference: a width seeded
+                // onto it would turn the None into a refused `return None` of a `-> X`.
+                if (TypeInference.WalkStatements(f.Body.Statements).OfType<ReturnStmt>()
+                        .Any(r => r.Value is null or NoneLiteral))
+                    returnsNone.Add(f);
             }
         }
         Walk("", main);
@@ -139,6 +145,28 @@ public partial class IRGenerator
     {
         if (UnannotatedReturnKey(irFunction) is { } key)
             NoteStore(key, returnType, value, readsItself: false);
+    }
+
+    /// A value returned from an unannotated function whose inference found no type: the
+    /// caller treats the call as void and reads the return register at whatever width its
+    /// own expression wants, so a byte came back with a garbage high byte (#519). The
+    /// function is declared with the value's width in the next run.
+    private void NoteUntypedReturn(string irFunction, Val value)
+    {
+        if (UnannotatedReturnKey(irFunction) is not { } key
+            || !slotDefs.TryGetValue(irFunction, out var def) || returnsNone.Contains(def)) return;
+        // Only a number: a string's interned id, a character, or an instance's handle is
+        // not a width, and those callers already read them as what they are.
+        if (value is Constant { Text: not null } || charReturningFunctions.Contains(irFunction)
+            || value is Variable iv && (instanceClasses.ContainsKey(iv.Name)
+                || NamesInstanceAnchor(iv.Name) || strConstantVariables.ContainsKey(iv.Name))
+            || value is Temporary tv && strConstantVariables.ContainsKey(tv.Name)) return;
+        var t = GetValType(value);
+        if (value is Constant c) t = NarrowestTypeFor(c.Value, c.Value);
+        if (!WidthSeeds.IsInt(t) || value is NoneVal) return;
+        Logger.Verbose("width", $"'{key}' returns a {t.ToString().ToLower()} with no return type: "
+            + "compiling again with it declared");
+        WidthSeeds!.Require(key, t);
     }
 
     /// The store checks of Emit: a Copy or an AugAssign into a registered slot.

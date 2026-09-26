@@ -1833,8 +1833,10 @@ public partial class IRGenerator
             if (functionReturnTypes.TryGetValue(currentFunction, out var outRt))
             {
                 var outRtDt = DataTypeExtensions.StringToDataType(outRt);
-                NoteReturnStore(currentFunction,
-                    outRtDt is DataType.VOID or DataType.UNKNOWN ? DataType.UINT8 : outRtDt, val);
+                if (outRtDt is DataType.VOID or DataType.UNKNOWN)
+                    NoteUntypedReturn(currentFunction, val);
+                else
+                    NoteReturnStore(currentFunction, outRtDt, val);
             }
             Emit(new Return(val, TagForReturn(stmt.Value, val)));
         }
