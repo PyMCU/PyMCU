@@ -2100,7 +2100,9 @@ public partial class IRGenerator
         if (widthHint is DataType hint && hint is not DataType.FLOAT) resType = hint;
 
         Temporary dst = MakeTemp(resType);
-        if (WidthSeeds != null) binaryOperands[dst.Name] = (v1, v2);
+        if (WidthSeeds != null)
+            binaryOperands[dst.Name] = (v1, v2,
+                expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift);
         // Record the range so a consumer of this temp promotes on the real values rather
         // than on the storage type. Only when it fits the emitted type: an explicit cast
         // (widthHint) narrows on purpose, and the wrapped value is no longer bounded by it.

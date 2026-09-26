@@ -89,7 +89,12 @@ public partial class IRGenerator
                 if (!unannotatedParams.Contains(p)) continue;
                 if (WidthSeeds.Get(key + "#" + p.Name) is not { } ps) continue;
                 var have = DataTypeExtensions.StringToDataType(p.Type);
+                string was = p.Type;
                 p.Type = TypeName(p.Type.Length == 0 ? ps : WidthSeeds.Join(have, ps));
+                // An inferred Optional[int] (a None reaches it) keeps its None member; the
+                // payload member is the one that widens.
+                if (p.UnionMembers != null)
+                    p.UnionMembers = p.UnionMembers.Select(m => m == was ? p.Type : m).ToList();
             }
             if (unannotatedReturns.Contains(f) && WidthSeeds.Get(key + "->") is { } rs)
             {
@@ -198,6 +203,9 @@ public partial class IRGenerator
     private void NoteStore(string key, DataType slot, Val value, bool readsItself)
     {
         if (WidthSeeds == null || !WidthSeeds.IsInt(slot)) return;
+        if (readsItself && value is Temporary gt && binaryOperands.TryGetValue(gt.Name, out var gops)
+            && gops.Grows)
+            WarnLoopAccumulator(key, slot);
         if (SlotValueRange(value) is not var (lo, hi)) return;
         NoteStoreRange(key, slot, lo, hi, readsItself, value);
     }
@@ -223,7 +231,7 @@ public partial class IRGenerator
 
     // The operands of each arithmetic temporary, so an accumulator's store can be judged by
     // what feeds it rather than by the promoted result.
-    private readonly Dictionary<string, (Val A, Val B)> binaryOperands = new();
+    private readonly Dictionary<string, (Val A, Val B, bool Grows)> binaryOperands = new();
 
     /// The narrowest type holding every leaf operand of <paramref name="v"/>'s arithmetic.
     /// The slot's own read is one of the leaves and answers the slot's own width, which
@@ -242,6 +250,9 @@ public partial class IRGenerator
     private void NoteAugStore(string key, DataType slot, BinaryOp op, Val operand)
     {
         if (WidthSeeds == null || !WidthSeeds.IsInt(slot)) return;
+        if (op is BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mul or BinaryOp.LShift
+            && operand is not Constant { Value: 0 })
+            WarnLoopAccumulator(key, slot);
         if (SlotValueRange(operand) is not var (oLo, oHi)) return;
         var (sMin, sMax) = RangeOfType(slot);
         // `x += v` and `x -= v` are accumulators too, so they answer for their sign; the
@@ -358,6 +369,36 @@ public partial class IRGenerator
             return PyMCU.Common.WidthSeeds.Join(current, NarrowestTypeFor(lo, hi));
         }
         return null;
+    }
+
+    // Slots already warned about, so a loop body lowered more than once says it once.
+    private readonly HashSet<string> accumulatorWarned = new();
+
+    /// A store that adds to its own unannotated slot inside a loop. No width holds every
+    /// value a loop can count to, so the width the evidence chose stays -- and the program is
+    /// told which one it is, where the store is, instead of wrapping in silence
+    /// (`c = GPIOR0.value` then `c += 1` three hundred times printed 44). Only the program's
+    /// own files: an installed library's accumulators are its author's decision. A 32-bit
+    /// slot is the widest there is and says nothing.
+    private void WarnLoopAccumulator(string key, DataType slot)
+    {
+        if (loopStack.Count == 0 || slot is DataType.INT32 or DataType.UINT32) return;
+        if (!string.IsNullOrEmpty(currentSourcePath)
+            && !projectModules.Any(m => modulePaths.TryGetValue(m, out var mp) && mp == currentSourcePath))
+            return;
+        if (!accumulatorWarned.Add(key)) return;
+        string shown = key.StartsWith("F:") ? "self." + key[(key.LastIndexOf('.') + 1)..]
+            : key.Contains('#') ? key[(key.LastIndexOf('#') + 1)..]
+            : key[(key.LastIndexOf('.') + 1)..];
+        var (lo, hi) = RangeOfType(slot);
+        string t = slot.ToString().ToLowerInvariant();
+        int line = inlineTracksCalleeLine && inlineCalleeStmtLine > 0 ? inlineCalleeStmtLine
+            : currentStmtLine > 0 ? currentStmtLine : lastLine;
+        Diagnostic.Warning(line: line, file: LocatedFile, code: "unannotated-accumulator", text:
+            $"line {line}: '{shown}' has no annotation and this store adds to it inside a loop. "
+            + $"It was given {t} ({lo}..{hi}) from what is stored into it, and a loop that counts "
+            + $"past that wraps. Annotate it with the width it needs (`{shown}: uint16 = ...` or "
+            + "wider) to say how far it counts.");
     }
 
     /// Whether <paramref name="e"/> reads the name <paramref name="name"/>.

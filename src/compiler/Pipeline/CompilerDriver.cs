@@ -93,6 +93,9 @@ public class CompilerDriver
                 continue;
             }
             Diagnostic.ReleaseWarnings();
+            if (run > 1)
+                Logger.Info("width", $"compiled {run} times: an unannotated slot was stored a "
+                    + "value wider than the width first chosen for it");
             break;
         }
 
