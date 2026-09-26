@@ -1335,7 +1335,11 @@ public partial class IRGenerator
 
     private List<Expression>? ResolveConstSequence(string name)
     {
-        var candidates = new List<string?>
+        // A frame that binds the name owns it: `len(buf)` in `def f(buf: bytes)` answered
+        // with the length of a module-level `buf = b"..."` (ShadowingFrameKey). The alias
+        // walk below still follows what the frame's binding is bound to.
+        string? frameKey = ShadowingFrameKey(name);
+        var candidates = frameKey != null ? new List<string?> { frameKey } : new List<string?>
         {
             !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
             !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
@@ -1348,8 +1352,9 @@ public partial class IRGenerator
         // (`mod___module_init.MODES`) -- a spelling none of the scope prefixes above
         // produces. Only the module(s) the current context belongs to are probed: another
         // module's global of the same name is not visible here.
-        foreach (var mp in OwningModulePrefixes())
-            candidates.Add(mp + "__module_init." + name);
+        if (frameKey == null)
+            foreach (var mp in OwningModulePrefixes())
+                candidates.Add(mp + "__module_init." + name);
 
         foreach (var candidate in candidates)
         {

@@ -214,6 +214,21 @@ public class GlobalShadowsBufferParamTests
     }
 
     [Fact]
+    public void PlainFunctionBytesParam_Len_IsNotTheModuleConstantsLength()
+    {
+        // Same refusal as without the global; with it, len() answered 3, the length of the
+        // module's `buf = b"..."` sequence.
+        var ex = Record.Exception(() => Gen(
+            "def size(buf: bytes) -> uint8:\n" +
+            "    return len(buf)\n" +
+            "buf = b\"\\x0b\\x0c\\x0d\"\n" +
+            "rb = b\"\\x15\\x16\\x17\\x18\"\n" +
+            "GPIOR1.value = size(rb)\n"));
+
+        Assert.NotNull(ex);
+    }
+
+    [Fact]
     public void PtrParam_Value_ReadsTheRegisterPassed()
     {
         var ir = Gen(
