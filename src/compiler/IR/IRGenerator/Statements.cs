@@ -1792,7 +1792,21 @@ public partial class IRGenerator
             // binding picks it up the same way it reads the declared `-> list[T]`
             // text. `return g()` chains it one hop through the call's own record.
             if (ListReturnElemType(stmt.Value, val) is { } outListElem)
+            {
+                // A caller compiled before this body read the elements at the declared (or
+                // inferred) `-> list[T]` width. A list of another width would be read
+                // through the wrong stride, so the two must agree.
+                if (functionReturnTypes.TryGetValue(currentFunction, out var declRet)
+                    && declRet.StartsWith("list[") && declRet.EndsWith("]")
+                    && outListElem != DataType.UNKNOWN
+                    && DataTypeExtensions.StringToDataType(declRet[5..^1]) is var declElem
+                    && declElem != outListElem)
+                    throw UserError(
+                        $"this returns a list of {outListElem.ToString().ToLowerInvariant()}, but the " +
+                        $"function returns {declRet}; declare the list the same way, like " +
+                        $"`v: {declRet} = ...`", stmt);
                 funcListReturnElems[currentFunction] = outListElem;
+            }
             Emit(new Return(val, TagForReturn(stmt.Value, val)));
         }
     }

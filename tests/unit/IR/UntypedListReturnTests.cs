@@ -11,7 +11,8 @@ namespace PyMCU.UnitTests;
 /// A function or method compiled as a subroutine that returns a local list, with no
 /// `-> list[T]` on its def, was called as a void one whenever the caller was compiled
 /// before the body (every module-level caller) or the method was outlined: `print(f())`
-/// printed whatever the result register held. It is refused and names the annotation;
+/// printed whatever the result register held. When nothing can type the list (an element
+/// type inference cannot read) it is refused and names the annotation;
 /// a `-> list[T]` method result is registered so print, len() and indexing find it.
 /// </summary>
 public class UntypedListReturnTests
@@ -51,9 +52,9 @@ public class UntypedListReturnTests
             PrintPrelude +
             "GPIOR0: ptr[uint8] = ptr(0x3E)\n" +
             "def g(w: uint8):\n" +
-            "    v: list[uint8] = [w, w + 1]\n" +
+            "    v = [min(w, 9), w]\n" +
             "    if w:\n" +
-            "        v.append(w + 2)\n" +
+            "        v.append(w)\n" +
             "    return v\n" +
             "print(g(GPIOR0.value))\n"));
         Assert.Contains("-> list[", ex.Message);
@@ -88,9 +89,9 @@ public class UntypedListReturnTests
             "    def __init__(self):\n" +
             "        self.w = GPIOR0.value\n" +
             "    def _get(self, i: uint8):\n" +
-            "        v: list[uint8] = [i, i + 1, i + 2]\n" +
+            "        v = [min(i, 9), i]\n" +
             "        if self.w:\n" +
-            "            v.append(i + 3)\n" +
+            "            v.append(i)\n" +
             "        return v\n" +
             "p = P()\n" +
             "print(p._get(GPIOR0.value))\n"));

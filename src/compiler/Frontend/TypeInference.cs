@@ -55,8 +55,14 @@ public static class TypeInference
         // needed for methods: each FunctionDef keeps its own ReturnType and nothing
         // here keys a method by bare name.
         var methodCandidates = new List<FunctionDef>();
+        // The module-level names each candidate's body can read (`buf = bytearray(8)`), for
+        // typing the elements of a list it returns.
+        var moduleScopeOf = new Dictionary<FunctionDef, Dictionary<string, string>>();
         foreach (var prog in programs)
         {
+            var modScope = ModuleScopeTypes(prog);
+            foreach (var f in prog.Functions) moduleScopeOf[f] = modScope;
+            foreach (var m in ClassMethods(prog)) moduleScopeOf[m] = modScope;
             var counts = prog.Functions.GroupBy(f => f.Name).ToDictionary(g => g.Key, g => g.Count());
             foreach (var f in prog.Functions)
             {
@@ -164,6 +170,11 @@ public static class TypeInference
                         memberLists[f.Name] = umembers;
                     }
                 }
+                else if (InferLocalListReturn(f, moduleScopeOf[f], returnTypes, memberLists) is { } lt)
+                {
+                    f.ReturnType = lt;
+                    returnTypes[f.Name] = lt;
+                }
             }
 
             // Method returns: the same member collection, but nothing enters
@@ -180,6 +191,8 @@ public static class TypeInference
                         m.ReturnMembersInferred = true;
                     }
                 }
+                else if (InferLocalListReturn(m, moduleScopeOf[m], returnTypes, memberLists) is { } mlt)
+                    m.ReturnType = mlt;
         }
     }
 
@@ -234,6 +247,70 @@ public static class TypeInference
         }
         if (sawNone || HasBareReturn(f.Body)) members.Add("None");
         return members;
+    }
+
+    // `return v` where every return hands back ONE local the body binds to a list: the
+    // declaration's own `list[T]`, or, for a literal, `list[T]` joined from its elements.
+    // An unannotated def keeps the "void" default otherwise, and a caller compiled before
+    // the body -- every module-level caller, and every call to an outlined method -- lowered
+    // the call as a void one: `print(g())` printed a stale register. Null when the elements
+    // are not all integers this table can type (a field read, a call it does not know).
+    private static string? InferLocalListReturn(
+        FunctionDef f, Dictionary<string, string> moduleScope,
+        Dictionary<string, string> returnTypes, Dictionary<string, List<string>> memberLists)
+    {
+        if (!IsInferableReturn(f.ReturnType)) return null;
+        string? name = null;
+        var returned = CollectReturns(f.Body.Statements);
+        foreach (var r in returned)
+        {
+            if (r is not VariableExpr v) return null;
+            if (name == null) name = v.Name;
+            else if (name != v.Name) return null;
+        }
+        if (name == null || HasBareReturn(f.Body)) return null;
+
+        var scope = new Dictionary<string, string>(moduleScope);
+        foreach (var (k, v) in ScopeTypes(f)) scope[k] = v;
+        if (scope.TryGetValue(name, out var declared))
+            return declared.StartsWith("list[") && declared.EndsWith("]") ? declared : null;
+
+        ListExpr? literal = null;
+        foreach (var s in WalkStatements(f.Body.Statements))
+            if (s is AssignStmt { Target: VariableExpr t, Value: var val } && t.Name == name)
+            {
+                if (val is not ListExpr le || literal != null) return null;   // one binding
+                literal = le;
+            }
+        if (literal == null) return null;
+        // `v = []` learns its elements from the appends; a literal from its own elements.
+        var elements = literal.Elements.Count > 0
+            ? literal.Elements
+            : WalkExpressions(f.Body.Statements).OfType<CallExpr>()
+                .Where(c => c.Callee is MemberAccessExpr { Member: "append", Object: VariableExpr o }
+                            && o.Name == name && c.Args.Count == 1)
+                .Select(c => c.Args[0]).ToList();
+        if (elements.Count == 0) return null;
+
+        string? joined = null;
+        foreach (var e in elements)
+        {
+            string? et = e is IndexExpr { Target: VariableExpr seq } && scope.TryGetValue(seq.Name, out var st)
+                ? SequenceElementType(st)
+                : ExprMembers(e, scope, returnTypes, memberLists) is [var only] ? Normalize(only) : null;
+            if (et == null) return null;
+            joined = joined == null ? et : Join(joined, et);
+        }
+        return $"list[{joined}]";
+    }
+
+    // The element type a subscript of a sequence of this declared type reads.
+    private static string? SequenceElementType(string t)
+    {
+        if (t == "bytearray" || t == "bytes") return "uint8";
+        if (t.StartsWith("list[") && t.EndsWith("]")) return Normalize(t[5..^1]);
+        int b = t.IndexOf('[');
+        return b > 0 && t.EndsWith("]") ? Normalize(t[..b]) : null;   // uint16[8]
     }
 
     // Merge one inferred member into the list: int-family members coalesce into a
@@ -450,6 +527,9 @@ public static class TypeInference
         {
             if (s is VarDecl vd && vd.VarType.Length > 0) scope[vd.Name] = vd.VarType;
             else if (s is AnnAssign aa && aa.Annotation.Length > 0) scope[aa.Target] = aa.Annotation;
+            // `buf = bytearray(8)`: only the subscript typing of a returned list reads it.
+            else if (s is AssignStmt { Target: VariableExpr bt, Value: CallExpr { Callee: VariableExpr { Name: "bytearray" } } })
+                scope[bt.Name] = "bytearray";
         }
         return scope;
     }
