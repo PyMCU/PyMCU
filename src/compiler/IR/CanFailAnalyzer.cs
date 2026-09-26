@@ -161,40 +161,17 @@ public static class CanFailAnalyzer
     // BranchOnError that jumps to a label inside the same function body.
     private static bool HasUnhandledSignalError(Function func)
     {
-        // Collect labels that are targets of BranchOnError within this function —
-        // these represent local catch dispatch points.
-        var localCatchLabels = new HashSet<string>();
-        foreach (var instr in func.Body)
-            if (instr is BranchOnError boe)
-                localCatchLabels.Add(boe.ErrorLabel);
-
-        // A SignalError is "unhandled" when none of its enclosing BranchOnError
-        // targets are local labels (i.e. the error escapes to the caller).
-        // For now we use a conservative rule: if ANY SignalError exists and there
-        // are no local BranchOnError handlers covering the same region, we mark
-        // CanFail. A future DFA pass can refine this to a per-path analysis.
-        // Only SignalErrors that propagate to the caller (CatchLabel == null) can make
-        // this function CanFail. A SignalError with a CatchLabel is a raise caught inside
-        // this same function (delivered to a local catch dispatcher) — it never escapes.
-        bool hasSignalError = func.Body.OfType<SignalError>().Any(se => se.CatchLabel is null);
-        bool hasCatchAll = localCatchLabels.Count > 0;
-
-        // If there are no local handlers at all, every SignalError escapes.
-        if (hasSignalError && !hasCatchAll) return true;
-
-        // If there are handlers, conservatively assume they may not cover all paths
-        // unless the count of SignalError sites exceeds the count of BranchOnError
-        // guards. A precise analysis requires a CFG walk; that can be added later
-        // using the existing CFG infrastructure in IR/CFG/.
-        if (hasSignalError && hasCatchAll)
-        {
-            int raiseCount  = func.Body.OfType<SignalError>().Count(se => se.CatchLabel is null);
-            int guardCount  = func.Body.OfType<BranchOnError>().Count();
-            // More raises than guards → at least one path escapes.
-            if (raiseCount > guardCount) return true;
-        }
-
-        return false;
+        // A SignalError with no CatchLabel is `SET T; RET`: it leaves this function by
+        // construction, whatever handlers the function has elsewhere. A SignalError with a
+        // CatchLabel is a raise caught inside this same function and never escapes.
+        //
+        // This used to compare the number of propagating raises with the number of
+        // BranchOnError guards, which are unrelated: a guard follows a CALL, not a raise.
+        // A function with a try/finally has several guards inside the try, so the raise in
+        // its finally (and the re-raise after it) were outnumbered, the function was not
+        // CanFail, its caller had no guard after the call, and a ZeroDivisionError the
+        // caller's `except` should have caught reached the unhandled halt instead.
+        return func.Body.OfType<SignalError>().Any(se => se.CatchLabel is null);
     }
 
     // Returns true if `func` calls a CanFail callee AND does not have a BranchOnError
