@@ -3236,7 +3236,9 @@ public partial class IRGenerator
                 // built inside an @inline expansion lives under the inline prefix, which a
                 // currentFunction-only probe misses (PyMCU#361).
                 string srcQ = ResolveNameKey(srcVe.Name);
-                if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
+                // The bare fallback is the module's array: never for a name a frame binds.
+                if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)
+                    && ShadowingFrameKey(srcVe.Name) == null) srcQ = srcVe.Name;
                 if (arraySizes.TryGetValue(srcQ, out int srcSize))
                 {
                     DataType elemDt = arrayElemTypes[srcQ];

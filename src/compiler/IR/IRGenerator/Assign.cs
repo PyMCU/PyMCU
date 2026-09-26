@@ -3713,7 +3713,13 @@ public partial class IRGenerator
     private bool TryEmitInferredSliceArray(VariableExpr target, VariableExpr src, SliceExpr sl)
     {
         string srcQ = string.IsNullOrEmpty(currentFunction) ? src.Name : currentFunction + "." + src.Name;
-        if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(src.Name)) srcQ = src.Name;
+        // A source some frame binds under another spelling -- an @inline parameter, whose
+        // enclosing `main.<name>` is the module's array of the same name -- is left to the
+        // general slice lowering, which resolves the binding; and a real function's own
+        // binding never falls back to the bare module name.
+        string? srcFrame = ShadowingFrameKey(src.Name);
+        if (srcFrame != null && srcFrame != srcQ) return false;
+        if (srcFrame == null && !arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(src.Name)) srcQ = src.Name;
         if (!arraySizes.TryGetValue(srcQ, out int srcSize)) return false;
 
         string qualified = string.IsNullOrEmpty(currentFunction) ? target.Name : currentFunction + "." + target.Name;
@@ -8026,7 +8032,13 @@ public partial class IRGenerator
                     string srcQ = string.IsNullOrEmpty(currentFunction)
                         ? srcVe.Name
                         : currentFunction + "." + srcVe.Name;
-                    if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
+                    // A frame binding the name owns it: an @inline parameter's own key (which
+                    // names no array, so the refusal below answers as it does for a program
+                    // without a module global of that name), never `main.<name>` or the bare
+                    // module array.
+                    string? srcFrame = ShadowingFrameKey(srcVe.Name);
+                    if (srcFrame != null) srcQ = srcFrame;
+                    else if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
                     if (arraySizes.TryGetValue(srcQ, out int srcSize))
                     {
                         DataType srcEdt = arrayElemTypes[srcQ];
