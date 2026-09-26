@@ -695,6 +695,17 @@ public partial class IRGenerator
 
                             bool rVoid = !functionReturnTypes.TryGetValue(callee, out var rt)
                                          || rt == "void" || rt == "None";
+                            // A method that hands back a local list with no `-> list[T]` on
+                            // its def was lowered as a void call, and the caller printed or
+                            // indexed whatever the result register held.
+                            if (rVoid && !ReferenceEquals(expr, discardedStatementCall)
+                                && (instanceMethodDefs.TryGetValue(callee, out var oListDef)
+                                    || methodAstByName.TryGetValue(callee, out oListDef))
+                                && ReturnsALocalList(oListDef))
+                                throw UserError(
+                                    $"'{memC.Member}' returns a list, and it is compiled as a " +
+                                    "subroutine whose def does not say so. Annotate the return " +
+                                    $"type, like `def {memC.Member}(self, ...) -> list[uint8]:`", expr);
                             if (rVoid)
                             {
                                 // `return self._p` with the receiver's _p marked None: the call
@@ -718,6 +729,15 @@ public partial class IRGenerator
                                         functionReturnTypes[callee]));
                             EmitMaybeTaggedCall(callee, oArgs, oDst);
                             InvalidateFieldsWrittenByCall(callee, instName);
+                            // `-> list[T]`: the result is the list, and print, len() and
+                            // indexing find it by its element type. Unregistered, `print(
+                            // o.m())` printed the heap pointer.
+                            if (rt is { } oRt && oRt.StartsWith("list[") && oRt.EndsWith("]"))
+                            {
+                                listVarElemTypes[oDst.Name] =
+                                    DataTypeExtensions.StringToDataType(oRt[5..^1]);
+                                variableTypes[oDst.Name] = DataType.GC_REF;
+                            }
                             return oDst;
                         }
 
@@ -734,6 +754,15 @@ public partial class IRGenerator
                             && BoundMethodCallee(callee, boundRecv.Name, boundImpl,
                                                  expr.Args) is { } boundCallee)
                         {
+                            // Same refusal as the outlined path above: the shared body is a
+                            // subroutine, and without `-> list[T]` its list result is lost.
+                            if (!ReferenceEquals(expr, discardedStatementCall)
+                                && ReturnsALocalList(boundImpl)
+                                && !IsListLikeReturnType(boundImpl.ReturnType))
+                                throw UserError(
+                                    $"'{memC.Member}' returns a list, and it is compiled as a " +
+                                    "subroutine whose def does not say so. Annotate the return " +
+                                    $"type, like `def {memC.Member}(self, ...) -> list[uint8]:`", expr);
                             Val boundResult = EmitRegularFunctionCall(expr, boundCallee);
                             InvalidateFieldsWrittenByCall(callee, boundRecv.Name);
                             return boundResult;
@@ -1453,6 +1482,8 @@ public partial class IRGenerator
     // fill defaulted params and copy each arg into the callee's param slot, then Call.
     private Val EmitRegularFunctionCall(CallExpr expr, string callee)
     {
+        // An expression statement's call has nobody to hand a result to.
+        bool regularResultDiscarded = ReferenceEquals(expr, discardedStatementCall);
         // A call that resolved to no known function (not inline, extern, a builtin or an
         // intrinsic — those return earlier) is a typo or a missing import. Report it now
         // instead of emitting a Call to an undefined symbol that fails much later with a
@@ -2046,7 +2077,8 @@ public partial class IRGenerator
         // treat the callee as void when no list return was seen.
         bool returnsVoidEnd = functionReturnTypes.TryGetValue(callee, out string? rType)
             && (rType == "void" || rType == "None")
-            && !funcListReturnElems.ContainsKey(callee);
+            && !funcListReturnElems.ContainsKey(callee)
+            && (!funcReturnLocalLists.Contains(callee) || regularResultDiscarded);
 
         if (returnsVoidEnd)
         {
@@ -2072,6 +2104,15 @@ public partial class IRGenerator
         // and the result temp is a GC pointer even though no annotation says so.
         lastCallReturnListElem = funcListReturnElems.TryGetValue(callee, out var flre)
             ? flre : (DataType?)null;
+        // The callee's body has not been compiled yet and its def does not say it returns a
+        // list: nothing here can type the result. Refused rather than lowered as the void
+        // call it used to be, whose result `print(f())` read out of a stale register.
+        if (lastCallReturnListElem == null && !IsListLikeReturnType(rType)
+            && funcReturnLocalLists.Contains(callee))
+            throw UserError(
+                $"'{callee}' returns a list, and this call is compiled before the function's " +
+                "body, so its element type is not known here. Annotate the return type, like " +
+                $"`def {callee}(...) -> list[uint8]:`", expr);
         // RFC 0001 Model B: a factory declared `-> C` for a single-field class returns the
         // field itself, and its IR return type already says so (VisitFunctionDef). The class
         // name has no width of its own, so without this the result temp was UNKNOWN.
@@ -2097,6 +2138,11 @@ public partial class IRGenerator
             listVarElemTypes[dstC.Name] = seqElem;
             if (rType != null && (rType.Contains("tuple") || rType.Contains("Tuple")))
                 tupleBoundNames.Add(dstC.Name);
+        }
+        else if (retDt == DataType.GC_REF && !listVarElemTypes.ContainsKey(dstC.Name)
+                 && lastCallReturnListElem is { } callListElem)
+        {
+            listVarElemTypes[dstC.Name] = callListElem;
         }
         return dstC;
     }

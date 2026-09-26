@@ -1843,6 +1843,8 @@ public partial class IRGenerator
             // funcListReturnElems is still empty.
             if (!func.IsInline && SeqNameReturnedBy(func) is { } seqName)
                 funcReturnSeqExprs[fullName] = (seqName, currentModulePrefix ?? "");
+            if (!func.IsInline && ReturnsALocalList(func))
+                funcReturnLocalLists.Add(fullName);
             var @params = new List<string>();
             var paramTypes = new List<DataType>();
             foreach (var p in func.Params)
@@ -5026,6 +5028,27 @@ public partial class IRGenerator
             fields.Add(ma.Member);
         }
         return fields.Count > 0 ? fields : null;
+    }
+
+    // True when every `return` of `func` hands back one local the body binds to a list
+    // (`v = [...]`, `v: list[T] = ...`).
+    private static bool ReturnsALocalList(FunctionDef func)
+    {
+        string? name = null;
+        foreach (var r in TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>())
+        {
+            if (r.Value is not VariableExpr v) return false;
+            if (name == null) name = v.Name;
+            else if (name != v.Name) return false;
+        }
+        if (name == null) return false;
+        return TypeInference.WalkStatements(func.Body).Any(s => s switch
+        {
+            AnnAssign a => a.Target == name && a.Annotation.StartsWith("list"),
+            VarDecl d => d.Name == name && d.VarType.StartsWith("list"),
+            AssignStmt { Target: VariableExpr t, Value: ListExpr } => t.Name == name,
+            _ => false,
+        });
     }
 
     private static string? SeqNameReturnedBy(FunctionDef func)

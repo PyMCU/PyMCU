@@ -572,6 +572,9 @@ public partial class IRGenerator
     /// takes an argument, and every use of that path is a statement).
     /// </summary>
     private bool callResultIsDiscarded;
+    // The call node an expression statement consists of. Unlike the flag above it names the
+    // call, so a builtin that never reads the flag (`print(f())`) does not pass it on to f.
+    private CallExpr? discardedStatementCall;
     // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
     private Dictionary<string, string> slotInstances = new();
     // @outline method symbol -> field -> byte offset within the slot (for self.field loads).
@@ -652,6 +655,12 @@ public partial class IRGenerator
     // recorded name against its own maps instead: a parameter's element type is the
     // argument's, a module-level sequence's is already registered.
     private Dictionary<string, (string Name, string ModulePrefix)> funcReturnSeqExprs = new();
+
+    // Outlined functions whose returns all hand back ONE local bound to a list. With no
+    // `-> list[T]` on the def, a caller compiled before the body has no way to know the
+    // call returns a list at all: the call was lowered as a void one and `print(f())`
+    // printed whatever the result register held.
+    private HashSet<string> funcReturnLocalLists = new();
 
     // Unique suffix for the synthesized index of a runtime-bounds slice iteration.
     private int sliceLoopId = 0;

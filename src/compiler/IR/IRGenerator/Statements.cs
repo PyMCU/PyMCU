@@ -1047,11 +1047,14 @@ public partial class IRGenerator
             // results this one DOES read -- do not inherit it (#302).
             bool prevDiscardedResult = callResultIsDiscarded;
             callResultIsDiscarded = exprStmt.Expr is CallExpr;
+            var prevDiscardedCall = discardedStatementCall;
+            discardedStatementCall = exprStmt.Expr as CallExpr;
             try { VisitExprStmt(exprStmt); }
             finally
             {
                 loweringDiscardedExprStmt = prevDiscarded;
                 callResultIsDiscarded = prevDiscardedResult;
+                discardedStatementCall = prevDiscardedCall;
             }
             return;
         }
