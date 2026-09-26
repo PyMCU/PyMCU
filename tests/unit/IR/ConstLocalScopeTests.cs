@@ -19,23 +19,25 @@ namespace PyMCU.UnitTests;
 // refused `ms = ms - 1` inside `helper`, which declares nothing const, with "cannot assign to
 // constant 'ms'". Named `k`, the refusal landed in the stdlib's uart_text.py. Whether it fired
 // depended on the order the functions were lowered in, so a helper written ABOVE the declaring
-// function compiled and the same helper written below it did not.
+// function compiled and the same helper written below it did not. A module constant leaked
+// the same way into every other module.
 //
-// A MODULE-level const is deliberately still refused in every module: a plain name in one
-// module can resolve to another module's global, and without the refusal that compiles to
-// the other module's value.
-//
-// WHAT DISCRIMINATES: the three builds below. Against the unfixed compiler each is refused.
+// WHAT DISCRIMINATES: the four builds below. Against the unfixed compiler each is refused.
 //
 // WHAT IS INVARIANT: a const local rebound in its own scope, in a plain function, an @inline
 // function and a module, is still refused (ConstRebindTests pins the module spellings).
 public class ConstLocalScopeTests
 {
-    private static void Build(string src) =>
+    private static void Build(string src, params (string Name, string Source)[] modules)
+    {
+        var imported = new Dictionary<string, ProgramNode>();
+        foreach (var (name, source) in modules)
+            imported[name] = new Parser(new Lexer(source).Tokenize()).ParseProgram();
         new IRGenerator().Generate(
-            new Parser(new Lexer(src).Tokenize()).ParseProgram(),
-            new Dictionary<string, ProgramNode>(),
-            new DeviceConfig { Arch = "avr" });
+            new Parser(new Lexer(src).Tokenize()).ParseProgram(), imported,
+            new DeviceConfig { Arch = "avr" },
+            projectModules: new HashSet<string>(modules.Select(m => m.Name)));
+    }
 
     private static PyMCU.Common.CompilerError Reject(string src)
         => Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Build(src));
@@ -86,6 +88,22 @@ public class ConstLocalScopeTests
             "    GPIOR1.value = ms\n" +
             "f(5)\n" +
             "g(GPIOR1.value)\n");
+    }
+
+    [Fact]
+    public void AModuleConstantDoesNotReachAnotherModule()
+    {
+        Build(Preamble +
+            "from cfg import get\n" +
+            "def f(x: uint32) -> uint32:\n" +
+            "    LIM = x + 300\n" +
+            "    return LIM\n" +
+            "GPIOR1.value = f(GPIOR1.value) + get()\n",
+            ("cfg",
+             "from pymcu.types import uint32, const\n" +
+             "LIM: const[uint32] = 10\n" +
+             "def get() -> uint32:\n" +
+             "    return LIM\n"));
     }
 
     // --- invariants --------------------------------------------------------------
