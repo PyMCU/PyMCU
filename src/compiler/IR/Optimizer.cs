@@ -1570,6 +1570,7 @@ private static Function CloneFunction(Function f)
                 {
                     if (copy.Dst is Variable vDst)
                     {
+                        ForgetCopiesOf(vDst.Name);
                         if (IsVolatile(vDst))
                             varConsts.Remove(vDst.Name);
                         else if (copy.Src is Constant c)
@@ -1665,10 +1666,24 @@ private static Function CloneFunction(Function f)
             {
                 case Variable v:
                     varConsts.Remove(v.Name);
+                    ForgetCopiesOf(v.Name);
                     break;
                 case Temporary t:
                     tempCopies.Remove(t.Name);
                     break;
+            }
+        }
+
+        // A temp that holds a variable's value from BEFORE the variable is written again
+        // cannot be forwarded to that variable past the write: the temp is the old value.
+        // `(0 + x) + (x := 2)` read the new x on both sides once `0 + x` had become a copy.
+        void ForgetCopiesOf(string name)
+        {
+            foreach (var stale in tempCopies.Where(kv => kv.Value is Variable fv && fv.Name == name)
+                         .Select(kv => kv.Key).ToList())
+            {
+                tempCopies.Remove(stale);
+                blacklistedTemps.Add(stale);
             }
         }
     }
