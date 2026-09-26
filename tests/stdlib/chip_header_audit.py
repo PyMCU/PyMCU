@@ -18,12 +18,32 @@ ATtiny13A as having 65 bytes and sends somebody to fix a chip that is correct. T
 positive happened while this audit was being written; the arithmetic is why.
 """
 
+import os
 import re
 from pathlib import Path
 
-TOOLCHAIN_HEADERS = Path(
-    "/Users/begeistert/Repos/avr-wasi/native/pymcu_avr_toolchain/avr/include/avr"
-)
+_SIBLING = "avr-wasi/native/pymcu_avr_toolchain/avr/include/avr"
+
+
+def _resolve_headers():
+    """Where this host keeps the vendor headers, or None when it keeps none.
+
+    The headers are not in the pymcu-avr wheel: the driver downloads the toolchain
+    into ~/.pymcu on first build, and they are BUILT from the avr-wasi sibling
+    checkout. So a host either has that checkout or has nothing to read, and the
+    difference has to be visible. It used to be an absolute path into one
+    developer's home directory, which read nothing anywhere else and reported all
+    1 900 registers as absent from a header it never opened.
+    """
+    override = os.environ.get("PYMCU_AVR_HEADERS")
+    if override:
+        path = Path(override)
+        return path if path.is_dir() else None
+    sibling = Path(__file__).resolve().parents[3] / _SIBLING
+    return sibling if sibling.is_dir() else None
+
+
+TOOLCHAIN_HEADERS = _resolve_headers()
 
 # The per-chip header each chip definition must agree with. A chip with no entry is not
 # audited, which is the honest state for parts whose vendor header this toolchain does not
@@ -65,6 +85,8 @@ _ARITH = re.compile(r"^[\s0-9xXa-fA-F()+\-*]+$")
 
 def _read_header(name, seen=None):
     """A header plus everything it includes, since iom168.h is a shell over iomx8.h."""
+    if TOOLCHAIN_HEADERS is None:
+        return ""
     seen = set() if seen is None else seen
     path = TOOLCHAIN_HEADERS / name
     if name in seen or not path.is_file():
