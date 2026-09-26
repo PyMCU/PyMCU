@@ -1828,6 +1828,7 @@ public partial class IRGenerator
             // byte it lowers to says nothing about that. Recorded beside the return TYPE
             // because a caller is often lowered before the callee's body is (#436).
             if (ReturnsOnlyChars(func)) charReturningFunctions.Add(fullName);
+            if (ReturnsOnlyNone(func)) noneReturningFunctions.Add(fullName);
             // `return <seq>` in an outlined function: record the returned name so a
             // call site compiled before this body can still resolve the element
             // type -- a module-level `x = f()` precedes f's emission, when
@@ -2306,6 +2307,8 @@ public partial class IRGenerator
                                 // setter's own expansion key is the ___setter spelling.
                                 functionReturnTypes[func.IsPropertySetter
                                     ? fullName + "___setter" : fullName] = func.ReturnType;
+                                if (!func.IsPropertySetter && ReturnsOnlyNone(func))
+                                    noneReturningFunctions.Add(fullName);
                                 var @params = new List<string>();
                                 var paramTypes = new List<DataType>();
                                 foreach (var p in func.Params)
@@ -4436,6 +4439,13 @@ public partial class IRGenerator
         outlinedMethods.Add(fullName);
         outlineFieldLayout[fullName] = layout;
         functionReturnTypes[fullName] = returnType;
+        // The write-back rewrite appends `return self.<field>`: that body returns a value.
+        if (!outlineWriteBack.ContainsKey(fullName) && ReturnsOnlyNone(func))
+            noneReturningFunctions.Add(fullName);
+        else
+            noneReturningFunctions.Remove(fullName);
+        if (!outlineWriteBack.ContainsKey(fullName) && SelfFieldsReturned(func) is { } rf)
+            outlinedSelfFieldReturns[fullName] = rf;
         functionParams[fullName] = synthParams.Select(p => p.Name).ToList();
         // The leading self-derived parameters ("self" or one self_<field> per layout
         // field) are not user arguments: a call site's arg index for param p is
@@ -4905,6 +4915,76 @@ public partial class IRGenerator
             r.Value is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 });
     }
 
+    /// <summary>
+    /// True when a function hands back None on every path it can take: each `return` is
+    /// bare, `return None`, or returns a local the body binds to nothing but None, and
+    /// reaching the end is the implicit `return None`. Only an undeclared or None-declared
+    /// result qualifies -- a declared width is a promise the refusals elsewhere enforce --
+    /// and an async body hands back a coroutine, not its return value.
+    /// </summary>
+    private static bool ReturnsOnlyNone(FunctionDef func)
+    {
+        if (func.IsAsync || func.IsExtern || func.ReturnMembers != null) return false;
+        if (func.ReturnType is not ("" or "void" or "None")) return false;
+
+        var noneOnly = new HashSet<string>();
+        var otherwise = new HashSet<string>(func.Params.Select(p => p.Name));
+        bool opaque = false;
+        foreach (var s in TypeInference.WalkStatements(func.Body))
+        {
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr av } a:
+                    (a.Value is NoneLiteral ? noneOnly : otherwise).Add(av.Name);
+                    break;
+                case AugAssignStmt { Target: VariableExpr gv }: otherwise.Add(gv.Name); break;
+                case AnnAssign an: otherwise.Add(an.Target); break;
+                case VarDecl vd:
+                    (vd.Init is NoneLiteral ? noneOnly : otherwise).Add(vd.Name);
+                    break;
+                case TupleUnpackStmt tu: otherwise.UnionWith(tu.Targets); break;
+                case ForStmt f:
+                    otherwise.Add(f.VarName);
+                    if (!string.IsNullOrEmpty(f.Var2Name)) otherwise.Add(f.Var2Name);
+                    break;
+                case WithStmt w when !string.IsNullOrEmpty(w.AsName): otherwise.Add(w.AsName); break;
+                case GlobalStmt g: otherwise.UnionWith(g.Names); break;
+                // `except E as x`, a match capture and a nonlocal rebinding are bindings this
+                // walk does not follow, so a returned NAME stops qualifying; a literal does not.
+                case NonlocalStmt or TryStmt or MatchStmt: noneOnly.Clear(); opaque = true; break;
+            }
+        }
+        var bodyStmts = func.Body.Statements;
+        foreach (var e in TypeInference.WalkExpressions(bodyStmts))
+            if (e is WalrusExpr we) otherwise.Add(we.VarName);
+        return TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>().All(r =>
+            r.Value is null or NoneLiteral
+            || !opaque && r.Value is VariableExpr rv
+               && noneOnly.Contains(rv.Name) && !otherwise.Contains(rv.Name));
+    }
+
+    /// <summary>
+    /// The fields a method hands back when every `return` is `self.<field>`, bare, or
+    /// `return None`, or null for any other shape. An outlined method receives its fields
+    /// by value, so whether such a call returns None is a fact about the RECEIVER's fields,
+    /// which only the call site knows.
+    /// </summary>
+    private static List<string>? SelfFieldsReturned(FunctionDef func)
+    {
+        if (func.IsAsync || func.Params.Count == 0 || func.ReturnMembers != null) return null;
+        if (func.ReturnType is not ("" or "void" or "None")) return null;
+        string self = func.Params[0].Name;
+        var fields = new List<string>();
+        foreach (var r in TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>())
+        {
+            if (r.Value is null or NoneLiteral) continue;
+            if (r.Value is not MemberAccessExpr { Object: VariableExpr sv } ma || sv.Name != self)
+                return null;
+            fields.Add(ma.Member);
+        }
+        return fields.Count > 0 ? fields : null;
+    }
+
     private static string? SeqNameReturnedBy(FunctionDef func)
     {
         var assigned = new HashSet<string>();
@@ -5070,6 +5150,7 @@ public partial class IRGenerator
 
                 string fullName = currentModulePrefix + func.Name;
                 functionReturnTypes[fullName] = func.ReturnType;
+                if (ReturnsOnlyNone(func)) noneReturningFunctions.Add(fullName);
                 var @params = new List<string>();
                 var paramTypes = new List<DataType>();
                 foreach (var p in func.Params)

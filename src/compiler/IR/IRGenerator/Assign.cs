@@ -2388,7 +2388,10 @@ public partial class IRGenerator
             // is None-valued the same as if the literal had been written (IsNoneValued
             // knows the shape; a constructor call returns false there and stays exempt).
             if (stmt.Value is NoneLiteral
-                || (stmt.Value is CallExpr && IsNoneValued(stmt.Value)))
+                || (stmt.Value is CallExpr && IsNoneValued(stmt.Value))
+                || (stmt.Value is CallExpr && ReferenceEquals(value, lastNoneCallResult))
+                // `w = alarm.wake_alarm`: a module global or a field the marks call None.
+                || (stmt.Value is MemberAccessExpr && IsNoneValued(stmt.Value, bareNameFallback: false)))
                 noneValuedNames.Add(noneTgt.Name);
             else if (value is not NoneVal) noneValuedNames.Remove(noneTgt.Name);
         }

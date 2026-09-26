@@ -696,9 +696,18 @@ public partial class IRGenerator
                                          || rt == "void" || rt == "None";
                             if (rVoid)
                             {
+                                // `return self._p` with the receiver's _p marked None: the call
+                                // hands back that None, which only this site can see.
+                                string rfBase = instName;
+                                for (int d = 0; d < 20 && variableAliases.TryGetValue(rfBase, out var rfa); d++)
+                                    rfBase = rfa;
+                                bool fieldsNone = outlinedSelfFieldReturns.TryGetValue(callee, out var rfs)
+                                    && rfs.All(f => noneValuedNames.Contains(instName + "_" + f)
+                                                    || noneValuedNames.Contains(rfBase + "_" + f));
                                 Emit(new Call(callee, oArgs, new NoneVal()));
                                 InvalidateFieldsWrittenByCall(callee, instName);
-                                return new NoneVal(LiveCallResult: true);
+                                if (fieldsNone) return lastNoneCallResult = new NoneVal();
+                                return VoidCallResult(callee);
                             }
 
                             Temporary oDst = MakeTemp(
@@ -1975,7 +1984,7 @@ public partial class IRGenerator
         if (returnsVoidEnd)
         {
             Emit(new Call(callee, argValuesL, new NoneVal()));
-            return new NoneVal(LiveCallResult: true);
+            return VoidCallResult(callee);
         }
 
         // Type the result temp with the callee's declared return type. Defaulting to uint8 lost
@@ -5431,7 +5440,7 @@ public partial class IRGenerator
         if (iaVoid)
         {
             Emit(new Call(iaMethod, iaArgs, new NoneVal()));
-            return new NoneVal(LiveCallResult: true);
+            return VoidCallResult(iaMethod);
         }
         Temporary iaDst = MakeTemp(
             functionReturnMembers.TryGetValue(iaMethod, out var iaMembers)
@@ -5583,13 +5592,28 @@ public partial class IRGenerator
 
         bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
                      || tRt == "void" || tRt == "None";
-        if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(LiveCallResult: true); }
+        if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return VoidCallResult(target); }
         Temporary tDst = MakeTemp(
             functionReturnMembers.TryGetValue(target, out var tMembers)
                 ? UnionPayloadType(tMembers)
                 : DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
         EmitMaybeTaggedCall(target, fwdArgs, tDst);
         return tDst;
+    }
+
+    /// <summary>
+    /// The value a call to a void-declared subroutine stands for. A callee that returns None
+    /// on every path left nothing in the return register, so its result IS None -- the
+    /// compile-time kind `is None`, print() and a binding all answer for. Any other void
+    /// callee may still have left an undeclared value there, and the live flag says so.
+    /// </summary>
+    private Val VoidCallResult(string callee)
+    {
+        if (!noneReturningFunctions.Contains(callee)) return new NoneVal(LiveCallResult: true);
+        // Kept by reference: a constructor hands back a NoneVal too, and a binding has to
+        // tell `x = f()` (x is None) from `x = Cls()` (x is the object).
+        lastNoneCallResult = new NoneVal();
+        return lastNoneCallResult;
     }
 
     // A variable bound to a lambda: expand the lambda body in place with the args bound

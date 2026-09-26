@@ -1549,6 +1549,18 @@ public partial class IRGenerator
             pendingConstructorTarget = savedCtorTarget;
         }
 
+        // `return self._p` of a field this scope has marked None, or of a local bound to
+        // None, reads the storage the mark sits on -- a slot nothing ever wrote -- and the
+        // expansion's result became that slot, so `obj.prop is None` folded to False where
+        // `obj._p is None` folded to True. The mark is the answer the direct read gives;
+        // the return hands it on. Only the scoped spellings count: the bare-name fallback
+        // would let any scope's `x = None` claim this one's `x`.
+        if (inlineStack.Count > 0 && val is not NoneVal
+            && stmt.Value is MemberAccessExpr or VariableExpr
+            && LiveOptionalTag(stmt.Value) == null
+            && IsNoneValued(stmt.Value, bareNameFallback: false))
+            val = new NoneVal();
+
         if (inlineStack.Count > 0)
         {
             var ctx = inlineStack.Last();

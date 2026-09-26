@@ -1048,7 +1048,7 @@ public partial class IRGenerator
         return expr.Args.Count == 3 ? expr.Args[2] : null;
     }
 
-    private bool IsNoneValued(Expression e)
+    private bool IsNoneValued(Expression e, bool bareNameFallback = true)
     {
         if (e is NoneLiteral) return true;
 
@@ -1091,7 +1091,7 @@ public partial class IRGenerator
             q = a;
             if (noneValuedNames.Contains(q)) return true;
         }
-        return noneValuedNames.Contains(ve.Name);
+        return bareNameFallback && noneValuedNames.Contains(ve.Name);
     }
 
     private bool IsBareRegisterName(Expression expr)

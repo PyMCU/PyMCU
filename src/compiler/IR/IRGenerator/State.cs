@@ -102,6 +102,16 @@ public partial class IRGenerator
     /// byte a call to one produces is a CHARACTER. Filled by the scan, read where a value
     /// has to be written as text (#436).
     private HashSet<string> charReturningFunctions = new();
+    /// Emitted names of the subroutines that hand back None on every path: only bare
+    /// `return`, `return None`, a local bound to nothing but None, or the end of the body.
+    /// A call to one has no value in the return register to read, so its result is the
+    /// compile-time None, and `f() is None` answers what CPython answers. Filled by the scan
+    /// beside charReturningFunctions, because a caller is often lowered before the callee.
+    private HashSet<string> noneReturningFunctions = new();
+    /// The NoneVal the last call to one of them produced (see VoidCallResult).
+    private NoneVal? lastNoneCallResult;
+    /// Outlined methods whose every return is `self.<field>` or None: the fields returned.
+    private Dictionary<string, List<string>> outlinedSelfFieldReturns = new();
     // Names currently bound to None (the real null, not the integer -1). Used to
     // resolve `x is None` / `x is not None` at compile time: a name here IS None,
     // an integer or a concrete instance is NOT. This is what keeps None from
