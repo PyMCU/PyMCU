@@ -91,13 +91,21 @@ public static class TypeInference
         {
             // param evidence: function -> param index -> joined type
             var evidence = new Dictionary<FunctionDef, string?[]>();
+            // Per param: whether None can arrive (a `= None` default or a None argument),
+            // and whether some argument is a literal that is not a number.
+            var noneEvidence = new Dictionary<FunctionDef, (bool none, bool unknown)[]>();
             foreach (var f in candidates)
             {
                 var ev = new string?[f.Params.Count];
+                var nev = new (bool none, bool unknown)[f.Params.Count];
                 for (int i = 0; i < f.Params.Count; i++)
+                {
                     if (f.Params[i].Type.Length == 0 && f.Params[i].DefaultValue is IntegerLiteral dl)
                         ev[i] = TypeOfIntValue(dl.Value);
+                    if (f.Params[i].DefaultValue is NoneLiteral) nev[i].none = true;
+                }
                 evidence[f] = ev;
+                noneEvidence[f] = nev;
             }
             var byName = candidates.ToDictionary(f => f.Name);
 
@@ -105,17 +113,40 @@ public static class TypeInference
             foreach (var prog in programs)
             {
                 foreach (var f in prog.Functions)
-                    CollectFromBody(f.Body.Statements, ScopeTypes(f), byName, returnTypes, evidence);
-                CollectFromBody(prog.GlobalStatements, ModuleScopeTypes(prog), byName, returnTypes, evidence);
+                    CollectFromBody(f.Body.Statements, ScopeTypes(f), byName, returnTypes, evidence,
+                        noneEvidence);
+                CollectFromBody(prog.GlobalStatements, ModuleScopeTypes(prog), byName, returnTypes,
+                    evidence, noneEvidence);
             }
 
             // Apply: fill empty param annotations from the joined evidence.
             foreach (var f in candidates)
             {
                 var ev = evidence[f];
+                var nev = noneEvidence[f];
                 for (int i = 0; i < f.Params.Count; i++)
-                    if (f.Params[i].Type.Length == 0 && ev[i] != null)
+                {
+                    if (f.Params[i].Type.Length != 0) continue;
+                    // None can arrive and every other argument is an integer: the parameter
+                    // is Optional[int], exactly as if it had been written so. Left a plain
+                    // integer, the body's `p is None` folded to False for every call -- the
+                    // subroutine is shared, so no call site's None could reach the fold --
+                    // and the None itself arrived as whatever byte the default lowered to.
+                    // The payload is the width the parameter had anyway -- the joined
+                    // evidence, or the historical uint8 -- so only the None changes. A
+                    // parameter the body treats as a buffer, an object or a callable keeps
+                    // the old reading: an integer union would be a lie about it.
+                    if (nev[i].none && !nev[i].unknown && f.Params[i].UnionMembers == null
+                        && UsedOnlyAsScalar(f, f.Params[i].Name))
+                    {
+                        string payload = ev[i] ?? "uint8";
+                        f.Params[i].Type = payload;
+                        f.Params[i].UnionMembers = new List<string> { payload, "None" };
+                        continue;
+                    }
+                    if (ev[i] != null)
                         f.Params[i].Type = ev[i]!;
+                }
 
                 // RFC 0009 phase 3 (6.1): the return type is the member list the
                 // return statements produce -- one member for a provably uniform
@@ -334,7 +365,8 @@ public static class TypeInference
     private static void CollectFromBody(
         List<Statement> body, Dictionary<string, string> scope,
         Dictionary<string, FunctionDef> byName, Dictionary<string, string> returnTypes,
-        Dictionary<FunctionDef, string?[]> evidence)
+        Dictionary<FunctionDef, string?[]> evidence,
+        Dictionary<FunctionDef, (bool none, bool unknown)[]> noneEvidence)
     {
         foreach (var e in WalkExpressions(body))
         {
@@ -357,10 +389,44 @@ public static class TypeInference
                     valueExpr = arg;
                 }
                 if (index < 0 || index >= ev.Length || f.Params[index].Type.Length > 0) continue;
+                if (valueExpr is NoneLiteral)
+                {
+                    noneEvidence[f][index].none = true;
+                    continue;
+                }
+                // A literal that is not a number says what the parameter is: not an integer.
+                if (valueExpr is not (IntegerLiteral or BooleanLiteral or VariableExpr or BinaryExpr
+                                      or UnaryExpr or CallExpr or MemberAccessExpr or IndexExpr
+                                      or TernaryExpr))
+                    noneEvidence[f][index].unknown = true;
                 string? t = StaticTypeOf(valueExpr, scope, returnTypes);
                 if (t != null) ev[index] = ev[index] == null ? t : Join(ev[index]!, t);
             }
         }
+    }
+
+    // True when nothing in the body subscripts, iterates, measures, calls or reads a member
+    // of <paramref name="name"/>: the uses a number (or None) supports.
+    private static bool UsedOnlyAsScalar(FunctionDef f, string name)
+    {
+        bool Is(Expression? e) => e is VariableExpr v && v.Name == name;
+        foreach (var s in WalkStatements(f.Body.Statements))
+            if (s is ForStmt fs && Is(fs.Iterable)) return false;
+        var bodyStmts = f.Body.Statements;
+        foreach (var e in WalkExpressions(bodyStmts))
+        {
+            switch (e)
+            {
+                case IndexExpr ix when Is(ix.Target): return false;
+                case MemberAccessExpr ma when Is(ma.Object): return false;
+                case CallExpr c when Is(c.Callee)
+                                     || c.Callee is MemberAccessExpr cm && Is(cm.Object)
+                                     || c.Callee is VariableExpr { Name: "len" }
+                                        && c.Args.Count == 1 && Is(c.Args[0]):
+                    return false;
+            }
+        }
+        return true;
     }
 
     // Local annotated declarations (params + `x: T = ...`) of a function.
