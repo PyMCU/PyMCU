@@ -560,7 +560,8 @@ public partial class IRGenerator
                                 foreach (var (fld, _, _) in outlineFieldLayout[callee])
                                     oArgs.Add(isHandle
                                         ? VisitExpression(memC.Object)
-                                        : VisitExpression(new MemberAccessExpr(memC.Object, fld)));
+                                        : CoerceOutlinedArg(callee, oArgs.Count,
+                                            VisitExpression(new MemberAccessExpr(memC.Object, fld))));
                             }
                             {
                                 functionParams.TryGetValue(callee, out var oKwPnames);
@@ -584,7 +585,7 @@ public partial class IRGenerator
                                         ?? TryEvalLiteralBufferArg(a) ?? VisitExpression(a);
                                 }
                                 finally { if (oArgTagged) optionalReadAllowed--; }
-                                if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
+                                av = CoerceOutlinedArg(callee, oPidx, av);
                                 // An array var / field (`self.temp` -> `d_temp`) marshals as
                                 // its base, same as the bare-name path in argValuesL -- a
                                 // Variable copies the first byte where a pointer is needed.
@@ -622,7 +623,7 @@ public partial class IRGenerator
                                     if (oDefaults[di] is not { } defaultExpr)
                                         break;
                                     Val dv = VisitExpression(defaultExpr);
-                                    if (dv is FloatConstant dfc) dv = new Constant((int)Math.Round(dfc.Value));
+                                    dv = CoerceOutlinedArg(callee, di, dv);
                                     oArgs.Add(CoerceToParam(callee, di, dv));
                                 }
                             }
@@ -10584,6 +10585,28 @@ public partial class IRGenerator
             strConstantVariables.Remove(key);
             localConstantValues.Remove(key);
         }
+    }
+
+    /// An argument of a call to an outlined method, in the type of the parameter it binds.
+    /// A compile-time float was rounded to an int whatever the parameter was, so `p.f(-3.0)`
+    /// for `def f(self, a: float)` passed the integer -3, the callee read its bytes as a float
+    /// and saw 0.0. Only a parameter that is not a float still collapses a compile-time float;
+    /// a float parameter takes an integer as the float it is, as EmitExternCall does.
+    private Val CoerceOutlinedArg(string callee, int pidx, Val av)
+    {
+        bool floatParam = functionParamTypes.TryGetValue(callee, out var pts)
+            && pidx >= 0 && pidx < pts.Count && pts[pidx] == DataType.FLOAT
+            && !IsTaggedParam(callee, pidx);
+        if (!floatParam)
+            return av is FloatConstant fc ? new Constant((int)Math.Round(fc.Value)) : av;
+        if (av is Constant { Text: null } ic) return new FloatConstant(ic.Value);
+        if (av is Variable or Temporary && IsScalarIntType(GetValType(av)))
+        {
+            var asFloat = MakeTemp(DataType.FLOAT);
+            Emit(new Copy(av, asFloat));
+            return asFloat;
+        }
+        return av;
     }
 
     // Call into a C extern function (@extern): coerce float args to ints per the C ABI
