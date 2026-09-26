@@ -427,6 +427,13 @@ public partial class IRGenerator
                 }
             }
 
+            if (isComparison && FoldFloatComparison(binExpr.Op, v1, v2) is { } floatRes)
+            {
+                if (jumpIfTrue) { if (floatRes) Emit(new Jump(targetLabel)); }
+                else            { if (!floatRes) Emit(new Jump(targetLabel)); }
+                return floatRes ? 2 : -1;
+            }
+
             if (v1 is Constant c1 && v2 is Constant c2 && isComparison)
             {
                 // Two Constants standing for STRINGS compare by their text, not by their value.
@@ -513,6 +520,13 @@ public partial class IRGenerator
                 DataType cmpType = ComparisonType(v1, v2);
                 v1 = WidenForComparison(v1, cmpType, left: true);
                 v2 = WidenForComparison(v2, cmpType);
+                // An integer literal against a run-time float is a float literal (see
+                // FloatOperand): `x < 0` otherwise converted the 0 on the chip every time.
+                if (GetValType(v1) == DataType.FLOAT || GetValType(v2) == DataType.FLOAT)
+                {
+                    v1 = FloatOperand(v1);
+                    v2 = FloatOperand(v2);
+                }
 
                 // The operand that kept this comparison from being decided, for a guard
                 // warning inside the branch to name (#330). The side that is NOT a literal is

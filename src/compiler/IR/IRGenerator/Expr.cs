@@ -1735,13 +1735,7 @@ public partial class IRGenerator
                 errLine, expr.Column);
         }
 
-        double? AsFloatCt(Val v)
-        {
-            if (v is FloatConstant fc) return fc.Value;
-            if (v is Variable vv && floatConstantVariables.TryGetValue(vv.Name, out double f)) return f;
-            if (v is Constant cv) return cv.Value;
-            return null;
-        }
+        double? AsFloatCt(Val v) => FloatCtValue(v);
 
         bool v1IsFloat = v1 is FloatConstant
             || (v1 is Variable vv1 && floatConstantVariables.ContainsKey(vv1.Name));
@@ -1846,7 +1840,7 @@ public partial class IRGenerator
             }
 
             Temporary floatDst = MakeTemp(isCompare ? DataType.UINT8 : DataType.FLOAT);
-            Emit(new Binary(MapOp(expr.Op), v1, v2, floatDst));
+            Emit(new Binary(MapOp(expr.Op), FloatOperand(v1), FloatOperand(v2), floatDst));
             return floatDst;
         }
 
@@ -2157,6 +2151,47 @@ public partial class IRGenerator
 
     private static bool IsIntegerType(DataType t) => t is DataType.UINT8 or DataType.INT8
         or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
+
+    /// The compile-time value of a float operation's operand: a float literal, a name bound
+    /// to one, or an integer literal (Python compares and combines int with float exactly).
+    /// Null when the value is only known at run time.
+    private double? FloatCtValue(Val v) => v switch
+    {
+        FloatConstant fc => fc.Value,
+        Variable vv when floatConstantVariables.TryGetValue(vv.Name, out double f) => f,
+        Constant { Text: null } cv => cv.Value,
+        _ => null
+    };
+
+    /// A comparison with a float on either side, decided at compile time when both values
+    /// are known; null otherwise. The same IEEE comparison CPython makes (a NaN compares
+    /// unequal to everything). An `if` lowers its test through EmitOptimizedConditionalJump,
+    /// which folded only integer Constant pairs, so `if x < 0.0:` over a `const[float]`
+    /// parameter compiled a run-time `__cmpsf2` and a `raise CompileError` under it was
+    /// downgraded to a warning: the documented refusal never fired.
+    private bool? FoldFloatComparison(Frontend.BinaryOp op, Val v1, Val v2)
+    {
+        bool IsFloat(Val v) => v is FloatConstant
+            || (v is Variable vv && floatConstantVariables.ContainsKey(vv.Name));
+        if (!IsFloat(v1) && !IsFloat(v2)) return null;
+        if (FloatCtValue(v1) is not double a || FloatCtValue(v2) is not double b) return null;
+        return op switch
+        {
+            Frontend.BinaryOp.Equal => a == b,
+            Frontend.BinaryOp.NotEqual => a != b,
+            Frontend.BinaryOp.Less => a < b,
+            Frontend.BinaryOp.LessEq => a <= b,
+            Frontend.BinaryOp.Greater => a > b,
+            Frontend.BinaryOp.GreaterEq => a >= b,
+            _ => null
+        };
+    }
+
+    /// An integer literal used as an operand of a run-time float operation, converted
+    /// here rather than on the chip: handed over as a Constant it cost a `__floatsisf`
+    /// call on every evaluation to produce a value the compiler already had.
+    private static Val FloatOperand(Val v) =>
+        v is Constant { Text: null } c ? new FloatConstant(c.Value) : v;
 
     private Val WidenForComparison(Val v, DataType to, bool left = false)
     {
