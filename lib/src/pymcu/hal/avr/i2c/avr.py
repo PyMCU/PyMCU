@@ -22,6 +22,10 @@
 #
 # TWI status codes (TWSR & 0xF8):
 #   0x08 - START condition transmitted OK
+#   0x10 - repeated START transmitted OK: what a START gives on a bus a stop=False
+#          transfer left held. Every transaction below takes it as a good START;
+#          refusing it made writeto(addr, buf, False) + readfrom_into() raise EIO
+#          with the device present (the MicroPython write-then-read idiom).
 #   0x18 - SLA+W sent, ACK received
 #   0x20 - SLA+W sent, NACK received (no device)
 #   0x28 - data byte sent, ACK received
@@ -137,7 +141,7 @@ def i2c_ping(addr: uint8) -> uint8:
         TWCR.value = 0x94       # STOP (bus dead)
         return 0
     status: uint8 = TWSR.value & 0xF8
-    if status == 0x08:          # START OK
+    if status == 0x08 or status == 0x10:   # START or repeated START OK
         TWDR.value = addr << 1  # SLA+W
         TWCR.value = 0x84
         if not _twi_wait():
@@ -277,7 +281,7 @@ def i2c_write_to(addr: uint8, data: uint8) -> uint8:
         TWCR.value = 0x94
         return 0xFF
     start_status: uint8 = TWSR.value & 0xF8
-    if start_status == 0x08:    # START OK
+    if start_status == 0x08 or start_status == 0x10:    # START or repeated START OK
         TWDR.value = addr << 1  # SLA+W
         TWCR.value = 0x84
         if not _twi_wait():
@@ -336,7 +340,7 @@ def i2c_write_bytes(addr: uint8, buf, n: uint16) -> uint8:
         TWCR.value = 0x94
         return 0xFF
     start_status: uint8 = TWSR.value & 0xF8
-    if start_status == 0x08:    # START OK
+    if start_status == 0x08 or start_status == 0x10:    # START or repeated START OK
         TWDR.value = addr << 1  # SLA+W
         TWCR.value = 0x84
         if not _twi_wait():
@@ -372,7 +376,7 @@ def i2c_read_from(addr: uint8) -> uint8:
         TWCR.value = 0x94
         return 0xFF
     start_status: uint8 = TWSR.value & 0xF8
-    if start_status == 0x08:        # START OK
+    if start_status == 0x08 or start_status == 0x10:    # START or repeated START OK
         sla_r: uint8 = (addr << 1) | 1  # SLA+R
         TWDR.value = sla_r
         TWCR.value = 0x84
@@ -401,7 +405,7 @@ def i2c_read_n(addr: uint8, buf, n: uint16) -> uint8:
         TWCR.value = 0x94
         return 0xFF
     st0: uint8 = TWSR.value & 0xF8
-    if st0 != 0x08:
+    if st0 != 0x08 and st0 != 0x10:  # START or repeated START
         TWCR.value = 0x94
         return 0
     sla_r: uint8 = (addr << 1) | 1  # SLA+R
@@ -439,7 +443,7 @@ def i2c_writeto_mem(addr: uint8, reg: uint8, data: uint8) -> uint8:
         TWCR.value = 0x94
         return 0xFF
     start_status: uint8 = TWSR.value & 0xF8
-    if start_status == 0x08:        # START OK
+    if start_status == 0x08 or start_status == 0x10:    # START or repeated START OK
         TWDR.value = addr << 1      # SLA+W
         TWCR.value = 0x84
         if not _twi_wait():
@@ -475,7 +479,7 @@ def i2c_readfrom_mem(addr: uint8, reg: uint8, buf, n: uint16) -> uint8:
         TWCR.value = 0x94
         return 0xFF
     st0: uint8 = TWSR.value & 0xF8
-    if st0 != 0x08:                 # START failed
+    if st0 != 0x08 and st0 != 0x10:  # START (or repeated START) failed
         TWCR.value = 0x94
         return 0
     TWDR.value = addr << 1          # SLA+W
