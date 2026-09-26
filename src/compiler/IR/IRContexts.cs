@@ -87,6 +87,11 @@ public class InlineContext
     // R24:R25, which is still live -- nothing ran between the two calls.
     public bool ResultIsLiveCall { get; set; }
 
+    // Where the expansion's first instruction goes, so a member tag minted by a later
+    // `return None` can be given its value-path default at the entry.
+    public List<Instruction>? EntryInstructions { get; set; }
+    public int EntryIndex { get; set; }
+
     // The inline name-prefix active inside this expansion's body (e.g. "inline1.outer.").
     // Used to resolve a free variable captured from an enclosing INLINE scope.
     public string Prefix { get; set; } = "";

@@ -2735,6 +2735,7 @@ public partial class IRGenerator
         inlineStack.Add(new InlineContext
             { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames,
               TupleSlotPrefix = tupleSlotPrefix, CalleeName = callee,
+              EntryInstructions = currentInstructions, EntryIndex = currentInstructions.Count,
               Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth,
               FinallyDepth = finallyStack.Count,
               // For a constructor call the target was consumed above (self already

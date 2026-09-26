@@ -1596,6 +1596,20 @@ public partial class IRGenerator
                 && inlineFunctions.TryGetValue(ctx.CalleeName, out var optFn)
                 && optFn?.ReturnMembers != null)
                 ctx.ResultTagTemp = MakeGlobalTemp(DataType.UINT8);
+            // A `return None` that does not decide the result alone -- a run-time branch
+            // picks between it and a value return -- makes the result a union even when
+            // nothing declared one: an @inline body, or a getter whose inferred members
+            // were never recorded. With no tag, the slot held a value on one path and
+            // residue on the other, and `is None` folded to False either way. Mint the tag
+            // here; the paths that return a value, including any already lowered, report
+            // the value member through the default stored at the expansion's entry.
+            if (ctx.ResultTagTemp == null && val is NoneVal { LiveCallResult: false }
+                && !afterUnconditionalReturn && !(endsBody && !hadResult)
+                && ctx.EntryInstructions != null)
+            {
+                ctx.ResultTagTemp = MakeGlobalTemp(DataType.UINT8);
+                ctx.EntryInstructions.Insert(ctx.EntryIndex, new Copy(new Constant(0), ctx.ResultTagTemp));
+            }
             if (ctx.ResultTagTemp != null)
             {
                 Val tagV = InlineReturnTagVal(ctx, stmt.Value, val);

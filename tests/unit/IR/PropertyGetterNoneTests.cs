@@ -85,7 +85,12 @@ public class PropertyGetterNoneTests
     public void ANonNoneSiblingWriteClearsTheMark()
     {
         // `s.inner = 5` re-derives `s.outer` (inner * 2): the stale `s.outer` mark from
-        // the earlier disable would have folded `s.outer is None` true and stored 99.
+        // the earlier disable would have folded `s.outer is None` true and dropped the
+        // else arm. Two different writes put `duty` out of compile-time reach, so the
+        // inner getter's `duty == 0` is a run-time branch between `return None` and a
+        // value, and the answer comes from that union's tag: both arms stay. (This used
+        // to assert the 99 arm away, which only held because the untagged union folded
+        // to "not None" whatever duty held.)
         var ir = Gen(Hdr + Pair +
             "def main():\n" +
             "    s.outer = None\n" +
@@ -96,7 +101,6 @@ public class PropertyGetterNoneTests
             "        GPIOR1.value = 10\n");
         var copies = ir.Functions.SelectMany(f => f.Body).OfType<Copy>().ToList();
         Assert.Contains(copies, c => c.Src is Constant k && k.Value == 10);
-        Assert.DoesNotContain(copies, c => c.Src is Constant k && k.Value == 99);
     }
 
     [Fact]
