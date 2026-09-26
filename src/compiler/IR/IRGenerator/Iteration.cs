@@ -3667,7 +3667,9 @@ public partial class IRGenerator
         // program had written `m = C(x)` first. Without this the statement fell through to
         // "just run the body": nothing constructed the manager, nothing bound v, and the
         // program was rejected for using a name that is assigned right there in its header.
-        if (stmt.ContextExpr is not VariableExpr && !string.IsNullOrEmpty(stmt.AsName))
+        // The same holds with no `as`: `with M(k):` and `with self.i2c_device:` (the lock
+        // idiom) ran the body alone and neither __enter__ nor __exit__, with no diagnostic.
+        if (stmt.ContextExpr is not VariableExpr)
         {
             string managerName = "__with_manager_" + (_withManagerCounter++);
             VisitStatement(new AssignStmt(new VariableExpr(managerName), stmt.ContextExpr));
