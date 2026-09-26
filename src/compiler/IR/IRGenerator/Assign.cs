@@ -1619,6 +1619,10 @@ public partial class IRGenerator
         var newDepth = inlineDepth + 1;
         var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
 
+        // Every expansion of this setter at this depth reuses the prefix: drop the
+        // compile-time bindings the previous one left under it (see EmitDunderCall).
+        CleanCtState(newPrefix[..^1]);
+
         variableAliases[newPrefix + "self"] = @base;
         instanceClasses[newPrefix + "self"] = cls;
 

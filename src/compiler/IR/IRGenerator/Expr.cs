@@ -337,6 +337,13 @@ public partial class IRGenerator
         int newDepth = inlineDepth + 1;
         string newPrefix = $"inline{newDepth}.{func.Name}.";
 
+        // The prefix repeats for every expansion of this dunder at this depth, so the
+        // body's own locals file under the same keys each time. Start clean, as
+        // EmitInlineFunctionCall does: a `p: ptr[uint8] = ptr(addr)` bound to a constant
+        // address by one `m[0x601] = v` otherwise survived into the next `m[a] = v`, whose
+        // run-time `ptr(a)` never replaced it, and the store went through the old address.
+        CleanCtState(newPrefix[..^1]);
+
         variableAliases[newPrefix + "self"] = selfQname;
         instanceClasses[newPrefix + "self"] = className;
 

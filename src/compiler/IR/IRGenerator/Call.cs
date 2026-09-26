@@ -4740,6 +4740,10 @@ public partial class IRGenerator
         var newDepth = inlineDepth + 1;
         var newPrefix = $"inline{newDepth}_{funcSuper.Name}_";
 
+        // Every expansion of this base method at this depth reuses the prefix: drop the
+        // compile-time bindings the previous one left under it (see EmitDunderCall).
+        CleanCtState(newPrefix[..^1]);
+
         var selfAlias = selfAliasKey;
         if (variableAliases.TryGetValue(selfAlias, out var vAlias))
             variableAliases[newPrefix + "self"] = vAlias;

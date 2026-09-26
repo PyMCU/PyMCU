@@ -363,6 +363,9 @@ public partial class IRGenerator
             RemoveDescendants(floatConstantVariables, sep);
             RemoveDescendants(variableAliases, sep);
             RemoveDescendants(constantAddressVariables, sep);
+            // The run-time half of a pointer binding, dropped with the constant half: a
+            // `ptr(<run-time>)` in one expansion left the mark behind for the next.
+            RemoveDescendants(runtimePtrVars, sep);
             RemoveDescendants(instanceClasses, sep);
             // Heap-list element types are callee-local state too: a `pulses =
             // list(pulses)` rebind in one expansion registers the param name
