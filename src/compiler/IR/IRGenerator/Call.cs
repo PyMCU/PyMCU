@@ -1955,6 +1955,25 @@ public partial class IRGenerator
                     argValuesL[i] = coerced;
                     argVal = coerced;
                 }
+                // An integer argument to a FLOAT parameter is converted here. The Call
+                // marshals the integer's own bytes and the callee reads them as a float, so
+                // `half(6)` for `def half(a: float)` received 0.0. A literal converts now;
+                // a run-time integer through a float temporary, which the backend converts.
+                // Not a tagged union parameter: its slot is FLOAT when a float is the widest
+                // member, and the tag spliced in below is read off the argument as written.
+                else if (i < paramTypes.Count && ptype == DataType.FLOAT
+                         && GetValType(argVal) != DataType.FLOAT && !IsTaggedParam(callee, i))
+                {
+                    if (argVal is Constant { Text: null } fArgC)
+                        argVal = new FloatConstant(fArgC.Value);
+                    else if (argVal is Variable or Temporary && IsScalarIntType(GetValType(argVal)))
+                    {
+                        var coerced = MakeTemp(DataType.FLOAT);
+                        Emit(new Copy(argVal, coerced));
+                        argVal = coerced;
+                    }
+                    argValuesL[i] = argVal;
+                }
 
                 // RFC 0009: a still-tagged argument only fits a parameter that carries
                 // its own tag byte -- a plain parameter would keep the payload and drop
