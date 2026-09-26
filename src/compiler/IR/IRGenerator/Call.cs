@@ -972,30 +972,6 @@ public partial class IRGenerator
 
         callee = ResolveOverloadedCallee(callee, expr);
 
-        {
-            bool isSleepMs = callee == "sleep_ms" || callee == "time_sleep_ms" || callee == "pymcu_time_sleep_ms" || callee == "delay_ms" || callee == "time_delay_ms" || callee == "pymcu_time_delay_ms";
-            bool isSleepUs = callee == "sleep_us" || callee == "time_sleep_us" || callee == "pymcu_time_sleep_us" || callee == "delay_us" || callee == "time_delay_us" || callee == "pymcu_time_delay_us";
-            if (isSleepMs || isSleepUs)
-            {
-                string targetSuffix = isSleepMs ? "delay_ms" : "delay_us";
-                string candidate = "pymcu_time_" + targetSuffix;
-                if (!inlineFunctions.ContainsKey(candidate))
-                {
-                    candidate = "";
-                    foreach (var fnName in inlineFunctions.Keys)
-                    {
-                        if (fnName.EndsWith(targetSuffix))
-                        {
-                            candidate = fnName;
-                            break;
-                        }
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(candidate)) callee = candidate;
-            }
-        }
-
         // One check for every builtin, before the dispatch below. Issue #226.
         expr = CheckBuiltinKeywords(expr, callee);
 
