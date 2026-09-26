@@ -6047,8 +6047,12 @@ public partial class IRGenerator
             // carries WIDENED fields (a uint16 _duty a setter joined past its uint8
             // init, #488), and answering from it alone hands back a Variable that was
             // never given a home -- the field reads as a name nothing allocates.
-            if (baseName != null && topLevelInstanceTargets.Contains(baseName)
-                && instanceClasses.ContainsKey(baseName)
+            //
+            // "Module-level instance" includes one HELD by a field of it: `h2.inner` built in
+            // Holder.__init__ flattens to `h2_inner`, which is not itself a top-level target,
+            // and its field was left a function-local nobody wrote -- `h2.inner.base` read 0
+            // inside a function and 2 at module level (#520).
+            if (baseName != null && IsModuleInstanceStorage(baseName)
                 && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main")
             {
                 var gft = variableTypes.TryGetValue(flattenedName, out var gvt)
@@ -6099,6 +6103,24 @@ public partial class IRGenerator
             nextStringId++;
         }
         return new Constant(stringLiteralIds[text], text);
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> is an instance whose fields live in module storage:
+    /// a module-level instance (`h2`), or an instance held by a field path under one
+    /// (`h2_inner`, the Src that Holder.__init__ built). The nested spelling shares the
+    /// root's prefix, the same test BoundModuleStorageSpelling makes; a function-scoped
+    /// key carries a `.` and never qualifies.
+    /// </summary>
+    private bool IsModuleInstanceStorage(string name)
+    {
+        if (!instanceClasses.ContainsKey(name) || name.IndexOf('.') >= 0) return false;
+        if (topLevelInstanceTargets.Contains(name)) return true;
+        foreach (var inst in topLevelInstanceTargets)
+            if (name.StartsWith(inst + "_", StringComparison.Ordinal)
+                && instanceClasses.ContainsKey(inst))
+                return true;
+        return false;
     }
 
     /// <summary>

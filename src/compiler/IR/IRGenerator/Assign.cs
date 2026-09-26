@@ -3425,8 +3425,7 @@ public partial class IRGenerator
             // method writes from its own body, which the marker never walks) is cross-function
             // storage by construction.
             if (moduleInstanceMutableFields.Contains(flattenedName)
-                || (baseName != null && topLevelInstanceTargets.Contains(baseName)
-                    && instanceClasses.ContainsKey(baseName)
+                || (baseName != null && IsModuleInstanceStorage(baseName)
                     && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main"))
                 mutableGlobals[flattenedName] = fdt;
 
