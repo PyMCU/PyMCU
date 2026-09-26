@@ -1,16 +1,36 @@
 # Beta 1 (0.1.0b1) release checklist
 
-Scope: `pymcu-compiler`, `pymcu-stdlib`, `pymcu-sdk`, `pymcu-avr`, and
-`pymcu-circuitpython` publish `0.1.0b1`. `pymcu-micropython`, `pymcu-arm`, and
+Scope: `pymcu-compiler`, `pymcu-stdlib`, `pymcu-sdk`, `pymcu-avr`,
+`pymcu-circuitpython` and `pymcu-micropython` publish `0.1.0b1`. `pymcu-arm` and
 `pymcu-pic` stay on their current alpha version: no publish action for them
-in this release. See [State of the beta](../language/state-of-the-beta.md)
-for what the label does and does not cover.
+in this release (`pymcu-arm` has two unpushed commits about a relocatable
+native module, `pymcu-pic` has none). See
+[State of the beta](../language/state-of-the-beta.md) for what the label does
+and does not cover.
 
-Every command below assumes the five packages are already merged from
-`release-b1` to `main` in their respective repos (`PyMCU`, `pymcu-avr`,
-`pymcu-circuitpython`). **That merge is a separate, explicit step the user
-takes**, not part of this checklist. Nothing here pushes or publishes on its
-own; each numbered stage ends with a manual go/no-go.
+**`pymcu-micropython` publishes too, decided 2026-09-26.** This file first
+said it stayed on alpha, which was written before the work that changed the
+answer: 38 commits since the 2026-09-15 freeze, including the whole `framebuf`
+module, a UART baudrate widened to `uint32` (asking for 115200 gets 50000
+without it), a byte count that could not hold a buffer past 255, and I2C
+raising `OSError` on a NACK the way upstream does. Leaving it out would keep
+PyPI serving `0.1.0a2` and none of that would reach anyone. Its version is now
+`0.1.0b1` and **its `pymcu-stdlib` floor moved with it**, from `0.1.0a10` to
+`0.1.0b1`: it was the last layer still floating on an alpha pin, which is the
+hazard the pre-flight note below describes, and `framebuf` leans on compiler
+behaviour only b1 has. It publishes at step 4b.
+
+**The direction of the freeze reversed on 2026-09-25.** This file was written
+for a freeze that lived on `release-b1` and got merged into `main`. It is now
+the other way round: `main` is 572 commits ahead of `release-b1` in this repo
+and 208 ahead in `pymcu-avr`, and the decision is to freeze from `main`. So
+every `git merge --ff-only release-b1` below became `git branch -f release-b1
+main`, which re-points the frozen branch at what is actually being shipped.
+
+Nothing here pushes or publishes on its own; each numbered stage ends with a
+manual go/no-go. Note that **nothing is on GitHub yet**: 855 commits across
+five repos are local-only, so the pushes below are not routine, they are the
+release.
 
 ## 0. Pre-flight
 
@@ -21,8 +41,15 @@ grep -H '^version' \
   ~/Repos/PyMCU/lib/pyproject.toml \
   ~/Repos/PyMCU/extensions/pymcu-sdk/pyproject.toml \
   ~/Repos/pymcu-avr/pyproject.toml \
-  ~/Repos/pymcu-circuitpython/pyproject.toml
-# All five must read 0.1.0b1.
+  ~/Repos/pymcu-circuitpython/pyproject.toml \
+  ~/Repos/pymcu-micropython/pyproject.toml
+# All six must read 0.1.0b1. Check the dependency floors too: every layer
+# must ask for pymcu-stdlib/pymcu-sdk >=0.1.0b1, not an alpha. A floating
+# alpha pin is what lets a b1 wheel install against an a10 stdlib.
+grep -h 'pymcu-stdlib>=\|pymcu-sdk>=' \
+  ~/Repos/pymcu-avr/pyproject.toml \
+  ~/Repos/pymcu-circuitpython/pyproject.toml \
+  ~/Repos/pymcu-micropython/pyproject.toml
 
 # Suites green in each repo (see AGENTS.md / CLAUDE.md for the compiler
 # rebuild step before test-unit).
@@ -52,7 +79,8 @@ pattern already used by `pymcu-arm`/`pymcu-pic` for `pymcu-sdk`.
 
 ```bash
 cd ~/Repos/PyMCU
-git checkout main && git merge --ff-only release-b1
+git checkout main
+git branch -f release-b1 main   # re-freeze: main is what ships
 git tag v0.1.0b1
 git push origin main --tags   # USER ACTION, confirm before running
 ```
@@ -76,19 +104,26 @@ this push having already regenerated `index.json`.
 
 ```bash
 cd ~/Repos/pymcu-libraries
-git status --short   # confirm clean; local main already has the upstream
-                      # adafruit_hcsr04 entry (commit ac81c44) unpushed
+git status --short   # confirm clean. Local main carries TEN unpushed commits
+                      # adding five upstream entries (hcsr04, pixelbuf,
+                      # framebuf, busdevice, ssd1306). It was rebased onto
+                      # origin/main on 2026-09-25 to absorb five CI
+                      # regenerate commits, so earlier shas no longer exist;
+                      # index.json and libraries.txt came through the rebase
+                      # byte-identical, verified.
 git push origin main   # USER ACTION
 ```
 Confirm the deploy workflow regenerates and serves the new index:
 `curl https://libraries.pymcu.org/index.json` should show `"compiler":
-"0.1.0b1"` and an `adafruit_hcsr04` / `adafruit-circuitpython-hcsr04` entry.
+"0.1.0b1"` and all seven entries: `dht`, `neopixel`, and the five upstream
+ones above.
 
 ## 3. Publish `pymcu-avr`
 
 ```bash
 cd ~/Repos/pymcu-avr
-git checkout main && git merge --ff-only release-b1
+git checkout main
+git branch -f release-b1 main   # re-freeze: main is what ships
 git tag v0.1.0b1
 git push origin main --tags   # USER ACTION
 ```
@@ -100,11 +135,30 @@ now that step 1 is live).
 
 ```bash
 cd ~/Repos/pymcu-circuitpython
-git checkout main && git merge --ff-only release-b1
+git checkout main
+git branch -f release-b1 main   # re-freeze: main is what ships
 git tag v0.1.0b1
 git push origin main --tags   # USER ACTION
 ```
 GitHub Releases → new release, tag `v0.1.0b1`, **Pre-release**, publish.
+
+## 4b. Publish `pymcu-micropython`
+
+```bash
+cd ~/Repos/pymcu-micropython
+git checkout main
+git branch -f release-b1 main   # re-freeze: main is what ships
+git tag v0.1.0b1
+git push origin main --tags   # USER ACTION
+```
+GitHub Releases → new release, tag `v0.1.0b1`, **Pre-release**, publish.
+Confirm on PyPI that `pymcu-micropython==0.1.0b1` resolves
+`pymcu-stdlib>=0.1.0b1`, and that `import framebuf` works in a project that
+declares the micropython stdlib flavor.
+
+Numbered `4b` rather than `5` on purpose: this stage was added on 2026-09-26,
+after the rest of this file was written and cross-referenced by step number.
+Renumbering would have silently broken the references in steps 5 through 8.
 
 ## 5. Flip the website copy from alpha to beta
 
@@ -122,7 +176,7 @@ project-wide framing changes):
 - `src/pages/about.astro:62` `"but are alpha"` (idem)
 - `src/pages/about.astro:83` heading `"Alpha, and honest about it"` and body `"Version 0.1.0a10"`
 
-Do this as one pass, after step 4, once all three beta packages actually
+Do this as one pass, after step 4b, once all four beta packages actually
 show `0.1.0b1` on PyPI. Do not touch the `pymcu-alpha-5.md` post,
 `HeritageCredits`, `RoadmapArchitectures`, or `Countdown`: those are out of
 scope for this flip. Push `copy-tone-and-figures` (or merge it) only after
@@ -173,7 +227,7 @@ If a published wheel is bad:
    and recreate the GitHub Release at the same tag. **Moving the tag alone
    does not retrigger the workflow**, and `workflow_dispatch` on an old tag
    reruns the old workflow file ([[release-environment-name]]).
-4. If a dependent package (step 3 or 4) publishes against a broken step-1
+4. If a dependent package (step 3, 4 or 4b) publishes against a broken step-1
    artifact: it is safe to leave step 1 as `0.1.0b1` and ship the fix as
    `0.1.0b2` for just the broken package, since all the pins here are
    lower-bounds only (`>=`), never upper-bounds. A later `bN` release of
