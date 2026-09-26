@@ -30,7 +30,7 @@ without hiding them:
 
 | Kind | Issues | What it means for a beta-1 program |
 |---|---|---|
-| Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364), [#390](https://github.com/PyMCU/PyMCU/issues/390), [#393](https://github.com/PyMCU/PyMCU/issues/393), [#394](https://github.com/PyMCU/PyMCU/issues/394) (one of its three probes), [#395](https://github.com/PyMCU/PyMCU/issues/395), [#396](https://github.com/PyMCU/PyMCU/issues/396), [#397](https://github.com/PyMCU/PyMCU/issues/397), [#398](https://github.com/PyMCU/PyMCU/issues/398), [#399](https://github.com/PyMCU/PyMCU/issues/399), [#401](https://github.com/PyMCU/PyMCU/issues/401) | An unannotated loop accumulator, a field read through `with ... as`, folded `hex`/`bin`/`str`, a nested comprehension, a ZCA `__add__`/`__lt__`, `len(instance)`, two-index `__setitem__`, `list[T].append()` on the heap, a one-character index, and `match` on an array can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. |
+| Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364), [#390](https://github.com/PyMCU/PyMCU/issues/390), [#394](https://github.com/PyMCU/PyMCU/issues/394) (one of its three probes), [#395](https://github.com/PyMCU/PyMCU/issues/395), [#396](https://github.com/PyMCU/PyMCU/issues/396), [#397](https://github.com/PyMCU/PyMCU/issues/397), [#398](https://github.com/PyMCU/PyMCU/issues/398), [#401](https://github.com/PyMCU/PyMCU/issues/401) | An unannotated loop accumulator, a field read through `with ... as`, a nested comprehension, a ZCA `__add__`/`__lt__`, `len(instance)`, two-index `__setitem__`, `list[T].append()` on the heap, and `match` on an array can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. Two that were here, `#393` (folded `hex`/`bin`/`str`) and `#399` (a one-character index), were fixed on 2026-09-26 and their probes now match CPython. |
 | Correctly refused, misleading reason | [#391](https://github.com/PyMCU/PyMCU/issues/391), [#392](https://github.com/PyMCU/PyMCU/issues/392), [#400](https://github.com/PyMCU/PyMCU/issues/400) (plus two of #394's three probes) | The build fails with a `CompileError` rather than shipping a wrong answer, but the message names the wrong cause (a class with no explicit `__init__`, `bytearray()` assigned to `self.field`, and an `Enum` member read outside a plain assignment all give a diagnostic that points somewhere other than the real limitation). |
 
 The distinction from "silent" as the term is used for the beta-1 exit bar:
@@ -60,8 +60,8 @@ interpreter. It found bugs the probe corpus could not, for the reason that
 makes it worth running: a probe exercises the construct an author already
 suspected, and a real driver exercises the combination nobody chose.
 
-On 2026-09-25 that harness opened 23 issues in one day. Ten are fixed and
-in the tree. What follows is what is still open and can reach a beta-1
+On 2026-09-25 that harness opened 23 issues in one day. Eleven are fixed and
+in the tree, and a string campaign closed five older ones alongside them. What follows is what is still open and can reach a beta-1
 program, with the ones that give a wrong answer and no diagnostic listed
 first, because that is the category this page exists to disclose.
 
@@ -70,7 +70,6 @@ first, because that is the category this page exists to disclose.
 | [#490](https://github.com/PyMCU/PyMCU/issues/490) | The ATtiny register maps are shifted against the vendor headers, so `analog_read()` on an ATtiny85 writes `ADMUX` where `ADCL` lives | ATtiny only |
 | [#494](https://github.com/PyMCU/PyMCU/issues/494) | `int()` is a cast to `int16`, so `int(46051.7)` prints `-19485` | every target |
 | [#506](https://github.com/PyMCU/PyMCU/issues/506) | A `str` is stored in a one-byte slot, so returning one from a function, or taking one as a bare parameter, truncates its id | every target |
-| [#508](https://github.com/PyMCU/PyMCU/issues/508) | `print()` of a `const[str]` parameter writes the flash address as a number, because the print ladder dispatches on syntax rather than on the value. A fix exists and is waiting on its gates; this row stands until it lands | every target |
 | [#510](https://github.com/PyMCU/PyMCU/issues/510) | A method with a single call site is inlined, and the filled ellipse it expands draws the wrong pixels | every target |
 | [#495](https://github.com/PyMCU/PyMCU/issues/495) | A compile-time chip predicate stops folding once it is bound to a name in another module, so both branches are compiled into the firmware | every target |
 | [#500](https://github.com/PyMCU/PyMCU/issues/500) | Two per-chip HAL modules exist twice; the facade wires one copy and the other has drifted, so reading the unwired copy describes behaviour the compiler does not have | every target |
