@@ -74,4 +74,35 @@ public class FloatParameterArgumentTests
         Assert.Equal(2, calls.Count);
         Assert.All(calls, c => Assert.Equal(new FloatConstant(-3.0), c.Args[^1]));
     }
+
+    [Fact]
+    public void AnIntegerForwardedToASiblingMethodsFloatParameterIsAFloat()
+    {
+        // `self.scale(-2)` inside another outlined method takes the forwarding path, which
+        // narrowed integer arguments to their parameter width and left a float parameter
+        // an integer.
+        var ir = Gen(Preamble +
+            "class P:\n" +
+            "    def __init__(self, s: float):\n" +
+            "        self.s = s\n" +
+            "    def scale(self, a: float) -> float:\n" +
+            "        return a * self.s\n" +
+            "    def twice(self, k: int16) -> float:\n" +
+            "        return self.scale(-2) + self.scale(k)\n" +
+            "p = P(2.5)\n" +
+            "x: float = p.twice(int16(GPIOR1.value))\n" +
+            "GPIOR1.value = uint8(x)\n");
+
+        var twice = ir.Functions.Single(f => f.Name.EndsWith("twice"));
+        var args = twice.Body.OfType<Call>().Where(c => c.FunctionName.EndsWith("scale"))
+            .Select(c => c.Args[^1]).ToList();
+        Assert.Equal(2, args.Count);
+        Assert.Equal(new FloatConstant(-2.0), args[0]);
+        Assert.Equal(DataType.FLOAT, args[1] switch
+        {
+            Temporary t => t.Type,
+            Variable v => v.Type,
+            _ => DataType.UNKNOWN
+        });
+    }
 }
