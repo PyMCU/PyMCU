@@ -518,6 +518,7 @@ public partial class IRGenerator
         this.projectModules = projectModules;
         this.importedModuleAsts = importedModules;
         this.mainProgramAst = mainAst;
+        this.referencedNames = null;
         this.deviceConfig = config;
         this.sourceLines = sourceLines ?? new List<string>();
         this.moduleSourceLines = moduleSourceLines ?? new Dictionary<string, List<string>>();
@@ -3514,7 +3515,7 @@ public partial class IRGenerator
             // installed layers is a separate question with its own measurements.
             if (!projectModules.Contains(kvp.Key))
             {
-                if (InstalledModuleInitializers(modAst, prefix) is { Statements.Count: > 0 } seeded)
+                if (InstalledModuleInitializers(kvp.Key, modAst, prefix) is { Statements.Count: > 0 } seeded)
                     AddModuleInit(kvp.Key, prefix, seeded, calls);
                 continue;
             }
@@ -3557,21 +3558,28 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// The part of an INSTALLED module's level that has to run anyway: the initial value of a
-    /// module global that has storage. The rest of its level stays out, for the reason
-    /// EmitImportedModuleInit gives, but a global with storage was declared, allocated, and
-    /// then never written: `maxsize = 2147483647` in the compat layers' sys.py read 0, and
-    /// `pymcu.random`'s `_state: uint32 = 1` started its sequence from 0. Only the ALL-CAPS
-    /// spelling folds to a constant, so the lowercase one -- the spelling upstream uses for
-    /// `sys.maxsize` -- was the one that lost its value, and a float of either spelling too.
+    /// The part of an INSTALLED module's level that has to run anyway: the bindings that give a
+    /// module global with storage its value. The rest of its level stays out (EmitImportedModuleInit
+    /// says why), but a global with storage was declared, allocated, and then never written:
+    /// `maxsize = 2147483647` in the compat layers' sys.py read 0, `pymcu.random`'s
+    /// `_state: uint32 = 1` started its sequence from 0, and `microcontroller.watchdog`, built
+    /// by `watchdog = WatchDogTimer()`, reported a 0.0 s timeout because its constructor never
+    /// ran. Only the ALL-CAPS spelling of a literal folds to a constant, so every other spelling
+    /// lost its value.
     ///
-    /// Taken: the top-level bindings of a name that is a mutable global of this module, to
-    /// values built only from literals (nothing is evaluated that could have an effect or
-    /// reach another module). A name only ever bound to a literal zero is left out: the
-    /// storage already starts at zero, and emitting it would only grow every program that
-    /// imports one.
+    /// Taken: a top-level binding, in the order written, of a name that has storage in this
+    /// module -- a mutable global, or an instance whose constructor sets fields. The binding
+    /// is lowered exactly as Python would run it on import, calls included, because the value
+    /// is what the global holds. What is not a binding (a bare call, a loop, a print) is not
+    /// taken: that is the part of an installed level written knowing it does not run.
+    ///
+    /// Left out, because there is nothing to write: compile-time text and tables (a str, a
+    /// dict or set literal, a constant), a buffer (its storage is zeroed and sized by the
+    /// scan), a name only ever bound to a literal zero (storage starts at zero), and a global
+    /// nothing in the program reads. Measured over the pymcu-avr fixtures, the layer examples
+    /// and the Adafruit simpletests: 529 of 556 programs come out byte-identical.
     /// </summary>
-    private Block? InstalledModuleInitializers(ProgramNode modAst, string prefix)
+    private Block? InstalledModuleInitializers(string moduleName, ProgramNode modAst, string prefix)
     {
         // A module whose level is a folded-away chip guard has nothing to run: its init would be
         // a use of the module, and the guard reports on use.
@@ -3585,44 +3593,130 @@ public partial class IRGenerator
             _ => (null, null, null),
         };
 
-        // A name qualifies when every binding the module level makes of it is a straight-line
-        // top-level one with a literal value: those run in order, unconditionally, on import.
-        // A binding nested in a block (a chip guard, a try) or computed from anything else
-        // disqualifies the name, since which one would have run is not this pass's to decide.
-        var disqualified = new HashSet<string>();
-        var nonZero = new HashSet<string>();
-        var direct = new HashSet<Statement>(modAst.GlobalStatements);
-        foreach (var st in TypeInference.WalkStatements(modAst.GlobalStatements))
+        // A name bound only to a literal zero needs no write; one bound to anything else needs
+        // every one of its bindings, zeros included, in order.
+        var needsWrite = new HashSet<string>();
+        foreach (var st in modAst.GlobalStatements)
         {
-            if (st is AugAssignStmt { Target: VariableExpr av }) { disqualified.Add(av.Name); continue; }
             var (name, _, init) = BindingOf(st);
-            if (name == null) continue;
-            if (!direct.Contains(st) || init == null || !IsLiteralOnly(init)) disqualified.Add(name);
-            else if (!IsLiteralZero(init)) nonZero.Add(name);
+            if (name != null && init != null && !IsLiteralZero(init)) needsWrite.Add(name);
         }
 
         var body = new Block();
         foreach (var st in modAst.GlobalStatements)
         {
             var (name, type, init) = BindingOf(st);
-            if (name == null || init == null) continue;
-            if (disqualified.Contains(name) || !nonZero.Contains(name)) continue;
-            if (!mutableGlobals.ContainsKey(prefix + name) || globals.ContainsKey(prefix + name)) continue;
-            body.Statements.Add(string.IsNullOrEmpty(type)
-                ? new AssignStmt(new VariableExpr(name) { Line = st.Line, Column = st.Column }, init)
-                    { Line = st.Line, Column = st.Column }
+            if (name == null || init == null || !needsWrite.Contains(name)) continue;
+            if (IsTopLevelPureDeclaration(st)) continue;
+            if (IsCompileTimeOrBufferInit(type, init)) continue;
+            string key = prefix + name;
+            if (globals.ContainsKey(key) || moduleSramArrays.Contains(name)) continue;
+            // An instance holds state only through the fields its constructor sets: one whose
+            // __init__ sets none (`machine.mem8`, `__CHIP__`, whose attributes are class-level
+            // compile-time facts) has nothing to write, and constructing it anyway added a call
+            // to every program that imports the module.
+            bool hasStorage = instanceClasses.TryGetValue(key, out var instCls)
+                ? ConstructorSetsFields(instCls)
+                : mutableGlobals.ContainsKey(key);
+            if (!hasStorage) continue;
+            // A global nothing in the program reads holds a value no one sees: seeding it
+            // only costs flash. `import sys` for `sys.implementation` must not pay for
+            // `maxsize`.
+            if (!ReferencedNames().Contains(name)) continue;
+            body.Statements.Add(string.IsNullOrEmpty(type) || st is not VarDecl
+                ? st
                 : new AnnAssign(name, type, init) { Line = st.Line, Column = st.Column });
+        }
+        // A binding inside a block of that level (a try, an `if` the compiler could not fold)
+        // is not lowered here: which branch would have run on import is not this pass's to
+        // decide. If its name holds state, the global would silently hold the wrong value, so
+        // refuse.
+        var direct = new HashSet<Statement>(modAst.GlobalStatements);
+        foreach (var st in TypeInference.WalkStatements(modAst.GlobalStatements))
+        {
+            if (direct.Contains(st)) continue;
+            var (name, type, init) = BindingOf(st);
+            if (name == null || init == null || IsCompileTimeOrBufferInit(type, init)) continue;
+            string key = prefix + name;
+            if (globals.ContainsKey(key) || moduleSramArrays.Contains(name)) continue;
+            bool holdsState = instanceClasses.TryGetValue(key, out var nestedCls)
+                ? ConstructorSetsFields(nestedCls)
+                : mutableGlobals.ContainsKey(key);
+            if (!holdsState) continue;
+            throw new PyMCU.Common.CompilerError("CompileError",
+                $"'{name}' is a module global of the installed module '{moduleName}' and this " +
+                "binding sits inside a block of the module level. An installed module's level " +
+                "runs only its top-level bindings, so the global would not hold the value " +
+                "Python gives it on import. Bind it at the top level of the module.",
+                st.Line, st.Column > 0 ? st.Column : 1, 1) { File = PathOfModule(moduleName) };
         }
         return body;
     }
 
-    private static bool IsLiteralOnly(Expression e) => e switch
+    /// <summary>
+    /// A value with nothing to write at run time: compile-time text or a lookup table, or a
+    /// buffer, whose storage the scan sizes and startup zeroes.
+    /// </summary>
+    private static bool IsCompileTimeOrBufferInit(string? type, Expression init) =>
+        init is StringLiteral or DictExpr or SetExpr or ListExpr or TupleExpr
+        || init is CallExpr { Callee: VariableExpr { Name: "bytearray" or "bytes" or "memoryview" or "array" } }
+        || (type != null && type.StartsWith("bytearray"));
+
+    private HashSet<string>? referencedNames;
+
+    /// <summary>
+    /// Every name anything in the program could read a module global through: a bare name,
+    /// an attribute, a `from m import name`, and -- for getattr -- any string literal. The
+    /// plain target of an assignment is a write and is not counted. Deliberately generous:
+    /// an extra name costs a seeded global, a missing one a silently wrong value.
+    /// </summary>
+    private HashSet<string> ReferencedNames()
     {
-        IntegerLiteral or FloatLiteral or BooleanLiteral => true,
-        UnaryExpr u => IsLiteralOnly(u.Operand),
-        BinaryExpr b => IsLiteralOnly(b.Left) && IsLiteralOnly(b.Right),
-        _ => false,
-    };
+        if (referencedNames != null) return referencedNames;
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var prog in importedModuleAsts.Values.Prepend(mainProgramAst))
+        {
+            if (prog == null) continue;
+            foreach (var imp in prog.Imports) foreach (var sym in imp.Symbols) names.Add(sym);
+            var writeTargets = new HashSet<ASTNode>(ReferenceEqualityComparer.Instance);
+            var nodes = AstNodes(prog, descendIntoFunctions: true).ToList();
+            foreach (var n in nodes)
+                if (n is AssignStmt { Target: VariableExpr wt }) writeTargets.Add(wt);
+            foreach (var n in nodes)
+            {
+                switch (n)
+                {
+                    case VariableExpr ve when !writeTargets.Contains(ve): names.Add(ve.Name); break;
+                    case MemberAccessExpr ma: names.Add(ma.Member); break;
+                    case StringLiteral sl: names.Add(sl.Value); break;
+                    case ImportStmt imp: foreach (var sym in imp.Symbols) names.Add(sym); break;
+                    case GlobalStmt g: foreach (var gn in g.Names) names.Add(gn); break;
+                }
+            }
+        }
+        return referencedNames = names;
+    }
+
+    /// <summary>Whether the class's own or inherited __init__ assigns any `self.&lt;field&gt;`.</summary>
+    private bool ConstructorSetsFields(string classKey)
+    {
+        if (!methodAstByName.TryGetValue(classKey + "___init__", out var init)) return false;
+        foreach (var st in TypeInference.WalkStatements(init.Body))
+        {
+            Expression? target = st switch
+            {
+                AssignStmt a => a.Target,
+                AugAssignStmt au => au.Target,
+                _ => null,
+            };
+            // A str field is compile-time text (`self.name = "micropython"`): nothing to write.
+            if (target is MemberAccessExpr { Object: VariableExpr { Name: "self" } }
+                && st is not AssignStmt { Value: StringLiteral }) return true;
+            // `super().__init__(...)`: the base's constructor may set the fields.
+            if (st is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr { Member: "__init__" } } }) return true;
+        }
+        return false;
+    }
 
     private static bool IsLiteralZero(Expression e) => e switch
     {
