@@ -4869,6 +4869,16 @@ public partial class IRGenerator
 
         target = ResolveTargetAddr(target);
 
+        // `p[i] = v` through a RUNTIME pointer writes a bit of the byte it points at. The
+        // bit instructions below take their operand as the storage to change, so they set a
+        // bit of the variable holding the ADDRESS: `p: ptr[uint8] = ptr(a); p[0] = 1`
+        // compiled to a `bset` on `p` and the register never changed.
+        if (RuntimePtrTargetElem(target) is DataType rpElem)
+        {
+            EmitRuntimePtrBitStore(target, rpElem, indexVal, VisitExpression(stmt.Value));
+            return;
+        }
+
         var bit = 0;
         if (indexVal is Constant c2)
         {
@@ -4966,6 +4976,48 @@ public partial class IRGenerator
             }
             return val;
         }
+    }
+
+    /// Stores <paramref name="value"/>'s truth into bit <paramref name="index"/> of the element
+    /// a runtime pointer points at: load it, change the bit, store it back. A constant index
+    /// uses the bit instructions on the loaded copy; a run-time one builds the mask.
+    private void EmitRuntimePtrBitStore(Val ptrVal, DataType elem, Val index, Val value)
+    {
+        Temporary cur = MakeTemp(elem);
+        Emit(new LoadIndirect(ptrVal, cur, elem));
+        // The bit instructions address one byte; a wider element takes the mask below.
+        if (ConstBitIndex(index) is int bit && elem.SizeOf() == 1)
+        {
+            if (value is Constant vc)
+            {
+                if (vc.Value != 0) Emit(new BitSet(cur, bit));
+                else Emit(new BitClear(cur, bit));
+            }
+            else Emit(new BitWrite(cur, bit, value));
+            Emit(new StoreIndirect(cur, ptrVal, elem));
+            return;
+        }
+        // res = (cur & ~mask) | ((value & 1) * mask), mask = 1 << index
+        Val mask;
+        if (ConstBitIndex(index) is int wideBit)
+            mask = new Constant(1 << wideBit);
+        else
+        {
+            Temporary maskTmp = MakeTemp(elem);
+            Emit(new Binary(BinaryOp.LShift, new Constant(1), index, maskTmp));
+            mask = maskTmp;
+        }
+        Temporary inv = MakeTemp(elem);
+        Emit(new Unary(UnaryOp.BitNot, mask, inv));
+        Temporary cleared = MakeTemp(elem);
+        Emit(new Binary(BinaryOp.BitAnd, cur, inv, cleared));
+        Temporary vbit = MakeTemp(elem);
+        Emit(new Binary(BinaryOp.BitAnd, value, new Constant(1), vbit));
+        Temporary vmask = MakeTemp(elem);
+        Emit(new Binary(BinaryOp.Mul, vbit, mask, vmask));
+        Temporary res = MakeTemp(elem);
+        Emit(new Binary(BinaryOp.BitOr, cleared, vmask, res));
+        Emit(new StoreIndirect(res, ptrVal, elem));
     }
 
     // Folds a literal integer expression to its value for the out-of-range check. Handles direct
@@ -9135,6 +9187,13 @@ public partial class IRGenerator
             }
 
             tgtVal = ResolveTargetAddr2(tgtVal);
+
+            // Through a runtime pointer: the bit lives at the address (see VisitIndexAssign).
+            if (RuntimePtrTargetElem(tgtVal) is DataType augElem)
+            {
+                EmitRuntimePtrBitStore(tgtVal, augElem, idxVal2, result);
+                return;
+            }
 
             int bit = 0;
             if (idxVal2 is Constant c2) bit = c2.Value;

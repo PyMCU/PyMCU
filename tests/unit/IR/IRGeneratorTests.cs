@@ -1233,8 +1233,10 @@ public class IRGeneratorTests
     [Fact]
     public void PtrUint16_LocalVar_BitSet_PreservesType()
     {
-        // A *local* variable declared as ptr[uint16] (via AnnAssign) must also
-        // carry DataType.UINT16 in the BitSet target.
+        // A *local* variable declared as ptr[uint16] (via AnnAssign) must also carry
+        // DataType.UINT16 to the access. Its address is a run-time value, so the bit is
+        // changed at the address it holds, 16 bits wide: this used to assert a BitSet on
+        // the variable itself, which set a bit of the address (see RuntimePointerBitTests).
         const string src =
             "def f():\n" +
             "    reg: ptr[uint16] = 0\n" +
@@ -1242,10 +1244,9 @@ public class IRGeneratorTests
 
         var body = GenerateIR(src).Functions[0].Body;
 
-        var bs = body.OfType<BitSet>().Single();
-        Assert.Equal(0, bs.Bit);
-        Assert.IsType<Variable>(bs.Target);
-        Assert.Equal(DataType.UINT16, ((Variable)bs.Target).Type);
+        Assert.DoesNotContain(body, i => i is BitSet { Target: Variable });
+        Assert.Contains(body, i => i is LoadIndirect { Elem: DataType.UINT16 });
+        Assert.Contains(body, i => i is StoreIndirect { Elem: DataType.UINT16 });
     }
 
     [Fact]

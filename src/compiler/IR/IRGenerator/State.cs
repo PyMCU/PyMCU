@@ -863,6 +863,25 @@ public partial class IRGenerator
         _ => DataType.UINT8
     };
 
+    // The element type of <paramref name="v"/> when it is a RUNTIME pointer (a `ptr(...)` of
+    // an address known only at run time), else null. Its bits live at the address it holds,
+    // not in the variable that holds the address.
+    private DataType? RuntimePtrTargetElem(Val v) => v switch
+    {
+        Variable pv when runtimePtrVars.TryGetValue(pv.Name, out var e) => e,
+        Temporary pt when runtimePtrVars.TryGetValue(pt.Name, out var e) => e,
+        _ => null
+    };
+
+    // A bit index known at compile time: a literal, or a name bound to a constant.
+    private int? ConstBitIndex(Val idx) => idx switch
+    {
+        Constant c => c.Value,
+        Temporary t when constantVariables.TryGetValue(t.Name, out int tv) => tv,
+        Variable v when constantVariables.TryGetValue(v.Name, out int vv) => vv,
+        _ => null
+    };
+
     // Builds a located user-facing compile error from inside IR generation. Using this
     // instead of `throw new Exception(...)` means the message is reported as a clean
     // `file:line: error: CompileError: ...` diagnostic (with the current source line and

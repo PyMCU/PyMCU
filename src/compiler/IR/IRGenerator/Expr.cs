@@ -3981,6 +3981,24 @@ public partial class IRGenerator
 
         target = ResolveAddr(target);
 
+        // `p[i]` through a RUNTIME pointer reads a bit of the byte it points at, not of the
+        // variable holding the address (see EmitRuntimePtrBitStore).
+        if (RuntimePtrTargetElem(target) is DataType rpElem)
+        {
+            Temporary cur = MakeTemp(rpElem);
+            Emit(new LoadIndirect(target, cur, rpElem));
+            Temporary rpDst = MakeTemp();
+            if (ConstBitIndex(indexVal2) is int rpBit && rpElem.SizeOf() == 1)
+            {
+                Emit(new BitCheck(cur, rpBit, rpDst));
+                return rpDst;
+            }
+            Temporary shifted = MakeTemp(rpElem);
+            Emit(new Binary(BinaryOp.RShift, cur, indexVal2, shifted));
+            Emit(new Binary(BinaryOp.BitAnd, shifted, new Constant(1), rpDst));
+            return rpDst;
+        }
+
         int bit = 0;
         if (indexVal2 is Constant c) bit = c.Value;
         else
