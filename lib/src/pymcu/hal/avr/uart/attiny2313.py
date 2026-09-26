@@ -311,3 +311,21 @@ def uart_read_timeout(ms: uint16) -> int16:
     if UCSRA[7]:
         return int16(UDR.value)
     return -1
+
+
+# Whether the data register is empty, so the byte written last has moved into the shift
+# register and is on its way out. A flush() waits on this and then for one frame: TXC
+# would say when the shift register itself is done, but it only means something once a
+# write has cleared it, and clearing it is a write to UCSRA that every UART write in
+# every program would have to pay for.
+@inline
+def uart_tx_empty() -> uint8:
+    if UCSRA[5] == 0:
+        return 0
+    return 1
+
+
+@inline
+def uart_deinit():
+    # RXEN/TXEN off: the pins go back to their port functions.
+    UCSRB.value = 0

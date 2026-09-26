@@ -367,6 +367,16 @@ status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
+symbol = "uart.UART.deinit"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387. AVR-only for now: the MicroPython layer's UART.init/deinit/flush need it (PyMCU#451)."
+
+[[deviation]]
+symbol = "uart.UART.reinit"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387. AVR-only for now: the MicroPython layer's UART.init/deinit/flush need it (PyMCU#451)."
+
+[[deviation]]
 symbol = "uart.UART.read_timeout"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
@@ -405,6 +415,11 @@ reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 symbol = "uart.UART.start_buffered_rx"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "uart.UART.tx_empty"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387. AVR-only for now: the MicroPython layer's UART.flush needs it (PyMCU#451)."
 
 [[deviation]]
 symbol = "uart.UART.write_hex"

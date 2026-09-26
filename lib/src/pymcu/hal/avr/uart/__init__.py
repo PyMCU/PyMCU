@@ -31,6 +31,7 @@ if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
         uart_write_fmt,
         uart_rx_count, uart_rx_buffer_size, uart_rx_irq_setup,
         uart_rx_read_timeout, uart_read_timeout,
+        uart_tx_empty, uart_deinit,
     )
 elif __CHIP__.name == "atmega32u4":
     from pymcu.hal.avr.uart.atmega32u4 import (
@@ -42,6 +43,7 @@ elif __CHIP__.name == "atmega32u4":
         uart_write_fmt,
         uart_rx_count, uart_rx_buffer_size, uart_rx_irq_setup,
         uart_rx_read_timeout, uart_read_timeout,
+        uart_tx_empty, uart_deinit,
     )
 elif (__CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
       or __CHIP__.name == "attiny25" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny85"
@@ -64,6 +66,7 @@ else:
         uart_write_fmt,
         uart_rx_count, uart_rx_buffer_size, uart_rx_irq_setup,
         uart_rx_read_timeout, uart_read_timeout,
+        uart_tx_empty, uart_deinit,
     )
 
 
@@ -240,3 +243,21 @@ class UART:
     @inline
     def read_timeout(self, ms: uint16) -> int16:
         return uart_read_timeout(ms)
+
+    # Reprogram the rate and frame of a running USART: the same register writes the
+    # constructor makes.
+    @inline
+    def reinit(self, baud: const[uint16] = 9600, bits: const[uint8] = 8,
+               parity: const[uint8] = 0, stop: const[uint8] = 1):
+        uart_init(baud, bits, parity, stop)
+
+    # Switch the transmitter and receiver off.
+    @inline
+    def deinit(self):
+        uart_deinit()
+
+    # 1 once the data register is empty: the last byte written is in the shift register
+    # or gone. See uart_tx_empty.
+    @inline
+    def tx_empty(self) -> uint8:
+        return uart_tx_empty()
