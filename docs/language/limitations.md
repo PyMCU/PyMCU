@@ -491,7 +491,10 @@ slot declared wide enough, signed when a value can be negative. `e = d + 300` in
 `e = d - 1` in the other gives `e` a signed slot, `def f(x)` called with `GPIOR0.value + 900`
 gets a 16-bit `x`, and the countdown in adafruit_framebuf's `scroll()` (`y += dt_y` with
 `dt_y = -1`) reaches -1 and leaves its loop. An unannotated `@inline` parameter takes the width
-of the run-time value it is bound to. A program whose slots all hold what is stored into them
+of the run-time value it is bound to, and an annotated one wraps to its declared width as the
+same parameter of a real subroutine does. An unannotated function that returns a number its
+inference could not type is declared with that number's width, instead of being read as void
+(#519). A program whose slots all hold what is stored into them
 compiles once. What this does not cover:
 
 - An accumulator does not grow with its count. `c = GPIOR0.value` and then `c += 1` three
