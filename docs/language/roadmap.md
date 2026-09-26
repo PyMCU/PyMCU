@@ -64,7 +64,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `int.from_bytes(b, 'little'/'big')` | Compile-time fold or runtime |
 | Raw strings `r"\n"` | No escape processing |
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |
-| Nested list comprehensions | Full outer × inner product unroll; `if` filter supported |
+| Nested list comprehensions | **Neither half of this row is true, measured 2026-09-26.** A comprehension inside a comprehension (`[[f(j) for j in ...] for i in ...]`) is refused. Two `for` clauses in one comprehension (`[a * b for a in X for b in Y]`) compiles and writes zeros, silently: probe `063` in the pymcu-avr corpus holds it against CPython as [#394](https://github.com/PyMCU/PyMCU/issues/394). An `if` filter is refused by name (`a list comprehension with a filter (if) is not supported`). What does work is the single-clause form filling a fixed array whose length is a compile-time constant |
 | `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported. An element built by a factory call keeps its returned class (`[pcf.get_pin(i) for i in range(8)]`, adafruit_pcf8574) |
 | A list given to a class (`Bar([Pin(a), Pin(b)])`, `Bar(pins)`) | Compile-time sequence bound to the parameter and to the `self` field: constant subscript, `for`, `len()`, and a run-time subscript that calls a method (up to 8 elements, lowered as a selection) |
 | A list of numbers or a `bytearray` given to a class | The field is another name for the values or the buffer: constant subscript and `for` on the values, run-time indexed load and store on the buffer |
