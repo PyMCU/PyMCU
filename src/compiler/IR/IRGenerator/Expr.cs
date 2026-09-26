@@ -597,6 +597,21 @@ public partial class IRGenerator
     // Range of `a op b` for the promoting operators, or null when it cannot be bounded
     // cheaply (non-constant or out-of-range shift count). Operands are 16-bit or narrower
     // wherever this is consulted, so the long arithmetic cannot overflow.
+    // A signed operand or a negative literal: what brings a sign into an operation.
+    private bool CanBeNegative(Val v) => ValRange(v).Min < 0;
+
+    // Range of `a // b` or `a % b` when both are non-negative and the divisor cannot be
+    // zero; null otherwise (a negative operand floors toward minus infinity, and a zero
+    // divisor raises before any value exists).
+    private static (long Min, long Max)? DivModResultRange(
+        AstBinOp op, (long Min, long Max) a, (long Min, long Max) b)
+    {
+        if (a.Min < 0 || b.Min < 1) return null;
+        return op == AstBinOp.FloorDiv
+            ? (a.Min / b.Max, a.Max / b.Min)
+            : (0L, Math.Min(a.Max, b.Max - 1));
+    }
+
     private static (long Min, long Max)? BinaryResultRange(
         AstBinOp op, (long Min, long Max) a, (long Min, long Max) b)
     {
@@ -2004,8 +2019,29 @@ public partial class IRGenerator
                     DataType.INT8 => DataType.INT16,
                     DataType.UINT16 => negResult ? DataType.INT32 : DataType.UINT32,
                     DataType.INT16 => DataType.INT32,
+                    // Nothing wider to promote to, so a result that can be negative has to
+                    // pick a 32-bit type. It takes the sign when it fits int32 (`q + -4585`,
+                    // q a bounded quotient, is -300, not 4294966996) or when an operand is
+                    // signed (`i * u` with i: int16 is negative whenever i is). Only
+                    // unsigned operands keep uint32 and its documented wrap: `a - 5` with a
+                    // near 3e9 must stay positive, and a difference of two uint32 ticks is
+                    // modular. Before this every case kept uint32, and the range fold read
+                    // it as "never negative".
+                    DataType.UINT32 => negResult
+                                       && ((resRange is (long sMin, long sMax)
+                                            && sMin >= int.MinValue && sMax <= int.MaxValue)
+                                           || CanBeNegative(v1) || CanBeNegative(v2))
+                        ? DataType.INT32 : DataType.UINT32,
                     _ => resType,
                 };
+        }
+        else if (expr.Op is AstBinOp.FloorDiv or AstBinOp.Mod && IsIntegerType(resType))
+        {
+            // Not promoted -- a quotient or remainder never outgrows its operands -- but
+            // bounded, and a consumer needs the bound: `30000 // (u + 7)` is at most 30000,
+            // and without it `q + -4585` could not tell a small negative result from a
+            // wrapped uint32 one.
+            resRange = DivModResultRange(expr.Op, ValRange(v1), ValRange(v2));
         }
 
         // An explicit cast around this op (`uint8(a + b)`) forces fixed-width: compute at the
@@ -2202,6 +2238,13 @@ public partial class IRGenerator
         if (v1 is not (Constant or Variable or Temporary) || v2 is not (Constant or Variable or Temporary)) return null;
         var (lo1, hi1) = ValRange(v1);
         var (lo2, hi2) = ValRange(v2);
+        // A uint32 against something that can be negative has no common exact width: the
+        // comparison runs on 32-bit patterns, and a uint32 that wrapped (`a + b` of a
+        // uint32 and a negative int32) holds the pattern of the negative value. Deciding
+        // it here on "a uint32 is never negative" answered False where the emitted
+        // compare says True.
+        if ((GetValType(v1) == DataType.UINT32 && lo2 < 0)
+            || (GetValType(v2) == DataType.UINT32 && lo1 < 0)) return null;
         bool alwaysLess = hi1 < lo2, alwaysGreater = lo1 > hi2;
         if (!alwaysLess && !alwaysGreater) return null;
         return op switch
