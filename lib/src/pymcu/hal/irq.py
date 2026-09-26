@@ -34,6 +34,7 @@
 
 from pymcu.types import uint8, ptr, inline, asm
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 
 @inline
@@ -94,3 +95,76 @@ def disable_interrupts():
             asm("csrci mstatus, 8")
         case _:
             pass  # pic12 and others: no interrupt controller
+
+
+# A critical section that nests: save the interrupt state, disable, and later put back
+# exactly what was saved. enable_interrupts() after a nested section re-enables what an
+# outer one still needs off, so `s1 = save(); s2 = save(); restore(s2)` left the I-flag
+# set with the outer section still open (PyMCU#353).
+#
+# The state is opaque to the caller: nonzero means "interrupts were on". Architectures
+# whose flag lives in a core register a program cannot read here (PRIMASK, mstatus)
+# refuse instead of answering a state they did not read.
+
+@inline
+def save_and_disable_interrupts() -> uint8:
+    """Disable interrupts and return the state to hand to restore_interrupts().
+
+    avr:     SREG & 0x80 (the I-flag), then CLI
+    pic14/e: INTCON & 0x80 (GIE), then BCF INTCON, GIE
+    pic18:   INTCON & 0x80 (GIE), then BCF INTCON, GIE
+    pic12:   0 (no interrupt controller)
+    """
+    match __CHIP__.arch:
+        case "avr":
+            sreg: ptr[uint8] = ptr(0x5F)
+            state: uint8 = sreg.value & 0x80
+            asm("CLI")
+            return state
+        case "pic14" | "pic14e":
+            intcon: ptr[uint8] = ptr(0x0B)
+            state: uint8 = intcon.value & 0x80
+            intcon[7] = 0
+            return state
+        case "pic18":
+            intcon: ptr[uint8] = ptr(0xFF2)
+            state: uint8 = intcon.value & 0x80
+            intcon[7] = 0
+            return state
+        case "arm" | "riscv":
+            raise CompileError(
+                "save_and_disable_interrupts: reading the interrupt mask (PRIMASK on "
+                "Cortex-M, mstatus.MIE on RISC-V) is not wired up on this architecture, "
+                "so a nested critical section cannot be restored. Use "
+                "disable_interrupts()/enable_interrupts() around a section that does not nest.")
+        case _:
+            return 0
+
+
+@inline
+def restore_interrupts(state: uint8):
+    """Put back the interrupt state save_and_disable_interrupts() returned."""
+    match __CHIP__.arch:
+        case "avr":
+            if state != 0:
+                asm("SEI")
+            else:
+                asm("CLI")
+        case "pic14" | "pic14e":
+            intcon: ptr[uint8] = ptr(0x0B)
+            if state != 0:
+                intcon[7] = 1
+            else:
+                intcon[7] = 0
+        case "pic18":
+            intcon: ptr[uint8] = ptr(0xFF2)
+            if state != 0:
+                intcon[7] = 1
+            else:
+                intcon[7] = 0
+        case "arm" | "riscv":
+            raise CompileError(
+                "restore_interrupts: reading the interrupt mask is not wired up on this "
+                "architecture; see save_and_disable_interrupts.")
+        case _:
+            pass
