@@ -660,6 +660,8 @@ public partial class IRGenerator
         // (safe integer-widening join) BEFORE scanning, so an unannotated helper no longer
         // silently defaults to uint8 and truncates wider arguments.
         PyMCU.Frontend.TypeInference.InferProgram(mainAst, importedModules.Values);
+        // The same for a parameter every call hands a string: it is `str`.
+        PyMCU.Frontend.StrParamInference.InferProgram(mainAst, importedModules.Values);
 
         // Shared with the import check, which has to know these resolve with or without an
         // import naming them (PyMCU.Common.BuiltinExceptionNames).
