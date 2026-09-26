@@ -472,6 +472,18 @@ public partial class IRGenerator
         // answered the hardcoded Constant(0) below instead of what the method computed.
         if (result == null) result = dunderCtx.ResultTemp;
 
+        // A `return <list var>` in the body recorded the element type on the context, and the
+        // branch joins since then dropped the temp's entry: without the re-registration the
+        // plain inline path does, `print(obj[i])` of a list-returning __getitem__ printed the
+        // heap pointer as an integer (adafruit_pixelbuf's `_getitem` list).
+        if (result is { } listRes && dunderCtx.ResultListElem is { } resListElem)
+        {
+            listVarElemTypes[listRes.Name] = resListElem;
+            variableTypes[listRes.Name] = DataType.GC_REF;
+            if (dunderCtx.ResultListInnerElem is { } resInnerElem)
+                listInnerElemTypes[listRes.Name] = resInnerElem;
+        }
+
         if (result != null) return result;
         return new Constant(0);
     }

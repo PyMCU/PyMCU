@@ -10509,6 +10509,17 @@ public partial class IRGenerator
             // The declared width of a NAME travels with its value, because a folded constant no
             // longer carries one (#331): `lo: int32 = -2147483648` printed its low byte.
             Val argV = VisitExpression(arg);
+            // A subscript whose __getitem__ hands back a heap list (`print(buf[0])` on
+            // adafruit_pixelbuf) is a list value like a call result above; the decimal
+            // writer would print its pointer.
+            if (arg is IndexExpr
+                && (argV switch { Variable iv => iv.Name, Temporary it => it.Name, _ => null })
+                    is { } idxResName
+                && listVarElemTypes.TryGetValue(idxResName, out var idxSeqElem))
+            {
+                EmitSeqRepr(writeStrFn, floatWriteFn, argV, idxSeqElem, IsTupleBound(idxResName));
+                return;
+            }
             // A guarded Optional op result is a tagged temp: print it member-wise
             // (`print(x + 1)` on Optional reads the tag, not the widest width).
             if (TryEmitOptionalStreamVal(writeStrFn, floatWriteFn, argV)) return;
