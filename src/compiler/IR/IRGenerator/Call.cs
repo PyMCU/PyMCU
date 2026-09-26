@@ -1969,9 +1969,9 @@ public partial class IRGenerator
                         argVal = new FloatConstant(fArgC.Value);
                     else if (argVal is Variable or Temporary && IsScalarIntType(GetValType(argVal)))
                     {
-                        var coerced = MakeTemp(DataType.FLOAT);
-                        Emit(new Copy(argVal, coerced));
-                        argVal = coerced;
+                        var fCoerced = MakeTemp(DataType.FLOAT);
+                        Emit(new Copy(argVal, fCoerced));
+                        argVal = fCoerced;
                     }
                     argValuesL[i] = argVal;
                 }
@@ -9618,9 +9618,31 @@ public partial class IRGenerator
     }
 
     // CoerceArgToParamWidth against parameter `index` of `callee`, when its type is known.
-    private Val CoerceToParam(string callee, int index, Val arg) =>
-        index >= 0 && functionParamTypes.TryGetValue(callee, out var pts) && index < pts.Count
-            ? CoerceArgToParamWidth(arg, pts[index]) : arg;
+    private Val CoerceToParam(string callee, int index, Val arg)
+    {
+        if (index < 0 || !functionParamTypes.TryGetValue(callee, out var pts) || index >= pts.Count)
+            return arg;
+        // A float parameter takes an integer as the float it is: marshalled as an integer,
+        // the callee read its bytes as a float (0.0 for `o.scale(-3)`).
+        if (pts[index] == DataType.FLOAT && !IsTaggedParam(callee, index))
+            return IntegerArgAsFloat(arg);
+        return CoerceArgToParamWidth(arg, pts[index]);
+    }
+
+    /// An integer argument bound for a float parameter, as a float: a literal converts now,
+    /// a run-time integer through a float temporary the backend converts. Anything else is
+    /// returned as it is.
+    private Val IntegerArgAsFloat(Val arg)
+    {
+        if (arg is Constant { Text: null } ic) return new FloatConstant(ic.Value);
+        if (arg is Variable or Temporary && IsScalarIntType(GetValType(arg)))
+        {
+            var asFloat = MakeTemp(DataType.FLOAT);
+            Emit(new Copy(arg, asFloat));
+            return asFloat;
+        }
+        return arg;
+    }
 
     private static bool IsScalarIntType(DataType t) => t is DataType.UINT8 or DataType.INT8
         or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
