@@ -5272,6 +5272,7 @@ public partial class IRGenerator
                 && literalSequenceArrays.Contains(pSeq.Name))
             { bound += SeqReprBound(pSeq.Name,
                     tupleBoundNames.Contains(pSeq.Name) || IsTupleBound(pSeqVe.Name)); continue; }
+            if (RuntimeStrPart(p) is { } rsp) { bound += rsp.Capacity - 1; continue; }
             if (!string.IsNullOrEmpty(p.FormatSpec))
             {
                 if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
@@ -5290,6 +5291,13 @@ public partial class IRGenerator
         }
         return bound;
     }
+
+    // A plain `{name}` part whose name holds a string built at run time.
+    private (string LenVar, int Capacity)? RuntimeStrPart(FStringPart p) =>
+        p.IsExpr && string.IsNullOrEmpty(p.FormatSpec) && p.Expr is VariableExpr v
+        && TryGetRuntimeStr(v.Name, out var info) ? info : null;
+
+    private int fsCopyId;
 
     // `lenVar = strfmtMod._fs_*(buf, lenVar, ...)` -- one chained strfmt call.
     private void EmitStrfmtCall(string strfmtMod, string lenVar, string fn, List<Expression> args) =>
@@ -5321,6 +5329,25 @@ public partial class IRGenerator
             if (p.Expr is IntegerLiteral il2 && string.IsNullOrEmpty(p.FormatSpec))
             { pending += il2.Value.ToString(); continue; }
             FlushLit();
+            // A string built at run time copies its bytes. It went to the decimal writer
+            // with the rest, which formatted the buffer's address: `f"{a},b"` with
+            // a = f"{seed}" built "257,b".
+            if (RuntimeStrPart(p) is { } rs)
+            {
+                string ctr = "__fscp_" + fsCopyId++;
+                var ctrE = new VariableExpr(ctr);
+                VisitStatement(new VarDecl(ctr, "uint16", new IntegerLiteral(0)));
+                var body = new Block();
+                body.Statements.Add(new AssignStmt(new IndexExpr(buf, pos),
+                    new IndexExpr(new VariableExpr(((VariableExpr)p.Expr!).Name), ctrE)));
+                body.Statements.Add(new AssignStmt(new VariableExpr(lenVar),
+                    new BinaryExpr(pos, Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+                body.Statements.Add(new AssignStmt(ctrE,
+                    new BinaryExpr(ctrE, Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+                VisitStatement(new WhileStmt(
+                    new BinaryExpr(ctrE, Frontend.BinaryOp.Less, new VariableExpr(rs.LenVar)), body));
+                continue;
+            }
             if (!string.IsNullOrEmpty(p.FormatSpec))
             {
                 if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
