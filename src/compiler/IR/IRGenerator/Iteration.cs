@@ -1130,6 +1130,16 @@ public partial class IRGenerator
     {
         baseKey = "";
         size = -1;
+        // Except that a frame binding the name ends the search: past it, the enclosing and
+        // bare spellings are the module's array of the same name (ShadowingFrameKey).
+        if (FrameArrayStorage(name, out bool frameBinds) is { } frameBase
+            && arraySizes.TryGetValue(frameBase, out int fs))
+        {
+            size = LogicalArrayLen(frameBase, fs);
+            baseKey = frameBase;
+            return;
+        }
+        if (frameBinds) return;
         if (!string.IsNullOrEmpty(currentInlinePrefix))
         {
             string key = currentInlinePrefix + name;
@@ -2513,37 +2523,7 @@ public partial class IRGenerator
                         }
                         else if (inner is VariableExpr vE)
                         {
-                            if (!string.IsNullOrEmpty(currentInlinePrefix))
-                            {
-                                string k = currentInlinePrefix + vE.Name;
-                                if (arraySizes.TryGetValue(k, out int s))
-                                {
-                                    arrSize = LogicalArrayLen(k, s);
-                                    @base = k;
-                                }
-                            }
-
-                            if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                            {
-                                string k = currentFunction + "." + vE.Name;
-                                if (arraySizes.TryGetValue(k, out int s))
-                                {
-                                    arrSize = LogicalArrayLen(k, s);
-                                    @base = k;
-                                }
-                            }
-
-                            if (arrSize < 0 && arraySizes.TryGetValue(vE.Name, out int s2))
-                            {
-                                arrSize = LogicalArrayLen(vE.Name, s2);
-                                @base = vE.Name;
-                            }
-
-                            if (arrSize < 0)
-                            {
-                                int s3a = ResolveAliasedArraySize(vE.Name, out var b3a);
-                                if (s3a > 0) { arrSize = s3a; @base = b3a; }
-                            }
+                            ResolveForBase(vE.Name, out @base, out arrSize);
                         }
 
                         if (arrSize > 0)
@@ -2650,18 +2630,8 @@ public partial class IRGenerator
                     (string Base, int Size, DataType Elem)? ResolveArr(Expression e)
                     {
                         if (e is not VariableExpr ve) return null;
-                        foreach (var k in new[]
-                        {
-                            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
-                            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
-                            ve.Name,
-                        })
-                        {
-                            if (k != null && arraySizes.TryGetValue(k, out int sz))
-                                return (k, LogicalArrayLen(k, sz), arrayElemTypes.TryGetValue(k, out var dt) ? dt : DataType.UINT8);
-                        }
-                        int sz2 = ResolveAliasedArraySize(ve.Name, out var b2);
-                        if (sz2 > 0) return (b2, sz2, arrayElemTypes.TryGetValue(b2, out var dt2) ? dt2 : DataType.UINT8);
+                        ResolveForBase(ve.Name, out var b2, out int sz2);
+                        if (b2.Length > 0) return (b2, sz2, arrayElemTypes.TryGetValue(b2, out var dt2) ? dt2 : DataType.UINT8);
                         return null;
                     }
 
@@ -2772,33 +2742,7 @@ public partial class IRGenerator
 
                         if (e is VariableExpr v)
                         {
-                            string @base = "";
-                            int arrSize = -1;
-                            if (!string.IsNullOrEmpty(currentInlinePrefix))
-                            {
-                                string k = currentInlinePrefix + v.Name;
-                                if (arraySizes.TryGetValue(k, out int s))
-                                {
-                                    arrSize = LogicalArrayLen(k, s);
-                                    @base = k;
-                                }
-                            }
-
-                            if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                            {
-                                string k = currentFunction + "." + v.Name;
-                                if (arraySizes.TryGetValue(k, out int s))
-                                {
-                                    arrSize = LogicalArrayLen(k, s);
-                                    @base = k;
-                                }
-                            }
-
-                            if (arrSize < 0 && arraySizes.TryGetValue(v.Name, out int s2))
-                            {
-                                arrSize = LogicalArrayLen(v.Name, s2);
-                                @base = v.Name;
-                            }
+                            ResolveForBase(v.Name, out string @base, out int arrSize);
 
                             if (arrSize > 0)
                             {
@@ -3017,39 +2961,7 @@ public partial class IRGenerator
 
                     if (inner is VariableExpr v)
                     {
-                        string @base = "";
-                        int arrSize = -1;
-                        if (!string.IsNullOrEmpty(currentInlinePrefix))
-                        {
-                            string k = currentInlinePrefix + v.Name;
-                            if (arraySizes.TryGetValue(k, out int s))
-                            {
-                                arrSize = LogicalArrayLen(k, s);
-                                @base = k;
-                            }
-                        }
-
-                        if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                        {
-                            string k = currentFunction + "." + v.Name;
-                            if (arraySizes.TryGetValue(k, out int s))
-                            {
-                                arrSize = LogicalArrayLen(k, s);
-                                @base = k;
-                            }
-                        }
-
-                        if (arrSize < 0 && arraySizes.TryGetValue(v.Name, out int s2))
-                        {
-                            arrSize = LogicalArrayLen(v.Name, s2);
-                            @base = v.Name;
-                        }
-
-                        if (arrSize < 0)
-                        {
-                            int s3r = ResolveAliasedArraySize(v.Name, out var b3r);
-                            if (s3r > 0) { arrSize = s3r; @base = b3r; }
-                        }
+                        ResolveForBase(v.Name, out string @base, out int arrSize);
 
                         if (arrSize > 0)
                         {
@@ -3217,21 +3129,7 @@ public partial class IRGenerator
             // for v in arr[lo:hi:step]: — unroll over a fixed-array slice (constant bounds).
             if (iter is IndexExpr { Target: VariableExpr sliceVar, Index: SliceExpr slc })
             {
-                string slBase = "";
-                int slSize = -1;
-                if (!string.IsNullOrEmpty(currentInlinePrefix)
-                    && arraySizes.TryGetValue(currentInlinePrefix + sliceVar.Name, out int ss0))
-                { slSize = LogicalArrayLen(currentInlinePrefix + sliceVar.Name, ss0); slBase = currentInlinePrefix + sliceVar.Name; }
-                if (slSize < 0 && !string.IsNullOrEmpty(currentFunction)
-                    && arraySizes.TryGetValue(currentFunction + "." + sliceVar.Name, out int ss1))
-                { slSize = LogicalArrayLen(currentFunction + "." + sliceVar.Name, ss1); slBase = currentFunction + "." + sliceVar.Name; }
-                if (slSize < 0 && arraySizes.TryGetValue(sliceVar.Name, out int ss2))
-                { slSize = LogicalArrayLen(sliceVar.Name, ss2); slBase = sliceVar.Name; }
-                if (slSize < 0)
-                {
-                    int ss3 = ResolveAliasedArraySize(sliceVar.Name, out var sb3);
-                    if (ss3 > 0) { slSize = ss3; slBase = sb3; }
-                }
+                ResolveForBase(sliceVar.Name, out string slBase, out int slSize);
 
                 if (slSize > 0)
                 {

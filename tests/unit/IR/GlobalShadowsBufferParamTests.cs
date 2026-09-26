@@ -110,6 +110,25 @@ public class GlobalShadowsBufferParamTests
     }
 
     [Fact]
+    public void InlineParam_ForLoop_WalksTheArgument()
+    {
+        var ir = Gen(
+            "@inline\n" +
+            "def total(buf: bytearray) -> uint8:\n" +
+            "    t: uint8 = 0\n" +
+            "    for x in buf:\n" +
+            "        t = t + x\n" +
+            "    return t\n" +
+            "buf = bytearray(3)\n" +
+            "rb = bytearray(5)\n" +
+            "rb[GPIOR0.value] = 9\n" +
+            "GPIOR1.value = total(rb)\n");
+
+        Assert.Contains(All(ir), i => i is ArrayLoad { ArrayName: "rb" or "main.rb" });
+        Assert.DoesNotContain(All(ir), i => i is ArrayLoad al && IsGlobalBuf(al.ArrayName));
+    }
+
+    [Fact]
     public void PlainFunctionBufferParam_IndexedStore_GoesThroughThePointer()
     {
         var ir = Gen(
