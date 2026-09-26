@@ -3929,8 +3929,12 @@ public partial class IRGenerator
     /// compile before, so no previously-compilable image changes).
     /// </summary>
     private void EmitGuardedTypeErrorRaise(string message)
+        => EmitGuardedBuiltinRaise("TypeError", message);
+
+    /// The same compiler-generated raise for any builtin exception type.
+    private void EmitGuardedBuiltinRaise(string exceptionType, string message)
     {
-        Val code = ResolveBinding("TypeError");
+        Val code = ResolveBinding(exceptionType);
         if (programRecordsRaiseMessages || programReportsRaiseMessage
             || ResolveRuntimeWriteStrFn() != "uart_write_str")
         {

@@ -3017,8 +3017,13 @@ public partial class IRGenerator
             Emit(new Copy(new Constant(0), new Variable(ExceptionSiteVar, DataType.UINT8)));
         }
 
+        // `E("")` was given an argument, so its args is ('',) and e.args[0] is '' -- not the
+        // IndexError of a bare `E()`. It stores the address of an empty string, which is
+        // non-zero, where `E()` stores zero.
+        bool emptyArgument = stmt.HasArgument && string.IsNullOrEmpty(resolvedMessage)
+            && dynamicMessage == null;
         if (programRecordsRaiseMessages && writesMessage
-            && !string.IsNullOrEmpty(resolvedMessage) && !dynamicStored)
+            && (!string.IsNullOrEmpty(resolvedMessage) || emptyArgument) && !dynamicStored)
         {
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(resolvedMessage!)),
@@ -3380,6 +3385,22 @@ public partial class IRGenerator
         DeclareExceptionMessageVar();
         pointer = new Variable(ExceptionMessageVar, DataType.UINT16);
         return true;
+    }
+
+    /// `e.args[0]` when the live exception was raised with no argument: its args is `()`,
+    /// so the subscript raises IndexError. The message word is zero exactly then -- and the
+    /// deferred-print site id too, when the program has one.
+    internal void EmitExceptionArgsIndexCheck(Val pointer)
+    {
+        string hasArg = MakeLabel();
+        Emit(new JumpIfNotZero(pointer, hasArg));
+        if (programHasDynamicRaiseMessage)
+        {
+            DeclareExceptionSiteVar();
+            Emit(new JumpIfNotZero(new Variable(ExceptionSiteVar, DataType.UINT8), hasArg));
+        }
+        EmitGuardedBuiltinRaise("IndexError", "tuple index out of range");
+        Emit(new Label(hasArg));
     }
 
     /// `e.args[<not 0>]`, which would otherwise read the one message under another index.

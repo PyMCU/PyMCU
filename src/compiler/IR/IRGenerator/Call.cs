@@ -10670,10 +10670,22 @@ public partial class IRGenerator
             RefuseBadArgsIndex(arg);
             if (TryExceptionMessage(arg, out var exnMsgPtr))
             {
+                // `e.args[0]` of an exception raised with no argument is CPython's IndexError:
+                // args is the empty tuple. A raise without a message leaves the word at zero
+                // (and the site id with it), which is what tells the two apart here.
+                if (arg is IndexExpr)
+                    EmitExceptionArgsIndexCheck(exnMsgPtr);
                 if (programHasDynamicRaiseMessage)
                     EmitExceptionMessagePrint();
                 else
+                {
+                    // Zero is "raised with no message": print nothing, as str(E()) is ''.
+                    // Handing zero to the writer streamed flash from address 0 instead.
+                    string noMsg = MakeLabel();
+                    Emit(new JumpIfZero(exnMsgPtr, noMsg));
                     Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
+                    Emit(new Label(noMsg));
+                }
                 return;
             }
 
