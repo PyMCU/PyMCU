@@ -3531,13 +3531,17 @@ public partial class IRGenerator
             if (ResolveListLiteralParam(ve.Name) is ListExpr litArg)
             {
                 int li;
+                // The index is evaluated ONCE: the constant test and the flash read used to
+                // visit it separately, so `seq[bump()]` called bump twice and read the element
+                // after the one Python reads.
+                Val? litIdx = expr.Index is IntegerLiteral ? null : VisitExpression(expr.Index);
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
-                else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
+                else if (litIdx is Constant clit) li = clit.Value;
                 else if (ConstValuesOf(litArg.Elements) is { } litValues
                          && TryMaterialiseConstTableFromValues(
                                 "param:" + ResolveNameKey(ve.Name), ve.Name, litValues)
                             is { } litTable)
-                    return EmitFlashArrayRead(litTable, VisitExpression(expr.Index), litValues.Count);
+                    return EmitFlashArrayRead(litTable, litIdx!, litValues.Count);
                 else throw UserError(
                     $"'{ve.Name}' holds {litArg.Elements.Count} compile-time values with no "
                     + "storage behind them, so it cannot be indexed at run time. Declare an "
