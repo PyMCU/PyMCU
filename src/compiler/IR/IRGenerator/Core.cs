@@ -2098,6 +2098,27 @@ public partial class IRGenerator
 
     private Val? ResolveBindingLadder(string name, PyMCU.Frontend.ASTNode? at, bool probe)
     {
+        // Code of an imported module reads ITS global before any bare-keyed table. The entry
+        // file's globals are filed under the bare name, so they answered first everywhere:
+        // `LIM: uint32 = 10` with `def get(): return LIM` in cfg.py returned the entry file's
+        // own `LIM`, and two modules with a global of the same name shared one slot (602 where
+        // CPython prints 311). A name the frame binds is not this, unless it declares it
+        // `global`; the module's own top level (its __module_init) has no frame, and a name
+        // it binds IS the global.
+        bool moduleLevel = currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+        if (!string.IsNullOrEmpty(currentModulePrefix)
+            && (currentFunctionGlobals.Contains(name)
+                || !(moduleLevel ? InlineScopeShadows(name) : LocalScopeBinds(name))))
+        {
+            string own = currentModulePrefix + name;
+            if (globals.TryGetValue(own, out var ownSym))
+                return ownSym.IsMemoryAddress
+                    ? new MemoryAddress(ownSym.Value, ownSym.Type)
+                    : new Constant(ownSym.Value);
+            if (mutableGlobals.TryGetValue(own, out var ownType))
+                return new Variable(own, ownType);
+        }
+
         if (globals.TryGetValue(name, out var symInfo))
         {
             if (symInfo.IsMemoryAddress)
@@ -2228,7 +2249,10 @@ public partial class IRGenerator
                 return new Variable(importedKey, importedAliasType);
         }
 
-        foreach (var mod in modules)
+        // A name the frame binds is its local, never another module's global: `lim = x + 300`
+        // in a function of the entry file read back cfg.py's `lim`, a module it never
+        // imported the name from, and the store was dropped as dead.
+        foreach (var mod in LocalScopeBinds(name) ? Enumerable.Empty<KeyValuePair<string, ModuleScope>>() : modules)
         {
             // `mod_member` mangling collides with ordinary user names: a program that
             // imports `time` and declares `time_alarm` makes `alarm` resolve to that
