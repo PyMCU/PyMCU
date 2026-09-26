@@ -3400,6 +3400,28 @@ public partial class IRGenerator
                     continue;
                 }
 
+                // A parameter declared with a width narrower than the argument's (or of the
+                // other sign) holds the argument converted to that width, as the same
+                // parameter of a real subroutine does. An alias read the caller's wider
+                // variable: `@inline def f(n: uint8)` called with a 300 printed 300 where the
+                // outlined twin printed 44.
+                string declParamT = func.Params[paramIdx].Type;
+                DataType declParamDt = DataTypeExtensions.StringToDataType(declParamT);
+                if ((IsNumericWidthName(declParamT) || declParamT == "int")
+                    && IsScalarIntType(vArg.Type) && IsScalarIntType(declParamDt)
+                    && !TypeHolds(declParamDt, vArg.Type)
+                    && !IsSubscriptedInBody(func.Body, func.Params[paramIdx].Name))
+                {
+                    variableAliases.Remove(paramName);
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableTypes[paramName] = declParamDt;
+                    Emit(new Copy(vArg, new Variable(paramName, declParamDt)));
+                    CarryOptionalTagToParam(paramName, vArg);
+                    continue;
+                }
+
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);

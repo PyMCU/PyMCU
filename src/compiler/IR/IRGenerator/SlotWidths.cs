@@ -93,6 +93,14 @@ public partial class IRGenerator
         }
     }
 
+    /// Whether every value of <paramref name="value"/> fits <paramref name="slot"/>.
+    private static bool TypeHolds(DataType slot, DataType value)
+    {
+        var (sLo, sHi) = RangeOfType(slot);
+        var (vLo, vHi) = RangeOfType(value);
+        return vLo >= sLo && vHi <= sHi;
+    }
+
     private static string TypeName(DataType t) => t switch
     {
         DataType.UINT8 => "uint8", DataType.INT8 => "int8",
