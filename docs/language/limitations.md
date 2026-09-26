@@ -500,9 +500,11 @@ compiles once. What this does not cover:
 - An accumulator does not grow with its count. `c = GPIOR0.value` and then `c += 1` three
   hundred times prints 44, not 300: a store computed from the slot itself (`c += v`,
   `c = c + v`, `self.c += v`) widens the slot for its sign and for the width of `v`, never for
-  the magnitude a loop reaches -- no width holds every value a loop can count to. A literal
-  start (`c = 0`) in a function is a 32-bit local already; annotate the accumulator
-  (`c: uint16 = ...`) where a runtime start can count past its width.
+  the magnitude a loop reaches -- no width holds every value a loop can count to. Such a
+  store inside a loop in the program's own files raises a warning at the store
+  (`unannotated-accumulator`) naming the width the slot got; annotate it (`c: uint16 = ...`)
+  to say how far it counts. A literal start (`c = 0`) in a function is a 32-bit local
+  already, and a 32-bit slot is not warned about.
 - A slot that receives both a value past 2147483647 and a negative one has no 32-bit type
   that holds both, and keeps wrapping.
 
