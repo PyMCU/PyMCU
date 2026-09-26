@@ -3512,7 +3512,12 @@ public partial class IRGenerator
             // never intended to compile. Measured, not assumed: doing it for all of them turns
             // 129 tests red, `machine`'s own `mem8 = _Mem8()` first. Extending it to the
             // installed layers is a separate question with its own measurements.
-            if (!projectModules.Contains(kvp.Key)) continue;
+            if (!projectModules.Contains(kvp.Key))
+            {
+                if (InstalledModuleInitializers(modAst, prefix) is { Statements.Count: > 0 } seeded)
+                    AddModuleInit(kvp.Key, prefix, seeded, calls);
+                continue;
+            }
 
             var body = new Block();
 
@@ -3538,40 +3543,7 @@ public partial class IRGenerator
             }
 
             if (body.Statements.Count == 0) continue;
-
-            // The synthesized function IS the module level, so every name it assigns is a
-            // module global by definition. Without saying so it hits the ordinary rule and
-            // reports "'c' is a module-level global; to assign it inside
-            // 'counter___module_init' add a 'global c'" -- naming a function nobody wrote.
-            var globalNames = new List<string>();
-            // Top-level-only was wrong: `if cond: x = 1` at module level still assigns
-            // the module global, and without the declaration the synthesized function
-            // demanded a `global x` in a function nobody wrote.
-            foreach (var st in TypeInference.WalkStatements(body.Statements))
-            {
-                var targets = st switch
-                {
-                    AnnAssign aa => new[] { aa.Target },
-                    AssignStmt { Target: VariableExpr tv } => new[] { tv.Name },
-                    AugAssignStmt { Target: VariableExpr av } => new[] { av.Name },
-                    ForStmt f => new[] { f.VarName, f.Var2Name },
-                    TupleUnpackStmt tu => tu.Targets.ToArray(),
-                    _ => Array.Empty<string?>(),
-                };
-                foreach (var target in targets)
-                    if (!string.IsNullOrEmpty(target) && !target.Contains('.')
-                        && !globalNames.Contains(target))
-                        globalNames.Add(target);
-            }
-            if (globalNames.Count > 0)
-                body.Statements.Insert(0, new GlobalStmt(globalNames));
-
-            string initName = prefix + "__module_init";
-            var initFn = new FunctionDef("__module_init", new List<Param>(), "None", body);
-            functionsToCompile.Add(new FunctionEntry
-                { Prefix = prefix, Func = initFn, SourceFile = kvp.Key + ".py", SourcePath = PathOfModule(kvp.Key) });
-            functionReturnTypes[initName] = "None";
-            calls.Add(new ExprStmt(new CallExpr(new VariableExpr(initName), new List<Expression>())));
+            AddModuleInit(kvp.Key, prefix, body, calls);
         }
 
         if (calls.Count == 0) return;
@@ -3582,6 +3554,122 @@ public partial class IRGenerator
         int at = 0;
         while (at < mainBody.Count && IsInjectedPreamble(mainBody[at])) at++;
         for (int i = calls.Count - 1; i >= 0; i--) mainBody.Insert(at, calls[i]);
+    }
+
+    /// <summary>
+    /// The part of an INSTALLED module's level that has to run anyway: the initial value of a
+    /// module global that has storage. The rest of its level stays out, for the reason
+    /// EmitImportedModuleInit gives, but a global with storage was declared, allocated, and
+    /// then never written: `maxsize = 2147483647` in the compat layers' sys.py read 0, and
+    /// `pymcu.random`'s `_state: uint32 = 1` started its sequence from 0. Only the ALL-CAPS
+    /// spelling folds to a constant, so the lowercase one -- the spelling upstream uses for
+    /// `sys.maxsize` -- was the one that lost its value, and a float of either spelling too.
+    ///
+    /// Taken: the top-level bindings of a name that is a mutable global of this module, to
+    /// values built only from literals (nothing is evaluated that could have an effect or
+    /// reach another module). A name only ever bound to a literal zero is left out: the
+    /// storage already starts at zero, and emitting it would only grow every program that
+    /// imports one.
+    /// </summary>
+    private Block? InstalledModuleInitializers(ProgramNode modAst, string prefix)
+    {
+        // A module whose level is a folded-away chip guard has nothing to run: its init would be
+        // a use of the module, and the guard reports on use.
+        if (moduleGuardErrors.ContainsKey(prefix)) return null;
+
+        static (string? Name, string? Type, Expression? Init) BindingOf(Statement st) => st switch
+        {
+            VarDecl vd => (vd.Name, vd.VarType, vd.Init),
+            AnnAssign aa => (aa.Target, aa.Annotation, aa.Value),
+            AssignStmt { Target: VariableExpr tv } asg => (tv.Name, null, asg.Value),
+            _ => (null, null, null),
+        };
+
+        // A name qualifies when every binding the module level makes of it is a straight-line
+        // top-level one with a literal value: those run in order, unconditionally, on import.
+        // A binding nested in a block (a chip guard, a try) or computed from anything else
+        // disqualifies the name, since which one would have run is not this pass's to decide.
+        var disqualified = new HashSet<string>();
+        var nonZero = new HashSet<string>();
+        var direct = new HashSet<Statement>(modAst.GlobalStatements);
+        foreach (var st in TypeInference.WalkStatements(modAst.GlobalStatements))
+        {
+            if (st is AugAssignStmt { Target: VariableExpr av }) { disqualified.Add(av.Name); continue; }
+            var (name, _, init) = BindingOf(st);
+            if (name == null) continue;
+            if (!direct.Contains(st) || init == null || !IsLiteralOnly(init)) disqualified.Add(name);
+            else if (!IsLiteralZero(init)) nonZero.Add(name);
+        }
+
+        var body = new Block();
+        foreach (var st in modAst.GlobalStatements)
+        {
+            var (name, type, init) = BindingOf(st);
+            if (name == null || init == null) continue;
+            if (disqualified.Contains(name) || !nonZero.Contains(name)) continue;
+            if (!mutableGlobals.ContainsKey(prefix + name) || globals.ContainsKey(prefix + name)) continue;
+            body.Statements.Add(string.IsNullOrEmpty(type)
+                ? new AssignStmt(new VariableExpr(name) { Line = st.Line, Column = st.Column }, init)
+                    { Line = st.Line, Column = st.Column }
+                : new AnnAssign(name, type, init) { Line = st.Line, Column = st.Column });
+        }
+        return body;
+    }
+
+    private static bool IsLiteralOnly(Expression e) => e switch
+    {
+        IntegerLiteral or FloatLiteral or BooleanLiteral => true,
+        UnaryExpr u => IsLiteralOnly(u.Operand),
+        BinaryExpr b => IsLiteralOnly(b.Left) && IsLiteralOnly(b.Right),
+        _ => false,
+    };
+
+    private static bool IsLiteralZero(Expression e) => e switch
+    {
+        IntegerLiteral { Value: 0 } or BooleanLiteral { Value: false } => true,
+        FloatLiteral f => f.Value == 0.0,
+        _ => false,
+    };
+
+    /// <summary>
+    /// Compile one module's init statements as its synthesized `__module_init`, under the
+    /// module's own prefix, and queue the call main makes to it.
+    /// </summary>
+    private void AddModuleInit(string moduleName, string prefix, Block body, List<Statement> calls)
+    {
+        // The synthesized function IS the module level, so every name it assigns is a
+        // module global by definition. Without saying so it hits the ordinary rule and
+        // reports "'c' is a module-level global; to assign it inside
+        // 'counter___module_init' add a 'global c'" -- naming a function nobody wrote.
+        var globalNames = new List<string>();
+        // Top-level-only was wrong: `if cond: x = 1` at module level still assigns
+        // the module global, and without the declaration the synthesized function
+        // demanded a `global x` in a function nobody wrote.
+        foreach (var st in TypeInference.WalkStatements(body.Statements))
+        {
+            var targets = st switch
+            {
+                AnnAssign aa => new[] { aa.Target },
+                AssignStmt { Target: VariableExpr tv } => new[] { tv.Name },
+                AugAssignStmt { Target: VariableExpr av } => new[] { av.Name },
+                ForStmt f => new[] { f.VarName, f.Var2Name },
+                TupleUnpackStmt tu => tu.Targets.ToArray(),
+                _ => Array.Empty<string?>(),
+            };
+            foreach (var target in targets)
+                if (!string.IsNullOrEmpty(target) && !target.Contains('.')
+                    && !globalNames.Contains(target))
+                    globalNames.Add(target);
+        }
+        if (globalNames.Count > 0)
+            body.Statements.Insert(0, new GlobalStmt(globalNames));
+
+        string initName = prefix + "__module_init";
+        var initFn = new FunctionDef("__module_init", new List<Param>(), "None", body);
+        functionsToCompile.Add(new FunctionEntry
+            { Prefix = prefix, Func = initFn, SourceFile = moduleName + ".py", SourcePath = PathOfModule(moduleName) });
+        functionReturnTypes[initName] = "None";
+        calls.Add(new ExprStmt(new CallExpr(new VariableExpr(initName), new List<Expression>())));
     }
 
 
