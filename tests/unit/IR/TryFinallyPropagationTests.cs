@@ -59,4 +59,14 @@ public class TryFinallyPropagationTests
         var ir = Gen(Src);
         Assert.True(ir.Functions.Single(f => f.Name == "run").CanFail);
     }
+
+    [Fact]
+    public void TheReRaiseAfterAFinally_ReloadsTheSavedCode()
+    {
+        var run = Gen(Src).Functions.Single(f => f.Name == "run");
+        // No propagating re-raise may say "leave R22 as it is" after the finally ran.
+        Assert.DoesNotContain(run.Body, i => i is SignalError { CatchLabel: null, Code: Constant { Value: 0 } });
+        Assert.Contains(run.Body, i => i is SignalError { CatchLabel: null, Code: Variable v }
+            && v.Name.StartsWith("__exn_code_"));
+    }
 }

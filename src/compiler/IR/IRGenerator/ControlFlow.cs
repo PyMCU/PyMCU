@@ -3214,11 +3214,24 @@ public partial class IRGenerator
         //   - in main itself there is no caller, so halt directly.
         RestoreBranchState(trySnap);
         if (hasFinally) EmitFinallyBody(stmt);
+        // The finally is ordinary code and is free to use R22 (a division in it did), so after
+        // one the pending code is reloaded from the copy the dispatcher saved: re-raising with
+        // "leave R22 as it is" handed the caller whatever the finally left there, and a caller's
+        // `except ZeroDivisionError` no longer matched its own exception.
+        Val pendingCode = hasFinally ? exnCode : new Constant(0);
         string? enclosingCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
         if (enclosingCatch != null)
-            Emit(new SignalError(new Constant(0), enclosingCatch));
+            Emit(new SignalError(pendingCode, enclosingCatch));
         else if (currentFunction != "main")
-            Emit(new SignalError(new Constant(0), null));
+            Emit(new SignalError(pendingCode, null));
+        else if (hasFinally)
+        {
+            // The unhandled report names the type from R22, so it is reloaded here too.
+            string unhandled = MakeLabel();
+            Emit(new SignalError(pendingCode, unhandled));
+            Emit(new Label(unhandled));
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+        }
         else
             Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
 
