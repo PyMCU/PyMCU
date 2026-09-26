@@ -792,12 +792,19 @@ public partial class IRGenerator
                         // mutate (it would emit a call to a nonexistent <var>_append symbol
                         // and fail at link). Surface it clearly. These method names are never
                         // valid on a non-list value, so this never flags a real symbol.
+                        // Located through UserError so the line and the file come from the
+                        // same frame: `lastLine` is -1 inside an expansion, and a call node
+                        // the C# front end built without a line printed `main.py:-1`.
                         if (memC.Member is "append" or "pop" or "insert" or "remove" or "extend" or "clear")
-                            throw new NameError(
+                        {
+                            var at = UserError(
                                 $"'.{memC.Member}()' requires a typed list; an untyped '[]' has no " +
                                 "runtime list. Declare it like `x: list[uint8] = []`, or use a " +
-                                "fixed-size array `x: uint8[N]`.",
-                                expr.Line > 0 ? expr.Line : lastLine, expr.Column);                        callee = vObj.Name + "_" + memC.Member;
+                                "fixed-size array `x: uint8[N]`.", expr.Line > 0 ? expr : memC);
+                            throw new NameError(at.Message, at.Line, at.Column, at.Length)
+                                { File = at.File, LocationIsFinal = true };
+                        }
+                        callee = vObj.Name + "_" + memC.Member;
                     }
                 }
                 else if (objVal is MemoryAddress addr)
