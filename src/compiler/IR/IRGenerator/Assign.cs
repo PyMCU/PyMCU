@@ -152,7 +152,7 @@ public partial class IRGenerator
 
         // A name declared with a `const[...]` annotation is immutable; reassigning it is a
         // user error (previously this was silently accepted, overwriting the constant).
-        if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
+        if (stmt.Target is VariableExpr constTgt && IsDeclaredConst(constTgt.Name))
             throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)", constTgt);
 
         // The same refusal one level in: an enum member. It was already refused where the enum
@@ -5034,7 +5034,7 @@ public partial class IRGenerator
             || StaticStringOf(p.Expr!) != null
             || p.Expr is IntegerLiteral
             || (p.Expr is VariableExpr cv &&
-                (declaredConstants.Contains(cv.Name)
+                (IsDeclaredConst(cv.Name)
                  || constantVariables.ContainsKey(currentInlinePrefix + cv.Name)
                  || constantVariables.ContainsKey(cv.Name)));
         if (parts.All(IsConstPart)) return false;
@@ -6987,7 +6987,7 @@ public partial class IRGenerator
         // A `const[...]` annotation marks the name immutable; record it so a later
         // assignment to it is rejected (see VisitAssign's reassignment guard).
         if (!stmt.Target.Contains('.') && IsConstType(stmt.Annotation))
-            declaredConstants.Add(stmt.Target);
+            declaredConstants.Add(DeclaredConstKey(stmt.Target));
 
         // `T: tuple[...] = (a, b, c)` IS `T = (a, b, c)` with the type written down (#357).
         //
@@ -8691,7 +8691,7 @@ public partial class IRGenerator
     {
         // A const-declared name is immutable; an augmented assignment (`K += 1`) mutates it
         // just like a plain assignment, so reject it with the same located error.
-        if (stmt.Target is VariableExpr augConstTgt && declaredConstants.Contains(augConstTgt.Name))
+        if (stmt.Target is VariableExpr augConstTgt && IsDeclaredConst(augConstTgt.Name))
             throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)", augConstTgt);
 
         // `Color.RED += 1` mutates an enum member exactly as a plain assignment does.

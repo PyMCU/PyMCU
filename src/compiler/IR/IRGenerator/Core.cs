@@ -385,6 +385,10 @@ public partial class IRGenerator
             // marked inline2.draw_char.char once per unrolled iteration, then a
             // later expansion handing a run-time char code refused ord(char)).
             RemoveDescendants(multiStrVariables, sep);
+            // A `const[...]` local of the previous expansion: the next one binds the
+            // same name afresh, and may bind it as an ordinary variable (a method of
+            // another class shares the prefix when the two have the same name).
+            RemoveDescendantsSet(declaredConstants, sep);
         }
     }
 
