@@ -5442,6 +5442,13 @@ public partial class IRGenerator
         if (expr.Object is VariableExpr handleVe && HandleFieldRead(handleVe.Name, expr.Member) is { } handleVal)
             return handleVal;
 
+        // The same handle when it is never bound to a name: `make(2).base`. The call's result
+        // IS the field, but the receiver is a temporary, so the read above never asked and the
+        // access flattened to `tmp_N_base`, a name nothing writes -- 0, while the bound spelling
+        // on the line before answered 2 (#526).
+        if (FactoryHandleCallField(expr) is { } factoryField)
+            return factoryField;
+
         // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field>` reads from the
         // instance slot via the `self` pointer at the field's byte offset. Guard with an empty
         // inline prefix: when ANOTHER method is inlined into this outlined slot method (e.g.
@@ -6103,6 +6110,30 @@ public partial class IRGenerator
             nextStringId++;
         }
         return new Constant(stringLiteralIds[text], text);
+    }
+
+    /// <summary>
+    /// `f(...).<paramref name="expr"/>.Member` where f is an outlined factory declared to return
+    /// a single-field class and the member is that field: lower the call and hand back its
+    /// result, which is the field. Null in every other case. An @inline factory is left alone:
+    /// its expansion builds a real instance and the ordinary resolution already reads it.
+    /// </summary>
+    private Val? FactoryHandleCallField(MemberAccessExpr expr)
+    {
+        if (expr.Object is not CallExpr { Callee: VariableExpr facVe }) return null;
+        string callee = ResolveCallee(facVe.Name);
+        if (inlineFunctions.ContainsKey(callee)) return null;
+        if (!functionReturnTypes.TryGetValue(callee, out var rt) || rt == null) return null;
+        if (!zcaFactoryClasses.TryGetValue(rt, out var fieldType)) return null;
+        if (!classFieldLayout.TryGetValue(rt, out var layout)
+            || layout.Count != 1 || layout[0].Field != expr.Member) return null;
+
+        Val result = VisitExpression(expr.Object);
+        DataType dt = DataTypeExtensions.StringToDataType(fieldType);
+        if (result is Temporary t && t.Type == dt) return t;
+        var typed = MakeTemp(dt);
+        Emit(new Copy(result, typed));
+        return typed;
     }
 
     /// <summary>

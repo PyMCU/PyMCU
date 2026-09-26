@@ -2009,10 +2009,15 @@ public partial class IRGenerator
         // and the result temp is a GC pointer even though no annotation says so.
         lastCallReturnListElem = funcListReturnElems.TryGetValue(callee, out var flre)
             ? flre : (DataType?)null;
+        // RFC 0001 Model B: a factory declared `-> C` for a single-field class returns the
+        // field itself, and its IR return type already says so (VisitFunctionDef). The class
+        // name has no width of its own, so without this the result temp was UNKNOWN.
         DataType retDt = functionReturnMembers.TryGetValue(callee, out var cMembers)
             ? UnionPayloadType(cMembers)
             : IsListLikeReturnType(rType) || lastCallReturnListElem.HasValue
                 ? DataType.GC_REF
+            : rType != null && zcaFactoryClasses.TryGetValue(rType, out var handleFieldType)
+                ? DataTypeExtensions.StringToDataType(handleFieldType)
             : rType != null && rType.Length > 0 ? DataTypeExtensions.StringToDataType(rType)
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
