@@ -212,6 +212,35 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Whether any @inline expansion open right now stores through one of its own parameters
+    /// (`p[i] = v`, `p[i] += v`). A literal handed down the chain can only be written through
+    /// such a store; a same-named buffer written in some other function is another object.
+    /// </summary>
+    private bool ActiveExpansionsStoreThroughParams()
+    {
+        foreach (var ctx in inlineStack)
+        {
+            FunctionDef? fd = inlineFunctions.TryGetValue(ctx.CalleeName, out var f1) ? f1
+                : methodAstByName.TryGetValue(ctx.CalleeName, out var f2) ? f2
+                : instanceMethodDefs.TryGetValue(ctx.CalleeName, out var f3) ? f3
+                : null;
+            if (fd == null) return true;   // cannot see the body: assume it writes
+            var ps = new HashSet<string>(fd.Params.Select(p => p.Name));
+            foreach (var st in TypeInference.WalkStatements(fd.Body.Statements))
+            {
+                Expression? t = st switch
+                {
+                    AssignStmt a => a.Target,
+                    AugAssignStmt au => au.Target,
+                    _ => null,
+                };
+                if (t is IndexExpr { Target: VariableExpr tv } && ps.Contains(tv.Name)) return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// The elements of a compile-time list of numbers, as constants, or null when any element
     /// is not one.
     /// </summary>

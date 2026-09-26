@@ -3784,10 +3784,16 @@ public partial class IRGenerator
                 Val? litIdx = expr.Index is IntegerLiteral ? null : VisitExpression(expr.Index);
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (litIdx is Constant clit) li = clit.Value;
+                // The table is keyed by the VALUES, not only by the parameter: the parameter
+                // key is reused by every expansion at the same depth, so `bus.write(b"\xcc\xbe")`
+                // then `bus.write(b"\xcc\x4e")` would read the first call's table. And the
+                // writes that could contradict it are the ones through a parameter of the
+                // expansions this literal travels in, not every `buf[i] = ...` in the program.
                 else if (UnderSeqArgScope(litScope, () => ConstValuesOf(litArg.Elements))
                             is { } litValues
+                         && !ActiveExpansionsStoreThroughParams()
                          && TryMaterialiseConstTableFromValues(
-                                "param:" + ResolveNameKey(ve.Name), ve.Name, litValues)
+                                "param:" + string.Join(",", litValues), "", litValues)
                             is { } litTable)
                     return EmitFlashArrayRead(litTable, litIdx!, litValues.Count);
                 else throw UserError(
