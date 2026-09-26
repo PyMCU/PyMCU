@@ -3222,6 +3222,15 @@ public partial class IRGenerator
                 continue;
             }
 
+            // A module-level `x = r` is lowered inside the synthesized main and files its alias
+            // as `main.x`, while the argument read of the global carries the bare `x`. Bound
+            // as it stood, the parameter took x's scalar slot (or a constant folded from it)
+            // and the callee's `buf[i]` read the bits of that byte instead of r's elements.
+            if (argValues[i] is Variable { Name: var modArg } modArgVar && !modArg.Contains('.')
+                && variableAliases.TryGetValue("main." + modArg, out var modAlias)
+                && FollowAliases(modAlias) is var modTerm && arraySizes.ContainsKey(modTerm))
+                argValues[i] = new Variable(modTerm, modArgVar.Type);
+
             if (argValues[i] is Variable vArg)
             {
                 // `neopixel_write(pin, self._post_brightness_buffer)`: an arena-backed
