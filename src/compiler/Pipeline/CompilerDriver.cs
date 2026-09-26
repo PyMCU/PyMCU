@@ -40,30 +40,60 @@ public class CompilerDriver
         var version = CompilerInfo.Version;
         Logger.PrintBanner(version);
 
-        var context = new CompilationContext(options);
-
-        foreach (var phase in _phases)
+        // A run that finds an unannotated slot narrower than a value stored into it asks for
+        // the whole compilation again with that slot widened (WidthSeeds). Each run starts from
+        // the source: the phases rewrite the tree as they go, so it cannot be lowered twice.
+        // Warnings wait until a run is known to be the last one, or each would print once per
+        // run. Widths only grow and are capped at 32 bits, so a handful of runs is the most a
+        // program can ask for; the last one is kept whatever it recorded.
+        const int maxRuns = 5;
+        var seeds = new WidthSeeds();
+        CompilationContext context = null!;
+        for (int run = 1; ; run++)
         {
-            var sw = Stopwatch.StartNew();
-            Logger.PhaseStart(phase.Name);
-            try
-            {
-                phase.Execute(context);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("Fatal", $"Unhandled exception in phase '{phase.Name}': {ex.Message}");
-                context.HasErrors = true;
-            }
-            sw.Stop();
+            context = new CompilationContext(options) { WidthSeeds = seeds, RerunAllowed = run < maxRuns };
+            seeds.BeginRun();
+            Diagnostic.HoldWarnings();
+            bool rerun = false;
 
-            if (context.HasErrors)
+            foreach (var phase in _phases)
             {
-                Logger.BuildFailed(phase.Name);
-                return 1;
+                var sw = Stopwatch.StartNew();
+                Logger.PhaseStart(phase.Name);
+                try
+                {
+                    phase.Execute(context);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("Fatal", $"Unhandled exception in phase '{phase.Name}': {ex.Message}");
+                    context.HasErrors = true;
+                }
+                sw.Stop();
+
+                if (context.HasErrors)
+                {
+                    Diagnostic.ReleaseWarnings();
+                    Logger.BuildFailed(phase.Name);
+                    return 1;
+                }
+
+                Logger.PhaseEnd(phase.Name, sw.ElapsedMilliseconds);
+
+                if (context.RerunWithWiderSlots)
+                {
+                    rerun = true;
+                    break;
+                }
             }
 
-            Logger.PhaseEnd(phase.Name, sw.ElapsedMilliseconds);
+            if (rerun)
+            {
+                Diagnostic.DropHeldWarnings();
+                continue;
+            }
+            Diagnostic.ReleaseWarnings();
+            break;
         }
 
         Logger.PrintTargetSummary(context.DeviceConfig.Chip, context.DeviceConfig.Frequency);

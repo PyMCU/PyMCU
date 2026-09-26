@@ -1828,6 +1828,14 @@ public partial class IRGenerator
                         $"`v: {declRet} = ...`", stmt);
                 funcListReturnElems[currentFunction] = outListElem;
             }
+            // An unannotated return whose inference found no type ("void") still hands the
+            // value back in the return register, where the caller reads a byte.
+            if (functionReturnTypes.TryGetValue(currentFunction, out var outRt))
+            {
+                var outRtDt = DataTypeExtensions.StringToDataType(outRt);
+                NoteReturnStore(currentFunction,
+                    outRtDt is DataType.VOID or DataType.UNKNOWN ? DataType.UINT8 : outRtDt, val);
+            }
             Emit(new Return(val, TagForReturn(stmt.Value, val)));
         }
     }

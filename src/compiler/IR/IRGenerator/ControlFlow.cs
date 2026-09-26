@@ -2108,7 +2108,10 @@ public partial class IRGenerator
         if (constantVariables.TryGetValue(key, out int iv)
             || localConstantValues.TryGetValue(key, out iv))
         {
-            var dt = MaterializedIntType(key, iv);
+            var dt = MaterializedIntType(key, iv, out bool declared);
+            // A local, or a parameter written without an annotation, is sized by the value it
+            // holds now; a store the loop makes later is checked against that (WidthSeeds).
+            if (!declared) dt = InferredSlot(key, dt);
             variableTypes[key] = dt;
             Emit(new Copy(new Constant(iv), new Variable(key, dt)));
             return;
@@ -2127,8 +2130,9 @@ public partial class IRGenerator
     /// slot signed, which dragged `t = t + self.g[y][x]` accumulators to i16 and emitted a
     /// whole second `write_decimal_i16` where main stayed unsigned.
     /// </summary>
-    private DataType MaterializedIntType(string key, long value)
+    private DataType MaterializedIntType(string key, long value, out bool declared)
     {
+        declared = false;
         if (!string.IsNullOrEmpty(currentInlinePrefix)
             && key.StartsWith(currentInlinePrefix, StringComparison.Ordinal)
             && inlineStack.Count > 0
@@ -2137,8 +2141,15 @@ public partial class IRGenerator
             && functionParamTypes.TryGetValue(callee, out var pts))
         {
             int idx = ps.IndexOf(key[currentInlinePrefix.Length..]);
-            if (idx >= 0 && idx < pts.Count && pts[idx] != DataType.UNKNOWN)
+            // An unannotated parameter reads as uint8 in that table, which is no declaration:
+            // `scroll(-1, 0)` bound delta_y to -1 and a loop that rebinds it stored 255.
+            bool written = !functionParamDeclared.TryGetValue(callee, out var decl)
+                || idx < 0 || idx >= decl.Count || decl[idx].Length > 0;
+            if (idx >= 0 && idx < pts.Count && pts[idx] != DataType.UNKNOWN && written)
+            {
+                declared = true;
                 return pts[idx];
+            }
         }
         return value switch
         {

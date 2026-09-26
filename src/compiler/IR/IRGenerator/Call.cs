@@ -612,6 +612,10 @@ public partial class IRGenerator
                                          && (StaticStringOf(oValExpr) is { Length: not 1 }
                                              || IsRuntimeStrArgument(oValExpr)))
                                     RefuseTextForNonStrParam(callee, oPname, oValExpr, expr);
+                                if (oKwPnames != null && oPidx >= 0 && oPidx < oKwPnames.Count
+                                    && functionParamTypes.TryGetValue(callee, out var oPtypes)
+                                    && oPidx < oPtypes.Count)
+                                    NoteArgumentStore(callee + "." + oKwPnames[oPidx], oPtypes[oPidx], av);
                                 // The same width coercion a plain call gets. An outlined
                                 // method is marshalled by each argument's own width too, and
                                 // `o.add(s + 300)` handed a uint16 parameter the uint32 temp
@@ -2072,6 +2076,8 @@ public partial class IRGenerator
                         argValuesL[i] = argVal;
                     }
                 }
+
+                NoteArgumentStore(paramVarName, ptype, argVal);
 
                 // Coerce a scalar argument to the callee's DECLARED param width (see
                 // CoerceArgToParamWidth for why the backend needs it).
@@ -3642,8 +3648,17 @@ public partial class IRGenerator
             strConstantVariables.Remove(paramName);
             floatConstantVariables.Remove(paramName);
             variableAliases.Remove(paramName);
-            DataType paramType = ParamListRefType(argValues[i], paramName,
-                DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type));
+            // An unannotated parameter takes the width of the run-time value it is bound to.
+            // The uint8 default truncated it: `f(GPIOR0.value + 900)` printed 132 (CPython
+            // 900). A later store into the parameter inside the body is checked like any
+            // inferred local's.
+            DataType declaredParamType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+            if (func.Params[paramIdx].Type.Length == 0
+                && WidthSeeds.IsInt(GetValType(argValues[i]))
+                && argValues[i] is Variable or Temporary)
+                declaredParamType = InferredSlot(paramName,
+                    WidthSeeds.Join(DataType.UINT8, GetValType(argValues[i])));
+            DataType paramType = ParamListRefType(argValues[i], paramName, declaredParamType);
             variableTypes[paramName] = paramType;
             Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
             CarryOptionalTagToParam(paramName, argValues[i]);
@@ -5926,6 +5941,10 @@ public partial class IRGenerator
             }
             finally { if (fwdTagged) optionalReadAllowed--; }
             if (!fwdTagged) RefuseOptionalPayloadStore(fAv, a);
+            if (functionParams.TryGetValue(target, out var fwdPnames) && fwdPidx >= 0
+                && fwdPidx < fwdPnames.Count
+                && functionParamTypes.TryGetValue(target, out var fwdPtypes) && fwdPidx < fwdPtypes.Count)
+                NoteArgumentStore(target + "." + fwdPnames[fwdPidx], fwdPtypes[fwdPidx], fAv);
             fwdArgs.Add(CoerceToParam(target, fwdPidx, fAv));
             fwdArgExprs.Add(a is KeywordArgExpr fKw2 ? fKw2.Value : a);
         }

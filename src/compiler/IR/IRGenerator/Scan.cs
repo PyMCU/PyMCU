@@ -1284,6 +1284,23 @@ public partial class IRGenerator
                 widenableGlobals.Remove(key);
             }
         }
+
+        // Every store into an unannotated global is checked against the width chosen above,
+        // and one an earlier run found too narrow starts at the width it needs.
+        foreach (var st in ast.GlobalStatements)
+        {
+            if (st is not AssignStmt { Target: VariableExpr gv } || annotated.Contains(gv.Name)) continue;
+            string key = currentModulePrefix + gv.Name;
+            if (mutableGlobals.TryGetValue(key, out var gt) && WidthSeeds.IsInt(gt))
+            {
+                var seeded = InferredSlot(key, gt);
+                if (seeded != gt)
+                {
+                    mutableGlobals[key] = seeded;
+                    widenableGlobals.Remove(key);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1886,6 +1903,7 @@ public partial class IRGenerator
             functionModulePrefix[fullName] = currentModulePrefix ?? "";
             if (func.Params.Any(p => p.IsKeywordOnly || p.IsPositionalOnly))
                 shapedSignatures[fullName] = func;
+            RecordSlotDef(fullName, func);
 
             if (scope != null)
             {
@@ -2125,10 +2143,11 @@ public partial class IRGenerator
                             {
                                 if (baseName is "Enum" or "IntEnum") continue;
                                 List<(string Field, string Type, string SourceParam)>? baseLayout = null;
+                                string baseLayoutKey = "";
                                 if (classFieldLayout.TryGetValue(oldPrefix + baseName, out var blm) && blm.Count > 0)
-                                    baseLayout = blm;
+                                    (baseLayout, baseLayoutKey) = (blm, oldPrefix + baseName);
                                 else if (classFieldLayout.TryGetValue(baseName, out var blm2) && blm2.Count > 0)
-                                    baseLayout = blm2;
+                                    (baseLayout, baseLayoutKey) = (blm2, baseName);
                                 else
                                 {
                                     // Same cross-module gap as above: a base named through an
@@ -2136,9 +2155,14 @@ public partial class IRGenerator
                                     string blmImported = ResolveCallee(baseName);
                                     if (blmImported != baseName
                                         && classFieldLayout.TryGetValue(blmImported, out var blm3) && blm3.Count > 0)
-                                        baseLayout = blm3;
+                                        (baseLayout, baseLayoutKey) = (blm3, blmImported);
                                 }
                                 if (baseLayout == null) continue;
+                                // A store through the subclass into an inherited unannotated
+                                // field is checked against the base's slot, which is the one
+                                // the subclass copies.
+                                foreach (var bf in baseLayout)
+                                    InheritFieldSlot(classKey, baseLayoutKey, bf.Field);
 
                                 // A field the subclass ALSO writes itself is the same slot the
                                 // base constructor fills (try: super().__init__() / except:
@@ -2343,6 +2367,7 @@ public partial class IRGenerator
                                 functionParamTypes[fullName] = paramTypes;
                                 NoteStrParamSlots(fullName, func, func.Params);
                                 functionParamDeclared[fullName] = func.Params.Select(p => p.Type).ToList();
+                                RecordSlotDef(fullName, func);
                                 // Methods need their defaults recorded too. Only top-level
                                 // functions were, so an outlined method called with an argument
                                 // omitted got nothing for that parameter and its body read zero
@@ -3833,6 +3858,13 @@ public partial class IRGenerator
         if (classInstanceFields.TryGetValue(classKey, out var claimedObj))
             layout.RemoveAll(e => claimedObj.Contains(e.Item1));
 
+        // A field no write annotated is checked at every store, and one an earlier run found
+        // too narrow is laid out at the width it needs (WidthSeeds).
+        for (int i = 0; i < layout.Count; i++)
+            if (!pinnedTypes.Contains(layout[i].Item1))
+                layout[i] = (layout[i].Item1, SeedFieldType(classKey, layout[i].Item1, layout[i].Item2),
+                             layout[i].Item3);
+
         return layout;
     }
 
@@ -4643,6 +4675,7 @@ public partial class IRGenerator
         functionParamDefaults[fullName] = synthParams.Select(p => p.DefaultValue).ToList();
         functionParamTypes[fullName] = synthParams.Select(p => ParamStorageType(synth, p.Type)).ToList();
         NoteStrParamSlots(fullName, synth, synthParams);
+        RecordSlotDef(fullName, func);
     }
 
     // RFC 0001 F4: is a method safe to outline (compile once, share) instead of force-inline?

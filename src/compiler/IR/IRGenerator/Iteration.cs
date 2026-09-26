@@ -1606,6 +1606,10 @@ public partial class IRGenerator
         DataType inferred = NarrowestTypeFor(lo, hi);
         if (DeclaredLoopVarType(stmt.VarName) is { } declared)
         {
+            // A name whose width was inferred from an earlier store is not declared: the loop
+            // is one more store into it (WidthSeeds).
+            if (InferredLoopVarType(stmt.VarName, declared, lo, hi) is { } widened)
+                return widened;
             var (dLo, dHi) = RangeOfType(declared);
             if (exact && (lo < dLo || hi > dHi))
                 throw UserError(

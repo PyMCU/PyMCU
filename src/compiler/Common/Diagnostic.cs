@@ -56,6 +56,9 @@ public static class Diagnostic
     /// and prints NO caret, because a caret on a guess is worse than no caret at all.
     public static void Report(CompilerError err, ReadOnlySpan<char> source, string filename)
     {
+        // An error ends the compilation, so the run it comes from is the last one: the
+        // warnings it held come first, in the order they were raised.
+        ReleaseWarnings();
         if (Format == ErrorFormat.Json)
         {
             DiagnosticJson.Report(err, source, filename);
@@ -161,6 +164,33 @@ public static class Diagnostic
     /// number as data for the JSON consumer, and stays 0 where the site does not know one; the
     /// duplication is deliberate, so that adopting this changes no terminal output.
     public static void Warning(string text, int line = 0, string? file = null, string? code = null)
+    {
+        if (heldWarnings != null)
+        {
+            heldWarnings.Add(() => EmitWarning(text, line, file, code));
+            return;
+        }
+        EmitWarning(text, line, file, code);
+    }
+
+    // Warnings of a compilation run that may be thrown away: the driver runs the compilation
+    // again when a run finds an unannotated slot too narrow (WidthSeeds), and each run raises
+    // the same warnings. They are held until the driver knows which run is the last.
+    private static List<Action>? heldWarnings;
+
+    public static void HoldWarnings() => heldWarnings = new List<Action>();
+
+    public static void DropHeldWarnings() => heldWarnings = null;
+
+    public static void ReleaseWarnings()
+    {
+        var held = heldWarnings;
+        heldWarnings = null;
+        if (held == null) return;
+        foreach (var w in held) w();
+    }
+
+    private static void EmitWarning(string text, int line, string? file, string? code)
     {
         if (Format == ErrorFormat.Json)
         {

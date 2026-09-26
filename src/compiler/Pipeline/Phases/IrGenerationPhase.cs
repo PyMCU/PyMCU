@@ -45,9 +45,30 @@ public class IrGenerationPhase : CompilerPhaseBase
         irGen.LibraryMode = context.Options.Library;
         // RFC 0008: --embed NAME=PATH pairs build the compile-time romfs table.
         irGen.EmbeddedFiles = context.Options.Embeds;
-        var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
-            context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
-            context.ModulePaths);
+        irGen.WidthSeeds = context.WidthSeeds;
+        ProgramIR ir;
+        try
+        {
+            ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
+                context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
+                context.ModulePaths);
+        }
+        catch (CompilerError) when (context.WidthSeeds.Grew && context.RerunAllowed)
+        {
+            // Lowered with a slot too narrow, the program may fail for that reason alone
+            // (a comparison folded against the truncated width, say). The widened run is the
+            // one that decides; if the error is real it comes back there.
+            context.RerunWithWiderSlots = true;
+            return;
+        }
+
+        // An unannotated slot was narrower than a value stored into it: the driver compiles
+        // again with the slot widened, so this IR goes no further.
+        if (context.WidthSeeds.Grew && context.RerunAllowed)
+        {
+            context.RerunWithWiderSlots = true;
+            return;
+        }
 
         // One width per variable name, whether or not the optimizer runs: the backend sizes a
         // name once, so two widths for one name is a miscompile, not a missed optimisation.

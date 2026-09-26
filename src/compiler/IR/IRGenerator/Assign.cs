@@ -1926,12 +1926,14 @@ public partial class IRGenerator
             // the binding takes (adafruit_ht16k33's _number does exactly this).
             if (value is Constant cc && !FitsInScalar(cc.Value, tv.Type.ToString().ToLower()))
             {
+                vt = InferredSlot(key, vt);
                 variableTypes[key] = vt;
                 return new Variable(key, vt);
             }
             return target;
         }
 
+        vt = InferredSlot(key, vt);
         variableTypes[key] = vt;
         return new Variable(key, vt);
     }
@@ -2167,6 +2169,7 @@ public partial class IRGenerator
                             Constant cc => NarrowestTypeFor(cc.Value, cc.Value),
                             _ => DataType.UINT8,
                         };
+                        lt = InferredSlot(localKey, lt);
                         variableTypes[localKey] = lt;
                         target = new Variable(localKey, lt);
                     }
@@ -2297,6 +2300,7 @@ public partial class IRGenerator
                                 type = castDt;
                             else if (value is Constant && stmt.Value is not IntegerLiteral)
                                 type = DataType.INT32;
+                            type = InferredSlot(qualifiedName, type);
                             variableTypes[qualifiedName] = type;
                             if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
                                 Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
@@ -2366,6 +2370,7 @@ public partial class IRGenerator
                 && priorT != DataType.UNKNOWN && priorT != DataType.FLOAT
                 && rebindT != DataType.FLOAT && priorT.SizeOf() > rebindT.SizeOf())
                 rebindT = priorT;
+            rebindT = InferredSlot(rebindQ, rebindT);
             variableTypes[rebindQ] = rebindT;
             target = new Variable(rebindQ, rebindT);
         }
@@ -2402,7 +2407,11 @@ public partial class IRGenerator
         else if (!(value is NoneVal)
             && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name))
             && !(value is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
-            Emit(new Copy(value, target));
+        {
+            storeReadsItsTarget = ReadsName(stmt.Value, varExpr.Name);
+            try { Emit(new Copy(value, target)); }
+            finally { storeReadsItsTarget = false; }
+        }
 
         // RFC 0009: a name that can hold a runtime optional gets its tag byte written
         // alongside every payload write -- including `x = None`, which emits no payload
@@ -2886,6 +2895,7 @@ public partial class IRGenerator
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
         RejectAssignmentToAMethod(memExpr2);
+        NoteFieldStore(memExpr2, stmt.Value, value);
 
         // RFC 0009: an Optional field is phase 2 -- a field store that kept only the
         // payload would drop the tag silently, so the unnarrowed case refuses by name.
@@ -9374,8 +9384,16 @@ public partial class IRGenerator
                 string q = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + ve.Name
                     : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
-                DataType dt = variableTypes.TryGetValue(q, out var dt2) ? dt2
-                    : WidestElemType(new List<int> { c.Value });
+                DataType dt;
+                if (variableTypes.TryGetValue(q, out var dt2)) dt = dt2;
+                else
+                {
+                    // An annotated parameter keeps the width it was always given here; a
+                    // local, or a parameter written without one, is checked from now on.
+                    dt = WidestElemType(new List<int> { c.Value });
+                    MaterializedIntType(q, c.Value, out bool declaredParam);
+                    if (!declaredParam) dt = InferredSlot(q, dt);
+                }
                 var slot = new Variable(q, dt);
                 variableTypes[q] = dt;
                 Emit(new Copy(c, slot));
@@ -9677,6 +9695,7 @@ public partial class IRGenerator
             DataType dt = GetValType(cur);
             if (dt == DataType.UNKNOWN) dt = DataType.UINT8;
             Temporary res = MakeTemp(dt);
+            NoteFieldAugStore(mfield, IRGenerator.MapAugOp(stmt.Op), operand);
             Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
             // A @property must write back through its setter, not a phantom data field. The
             // getter read above already produced `cur`; route the new value through the setter.
@@ -9922,7 +9941,8 @@ public partial class IRGenerator
                 for (int k = 0; k < nTgt; ++k)
                 {
                     string qualified = QualifyTarget(stmt.Targets[k]);
-                    DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : GetValType(snapshots[k]);
+                    DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t
+                        : InferredSlot(qualified, GetValType(snapshots[k]));
                     variableTypes[qualified] = dt;
                     Emit(new Copy(snapshots[k], new Variable(qualified, dt)));
                     if (snapshots[k] is Constant c)
@@ -9959,9 +9979,11 @@ public partial class IRGenerator
                 {
                     Val v = VisitExpression(tup.Elements[k]);
                     string qualified = QualifyTarget(stmt.Targets[k]);
-                    Emit(new Copy(v, new Variable(qualified, DataType.UINT8)));
+                    DataType fixedT = variableTypes.TryGetValue(qualified, out var ft) ? ft
+                        : InferredSlot(qualified, DataType.UINT8);
+                    variableTypes[qualified] = fixedT;
+                    Emit(new Copy(v, new Variable(qualified, fixedT)));
                     if (v is Constant c) constantVariables[qualified] = c.Value;
-                    variableTypes[qualified] = DataType.UINT8;
                 }
 
                 string starName = QualifyTarget(stmt.Targets[starIdx]);
@@ -9984,9 +10006,11 @@ public partial class IRGenerator
                     int srcIdx = starIdx + starCount + k;
                     Val v = VisitExpression(tup.Elements[srcIdx]);
                     string qualified = QualifyTarget(stmt.Targets[starIdx + 1 + k]);
-                    Emit(new Copy(v, new Variable(qualified, DataType.UINT8)));
+                    DataType afterT = variableTypes.TryGetValue(qualified, out var at) ? at
+                        : InferredSlot(qualified, DataType.UINT8);
+                    variableTypes[qualified] = afterT;
+                    Emit(new Copy(v, new Variable(qualified, afterT)));
                     if (v is Constant c) constantVariables[qualified] = c.Value;
-                    variableTypes[qualified] = DataType.UINT8;
                 }
             }
         }
@@ -10028,9 +10052,9 @@ public partial class IRGenerator
                 // `-> (uint8, uint16)` does not get its second value truncated to 8 bits. A
                 // slot that carries a constant but no declared type sizes to that constant.
                 DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t
-                    : variableTypes.TryGetValue(srcName, out var st) ? st
-                    : constantVariables.TryGetValue(srcName, out int scv)
-                        ? WidestElemType(new List<int> { scv }) : DataType.UINT8;
+                    : InferredSlot(dstName, variableTypes.TryGetValue(srcName, out var st) ? st
+                        : constantVariables.TryGetValue(srcName, out int scv)
+                            ? WidestElemType(new List<int> { scv }) : DataType.UINT8);
                 variableTypes[dstName] = dt;
                 Emit(new Copy(new Variable(srcName, dt), new Variable(dstName, dt)));
                 if (constantVariables.TryGetValue(srcName, out int cVal)) constantVariables[dstName] = cVal;

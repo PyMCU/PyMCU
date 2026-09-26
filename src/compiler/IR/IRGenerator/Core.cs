@@ -238,6 +238,7 @@ public partial class IRGenerator
             foreach (var k in valueTrackingAliases) variableAliases.Remove(k);
             valueTrackingAliases.Clear();
         }
+        CheckSlotWrite(inst);
         currentInstructions.Add(inst);
     }
 
@@ -660,9 +661,11 @@ public partial class IRGenerator
         // Fill unannotated params/returns of outlined functions from call-site evidence
         // (safe integer-widening join) BEFORE scanning, so an unannotated helper no longer
         // silently defaults to uint8 and truncates wider arguments.
+        RecordUnannotatedSignatures(mainAst, importedModules);
         PyMCU.Frontend.TypeInference.InferProgram(mainAst, importedModules.Values);
         // The same for a parameter every call hands a string: it is `str`.
         PyMCU.Frontend.StrParamInference.InferProgram(mainAst, importedModules.Values);
+        ApplySignatureSeeds();
 
         // Shared with the import check, which has to know these resolve with or without an
         // import naming them (PyMCU.Common.BuiltinExceptionNames).

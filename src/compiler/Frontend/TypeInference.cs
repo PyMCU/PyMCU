@@ -730,6 +730,9 @@ public static class TypeInference
         }
     }
 
+    // Every sub-expression of one expression, itself included.
+    internal static IEnumerable<Expression> WalkExpressionTree(Expression e) => WalkExpression(e);
+
     private static IEnumerable<Expression> WalkExpression(Expression e)
     {
         yield return e;

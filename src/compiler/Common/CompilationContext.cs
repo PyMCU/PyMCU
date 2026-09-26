@@ -66,4 +66,11 @@ public class CompilationContext(CompilerOptions options)
 
     // Set by GcAnalysisPhase when GC_REF values are found in the IR.
     public bool ProgramNeedsGc { get; set; } = false;
+
+    // Widths unannotated slots turned out to need, shared by every run of one compilation
+    // (see WidthSeeds). IrGenerationPhase sets RerunWithWiderSlots when this run recorded a
+    // wider one, and the driver then starts the compilation over instead of going on.
+    public WidthSeeds WidthSeeds { get; set; } = new();
+    public bool RerunWithWiderSlots { get; set; }
+    public bool RerunAllowed { get; set; } = true;
 }
