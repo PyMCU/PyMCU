@@ -2482,6 +2482,8 @@ public partial class IRGenerator
         // so the rewrite leaves it alone and the check below still decides it (#334).
         Expression truthCond = LowerInstanceTruthiness(expr.Condition);
         if (IsNoneValued(truthCond)) return VisitExpression(expr.FalseVal);
+        if (TryBufferTruthiness(truthCond, out bool bufTernTruthy))
+            return VisitExpression(bufTernTruthy ? expr.TrueVal : expr.FalseVal);
 
         // A bare optional as the condition is a tag test, not a payload read -- the
         // carry-eval keeps the section-8 refusal for everything inside the arms.
@@ -2680,6 +2682,10 @@ public partial class IRGenerator
         // the same decision EmitOptimizedConditionalJump makes for `if not x:`. Without
         // this the name read as its slot, which nothing ever wrote.
         if (expr.Op == AstUnOp.Not && IsNoneValued(unaryOperand)) return new Constant(1);
+
+        // `not buf` on a fixed-length buffer: its length decides, not its first byte.
+        if (expr.Op == AstUnOp.Not && TryBufferTruthiness(unaryOperand, out bool bufTruthy))
+            return new Constant(bufTruthy ? 0 : 1);
 
         // RFC 0009: `not r` on a live optional is a tag test first -- true when the tag
         // says None, else the payload's falseness decides. The payload is never read

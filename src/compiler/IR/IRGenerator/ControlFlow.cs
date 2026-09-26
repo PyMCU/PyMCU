@@ -702,8 +702,40 @@ public partial class IRGenerator
     /// on every path that reaches the test -- the same basis FoldedOperand compares
     /// on. False when the name is not provably constant here.
     /// </summary>
+    /// <summary>
+    /// The truth value of a name that holds a fixed-length buffer or compile-time sequence:
+    /// a bytearray/bytes/list is true when it is non-empty, and its length is known here.
+    /// Without this `if not buf:` on a bytearray lowered as a run-time test of the NAME,
+    /// which read the buffer's first byte -- `bytearray(4)` holding a zero there answered
+    /// "empty", and `if not l_rom: l_rom = bytearray(8)` threw the caller's buffer away.
+    /// </summary>
+    private bool TryBufferTruthiness(Expression operand, out bool truthy)
+    {
+        truthy = false;
+        if (operand is not VariableExpr ve) return false;
+        // A run-time string and an arena buffer carry a run-time length.
+        if (TryGetRuntimeStr(ve.Name, out _) || TryResolveArenaBuffer(ve.Name, out _)) return false;
+        if (ResolveListLiteralParam(ve.Name) is ListExpr lit)
+        {
+            truthy = lit.Elements.Count > 0;
+            return true;
+        }
+        if (ResolveArrayVar(ve.Name) is { } arr)
+        {
+            truthy = arr.Size > 0;
+            return true;
+        }
+        if (ResolveConstSequence(ve.Name) is { } seq)
+        {
+            truthy = seq.Count > 0;
+            return true;
+        }
+        return false;
+    }
+
     private bool TryConstIntTruthiness(Expression operand, out bool truthy)
     {
+        if (TryBufferTruthiness(operand, out truthy)) return true;
         truthy = false;
         if (operand is not VariableExpr ve) return false;
         string q = !string.IsNullOrEmpty(currentInlinePrefix)
