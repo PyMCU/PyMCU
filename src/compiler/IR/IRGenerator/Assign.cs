@@ -7379,6 +7379,17 @@ public partial class IRGenerator
             // Union[int, float] = r` takes r's whole value, tag byte included.
             Val rhs = stmt.UnionMembers != null ? EvalOptionalCarry(stmt.Value) : VisitExpression(stmt.Value);
 
+            // A declaration binds the name afresh, so it drops whichever of the two pointer
+            // shapes an earlier binding of the same key left behind. The key repeats: every
+            // expansion of one @inline at one depth spells its locals the same, and a stale
+            // runtime-pointer mark made `p: ptr[uint8] = ptr(0x0610)` store THROUGH the byte
+            // at 0x0610 instead of into it.
+            if (isPtrAnnotation)
+            {
+                constantAddressVariables.Remove(qualified2);
+                runtimePtrVars.Remove(qualified2);
+            }
+
             // For ptr[T] = ptr(constant), register the constant address and element type;
             // do not emit a Copy (the "variable" is a compile-time address constant).
             if (isPtrAnnotation && rhs is MemoryAddress ptrAddr)
