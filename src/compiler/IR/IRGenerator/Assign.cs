@@ -4469,7 +4469,7 @@ public partial class IRGenerator
             VisitExpression(new CallExpr(
                 new MemberAccessExpr(new VariableExpr(arenaMod), "write8"),
                 new List<Expression> {
-                    new BinaryExpr(arenaWriteVe, PyMCU.Frontend.BinaryOp.Add, indexExpr.Index),
+                    new BinaryExpr(arenaWriteVe, PyMCU.Frontend.BinaryOp.Add, ArenaIndex(arenaWriteVe, indexExpr.Index)),
                     stmt.Value,
                 }));
             return;
@@ -4493,7 +4493,7 @@ public partial class IRGenerator
             VisitExpression(new CallExpr(
                 new MemberAccessExpr(new VariableExpr(arenaMod), "write8"),
                 new List<Expression> {
-                    new BinaryExpr(new VariableExpr(tempOff), PyMCU.Frontend.BinaryOp.Add, indexExpr.Index),
+                    new BinaryExpr(new VariableExpr(tempOff), PyMCU.Frontend.BinaryOp.Add, ArenaIndex(arenaWriteMem, indexExpr.Index)),
                     stmt.Value,
                 }));
             return;
@@ -7851,6 +7851,18 @@ public partial class IRGenerator
             default:
                 return null;
         }
+    }
+
+    // `buf[-k]` on an arena buffer is `buf[len(buf) - k]`. The element's offset is the
+    // buffer's base plus the index, so a negative constant used as it was read and wrote the
+    // bytes in FRONT of the buffer -- the tail of whatever was allocated before it -- with no
+    // diagnostic. The length is the run-time one len() already answers.
+    private Expression ArenaIndex(Expression target, Expression index)
+    {
+        if (!TryEvalElemConst(index, out int k) || k >= 0) return index;
+        return new BinaryExpr(
+            new CallExpr(new VariableExpr("len"), new List<Expression> { target }) { Line = index.Line },
+            PyMCU.Frontend.BinaryOp.Add, index) { Line = index.Line };
     }
 
     // The import alias `pymcu.arena` was given in the entry file (`pymcu build` injects

@@ -2922,7 +2922,7 @@ public partial class IRGenerator
             string arenaMod = ResolveArenaModuleAlias(expr);
             return VisitExpression(new CallExpr(
                 new MemberAccessExpr(new VariableExpr(arenaMod), "read8"),
-                new List<Expression> { new BinaryExpr(arenaReadVe, AstBinOp.Add, expr.Index) }));
+                new List<Expression> { new BinaryExpr(arenaReadVe, AstBinOp.Add, ArenaIndex(arenaReadVe, expr.Index)) }));
         }
 
         // PyMCU#418: the FIELD form, `self.buf[i]` / `d.buf[i]` -- see
@@ -2940,7 +2940,7 @@ public partial class IRGenerator
             string arenaMod = ResolveArenaModuleAlias(expr);
             return VisitExpression(new CallExpr(
                 new MemberAccessExpr(new VariableExpr(arenaMod), "read8"),
-                new List<Expression> { new BinaryExpr(new VariableExpr(tempOff), AstBinOp.Add, expr.Index) }));
+                new List<Expression> { new BinaryExpr(new VariableExpr(tempOff), AstBinOp.Add, ArenaIndex(arenaReadMem, expr.Index)) }));
         }
 
         // `memoryview(buf)[k]`/`[a:b]`: a slice is a writable window of the
