@@ -88,6 +88,27 @@ public class FramePackingTests
     }
 
     [Fact]
+    public void ANamedLocalInAVacatedTempSlotKeepsItExclusive()
+    {
+        // `asin(x)` stages `math_atan2.y` and then `math_atan2.x`, the callee's
+        // parameters, one instruction apart; the callee reads both after the
+        // call. The first took the slot a dead temp left and freed it at its own
+        // last mention, so the second landed on it and atan2 saw y == x. A named
+        // local owns a reused slot exactly as it owns a fresh one.
+        var offsets = Offsets(Prog(new List<Instruction>
+        {
+            new Copy(new Constant(5), new Temporary("tmp_a")),
+            Use(new Temporary("tmp_a")),
+            new Copy(new Constant(7), new Variable("callee.y")),
+            new Copy(new Constant(9), new Variable("callee.x")),
+            Use(new Variable("s")),
+            new Return(new Constant(0)),
+        }));
+
+        Assert.NotEqual(offsets["callee.y"], offsets["callee.x"]);
+    }
+
+    [Fact]
     public void ARootedSlotKeepsAnExclusiveSlot()
     {
         // A GcRoot'd variable is live for the whole body: the shadow stack
