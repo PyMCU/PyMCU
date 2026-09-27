@@ -2331,7 +2331,10 @@ public partial class IRGenerator
         }
 
         if (func != null)
+        {
             CheckSignatureShape(func, expr.Args, QualNameForCall(func, callee), expr);
+            KeywordsToPositions(func, expr.Args);
+        }
 
         // @warning("..."): print the author-supplied note (once per function)
         // when a call to this function is expanded. Informational only -- it
@@ -4858,6 +4861,49 @@ public partial class IRGenerator
                                 $"keyword arguments: '{string.Join(", ", misplaced.Select(k => k.Key))}'",
                     misplaced[0]);
         }
+    }
+
+    /// <summary>
+    /// A keyword argument binds exactly as the positional one it stands for. The binding
+    /// loop below gives a positional argument every sequence shape (a tuple or list literal,
+    /// a bytes literal, a sequence of instances) and a keyword argument only a VALUE, so
+    /// `f(a=(1, 2))` was refused as "tuples are not supported as runtime values" while
+    /// `f((1, 2))` compiled: `keypad.KeyMatrix(row_pins=(...), column_pins=(...))`, the way
+    /// the CircuitPython documentation writes it. When the keywords fill the parameters right
+    /// after the positional arguments with no gap, they are moved into those positions; a
+    /// gap (a default in between) keeps the keyword path, which evaluates the default in the
+    /// callee's scope. Rewritten in place: the order is Python's own binding, so doing it
+    /// again is a no-op.
+    /// </summary>
+    private static void KeywordsToPositions(FunctionDef fn, List<Expression> args)
+    {
+        if (!args.Any(a => a is KeywordArgExpr) || args.Any(a => a is StarArgExpr)) return;
+        if (fn.Params.Any(p => p.IsVarArg || p.IsKwArg)) return;
+        int receivers = fn.Params.TakeWhile(p => IsReceiverParamName(p.Name)
+                                                 || (fn.IsClassMethod && p == fn.Params[0])).Count();
+        var declared = fn.Params.Skip(receivers).ToList();
+        var positional = args.Where(a => a is not KeywordArgExpr).ToList();
+        var byName = new Dictionary<string, Expression>();
+        foreach (var kw in args.OfType<KeywordArgExpr>())
+            if (!byName.TryAdd(kw.Key, kw.Value)) return;          // the binder names the repeat
+        if (byName.Keys.Any(k => declared.FindIndex(p => p.Name == k) < positional.Count))
+            return;                                               // "multiple values", said there
+        // A keyword-only parameter stays a keyword: the shape check reads the call again
+        // whenever the same call node is lowered again, and must still see it as one.
+        int next = positional.Count;
+        var moved = new List<Expression>();
+        while (next < declared.Count && !declared[next].IsKeywordOnly
+               && byName.Remove(declared[next].Name, out var v))
+        {
+            moved.Add(v);
+            next++;
+        }
+        if (moved.Count == 0) return;
+        var kept = args.OfType<KeywordArgExpr>().Where(k => byName.ContainsKey(k.Key)).ToList();
+        args.Clear();
+        args.AddRange(positional);
+        args.AddRange(moved);
+        args.AddRange(kept);
     }
 
     /// The name CPython's call errors give a function: `f`, or `Cls.m` for a method.
