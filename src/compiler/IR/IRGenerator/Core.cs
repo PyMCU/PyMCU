@@ -2727,6 +2727,16 @@ public partial class IRGenerator
             ? currentInlinePrefix + name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
 
+        // A name no frame binds is the module global, and that is the slot the assembly has
+        // to load and store back: at module level `main.x` is a different variable from the
+        // global `x`, and `asm("inc %0", x)` incremented it while `print(x)` read the global.
+        string moduleKey = currentModulePrefix + name;
+        if (ShadowingFrameKey(name) == null && mutableGlobals.TryGetValue(moduleKey, out var globalDt))
+        {
+            localConstantValues.Remove(moduleKey);
+            return new Variable(moduleKey, globalDt);
+        }
+
         DataType type = DataType.UINT8;
         if (variableTypes.TryGetValue(localName, out var dt))
             type = dt;
