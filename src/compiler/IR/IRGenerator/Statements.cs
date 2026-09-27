@@ -1250,6 +1250,18 @@ public partial class IRGenerator
             return;
         }
 
+        // A buffer sized at run time lives in the arena and is held as its offset there; the
+        // expansion has no name to hand back for it, and the offset alone read as a number at
+        // the call site -- a buffer of zeros, `len()` of it refused.
+        if (stmt.Value is VariableExpr retArena && inlineStack.Count > 0
+            && TryResolveArenaBuffer(retArena.Name, out _))
+            throw UserError(
+                $"'{retArena.Name}' is a buffer sized at run time, and one of those cannot be "
+                + "returned: it lives in the arena with no name the caller can take over. Size it "
+                + "from something the compiler can see at the call site (a constant, or len() of "
+                + "a fixed-size buffer), or take the buffer as a parameter and fill it in place.",
+                stmt.Value);
+
         if (stmt.Value != null && IsSequenceObject(stmt.Value))
         {
             if (stmt.Value is VariableExpr retArr && inlineStack.Count > 0

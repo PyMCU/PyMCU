@@ -40,4 +40,22 @@ public class ReturnedBufferSizedFromLenTests
             .Should().BeTrue(because: "the returned buffer is 2 * len(src) = 6 bytes");
         main.OfType<BitCheck>().Should().BeEmpty();
     }
+
+    [Fact]
+    public void ABufferSizedAtRunTimeCannotBeReturned()
+    {
+        var act = () => Gen(
+            "from pymcu.types import uint8, inline\n" +
+            "@inline\n" +
+            "def mk(k: uint8) -> bytearray:\n" +
+            "    out = bytearray(k)\n" +
+            "    return out\n" +
+            "def go(k: uint8) -> uint8:\n" +
+            "    a = mk(k)\n" +
+            "    return a[0]\n" +
+            "x = go(3)\n" +
+            "y = go(4)\n");
+
+        act.Should().Throw<Exception>().WithMessage("*sized at run time*cannot be*returned*");
+    }
 }
