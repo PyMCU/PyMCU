@@ -17,7 +17,7 @@ must be annotated; the compiler rejects unannotated assignments.
 | `int` | 16-bit | Yes | -32768 – 32767 | Built-in alias for `int16`; **no import needed** |
 | `uint32` | 32-bit | No | 0 – 4 294 967 295 | Timestamps, large counters |
 | `int32` | 32-bit | Yes | — | Signed 32-bit |
-| `bool` | 8-bit | — | 0 / 1 | Aliases `uint8`; `True`/`False` fold to 1/0 |
+| `bool` | 8-bit | — | 0 / 1 | Stored as a `uint8` 0/1; arithmetic sees 1/0, and `print`/f-strings spell it `True`/`False` as CPython does, whether it comes from a literal, a comparison, `not`, `and`/`or`, a truth builtin, a name bound only to bools, or a function that returns only bools |
 | `float` | 32-bit | Yes | IEEE 754 single | Soft-float via `__fp_*` helpers (~200-400 cycles/op, AVR only) |
 
 Import everything except `int` from `pymcu.types`:
