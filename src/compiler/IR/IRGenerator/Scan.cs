@@ -3024,15 +3024,16 @@ public partial class IRGenerator
         }
     }
 
-    // The scope the read belongs to: inside an inline expansion the prefix's function
-    // segment (`inline{depth}.{func}.`), inside a regular body the qualified function
-    // name, at module level null (the flat namespace).
+    // The scope the read belongs to: inside an inline expansion the prefix's callee
+    // segment, the last one (`inline{depth}.{callee}.`, or `inline{depth}.{enclosing}.
+    // {callee}.` outside main), inside a regular body the qualified function name, at
+    // module level null (the flat namespace).
     private string? CurrentBoolScope()
     {
         string p = currentInlinePrefix;
-        if (p.Length > 0)
+        if (p.Length > 1 && p[^1] == '.')
         {
-            int d1 = p.IndexOf('.'), d2 = p.LastIndexOf('.');
+            int d2 = p.Length - 1, d1 = p.LastIndexOf('.', d2 - 1);
             if (d1 >= 0 && d2 > d1 + 1) return p.Substring(d1 + 1, d2 - d1 - 1);
         }
         return currentFunction.Length > 0 ? currentFunction : null;
