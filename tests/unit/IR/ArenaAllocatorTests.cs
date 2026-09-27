@@ -378,6 +378,61 @@ public class ArenaAllocatorTests
         Assert.Contains(main.Body, i => i is ArrayLoad ld && ld.ArrayName == "_arena");
     }
 
+    [Theory]
+    [InlineData("buf[GPIOR0.value] += 5\n")]
+    [InlineData("d.buf[GPIOR0.value] |= 0x81\n")]
+    [InlineData("d.bump(GPIOR0.value)\n")]
+    public void AugmentedAssignOnAnArenaBufferIsARead8AndAWrite8(string statement)
+    {
+        // `x[i] OP= v` had no arena hook, so its store-back fell through to the register
+        // bit path and a program with no register in it was refused with "Bit index must be
+        // constant for augmented assignment". It is the element read and the element write
+        // of the same offset.
+        var program = Generate(
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self, n: uint16):\n" +
+            "        self.buf = bytearray(n)\n\n" +
+            "    @inline\n" +
+            "    def bump(self, i: uint16) -> None:\n" +
+            "        self.buf[i] -= 1\n\n" +
+            "n: uint16 = uint16(GPIOR0.value) + 3\n" +
+            "buf: bytearray = bytearray(n)\n" +
+            "d: Dev = Dev(n)\n" +
+            statement);
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is ArrayLoad ld && ld.ArrayName == "_arena");
+        Assert.Contains(main.Body, i => i is ArrayStore st && st.ArrayName == "_arena");
+    }
+
+    [Theory]
+    [InlineData("buf[-1] = 7\n")]
+    [InlineData("x: uint8 = buf[-1]\n")]
+    [InlineData("d.buf[-1] = 7\n")]
+    [InlineData("x: uint8 = d.buf[-1]\n")]
+    [InlineData("buf[-1] += 7\n")]
+    public void ANegativeIndexIntoAnArenaBufferCountsFromItsLength(string statement)
+    {
+        // The element's offset is the buffer's base plus the index, so `buf[-1]` used as it
+        // was reached the byte in FRONT of the buffer -- the tail of whatever was allocated
+        // before it -- silently. It is `buf[len(buf) - 1]`, and len() is the run-time length
+        // the allocation recorded.
+        var program = Generate(
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self, n: uint16):\n" +
+            "        self.buf = bytearray(n)\n\n" +
+            "n: uint16 = uint16(GPIOR0.value) + 3\n" +
+            "buf: bytearray = bytearray(n)\n" +
+            "d: Dev = Dev(n)\n" +
+            statement);
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        static bool IsLen(Val v) => v is Variable { Name: var nm } && nm.EndsWith("__arena_len");
+        Assert.Contains(main.Body, i => i is Binary b && (IsLen(b.Src1) || IsLen(b.Src2)));
+    }
+
     [Fact]
     public void ClassDictIndexingCoexistsWithArenaBuffers()
     {
