@@ -50,7 +50,7 @@ integer dict (open addressing over per-instance fixed arrays — no heap, no GC)
 semantics where they fit a fixed footprint: `d[k]` / `d[k] = v`, `KeyError` on a missing
 key, `ValueError` when inserting into a full dict, `k in d`, `len(d)`, `get(k, default)`,
 `pop(k)`, `clear()`. The capacity is a compile-time constant.
-Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index access.
+Fixed-size arrays `arr: T[N]` support both constant- and variable-index access. On AVR that holds for every element type, the four-byte ones (`int32`, `uint32`, `float`) included, and through a field (`self.buf[i]`) as through a name. A negative constant index counts from the end (`a[-1]`) on every read, store and `+=`; a constant index outside the array is a compile-time `IndexError`.
 
 **`bytearray(n)` with a runtime `n`** allocates from a static arena instead of being
 refused, where the compiler can prove the statement runs **at most once**: a module-level
@@ -63,8 +63,8 @@ once at start-up and never shrinks, which is why the once rule exists at all -- 
 would free the buffer when it goes out of scope, and there is nothing here that can. The
 allocator itself is Python (`lib/src/pymcu/arena.py`), not a compiler intrinsic; `pymcu
 build` reports its reservation (`Arena: reserved <N> B ...`) and reserves zero bytes,
-linking none of it in, for a program that never uses it. `x[i]`, `x[i] = v` and `len(x)`
-work, both as a local (`buf = bytearray(n)`) and as an `@inline __init__`'s field
+linking none of it in, for a program that never uses it. `x[i]`, `x[i] = v`, `x[i] OP= v`,
+`x[-k]` (counted from the run-time length) and `len(x)` work, both as a local (`buf = bytearray(n)`) and as an `@inline __init__`'s field
 (`self.buf = bytearray(n)`), through as many further `@inline` method calls as needed.
 Not yet: slicing / `memoryview` on a runtime-sized buffer, passing one to a function's
 `bytearray` parameter, and allocating inside a non-inlined, non-`__init__` function
