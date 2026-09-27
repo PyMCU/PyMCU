@@ -2893,6 +2893,7 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(stmt.ErrorType) && inlineStack.Count > 0 &&
             tryCatchStack.Count == 0 && handlerCodeStack.Count == 0 &&
             !inlineStack[^1].SawDynamicLoop &&
+            !inlineStack[^1].SawConditionalExit &&
             _runtimeBranchDepth <= inlineStack[^1].EntryBranchDepth)
         {
             string reason = resolvedMessage.Length > 0 ? resolvedMessage : stmt.ErrorType;
@@ -2922,6 +2923,9 @@ public partial class IRGenerator
             throw new ArchitectureError($"{stmt.ErrorType}: {reason}", line, 0)
                 { File = CallSiteSourcePath(), LocationIsFinal = true };
         }
+
+        if (inlineStack.Count > 0 && _runtimeBranchDepth > inlineStack[^1].EntryBranchDepth)
+            inlineStack[^1].SawConditionalExit = true;
 
         // A bare `raise` (no type) re-raises the exception currently being handled. Re-signal from
         // the handler's saved code variable (SignalError reloads R22 from it), so it is correct even

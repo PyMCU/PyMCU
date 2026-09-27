@@ -108,6 +108,12 @@ public class InlineContext
     // cannot see, so it is not the unconditional raise the abort rule is looking for.
     public bool SawDynamicLoop { get; set; } = false;
 
+    // Set once a `return` or a `raise` in this expansion sits under a run-time branch. A raise
+    // after it is reached only when that branch was not taken, which the compiler does not
+    // decide, so it is not the unconditional raise the abort rule is looking for either
+    // (`if c: return x` ... then `raise ValueError(...)` at the end of the body).
+    public bool SawConditionalExit { get; set; } = false;
+
     // The file the CALL is written in, which is not the file being lowered once the body walk
     // has moved the pair to the callee. An author-written `raise CompileError` in a driver is
     // about the caller's argument, so it reports the caller, and reporting a caller means

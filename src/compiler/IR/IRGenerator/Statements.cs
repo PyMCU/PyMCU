@@ -1175,6 +1175,8 @@ public partial class IRGenerator
 
     private void VisitReturn(ReturnStmt stmt)
     {
+        if (inlineStack.Count > 0 && _runtimeBranchDepth > inlineStack[^1].EntryBranchDepth)
+            inlineStack[^1].SawConditionalExit = true;
         // `return None` -- and the bare `return`, which is the same statement to Python --
         // on a path the program can REACH, from a function whose declared result has a
         // width. None is a compile-time property here, not a value: nothing exists to put
