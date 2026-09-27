@@ -562,8 +562,15 @@ public class StackAllocator
             }
             else
             {
+                // A named local may take a slot a temp has vacated, but from then on it owns
+                // it exactly as a fresh one: its own last mention is not when the slot frees.
+                // Freeing it at groupEnd handed it on to the next named local, so a caller
+                // staging two arguments into its callee's parameters (`math_atan2.y` then
+                // `math_atan2.x`, one instruction apart) gave both the same slot, and
+                // `asin(x)` became `atan2(v, v)`.
                 canonicalOffset[canonical] = busy[pick].Offset;
-                busy[pick] = (busy[pick].Offset, busy[pick].Size, groupEnd[canonical]);
+                busy[pick] = (busy[pick].Offset, busy[pick].Size,
+                              PackableGroups.Contains(canonical) ? groupEnd[canonical] : int.MaxValue);
             }
         }
 
