@@ -72,6 +72,24 @@ public partial class IRGenerator
         _ => throw new Exception($"AugOp {op} has no IR equivalent"),
     };
 
+    // Maps AST AugOp to the AST BinaryOp, for an augmented assignment rewritten as
+    // `target = target OP value`.
+    private static PyMCU.Frontend.BinaryOp AstBinaryOp(AugOp op) => op switch
+    {
+        AugOp.Add => PyMCU.Frontend.BinaryOp.Add,
+        AugOp.Sub => PyMCU.Frontend.BinaryOp.Sub,
+        AugOp.Mul => PyMCU.Frontend.BinaryOp.Mul,
+        AugOp.Div => PyMCU.Frontend.BinaryOp.Div,
+        AugOp.FloorDiv => PyMCU.Frontend.BinaryOp.FloorDiv,
+        AugOp.Mod => PyMCU.Frontend.BinaryOp.Mod,
+        AugOp.BitAnd => PyMCU.Frontend.BinaryOp.BitAnd,
+        AugOp.BitOr => PyMCU.Frontend.BinaryOp.BitOr,
+        AugOp.BitXor => PyMCU.Frontend.BinaryOp.BitXor,
+        AugOp.LShift => PyMCU.Frontend.BinaryOp.LShift,
+        AugOp.RShift => PyMCU.Frontend.BinaryOp.RShift,
+        _ => throw new Exception($"AugOp {op} has no AST equivalent"),
+    };
+
     private bool IsConstType(string type)
     {
         return type == "const" || (type.StartsWith("const[") && type.EndsWith("]"));

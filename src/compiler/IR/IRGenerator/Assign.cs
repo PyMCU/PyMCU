@@ -8795,6 +8795,32 @@ public partial class IRGenerator
             }
         }
 
+        // `buf[i] OP= v` on an arena-allocated bytearray (RFC 0004). The plain read and store
+        // are rewritten to arena.read8/write8 at `offset + i`, but the augmented form had no
+        // such hook: its store-back fell through to the register bit path, and a program with
+        // no register in it was told "Bit index must be constant for augmented assignment".
+        // The element's offset is computed once into a hidden local, the shape the field hooks
+        // already use, and the statement becomes write8(off, read8(off) OP v): the subscript,
+        // then the element, then the value, CPython's order.
+        if (stmt.Target is IndexExpr { Index: not SliceExpr and not TupleExpr } arenaAug
+            && arenaAug.Target is VariableExpr or MemberAccessExpr
+            && ArenaOffsetSource(arenaAug.Target) != null)
+        {
+            string augOff = $"__arena_field_off_{arenaFieldTempId++}";
+            VisitStatement(new VarDecl(augOff, "uint16",
+                new BinaryExpr(arenaAug.Target, PyMCU.Frontend.BinaryOp.Add,
+                    ArenaIndex(arenaAug.Target, arenaAug.Index)) { Line = stmt.Line }) { Line = stmt.Line });
+            string augMod = ResolveArenaModuleAlias(arenaAug);
+            Expression augElem = new CallExpr(new MemberAccessExpr(new VariableExpr(augMod), "read8"),
+                new List<Expression> { new VariableExpr(augOff) }) { Line = stmt.Line };
+            VisitExpression(new CallExpr(new MemberAccessExpr(new VariableExpr(augMod), "write8"),
+                new List<Expression> {
+                    new VariableExpr(augOff),
+                    new BinaryExpr(augElem, AstBinaryOp(stmt.Op), stmt.Value) { Line = stmt.Line },
+                }) { Line = stmt.Line });
+            return;
+        }
+
         // `buf += src` on a fixed buffer is the in-place concat CPython gives the
         // spelling: grow the buffer's compile-time size by the source's length and
         // write the source's bytes into the new tail -- the same stores the slice
