@@ -41,7 +41,24 @@ public abstract record Val;
 //
 // Frontend-only: [JsonIgnore] keeps it out of the .mir, so a backend receives exactly the bytes
 // it received before. Value is untouched, so a one-character literal still passes as its code.
-public record Constant(int Value, [property: JsonIgnore] string? Text = null) : Val;
+// Unsigned: Value is the 32-bit PATTERN of a number from 2^31 to 2^32-1 (`0xFFFFFFFF`), which
+// an int cannot hold as itself. Read through AsLong. [JsonIgnore]: backends emit the pattern
+// byte-wise and never needed the reading.
+public record Constant(int Value, [property: JsonIgnore] string? Text = null,
+                       [property: JsonIgnore] bool Unsigned = false) : Val
+{
+    /// <summary>The number this constant stands for.</summary>
+    [JsonIgnore] public long AsLong => Unsigned ? (uint)Value : Value;
+
+    /// <summary>
+    /// The constant for a number: itself when it fits an int, its pattern marked Unsigned when
+    /// it is a uint32 past int32. Null for anything wider.
+    /// </summary>
+    public static Constant? Of(long n) =>
+        n >= int.MinValue && n <= int.MaxValue ? new Constant((int)n)
+        : n > int.MaxValue && n <= uint.MaxValue ? new Constant(unchecked((int)(uint)n), Unsigned: true)
+        : null;
+}
 
 public record FloatConstant(double Value) : Val;
 

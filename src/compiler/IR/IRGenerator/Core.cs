@@ -164,6 +164,7 @@ public partial class IRGenerator
             case BooleanLiteral:
                 break;
             case IntegerLiteral il:
+                if (il.Unsigned) return DataType.UINT32;
                 if (il.Value < short.MinValue) return DataType.INT32;
                 if (il.Value < sbyte.MinValue) return DataType.INT16;
                 if (il.Value < 0) return DataType.INT8;

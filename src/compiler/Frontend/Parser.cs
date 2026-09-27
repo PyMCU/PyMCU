@@ -3287,7 +3287,8 @@ public class Parser
                 // byte-wise, and the magnitude-based width sees 4 bytes either way.
                 // (Compile-time folding of arithmetic ON such literals would see the
                 // signed reading; runtime uint32 arithmetic is unaffected.)
-                return Leaf(new IntegerLiteral(unchecked((int)(uint)val64)), t);
+                return Leaf(new IntegerLiteral(unchecked((int)(uint)val64))
+                    { Unsigned = val64 > int.MaxValue }, t);
             }
             catch (OverflowException)
             {

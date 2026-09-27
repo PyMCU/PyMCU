@@ -240,10 +240,12 @@ public partial class IRGenerator
 
             if (value is IntegerLiteral lit && !dropped.Contains(name))
             {
+                // The number, not the pattern: `M = 0xFFFFFFFF` is a uint32, not an int8 -1.
+                long lv = lit.Unsigned ? (uint)lit.Value : lit.Value;
                 if (bounds.TryGetValue(name, out var b))
-                    bounds[name] = (Math.Min(b.Min, lit.Value), Math.Max(b.Max, lit.Value));
+                    bounds[name] = (Math.Min(b.Min, lv), Math.Max(b.Max, lv));
                 else
-                    bounds[name] = (lit.Value, lit.Value);
+                    bounds[name] = (lv, lv);
                 return;
             }
 

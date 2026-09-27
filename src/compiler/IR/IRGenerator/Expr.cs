@@ -34,7 +34,7 @@ public partial class IRGenerator
         if (expr is TernaryExpr tern) return VisitTernary(tern);
         if (expr is UnaryExpr un) return VisitUnary(un);
         if (expr is IntegerLiteral num) return VisitLiteral(num);
-        if (expr is VariableExpr v) return VisitVariable(v);
+        if (expr is VariableExpr v) return MarkUnsignedName(v, VisitVariable(v));
         if (expr is CallExpr call) return VisitCall(call);
         if (expr is YieldExpr yieldExpr) return VisitYield(yieldExpr);
         if (expr is IndexExpr idx) return VisitIndex(idx);
@@ -555,6 +555,9 @@ public partial class IRGenerator
         if (v is MemoryAddress mem) return mem.Type;
         if (v is Constant c)
         {
+            // A literal from 2^31 up is a uint32: its int pattern reads -1 for 0xFFFFFFFF,
+            // which typed it int8 and made `0xFFFFFFFF >> n` an arithmetic shift.
+            if (c.Unsigned) return DataType.UINT32;
             if (c.Value >= 0 && c.Value <= 255) return DataType.UINT8;
             if (c.Value >= -128 && c.Value <= 127) return DataType.INT8;
             if (c.Value >= 0 && c.Value <= 65535) return DataType.UINT16;
@@ -586,7 +589,7 @@ public partial class IRGenerator
     {
         switch (v)
         {
-            case Constant c: return (c.Value, c.Value);
+            case Constant c: return (c.AsLong, c.AsLong);
             case Temporary t:
                 return tempRanges.TryGetValue(t.Name, out var r) ? r : RangeOfType(t.Type);
             case Variable varV: return RangeOfType(varV.Type);
@@ -597,6 +600,14 @@ public partial class IRGenerator
     // Range of `a op b` for the promoting operators, or null when it cannot be bounded
     // cheaply (non-constant or out-of-range shift count). Operands are 16-bit or narrower
     // wherever this is consulted, so the long arithmetic cannot overflow.
+    private Val MaterializeUnsigned(Val v)
+    {
+        if (v is not Constant { Unsigned: true }) return v;
+        Temporary t = MakeTemp(DataType.UINT32);
+        Emit(new Copy(v, t));
+        return t;
+    }
+
     // A signed operand or a negative literal: what brings a sign into an operation.
     private bool CanBeNegative(Val v) => ValRange(v).Min < 0;
 
@@ -705,7 +716,34 @@ public partial class IRGenerator
         return signed;
     }
 
-    private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
+    private static Val VisitLiteral(IntegerLiteral expr) =>
+        new Constant(expr.Value, Unsigned: expr.Unsigned);
+
+    /// <summary>
+    /// A name folded to a constant hands back its int, and the constant tables keep no mark:
+    /// `M = 0xFFFFFFFF` then `M // 16` read -1 and folded to -1. When the name is recorded
+    /// as uint32, a pattern that reads negative is the number past int32.
+    /// </summary>
+    private Val MarkUnsignedName(VariableExpr ve, Val v)
+    {
+        if (v is not Constant { Unsigned: false, Text: null, Value: < 0 } c) return v;
+        if (unsignedConstNames.Contains(ve.Name)) return c with { Unsigned = true };
+        foreach (var key in new[]
+                 {
+                     currentInlinePrefix + ve.Name,
+                     string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name,
+                     currentModulePrefix + ve.Name, ve.Name,
+                 })
+        {
+            if (key.Length == 0) continue;
+            DataType? t = variableTypes.TryGetValue(key, out var vt) ? vt
+                        : mutableGlobals.TryGetValue(key, out var mt) ? mt
+                        : globals.TryGetValue(key, out var gs) ? gs.Type : null;
+            if (t == null) continue;
+            return t == DataType.UINT32 ? c with { Unsigned = true } : v;
+        }
+        return v;
+    }
 
     private Val VisitVariable(VariableExpr expr)
     {
@@ -1989,6 +2027,12 @@ public partial class IRGenerator
         else if (lConst && !rConst) resType = t2;            // same size: a literal is type-agnostic,
         else if (rConst && !lConst) resType = t1;            // so take the typed operand (keeps its sign)
         else resType = t1;                                   // both/neither constant: keep left (prior behaviour)
+        // A right shift is the left operand's, whatever the count's width or sign: the
+        // result never outgrows it, and its signedness decides logical or arithmetic.
+        // `0xFFFFFFFF >> (32 - k)` with k: int32 took the count's int32 and shifted the
+        // -1 pattern arithmetically, 4294967295 instead of 255.
+        if (expr.Op == AstBinOp.RShift && IsIntegerType(t1) && t1.SizeOf() >= t2.SizeOf())
+            resType = t1;
 
         // Python-fidelity: integer add/sub/mul/shift PROMOTES the result to the next wider type so
         // a same-width op never silently overflows (uint8+uint8 -> uint16 = 300, not 44; uint16*
@@ -2091,27 +2135,33 @@ public partial class IRGenerator
                     expr.Line > 0 ? expr.Line : lastLine, expr.Column);
             }
 
-            // int32 is the widest integer PyMCU has, so a constant that leaves its range has
-            // no value to fold to. Computing it in 32 bits wrapped instead: `-2147483648 - 1`
-            // became 2147483647 without a word, while the same overflow one width down
-            // (`int16 = -32768 - 1`) was already a build error.
-            Constant Fold(long result)
-            {
-                if (result < int.MinValue || result > int.MaxValue)
-                    throw new ValueError(
-                        $"the constant {result} does not fit in int32, the widest integer type "
-                        + "(the operands are folded at compile time, so there is no width to "
-                        + "carry it)", expr.Line > 0 ? expr.Line : lastLine, expr.Column);
-                return new Constant((int)result);
-            }
+            // Folded on the NUMBERS the constants stand for (AsLong): a literal from 2^31 up
+            // holds its 32-bit pattern, and folding the pattern read 0xFFFFFFFF as -1, so
+            // `0xFFFFFFFF >> 24` folded to -1 and `0x80000000 // 2` to a negative.
+            long a = cA.AsLong, b = cB.AsLong;
+
+            // int32 is the widest SIGNED integer PyMCU has and uint32 the widest unsigned, so
+            // a constant past both has no value to fold to. Computing it in 32 bits wrapped
+            // instead: `-2147483648 - 1` became 2147483647 without a word, while the same
+            // overflow one width down (`int16 = -32768 - 1`) was already a build error.
+            Constant Fold(long result) =>
+                Constant.Of(result) ?? throw new ValueError(
+                    $"the constant {result} does not fit in int32 or uint32, the widest integer "
+                    + "types (the operands are folded at compile time, so there is no width to "
+                    + "carry it)", expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+
+            // The quotient and remainder of in-range operands fit a 32-bit type except for
+            // int32 MIN // -1, whose executed answer is the wrap (see below).
+            Constant Wrap(long result) =>
+                Constant.Of(result) ?? new Constant(unchecked((int)result));
 
             switch (expr.Op)
             {
-                case AstBinOp.Add: return Fold((long)cA.Value + cB.Value);
-                case AstBinOp.Sub: return Fold((long)cA.Value - cB.Value);
-                case AstBinOp.Equal: return new Constant(cA.Value == cB.Value ? 1 : 0);
-                case AstBinOp.NotEqual: return new Constant(cA.Value != cB.Value ? 1 : 0);
-                case AstBinOp.Mul: return Fold((long)cA.Value * cB.Value);
+                case AstBinOp.Add: return Fold(a + b);
+                case AstBinOp.Sub: return Fold(a - b);
+                case AstBinOp.Equal: return new Constant(a == b ? 1 : 0);
+                case AstBinOp.NotEqual: return new Constant(a != b ? 1 : 0);
+                case AstBinOp.Mul: return Fold(a * b);
                 // Divided in long, and NOT routed through Fold(). C# throws
                 // OverflowException on int.MinValue / -1 and int.MinValue % -1, the two cases
                 // whose true quotient is 2147483648; unhandled, it reached the user as
@@ -2126,25 +2176,30 @@ public partial class IRGenerator
                 // Mul leave the range routinely and have no single representable answer, so
                 // they keep diagnosing; a floored division of two in-range operands can only
                 // leave it in this one case, and there the hardware has already answered.
-                case AstBinOp.Div: return new Constant(unchecked((int)((long)cA.Value / cB.Value)));
+                case AstBinOp.Div: return a == int.MinValue && b == -1
+                    ? new Constant(int.MinValue) : Wrap(a / b);
                 case AstBinOp.FloorDiv:
-                    long q = (long)cA.Value / cB.Value;
-                    if ((cA.Value ^ cB.Value) < 0 && q * cB.Value != cA.Value) q--;
-                    return new Constant(unchecked((int)q));
+                    long q = a / b;
+                    if ((a < 0) != (b < 0) && q * b != a) q--;
+                    return a == int.MinValue && b == -1 ? new Constant(int.MinValue) : Wrap(q);
                 case AstBinOp.Mod:
                     // Python's % follows the sign of the divisor (floored), unlike C#'s
                     // truncated %. e.g. -7 % 3 == 2, not -1. Match Python at fold time.
-                    long rem = (long)cA.Value % cB.Value;
-                    if (rem != 0 && ((rem < 0) != (cB.Value < 0))) rem += cB.Value;
-                    return new Constant(unchecked((int)rem));
-                case AstBinOp.BitAnd: return new Constant(cA.Value & cB.Value);
-                case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
-                case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);
-                case AstBinOp.RShift: return new Constant(cA.Value >> cB.Value);
-                case AstBinOp.Less: return new Constant(cA.Value < cB.Value ? 1 : 0);
-                case AstBinOp.LessEq: return new Constant(cA.Value <= cB.Value ? 1 : 0);
-                case AstBinOp.Greater: return new Constant(cA.Value > cB.Value ? 1 : 0);
-                case AstBinOp.GreaterEq: return new Constant(cA.Value >= cB.Value ? 1 : 0);
+                    long rem = a % b;
+                    if (rem != 0 && ((rem < 0) != (b < 0))) rem += b;
+                    return Wrap(rem);
+                case AstBinOp.BitAnd: return Wrap(a & b);
+                case AstBinOp.BitOr: return Wrap(a | b);
+                // A left shift keeps its 32-bit wrap: `1 << 31` is the uint32 2147483648.
+                case AstBinOp.LShift:
+                    long sh = a << (int)b;
+                    return Constant.Of(sh) ?? Wrap(sh & 0xFFFFFFFFL);
+                // On the number: `0xFFFFFFFF >> 24` is 255, and -8 >> 1 is still -4.
+                case AstBinOp.RShift: return Wrap(a >> (int)b);
+                case AstBinOp.Less: return new Constant(a < b ? 1 : 0);
+                case AstBinOp.LessEq: return new Constant(a <= b ? 1 : 0);
+                case AstBinOp.Greater: return new Constant(a > b ? 1 : 0);
+                case AstBinOp.GreaterEq: return new Constant(a >= b ? 1 : 0);
             }
         }
 
@@ -2165,6 +2220,13 @@ public partial class IRGenerator
                 // Non-comparison ops on two ptrs fall through to normal Binary emit.
             }
         }
+
+        // A literal from 2^31 up reaches a backend as its int pattern, and the Unsigned mark
+        // does not travel in the .mir: `0x80000000 // (n + 2)` was divided as -2147483648. A
+        // typed uint32 operand is what every backend reads as unsigned. (Everything above
+        // this point folds on the mark; everything below emits.)
+        v1 = MaterializeUnsigned(v1);
+        v2 = MaterializeUnsigned(v2);
 
         // Runtime divide/modulo by zero raises ZeroDivisionError, matching Python (a constant
         // zero divisor is already a compile-time error above). The check guards only a runtime
@@ -2634,9 +2696,14 @@ public partial class IRGenerator
         {
             switch (expr.Op)
             {
-                case AstUnOp.Negate: return new Constant(-c.Value);
+                // On the number, not the pattern: -0x80000000 is -2147483648.
+                case AstUnOp.Negate:
+                    return Constant.Of(-c.AsLong) ?? throw new ValueError(
+                        $"the constant {-c.AsLong} does not fit in int32, the widest signed type",
+                        expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                 case AstUnOp.Not: return new Constant(c.Value == 0 ? 1 : 0);
-                case AstUnOp.BitNot: return new Constant(~c.Value);
+                case AstUnOp.BitNot:
+                    return Constant.Of(~c.AsLong) ?? Constant.Of(~c.AsLong & 0xFFFFFFFFL)!;
             }
         }
 

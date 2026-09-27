@@ -102,6 +102,11 @@ public partial class IRGenerator
     /// byte a call to one produces is a CHARACTER. Filled by the scan, read where a value
     /// has to be written as text (#436).
     private HashSet<string> charReturningFunctions = new();
+    // Names last bound to a constant from 2^31 up (`M = 0xFFFFFFFF`): its int pattern reads
+    // negative, and a read of the name must hand back the number (MarkUnsignedName).
+    private readonly HashSet<string> unsignedConstNames = new();
+    // Functions whose every value return is a Python bool (Scan.ReturnsOnlyBools, #386).
+    private readonly HashSet<string> boolReturningFunctions = new();
     /// Emitted names of the subroutines that hand back None on every path: only bare
     /// `return`, `return None`, a local bound to nothing but None, or the end of the body.
     /// A call to one has no value in the return register to read, so its result is the

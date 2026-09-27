@@ -104,6 +104,9 @@ public class ClassDef : Statement
 public class IntegerLiteral : Expression
 {
     public int Value { get; }
+    // Written as a number from 2^31 to 2^32-1: Value holds its 32-bit pattern, and the
+    // number is (uint)Value. A literal is never negative.
+    public bool Unsigned { get; init; }
     public IntegerLiteral(int value) => Value = value;
 }
 

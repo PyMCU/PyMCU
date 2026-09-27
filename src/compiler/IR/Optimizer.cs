@@ -1057,6 +1057,43 @@ private static Function CloneFunction(Function f)
 
     private static int? GetConstant(Val val) => val is Constant c ? c.Value : null;
 
+    /// <summary>
+    /// The operations whose answer depends on reading a 32-bit pattern as signed or unsigned
+    /// (`>>`, the divisions, the comparisons), folded on the unsigned reading when the pattern
+    /// stands for a uint32: a result declared uint32, or a constant marked Unsigned. Folding
+    /// the int reading made `0xFFFFFFFF >> 24` -1 and `0x80000000 // 2` negative. Null for
+    /// every other case, which the int fold below keeps answering.
+    /// </summary>
+    private static Constant? FoldUnsigned32(Binary b, int v1, int v2)
+    {
+        bool u1 = b.Src1 is Constant { Unsigned: true }, u2 = b.Src2 is Constant { Unsigned: true };
+        bool dstU32 = GetDataType(b.Dst) == DataType.UINT32;
+        switch (b.Op)
+        {
+            case BinaryOp.RShift when (dstU32 || u1) && v2 is >= 0 and < 32:
+                return Constant.Of((long)(uint)v1 >> v2);
+            case BinaryOp.Div or BinaryOp.FloorDiv when (dstU32 || u1 || u2) && v2 != 0:
+                if (!(dstU32 || (u1 || v1 >= 0) && (u2 || v2 > 0))) return null;
+                return Constant.Of((long)(uint)v1 / (uint)v2);
+            case BinaryOp.Mod when (dstU32 || u1 || u2) && v2 != 0:
+                if (!(dstU32 || (u1 || v1 >= 0) && (u2 || v2 > 0))) return null;
+                return Constant.Of((long)(uint)v1 % (uint)v2);
+            case BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.LessThan or BinaryOp.LessEqual
+                or BinaryOp.GreaterThan or BinaryOp.GreaterEqual when u1 || u2:
+            {
+                long a = u1 ? (uint)v1 : v1, c = u2 ? (uint)v2 : v2;
+                bool r = b.Op switch
+                {
+                    BinaryOp.Equal => a == c, BinaryOp.NotEqual => a != c,
+                    BinaryOp.LessThan => a < c, BinaryOp.LessEqual => a <= c,
+                    BinaryOp.GreaterThan => a > c, _ => a >= c,
+                };
+                return new Constant(r ? 1 : 0);
+            }
+            default: return null;
+        }
+    }
+
     // Algebraic identities for a Binary with exactly one constant operand. These
     // collapse the redundant masking/OR-ing the @inline driver expansions emit on
     // runtime values (e.g. (c & 0xF0) | 0 | _BL in the LCD nibble path), which
@@ -1143,7 +1180,12 @@ private static Function CloneFunction(Function f)
                 {
                     var c1 = GetConstant(binary.Src1);
                     var c2 = GetConstant(binary.Src2);
-                    if (c1.HasValue && c2.HasValue)
+                    if (c1.HasValue && c2.HasValue
+                        && FoldUnsigned32(binary, c1.Value, c2.Value) is { } u32)
+                    {
+                        func.Body[i] = new Copy(u32, binary.Dst);
+                    }
+                    else if (c1.HasValue && c2.HasValue)
                     {
                         var result = 0;
                         var foldable = true;

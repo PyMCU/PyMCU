@@ -402,7 +402,8 @@ public static class PythonAstReader
         string kind = Str(e, "k");
         switch (kind)
         {
-            case "Int": return Located(new IntegerLiteral(e.GetProperty("value").GetInt32()), e);
+            case "Int": return Located(new IntegerLiteral(e.GetProperty("value").GetInt32())
+                { Unsigned = e.TryGetProperty("unsigned", out var uns) && uns.GetBoolean() }, e);
             case "Float": return Located(new FloatLiteral(e.GetProperty("value").GetDouble()), e);
             case "Bool": return Located(new BooleanLiteral(e.GetProperty("value").GetBoolean()), e);
             case "Str": return Located(new StringLiteral(Str(e, "value")), e);

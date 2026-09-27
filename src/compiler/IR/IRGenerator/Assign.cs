@@ -1972,6 +1972,10 @@ public partial class IRGenerator
 
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
     {
+        // The constant tables keep an int and no Unsigned mark; the name keeps it instead.
+        if (value is Constant { Unsigned: true }) unsignedConstNames.Add(varExpr.Name);
+        else unsignedConstNames.Remove(varExpr.Name);
+
         if (stmt.AnnotatedType is { Length: > 0 } declared
             && !declared.Contains("ptr") && !declared.Contains("PIORegister"))
             RejectBareRegisterRead(stmt.Value);

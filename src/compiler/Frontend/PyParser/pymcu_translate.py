@@ -476,7 +476,12 @@ def e_constant(node):
     if isinstance(v, bool):
         return {"k": "Bool", "value": v}
     if isinstance(v, int):
-        return {"k": "Int", "value": int32_pattern(v, node)}
+        out = {"k": "Int", "value": int32_pattern(v, node)}
+        # 2^31..2^32-1: the pattern reads negative, and the number is not (Parser.cs marks
+        # the same literal Unsigned).
+        if v > 0x7FFFFFFF:
+            out["unsigned"] = True
+        return out
     if isinstance(v, float):
         return {"k": "Float", "value": v}
     if isinstance(v, str):

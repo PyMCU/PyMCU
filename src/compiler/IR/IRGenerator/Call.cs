@@ -8280,7 +8280,7 @@ public partial class IRGenerator
         if (v is Constant c)
         {
             // float(int_literal) -> a float constant (e.g. float(5) -> 5.0).
-            if (dstType == DataType.FLOAT) return new FloatConstant(c.Value);
+            if (dstType == DataType.FLOAT) return new FloatConstant(c.AsLong);
             int val = c.Value;
             switch (dstType)
             {
@@ -8288,6 +8288,10 @@ public partial class IRGenerator
                 case DataType.UINT16: val = (ushort)val; break;
                 case DataType.INT8: val = (sbyte)val; break;
                 case DataType.INT16: val = (short)val; break;
+                // uint32 of a pattern that reads negative is the number past int32
+                // (`uint32(-1)` is 4294967295); int32 of one is the negative reading.
+                case DataType.UINT32: return new Constant(val, Unsigned: val < 0);
+                case DataType.INT32: return new Constant(val);
             }
 
             return new Constant(val);
@@ -8957,6 +8961,7 @@ public partial class IRGenerator
             // 0x1234 printed as 52. Assigning the same read to a uint16 local first printed
             // it whole, which is what made the truncation look like the register's fault.
             MemoryAddress ma2 => ma2.Type,
+            Constant { Unsigned: true } => DataType.UINT32,
             Constant cc => cc.Value < 0
                          ? (cc.Value >= short.MinValue ? DataType.INT16 : DataType.INT32)
                          : cc.Value <= 0xFF ? DataType.UINT8
