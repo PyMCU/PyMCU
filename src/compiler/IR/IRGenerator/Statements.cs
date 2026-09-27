@@ -1555,11 +1555,15 @@ public partial class IRGenerator
         // `obj._p is None` folded to True. The mark is the answer the direct read gives;
         // the return hands it on. Only the scoped spellings count: the bare-name fallback
         // would let any scope's `x = None` claim this one's `x`.
+        bool returnsNone = stmt.Value is null or NoneLiteral;
         if (inlineStack.Count > 0 && val is not NoneVal
             && stmt.Value is MemberAccessExpr or VariableExpr
             && LiveOptionalTag(stmt.Value) == null
             && IsNoneValued(stmt.Value, bareNameFallback: false))
+        {
             val = new NoneVal();
+            returnsNone = true;
+        }
 
         if (inlineStack.Count > 0)
         {
@@ -1603,7 +1607,12 @@ public partial class IRGenerator
             // residue on the other, and `is None` folded to False either way. Mint the tag
             // here; the paths that return a value, including any already lowered, report
             // the value member through the default stored at the expansion's entry.
-            if (ctx.ResultTagTemp == null && val is NoneVal { LiveCallResult: false }
+            //
+            // The RETURN has to say None, not the value: a constructor's `return S(x)` also
+            // lowers to a NoneVal -- the instance travels outside the value channel -- and
+            // taking that for a None return made every such factory an Optional, so the
+            // caller's `t = f(v)` was refused as "may be None" (cplayer, time.localtime).
+            if (ctx.ResultTagTemp == null && returnsNone && val is NoneVal { LiveCallResult: false }
                 && !afterUnconditionalReturn && !(endsBody && !hadResult)
                 && ctx.EntryInstructions != null)
             {
