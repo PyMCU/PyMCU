@@ -375,8 +375,8 @@ public partial class IRGenerator
 
     // Names that carry a real Python bool, so an interpolation prints True/False instead of
     // 1/0. Collected program-wide, by UNQUALIFIED name, before IR generation: boolNames holds
-    // every name bound to a True/False literal (or declared `: bool` with such an init);
-    // nonBoolNames holds every name that anywhere receives something else (a comparison, an
+    // every name bound to a bool-shaped value (a True/False literal, a comparison, `not`, a
+    // truth builtin); nonBoolNames holds every name that anywhere receives something else (an
     // integer, a loop variable, a parameter). A name prints as a bool only when it is in the
     // first set and absent from the second, so a name that is a bool at one point and an
     // integer later keeps printing as a number everywhere.

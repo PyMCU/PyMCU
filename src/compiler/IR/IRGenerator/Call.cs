@@ -8706,14 +8706,18 @@ public partial class IRGenerator
             $"f\"{{{ve.Name}.<field>}}\" or a method that returns a number.", e);
     }
 
-    // A bool value in the Python sense: a True/False literal, or a name bound to one
-    // everywhere in the program. A comparison is deliberately NOT a bool here — PyMCU
-    // lowers `a < b` to an integer, and printing it as True/False would misreport any
-    // other integer flowing through the same name.
+    // A bool value in the Python sense: a True/False literal, a comparison, `not`, a truth
+    // builtin, `and`/`or` of bools, a call whose every return is one, or a name bound only to
+    // bools everywhere it can be seen. A name that also receives an integer anywhere stays
+    // a number, so a bool never misreports an integer flowing through the same name.
     private bool IsBoolExpr(Expression e) => e switch
     {
         BooleanLiteral => true,
         VariableExpr ve => IsBoolName(ve.Name),
+        // `and`/`or` hand back one of their operands, so the result is a bool exactly when
+        // both are: `print((a > b) or (a > 1))` printed 1 (#386).
+        BinaryExpr { Op: Frontend.BinaryOp.And or Frontend.BinaryOp.Or } lo =>
+            IsBoolExpr(lo.Left) && IsBoolExpr(lo.Right),
         // Comparisons are bools too: `print(dev.i2c is not None)` went to the decimal
         // writer and sent 1/0 where CPython and CircuitPython spell True/False.
         BinaryExpr be => be.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
@@ -8735,13 +8739,15 @@ public partial class IRGenerator
         VariableExpr cv =>
             // `isinstance` is a builtin, not a def, so it has no functionReturnTypes
             // entry -- but it always yields a Python bool.
-            cv.Name == "isinstance"
-            || functionReturnTypes.GetValueOrDefault(ResolveCallee(cv.Name)) == "bool",
+            (IsTruthBuiltin(cv.Name) && !functionParams.ContainsKey(ResolveCallee(cv.Name)))
+            || functionReturnTypes.GetValueOrDefault(ResolveCallee(cv.Name)) == "bool"
+            || boolReturningFunctions.Contains(ResolveCallee(cv.Name)),
         MemberAccessExpr cm =>
             cm.Object is VariableExpr cobj
             && InstanceClassOfName(cobj.Name) is { } ccls
             && ResolveMROMethod(ccls, cm.Member) is { } mcls
-            && functionReturnTypes.GetValueOrDefault(mcls + "_" + cm.Member) == "bool",
+            && (functionReturnTypes.GetValueOrDefault(mcls + "_" + cm.Member) == "bool"
+                || boolReturningFunctions.Contains(mcls + "_" + cm.Member)),
         _ => false,
     };
 

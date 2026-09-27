@@ -1836,6 +1836,7 @@ public partial class IRGenerator
             // byte it lowers to says nothing about that. Recorded beside the return TYPE
             // because a caller is often lowered before the callee's body is (#436).
             if (ReturnsOnlyChars(func)) charReturningFunctions.Add(fullName);
+            if (ReturnsOnlyBools(func)) boolReturningFunctions.Add(fullName);
             if (ReturnsOnlyNone(func)) noneReturningFunctions.Add(fullName);
             // `return <seq>` in an outlined function: record the returned name so a
             // call site compiled before this body can still resolve the element
@@ -2322,6 +2323,8 @@ public partial class IRGenerator
                                     ? fullName + "___setter" : fullName] = func.ReturnType;
                                 if (!func.IsPropertySetter && ReturnsOnlyNone(func))
                                     noneReturningFunctions.Add(fullName);
+                                if (!func.IsPropertySetter && ReturnsOnlyBools(func))
+                                    boolReturningFunctions.Add(fullName);
                                 var @params = new List<string>();
                                 var paramTypes = new List<DataType>();
                                 foreach (var p in func.Params)
@@ -2915,9 +2918,9 @@ public partial class IRGenerator
     }
 
     // Walk a statement and classify every plain-name binding as bool or not-bool (see the
-    // boolNames/nonBoolNames comment in State.cs). Only a True/False literal binds a bool;
-    // everything else -- a comparison (an integer in PyMCU), a loop variable, a parameter --
-    // vetoes the name. Module-level bindings veto program-wide (one flat namespace);
+    // boolNames/nonBoolNames comment in State.cs). A bool-shaped value (a literal, a
+    // comparison, `not`, a truth builtin) binds a bool; everything else -- arithmetic, a
+    // loop variable, a parameter -- vetoes the name. Module-level bindings veto program-wide (one flat namespace);
     // bindings inside a function veto only within that function's scope, since a callee's
     // `off` parameter is a different binding from the program's `off` local.
     private void CollectBoolNames(Statement? s, string? scope = null, string? cls = null)
@@ -2965,7 +2968,9 @@ public partial class IRGenerator
 
     private void NoteBoolBinding(string name, Expression? value, string? scope)
     {
-        if (value is BooleanLiteral) NoteBool(scope, name);
+        // A name bound to a comparison holds a Python bool (`v = base > k; print(v)` is
+        // False, not 0, in CPython): anything bool-shaped binds a bool (#386).
+        if (value != null && IsBoolShaped(value)) NoteBool(scope, name);
         else if (value is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 })
         {
             NoteScoped(nonBoolScopes, nonBoolNames, scope, name);
@@ -4958,6 +4963,43 @@ public partial class IRGenerator
     /// and no path that falls off the end: on such a path the function hands back whatever
     /// the return register held, which is not a character.
     /// </summary>
+    // `def ret(): return base > k`: every value the function hands back is a truth value,
+    // so the call prints True/False as CPython does. Recorded beside the chars for the same
+    // reason: a caller is often lowered before the callee's body (#386).
+    private static bool ReturnsOnlyBools(FunctionDef func)
+    {
+        if (func.ReturnType == "bool") return true;
+        if (func.IsAsync || func.ReturnMembers != null) return false;
+        var returns = TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>().ToList();
+        if (returns.Count == 0 || !AlwaysLeaves(func.Body)) return false;
+        return returns.All(r => r.Value != null && IsBoolShaped(r.Value));
+    }
+
+    /// <summary>
+    /// A value that is a Python bool by its shape alone: True/False, a comparison, `not`, a
+    /// truth builtin, or `and`/`or` of such values (which return one of their bool operands).
+    /// Decidable before any lowering, which is what a scan needs.
+    /// </summary>
+    internal static bool IsBoolShaped(Expression e) => e switch
+    {
+        BooleanLiteral => true,
+        UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Not } => true,
+        BinaryExpr { Op: PyMCU.Frontend.BinaryOp.And or PyMCU.Frontend.BinaryOp.Or } lo =>
+            IsBoolShaped(lo.Left) && IsBoolShaped(lo.Right),
+        BinaryExpr { Op: var op } => op is PyMCU.Frontend.BinaryOp.Equal
+            or PyMCU.Frontend.BinaryOp.NotEqual or PyMCU.Frontend.BinaryOp.Less
+            or PyMCU.Frontend.BinaryOp.LessEq or PyMCU.Frontend.BinaryOp.Greater
+            or PyMCU.Frontend.BinaryOp.GreaterEq or PyMCU.Frontend.BinaryOp.Is
+            or PyMCU.Frontend.BinaryOp.IsNot or PyMCU.Frontend.BinaryOp.In
+            or PyMCU.Frontend.BinaryOp.NotIn,
+        CallExpr { Callee: VariableExpr { Name: var fn } } => IsTruthBuiltin(fn),
+        _ => false,
+    };
+
+    internal static bool IsTruthBuiltin(string name) =>
+        name is "bool" or "isinstance" or "issubclass" or "all" or "any" or "hasattr"
+            or "callable";
+
     private static bool ReturnsOnlyChars(FunctionDef func)
     {
         var returns = TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>().ToList();
