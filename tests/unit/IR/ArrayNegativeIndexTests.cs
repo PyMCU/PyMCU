@@ -104,6 +104,26 @@ public class ArrayNegativeIndexTests
         Assert.Contains(AllInstructions(ir), i => i is ArrayStore { Index: Constant { Value: 2 } });
     }
 
+    [Theory]
+    [InlineData("uint8", "x: uint8 = xs[-1]\n")]
+    [InlineData("uint16", "xs[-2] = GPIOR0.value + 3000\n")]
+    [InlineData("uint8", "xs[-1] += 10\n")]
+    public void AHeapListAtANegativeIndex_CountsFromItsRunTimeLength(string elem, string statement)
+    {
+        // A list[T] element lives at base + 2 + index * size, and `xs[-1]` used -1 as it was:
+        // it addressed the list's header and read or wrote its bytes as an element.
+        var ir = Generate(
+            $"xs: list[{elem}] = []\n" +
+            "xs.append(GPIOR0.value + 5)\n" +
+            "xs.append(GPIOR0.value + 6)\n" +
+            statement);
+
+        var main = Assert.Single(ir.Functions, f => f.Name == "main");
+        Assert.DoesNotContain(main.Body, i => i is Binary b
+            && (b.Src1 is Constant { Value: < 0 } || b.Src2 is Constant { Value: < 0 }));
+        Assert.Contains(main.Body, i => i is Binary { Op: PyMCU.IR.BinaryOp.Sub, Src2: Constant { Value: > 0 } });
+    }
+
     [Fact]
     public void AConstantStorePastTheEnd_IsAnIndexError()
     {
