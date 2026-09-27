@@ -12008,6 +12008,19 @@ public partial class IRGenerator
         if (instanceClasses.TryGetValue(zcaRootKey, out string? cls) && cls != null)
             instanceClasses[paramName] = cls;
 
+        // The handler runs between any two instructions of the program, so the value main's
+        // lowering holds for a field at this point is provable only for a field nothing writes
+        // after its constructor. Every other field is read from memory inside the handler:
+        // folding them made I2CTarget's `if t._phase == 0` always true and indexed `mem[0]`
+        // for every byte, because the fold was the 0 that __init__ had just stored.
+        var hiddenFields = new Dictionary<string, (int Value, bool WasKilled)>();
+        foreach (var key in IsrMutableFieldKeys(zcaRootKey))
+        {
+            hiddenFields[key] = (constantVariables[key], killedConstants.Contains(key));
+            constantVariables.Remove(key);
+            killedConstants.Add(key);
+        }
+
         // Propagate ZCA sub-fields (constantVariables, strConstantVariables, instanceClasses)
         string zcaFieldPfx = zcaRootKey + ".";
         foreach (var kv in constantVariables
@@ -12038,6 +12051,23 @@ public partial class IRGenerator
         };
         pendingZcaSynthFunctions.Add(wrapperFunc);
 
+        // A field the handler writes stays unfolded for the rest of main too: from here on the
+        // interrupt can change it under any read. A field it only reads is main's to track
+        // again, with the value it held before the handler was lowered.
+        var writtenByHandler = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var ins in wrapperFunc.Body)
+        {
+            foreach (var dv in Verifier.DstVals(ins))
+                if (dv is Variable dvv) writtenByHandler.Add(dvv.Name);
+            if (ins is AugAssign { Target: Variable av }) writtenByHandler.Add(av.Name);
+        }
+        foreach (var (key, (value, wasKilled)) in hiddenFields)
+        {
+            if (writtenByHandler.Contains(key)) continue;
+            if (!wasKilled) killedConstants.Remove(key);
+            constantVariables.TryAdd(key, value);
+        }
+
         // Restore compilation state
         currentInstructions    = savedInstructions;
         currentFunction        = savedFunction;
@@ -12054,6 +12084,99 @@ public partial class IRGenerator
         currentFunctionGlobals = savedFunctionGlobals;
 
         return synthName;
+    }
+
+    /// <summary>
+    /// The folded fields of <paramref name="root"/> that something may write after the
+    /// constructor: a method of the field's class other than `__init__` assigning
+    /// `self.&lt;field&gt;`, or any store `&lt;expr&gt;.&lt;field&gt; = v` anywhere in the program
+    /// whose object is not a bare `self` -- the handler's own `t.memaddr = ...`, a
+    /// `obj.limit = 9` in main, `self._hw.x = v` in another class. The second rule is by name
+    /// and errs on "mutable", which only costs a fold inside the handler; the first is by
+    /// class, so a HAL field another class happens to share a name with keeps the constant
+    /// the backend needs for a bit mask. Compile-time strings are left alone: no store can
+    /// give one a run-time value.
+    /// </summary>
+    private List<string> IsrMutableFieldKeys(string root)
+    {
+        var keys = new List<string>();
+        if (!instanceClasses.TryGetValue(root, out var cls) || cls == null) return keys;
+
+        var storedByName = MemberNamesStoredOutsideSelf();
+        string pfx = root + "_";
+        foreach (var key in constantVariables.Keys.Where(k => k.StartsWith(pfx, StringComparison.Ordinal)).ToList())
+        {
+            if (strConstantVariables.ContainsKey(key)) continue;
+
+            // Walk the path down the layouts to the class that declares the leaf field:
+            // `_hw__freq` under an I2CTarget is `_hw` (an _I2C) and then its `_freq`.
+            string rest = key[pfx.Length..];
+            string? owner = cls;
+            string? leaf = null;
+            while (owner != null && classFieldLayout.TryGetValue(owner, out var lay))
+            {
+                if (lay.Any(f => f.Field == rest)) { leaf = rest; break; }
+                var hop = lay.Where(f => rest.StartsWith(f.Field + "_", StringComparison.Ordinal)
+                                         && classFieldLayout.ContainsKey(f.Type))
+                             .OrderByDescending(f => f.Field.Length).FirstOrDefault();
+                if (hop.Field == null) break;
+                rest = rest[(hop.Field.Length + 1)..];
+                owner = hop.Type;
+            }
+
+            bool mutable;
+            if (leaf != null && owner != null)
+                mutable = storedByName.Contains(leaf)
+                          || SiblingMethodsOf(owner).Any(m => m.Key != "__init__"
+                                                              && MethodMutatesFieldPublic(m.Value, leaf));
+            else
+                // A path the layouts do not reach: fall back to the name rule on its tail.
+                mutable = storedByName.Any(n => rest == n || rest.EndsWith("_" + n, StringComparison.Ordinal));
+            if (mutable) keys.Add(key);
+        }
+        return keys;
+    }
+
+    /// <summary>
+    /// Every member name some statement of the program stores into through an object that is
+    /// not a bare `self`: `t.x = v`, `t.x += v`, `self.inner.x = v`, `t.x: uint8 = v`.
+    /// </summary>
+    private HashSet<string> MemberNamesStoredOutsideSelf()
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        void Target(Expression? t)
+        {
+            switch (t)
+            {
+                case MemberAccessExpr { Object: VariableExpr { Name: "self" } }: return;
+                case MemberAccessExpr ma: names.Add(ma.Member); return;
+                case TupleExpr te: foreach (var el in te.Elements) Target(el); return;
+            }
+        }
+        void Dotted(string? name)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            int dot = name.LastIndexOf('.');
+            if (dot <= 0 || name.StartsWith("self.", StringComparison.Ordinal) && dot == 4) return;
+            names.Add(name[(dot + 1)..]);
+        }
+
+        var programs = new List<ProgramNode>(importedModuleAsts.Values);
+        if (mainProgramAst != null) programs.Insert(0, mainProgramAst);
+        foreach (var prog in programs)
+        foreach (var node in AstNodes(prog, descendIntoFunctions: true))
+        {
+            switch (node)
+            {
+                case AssignStmt a: Target(a.Target); break;
+                case AugAssignStmt ag: Target(ag.Target); break;
+                case AnnAssign an: Dotted(an.Target); break;
+                case VarDecl vd: Dotted(vd.Name); break;
+                case TupleUnpackStmt tu: foreach (var n in tu.Targets) Dotted(n); break;
+            }
+        }
+        return names;
     }
 
     /// <summary>
