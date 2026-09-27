@@ -261,6 +261,11 @@ public partial class IRGenerator
                 if (TryGetSetBinding(ve.Name, out var sb)) { count = sb.Elements.Count; return true; }
                 if (ResolveListLiteralParam(ve.Name) is ListExpr lp) { count = lp.Elements.Count; return true; }
                 if (ResolveConstSequence(ve.Name) is { } vseq) { count = vseq.Count; return true; }
+                // A parameter bound to the caller's buffer is an alias of it: the length is the
+                // array's. `bytearray(2 * len(data))` inside an @inline otherwise failed to fold,
+                // took the run-time arena path, and a `return out` of it handed back the arena
+                // offset as a number -- a buffer of zeros at the call site.
+                if (ResolveArrayVar(ve.Name) is { } aliased) { count = aliased.Size; return true; }
                 foreach (var k in new[]
                 {
                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
