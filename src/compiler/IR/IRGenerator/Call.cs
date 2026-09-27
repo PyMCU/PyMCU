@@ -11292,9 +11292,19 @@ public partial class IRGenerator
         return "";
     }
 
-    // Computes basePtr + 2 + index * elemSize as a UINT16 address Temporary.
+    // Computes basePtr + 2 + index * elemSize as a UINT16 address Temporary. A negative
+    // constant index counts from the list's run-time length (header byte 0): `xs[-1]` used
+    // as it was addressed the header and printed its bytes as an element.
     private Temporary EmitElemAddr(Val basePtr, Val index, int elemSize)
     {
+        if (index is Constant { Value: < 0 } negIdx)
+        {
+            Temporary count = EmitListLoad(basePtr, 0, DataType.UINT8);
+            Temporary fromEnd = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Sub, count, new Constant(-negIdx.Value), fromEnd));
+            index = fromEnd;
+        }
+
         Val ptrU16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
                    : basePtr is Variable v ? v with { Type = DataType.UINT16 }
                    : basePtr;
