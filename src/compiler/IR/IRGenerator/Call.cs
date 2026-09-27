@@ -3995,7 +3995,13 @@ public partial class IRGenerator
             && !resultDiscarded && func != null && finishedCtx.ResultTemp != null
             && finishedCtx.ResultVars.Count == 0
             && finishedCtx.ReturnedBuffer == null
-            && (!finishedCtx.ResultAssigned || !AlwaysLeaves(func.Body));
+            && (!finishedCtx.ResultAssigned || !AlwaysLeaves(func.Body))
+            // A body whose every path ends in `raise` never reaches a result to produce: the
+            // call either raises or, caught by a caller's `try`, never hands a value on.
+            // `@inline def f() -> uint32: raise ValueError("x")` inside `try: t = f()` was
+            // refused as reaching the end without returning.
+            && !(AlwaysLeaves(func.Body)
+                 && !TypeInference.WalkStatements(func.Body).OfType<ReturnStmt>().Any());
 
         inlineStack.RemoveAt(inlineStack.Count - 1);
         activeInlineExpansions.Remove(callee);

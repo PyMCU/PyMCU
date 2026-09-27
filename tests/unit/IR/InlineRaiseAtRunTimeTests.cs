@@ -40,6 +40,22 @@ public class InlineRaiseAtRunTimeTests
     }
 
     [Fact]
+    public void ABodyThatOnlyRaises_InsideATry_Compiles()
+    {
+        var ir = Gen(Head +
+            "@inline\n" +
+            "def f() -> uint32:\n" +
+            "    raise ValueError(\"x\")\n" +
+            "t: uint32 = 0\n" +
+            "try:\n" +
+            "    t = f()\n" +
+            "except ValueError:\n" +
+            "    t = 1\n");
+        Assert.Contains(ir.Functions.Single(f => f.Name == "main").Body,
+            i => i is SignalError { CatchLabel: not null });
+    }
+
+    [Fact]
     public void AnUnconditionalRaiseWithNoHandler_IsStillACompileError()
     {
         Assert.ThrowsAny<CompilerError>(() => Gen(Head +
