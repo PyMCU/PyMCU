@@ -3785,7 +3785,7 @@ public partial class IRGenerator
         if (expr.Target is MemberAccessExpr memLoad
             && ResolveMemberArrayName(memLoad) is string flatLoad)
         {
-            Val idxVal = VisitExpression(expr.Index);
+            Val idxVal = ConstArrayIndex(flatLoad, VisitExpression(expr.Index), expr.Index);
             RemapArrayAccess(flatLoad, idxVal, out var loadName, out var loadIdx,
                 out var loadSize, out var loadDt);
             Temporary tmp = MakeTemp(loadDt);

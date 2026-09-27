@@ -1977,6 +1977,25 @@ public partial class IRGenerator
             + "has storage.", at);
     }
 
+    /// <summary>
+    /// A compile-time subscript of the fixed array <paramref name="key"/>, as the element it
+    /// names: `a[-1]` is `a[len - 1]`, and an index outside the array is Python's IndexError.
+    /// A run-time index is returned unchanged. The named-array READ normalized its constant
+    /// index, but the stores and every `self.buf[...]` access handed a negative constant to
+    /// the backend as it was: the load read the bytes in front of the array, silently, and
+    /// the store failed in the assembler on a negative displacement.
+    /// </summary>
+    private Val ConstArrayIndex(string key, Val idx, ASTNode at)
+    {
+        if (idx is not Constant c || !arraySizes.TryGetValue(key, out int size)) return idx;
+        int len = LogicalArrayLen(key, size);
+        int k = c.Value < 0 ? c.Value + len : c.Value;
+        if (k < 0 || k >= len)
+            throw new IndexError($"array index {c.Value} out of range for size {len}",
+                at.Line > 0 ? at.Line : lastLine, at.Column);
+        return k == c.Value ? idx : new Constant(k);
+    }
+
     /// <param name="at">
     /// The expression node the name was read from, when the caller has it. Only used to locate
     /// the "not defined" diagnostic: a name is a token, so it has a column, and the caret

@@ -4732,7 +4732,7 @@ public partial class IRGenerator
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified)
                     || arrayViewBase.ContainsKey(qualified))
                 {
-                    Val idxVal = VisitExpression(indexExpr.Index);
+                    Val idxVal = ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index);
                     Val srcVal = VisitExpression(stmt.Value);
                     RemapArrayAccess(qualified, idxVal, out var storeName, out var storeIdx,
                         out var storeSize, out var storeDt);
@@ -4746,9 +4746,8 @@ public partial class IRGenerator
                     // iteration). This lets inline functions write into a caller's
                     // fixed array via constant-index stores without SRAM indexing.
                     int elemIdx;
-                    if (indexExpr.Index is IntegerLiteral c)
-                        elemIdx = c.Value;
-                    else if (VisitExpression(indexExpr.Index) is Constant cc)
+                    if (ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index)
+                        is Constant cc)
                         elemIdx = cc.Value;
                     else
                         throw UnrolledArrayIndexError(qualified, indexExpr.Target);
@@ -4766,7 +4765,7 @@ public partial class IRGenerator
         if (indexExpr.Target is MemberAccessExpr memStore
             && ResolveMemberArrayName(memStore) is string flatStore)
         {
-            Val idxVal = VisitExpression(indexExpr.Index);
+            Val idxVal = ConstArrayIndex(flatStore, VisitExpression(indexExpr.Index), indexExpr.Index);
             Val srcVal = VisitExpression(stmt.Value);
             RemapArrayAccess(flatStore, idxVal, out var storeName, out var storeIdx,
                 out var storeSize, out var storeDt);
@@ -9028,15 +9027,15 @@ public partial class IRGenerator
 
                 if (arraySizes.ContainsKey(qualified))
                 {
+                    Val idxVal = ConstArrayIndex(qualified, VisitExpression(ie.Index), ie.Index);
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
                     {
-                        Val idxVal = VisitExpression(ie.Index);
                         Emit(new ArrayStore(qualified, idxVal, result, arrayElemTypes[qualified],
                             arraySizes[qualified]));
                     }
                     else
                     {
-                        if (!(ie.Index is IntegerLiteral il)) throw UserError("Array subscript must be const");
+                        if (idxVal is not Constant il) throw UnrolledArrayIndexError(qualified, ie.Target);
                         string elemName = qualified + "__" + il.Value;
                         Emit(new Copy(result, new Variable(elemName, arrayElemTypes[qualified])));
                     }
@@ -9053,7 +9052,7 @@ public partial class IRGenerator
             if (ie.Target is MemberAccessExpr augMem
                 && ResolveMemberArrayName(augMem) is string flatAug)
             {
-                Val idxVal = VisitExpression(ie.Index);
+                Val idxVal = ConstArrayIndex(flatAug, VisitExpression(ie.Index), ie.Index);
                 RemapArrayAccess(flatAug, idxVal, out var augName, out var augIdx,
                     out var augSize, out var augDt);
                 Emit(new ArrayStore(augName, augIdx, result, augDt, augSize));
