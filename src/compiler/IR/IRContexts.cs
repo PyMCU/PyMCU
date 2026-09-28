@@ -73,6 +73,11 @@ public class InlineContext
     // by a trailing `return "PD2"` still a compile-time "PB5" when n is 13.
     public bool ResultReturnedUnconditionally { get; set; }
 
+    // For each live `return` visited: the instance it returned (the terminal name of its
+    // alias chain), or null for any other value, None included. One instance on every path
+    // makes the call's value THAT instance; two or more are chosen at run time.
+    public List<string?> ReturnedInstances { get; } = new();
+
     // The body's deciding return produced None (`return None` or a bare `return`, no value
     // return on any reachable path before it). The call's value is then a compile-time None:
     // the typed ResultTemp is only a formality of the declared `Optional[float]`, and the

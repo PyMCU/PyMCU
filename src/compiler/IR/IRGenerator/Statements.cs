@@ -1630,6 +1630,7 @@ public partial class IRGenerator
             bool afterUnconditionalReturn = ctx.ResultReturnedUnconditionally;
             bool endsBody = _runtimeBranchDepth <= ctx.EntryBranchDepth;
             bool hadResult = ctx.ResultAssigned;
+            if (!afterUnconditionalReturn) ctx.ReturnedInstances.Add(ReturnedInstanceName(val));
             // An unannotated def is "void" to the parser and return-type inference skips class
             // methods, so a method's `return self.value` had no result temporary to land in and
             // the caller read None. The first value return decides the width.
@@ -1919,6 +1920,18 @@ public partial class IRGenerator
     /// arrive as a UnaryExpr around a positive IntegerLiteral -- the parser's shape for
     /// `-1` -- so both spellings count.
     /// </summary>
+    // The instance a returned value names, followed through its aliases (`return x` where x
+    // is a parameter bound to the caller's `a`), or null when it names none. A factory
+    // handle is excluded: it IS its field's value, and copying it is correct.
+    private string? ReturnedInstanceName(Val val)
+    {
+        string? name = val switch { Variable v => v.Name, Temporary t => t.Name, _ => null };
+        if (name == null) return null;
+        string term = FollowAliases(name);
+        return instanceClasses.ContainsKey(term) && !factoryHandleInstances.Contains(term)
+            ? term : null;
+    }
+
     private static DataType JoinInlineResultLiteralEvidence(FunctionDef func, DataType t)
     {
         foreach (var rs in TypeInference.WalkStatements(func.Body.Statements))

@@ -4258,10 +4258,34 @@ public partial class IRGenerator
             MarkOptional(result.Name, resTag, rMembers);
         }
 
+        // `return x` where x is an instance: the call's value is THAT instance, not a copy of
+        // its handle byte. The result temporary only aliased it, and an alias through a
+        // scratch temporary is not followed, so `w = one(a)` bound w to the temp and `w.k`
+        // read `w_k`, which nothing writes: 0 for 7. Hand back the instance's own name so the
+        // caller's binding aliases the object, exactly as `w = a` does.
+        var retInsts = finishedCtx.ReturnedInstances;
+        if (!resultDiscarded && retInsts.Count > 0 && retInsts.All(n => n != null))
+        {
+            var distinctInsts = retInsts.Distinct().ToList();
+            if (distinctInsts.Count == 1)
+                return new Variable(distinctInsts[0]!, DataType.UINT8);
+            throw UserError(
+                $"'{callee}' returns a different instance depending on a run-time condition "
+                + $"({string.Join(", ", distinctInsts.Select(DisplayInstanceName))}). An instance "
+                + "chosen at run time cannot be returned from an @inline function: PyMCU lays "
+                + "each instance out at compile time, so the caller would receive no object "
+                + "to read fields from. Return a value that identifies it (an index or a "
+                + "field) and select the instance with an `if` at the call site.",
+                expr);
+        }
+
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
         return new NoneVal();
     }
+
+    private static string DisplayInstanceName(string? name) =>
+        name == null ? "?" : name[(name.LastIndexOf('.') + 1)..];
 
     // A heap-list argument arrives as a GC_REF Temporary (`tuple(xs)`) or a
     // Variable the alias chase resolves to a registered list. Copying it into a
