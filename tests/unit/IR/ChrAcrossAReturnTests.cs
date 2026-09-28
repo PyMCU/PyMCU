@@ -119,4 +119,55 @@ public class ChrAcrossAReturnTests
 
         Assert.True(MainWritesADecimal(ir));
     }
+
+    // The run-time half through a NAME: `c = chr(s + 72); print(c)` sent 72. The binding is
+    // the only thing that says the byte is a character.
+    [Fact]
+    public void ARuntimeChrBoundToAName_PrintsItsCharacter()
+    {
+        var ir = Gen(
+            "c = chr(GPIOR0.value + 72)\n" +
+            "print(c)\n");
+
+        Assert.True(MainWritesABareByte(ir));
+        Assert.False(MainWritesADecimal(ir));
+    }
+
+    [Fact]
+    public void ARuntimeChrBoundToALocal_PrintsItsCharacter()
+    {
+        var ir = Gen(
+            "def show(n: uint8):\n" +
+            "    c = chr(n + 1)\n" +
+            "    print(c)\n" +
+            "show(GPIOR0.value)\n");
+
+        Assert.False(ir.Functions.SelectMany(f => f.Body)
+            .Any(i => i is Call c && c.FunctionName.Contains("uart_write_decimal")));
+    }
+
+    // A name chr() binds on one path and a number binds on another cannot say at the print
+    // which it holds: refused, rather than printed as a number on the chr() path.
+    [Fact]
+    public void ANameThatIsSometimesAChr_IsRefusedAtThePrint()
+    {
+        var ex = Assert.ThrowsAny<Exception>(() => Gen(
+            "k: uint8 = GPIOR0.value\n" +
+            "c = k\n" +
+            "if k > 3:\n" +
+            "    c = chr(k)\n" +
+            "print(c)\n"));
+        Assert.Contains("chr(...) on one path", ex.Message);
+    }
+
+    // The control: a name that chr() never binds is a number.
+    [Fact]
+    public void ANameBoundToANumber_StillPrintsANumber()
+    {
+        var ir = Gen(
+            "c = GPIOR0.value + 72\n" +
+            "print(c)\n");
+
+        Assert.True(MainWritesADecimal(ir));
+    }
 }
