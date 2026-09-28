@@ -185,4 +185,31 @@ public class InlineArgumentEvaluatedOnceTests
             "GPIOR1.value = m.k\n");
         Assert.Equal(new[] { "other", "bump", "bump" }, CallOrder(ir));
     }
+
+    private static bool ReadsCAfterBump(ProgramIR ir)
+    {
+        var body = Main(ir).ToList();
+        int bump = body.FindIndex(i => i is Call { FunctionName: "bump" });
+        Assert.True(bump >= 0);
+        // A record prints a List argument as its type name, so a call's arguments are asked
+        // one by one.
+        static bool ReadsC(Instruction i) => i is Call c
+            ? c.Args.Any(a => a is Variable { Name: "_c" })
+            : i.ToString()!.Contains("Name = _c,");
+        return body.Skip(bump + 1).Any(ReadsC);
+    }
+
+    // `0 + _c` folds to a temporary holding `_c`, read before the call. Forwarding the
+    // temporary into the call's argument reads `_c` where the call runs -- after bump()
+    // wrote it through `global`.
+    [Fact]
+    public void ATempHoldingAGlobalIsNotForwardedPastACall()
+    {
+        var ir = Gen(Bump +
+            "def f(a: uint8, b: uint8) -> uint8:\n" +
+            "    return a * 10 + b\n\n" +
+            "_c = GPIOR0.value\n" +
+            "GPIOR1.value = f(0 + _c, bump())\n", optimize: true);
+        Assert.False(ReadsCAfterBump(ir));
+    }
 }

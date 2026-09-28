@@ -1643,6 +1643,14 @@ private static Function CloneFunction(Function f)
                     else if (globalNames is { Count: > 0 })
                         foreach (var g in varConsts.Keys.Where(globalNames.Contains).ToList())
                             varConsts.Remove(g);
+                    // The same holds for a temporary that holds a global's value: it was read
+                    // before the call, and forwarding the global into a use after the call
+                    // reads what the call left there (`print(count, bump())`).
+                    if (globalNames is { Count: > 0 })
+                        foreach (var gname in tempCopies.Values
+                                     .OfType<Variable>().Select(v => v.Name)
+                                     .Where(globalNames.Contains).Distinct().ToList())
+                            ForgetCopiesOf(gname);
                     break;
                 default:
                     // Every other instruction that DEFINES a value retires whatever was tracked
