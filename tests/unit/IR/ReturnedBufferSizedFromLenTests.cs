@@ -16,10 +16,34 @@ namespace PyMCU.UnitTests;
 /// </summary>
 public class ReturnedBufferSizedFromLenTests
 {
+    // A runtime-sized bytearray(n) lowers to pymcu.arena.alloc, so the module has to
+    // resolve like the driver's loaded stdlib does (ArenaAllocatorTests explains why
+    // ARENA_SIZE is substituted: shipped 0 folds every alloc's bounds check to a
+    // compile-time MemoryError).
+    private static readonly ProgramNode ArenaModuleAst = new Parser(new Lexer(
+        System.Text.RegularExpressions.Regex.Replace(
+            File.ReadAllText(FindRepoFile("lib/src/pymcu/arena.py")),
+            @"^ARENA_SIZE: uint16 = \d+$", "ARENA_SIZE: uint16 = 64",
+            System.Text.RegularExpressions.RegexOptions.Multiline))
+        .Tokenize()).ParseProgram();
+
+    private static string FindRepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, relativePath);
+            if (File.Exists(candidate)) return candidate;
+            dir = dir.Parent;
+        }
+        throw new FileNotFoundException(
+            $"could not find '{relativePath}' walking up from {AppContext.BaseDirectory}");
+    }
+
     private static ProgramIR Gen(string src) =>
         Optimizer.Optimize(new IRGenerator().Generate(
             new Parser(new Lexer(src).Tokenize()).ParseProgram(),
-            new Dictionary<string, ProgramNode>(),
+            new Dictionary<string, ProgramNode> { ["pymcu.arena"] = ArenaModuleAst },
             new DeviceConfig { Arch = "avr" }));
 
     [Fact]
@@ -44,7 +68,31 @@ public class ReturnedBufferSizedFromLenTests
     [Fact]
     public void ABufferSizedAtRunTimeCannotBeReturned()
     {
+        // The @inline is expanded at module level, so bytearray(k) itself is a legal
+        // once-only arena allocation; it is handing that buffer back through `return`
+        // that has no answer -- the expansion has no name the caller can take over.
         var act = () => Gen(
+            "import pymcu.arena as _pymcu_arena\n" +
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import uint8, inline\n" +
+            "@inline\n" +
+            "def mk(k: uint8) -> bytearray:\n" +
+            "    out = bytearray(k)\n" +
+            "    return out\n" +
+            "a = mk(GPIOR0.value + 3)\n");
+
+        act.Should().Throw<Exception>().WithMessage("*sized at run time*cannot be*returned*");
+    }
+
+    [Fact]
+    public void ABufferSizedAtRunTimeInsideACalledFunctionIsRefusedFirst()
+    {
+        // The same shape one call deeper: the arena allocation is refused before the
+        // return is even reached, because `mk` expands inside `go` and a buffer
+        // allocated there runs once per call the arena can never free.
+        var act = () => Gen(
+            "import pymcu.arena as _pymcu_arena\n" +
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
             "from pymcu.types import uint8, inline\n" +
             "@inline\n" +
             "def mk(k: uint8) -> bytearray:\n" +
@@ -53,9 +101,8 @@ public class ReturnedBufferSizedFromLenTests
             "def go(k: uint8) -> uint8:\n" +
             "    a = mk(k)\n" +
             "    return a[0]\n" +
-            "x = go(3)\n" +
-            "y = go(4)\n");
+            "x = go(GPIOR0.value + 3)\n");
 
-        act.Should().Throw<Exception>().WithMessage("*sized at run time*cannot be*returned*");
+        act.Should().Throw<Exception>().WithMessage("*run at most once*");
     }
 }
