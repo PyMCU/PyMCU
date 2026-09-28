@@ -212,4 +212,52 @@ public class InlineArgumentEvaluatedOnceTests
             "GPIOR1.value = f(0 + _c, bump())\n", optimize: true);
         Assert.False(ReadsCAfterBump(ir));
     }
+
+    // A name argument is an alias of the caller's name. That is its value only while nothing
+    // writes the name during the expansion.
+    [Fact]
+    public void AGlobalTheExpansionWritesIsBoundByValue()
+    {
+        var ir = Gen(Bump +
+            "def via() -> uint8:\n" +
+            "    return bump()\n\n" +
+            "@inline\n" +
+            "def f(v):\n" +
+            "    via()\n" +
+            "    return v\n\n" +
+            "_c = GPIOR0.value\n" +
+            "GPIOR1.value = f(_c)\n", optimize: true);
+        var body = Main(ir).ToList();
+        int call = body.FindIndex(i => i is Call { FunctionName: "via" });
+        Assert.DoesNotContain(body.Skip(call + 1), i => i.ToString()!.Contains("Name = _c,"));
+    }
+
+    [Fact]
+    public void AKeywordArgumentTheExpansionWritesIsBoundByValue()
+    {
+        var ir = Gen(Bump +
+            "@inline\n" +
+            "def f(v):\n" +
+            "    bump()\n" +
+            "    return v\n\n" +
+            "_c = GPIOR0.value\n" +
+            "GPIOR1.value = f(v=_c)\n", optimize: true);
+        var body = Main(ir).ToList();
+        int call = body.FindIndex(i => i is Call { FunctionName: "bump" });
+        Assert.DoesNotContain(body.Skip(call + 1), i => i.ToString()!.Contains("Name = _c,"));
+    }
+
+    [Fact]
+    public void AGlobalNothingWritesStaysAnAlias()
+    {
+        var ir = Gen(Bump +
+            "@inline\n" +
+            "def g(v):\n" +
+            "    other()\n" +
+            "    return v + 1\n\n" +
+            "_c = GPIOR0.value\n" +
+            "GPIOR1.value = g(_c)\n");
+        Assert.DoesNotContain(Main(ir).OfType<Copy>(),
+            c => c.Src is Variable { Name: "_c" } && c.Dst is Variable dv && dv.Name.EndsWith(".v"));
+    }
 }

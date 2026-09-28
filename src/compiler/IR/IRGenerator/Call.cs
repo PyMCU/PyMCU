@@ -3211,6 +3211,24 @@ public partial class IRGenerator
                     continue;
                 }
 
+                // The alias reads the caller's name wherever the body reads the parameter, so
+                // it is the argument's value only while nothing writes that name. A global the
+                // expansion can write -- `global` in the body or in any function it calls --
+                // or a field a method it calls assigns, is bound by value instead: `f(count)`
+                // with a body that bumps count read the bumped count. Nothing writing the name
+                // keeps the alias, and with it the code.
+                if (ExpansionMayWriteArg(func, vArg,
+                        i < rawArgExprs.Count ? rawArgExprs[i] : null))
+                {
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = vArg.Type;
+                    Emit(new Copy(vArg, new Variable(paramName, vArg.Type)));
+                    continue;
+                }
+
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
@@ -3592,7 +3610,9 @@ public partial class IRGenerator
                         DataType paramType = ParamListRefType(kvp.Value, paramName,
                             DataTypeExtensions.StringToDataType(func.Params[pi].Type));
                         variableTypes[paramName] = paramType;
-                        if (kvp.Value is Variable)
+                        if (kvp.Value is Variable kwVar
+                            && !ExpansionMayWriteArg(func, kwVar,
+                                rawKwArgExprs.TryGetValue(kvp.Key, out var kwRawArg) ? kwRawArg : null))
                         {
                             // Variable arg (including ZCA instances): preserve the alias
                             // set above and skip the Copy, same as positional arg handling.
@@ -3600,7 +3620,8 @@ public partial class IRGenerator
                         else
                         {
                             variableAliases.Remove(paramName);
-                            Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
+                            Emit(new Copy(kvp.Value, new Variable(paramName,
+                                kvp.Value is Variable kwCopyVar ? kwCopyVar.Type : paramType)));
                         }
                         CarryOptionalTagToParam(paramName, kvp.Value);
                     }
@@ -9377,6 +9398,14 @@ public partial class IRGenerator
         return new PreEvaluatedExpr(v, null) { Line = e.Line };
     }
 
+    private bool NameStandsForStorage(string n) =>
+        arraySizes.ContainsKey(n) || bytearrayParams.Contains(n) || listVarElemTypes.ContainsKey(n)
+        || strConstantVariables.ContainsKey(n) || flashStrPtrVars.Contains(n)
+        || constantAddressVariables.ContainsKey(n) || arenaBufferNames.Contains(n)
+        || optionalTagSlots.ContainsKey(n)
+        || TryResolveArrayStorageKey(n, out _) || TryResolveArrayStorageKey(FollowAliases(n), out _)
+        || ResolveConstSequence(n) != null;
+
     // `REG.value` on a pointer, anywhere inside the expression: a volatile load.
     private bool ReadsARegister(Expression? e) => e switch
     {
@@ -10485,6 +10514,124 @@ public partial class IRGenerator
         }
         value = 0;
         return false;
+    }
+
+    // Whether the argument that produced <paramref name="vArg"/> names caller-side storage
+    // the expansion of <paramref name="func"/> can write: a plain name when it is a mutable
+    // global, a field when any reachable method assigns that member, and a `mod.x` module
+    // attribute under either write shape. Only an int or float scalar is in play: storage,
+    // text and instances keep their identity binding.
+    private bool ExpansionMayWriteArg(FunctionDef func, Variable vArg, Expression? rawExpr) =>
+        vArg.Type <= DataType.FLOAT && !NameStandsForStorage(vArg.Name)
+        && string.IsNullOrEmpty(GetValClass(vArg))
+        && rawExpr switch
+        {
+            VariableExpr gve when mutableGlobals.ContainsKey(vArg.Name) =>
+                ExpansionMayWrite(func, gve.Name, null),
+            // `mod.x` is another module's global, which a `global` statement in a reachable
+            // body writes by the member's own name; an instance's field is written through
+            // a receiver assignment (`self.x = ...`).
+            MemberAccessExpr fme => ExpansionMayWrite(func,
+                fme.Object is VariableExpr mo && importedAliases.ContainsKey(mo.Name)
+                    ? fme.Member : null,
+                fme.Member),
+            _ => false,
+        };
+
+    // Whether expanding <paramref name="func"/> can write the module global
+    // <paramref name="global"/> or a field named <paramref name="member"/>: the body or any
+    // function it can reach, by name. A global counts only where a `global` statement makes
+    // the assignment reach it; a field counts on any receiver, since which object a method
+    // runs on is not known here.
+    private bool ExpansionMayWrite(FunctionDef func, string? global, string? member)
+    {
+        var seen = new HashSet<FunctionDef>();
+        var work = new Stack<FunctionDef>();
+        work.Push(func);
+        while (work.Count > 0)
+        {
+            var f = work.Pop();
+            if (!seen.Add(f)) continue;
+            var names = new HashSet<string>();
+            var receivers = new HashSet<(string, string)>();
+            CollectMutatedNames(f.Body, names, receivers);
+            if (global != null && names.Contains(global)
+                && TypeInference.WalkStatements(f.Body)
+                    .Any(st => st is GlobalStmt g && g.Names.Contains(global)))
+                return true;
+            if (member != null && receivers.Any(r => r.Item2 == "=" + member))
+                return true;
+            var callees = new HashSet<string>(receivers.Where(r => !r.Item2.StartsWith('='))
+                .Select(r => r.Item2));
+            foreach (var st in TypeInference.WalkStatements(f.Body))
+                CollectCalleeNames(st, callees);
+            foreach (var name in callees)
+                if (FunctionsByName().TryGetValue(name, out var defs))
+                    foreach (var d in defs) work.Push(d);
+        }
+        return false;
+    }
+
+    private Dictionary<string, List<FunctionDef>>? functionsByName;
+
+    private Dictionary<string, List<FunctionDef>> FunctionsByName()
+    {
+        if (functionsByName != null) return functionsByName;
+        functionsByName = new Dictionary<string, List<FunctionDef>>();
+        foreach (var f in functionSourcePath.Keys
+                     .Concat(instanceMethodDefs.Values).Concat(methodAstByName.Values)
+                     .Concat(inlineFunctions.Values.OfType<FunctionDef>()).Distinct())
+        {
+            if (!functionsByName.TryGetValue(f.Name, out var l)) functionsByName[f.Name] = l = new();
+            l.Add(f);
+        }
+        return functionsByName;
+    }
+
+    // The bare names of the plain functions a statement calls, `f(...)` anywhere in it.
+    private static void CollectCalleeNames(Statement st, HashSet<string> into)
+    {
+        void E(Expression? e)
+        {
+            switch (e)
+            {
+                case null: return;
+                case CallExpr c:
+                    if (c.Callee is VariableExpr cv) into.Add(cv.Name);
+                    E(c.Callee);
+                    foreach (var a in c.Args) E(a);
+                    return;
+                case KeywordArgExpr k: E(k.Value); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case MemberAccessExpr m: E(m.Object); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case WalrusExpr w: E(w.Value); return;
+                case ListExpr l: foreach (var x in l.Elements) E(x); return;
+                case TupleExpr tu: foreach (var x in tu.Elements) E(x); return;
+                case FStringExpr fs: foreach (var p in fs.Parts) E(p.Expr); return;
+                default: return;
+            }
+        }
+        switch (st)
+        {
+            case AssignStmt a: E(a.Target); E(a.Value); break;
+            case AugAssignStmt aug: E(aug.Target); E(aug.Value); break;
+            case AnnAssign an: E(an.Value); break;
+            case VarDecl vd: E(vd.Init); break;
+            case TupleUnpackStmt tu: E(tu.Value); break;
+            case ExprStmt es: E(es.Expr); break;
+            case ReturnStmt r: E(r.Value); break;
+            case ForStmt f: E(f.Iterable); E(f.RangeStart); E(f.RangeStop); E(f.RangeStep); break;
+            case WhileStmt w: E(w.Condition); break;
+            case IfStmt i:
+                E(i.Condition);
+                foreach (var (cond, _) in i.ElifBranches) E(cond);
+                break;
+            case WithStmt wi: E(wi.ContextExpr); break;
+            case MatchStmt m: E(m.Target); break;
+        }
     }
 
     /// <summary>
