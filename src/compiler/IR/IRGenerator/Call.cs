@@ -4269,7 +4269,20 @@ public partial class IRGenerator
         {
             var distinctInsts = retInsts.Distinct().ToList();
             if (distinctInsts.Count == 1)
-                return new Variable(distinctInsts[0]!, DataType.UINT8);
+            {
+                // A single-field class collapses the instance onto its field, so the
+                // returned name may be the widened anchor itself: minting it at u8 would
+                // truncate `r: uint16 = f.up(300)` at the copy. Multi-field instances have
+                // no scalar slot of their own; u8 is only a formality there.
+                var inst = distinctInsts[0]!;
+                DataType instT = variableTypes.TryGetValue(inst, out var ivt) && ivt != DataType.UNKNOWN
+                    ? ivt
+                    : instanceClasses.TryGetValue(inst, out var icls) && icls != null
+                        && classFieldLayout.TryGetValue(icls, out var ilay) && ilay.Count == 1
+                        ? DataTypeExtensions.StringToDataType(ilay[0].Type)
+                        : DataType.UINT8;
+                return new Variable(inst, instT);
+            }
             throw UserError(
                 $"'{callee}' returns a different instance depending on a run-time condition "
                 + $"({string.Join(", ", distinctInsts.Select(DisplayInstanceName))}). An instance "
