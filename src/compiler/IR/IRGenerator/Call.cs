@@ -4881,7 +4881,7 @@ public partial class IRGenerator
     /// callee's scope. Rewritten in place: the order is Python's own binding, so doing it
     /// again is a no-op.
     /// </summary>
-    private static void KeywordsToPositions(FunctionDef fn, List<Expression> args)
+    private void KeywordsToPositions(FunctionDef fn, List<Expression> args)
     {
         if (!args.Any(a => a is KeywordArgExpr) || args.Any(a => a is StarArgExpr)) return;
         if (fn.Params.Any(p => p.IsVarArg || p.IsKwArg)) return;
@@ -4906,10 +4906,22 @@ public partial class IRGenerator
         }
         if (moved.Count == 0) return;
         var kept = args.OfType<KeywordArgExpr>().Where(k => byName.ContainsKey(k.Key)).ToList();
+        // A keyword left for the keyword path evaluates after the positional binds -- later
+        // than where it was written. With an effectful argument in the call that reordering
+        // is observable, so the keyword path keeps the whole call.
+        if (kept.Count != 0
+            && args.Any(a => OperandCanHaveAnEffect(a is KeywordArgExpr ka ? ka.Value : a)))
+            return;
+        var written = args.ToList();
+        var ordered = new List<Expression>();
+        ordered.AddRange(positional);
+        ordered.AddRange(moved);
+        ordered.AddRange(kept);
+        // `moved` sits in declared order; Python evaluates the arguments as they were
+        // written. PinKeywordOrder answers the difference the way ReorderCallArgs does:
+        // `f(b=_c, a=bump())` still reads _c before bump() runs.
         args.Clear();
-        args.AddRange(positional);
-        args.AddRange(moved);
-        args.AddRange(kept);
+        args.AddRange(PinKeywordOrder(written, ordered));
     }
 
     /// The name CPython's call errors give a function: `f`, or `Cls.m` for a method.
