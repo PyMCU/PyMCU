@@ -7694,7 +7694,7 @@ public partial class IRGenerator
         ["print"]     = ([], ["sep", "end"], ["file", "flush"]),
         ["pow"]       = (["base", "exp"], [], ["mod"]),
         ["str"]       = (["object"], [], ["encoding", "errors"]),
-        ["enumerate"] = (["iterable"], [], ["start"]),
+        ["enumerate"] = (["iterable"], ["start"], []),
         ["sum"]       = ([], [], ["start"]),
         ["zip"]       = ([], [], ["strict"]),
         ["int"]       = ([], [], ["base"]),

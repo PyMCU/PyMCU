@@ -2236,6 +2236,39 @@ public partial class IRGenerator
                     VisitFor(starRange);
                     return;
                 }
+                else if (calleeVar.Name == "enumerate" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 2)
+                {
+                    // `enumerate(xs, 7)` / `enumerate(xs, start=7)`: the same walk with the
+                    // index shifted, i.e. `for __k, v in enumerate(xs): i = __k + 7`. The start
+                    // must fold, so the shift is the one add every index gets; a run-time start
+                    // read once per iteration would see a body that rebinds it.
+                    Expression startE = call.Args[1] is KeywordArgExpr kw
+                        ? (kw.Key == "start" ? kw.Value
+                            : throw UserError($"enumerate() takes no keyword argument '{kw.Key}=' -- only 'start'",
+                                call.Args[1]))
+                        : call.Args[1];
+                    if (!TryFoldInt(startE, out int enumStart))
+                        throw UserError("enumerate(): the start must be a compile-time integer -- the "
+                                        + "index is a compile-time counter or a loop counter, and the "
+                                        + "start is folded into it", startE);
+                    var plain = new CallExpr(call.Callee, new List<Expression> { call.Args[0] })
+                        { Line = call.Line, Column = call.Column };
+                    if (enumStart == 0)
+                    {
+                        VisitFor(new ForStmt(stmt.VarName, plain, stmt.Body)
+                            { Var2Name = stmt.Var2Name, Line = stmt.Line, Column = stmt.Column });
+                        return;
+                    }
+                    string hidden = "__enum" + (++sliceLoopId) + "_" + stmt.VarName;
+                    var shifted = new Block { Line = stmt.Line };
+                    shifted.Statements.Add(new AssignStmt(new VariableExpr(stmt.VarName) { Line = stmt.Line },
+                        new BinaryExpr(new VariableExpr(hidden) { Line = stmt.Line }, PyMCU.Frontend.BinaryOp.Add,
+                            new IntegerLiteral(enumStart) { Line = stmt.Line }) { Line = stmt.Line }) { Line = stmt.Line });
+                    shifted.Statements.Add(stmt.Body);
+                    VisitFor(new ForStmt(hidden, plain, shifted)
+                        { Var2Name = stmt.Var2Name, Line = stmt.Line, Column = stmt.Column });
+                    return;
+                }
                 else if (calleeVar.Name == "enumerate" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 1)
                 {
                     string idxKey = currentInlinePrefix + stmt.VarName;
