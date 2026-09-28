@@ -1465,7 +1465,9 @@ public partial class IRGenerator
             && !functionReturnTypes.ContainsKey(callee)
             && !inlineFunctions.ContainsKey(callee)
             && !externFunctionMap.ContainsKey(callee)
-            && !callee.StartsWith("__"))
+            // `__import__` and `__build_class__` are CPython builtins, not runtime helpers:
+            // exempting them by their prefix sent the call to the linker.
+            && (!callee.StartsWith("__") || PythonBuiltins.Contains(callee)))
         {
             string shown = callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
 
@@ -7070,6 +7072,16 @@ public partial class IRGenerator
         ["reversed"] = "it returns an iterator, which needs a heap. Walk the indices backwards "
                        + "with `for i in range(n - 1, -1, -1)`",
         ["map"] = "it returns an iterator, which needs a heap. Write the loop",
+        ["copyright"] = "it prints the interpreter's text in an interactive session, and there is "
+                        + "no interpreter or session on the target",
+        ["credits"] = "it prints the interpreter's text in an interactive session, and there is "
+                      + "no interpreter or session on the target",
+        ["license"] = "it prints the interpreter's text in an interactive session, and there is "
+                      + "no interpreter or session on the target",
+        ["__import__"] = "modules are resolved when the program is compiled and nothing is "
+                         + "imported at run time. Write the `import` statement",
+        ["__build_class__"] = "classes are built when the program is compiled; there is no "
+                              + "run-time class object to build. Write the `class` statement",
         ["filter"] = "it returns an iterator, which needs a heap. Write the loop with an `if`",
         ["list"] = "a growable list needs a heap. Declare a fixed-size array "
                    + "(`buf: uint8[4] = [...]`)",

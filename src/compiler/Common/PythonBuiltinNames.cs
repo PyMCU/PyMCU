@@ -37,6 +37,10 @@ public static class PythonBuiltinNames
         "min", "next", "object", "oct", "open", "ord", "pow", "print", "property", "quit",
         "range", "repr", "reversed", "round", "set", "setattr", "slice", "sorted",
         "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip",
+        // The interactive-session objects and the two hooks the interpreter itself calls.
+        // Leaving them out sent `copyright` to "typo, or a missing import?" and let a call
+        // of `__import__` or `__build_class__` through to the linker as an undefined symbol.
+        "copyright", "credits", "license", "__import__", "__build_class__",
     };
 
     /// <summary>
