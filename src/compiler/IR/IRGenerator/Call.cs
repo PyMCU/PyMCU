@@ -7239,7 +7239,17 @@ public partial class IRGenerator
             return new Constant(res);
         }
 
-        // Runtime operands lower to a CALL on the __pymcu_powf subroutine -- one
+        // Two integers are integer exponentiation, the same operation `**` is: pow(b, 5)
+        // with a run-time b unrolls to multiplies. Forwarding them to the float routine
+        // below handed its float parameters two integer bit patterns, and every run-time
+        // pow() of integers printed 1.0.
+        bool anyFloat = InferExprType(expr.Args[0]) == DataType.FLOAT
+                        || InferExprType(expr.Args[1]) == DataType.FLOAT;
+        if (!anyFloat)
+            return LowerPow(VisitExpression(expr.Args[0]), VisitExpression(expr.Args[1]),
+                expr.Args[1], "pow()");
+
+        // Runtime float operands lower to a CALL on the __pymcu_powf subroutine -- one
         // shared software-float implementation, the same one `math.pow` delegates to.
         if (functionParams.ContainsKey("__pymcu_powf"))
         {
