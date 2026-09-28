@@ -1825,8 +1825,11 @@ public partial class IRGenerator
             }
 
             // If the argument is a bare variable name that refers to a local array,
-            // pass its base address rather than trying to load it as a scalar.
-            if (arg is VariableExpr argVe)
+            // pass its base address rather than trying to load it as a scalar. A local or
+            // parameter holding a number is not one, even when a module-level array shares
+            // its name: `def h(b: uint8): g(b)` passed the address of the program's
+            // `b = bytearray(...)`, and g printed 0 for 5.
+            if (arg is VariableExpr argVe && !NameIsLocalScalar(argVe.Name))
             {
                 string argQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix
@@ -1899,6 +1902,7 @@ public partial class IRGenerator
             // normalization would strip `f.buf` to a module array that shares the bare name.
             if (argEvaluated is Variable argArrayVar
                 && !bytearrayParams.Contains(argArrayVar.Name)
+                && !(arg is VariableExpr scalarVe && NameIsLocalScalar(scalarVe.Name))
                 && TryResolveArrayStorageKey(argArrayVar.Name, out var argStorage)
                 && (arraysWithVariableIndex.Contains(argStorage)
                     || moduleSramArrays.Contains(argStorage)))
@@ -1909,9 +1913,12 @@ public partial class IRGenerator
             // Variable it resolves to names a slot nobody writes (`write(buf)` ->
             // `writeto(addr, buf)` -> `_i2c_writeto(addr, buffer, n)` hands a real
             // subroutine the unbacked name). Give the elements a hidden buffer and
-            // pass its base.
+            // pass its base. Not when the bare name is a local scalar: the sequence
+            // the resolution finds then is a module-level binding the parameter
+            // shadows, and materializing it hands the callee the shadowed buffer.
             else if (argEvaluated is Variable
                      && arg is VariableExpr seqArgV
+                     && !NameIsLocalScalar(seqArgV.Name)
                      && ResolveConstSequenceExpr(seqArgV) is { } seqElems
                      && MaterializeSequenceArg(seqElems) is { } seqBuf)
             {
@@ -4471,6 +4478,10 @@ public partial class IRGenerator
     private bool ArgumentIsBuffer(Expression? arg, Val? evaluated)
     {
         if (evaluated is ArrayBase) return true;
+        // A local or parameter holding a number shadows a module-level buffer of the same
+        // name: the storage lookups below fall back to the bare spelling, and `b: uint8` in
+        // uart_write_byte_repr read as the program's own `b = b"AZ"`.
+        if (arg is VariableExpr shadowVe && NameIsLocalScalar(shadowVe.Name)) return false;
         if (evaluated is Variable ev && IsBufferStorageName(ev.Name)) return true;
         return arg switch
         {
@@ -4487,11 +4498,33 @@ public partial class IRGenerator
     /// compile-time sequence rather than as storage. A tuple or a range bound the same way is
     /// a group of values and is left out.
     private bool NameIsListLiteralSequence(string name)
-        => !IsTupleBound(name)
+        => !NameIsLocalScalar(name)
+           && !IsTupleBound(name)
            && ResolveConstSequence(name) != null
            && !rangeBoundSequences.Contains(name)
            && !(!string.IsNullOrEmpty(currentFunction) && rangeBoundSequences.Contains(currentFunction + "." + name))
            && !(!string.IsNullOrEmpty(currentInlinePrefix) && rangeBoundSequences.Contains(currentInlinePrefix + name));
+
+    /// A name the current function or inline expansion binds to a number, which hides any
+    /// sequence or buffer of the same name further out.
+    private bool NameIsLocalScalar(string name)
+    {
+        foreach (string? key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+                     string.IsNullOrEmpty(currentFunction) || currentFunction == "main"
+                         ? null : currentFunction + "." + name,
+                 })
+        {
+            if (key == null) continue;
+            if (arraySizes.ContainsKey(key) || constSequenceBindings.ContainsKey(key)
+                || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key)
+                || variableAliases.ContainsKey(key))
+                return false;
+            if (variableTypes.ContainsKey(key)) return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// `f(b"AB")` against `def f(x: uint8)`: the buffer arrives as its address and the

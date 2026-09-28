@@ -151,6 +151,47 @@ public class BufferToNumberParameterTests
             s => s.ArrayName == arg.ArrayName && s.Src is Constant { Value: 82 });
     }
 
+    // Control: a parameter holding a number shadows a module-level bytes literal of the same
+    // name. The storage lookups fall back to the bare spelling, and the first cut of this fix
+    // refused the HAL's own `uart_write(b)` inside `uart_write_byte_repr(b: uint8)` for any
+    // program with a global `b = b"AZ"`.
+    [Fact]
+    public void ANumberParameterShadowsAModuleLevelBytesLiteral()
+    {
+        var ir = Gen(Preamble +
+            "b = b\"AZ\"\n" +
+            "@inline\n" +
+            "def put(data: uint8):\n" +
+            "    G.value = data\n" +
+            "def h(b: uint8):\n" +
+            "    put(b)\n" +
+            "h(G.value)\n" +
+            "h(G.value)\n" +
+            "G.value = b[1]\n");
+        Assert.Contains(ir.Functions, f => f.Name == "h");
+    }
+
+    // DISCRIMINATING. The same shadow through a subroutine call, which was a SILENT fault
+    // before any of this: the marshalling step found the module-level array under the bare
+    // name and passed its address for the parameter, so `g` printed 0 for 5.
+    [Fact]
+    public void ANumberParameterPassedOnIsItsValueNotAShadowedArray()
+    {
+        var ir = Gen(Preamble +
+            "b = bytearray(2)\n" +
+            "def g(x: uint8):\n" +
+            "    G.value = x\n" +
+            "def h(b: uint8):\n" +
+            "    g(b)\n" +
+            "h(G.value)\n" +
+            "h(G.value)\n" +
+            "G.value = b[1]\n");
+
+        var call = ir.Functions.Single(f => f.Name == "h").Body.OfType<Call>()
+            .Single(c => c.FunctionName == "g");
+        Assert.IsNotType<ArrayBase>(call.Args[0]);
+    }
+
     // Control: a buffer parameter keeps taking a bytes literal.
     [Fact]
     public void ABytesLiteralToABytesParameterStillCompiles()
