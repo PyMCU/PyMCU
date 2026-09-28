@@ -2636,8 +2636,9 @@ public partial class IRGenerator
                 throw UserError(
                     $"'{name}' is the exception this handler caught, and the only things it "
                     + $"carries are its message and its type: print({name}), str({name}), "
-                    + $"{name}.args[0]{oneType}. There is no exception object to store, "
-                    + "pass on, or keep past the handler.", at);
+                    + $"{name}.args[0], print({name}.args), len({name}.args){oneType}. "
+                    + "There is no exception object to store, pass on, or keep past "
+                    + "the handler.", at);
             }
 
             throw UserError(

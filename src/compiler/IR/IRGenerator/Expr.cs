@@ -5925,6 +5925,23 @@ public partial class IRGenerator
                 expr);
         }
 
+        // `e.args` read as a value: the args the caught raise was built with are a
+        // tuple -- () for a bare raise, (message,) for one with an argument -- and
+        // which of the two is decided at run time by the message word the raise
+        // left, so there is no tuple object to store, pass or iterate. The reads
+        // it answers are print(e.args), len(e.args) and e.args[0].
+        if (expr is MemberAccessExpr { Object: VariableExpr argsVe, Member: "args" }
+            && TryGetExceptionBinding(argsVe.Name, out _))
+        {
+            throw UserError(
+                $"'{argsVe.Name}.args' is the tuple of the raise's argument -- () or "
+                + "(message,) by what the caught raise carried, a run-time fact, so "
+                + "there is no tuple object to store or pass. The reads it answers: "
+                + $"print({argsVe.Name}.args), len({argsVe.Name}.args) and "
+                + $"{argsVe.Name}.args[0].",
+                expr);
+        }
+
         // A single-field instance handed back by a factory IS its one field: the call returns
         // the field's value in a register and the name is bound to that (RFC 0001 Model B
         // handle). A method call on it already knew that; a direct field READ did not, and

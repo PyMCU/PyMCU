@@ -1676,6 +1676,18 @@ public partial class IRGenerator
             // top-level loop variable bare while the body read "func.<name>".
             string varKey = QualifyLoopVar(stmt.VarName);
 
+            // `for a in e.args`: the args the caught raise carried are a tuple () or
+            // (message,) -- which of the two is a run-time fact, so there is no
+            // sequence to step. `e.args[0]` reads the one item it can hold.
+            if (iter is MemberAccessExpr { Object: VariableExpr forArgsVe, Member: "args" }
+                && TryGetExceptionBinding(forArgsVe.Name, out _))
+                throw UserError(
+                    $"'{forArgsVe.Name}.args' is the tuple of the raise's argument -- () "
+                    + "or (message,) by what the caught raise carried, a run-time fact, "
+                    + "so there is no sequence here to step through. "
+                    + $"{forArgsVe.Name}.args[0] reads the one item it can hold, under "
+                    + $"a `len({forArgsVe.Name}.args)` guard.", iter);
+
             // A generator expression is not an iterable this dispatch can lower -- there is
             // no iterator for `for` to draw from. The five reductions unwrap theirs before
             // `for` is ever asked, so say where the construct does work.

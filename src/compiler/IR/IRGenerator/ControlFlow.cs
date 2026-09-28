@@ -3403,6 +3403,37 @@ public partial class IRGenerator
         Emit(new Label(hasArg));
     }
 
+    /// `print(e.args)`: CPython prints the args tuple -- `()` for a raise that carried
+    /// no argument, `(message,)` for one that did (a one-element tuple keeps the
+    /// trailing comma). Which of the two the caught exception carries is a run-time
+    /// fact -- the raise leaves the message word zero (and the deferred-print site id
+    /// zero) only when it was raised bare -- so both halves are emitted behind the
+    /// check rather than chosen here.
+    internal void EmitExceptionArgsTuplePrint(string writeStrFn)
+    {
+        EmitStreamStr(writeStrFn, "(");
+        string hasArg = MakeLabel();
+        string after = MakeLabel();
+        DeclareExceptionMessageVar();
+        Emit(new JumpIfNotZero(new Variable(ExceptionMessageVar, DataType.UINT16), hasArg));
+        if (programHasDynamicRaiseMessage)
+        {
+            DeclareExceptionSiteVar();
+            Emit(new JumpIfNotZero(new Variable(ExceptionSiteVar, DataType.UINT8), hasArg));
+        }
+        Emit(new Jump(after));
+        Emit(new Label(hasArg));
+        if (programHasDynamicRaiseMessage)
+            EmitExceptionMessagePrint();
+        else
+            Emit(new Call(ResolveRuntimeWriteStrFn(),
+                new List<Val> { new Variable(ExceptionMessageVar, DataType.UINT16) },
+                new NoneVal()));
+        EmitStreamStr(writeStrFn, ",");
+        Emit(new Label(after));
+        EmitStreamStr(writeStrFn, ")");
+    }
+
     /// `e.args[<not 0>]`, which would otherwise read the one message under another index.
     internal void RefuseBadArgsIndex(Expression e)
     {

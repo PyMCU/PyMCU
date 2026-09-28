@@ -6202,6 +6202,30 @@ public partial class IRGenerator
     private Val EmitLenBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument", expr.Callee);
+
+        // `len(e.args)` on the exception a handler bound: args is () when the raise
+        // carried no argument and (message,) when it did -- 0 or 1, decided at run
+        // time by the message word (and the deferred-print site id, when the program
+        // has one). A raise's argument list never holds more than the one message.
+        if (expr.Args[0] is MemberAccessExpr { Object: VariableExpr lenArgsObj, Member: "args" }
+            && TryGetExceptionBinding(lenArgsObj.Name, out _))
+        {
+            DeclareExceptionMessageVar();
+            Temporary hasArg = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.NotEqual,
+                new Variable(ExceptionMessageVar, DataType.UINT16), new Constant(0), hasArg));
+            if (programHasDynamicRaiseMessage)
+            {
+                DeclareExceptionSiteVar();
+                Temporary hasSite = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.NotEqual,
+                    new Variable(ExceptionSiteVar, DataType.UINT8), new Constant(0), hasSite));
+                Temporary lenEither = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.BitOr, hasArg, hasSite, lenEither));
+                hasArg = lenEither;
+            }
+            return hasArg;
+        }
         if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
         if (expr.Args[0] is TupleExpr te2) return new Constant(te2.Elements.Count);
         if (expr.Args[0] is Frontend.DictExpr de2) return new Constant(de2.Entries.Count);
@@ -10107,6 +10131,10 @@ public partial class IRGenerator
             {
                 Target: MemberAccessExpr { Object: VariableExpr av, Member: "args" },
             } && TryGetExceptionBinding(av.Name, out _)) return false;
+        // `print(e.args)`: the args tuple is streamed piece by piece, not evaluated --
+        // reading it as a value would try to materialise a runtime tuple there is not.
+        if (a is MemberAccessExpr { Object: VariableExpr avArgs, Member: "args" }
+            && TryGetExceptionBinding(avArgs.Name, out _)) return false;
         if (a is CallExpr { Callee: VariableExpr { Name: "chr" } }) return false;
         if (a is IndexExpr { Index: SliceExpr }) return false;                       // bytearray repr
         if (a is IndexExpr { Index: not SliceExpr } ix && StringBehindSubscript(ix) != null) return false;
@@ -10686,6 +10714,18 @@ public partial class IRGenerator
                     Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
                     Emit(new Label(noMsg));
                 }
+                return;
+            }
+
+            // `print(e.args)` prints the whole args tuple -- `()` when the caught raise
+            // carried no argument, `(message,)` when it did. Which of the two is a
+            // run-time fact on this target (the message word, and the deferred-print
+            // site id when the program has one), so EmitExceptionArgsTuplePrint emits
+            // both halves behind that check.
+            if (arg is MemberAccessExpr { Object: VariableExpr argsObj, Member: "args" }
+                && TryGetExceptionBinding(argsObj.Name, out _))
+            {
+                EmitExceptionArgsTuplePrint(writeStrFn);
                 return;
             }
 
