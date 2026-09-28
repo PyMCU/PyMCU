@@ -7461,16 +7461,34 @@ public partial class IRGenerator
         if (aVal is Constant ca && bVal is Constant cb)
         {
             if (cb.Value == 0) throw UserError("divmod(): division by zero", ArgAt(expr, 1));
-            int q = ca.Value / cb.Value;
-            int r = ca.Value % cb.Value;
+            // Python's divmod floors: divmod(-17, 5) is (-4, 3). C#'s / and % truncate
+            // toward zero and answered (-3, -2).
+            long lq = (long)ca.Value / cb.Value;
+            if ((ca.Value ^ cb.Value) < 0 && lq * cb.Value != ca.Value) lq--;
+            int q = unchecked((int)lq);
+            int r = unchecked((int)((long)ca.Value - lq * cb.Value));
             if (pendingTupleCount == 2)
             {
                 string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
                 string qn = bBase + ".divmod_q" + tempCounter;
                 string rn = bBase + ".divmod_r" + (tempCounter + 1);
                 tempCounter += 2;
-                Emit(new Copy(new Constant(q), new Variable(qn, rt)));
-                Emit(new Copy(new Constant(r), new Variable(rn, rt)));
+                // The operands' width, as the run-time division below stores it, made signed
+                // when a result is negative: sizing each slot to its own value left the
+                // remainder of divmod(-17, 5) a uint8 that a later divmod(17, -5) reused.
+                DataType ct = WidestElemType(new List<int> { q, r });
+                if (rt.SizeOf() > ct.SizeOf())
+                    ct = !(q < 0 || r < 0) || rt.IsSigned() ? rt
+                        : rt.SizeOf() >= 4 ? DataType.INT32 : DataType.INT16;
+                DataType qt = ct, rtt = ct;
+                Emit(new Copy(new Constant(q), new Variable(qn, qt)));
+                Emit(new Copy(new Constant(r), new Variable(rn, rtt)));
+                // The unpack sizes each target from its slot; an unregistered slot sized
+                // it uint8, and -4 printed as 252.
+                variableTypes[qn] = qt;
+                variableTypes[rn] = rtt;
+                constantVariables[qn] = q;
+                constantVariables[rn] = r;
                 lastTupleResults = new List<string> { qn, rn };
                 return new NoneVal();
             }
@@ -7486,6 +7504,10 @@ public partial class IRGenerator
             tempCounter += 2;
             var qvar = new Variable(qn, rt);
             var rvar = new Variable(rn, rt);
+            // Registered so the unpack targets take the division's width and sign: without
+            // it `q, r = divmod(a, b)` stored an int16 quotient of -143 into a uint8 q.
+            variableTypes[qn] = rt;
+            variableTypes[rn] = rt;
 
             // Emit the quotient and remainder as the same FloorDiv/Mod the // and %
             // operators produce, adjacent and sharing operands, so the AVR backend's
