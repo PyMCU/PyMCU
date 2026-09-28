@@ -2374,7 +2374,30 @@ public partial class IRGenerator
         if (target is Variable payTgt && optionalMembersByName.ContainsKey(payTgt.Name))
             target = UnionPayloadStoreTarget(payTgt, value, stmt.Value);
 
-        if (value is ArrayBase abRet && target is Variable arrTgt)
+        // `s = <instance>` -- the value's name resolves to a constructed instance's
+        // anchor: `return Cls(...)` inside an @inline `__get__` mints `__cN` and the
+        // expansion's result temp ALIASES it, so a descriptor read assigned to a name
+        // arrived here as `s = tmp` with the instance already built behind the alias.
+        // The anchor has no byte to copy -- its storage lives under flattened field
+        // names -- so the target becomes another NAME for the instance, the same way
+        // `self.f = <instance>` files its field instead of copying a byte. Without the
+        // alias the scalar copy below read the temp's slot, which nothing ever wrote.
+        string? instSrcName = value switch
+        {
+            Variable ivv => ivv.Name,
+            Temporary itv => itv.Name,
+            _ => null,
+        };
+        string? instAnchor = instSrcName != null && NamesInstanceAnchor(FollowAliases(instSrcName))
+            ? FollowAliases(instSrcName) : null;
+        if (target is Variable instTgt && instAnchor != null)
+        {
+            variableAliases[instTgt.Name] = instAnchor;
+            if (instanceClasses.TryGetValue(instAnchor, out var instCls) && instCls != null)
+                instanceClasses[instTgt.Name] = instCls;
+            virtualInstances.Add(instTgt.Name);
+        }
+        else if (value is ArrayBase abRet && target is Variable arrTgt)
             CopyArrayIdentity(arrTgt.Name, abRet.ArrayName);
         else if (!(value is NoneVal)
             && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name))
@@ -2443,7 +2466,7 @@ public partial class IRGenerator
 
         if (value is Variable vv2 && target is Variable tv2)
         {
-            variableAliases[tv2.Name] = vv2.Name;
+            variableAliases[tv2.Name] = instAnchor ?? vv2.Name;
             // An alias to an INSTANCE is structural, not value-tracking: WHICH OBJECT the name
             // stands for does not depend on which path ran, so it has to survive a label. Filed
             // as value-tracking, it was dropped by the first label a loop emits, and
@@ -2453,19 +2476,22 @@ public partial class IRGenerator
             // `alarm.pin`, `alarm.time`, `microcontroller.cpu`, `microcontroller.watchdog`.
             //
             // A write to either name still clears it, through InvalidateAliasesForWrite.
-            if (ReceiverClassThroughAliases(vv2.Name) is null)
+            if (instAnchor == null && ReceiverClassThroughAliases(vv2.Name) is null)
                 valueTrackingAliases.Add(tv2.Name);
         }
         else if (value is Temporary tSrc && target is Variable tDst)
         {
-            variableAliases[tDst.Name] = tSrc.Name;
+            // instAnchor, not tSrc: a mid-chain scratch name is where member reads
+            // stop (Temporary.IsScratchName ends the walk), so `s = <call>` would
+            // flatten `s.field` to a slot the constructor never wrote.
+            variableAliases[tDst.Name] = instAnchor ?? tSrc.Name;
             // The same rule the Variable branch applies: an alias to an INSTANCE
             // is structural -- which object the name stands for does not depend
             // on which path ran, so it must survive a label. `r = decode_bits(p)`
             // binds r to the handle the inlined call returned; filed as
             // value-tracking, the first label a later statement emitted dropped
             // it, and `r.code[i]` resolved to a phantom `r_code` slot.
-            if (ReceiverClassThroughAliases(tSrc.Name) is null)
+            if (instAnchor == null && ReceiverClassThroughAliases(tSrc.Name) is null)
                 valueTrackingAliases.Add(tDst.Name);
         }
 
