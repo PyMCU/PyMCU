@@ -318,4 +318,20 @@ public class InlineArgumentEvaluatedOnceTests
         var ir = Gen(Bump + Writers + program);
         Assert.Equal(new[] { "bump", "other" }, CallOrder(ir));
     }
+
+    // A temporary that copied a variable holds the value from BEFORE the variable is
+    // written again; forwarding the variable into a later use reads the new one. A call
+    // that may write a global through `global` retires its copies the same way.
+    [Fact]
+    public void ACopiedNameIsNotForwardedPastItsOwnWrite()
+    {
+        var ir = Gen(Bump + "_c = GPIOR0.value\n" +
+            "GPIOR1.value = (0 + _c) + (_c := 9)\n", optimize: true);
+        var body = Main(ir).ToList();
+        int walrus = body.FindIndex(
+            i => i is Copy { Src: Constant { Value: 9 }, Dst: Variable { Name: "_c" } });
+        Assert.True(walrus >= 0);
+        Assert.DoesNotContain(body.Skip(walrus + 1),
+            i => i.ToString()!.Contains("Name = _c,"));
+    }
 }
