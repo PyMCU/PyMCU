@@ -2215,6 +2215,16 @@ public partial class IRGenerator
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
         EmitMaybeTaggedCall(callee, argValuesL, dstC);
+        // A factory's result is a handle instance whether or not it is bound to a name:
+        // `rd(make(2))` binds the parameter to this temporary, and a parameter typed with
+        // the class reads its field through the handle only when the handle is known to be
+        // one. Untagged, `s.base` flattened to a name nothing wrote and read 0, while
+        // `o = make(2); rd(o)` read 2.
+        if (rType != null && zcaFactoryClasses.ContainsKey(rType))
+        {
+            instanceClasses[dstC.Name] = rType;
+            factoryHandleInstances.Add(dstC.Name);
+        }
         // An outlined sequence result whose element type is resolvable at the call
         // site: `-> list[T]` names it, and a bare `-> list`/`-> tuple` answers
         // through the `return <seq>` name the scan recorded. The callee's own body
@@ -3585,6 +3595,22 @@ public partial class IRGenerator
                 // the class would otherwise be lost.
                 if (instanceClasses.TryGetValue(tArg.Name, out var tCls) && tCls != null)
                     instanceClasses[paramName] = tCls;
+                // A zero-copy factory result passed straight in (`rd(make(2))`) is its one
+                // field's scalar. Bound by the ordinary Copy below, the parameter has
+                // storage but no handle tag, so `param.field` flattened to
+                // `<param>_<field>` -- a name nothing writes -- and read 0 while the copied
+                // value sat one name over. Tag it a handle and give it the field's width.
+                if (factoryHandleInstances.Contains(tArg.Name))
+                {
+                    factoryHandleInstances.Add(paramName);
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = tArg.Type;
+                    Emit(new Copy(tArg, new Variable(paramName, tArg.Type)));
+                    continue;
+                }
                 // Non-constant Temporary: fall through to runtime Copy
             }
 

@@ -6693,13 +6693,19 @@ public partial class IRGenerator
                      name,
                  })
         {
-            if (key == null || !factoryHandleInstances.Contains(key)) continue;
-            if (!instanceClasses.TryGetValue(key, out var cls) || cls == null) continue;
+            // The handle can sit behind an alias: an @inline parameter bound to `o` keeps
+            // `o` as its storage, so the membership question -- and the read -- have to
+            // resolve to the name the value actually lives under.
+            string? storage = key == null ? null : FollowAliases(key);
+            if (storage == null || !factoryHandleInstances.Contains(storage)) continue;
+            if (!instanceClasses.TryGetValue(storage, out var cls) || cls == null) continue;
             if (!classFieldLayout.TryGetValue(cls, out var layout)) continue;
             if (layout.Count != 1 || layout[0].Field != member) continue;
 
             DataType dt = DataTypeExtensions.StringToDataType(layout[0].Type);
-            return new Variable(key, variableTypes.TryGetValue(key, out var vt) ? vt : dt);
+            dt = variableTypes.TryGetValue(storage, out var vt) && vt != DataType.UNKNOWN ? vt : dt;
+            return storage.StartsWith("tmp_", StringComparison.Ordinal)
+                ? new Temporary(storage, dt) : new Variable(storage, dt);
         }
         return null;
     }
