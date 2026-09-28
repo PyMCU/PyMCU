@@ -3424,6 +3424,20 @@ public partial class IRGenerator
                     constantAddressVariables.Remove(flattenedName);
                     return;
                 }
+                // `self.c = REG.value` without an annotation READS the register the same
+                // way: the field keeps a copy of what it held at that moment. Only the
+                // register itself (`self._port = PORTB`) makes the field an alias of the
+                // address. Both evaluate to the same MemoryAddress, so the source has to
+                // say which: filed as an alias, `self.c += 1` in a loop wrote the register
+                // and `print(o.c)` read it back live.
+                if (stmt.Value is MemberAccessExpr { Member: "value" })
+                {
+                    DataType readT = variableTypes.TryGetValue(flattenedName, out var frt)
+                        ? frt : ma2.Type;
+                    Emit(new Copy(value, new Variable(flattenedName, readT)));
+                    constantAddressVariables.Remove(flattenedName);
+                    return;
+                }
                 constantAddressVariables[flattenedName] = ma2.Address;
                 // The element width travels with the address, exactly as it does on the
                 // aliased path below. Without this the field kept whatever width the class
