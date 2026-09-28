@@ -281,11 +281,19 @@ public class StackAllocator
                     case JumpIfGreaterOrEqual jge: RegisterVar(jge.Src1, i, 1); RegisterVar(jge.Src2, i, 1); NoteJump(jge.Target, i); break;
                     case BranchOnError boe: NoteJump(boe.ErrorLabel, i); break;
                     case ArrayLoad al:
-                        if (!_globalNames.Contains(al.ArrayName) && node.Locals.Add(al.ArrayName))
+                        if (!_globalNames.Contains(al.ArrayName))
                         {
-                            VariableSizes[al.ArrayName] = al.Count * al.ElemType.SizeOf();
+                            node.Locals.Add(al.ArrayName);
+                            // Width registrations MAX (as in RegisterVar): the first
+                            // mention is not authoritative -- `b = bytearray([x, y])`
+                            // stores a 2-element literal first and a later `b += c`
+                            // re-mentions the array with its grown count, so first
+                            // mention alone under-allocates the backing bytes.
+                            VariableSizes[al.ArrayName] = Math.Max(
+                                VariableSizes.TryGetValue(al.ArrayName, out var pal) ? pal : 0,
+                                al.Count * al.ElemType.SizeOf());
+                            NoteUse(al.ArrayName, i, 1);
                         }
-                        if (!_globalNames.Contains(al.ArrayName)) NoteUse(al.ArrayName, i, 1);
 
                         RegisterVar(al.Index, i, 1);
                         RegisterVar(al.Dst, i, 2);
@@ -295,11 +303,14 @@ public class StackAllocator
                         RegisterVar(alf.Dst, i, 2);
                         break;
                     case ArrayStore ast:
-                        if (!_globalNames.Contains(ast.ArrayName) && node.Locals.Add(ast.ArrayName))
+                        if (!_globalNames.Contains(ast.ArrayName))
                         {
-                            VariableSizes[ast.ArrayName] = ast.Count * ast.ElemType.SizeOf();
+                            node.Locals.Add(ast.ArrayName);
+                            VariableSizes[ast.ArrayName] = Math.Max(
+                                VariableSizes.TryGetValue(ast.ArrayName, out var pas) ? pas : 0,
+                                ast.Count * ast.ElemType.SizeOf());
+                            NoteUse(ast.ArrayName, i, 2);
                         }
-                        if (!_globalNames.Contains(ast.ArrayName)) NoteUse(ast.ArrayName, i, 2);
 
                         RegisterVar(ast.Index, i, 1);
                         RegisterVar(ast.Src, i, 1);
@@ -362,13 +373,17 @@ public class StackAllocator
                     case BytearrayLoad bl:
                         // bytearray pointer params are UINT16 (2-byte address); must be sized explicitly
                         // because PtrName is a string, not a Val, so RegisterVar never sees it.
-                        VariableSizes[bl.PtrName] = 2;
+                        // MAX, not overwrite: a name already registered wider (e.g. as an
+                        // ArrayStore backing array) must not shrink back to the pointer size.
+                        VariableSizes[bl.PtrName] = Math.Max(
+                            VariableSizes.TryGetValue(bl.PtrName, out var pbl) ? pbl : 0, 2);
                         if (!_globalNames.Contains(bl.PtrName)) NoteUse(bl.PtrName, i, 1);
                         RegisterVar(bl.Index, i, 1);
                         RegisterVar(bl.Dst, i, 2);
                         break;
                     case BytearrayStore bs:
-                        VariableSizes[bs.PtrName] = 2;
+                        VariableSizes[bs.PtrName] = Math.Max(
+                            VariableSizes.TryGetValue(bs.PtrName, out var pbs) ? pbs : 0, 2);
                         if (!_globalNames.Contains(bs.PtrName)) NoteUse(bs.PtrName, i, 1);
                         RegisterVar(bs.Index, i, 1);
                         RegisterVar(bs.Src, i, 1);
