@@ -6931,83 +6931,53 @@ public partial class IRGenerator
     }
 
     // sum(seq): fold a list literal or sum a fixed-size array's unrolled elements.
+    //
+    // Both lower to the `+` chain CPython evaluates, `seq[0] + seq[1] + ...`, through
+    // VisitBinary: the elements are read the way a subscript reads them and each step
+    // promotes like `+` does. The array form used to read flattened `a__0` slots that no
+    // store writes (the array lives in SRAM), so sum(a) printed 0 or whatever the previous
+    // expression left in the register; and an add at the element width wrapped
+    // uint8 200 + 100 + 50 to 94.
     private Val EmitSumBuiltin(CallExpr expr)
     {
         if (expr.Args.Count > 0 && expr.Args[0] is GeneratorExpr)
             return EmitGenExpReduction(expr, "sum");
         if (expr.Args.Count != 1) throw UserError("sum() expects exactly one argument", expr.Callee);
+        List<Expression> elems;
         switch (expr.Args[0])
         {
             case ListExpr { Elements.Count: 0 }:
                 return new Constant(0);
             case ListExpr le:
-            {
-                var acc = VisitExpression(le.Elements[0]);
-                for (var i = 1; i < le.Elements.Count; ++i)
-                {
-                    var v = VisitExpression(le.Elements[i]);
-                    if (acc is Constant ca && v is Constant cv)
-                    {
-                        acc = new Constant(ca.Value + cv.Value);
-                        continue;
-                    }
-
-                    var t = MakeTemp(DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(v)));
-                    Emit(new Binary(BinaryOp.Add, acc, v, t));
-                    acc = t;
-                }
-
-                return acc;
-            }
+                elems = le.Elements;
+                break;
             case VariableExpr sumVar:
             {
                 int arrSize = -1;
-                string arrBase = "";
-                if (!string.IsNullOrEmpty(currentInlinePrefix))
-                {
-                    string key = currentInlinePrefix + sumVar.Name;
-                    if (arraySizes.TryGetValue(key, out int s))
-                    {
-                        arrSize = s;
-                        arrBase = key;
-                    }
-                }
-
-                if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                {
-                    string key = currentFunction + "." + sumVar.Name;
-                    if (arraySizes.TryGetValue(key, out int s))
-                    {
-                        arrSize = s;
-                        arrBase = key;
-                    }
-                }
-
+                if (!string.IsNullOrEmpty(currentInlinePrefix)
+                    && arraySizes.TryGetValue(currentInlinePrefix + sumVar.Name, out int s))
+                    arrSize = s;
+                if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction)
+                    && arraySizes.TryGetValue(currentFunction + "." + sumVar.Name, out int s1))
+                    arrSize = s1;
                 if (arrSize < 0 && arraySizes.TryGetValue(sumVar.Name, out int s2))
-                {
                     arrSize = s2;
-                    arrBase = sumVar.Name;
-                }
 
                 if (arrSize <= 0) throw UserError("sum() requires a list literal or fixed-size array", ArgAt(expr, 0));
-
-                // Read each element at the array's real element type; a hardcoded UINT8 here
-                // truncated every element of a uint16/int16 array (and the running sum).
-                DataType elemTy = arrayElemTypes.TryGetValue(arrBase, out var et) ? et : DataType.UINT8;
-                Val acc = new Variable(arrBase + "__0", elemTy);
-                for (int i = 1; i < arrSize; ++i)
-                {
-                    Val vi = new Variable(arrBase + "__" + i, elemTy);
-                    Temporary t = MakeTemp(DataTypeExtensions.GetPromotedType(GetValType(acc), elemTy));
-                    Emit(new Binary(BinaryOp.Add, acc, vi, t));
-                    acc = t;
-                }
-
-                return acc;
+                elems = new List<Expression>(arrSize);
+                for (int i = 0; i < arrSize; ++i)
+                    elems.Add(new IndexExpr(sumVar, new IntegerLiteral(i) { Line = sumVar.Line })
+                        { Line = sumVar.Line, Column = sumVar.Column });
+                break;
             }
             default:
                 throw UserError("sum() requires a list literal or fixed-size array", ArgAt(expr, 0));
         }
+
+        Expression chain = elems[0];
+        for (int i = 1; i < elems.Count; ++i)
+            chain = new BinaryExpr(chain, PyMCU.Frontend.BinaryOp.Add, elems[i]) { Line = expr.Line, Column = expr.Column };
+        return VisitExpression(chain);
     }
 
     // bool(x): Python's truth test, which for every value PyMCU can hold is "not zero".

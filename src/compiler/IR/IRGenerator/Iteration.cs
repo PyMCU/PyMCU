@@ -2998,13 +2998,20 @@ public partial class IRGenerator
                                 if (rvBrk)
                                     loopStack.Add(new LoopLabels { ContinueLabel = rvContLabel, BreakLabel = rvBreakLabel, FinallyDepth = finallyStack.Count });
                                 string elemKey = @base + "__" + k;
-                                if (constantVariables.TryGetValue(elemKey, out int cv))
-                                    constantVariables[valKey] = cv;
-                                else if (instanceClasses.ContainsKey(elemKey) ||
-                                         instanceClasses.Keys.Any(x => x.StartsWith(elemKey + ".")))
+                                if (instanceClasses.ContainsKey(elemKey) ||
+                                    instanceClasses.Keys.Any(x => x.StartsWith(elemKey + ".")))
                                     BindInstanceForIteration(elemKey, qValKey);
                                 else
-                                    Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
+                                {
+                                    // The element is what `v[k]` reads. A copy of the flattened
+                                    // `v__k` slot read storage no store writes -- the array lives
+                                    // in SRAM -- and every element came out 0 (the forward walk
+                                    // already reads through ArrayLoad).
+                                    Val rElem = VisitIndex(new IndexExpr(new VariableExpr(v.Name) { Line = v.Line },
+                                        new IntegerLiteral(k)) { Line = v.Line });
+                                    if (rElem is Constant rc) constantVariables[valKey] = rc.Value;
+                                    else Emit(new Copy(rElem, new Variable(qValKey, elemDt)));
+                                }
                                 VisitStatement(stmt.Body);
                                 _seqTerminated = false;
                                 if (rvBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(rvContLabel)); }
