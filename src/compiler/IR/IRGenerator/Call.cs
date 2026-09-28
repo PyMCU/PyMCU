@@ -4244,7 +4244,8 @@ public partial class IRGenerator
         // An Optional-annotated callee is exempt: its answer lives in the tag temp the
         // MarkOptional below reads, and a bare NoneVal here would skip the tag and let a
         // provable-None result store into an untagged slot without the narrow-it refusal.
-        if (finishedCtx.ResultTagTemp == null && finishedCtx.ResultIsNone) return new NoneVal();
+        if (finishedCtx.ResultTagTemp == null && finishedCtx.ResultIsNone)
+            return isConstructor ? new NoneVal() : MarkNoneCallResult();
         if (finishedCtx.ResultTagTemp == null && finishedCtx.ResultIsLiveCall)
             return new NoneVal(LiveCallResult: true);
 
@@ -4281,7 +4282,13 @@ public partial class IRGenerator
 
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
-        return new NoneVal();
+        // No runtime result at all: for a plain call the value IS None, and the
+        // assignment's `x = f()` recognizes it by identity, so the shared marker
+        // has to be the object that flows out. A constructor is different: its
+        // caller binds the built instance through pendingConstructorTarget and
+        // this NoneVal is only the body's formal answer -- marking `x` None in
+        // `x = Cls()` would fold `x is None` to True under a live object.
+        return isConstructor ? new NoneVal() : MarkNoneCallResult();
     }
 
     private static string DisplayInstanceName(string? name) =>
@@ -6311,8 +6318,14 @@ public partial class IRGenerator
     private Val VoidCallResult(string callee)
     {
         if (!noneReturningFunctions.Contains(callee)) return new NoneVal(LiveCallResult: true);
-        // Kept by reference: a constructor hands back a NoneVal too, and a binding has to
-        // tell `x = f()` (x is None) from `x = Cls()` (x is the object).
+        return MarkNoneCallResult();
+    }
+
+    // The shared identity of "this call produced None": a binding tests it with
+    // ReferenceEquals, because a constructor hands back a NoneVal too and
+    // `x = Cls()` must not mark x None. The object returned here is the marker.
+    private NoneVal MarkNoneCallResult()
+    {
         lastNoneCallResult = new NoneVal();
         return lastNoneCallResult;
     }
@@ -11180,8 +11193,9 @@ public partial class IRGenerator
             if (TryEmitOptionalStreamOperand(writeStrFn, floatWriteFn, arg)) return;
 
             // A name bound to None that is not an Optional: an @inline parameter whose
-            // default is None and whose call passed nothing. Its slot holds whatever the
-            // last expansion left, and the number writer printed that (`g()` printed 0).
+            // default is None and whose call passed nothing, or `x = f()` where f
+            // returns nothing. Its slot holds whatever the last expansion left, and the
+            // number writer printed that (`g()` printed 0).
             if (arg is VariableExpr or MemberAccessExpr && IsNoneValued(arg))
             {
                 EmitStreamStr(writeStrFn, "None");
