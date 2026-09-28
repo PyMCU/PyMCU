@@ -3122,8 +3122,14 @@ public partial class IRGenerator
 
             // A parameter or local bound to a non-string shadows any same-named global the
             // remaining keys would find, exactly as Python scoping works (#438) -- the same
-            // guard ResolveStrConstant's bare-name fallback asks.
-            if (BindsNonString(k)) break;
+            // guard ResolveStrConstant's bare-name fallback asks. `main` is the module's own
+            // top level, though: `main.<n>` there is not a scope over the global, so its entry
+            // in boundNames only records the assignment that filed `<n>` as a global and must
+            // not hide the mark the global key carries (`s = d[k]` at module level).
+            if (BindsNonString(k) && !(currentFunction == "main"
+                                       && k == currentFunction + "." + name
+                                       && mutableGlobals.ContainsKey(currentModulePrefix + name)))
+                break;
         }
 
         key = "";
