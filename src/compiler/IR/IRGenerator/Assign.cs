@@ -177,6 +177,11 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
             return;
 
+        // `x = str(seq)` on a literal list/tuple in fixed slots: the repr is runtime
+        // text built into the same buffer pair an f-string value gets.
+        if (stmt.Target is VariableExpr strRvTgt && TryExpandStrReprValue(strRvTgt.Name, stmt.Value))
+            return;
+
         // `s = sep.join([...])`: constant fold for all-static strings, and the canonical
         // bytes-to-string idiom `''.join([chr(b) for b in buf])` as a runtime string.
         if (stmt.Target is VariableExpr joinTgt && TryEmitJoinAssign(joinTgt.Name, stmt.Value))
@@ -5262,6 +5267,11 @@ public partial class IRGenerator
             string? st = StaticStringOf(p.Expr!);
             if (st != null) { bound += st.Length; continue; }
             if (p.Expr is IntegerLiteral pil) { bound += pil.Value.ToString().Length; continue; }
+            if (p.Expr is VariableExpr pSeqVe
+                && ResolveArrayVar(pSeqVe.Name) is { } pSeq
+                && literalSequenceArrays.Contains(pSeq.Name))
+            { bound += SeqReprBound(pSeq.Name,
+                    tupleBoundNames.Contains(pSeq.Name) || IsTupleBound(pSeqVe.Name)); continue; }
             if (!string.IsNullOrEmpty(p.FormatSpec))
             {
                 if (p.FormatSpec.EndsWith("f", StringComparison.Ordinal))
@@ -5340,6 +5350,13 @@ public partial class IRGenerator
                     });
                 }
             }
+            else if (p.Expr is VariableExpr pSeqVe
+                     && ResolveArrayVar(pSeqVe.Name) is { } pSeq
+                     && literalSequenceArrays.Contains(pSeq.Name))
+            {
+                EmitSeqReprInto(strfmtMod, bufName, lenVar, pSeq.Name,
+                    tupleBoundNames.Contains(pSeq.Name) || IsTupleBound(pSeqVe.Name));
+            }
             else
             {
                 EmitStrfmtCall(strfmtMod, lenVar,
@@ -5348,6 +5365,202 @@ public partial class IRGenerator
             }
         }
         FlushLit();
+    }
+
+    // The repr of a literal list/tuple in fixed slots, appended into a strfmt buffer
+    // at lenVar: the same shape print() streams, but each byte lands in the buffer the
+    // way _fs_text writes it. A Str element's text is compile-time; a RuntimeStr
+    // element is a byte copy of its live buffer.
+    private void EmitSeqReprInto(string strfmtMod, string bufName, string lenVar,
+                                 string seqKey, bool isTuple)
+    {
+        var buf = new VariableExpr(bufName);
+        var pos = new VariableExpr(lenVar);
+        void Text(string s) =>
+            EmitStrfmtCall(strfmtMod, lenVar, "_fs_text",
+                new List<Expression> { buf, pos, new StringLiteral(s) });
+
+        int count = arraySizes[seqKey];
+        literalSeqElemKinds.TryGetValue(seqKey, out var kinds);
+        ctArrayConstElements.TryGetValue(seqKey, out var constElems);
+        bool inSram = arraysWithVariableIndex.Contains(seqKey) || moduleSramArrays.Contains(seqKey);
+        DataType elemDt = arrayElemTypes.TryGetValue(seqKey, out var et) ? et : DataType.UINT8;
+
+        Text(isTuple ? "(" : "[");
+        for (int k = 0; k < count; k++)
+        {
+            if (k > 0) Text(", ");
+            var (kind, arg) = kinds != null && k < kinds.Count
+                ? kinds[k] : (LiteralSeqElemKind.Number, (string?)null);
+            if (kind == LiteralSeqElemKind.Str) { Text(PyStrReprText(arg!)); continue; }
+            if (kind == LiteralSeqElemKind.RuntimeStr
+                && TryGetRuntimeStr(arg!, out var rsrc))
+            {
+                Text("'");
+                string ci = "__cpx" + tempCounter++;
+                VisitStatement(new VarDecl(ci, "uint16", new IntegerLiteral(0)));
+                var copyBody = new Block();
+                copyBody.Statements.Add(new AssignStmt(
+                    new IndexExpr(buf, pos),
+                    new IndexExpr(new VariableExpr(arg!), new VariableExpr(ci))));
+                copyBody.Statements.Add(new AssignStmt(pos,
+                    new BinaryExpr(pos, Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+                copyBody.Statements.Add(new AssignStmt(new VariableExpr(ci),
+                    new BinaryExpr(new VariableExpr(ci), Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+                VisitStatement(new WhileStmt(
+                    new BinaryExpr(new VariableExpr(ci), Frontend.BinaryOp.Less,
+                        new VariableExpr(rsrc.LenVar)), copyBody));
+                Text("'");
+                continue;
+            }
+            // Bool/Number: the slot value (or the folded constant when there is no slot).
+            // PreEvaluatedExpr carries the Val itself -- a VariableExpr spelling of the
+            // qualified `main.v__0` slot name does not survive scoped name resolution.
+            Val elemVal;
+            if (constElems != null && k < constElems.Count)
+                elemVal = new Constant(constElems[k]);
+            else if (inSram)
+            {
+                var tmp = MakeTemp(elemDt);
+                Emit(new ArrayLoad(seqKey, new Constant(k), tmp, elemDt, count));
+                elemVal = tmp;
+            }
+            else
+            {
+                string slot = seqKey + "__" + k;
+                elemVal = new Variable(slot,
+                    variableTypes.TryGetValue(slot, out var sdt) ? sdt : elemDt);
+            }
+            Expression elem = new PreEvaluatedExpr(elemVal, null);
+            if (kind == LiteralSeqElemKind.Bool)
+            {
+                if (constElems != null && k < constElems.Count)
+                    Text(constElems[k] != 0 ? "True" : "False");
+                else
+                {
+                    // `lenVar = _fs_text(buf, pos, "True"/"False")` under `elem != 0`.
+                    var thenB = new Block();
+                    thenB.Statements.Add(new AssignStmt(pos,
+                        new CallExpr(new MemberAccessExpr(new VariableExpr(strfmtMod), "_fs_text"),
+                            new List<Expression> { buf, pos, new StringLiteral("True") })));
+                    var elseB = new Block();
+                    elseB.Statements.Add(new AssignStmt(pos,
+                        new CallExpr(new MemberAccessExpr(new VariableExpr(strfmtMod), "_fs_text"),
+                            new List<Expression> { buf, pos, new StringLiteral("False") })));
+                    VisitStatement(new IfStmt(
+                        new BinaryExpr(elem, Frontend.BinaryOp.NotEqual, new IntegerLiteral(0)),
+                        thenB, null, elseB));
+                }
+                continue;
+            }
+            EmitStrfmtCall(strfmtMod, lenVar,
+                elemDt is DataType.INT8 or DataType.INT16 or DataType.INT32
+                    || (constElems != null && k < constElems.Count && constElems[k] < 0)
+                    ? "_fs_i32" : "_fs_u32",
+                new List<Expression> { buf, pos, elem });
+        }
+        Text(isTuple && count == 1 ? ",)" : isTuple ? ")" : "]");
+    }
+
+    // `str(seq)` / `f"{seq}"`-as-value on a literal sequence: the repr, held in the
+    // buffer + length pair print() and len() already read for an f-string value.
+    // Returns the bare buffer name; caller-side qualified lookup is runtimeStrVars'.
+    private string EmitSeqReprRuntimeStr(string bufName, string seqKey, bool isTuple,
+                                         Expression blame)
+    {
+        string strfmtMod = RequireStrfmtMod(blame);
+        VisitStatement(new VarDecl(bufName, "bytearray",
+            new CallExpr(new VariableExpr("bytearray"),
+                new List<Expression> { new IntegerLiteral(SeqReprBound(seqKey, isTuple)) })));
+        string lenVar = "__fslen_" + bufName;
+        VisitStatement(new VarDecl(lenVar, "uint16", new IntegerLiteral(0)));
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + bufName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        runtimeStrVars[qualified] = (lenVar, SeqReprBound(seqKey, isTuple));
+        EmitSeqReprInto(strfmtMod, bufName, lenVar, seqKey, isTuple);
+        VisitStatement(new AssignStmt(new IndexExpr(new VariableExpr(bufName), new VariableExpr(lenVar)),
+            new IntegerLiteral(0)));
+        return bufName;
+    }
+
+    // A pessimistic bound on the repr bytes of a fixed-slot sequence: brackets, ", "
+    // separators, a 1-tuple comma, then per element -- a number needs at most an i32's
+    // spelling, a bool at most "False", a str its already-computed repr text, and a
+    // runtime string its buffer capacity plus quotes.
+    private int SeqReprBound(string seqKey, bool isTuple)
+    {
+        int count = arraySizes[seqKey];
+        literalSeqElemKinds.TryGetValue(seqKey, out var kinds);
+        int bound = 3 + (count > 1 ? 2 * (count - 1) : 0) + (isTuple && count == 1 ? 1 : 0);
+        for (int k = 0; k < count; k++)
+        {
+            var (kind, arg) = kinds != null && k < kinds.Count
+                ? kinds[k] : (LiteralSeqElemKind.Number, (string?)null);
+            bound += kind switch
+            {
+                LiteralSeqElemKind.Bool => 5,
+                LiteralSeqElemKind.Str => PyStrReprText(arg ?? "").Length,
+                LiteralSeqElemKind.RuntimeStr =>
+                    TryGetRuntimeStr(arg!, out var rb) ? rb.Capacity + 2 : 2,
+                _ => 11,
+            };
+        }
+        return bound;
+    }
+
+    // `x = str(v)` for a literal sequence v: build the repr into a buffer bound to x,
+    // the same runtime-string pair an f-string value would produce.
+    private bool TryExpandStrReprValue(string target, Expression value)
+    {
+        if (value is not CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } strCall)
+            return false;
+        // `str(object=v)` spells the argument with a keyword; binding it is the
+        // builtin's own job, and evaluating a KeywordArgExpr as a value refuses.
+        if (strCall.Args[0] is KeywordArgExpr) return false;
+        string seqKey;
+        bool seqIsTuple;
+        if (strCall.Args[0] is VariableExpr sve)
+        {
+            if (ResolveArrayVar(sve.Name) is not { } strSeq
+                || !literalSequenceArrays.Contains(strSeq.Name))
+                return false;
+            seqKey = strSeq.Name;
+            seqIsTuple = tupleBoundNames.Contains(strSeq.Name) || IsTupleBound(sve.Name);
+        }
+        else
+        {
+            // `x = str(f())`: evaluate the call, then build the repr of whatever
+            // literal sequence's slots it handed back -- nothing else qualifies.
+            Val sv = VisitExpression(strCall.Args[0]);
+            if (sv is not Variable svv || !literalSequenceArrays.Contains(svv.Name))
+                return false;
+            seqKey = svv.Name;
+            seqIsTuple = tupleBoundNames.Contains(svv.Name) || IsTupleBound(svv.Name);
+        }
+        EmitSeqReprRuntimeStr(target, seqKey, seqIsTuple, value);
+        return true;
+    }
+
+    // CPython's repr() of a str: single quotes, switching to double when the text has
+    // a `'` and no `"`; escapes for the quote, the backslash, and control characters.
+    private static string PyStrReprText(string text)
+    {
+        char q = text.Contains('\'') && !text.Contains('"') ? '"' : '\'';
+        var sb = new System.Text.StringBuilder();
+        sb.Append(q);
+        foreach (char ch in text)
+        {
+            if (ch == '\\' || ch == q) { sb.Append('\\'); sb.Append(ch); }
+            else if (ch == '\n') sb.Append("\\n");
+            else if (ch == '\r') sb.Append("\\r");
+            else if (ch == '\t') sb.Append("\\t");
+            else if (ch < 32 || ch == 127)
+            { sb.Append("\\x"); sb.Append(((int)ch).ToString("x2")); }
+            else sb.Append(ch);
+        }
+        sb.Append(q);
+        return sb.ToString();
     }
 
     // `sep.join(<genexp or listcomp>)` materialized as a runtime string: the comprehension
@@ -8714,6 +8927,18 @@ public partial class IRGenerator
         // A SRAM array that a later runtime index writes (the `[None] * n` scratch) is not
         // a compile-time sequence: folding the zeros would hide the stores.
         variableAliases.Remove(qualified);
+        if (elemTypes == null && ctorClasses.All(c => c == null))
+        {
+            literalSequenceArrays.Add(qualified);
+            var kinds = new List<(LiteralSeqElemKind Kind, string? Arg)>(count);
+            foreach (var el in elemExprs) kinds.Add(LiteralSeqElemKindOf(el));
+            literalSeqElemKinds[qualified] = kinds;
+        }
+        else
+        {
+            literalSequenceArrays.Remove(qualified);
+            literalSeqElemKinds.Remove(qualified);
+        }
         constSequenceBindings.Remove(qualified);
         if (allConst && !useSram)
             constSequenceBindings[qualified] =
@@ -8728,6 +8953,17 @@ public partial class IRGenerator
         if (allConst && !useSram) ctArrayConstElements[qualified] = constElems;
         else ctArrayConstElements.Remove(qualified);
         return true;
+    }
+
+    // The repr one literal-sequence element gets. The slot stores every element as a
+    // number -- a bool as 0/1, a compile-time string as its interned id -- so what the
+    // element was WRITTEN as is the only record print() can quote or True/False by.
+    private (LiteralSeqElemKind Kind, string? Arg) LiteralSeqElemKindOf(Expression e)
+    {
+        if (e is BooleanLiteral || IsBoolExpr(e)) return (LiteralSeqElemKind.Bool, null);
+        if (TryEvalConstStrElement(e, out var elText)) return (LiteralSeqElemKind.Str, elText);
+        if (e is VariableExpr elv && TryGetRuntimeStr(elv.Name, out _)) return (LiteralSeqElemKind.RuntimeStr, elv.Name);
+        return (LiteralSeqElemKind.Number, null);
     }
 
     /// <summary>

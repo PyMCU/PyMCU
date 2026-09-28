@@ -1336,6 +1336,16 @@ public partial class IRGenerator
     // that the function appends to). Nothing declared the width, so an append of a
     // wider value is refused instead of being stored truncated.
     private HashSet<string> inferredLiteralLists = new();
+    // Compile-time sequences laid out from a list or tuple LITERAL of values (TryVisitCtListAssign):
+    // fixed slots like a bytearray's, but printed as the `[a, b]` / `(a, b)` they were written as.
+    private HashSet<string> literalSequenceArrays = new();
+    // The repr a literalSequenceArrays element was WRITTEN with: the slot stores the
+    // value as a number, but `print` spells a bool True/False and a compile-time
+    // string quoted like CPython. Arg carries the repr text for Str and the source
+    // runtime-string name for RuntimeStr; a None arg defers to the slot.
+    private enum LiteralSeqElemKind { Number, Bool, Str, RuntimeStr }
+    private readonly Dictionary<string, List<(LiteralSeqElemKind Kind, string? Arg)>>
+        literalSeqElemKinds = new();
     // Set when a heap object's payload may hold GC_REFs -- GcAlloc(Ref) sites
     // and the inline flag write EmitRefPayloadFlag emits. Stamped onto
     // ProgramIR.UsesRefPayloads so the backend can drop the ref-tracing GC

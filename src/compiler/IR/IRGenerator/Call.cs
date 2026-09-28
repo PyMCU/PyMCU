@@ -7413,7 +7413,23 @@ public partial class IRGenerator
     private Val EmitStrBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("str() expects exactly one argument", expr.Callee);
+        // `str(seq)` on a literal list/tuple in fixed slots: the repr materialized into
+        // a runtime-string buffer (`x = str(v)`, `f"{str(v)}"`, print(str(v)) falls
+        // into the streamed intercept before ever calling this).
+        if (expr.Args[0] is VariableExpr sve
+            && ResolveArrayVar(sve.Name) is { } sSeq
+            && literalSequenceArrays.Contains(sSeq.Name))
+            return new Variable(EmitSeqReprRuntimeStr("__str" + tempCounter++, sSeq.Name,
+                tupleBoundNames.Contains(sSeq.Name) || IsTupleBound(sve.Name), expr), DataType.UINT8);
         Val v = VisitExpression(expr.Args[0]);
+        // `str(s)` where s is already a runtime string: str() is idempotent -- the
+        // buffer it names is the answer.
+        if (v is Variable rvv && TryGetRuntimeStr(rvv.Name, out _)) return rvv;
+        // `str(f())` where f's return handed back a literal sequence's fixed slots:
+        // the repr of those slots, as a buffer.
+        if (v is Variable svv && literalSequenceArrays.Contains(svv.Name))
+            return new Variable(EmitSeqReprRuntimeStr("__str" + tempCounter++, svv.Name,
+                tupleBoundNames.Contains(svv.Name) || IsTupleBound(svv.Name), expr), DataType.UINT8);
         if (!(v is Constant c)) throw UserError("str() argument must be a compile-time constant integer", ArgAt(expr, 0));
         string decstr = c.Text ?? c.Value.ToString();
         if (!stringLiteralIds.ContainsKey(decstr))
@@ -9910,6 +9926,20 @@ public partial class IRGenerator
             if (sv != null) { pending += sv; continue; }
             if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
             if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
+            // `f"{v}"` naming a literal list/tuple in fixed slots: the repr print()
+            // writes. Ahead of ModuleConstListValues -- it would take a LIST down the
+            // tuple-bracket path.
+            if (part.Expr is VariableExpr flv
+                && ResolveArrayVar(flv.Name) is { } flSeq
+                && literalSequenceArrays.Contains(flSeq.Name))
+            {
+                Flush();
+                TryEmitLiteralSequenceRepr(writeStrFn, flSeq.Name,
+                    tupleBoundNames.Contains(flSeq.Name) || IsTupleBound(flv.Name),
+                    e => EmitStreamVal(floatFn,
+                        e is PreEvaluatedExpr fpv ? fpv.Value : VisitExpression(e)));
+                continue;
+            }
             // `f"{_GAINS}"` names a module-level tuple of constants: CPython writes
             // the repr `(1, 4, 16, 60)`. Reading the NAME instead evaluated to the
             // table's base and streamed a 0 (adafruit_tcs34725's ValueErrors).
@@ -9947,12 +9977,27 @@ public partial class IRGenerator
                 Val partVal = part.Expr is PreEvaluatedExpr pev
                     ? pev.Value : VisitExpression(part.Expr!);
                 Flush();
+                // `{str(v)}` produced a runtime-string buffer; `{f()}` returning a
+                // literal sequence produced its fixed slots -- repr either way.
+                if (partVal is Variable prs && TryGetRuntimeStr(prs.Name, out var prsInfo))
+                { EmitRuntimeStrStream(prs.Name, prsInfo.LenVar); continue; }
+                if (ValNameOf(partVal) is { } pSeqName
+                    && literalSequenceArrays.Contains(pSeqName)
+                    && TryEmitLiteralSequenceRepr(writeStrFn, pSeqName,
+                           tupleBoundNames.Contains(pSeqName) || IsTupleBound(pSeqName),
+                           e2 => EmitStreamVal(floatFn,
+                               e2 is PreEvaluatedExpr fpv2 ? fpv2.Value : VisitExpression(e2))))
+                    continue;
                 if (!TryEmitOptionalStreamVal(writeStrFn, floatFn, partVal))
                     EmitStreamVal(floatFn, partVal);
                 continue;
             }
             Flush();
             Val partFinal = VisitExpression(part.Expr!);
+            // A plain `{v}` can also reach a str() buffer -- the CallExpr arm only
+            // runs when the AST still showed the call.
+            if (partFinal is Variable pfv && TryGetRuntimeStr(pfv.Name, out var pfvInfo))
+            { EmitRuntimeStrStream(pfv.Name, pfvInfo.LenVar); continue; }
             if (!TryEmitOptionalStreamVal(writeStrFn, floatFn, partFinal))
                 EmitStreamVal(floatFn, partFinal);
         }
@@ -10519,6 +10564,25 @@ public partial class IRGenerator
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
 
+            // A name bound to a list or tuple literal of run-time values lives in fixed slots,
+            // and the bytearray repr below took it for one, or the scalar path printed 0:
+            // `v = [GPIOR0.value + 1, ...]; print(v)` printed `0`. Ahead of
+            // ModuleConstListValues: an all-constant literal resolves there too, and its
+            // path writes tuple brackets for a LIST.
+            if (arg is VariableExpr litSeqName && ResolveArrayVar(litSeqName.Name) is { } litSeq
+                && TryEmitLiteralSequenceRepr(writeStrFn, litSeq.Name,
+                       tupleBoundNames.Contains(litSeq.Name) || IsTupleBound(litSeqName.Name), EmitPrintArg))
+                return;
+
+            // `print(str(seq))` on the same literal: the repr text, streamed -- no
+            // buffer materialization needed where the print sink is already the wire.
+            if (arg is CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } pStrCall
+                && pStrCall.Args[0] is VariableExpr pStrSeqVe
+                && ResolveArrayVar(pStrSeqVe.Name) is { } pStrSeq
+                && TryEmitLiteralSequenceRepr(writeStrFn, pStrSeq.Name,
+                       tupleBoundNames.Contains(pStrSeq.Name) || IsTupleBound(pStrSeqVe.Name), EmitPrintArg))
+                return;
+
             // `print(_GAINS)` names a module-level tuple of constants: CPython prints
             // the repr `(1, 4, 16, 60)` where the bare name read as a scalar 0.
             if (arg is VariableExpr ptv && ModuleConstListValues(ptv.Name) is { } pcv)
@@ -10615,6 +10679,17 @@ public partial class IRGenerator
                         || IsTupleBound(seqResName));
                     return;
                 }
+                // An inline callee's `return <literal list local>` hands back its slots.
+                if (seqResName != null
+                    && TryEmitLiteralSequenceRepr(writeStrFn, seqResName, IsTupleBound(seqResName), EmitPrintArg))
+                    return;
+                // `print(str(v))` / `print(join(...))`: the call built a runtime-string
+                // buffer -- stream its bytes, not the buffer pointer's decimal.
+                if (seqVal is Variable seqRv && TryGetRuntimeStr(seqRv.Name, out var seqRInfo))
+                {
+                    EmitRuntimeStrStream(seqRv.Name, seqRInfo.LenVar);
+                    return;
+                }
                 // `print(f())` / `print(obj.prop)` on a tagged union result: the
                 // tag the callee returned decides "None" or the member's repr.
                 if (TryEmitOptionalStreamVal(writeStrFn, floatWriteFn, seqVal)) return;
@@ -10642,11 +10717,15 @@ public partial class IRGenerator
             // writer would print its pointer.
             if (arg is IndexExpr
                 && (argV switch { Variable iv => iv.Name, Temporary it => it.Name, _ => null })
-                    is { } idxResName
-                && listVarElemTypes.TryGetValue(idxResName, out var idxSeqElem))
+                    is { } idxResName)
             {
-                EmitSeqRepr(writeStrFn, floatWriteFn, argV, idxSeqElem, IsTupleBound(idxResName));
-                return;
+                if (listVarElemTypes.TryGetValue(idxResName, out var idxSeqElem))
+                {
+                    EmitSeqRepr(writeStrFn, floatWriteFn, argV, idxSeqElem, IsTupleBound(idxResName));
+                    return;
+                }
+                if (TryEmitLiteralSequenceRepr(writeStrFn, idxResName, IsTupleBound(idxResName), EmitPrintArg))
+                    return;
             }
             // A guarded Optional op result is a tagged temp: print it member-wise
             // (`print(x + 1)` on Optional reads the tag, not the widest width).
@@ -10675,6 +10754,73 @@ public partial class IRGenerator
 
         EmitStreamStr(writeStrFn, endStr);
         return new NoneVal();
+    }
+
+    /// <summary>
+    /// The repr of a compile-time sequence laid out from a list or tuple literal: `[a, b]`,
+    /// `(a, b)`, `(a,)`. Each element is read from its slot -- a `name__k` variable, or the
+    /// SRAM array when the sequence is indexed at run time; an all-constant literal has no
+    /// slots at all, so its element constants are taken from ctArrayConstElements. The
+    /// recorded LiteralSeqElemKind spells a bool True/False and a string quoted, because
+    /// the slot stores both as bare numbers. False when the key is not one.
+    /// </summary>
+    private bool TryEmitLiteralSequenceRepr(string writeStrFn, string key, bool isTuple,
+                                            Action<Expression> printArg)
+    {
+        if (!literalSequenceArrays.Contains(key) || !arraySizes.TryGetValue(key, out int count))
+            return false;
+        DataType elemDt = arrayElemTypes.TryGetValue(key, out var et) ? et : DataType.UINT8;
+        bool inSram = arraysWithVariableIndex.Contains(key) || moduleSramArrays.Contains(key);
+        literalSeqElemKinds.TryGetValue(key, out var kinds);
+        ctArrayConstElements.TryGetValue(key, out var constElems);
+        EmitStreamStr(writeStrFn, isTuple ? "(" : "[");
+        for (int k = 0; k < count; k++)
+        {
+            if (k > 0) EmitStreamStr(writeStrFn, ", ");
+            var (kind, arg) = kinds != null && k < kinds.Count
+                ? kinds[k] : (LiteralSeqElemKind.Number, (string?)null);
+            if (kind == LiteralSeqElemKind.Str)
+            {
+                EmitStreamStr(writeStrFn, PyStrReprText(arg!));
+                continue;
+            }
+            if (kind == LiteralSeqElemKind.RuntimeStr
+                && TryGetRuntimeStr(arg!, out var rsrc))
+            {
+                EmitStreamStr(writeStrFn, "'");
+                EmitRuntimeStrStream(arg!, rsrc.LenVar);
+                EmitStreamStr(writeStrFn, "'");
+                continue;
+            }
+            Val elem;
+            if (constElems != null && k < constElems.Count)
+                elem = new Constant(constElems[k]);
+            else if (inSram)
+            {
+                var t = MakeTemp(elemDt);
+                Emit(new ArrayLoad(key, new Constant(k), t, elemDt, count));
+                elem = t;
+            }
+            else
+            {
+                string slot = key + "__" + k;
+                elem = new Variable(slot, variableTypes.TryGetValue(slot, out var sdt) ? sdt : elemDt);
+            }
+            if (kind == LiteralSeqElemKind.Bool)
+            {
+                if (elem is Constant bc)
+                    EmitStreamStr(writeStrFn, bc.Value != 0 ? "True" : "False");
+                else
+                    EmitStreamBool(writeStrFn,
+                        new BinaryExpr(new PreEvaluatedExpr(elem, null),
+                            Frontend.BinaryOp.NotEqual, new IntegerLiteral(0)));
+                continue;
+            }
+            printArg(new PreEvaluatedExpr(elem, null));
+        }
+        if (isTuple && count == 1) EmitStreamStr(writeStrFn, ",");
+        EmitStreamStr(writeStrFn, isTuple ? ")" : "]");
+        return true;
     }
 
     // funcref(fn): resolve a function name (through any alias chain) to a FunctionRef

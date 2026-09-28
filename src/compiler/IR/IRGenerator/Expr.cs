@@ -472,6 +472,12 @@ public partial class IRGenerator
         // answered the hardcoded Constant(0) below instead of what the method computed.
         if (result == null) result = dunderCtx.ResultTemp;
 
+        // The body returned a sequence's slots (`return self._getitem(i)`): the call's value
+        // is that storage, as the plain inline path hands it back.
+        if (dunderCtx.ReturnedBuffer is { } dunderBuf)
+            return new Variable(dunderBuf, arrayElemTypes.TryGetValue(dunderBuf, out var dbEt)
+                ? dbEt : DataType.UINT8);
+
         // A `return <list var>` in the body recorded the element type on the context, and the
         // branch joins since then dropped the temp's entry: without the re-registration the
         // plain inline path does, `print(obj[i])` of a list-returning __getitem__ printed the

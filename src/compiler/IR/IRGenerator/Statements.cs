@@ -1570,6 +1570,23 @@ public partial class IRGenerator
             returnsNone = true;
         }
 
+        // `return self._getitem(i)`: a nested expansion handed back the slots of a list
+        // literal, and copying that NAME into a scalar result slot kept one byte of nothing.
+        // It travels on as the buffer it is, the way `return <local array>` does above.
+        if (inlineStack.Count > 0 && val is Variable retLitSeq
+            && literalSequenceArrays.Contains(retLitSeq.Name) && arraySizes.ContainsKey(retLitSeq.Name)
+            && inlineStack.Last().ResultVars.Count == 0)
+        {
+            var bufCtx = inlineStack.Last();
+            bufCtx.ReturnedBuffer = retLitSeq.Name;
+            bufCtx.ResultAssigned = true;
+            if (_runtimeBranchDepth <= bufCtx.EntryBranchDepth)
+                bufCtx.ResultReturnedUnconditionally = true;
+            EmitPendingFinally(bufCtx.FinallyDepth);
+            Emit(new Jump(bufCtx.ExitLabel));
+            return;
+        }
+
         if (inlineStack.Count > 0)
         {
             var ctx = inlineStack.Last();
