@@ -3046,6 +3046,21 @@ public partial class IRGenerator
             var varType = DataType.UINT8;
             var originalName = memExpr2.Object is VariableExpr veObj ? veObj.Name : null;
 
+            // A collapsed single-field anchor IS the field's scalar, not a pointer: `x.value = v`
+            // stores at the field's declared (or seed-widened) width, the same store a plain
+            // `x = v` does. The pointer rules below minted it at the u8 default (annotated
+            // fields truncated at construction) or refused a 16/32-bit write outright. An
+            // anchor filed as a pointer alias (`self.value = ptr(addr)`, unannotated) keeps
+            // the register-write contract and falls through.
+            if (target is Variable anchorVar && IsCollapsedFieldAnchor(memExpr2.Object)
+                && !constantAddressVariables.ContainsKey(anchorVar.Name))
+            {
+                var aw = CollapsedAnchorWidth(memExpr2.Object, anchorVar, stmt.AnnotatedType);
+                RegisterAnchorWidth(anchorVar.Name, aw);
+                Emit(new Copy(value, new Variable(anchorVar.Name, aw)));
+                return;
+            }
+
             // Runtime pointer (from ptr(<runtime addr>), e.g. ptr(BASE + x)): the target
             // Val holds a 16-bit address computed at runtime, so write through it with a
             // StoreIndirect rather than to a compile-time MemoryAddress.
@@ -3395,6 +3410,19 @@ public partial class IRGenerator
 
             if (value is MemoryAddress ma2)
             {
+                // A field declared with a scalar width holds the read byte, not the
+                // register's address: `self.value: uint16 = GPIOR0.value` snapshots what
+                // the register holds into the field. The pointer-alias below is the
+                // unannotated spelling's contract (`self.tccrb = ptr(base + 1)`).
+                if (stmt.AnnotatedType is { } annField
+                    && WidthSeeds.IsInt(DataTypeExtensions.StringToDataType(annField)))
+                {
+                    var annFieldDt = DataTypeExtensions.StringToDataType(annField);
+                    Emit(new Copy(value, new Variable(flattenedName, annFieldDt)));
+                    variableTypes[flattenedName] = annFieldDt;
+                    constantAddressVariables.Remove(flattenedName);
+                    return;
+                }
                 constantAddressVariables[flattenedName] = ma2.Address;
                 // The element width travels with the address, exactly as it does on the
                 // aliased path below. Without this the field kept whatever width the class
@@ -3633,6 +3661,42 @@ public partial class IRGenerator
         }
 
         return DataType.UINT8;
+    }
+
+    /// The width a collapsed single-field anchor holds: the field's declared layout width
+    /// (already seed-adjusted), widened by a per-statement annotation and by whatever width
+    /// the anchor variable itself was minted or registered at earlier in this run. Widening
+    /// only -- it never picks something narrower than an existing registration.
+    private DataType CollapsedAnchorWidth(Expression obj, Variable anchor, string? annotation)
+    {
+        DataType w = obj is VariableExpr ve ? FlattenedFieldType(ve.Name, "value") : DataType.UINT8;
+        if (annotation is { Length: > 0 } ann && IsNumericWidthName(ann))
+            w = PyMCU.Common.WidthSeeds.Join(w, DataTypeExtensions.StringToDataType(ann));
+        if (IsNumericWidth(anchor.Type)) w = PyMCU.Common.WidthSeeds.Join(w, anchor.Type);
+        if (variableTypes.TryGetValue(anchor.Name, out var rv) && IsNumericWidth(rv))
+            w = PyMCU.Common.WidthSeeds.Join(w, rv);
+        if (mutableGlobals.TryGetValue(anchor.Name, out var mg) && IsNumericWidth(mg))
+            w = PyMCU.Common.WidthSeeds.Join(w, mg);
+        return w;
+    }
+
+    /// Record a collapsed anchor's width in every table a later read of the same name
+    /// consults -- joining, never narrowing -- so the byte binding `x = C()` adopted at
+    /// first sight of the ctor does not keep reads at u8 while writes store u16.
+    private void RegisterAnchorWidth(string name, DataType w)
+    {
+        if (!IsNumericWidth(w)) return;
+        if (variableTypes.TryGetValue(name, out var rv) && IsNumericWidth(rv))
+            variableTypes[name] = PyMCU.Common.WidthSeeds.Join(rv, w);
+        else if (w != DataType.UINT8)
+            variableTypes[name] = w;
+        if (mutableGlobals.TryGetValue(name, out var mg) && IsNumericWidth(mg))
+            mutableGlobals[name] = PyMCU.Common.WidthSeeds.Join(mg, w);
+        if (globals.TryGetValue(name, out var gi) && IsNumericWidth(gi.Type))
+        {
+            gi.Type = PyMCU.Common.WidthSeeds.Join(gi.Type, w);
+            globals[name] = gi;
+        }
     }
 
     // RFC 0001 Model B (Class[N]): the runtime address of `arr[idx].<member>` for an instance
@@ -9670,6 +9734,22 @@ public partial class IRGenerator
                 Temporary res = MakeTemp(elem);
                 Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), maddr, operand, res));
                 Emit(new Copy(res, new MemoryAddress(maddr.Address, elem)));
+                return;
+            }
+
+            // A collapsed single-field anchor IS its field's scalar: `x.value OP= n` is a
+            // read-modify-write on the variable itself at the field's width, not a
+            // pointer store. The aug check feeds the operand to the field's seed, so a
+            // sum that outgrows the layout widens it on the next run.
+            if (ptrObj is Variable augAnchor && IsCollapsedFieldAnchor(mae.Object))
+            {
+                var aw = CollapsedAnchorWidth(mae.Object, augAnchor, null);
+                RegisterAnchorWidth(augAnchor.Name, aw);
+                var anchorW = new Variable(augAnchor.Name, aw);
+                NoteFieldAugStore(mae, IRGenerator.MapAugOp(stmt.Op), operand);
+                Temporary augRes = MakeTemp(aw);
+                Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), anchorW, operand, augRes));
+                Emit(new Copy(augRes, anchorW));
                 return;
             }
 

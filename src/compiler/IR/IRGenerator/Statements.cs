@@ -1693,6 +1693,25 @@ public partial class IRGenerator
                 // inlined __enter__/__exit__): the alias below binds the result.
                 if (!(val is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
                 {
+                    // The temp was minted before this body lowered, from the return type the
+                    // signature carried THEN -- for an unannotated def, whatever width an
+                    // earlier run's seeds had reached. A value that outgrew it since is the
+                    // same shape as an unannotated slot stored wide: note the store so the
+                    // next run declares the callee's return (and mints this temp) at the
+                    // width the body actually produces, instead of letting the Copy below
+                    // truncate it where no slot check can see.
+                    FunctionDef? retDef = null;
+                    if (ctx.CalleeName is { } retCallee)
+                    {
+                        if (slotDefs.TryGetValue(retCallee, out var sd)) retDef = sd;
+                        else if (instanceMethodDefs.TryGetValue(retCallee, out var imd)) retDef = imd;
+                        else if (methodAstByName.TryGetValue(retCallee, out var mad)) retDef = mad;
+                        else if (inlineFunctions.TryGetValue(retCallee, out var ifn)) retDef = ifn;
+                    }
+                    if (retDef != null && unannotatedReturns.Contains(retDef)
+                        && defSeedKeys.TryGetValue(retDef, out var retSeedKey))
+                        NoteStore(retSeedKey + "->", ctx.ResultTemp.Type, val, readsItself: false);
+
                     // A ResultTemp minted from an annotation StringToDataType can't map
                     // (`-> NamedTuple`, `-> tuple`) is one byte wide; returning a GC_REF
                     // through it truncates the pointer. The emitted Temporary keeps its

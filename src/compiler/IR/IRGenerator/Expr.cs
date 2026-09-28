@@ -554,6 +554,49 @@ public partial class IRGenerator
         return false;
     }
 
+    // The single-field case IsKnownInstanceField deliberately excludes: a ZCA class with
+    // exactly one scalar field stores it under the instance's own name (RFC 0001 Model B
+    // collapse), so `x.<member>` -- `x.value` included -- IS the anchor variable at whatever
+    // width the field was declared or widened to. The `.value` register paths must treat a
+    // wider-than-byte anchor as the variable it is: a Copy target or read-modify-write,
+    // never a pointer whose address must be constant.
+    /// True when <paramref name="obj"/> evaluates to a single-field instance whose field
+    /// collapses onto the instance's own name: `x.value` then names the scalar variable
+    /// itself, not a pointer's byte or a slot. The `self` of a bound-outlined method is
+    /// resolved through methodInstanceTypes the way FlattenedFieldType does.
+    private bool IsCollapsedFieldAnchor(Expression obj)
+    {
+        if (obj is not VariableExpr ve) return false;
+        foreach (var start in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                     ve.Name,
+                 })
+        {
+            if (start == null) continue;
+            string? key = start;
+            for (int depth = 0; depth < 20 && key != null; depth++)
+            {
+                if (instanceClasses.TryGetValue(key, out var cls) && cls != null
+                    && !slotInstances.ContainsKey(key)
+                    && classFieldLayout.TryGetValue(cls, out var layout)
+                    && layout.Count == 1)
+                    return true;
+                if (!variableAliases.TryGetValue(key, out key)) break;
+            }
+        }
+        if (ve.Name == "self" || ve.Name.EndsWith(".self"))
+        {
+            string? frameMethod = inlineStack.Count > 0 && !string.IsNullOrEmpty(inlineStack[^1].CalleeName)
+                ? inlineStack[^1].CalleeName : currentFunction;
+            if (frameMethod != null && methodInstanceTypes.TryGetValue(frameMethod, out var selfCls)
+                && classFieldLayout.TryGetValue(selfCls, out var selfLay) && selfLay.Count == 1)
+                return true;
+        }
+        return false;
+    }
+
     private DataType GetValType(Val v)
     {
         if (v is FloatConstant) return DataType.FLOAT;
@@ -6178,6 +6221,8 @@ public partial class IRGenerator
                     return new MemoryAddress(ptrAddr, elemType);
                 }
                 if (variableTypes.TryGetValue(v.Name, out var vt)) varType = vt;
+                else if (mutableGlobals.TryGetValue(v.Name, out var mgv)) varType = mgv;
+                else if (globals.TryGetValue(v.Name, out var gv)) varType = gv.Type;
                 obj = v with { Type = varType };
             }
 
