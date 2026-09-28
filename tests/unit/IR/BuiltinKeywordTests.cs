@@ -92,13 +92,11 @@ public class BuiltinKeywordTests
     }
 
     [Fact]
-    public void EnumerateStart_SaysSo_RatherThanBlamingTheIterable()
+    public void EnumerateStart_IsSupported()
     {
-        // The one in this class a real program would write, and the worst answer of the set:
-        // the old message was about the ITERABLE, which is a correct list literal.
-        string msg = Refusal("    for i, v in enumerate([1, 2], start=1):\n        seed = i + v\n");
-        Assert.Contains("'start' is a keyword argument of enumerate() in Python", msg);
-        Assert.DoesNotContain("iterable must be", msg);
+        // `start` used to be refused here by name. It is a compile-time shift of the index
+        // now: `for i, v in enumerate(xs, start=k)` is `for j, v in enumerate(xs): i = j + k`.
+        Assert.NotNull(Gen("    for i, v in enumerate([1, 2], start=1):\n        seed = i + v\n"));
     }
 
     // ---- CPython has no such keyword either: the reader's typo -----------------------------
