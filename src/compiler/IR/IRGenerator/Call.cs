@@ -3117,6 +3117,15 @@ public partial class IRGenerator
                 // so `for x in param` unrolls it and `param[const]` folds. Clear any
                 // stale scalar bindings.
                 listLiteralParams[paramName] = rawListArgs[i]!;
+                // The elements stay AST, so they are evaluated late -- under the callee's
+                // scope by default. Their scope is the CALLER's: the saved fields above,
+                // captured before this expansion installed its own, are what `t[0]`
+                // reading `f(reg)` or `self.k` must see (adafruit_ds3231 builds
+                // time.struct_time((...)) through such a call inside a descriptor).
+                listLiteralParamScopes[paramName] = new SeqArgScope(
+                    savedModulePrefix, savedPrefix,
+                    savedSourcePath, savedSourceFile,
+                    savedTracksCallee, savedCalleeLine);
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
@@ -3124,6 +3133,7 @@ public partial class IRGenerator
                 continue;
             }
             listLiteralParams.Remove(paramName);
+            listLiteralParamScopes.Remove(paramName);
 
             // `levels = [7, 8, 9]` then `D(levels)`: a list of NUMBERS reached by name keeps its
             // elements against the parameter, so `xs[0]`, `for v in xs` and `len(xs)` answer the
@@ -5537,6 +5547,7 @@ public partial class IRGenerator
             string name = prefix + func.Params[varArgIdx].Name;
             constSequenceBindings.Remove(name);
             listLiteralParams.Remove(name);
+            listLiteralParamScopes.Remove(name);
             constSequenceBindings[name] = extraPositional;
         }
 

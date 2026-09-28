@@ -1826,13 +1826,15 @@ public partial class IRGenerator
 
             // A parameter bound to a bytes/list literal argument (e.g. the `buf` of
             // uart.write(b"Hi")) iterates exactly like a direct list literal.
-            ListExpr? GetListParam(Expression e)
+            ListExpr? GetListParam(Expression e, out SeqArgScope? scope)
             {
+                scope = null;
                 if (e is not VariableExpr varE) return null;
-                return ResolveListLiteralParam(varE.Name);
+                TryResolveListLiteralParam(varE.Name, out var bound, out scope);
+                return bound;
             }
 
-            if (GetListParam(iter) is ListExpr boundList)
+            if (GetListParam(iter, out var lpScope) is ListExpr boundList)
             {
                 // The caller's literal has no local name to veto on -- the elements
                 // were just read, so the materialised table holds what they are now.
@@ -1845,7 +1847,11 @@ public partial class IRGenerator
                         constantVariables[varKey] = il.Value;
                         EmitUnrolledIteration(stmt.Body, lpBrk);
                     }
-                    else if (BindUnrolledElement(varKey, elem))
+                    // The element is the caller's text: a name or `self` in it resolves
+                    // where the literal was passed, not in this body (the callee scope
+                    // is installed while the loop unrolls). Same reason `param[i]`
+                    // folds through UnderSeqArgScope in Expr.cs.
+                    else if (UnderSeqArgScope(lpScope, () => BindUnrolledElement(varKey, elem)))
                     {
                         EmitUnrolledIteration(stmt.Body, lpBrk);
                         constSequenceBindings.Remove(varKey);
@@ -2288,7 +2294,9 @@ public partial class IRGenerator
                     // enumerate() over a list [..] / tuple (..) literal, or an inline
                     // parameter bound to such a literal, of compile-time constants.
                     Expression enumInner = inner;
-                    if (enumInner is VariableExpr epv && ResolveListLiteralParam(epv.Name) is ListExpr eBound)
+                    SeqArgScope? enumScope = null;
+                    if (enumInner is VariableExpr epv
+                        && TryResolveListLiteralParam(epv.Name, out var eBound, out enumScope))
                         enumInner = eBound;
                     // Only the literal spelling was written at this `for`. The other two the
                     // switch below accepts reach a list through a NAME -- an @inline parameter
@@ -2327,10 +2335,12 @@ public partial class IRGenerator
                             // `bytes([register & 0xFF])` with `register` a folded parameter
                             // IS a compile-time element -- the general evaluator folds what
                             // the literal switch cannot see.
-                            if (TryEvalElemConst(elem, out int ev))
+                            int? ev = UnderSeqArgScope(enumScope,
+                                () => TryEvalElemConst(elem, out int v) ? v : (int?)null);
+                            if (ev is { } evv)
                             {
                                 constantVariables[idxKey] = idx++;
-                                constantVariables[valKey] = ev;
+                                constantVariables[valKey] = evv;
                                 VisitStatement(stmt.Body);
                             }
                             else

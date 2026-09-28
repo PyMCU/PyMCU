@@ -374,11 +374,18 @@ public partial class IRGenerator
             if (seqArgs != null && seqArgs.TryGetValue(extraIdx, out var seqLit))
             {
                 listLiteralParams[paramKey] = seqLit;
+                // Bound before the dunder's own frame installs below, so the current
+                // fields still describe the scope the literal was written in.
+                listLiteralParamScopes[paramKey] = new SeqArgScope(
+                    currentModulePrefix, currentInlinePrefix,
+                    currentSourcePath, currentSourceFile,
+                    inlineTracksCalleeLine, inlineCalleeStmtLine);
                 constantVariables.Remove(paramKey);
                 variableAliases.Remove(paramKey);
                 continue;
             }
             listLiteralParams.Remove(paramKey);
+            listLiteralParamScopes.Remove(paramKey);
             // Clear any binding left from a PRIOR call to this same dunder at the same inline
             // depth (the prefix, hence paramKey, is reused). Without this, a stale alias from a
             // previous call (e.g. b[0]=s aliased v->s) survived and shadowed a fresh Copy on the
@@ -2746,15 +2753,30 @@ public partial class IRGenerator
     // (same resolution as the for-in path in Iteration.cs). Returns null if the
     // name is not a sequence-literal parameter.
     private Frontend.ListExpr? ResolveListLiteralParam(string name)
+        => TryResolveListLiteralParam(name, out var bound, out _) ? bound : null;
+
+    // Same resolution, and the caller scope the binding was recorded under -- so the
+    // element an expression reads can be evaluated where it was WRITTEN, not where the
+    // parameter happened to be consumed (UnderSeqArgScope, State.cs).
+    private bool TryResolveListLiteralParam(string name,
+                                            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+                                            out Frontend.ListExpr? bound,
+                                            out SeqArgScope? scope)
     {
         string? key = currentInlinePrefix + name;
         for (var depth = 0; depth < 20; depth++)
         {
-            if (key != null && listLiteralParams.TryGetValue(key, out var bound)) return bound;
+            if (key != null && listLiteralParams.TryGetValue(key, out bound))
+            {
+                listLiteralParamScopes.TryGetValue(key, out scope);
+                return true;
+            }
             if (key != null && variableAliases.TryGetValue(key, out var alias)) key = alias;
             else break;
         }
-        return null;
+        bound = null;
+        scope = null;
+        return false;
     }
 
     // Dict/set literal bindings, looked up with the standard qualification order.
@@ -3701,7 +3723,7 @@ public partial class IRGenerator
             // subscript (param[0]) to the corresponding element expression. Mirrors
             // the for-in unroll path in Iteration.cs (same key + alias resolution);
             // enables e.g. NeoPixel.fill((r, g, b)) consumed as color[0..2].
-            if (ResolveListLiteralParam(ve.Name) is ListExpr litArg)
+            if (TryResolveListLiteralParam(ve.Name, out var litArg, out var litScope))
             {
                 int li;
                 // The index is evaluated ONCE: the constant test and the flash read used to
@@ -3710,7 +3732,8 @@ public partial class IRGenerator
                 Val? litIdx = expr.Index is IntegerLiteral ? null : VisitExpression(expr.Index);
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (litIdx is Constant clit) li = clit.Value;
-                else if (ConstValuesOf(litArg.Elements) is { } litValues
+                else if (UnderSeqArgScope(litScope, () => ConstValuesOf(litArg.Elements))
+                            is { } litValues
                          && TryMaterialiseConstTableFromValues(
                                 "param:" + ResolveNameKey(ve.Name), ve.Name, litValues)
                             is { } litTable)
@@ -3723,7 +3746,9 @@ public partial class IRGenerator
                 if (li < 0) li += litArg.Elements.Count;
                 if (li < 0 || li >= litArg.Elements.Count)
                     throw UserError("Tuple/list parameter subscript index out of range", expr.Index);
-                return VisitExpression(litArg.Elements[li]);
+                // The element is the caller's AST evaluated late: its names, its `self`
+                // and its diagnostics belong to the call site, not to this body.
+                return UnderSeqArgScope(litScope, () => VisitExpression(litArg.Elements[li]));
             }
 
             // `pins = [2, 3, 4]` then `pins[0]`: a name bound to an all-constant list keeps its

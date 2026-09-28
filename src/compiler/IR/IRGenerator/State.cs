@@ -964,6 +964,46 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Runs <paramref name="f"/> under the caller scope recorded for a literal-sequence
+    /// parameter binding -- the mirror image of VisitDefaultValueUnderCallee. A default
+    /// value is text in the callee's file evaluated while the caller's scope is installed;
+    /// a literal argument's elements are text in the CALLER's file evaluated while the
+    /// callee's scope is installed. Both move the same six fields and put them back.
+    /// A binding recorded without a scope runs unchanged.
+    /// </summary>
+    private T UnderSeqArgScope<T>(SeqArgScope? scope, Func<T> f)
+    {
+        if (scope == null) return f();
+
+        string savedPrefix = currentInlinePrefix;
+        string? savedMod = currentModulePrefix;
+        string savedPath = currentSourcePath;
+        string savedFile = currentSourceFile;
+        bool savedTracks = inlineTracksCalleeLine;
+        int savedCalleeLine = inlineCalleeStmtLine;
+
+        currentInlinePrefix = scope.InlinePrefix;
+        currentModulePrefix = scope.ModulePrefix;
+        currentSourcePath = scope.SourcePath;
+        currentSourceFile = scope.SourceFile;
+        inlineTracksCalleeLine = scope.TracksCalleeLine;
+        inlineCalleeStmtLine = scope.CalleeStmtLine;
+        try
+        {
+            return f();
+        }
+        finally
+        {
+            currentInlinePrefix = savedPrefix;
+            currentModulePrefix = savedMod;
+            currentSourcePath = savedPath;
+            currentSourceFile = savedFile;
+            inlineTracksCalleeLine = savedTracks;
+            inlineCalleeStmtLine = savedCalleeLine;
+        }
+    }
+
     /// The file to report against, or null to mean the entry file. The line numbers this
     /// generator carries belong to whichever module is being lowered, so a diagnostic that does
     /// not also say WHICH file states a line of one file against the name of another.
@@ -1303,6 +1343,24 @@ public partial class IRGenerator
     private Dictionary<string, List<Frontend.Expression>> arrayLiteralElements = new();
 
     private Dictionary<string, Frontend.ListExpr> listLiteralParams = new();
+
+    /// <summary>
+    /// The scope in effect where a bytes/list/tuple literal was passed: the module prefix,
+    /// the caller's inline frame and the caller's source location. Such a literal binds to
+    /// its parameter by AST, not by value, so `param[i]` and `for x in param` can fold
+    /// element-wise -- but the elements are the CALLER's text, and by the time the
+    /// parameter binds the callee's own scope is installed. Without this record a name in
+    /// an element resolved in the callee's module and `self` answered the callee's
+    /// instance: `S((f(reg), self.k))` looked for `f` next to `S`, and for `k` on `S`'s
+    /// instance, whatever scope the call was written in.
+    /// </summary>
+    private sealed record SeqArgScope(string? ModulePrefix, string InlinePrefix,
+                                      string SourcePath, string SourceFile,
+                                      bool TracksCalleeLine, int CalleeStmtLine);
+
+    // Keyed by the same qualified parameter name as listLiteralParams; a binding with no
+    // entry here evaluates its elements where they are read, as before this record existed.
+    private Dictionary<string, SeqArgScope> listLiteralParamScopes = new();
 
     // Functions already reported via the @warning informational diagnostic, so
     // the note is emitted at most once per function.

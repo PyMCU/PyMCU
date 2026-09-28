@@ -699,6 +699,7 @@ public partial class IRGenerator
         strConstantVariables.Remove(targetKey);
         floatConstantVariables.Remove(targetKey);
         listLiteralParams.Remove(targetKey);
+        listLiteralParamScopes.Remove(targetKey);
         constSequenceBindings.Remove(targetKey);
     }
 
@@ -774,6 +775,7 @@ public partial class IRGenerator
         strConstantVariables.Remove(key);
         floatConstantVariables.Remove(key);
         listLiteralParams.Remove(key);
+        listLiteralParamScopes.Remove(key);
         constSequenceBindings.Remove(key);
 
         var elems = new List<string>();

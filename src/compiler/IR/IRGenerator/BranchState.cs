@@ -79,6 +79,7 @@ public partial class IRGenerator
         public Dictionary<string, Frontend.DictExpr> DictLiteralBindings = new();
         public Dictionary<string, Frontend.SetExpr> SetLiteralBindings = new();
         public Dictionary<string, Frontend.ListExpr> ListLiteralParams = new();
+        public Dictionary<string, SeqArgScope> ListLiteralParamScopes = new();
         public Dictionary<string, List<Expression>> ConstSequenceBindings = new();
         public Dictionary<string, List<Expression>> ArrayLiteralElements = new();
         public Dictionary<string, List<string>> NamedTupleElements = new();
@@ -138,6 +139,7 @@ public partial class IRGenerator
         DictLiteralBindings = new Dictionary<string, Frontend.DictExpr>(dictLiteralBindings),
         SetLiteralBindings = new Dictionary<string, Frontend.SetExpr>(setLiteralBindings),
         ListLiteralParams = new Dictionary<string, Frontend.ListExpr>(listLiteralParams),
+        ListLiteralParamScopes = new Dictionary<string, SeqArgScope>(listLiteralParamScopes),
         ConstSequenceBindings = constSequenceBindings.ToDictionary(kv => kv.Key, kv => new List<Expression>(kv.Value)),
         ArrayLiteralElements = arrayLiteralElements.ToDictionary(kv => kv.Key, kv => new List<Expression>(kv.Value)),
         NamedTupleElements = namedTupleElements.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
@@ -188,6 +190,7 @@ public partial class IRGenerator
         RestoreInto(dictLiteralBindings, s.DictLiteralBindings);
         RestoreInto(setLiteralBindings, s.SetLiteralBindings);
         RestoreInto(listLiteralParams, s.ListLiteralParams);
+        RestoreInto(listLiteralParamScopes, s.ListLiteralParamScopes);
         RestoreInto(constSequenceBindings, s.ConstSequenceBindings);
         RestoreInto(arrayLiteralElements, s.ArrayLiteralElements);
         RestoreInto(namedTupleElements, s.NamedTupleElements);
@@ -287,6 +290,7 @@ public partial class IRGenerator
         dictLiteralBindings = JoinDicts(arms.Select(a => a.DictLiteralBindings).ToList());
         setLiteralBindings = JoinDicts(arms.Select(a => a.SetLiteralBindings).ToList());
         listLiteralParams = JoinDicts(arms.Select(a => a.ListLiteralParams).ToList());
+        listLiteralParamScopes = JoinDicts(arms.Select(a => a.ListLiteralParamScopes).ToList());
         constSequenceBindings = JoinDicts(arms.Select(a => a.ConstSequenceBindings).ToList(),
             (x, y) => x.SequenceEqual(y));
         arrayLiteralElements = JoinDicts(arms.Select(a => a.ArrayLiteralElements).ToList(),
