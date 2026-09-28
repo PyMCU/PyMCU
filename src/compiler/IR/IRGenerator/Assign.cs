@@ -3677,7 +3677,11 @@ public partial class IRGenerator
             w = PyMCU.Common.WidthSeeds.Join(w, rv);
         if (mutableGlobals.TryGetValue(anchor.Name, out var mg) && IsNumericWidth(mg))
             w = PyMCU.Common.WidthSeeds.Join(w, mg);
-        return w;
+        // The anchor's own slot seed: an earlier run may already have widened this name past
+        // what the field layout or the current binding shows -- the constructor's first
+        // `self.value = 0` ran before the seed was consulted and stored a byte into a name
+        // the loop then read at two (zca-method-loop-return's `main.f`: uint8 vs uint16).
+        return SeedSlot(anchor.Name, w);
     }
 
     /// Record a collapsed anchor's width in every table a later read of the same name

@@ -264,6 +264,42 @@ public class CollapsedFieldAnchorTests
     }
 
     [Fact]
+    public void A_seeded_anchor_stores_at_the_slot_width_from_the_first_store()
+    {
+        // zca-method-loop-return: the constructor's `self.value = 0` stores into the
+        // collapsed anchor `main.f` BEFORE the assignment that mints it runs, so a run
+        // that already knew the slot needed u16 still emitted the byte store while the
+        // loop's later writes were u16 -- a u8 write under u16 reads. The anchor's own
+        // seed now floors CollapsedAnchorWidth, and every run writes it at one width.
+        var seeds = new WidthSeeds();
+        for (int run = 1; ; run++)
+        {
+            seeds.BeginRun();
+            var ir = new IRGenerator { WidthSeeds = seeds }.Generate(
+                new Parser(new Lexer(
+                    "class Fader:\n" +
+                    "    def __init__(self):\n" +
+                    "        self.value = 0\n" +
+                    "    def up(self, n):\n" +
+                    "        for i in range(n):\n" +
+                    "            self.value = self.value + i\n" +
+                    "        return self.value\n" +
+                    "def consume(x: uint16):\n" +
+                    "    pass\n" +
+                    "def main():\n" +
+                    "    f = Fader()\n" +
+                    "    consume(f.up(10))\n" +
+                    "main()\n").Tokenize()).ParseProgram(),
+                new Dictionary<string, ProgramNode>(),
+                new DeviceConfig { Arch = "avr" });
+            Verifier.Verify(ir)
+                .Where(v => v.Check == "storage-width" && v.Detail.Contains("'main.f'"))
+                .Should().BeEmpty($"run {run} must write 'main.f' at the slot's width");
+            if (!seeds.Grew || run == 5) return;
+        }
+    }
+
+    [Fact]
     public void A_factory_returned_anchor_carries_the_field_width()
     {
         // The factory hands the collapsed field back as the handle; `bump` then writes
