@@ -122,6 +122,44 @@ public class BuiltinDiagnosticTests
         Assert.Contains(main.Body, i => i is Binary { Op: PyMCU.IR.BinaryOp.NotEqual });
     }
 
+    [Theory]
+    [InlineData("__import__")]
+    [InlineData("__build_class__")]
+    public void AnInterpreterHook_Called_IsRefusedBeforeTheLinker(string name)
+    {
+        // Both start with "__", which used to exempt a call from the not-provided check, so
+        // the undefined symbol reached the linker. They are CPython builtins -- in the list
+        // like any other -- and get the same named refusal.
+        var msg = ErrorFor($"    x = {name}(\"os\")\n");
+
+        Assert.Contains($"{name}()", msg);
+        Assert.Contains("PyMCU does not provide", msg);
+    }
+
+    [Theory]
+    [InlineData("copyright")]
+    [InlineData("credits")]
+    [InlineData("license")]
+    public void TheSessionText_Named_IsRefusedWithItsOwnReason(string name)
+    {
+        // `copyright` is a builtin name, so reading it never was a typo; printing the
+        // interpreter's banner is the thing there is no target for.
+        var msg = ErrorFor($"    print({name})\n");
+
+        Assert.Contains($"'{name}'", msg);
+        Assert.Contains("interactive session", msg);
+        Assert.DoesNotContain("typo", msg);
+    }
+
+    [Fact]
+    public void TheSessionText_Called_IsRefusedBeforeTheLinker()
+    {
+        var msg = ErrorFor("    x = license()\n");
+
+        Assert.Contains("license()", msg);
+        Assert.Contains("PyMCU does not provide", msg);
+    }
+
     [Fact]
     public void BoolOfAStringLiteral_FoldsToItsEmptiness()
     {
