@@ -192,6 +192,62 @@ public class BufferToNumberParameterTests
         Assert.IsNotType<ArrayBase>(call.Args[0]);
     }
 
+    // DISCRIMINATING. A store through an @inline callee's buffer-declared parameter bound
+    // to a bytes literal: the compile-time sequence has no writable slot, and on the dead
+    // name the store compiled to a register bit set -- `b[0] = 65` emitted `bset put.b, 0`
+    // and the 65 went nowhere. Refused with the same "no storage" diagnostic the deferred
+    // flash-table veto raises on the read path, whether or not a run-time read follows.
+    [Fact]
+    public void AStoreThroughAnInlineBufferParameterIsRefused()
+    {
+        var ex = Assert.Throws<CompilerError>(() => Gen(Preamble +
+            "@inline\n" +
+            "def put(b: bytearray):\n" +
+            "    b[0] = 0x55\n" +
+            "put(b\"AB\")\n"));
+        Assert.Contains("compile-time values with no storage", ex.Message);
+    }
+
+    // A run-time read needs no storage of its own: the values are constants and nothing
+    // writes them, so the deferred `__cttab` flash table answers `b[i]` -- the binding
+    // stays the literal, and the literal's own store must not appear.
+    [Fact]
+    public void ARunTimeReadOnAnInlineBufferParameterStaysAFlashTable()
+    {
+        var ir = Gen(Preamble +
+            "@inline\n" +
+            "def put(b: bytearray):\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 2:\n" +
+            "        G.value = b[i]\n" +
+            "        i = i + 1\n" +
+            "put(b\"AB\")\n");
+
+        Assert.DoesNotContain(ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>(),
+            s => s.ArrayName.Contains("__inline_bytes_arg"));
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<FlashData>(),
+            t => t.Name.Contains("__cttab") && t.Bytes.Count == 2);
+    }
+
+    // A run-time read over an element that is not a compile-time constant folds nothing
+    // and the `__cttab` table holds constants only: the literal materializes under a
+    // hidden name and the parameter aliases that storage.
+    [Fact]
+    public void ARunTimeReadOverANonConstantElementGetsStorage()
+    {
+        var ir = Gen(Preamble +
+            "@inline\n" +
+            "def put(b: bytearray):\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 2:\n" +
+            "        G.value = b[i]\n" +
+            "        i = i + 1\n" +
+            "put([G.value, 2])\n");
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>(),
+            s => s.ArrayName.Contains("__inline_bytes_arg"));
+    }
+
     // Control: a buffer parameter keeps taking a bytes literal.
     [Fact]
     public void ABytesLiteralToABytesParameterStillCompiles()

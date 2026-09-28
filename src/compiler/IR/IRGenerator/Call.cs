@@ -3158,6 +3158,35 @@ public partial class IRGenerator
 
             if (i < rawListArgs.Count && rawListArgs[i] != null)
             {
+                // A buffer parameter whose body needs real storage -- a run-time
+                // subscript over elements that are not compile-time constants --
+                // cannot stay a compile-time sequence: bound as one, `buf[i]` was
+                // refused as "compile-time values with no storage", the refusal the
+                // report `UART.write(b"DE\n")` hit once the bytearray overload was
+                // chosen. Materialize the literal under a hidden name -- the same
+                // `bytes(...)` binding an inline `bytearray(...)` argument already
+                // gets -- and alias the parameter to that storage. A store through
+                // the parameter is refused inside BufferParamNeedsStorage instead:
+                // nothing can write the compile-time sequence, and the dead slot it
+                // used to land on ate the store (`b[0] = 65` emitted `bset put.b, 0`).
+                // Reads the deferred paths already answer keep the literal binding:
+                // `buf[0]` folds, a run-time `buf[i]` over constants reads a
+                // `__cttab` flash table, `writeto(a, buf, n)` marshals a `__seqarg`
+                // copy, and `len(buf)` or `for b in buf` unroll.
+                string litAnn = func.Params[paramIdx].Type ?? "";
+                if (litAnn is "" or "bytearray" or "bytes" or "memoryview"
+                    && BufferParamNeedsStorage(func.Body, func.Params[paramIdx].Name,
+                                               rawListArgs[i]!)
+                    && TryEvalLiteralBufferArg(rawListArgs[i]!) is ArrayBase litBuf)
+                {
+                    variableAliases[paramName] = litBuf.ArrayName;
+                    variableTypes[paramName] =
+                        DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    continue;
+                }
                 // Bytes/list/tuple literal bound to this parameter: record the raw AST
                 // so `for x in param` unrolls it and `param[const]` folds. Clear any
                 // stale scalar bindings.
@@ -4504,6 +4533,42 @@ public partial class IRGenerator
            && !rangeBoundSequences.Contains(name)
            && !(!string.IsNullOrEmpty(currentFunction) && rangeBoundSequences.Contains(currentFunction + "." + name))
            && !(!string.IsNullOrEmpty(currentInlinePrefix) && rangeBoundSequences.Contains(currentInlinePrefix + name));
+
+    /// A parameter bound to a literal the body cannot use as a compile-time sequence.
+    /// A subscript or slice of it assigned (`buf[i] = v`) is refused outright: nothing
+    /// can write a flash table, the binding's dead slot otherwise ate the store
+    /// (`b[0] = 65` compiled to `bset put.b, 0`), and a bytes object takes no item
+    /// assignment in CPython either. When nothing writes it, a run-time subscript
+    /// still needs storage only where the materialised-on-demand table cannot answer:
+    /// an element that is not a compile-time constant. Everything else keeps the
+    /// literal binding: a constant subscript folds, a served run-time subscript reads
+    /// the `__cttab` flash table, and the marshal lays out a `__seqarg` copy when the
+    /// name goes whole into a call.
+    private bool BufferParamNeedsStorage(Block body, string name, ListExpr lit)
+    {
+        static bool IsName(Expression? e, string n) => e is VariableExpr v && v.Name == n;
+        foreach (var s in TypeInference.WalkStatements(body))
+        {
+            var target = s switch
+            {
+                AssignStmt a => a.Target,
+                AugAssignStmt g => g.Target,
+                _ => null,
+            };
+            if (target is IndexExpr ti && IsName(ti.Target, name))
+                throw UserError(
+                    $"'{name}' holds {lit.Elements.Count} compile-time values with no "
+                    + "storage behind them, so it cannot be written. Declare an array and "
+                    + $"pass that (`table: uint8[{lit.Elements.Count}] = [...]`).", ti);
+        }
+        if (ConstValuesOf(lit.Elements) != null) return false;
+        foreach (var e in TypeInference.WalkExpressions(
+                     TypeInference.WalkStatements(body).ToList()))
+            if (e is IndexExpr ix && IsName(ix.Target, name)
+                                   && ix.Index is not IntegerLiteral)
+                return true;
+        return false;
+    }
 
     /// A name the current function or inline expansion binds to a number, which hides any
     /// sequence or buffer of the same name further out.
