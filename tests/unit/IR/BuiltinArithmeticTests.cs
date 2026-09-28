@@ -13,6 +13,11 @@ namespace PyMCU.UnitTests;
 /// __pymcu_powf, whose parameters are floats: it received two integer bit patterns and
 /// every such call printed 1.0. It is integer exponentiation, the operation `**` already
 /// lowers.
+///
+/// divmod() floors like // and %, and its two results carry the division's width and sign.
+/// The fold truncated toward zero (divmod(-17, 5) gave -3, -2), and `q, r = divmod(...)`
+/// sized both targets uint8 because the result slots were never registered, so a run-time
+/// -143 printed as 113.
 /// </summary>
 public class BuiltinArithmeticTests
 {
@@ -53,5 +58,36 @@ public class BuiltinArithmeticTests
             "s = GPIOR0.value\n" +
             "r = pow(3, s + 5)\n"));
         Assert.Contains("exponent must be a compile-time constant integer", ex.Message);
+    }
+
+    [Fact]
+    public void DivmodOfNegativeLiterals_Floors()
+    {
+        var ir = Gen(
+            "q, r = divmod(-17, 5)\n" +
+            "print(q)\n" +
+            "print(r)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        var r = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.r" });
+        Assert.True(((Variable)q.Dst).Type.IsSigned());
+        Assert.Equal(-4, (q.Src as Constant)?.Value ?? ConstOf(ir, q.Src));
+        Assert.Equal(3, (r.Src as Constant)?.Value ?? ConstOf(ir, r.Src));
+    }
+
+    private static int ConstOf(ProgramIR ir, Val v) =>
+        ((Constant)Main(ir).OfType<Copy>().Single(c => c.Dst == v).Src).Value;
+
+    [Fact]
+    public void DivmodUnpack_TargetsTakeTheDivisionsWidth()
+    {
+        var ir = Gen(
+            "a: int16 = GPIOR0.value - 1000\n" +
+            "q, r = divmod(a, GPIOR0.value + 7)\n" +
+            "print(q)\n" +
+            "print(r)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
     }
 }
