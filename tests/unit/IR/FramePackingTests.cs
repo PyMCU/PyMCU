@@ -109,6 +109,30 @@ public class FramePackingTests
     }
 
     [Fact]
+    public void AGrownArrayKeepsItsGrownExtent()
+    {
+        // `b = bytearray([a, b]); b += tail` lowers to ArrayStores whose first
+        // mentions carry the literal's count (2) while the extension stores
+        // carry the grown count (6). Sizing the slot from the first mention
+        // alone under-allocated the array: its tail ran past the caller's
+        // frame into the callee's parameter slots, and the callee's own
+        // argument stores stomped the buffer it was about to read.
+        var offsets = Offsets(Prog(new List<Instruction>
+        {
+            new ArrayStore("buf", new Constant(0), new Constant(1), DataType.UINT8, 2),
+            new ArrayStore("buf", new Constant(1), new Constant(2), DataType.UINT8, 2),
+            new ArrayStore("buf", new Constant(2), new Temporary("t2"), DataType.UINT8, 6),
+            new ArrayStore("buf", new Constant(3), new Temporary("t3"), DataType.UINT8, 6),
+            new ArrayStore("buf", new Constant(4), new Temporary("t4"), DataType.UINT8, 6),
+            new ArrayStore("buf", new Constant(5), new Temporary("t5"), DataType.UINT8, 6),
+            new Call("sink", new List<Val> { new ArrayBase("buf") }, new Temporary("sink_r")),
+            new Return(new Constant(0)),
+        }));
+
+        Assert.True(offsets["x"] >= offsets["buf"] + 6);
+    }
+
+    [Fact]
     public void ARootedSlotKeepsAnExclusiveSlot()
     {
         // A GcRoot'd variable is live for the whole body: the shadow stack
