@@ -8604,6 +8604,41 @@ public partial class IRGenerator
     // this is one comparison per text it can hold, each arm a write_str of a literal. The texts
     // stay in flash where a folded write would have left them -- nothing is copied into RAM and
     // nothing is formatted. Returns false when the name is not such a string.
+    /// <summary>
+    /// The texts of `d[k]` when d is a dict whose values are all strings and k is not a
+    /// literal; null otherwise. The lookup yields the chosen text's interned id.
+    /// </summary>
+    private List<string>? DictOfStringsLookup(Expression e)
+    {
+        Expression? index;
+        Frontend.DictExpr dict;
+        string? fallback = null;
+        switch (e)
+        {
+            case IndexExpr { Target: VariableExpr or MemberAccessExpr, Index: not SliceExpr } dix
+                when TryGetDictFor(dix.Target, out dict!):
+                index = dix.Index;
+                break;
+            // `d.get(k, "fallback")` yields one of the dict's texts or the default's. A
+            // non-string default makes the result a str|int union this dispatch cannot
+            // stream, so only the all-string shape is claimed here.
+            case CallExpr { Callee: MemberAccessExpr { Member: "get" } gm, Args.Count: 2 } dget
+                when TryGetDictFor(gm.Object, out dict!)
+                    && StaticStringOf(dget.Args[1]) is { } df:
+                index = dget.Args[0];
+                fallback = df;
+                break;
+            default:
+                return null;
+        }
+        if (dict.Entries.Count == 0) return null;
+        if (!dict.Entries.All(en => StaticStringOf(en.Value) != null)) return null;
+        if (TryEvalConstElement(index, out _)) return null;
+        return dict.Entries.Select(en => StaticStringOf(en.Value)!)
+                   .Concat(fallback != null ? new[] { fallback } : Enumerable.Empty<string>())
+                   .Distinct().ToList();
+    }
+
     private bool TryEmitMultiStrStream(string writeStrFn, Expression arg)
     {
         // `print("mono" if k == 0 else "none")`. A conditional EXPRESSION never reaches the
@@ -8652,6 +8687,31 @@ public partial class IRGenerator
             Emit(new Label(ternElse));
             EmitStreamStr(writeStrFn, ternFalse);
             Emit(new Label(ternEnd));
+            return true;
+        }
+
+        // `d[k]` with a run-time k over a dict whose values are all strings: the lookup hands
+        // back the chosen text's interned id, and the number writer printed it (258 for "CD").
+        // The texts are known; only which one is decided at run time, so the id picks the
+        // write the same way a name holding several texts does.
+        if (DictOfStringsLookup(arg) is { } texts)
+        {
+            Val picked = VisitExpression(arg);
+            if (picked is Constant pk && texts.FirstOrDefault(t => StringIdOf(t) == pk.Value) is { } known)
+            {
+                EmitStreamStr(writeStrFn, known);
+                return true;
+            }
+            string dEnd = MakeLabel();
+            foreach (var text in texts)
+            {
+                string dNext = MakeLabel();
+                Emit(new JumpIfNotEqual(picked, new Constant(StringIdOf(text)), dNext));
+                EmitStreamStr(writeStrFn, text);
+                Emit(new Jump(dEnd));
+                Emit(new Label(dNext));
+            }
+            Emit(new Label(dEnd));
             return true;
         }
 
@@ -10051,6 +10111,17 @@ public partial class IRGenerator
                     tupleBoundNames.Contains(flSeq.Name) || IsTupleBound(flv.Name),
                     e => EmitStreamVal(floatFn,
                         e is PreEvaluatedExpr fpv ? fpv.Value : VisitExpression(e)));
+                continue;
+            }
+            // `{d[k]}` over a dict of strings, a name whose text a run-time path decided
+            // (`s = d[k]` binds the same candidate set), and a name known to be None:
+            // the same answers print gives them.
+            if (DictOfStringsLookup(part.Expr!) != null || IsMultiStrOperand(part.Expr!)
+                || (part.Expr is MemberAccessExpr fsmem
+                    && TryGetMultiStrMember(fsmem, out _, out _, out _)))
+            {
+                Flush();
+                TryEmitMultiStrStream(writeStrFn, part.Expr!);
                 continue;
             }
             // `f"{_GAINS}"` names a module-level tuple of constants: CPython writes

@@ -267,6 +267,16 @@ public partial class IRGenerator
             {
                 MarkMultiStr(StrBindingKey(strTgt.Name), new[] { ternArmA, ternArmB });
             }
+
+            // `s = d[k]` with a run-time k over a dict of strings: one of the dict's texts,
+            // decided at run time -- the same binding the conditional expression makes, and
+            // stored the same way, so a read dispatches on the id instead of printing it.
+            if (DictOfStringsLookup(stmt.Value) is { } dictTexts)
+            {
+                string dKey = StrBindingKey(strTgt.Name);
+                multiStrCandidates[dKey] = dictTexts;
+                MarkMultiStr(dKey, dictTexts);
+            }
         }
 
         // `objs = [A(s), A(s + 1)]`: a list of instances. Build each element as an instance of
