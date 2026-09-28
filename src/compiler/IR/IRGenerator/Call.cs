@@ -10124,6 +10124,12 @@ public partial class IRGenerator
                 TryEmitMultiStrStream(writeStrFn, part.Expr!);
                 continue;
             }
+            // A name known to be None interpolates as "None", the same answer print gives.
+            if (part.Expr is VariableExpr or MemberAccessExpr && IsNoneValued(part.Expr!))
+            {
+                pending += "None";
+                continue;
+            }
             // `f"{_GAINS}"` names a module-level tuple of constants: CPython writes
             // the repr `(1, 4, 16, 60)`. Reading the NAME instead evaluated to the
             // table's base and streamed a 0 (adafruit_tcs34725's ValueErrors).
