@@ -92,6 +92,44 @@ public class OptimizerTests
     }
 
     [Fact]
+    public void CopyPropagation_DoesNotForwardAVariableAfterItIsWrittenAgain()
+    {
+        // `sum(v for v in [s + 1, s + 2, ...])` unrolls to: x = s+1; t = 0 + x (which folds to
+        // t = x); x = s+2; t2 = t + x. The temp was recorded as a copy of x, and forwarding
+        // x into `t + x` after x was rewritten read the NEW x twice: 2+2+4+8 printed 16 for
+        // 15. A temp stands for the value the variable held at the copy, not for the name.
+        var x = new Variable("x", DataType.UINT16);
+        var optimized = Optimizer.Optimize(MakeProgram(
+            new Binary(IrBinaryOp.Add, new MemoryAddress(0x3E, DataType.UINT8), new Constant(1), x),
+            new Copy(x, new Temporary("t0", DataType.UINT16)),
+            new Binary(IrBinaryOp.Add, new MemoryAddress(0x3E, DataType.UINT8), new Constant(2), x),
+            new Binary(IrBinaryOp.Add, new Temporary("t0", DataType.UINT16), x, new Temporary("t1", DataType.UINT16)),
+            new Return(new Temporary("t1", DataType.UINT16))));
+        var body = optimized.Functions[0].Body;
+
+        var sum = body.OfType<Binary>().Last(b => b.Op == IrBinaryOp.Add);
+        Assert.NotEqual(sum.Src1, sum.Src2);
+    }
+
+    [Fact]
+    public void CopyPropagation_WalrusRebindAfterAnIdentityAdd_KeepsTheOldValue()
+    {
+        // The same fault from source, no builtin involved: `(0 + x)` is a temp copy of x,
+        // the walrus rebinds x before the outer add reads the temp, and forwarding x read
+        // the new value on both sides (s = 0 printed 4 for 3).
+        var optimized = GenerateAndOptimize(
+            "def f(s: uint8) -> uint16:\n" +
+            "    x = s + 1\n" +
+            "    return (0 + x) + (x := s + 2)\n" +
+            "def main():\n" +
+            "    f(0)\n");
+        var body = optimized.Functions.SelectMany(fn => fn.Body);
+
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.Add } b
+                                         && b.Src1 is Variable && b.Src1 == b.Src2);
+    }
+
+    [Fact]
     public void InlineParam_ShadowsSameNamedModuleGlobal()
     {
         // A user global named like a library @inline's parameter must not hijack the
