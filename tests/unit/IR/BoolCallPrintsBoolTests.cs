@@ -131,4 +131,54 @@ public class BoolCallPrintsBoolTests
             "isinstance() always yields a Python bool");
         main.Body.Any(i => Calls(i, "uart_write_str")).Should().BeTrue();
     }
+
+    [Fact]
+    public void AComparisonThroughAClassDunder_BindsWhatTheDunderReturns()
+    {
+        // `Cell.__eq__` returns `self.n + other.n` -- an int, 7 here, so `v = a == b`
+        // holds 7 and CPython prints 7. The bool scan marked every comparison-shaped
+        // binding bool before any class was registered; only a later pass can see the
+        // dunder's return type and take the mark back (probe
+        // 282_cmp_dunder_in_value_position).
+        var main = Gen(
+            "class Cell:\n" +
+            "    def __init__(self, n):\n" +
+            "        self.n = n\n" +
+            "    def __eq__(self, other):\n" +
+            "        return self.n + other.n\n\n" +
+            "def go():\n" +
+            "    a = Cell(3)\n" +
+            "    b = Cell(4)\n" +
+            "    v = a == b\n" +
+            "    print(v)\n" +
+            "go()\n").Functions.Single(f => f.Name == "go");
+
+        main.Body.Any(i => i is Call c && c.FunctionName.StartsWith("uart_write_decimal_"))
+            .Should().BeTrue("__eq__ returned an int: v is a number, not a bool -- " +
+                "a bool mark would have routed it to EmitStreamBool's True/False words");
+    }
+
+    [Fact]
+    public void AComparisonThroughABoolDunder_KeepsItsBoolPrint()
+    {
+        // The demotion must not overreach: a class whose comparison dunder returns
+        // only bools still binds a bool, and `v` prints True/False.
+        var main = Gen(
+            "class Cell:\n" +
+            "    def __init__(self, n):\n" +
+            "        self.n = n\n" +
+            "    def __eq__(self, other):\n" +
+            "        return self.n == other.n\n\n" +
+            "def go():\n" +
+            "    a = Cell(3)\n" +
+            "    b = Cell(4)\n" +
+            "    v = a == b\n" +
+            "    print(v)\n" +
+            "go()\n").Functions.Single(f => f.Name == "go");
+
+        main.Body.Any(i => Calls(i, "uart_write_str")).Should().BeTrue(
+            "__eq__ returning `self.n == other.n` returns a bool");
+        main.Body.Any(i => i is Call c && c.FunctionName.StartsWith("uart_write_decimal_"))
+            .Should().BeFalse();
+    }
 }

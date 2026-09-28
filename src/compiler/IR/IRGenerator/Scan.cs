@@ -2990,6 +2990,138 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Takes back a bool mark CollectBoolNames filed for `v = a == b` before any class was
+    /// scanned: a comparison whose left operand is an instance of a class that defines the
+    /// operator's dunder returns whatever the dunder returns, not a Python bool
+    /// (`Cell.__eq__` returning `self.n + other.n` makes `v` hold 7, and `print(v)` must
+    /// spell 7, not True -- probe 282_cmp_dunder_in_value_position).
+    ///
+    /// Runs after every module's scan, when classModuleMap, classDirectMethods and
+    /// boolReturningFunctions are all complete -- they are empty while CollectBoolNames
+    /// walks. Re-walks the same statements under the same scope keys, tracking
+    /// `name = Ctor(...)` bindings itself because instanceClasses only records module-level
+    /// instances at scan time. Conservative in both directions: only a comparison whose
+    /// left operand is POSITIVELY an instance of a class POSITIVELY defining the exact
+    /// dunder (through the MRO) is demoted, and only when that dunder does not return
+    /// exclusively bools. A class with no dunder keeps the bool: `==`/`!=` then fold to
+    /// identity, and an ordering op is refused before it ever prints.
+    /// </summary>
+    private void DemoteDunderBoundComparisons(ProgramNode ast, string modPrefix)
+    {
+        var moduleCtors = new Dictionary<string, string>();
+        foreach (var stmt in ast.GlobalStatements)
+            DemoteDunderWalk(stmt, null, null, modPrefix, moduleCtors);
+        foreach (var fn in ast.Functions)
+            DemoteDunderWalk(fn, null, null, modPrefix, new Dictionary<string, string>(moduleCtors));
+    }
+
+    // The walk mirrors CollectBoolNames statement-for-statement: same walk, same scope
+    // keys, same order, so the veto lands on the binding the earlier pass filed.
+    private void DemoteDunderWalk(Statement? s, string? scope, string? cls, string modPrefix,
+                                  Dictionary<string, string> ctorOf)
+    {
+        foreach (var st in TypeInference.WalkStatements(s))
+        {
+            switch (st)
+            {
+                case ClassDef cd:
+                    DemoteDunderWalk(cd.Body, scope, cd.Name, modPrefix,
+                                     new Dictionary<string, string>(ctorOf));
+                    break;
+                case FunctionDef fd:
+                {
+                    string fScope = cls != null
+                        ? cls + "_" + fd.Name
+                        : modPrefix + fd.Name;
+                    var local = new Dictionary<string, string>(ctorOf);
+                    // An annotated parameter arrives already an instance of the named class
+                    // (`def go(a: Cell)`); an unannotated one carries nothing this can trust.
+                    foreach (var p in fd.Params)
+                    {
+                        local.Remove(p.Name);
+                        if (p.Type.Length > 0
+                            && classModuleMap.TryGetValue(p.Type, out var pmod) && pmod != null)
+                            local[p.Name] = pmod + p.Type;
+                    }
+                    DemoteDunderWalk(fd.Body, fScope, null, modPrefix, local);
+                    break;
+                }
+                case AssignStmt { Target: VariableExpr av } a:
+                    // The RHS reads the OLD binding of av; decide before updating it.
+                    DemoteComparisonBinding(av.Name, a.Value, scope, modPrefix, ctorOf);
+                    UpdateCtorBinding(ctorOf, av.Name, a.Value);
+                    break;
+                case VarDecl vd:
+                    DemoteComparisonBinding(vd.Name, vd.Init, scope, modPrefix, ctorOf);
+                    UpdateCtorBinding(ctorOf, vd.Name, vd.Init);
+                    break;
+                case AnnAssign an when !an.Target.Contains('.'):
+                    DemoteComparisonBinding(an.Target, an.Value, scope, modPrefix, ctorOf);
+                    UpdateCtorBinding(ctorOf, an.Target, an.Value);
+                    break;
+                case AssignStmt { Target: TupleExpr tup }:
+                    foreach (var e in tup.Elements)
+                        if (e is VariableExpr tv) ctorOf.Remove(tv.Name);
+                    break;
+                case AugAssignStmt { Target: VariableExpr gv }: ctorOf.Remove(gv.Name); break;
+            }
+        }
+    }
+
+    private void DemoteComparisonBinding(string name, Expression? value, string? scope,
+                                         string modPrefix, Dictionary<string, string> ctorOf)
+    {
+        if (value is not BinaryExpr b || b.Left is not VariableExpr lv) return;
+        string? dunder = b.Op switch
+        {
+            PyMCU.Frontend.BinaryOp.Equal => "__eq__",
+            PyMCU.Frontend.BinaryOp.NotEqual => "__ne__",
+            PyMCU.Frontend.BinaryOp.Less => "__lt__",
+            PyMCU.Frontend.BinaryOp.LessEq => "__le__",
+            PyMCU.Frontend.BinaryOp.Greater => "__gt__",
+            PyMCU.Frontend.BinaryOp.GreaterEq => "__ge__",
+            // `is`, `in`, `and`/`or`/`not` keep the bool they were filed under: identity and
+            // membership answer True/False no matter what an operand is.
+            _ => null,
+        };
+        if (dunder == null) return;
+
+        string? cls = ctorOf.TryGetValue(lv.Name, out var known)
+            ? known
+            // A module-level instance bound in an earlier statement (or an imported module's)
+            // was filed under its qualified key during ScanGlobals.
+            : instanceClasses.TryGetValue(modPrefix + lv.Name, out var scanned) ? scanned : null;
+        if (cls == null) return;
+
+        string owner = ResolveMROMethod(cls, dunder);
+        if (ClassDefinesMethod(owner, dunder)
+            && !boolReturningFunctions.Contains(owner + "_" + dunder))
+            NoteNonBool(scope, name);
+    }
+
+    private void UpdateCtorBinding(Dictionary<string, string> ctorOf, string name, Expression? value)
+    {
+        if (value is CallExpr cc && CtorClassOf(cc) is { } qc) ctorOf[name] = qc;
+        else if (value is VariableExpr vv && ctorOf.TryGetValue(vv.Name, out var alias))
+            ctorOf[name] = alias;
+        else ctorOf.Remove(name);
+    }
+
+    // The qualified class key (`main_Cell`, `lib1_S`) a constructor call builds, or null
+    // when the callee is not a class the scan can name.
+    private string? CtorClassOf(CallExpr cc)
+    {
+        if (cc.Callee is VariableExpr cv
+            && classModuleMap.TryGetValue(cv.Name, out var mod) && mod != null)
+            return mod + cv.Name;
+        if (cc.Callee is MemberAccessExpr { Object: VariableExpr mv, Member: var member }
+            && classModuleMap.TryGetValue(member, out var mm) && mm != null
+            && mm == mv.Name.Replace('.', '_') + "_")
+            return mm + member;
+        return null;
+    }
+
     // Whether a name holds a CHARACTER at the read: 1 when every binding it has in the
     // read's scope is a `chr(...)` call, -1 when chr() binds it on some path and something
     // else on another (the value alone cannot say which it holds), 0 when chr() never binds

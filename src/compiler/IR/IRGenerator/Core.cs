@@ -1000,6 +1000,14 @@ public partial class IRGenerator
         // settled while the containing method is itself being scanned (#373).
         DemoteUnsafeOutlinedSelfCalls();
 
+        // And the same ordering argument again: whether `v = a == b` binds a bool or a
+        // dunder's return value is decidable only once every class's methods are in the
+        // registry -- CollectBoolNames ran before any of them existed.
+        foreach (var modKvp in importedModules)
+            DemoteDunderBoundComparisons(modKvp.Value,
+                astToCanonicalPrefix.TryGetValue(modKvp.Value, out var dpfx) ? dpfx : "");
+        DemoteDunderBoundComparisons(mainAst, "");
+
         // Synthesize a `main` function from top-level executable statements when the
         // user has not written an explicit `def main():`.  This allows MicroPython-
         // and CircuitPython-style scripts that have no entry-point wrapper.
