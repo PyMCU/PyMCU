@@ -316,4 +316,45 @@ public class InferredSlotWidthTests
             "r: uint16 = f(3)\n");
         runs.Should().Be(1);
     }
+
+    [Fact]
+    public void An_inline_local_minted_wide_in_a_later_expansion_stores_wide_from_the_start()
+    {
+        // surfacecov-neopixel's `_set_item.offset`: every expansion of an @inline callee
+        // mints its locals under the same generated name -- `inline1.put.off` here -- at
+        // whatever width THAT call's value carries. The first call's folded 0 gives a
+        // byte, the second's u8 index a u16 product, and `j` a u32-range sum whose store
+        // into the u16 slot files the seed. On the widened run the FIRST expansion still
+        // minted its byte -- a u8 store under the name a later expansion uses at u32.
+        // The mint now starts at the seed, so the widened run is consistent end to end.
+        // (The byte store on the FIRST run, before any seed exists, is the shape the
+        // corpus baseline already admits; the bug was it surviving into the seed's run.)
+        var seeds = new WidthSeeds();
+        ProgramIR lastIr = null!;
+        for (int run = 1; ; run++)
+        {
+            seeds.BeginRun();
+            lastIr = new IRGenerator { WidthSeeds = seeds }.Generate(
+                new Parser(new Lexer(
+                    "base: uint8 = 3\n" +
+                    "a: list[uint8] = [0] * 8\n" +
+                    "@inline\n" +
+                    "def put(idx, v):\n" +
+                    "    off = base + idx * 700\n" +
+                    "    a[off] = v\n" +
+                    "def main():\n" +
+                    "    put(0, 7)\n" +
+                    "    i8: uint8 = 5\n" +
+                    "    put(i8, i8)\n" +
+                    "    j: uint16 = 300\n" +
+                    "    put(j, 7)\n" +
+                    "main()\n").Tokenize()).ParseProgram(),
+                new Dictionary<string, ProgramNode>(),
+                new DeviceConfig { Arch = "avr" });
+            if (!seeds.Grew || run == 5) break;
+        }
+        Verifier.Verify(lastIr)
+            .Where(v => v.Check == "storage-width" && v.Detail.Contains("put.off"))
+            .Should().BeEmpty();
+    }
 }

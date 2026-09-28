@@ -1914,28 +1914,29 @@ public partial class IRGenerator
             Constant cc => NarrowestTypeFor(cc.Value, cc.Value),
             _ => DataType.UNKNOWN,
         };
-        if (vt == DataType.UNKNOWN || vt == tv.Type) return target;
-        // Only ever WIDER. Narrowing a binding here would be a new truncation, and FLOAT is
-        // not comparable by size to an integer: it is a different representation, and a store
-        // into an integer slot loses the value rather than its high bytes.
-        if (vt != DataType.FLOAT && vt.SizeOf() <= tv.Type.SizeOf())
-        {
-            // Equal width is still a truncation when the SIGN differs: `dot = s.find(".")`
-            // hands back -1, which a fresh uint8 slot would store as 255 and read back as
-            // a number that is never negative. The value's own narrowest type is the one
-            // the binding takes (adafruit_ht16k33's _number does exactly this).
-            if (value is Constant cc && !FitsInScalar(cc.Value, tv.Type.ToString().ToLower()))
-            {
-                vt = InferredSlot(key, vt);
-                variableTypes[key] = vt;
-                return new Variable(key, vt);
-            }
-            return target;
-        }
 
-        vt = InferredSlot(key, vt);
-        variableTypes[key] = vt;
-        return new Variable(key, vt);
+        // The width this expansion's own evidence gives the fresh local: `tv.Type` is the
+        // ladder's byte default, not a binding somebody chose, so only a wider value -- or an
+        // equal-width one whose sign the byte would lose -- replaces it.
+        DataType chosen = tv.Type;
+        if (vt != DataType.UNKNOWN && vt != tv.Type
+            && (vt == DataType.FLOAT || vt.SizeOf() > tv.Type.SizeOf()
+                // Equal width is still a truncation when the SIGN differs: `dot = s.find(".")`
+                // hands back -1, which a fresh uint8 slot would store as 255 and read back as
+                // a number that is never negative. The value's own narrowest type is the one
+                // the binding takes (adafruit_ht16k33's _number does exactly this).
+                || (value is Constant ncc && !FitsInScalar(ncc.Value, tv.Type.ToString().ToLower()))))
+            chosen = vt;
+
+        // ...and under it the floor an earlier run already proved for this same generated
+        // name. Every expansion of the callee mints the slot name at whatever width ITS
+        // value happens to carry, so a narrow first expansion would leave a byte store
+        // under a name a later expansion -- or the earlier run that filed the seed --
+        // already reads at full width (neopixel's `_set_item.offset`: uint8 vs int32).
+        chosen = InferredSlot(key, chosen);
+        if (chosen == tv.Type) return target;
+        variableTypes[key] = chosen;
+        return new Variable(key, chosen);
     }
 
     // `x = <val>` / `return <val>` where the value carries a list[T]: the element
