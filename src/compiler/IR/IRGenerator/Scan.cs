@@ -2985,31 +2985,43 @@ public partial class IRGenerator
                     if (!string.IsNullOrEmpty(f.Var2Name)) NoteNonBool(scope, f.Var2Name);
                     break;
                 case AssignStmt { Target: VariableExpr av } a:
-                    NoteBoolBinding(av.Name, a.Value, scope);
+                    NoteBoolBinding(av.Name, a.Value, scope, a.AnnotatedType);
                     break;
                 case AssignStmt { Target: TupleExpr tup }:
                     foreach (var e in tup.Elements)
                         if (e is VariableExpr tv) NoteNonBool(scope, tv.Name);
                     break;
                 case AugAssignStmt { Target: VariableExpr gv }: NoteNonBool(scope, gv.Name); break;
-                case VarDecl vd: NoteBoolBinding(vd.Name, vd.Init, scope); break;
+                case VarDecl vd: NoteBoolBinding(vd.Name, vd.Init, scope, vd.VarType); break;
                 case AnnAssign an when !an.Target.Contains('.'):
-                    NoteBoolBinding(an.Target, an.Value, scope);
+                    NoteBoolBinding(an.Target, an.Value, scope, an.Annotation);
                     break;
             }
         }
     }
 
-    private void NoteBoolBinding(string name, Expression? value, string? scope)
+    private void NoteBoolBinding(string name, Expression? value, string? scope,
+                                 string? declaredType = null)
     {
-        // A name bound to a comparison holds a Python bool (`v = base > k; print(v)` is
-        // False, not 0, in CPython): anything bool-shaped binds a bool (#386).
-        if (value != null && IsBoolShaped(value)) NoteBool(scope, name);
-        else if (value is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 })
+        if (value is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 })
         {
             NoteScoped(nonBoolScopes, nonBoolNames, scope, name);
             NoteScoped(charScopes, charNames, scope, name);
+            return;
         }
+        // An annotation is the binding's declared type in PyMCU's model:
+        // `c: uint8 = 300 in d` stores the membership's answer as a byte and
+        // prints 1/0, while the same `in` unannotated is CPython's bool and
+        // prints True/False (#386). `bool` (or no annotation) leaves the call
+        // to the value's own shape; anything else vetoes the mark.
+        if (declaredType != null && declaredType != "bool")
+        {
+            NoteNonBool(scope, name);
+            return;
+        }
+        // A name bound to a comparison holds a Python bool (`v = base > k; print(v)` is
+        // False, not 0, in CPython): anything bool-shaped binds a bool (#386).
+        if (value != null && IsBoolShaped(value)) NoteBool(scope, name);
         else NoteNonBool(scope, name);
     }
 
