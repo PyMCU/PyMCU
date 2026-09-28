@@ -5057,10 +5057,7 @@ public partial class IRGenerator
     // @inline function returns its expansion's result even undeclared; an undeclared METHOD
     // leaves it in the return register for the next instruction (PyMCU#292), and moving it
     // ahead of a subscript that makes a call would lose it.
-    private bool ValueCanBeHeld(Expression value) =>
-        OperandYieldsARealValue(value)
-        || value is CallExpr { Callee: VariableExpr fv }
-           && inlineFunctions.ContainsKey(ResolveCallee(fv.Name));
+    private bool ValueCanBeHeld(Expression value) => ValueIsHandedBack(value);
 
     private Expression HeldAssignedValue(Expression value)
     {

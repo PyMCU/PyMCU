@@ -1410,7 +1410,32 @@ public partial class IRGenerator
                 ordered.Add(def);
             }
         }
-        return ordered;
+        return PinKeywordOrder(args, ordered);
+    }
+
+    // `f(b=count, a=bump())` evaluates count, then bump, in the order written; the list above
+    // is in PARAMETER order, and every argument is evaluated in that order after it. When the
+    // two orders differ and an argument can have an effect, the arguments are evaluated here,
+    // as written, and carried as values.
+    private List<Expression> PinKeywordOrder(List<Expression> written, List<Expression> ordered)
+    {
+        var values = written.Select(a => a is KeywordArgExpr kw ? kw.Value : a).ToList();
+        var passed = ordered.Where(o => values.Any(v => ReferenceEquals(v, o))).ToList();
+        if (passed.SequenceEqual(values, ReferenceEqualityComparer.Instance)
+            || !values.Any(OperandCanHaveAnEffect))
+            return ordered;
+        var pinned = new Dictionary<Expression, Expression>(ReferenceEqualityComparer.Instance);
+        for (int k = 0; k < values.Count; k++)
+        {
+            Expression v = values[k];
+            if (OperandCanHaveAnEffect(v) && ValueIsHandedBack(v))
+                pinned[v] = PinOnce(v);
+            else if (v is VariableExpr or MemberAccessExpr && !OperandCanHaveAnEffect(v)
+                     && values.Skip(k + 1).Any(OperandCanHaveAnEffect)
+                     && SnapshotRead(VisitExpression(v)) is Temporary read)
+                pinned[v] = new PreEvaluatedExpr(read, null) { Line = v.Line };
+        }
+        return ordered.Select(o => pinned.TryGetValue(o, out var p) ? p : o).ToList();
     }
 
     // Emit a call to a known non-@inline function (a real subroutine): build the arg
@@ -1802,6 +1827,10 @@ public partial class IRGenerator
             {
                 argEvaluated = seqBuf;
             }
+            // Read now when a later argument can have an effect: the call instruction reads
+            // a name argument where it runs, after every argument has been evaluated.
+            if (callArgs.Skip(ai + 1).Any(a => OperandCanHaveAnEffect(a is KeywordArgExpr ka ? ka.Value : a)))
+                argEvaluated = SnapshotRead(argEvaluated);
             argValuesL.Add(argEvaluated);
             }
             finally { if (argIsTagged || CouldBeGuardedOperand(arg)) optionalReadAllowed--; }
@@ -2424,6 +2453,13 @@ public partial class IRGenerator
                     kwArgValues[kw.Key] = TryEvalInlineBufferArg(kw.Value) is ArrayBase kwBuf
                         ? new Variable(kwBuf.ArrayName, DataType.UINT16)
                         : VisitExpression(kw.Value);
+                    // The same rule a positional argument follows: a name or a field is
+                    // read where the parameter binds, after every argument ran. A later
+                    // argument that can have an effect makes the read happen here, in
+                    // the order the call was written (`f(b=count, a=bump())`).
+                    if (expr.Args.SkipWhile(a => !ReferenceEquals(a, rawArg)).Skip(1)
+                            .Any(a => OperandCanHaveAnEffect(a is KeywordArgExpr ka ? ka.Value : a)))
+                        kwArgValues[kw.Key] = SnapshotRead(kwArgValues[kw.Key]);
                 }
                 if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
                 rawKwArgExprs[kw.Key] = kw.Value;
@@ -2532,10 +2568,11 @@ public partial class IRGenerator
                     // A register read is a load the parameter binding performs, after every
                     // argument has been evaluated. When a later argument can have an effect
                     // -- one that may write the register -- the load happens here, in order.
-                    if (argValues[^1] is MemoryAddress && ReadsARegister(arg)
-                        && expr.Args.SkipWhile(a => !ReferenceEquals(a, rawArg)).Skip(1)
+                    // A name or a field is the same: read at the binding, it saw the later
+                    // argument's write (`f(count, bump())` bound the bumped count).
+                    if (expr.Args.SkipWhile(a => !ReferenceEquals(a, rawArg)).Skip(1)
                             .Any(a => OperandCanHaveAnEffect(a is KeywordArgExpr ka ? ka.Value : a)))
-                        argValues[^1] = ((PreEvaluatedExpr)HeldValue(argValues[^1], arg)).Value;
+                        argValues[^1] = SnapshotRead(argValues[^1]);
                     // Always restore: same reason as kwarg case above.
                     pendingConstructorTarget = savedOuterPct;
                 }
@@ -9398,6 +9435,23 @@ public partial class IRGenerator
         return new PreEvaluatedExpr(v, null) { Line = e.Line };
     }
 
+    // A name, a field or a register reaches the instruction that uses it as itself, and is
+    // read when that instruction runs. When something with an effect is evaluated between
+    // the two -- a later argument, the right operand, a later operand of a print -- the read
+    // has to happen first, where Python makes it: `print(count, bump())` printed the count
+    // after the bump. Only an integer scalar is taken; a name that stands for storage, text
+    // or an optional keeps its identity.
+    private Val SnapshotRead(Val v)
+    {
+        bool lazy = v is MemoryAddress
+            || v is Variable var && var.Type <= DataType.FLOAT
+               && string.IsNullOrEmpty(GetValClass(v)) && !NameStandsForStorage(var.Name);
+        if (!lazy) return v;
+        Temporary held = MakeTemp(GetValType(v));
+        Emit(new Copy(v, held));
+        return held;
+    }
+
     private bool NameStandsForStorage(string n) =>
         arraySizes.ContainsKey(n) || bytearrayParams.Contains(n) || listVarElemTypes.ContainsKey(n)
         || strConstantVariables.ContainsKey(n) || flashStrPtrVars.Contains(n)
@@ -9405,6 +9459,11 @@ public partial class IRGenerator
         || optionalTagSlots.ContainsKey(n)
         || TryResolveArrayStorageKey(n, out _) || TryResolveArrayStorageKey(FollowAliases(n), out _)
         || ResolveConstSequence(n) != null;
+
+    private bool ValueIsHandedBack(Expression value) =>
+        OperandYieldsARealValue(value)
+        || value is CallExpr { Callee: VariableExpr fv }
+           && inlineFunctions.ContainsKey(ResolveCallee(fv.Name));
 
     // `REG.value` on a pointer, anywhere inside the expression: a volatile load.
     private bool ReadsARegister(Expression? e) => e switch

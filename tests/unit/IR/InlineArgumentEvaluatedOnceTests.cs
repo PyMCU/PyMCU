@@ -260,4 +260,47 @@ public class InlineArgumentEvaluatedOnceTests
         Assert.DoesNotContain(Main(ir).OfType<Copy>(),
             c => c.Src is Variable { Name: "_c" } && c.Dst is Variable dv && dv.Name.EndsWith(".v"));
     }
+
+    // A name reaches the instruction that uses it as itself and is read when that instruction
+    // runs. `print(_c, bump())` printed the bumped count; the name must be read before the call,
+    // so nothing after the call in main reads `_c` in any of these programs.
+    private const string Writers =
+        "def uart_write_str(s: const[str]):\n" +
+        "    pass\n" +
+        "def uart_write_decimal_u8(v: uint8):\n" +
+        "    pass\n\n";
+
+    [Theory]
+    [InlineData("def f(a: uint8, b: uint8) -> uint8:\n    return a * 10 + b\n\nGPIOR1.value = f(_c, bump())\n")]
+    [InlineData("@inline\ndef f(a, b):\n    return a * 10 + b\n\nGPIOR1.value = f(_c, bump())\n")]
+    public void ANameIsReadBeforeALaterOperandsCall(string program)
+    {
+        // Seeded from a register, so the name holds no constant the folder could print.
+        var ir = Gen(Bump + Writers + "_c = GPIOR0.value\n" + program, optimize: true);
+        Assert.False(ReadsCAfterBump(ir));
+    }
+
+    [Fact]
+    public void KeywordArgumentsRunInTheOrderWritten()
+    {
+        var ir = Gen(Bump +
+            "def f(a: uint8, b: uint8) -> uint8:\n" +
+            "    return a * 10 + b\n\n" +
+            "GPIOR1.value = f(b=other(), a=bump())\n");
+        Assert.Equal(new[] { "other", "bump" }, CallOrder(ir));
+    }
+
+    [Fact]
+    public void AKeywordNameIsReadInItsWrittenPosition()
+    {
+        // `f(b=_c, a=bump())` expands b first in the order written: the name must be
+        // read before the bump call, or the parameter binds the bumped count.
+        var ir = Gen(Bump +
+            "@inline\n" +
+            "def f(a, b):\n" +
+            "    return a * 10 + b\n\n" +
+            "_c = GPIOR0.value\n" +
+            "GPIOR1.value = f(b=_c, a=bump())\n", optimize: true);
+        Assert.False(ReadsCAfterBump(ir));
+    }
 }
