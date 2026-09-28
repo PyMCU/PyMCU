@@ -1273,6 +1273,25 @@ public partial class IRGenerator
         if (TryEmitGuardedBinary(expr) is { } guarded)
             return guarded;
 
+        // `count < bump()`: the left operand is a name, and a name reaches the instruction as
+        // itself and is read when it runs -- after the right operand's call. When the right
+        // operand can have an effect, the left is read first, as Python reads it.
+        if (expr.Op is not (AstBinOp.And or AstBinOp.Or or AstBinOp.In or AstBinOp.NotIn
+                            or AstBinOp.Is or AstBinOp.IsNot)
+            && expr.Left is VariableExpr or MemberAccessExpr
+            && !OperandCanHaveAnEffect(expr.Left) && OperandCanHaveAnEffect(expr.Right)
+            && !CouldBeGuardedOperand(expr.Left))
+        {
+            Val leftVal = VisitExpression(expr.Left);
+            Val leftRead = SnapshotRead(leftVal);
+            if (!ReferenceEquals(leftRead, leftVal))
+            {
+                castWidthHint = widthHint;
+                return VisitBinary(new BinaryExpr(new PreEvaluatedExpr(leftRead, null) { Line = expr.Left.Line },
+                    expr.Op, expr.Right) { Line = expr.Line, Column = expr.Column, Length = expr.Length });
+            }
+        }
+
         // None comparisons resolve at compile time with real null semantics: an
         // integer or a concrete instance is never None; only a name bound to None
         // (or the None literal itself) is. This replaces the old None==-1 model,

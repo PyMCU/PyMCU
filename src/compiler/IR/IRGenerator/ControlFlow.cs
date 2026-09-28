@@ -365,6 +365,10 @@ public partial class IRGenerator
                 && (binExpr.Left is StringLiteral || binExpr.Right is StringLiteral);
             if (cmpAgainstStrLiteral) multiStrHandleReads++;
             Val v1 = VisitExpression(binExpr.Left);
+            // `if count < bump():` -- read the name before the call, as VisitBinary does.
+            if (!cmpAgainstStrLiteral && !OperandCanHaveAnEffect(binExpr.Left)
+                && OperandCanHaveAnEffect(binExpr.Right))
+                v1 = SnapshotRead(v1);
             Val v2 = VisitExpression(binExpr.Right);
             if (cmpAgainstStrLiteral) multiStrHandleReads--;
 

@@ -9460,6 +9460,15 @@ public partial class IRGenerator
         || TryResolveArrayStorageKey(n, out _) || TryResolveArrayStorageKey(FollowAliases(n), out _)
         || ResolveConstSequence(n) != null;
 
+    // Whether anything in this print operand can have an effect, looking inside a tuple and
+    // an f-string, which the print lowering takes apart.
+    private bool PrintOperandHasAnEffect(Expression e) => e switch
+    {
+        TupleExpr t => t.Elements.Any(PrintOperandHasAnEffect),
+        FStringExpr fs => fs.Parts.Any(p => p.IsExpr && p.Expr != null && PrintOperandHasAnEffect(p.Expr)),
+        _ => OperandCanHaveAnEffect(e),
+    };
+
     private bool ValueIsHandedBack(Expression value) =>
         OperandYieldsARealValue(value)
         || value is CallExpr { Callee: VariableExpr fv }
@@ -9498,7 +9507,10 @@ public partial class IRGenerator
     // already happen before any character of the line -- and leaving those alone is what keeps
     // `print(side())` and `print(f"{side()}")` byte-identical. It is set as the walk passes each
     // piece that writes.
-    private Expression PreEvaluatePrintOperand(Expression arg, ref bool written)
+    // <paramref name="laterEffect"/> says whether an operand after this one can have an effect.
+    // A name, a field or a register read is then taken here too: the lowering reads it where it
+    // writes it, which is after that later operand ran.
+    private Expression PreEvaluatePrintOperand(Expression arg, ref bool written, bool laterEffect)
     {
         if (arg is PreEvaluatedExpr) { written = true; return arg; }
 
@@ -9507,9 +9519,11 @@ public partial class IRGenerator
             var elems = new List<Expression>(tup.Elements.Count);
             bool tupChanged = false;
             written = true;                       // the opening `(` goes out before any element
-            foreach (var el in tup.Elements)
+            for (int k = 0; k < tup.Elements.Count; k++)
             {
-                var rewritten = PreEvaluatePrintOperand(el, ref written);
+                var el = tup.Elements[k];
+                var rewritten = PreEvaluatePrintOperand(el, ref written,
+                    laterEffect || tup.Elements.Skip(k + 1).Any(PrintOperandHasAnEffect));
                 tupChanged |= !ReferenceEquals(rewritten, el);
                 elems.Add(rewritten);
             }
@@ -9520,15 +9534,18 @@ public partial class IRGenerator
         {
             var parts = new List<FStringPart>(fstr.Parts.Count);
             bool fsChanged = false;
-            foreach (var part in fstr.Parts)
+            for (int k = 0; k < fstr.Parts.Count; k++)
             {
+                var part = fstr.Parts[k];
                 if (!part.IsExpr || part.Expr == null)
                 {
                     if (!string.IsNullOrEmpty(part.Text)) written = true;
                     parts.Add(part);
                     continue;
                 }
-                var rewritten = PreEvaluateInterpolation(part, ref written);
+                var rewritten = PreEvaluateInterpolation(part, ref written,
+                    laterEffect || fstr.Parts.Skip(k + 1)
+                        .Any(p => p.IsExpr && p.Expr != null && PrintOperandHasAnEffect(p.Expr)));
                 fsChanged |= !ReferenceEquals(rewritten, part.Expr);
                 parts.Add(ReferenceEquals(rewritten, part.Expr)
                     ? part
@@ -9541,21 +9558,39 @@ public partial class IRGenerator
             return fsChanged ? new FStringExpr(parts) { Line = fstr.Line } : fstr;
         }
 
-        bool needed = written;
+        // The first thing written needs no pre-evaluation of its own, unless a later operand
+        // is pre-evaluated: that one would then run ahead of it (`print(bump(), other())`).
+        bool needed = written || laterEffect;
         written = true;
+        if (laterEffect && !OperandCanHaveAnEffect(arg) && PrintOperandIsRunAsANumber(arg, requireEffect: false))
+            return ReadBeforeALaterEffect(arg, DeclaredWidthOfName(arg));
         if (!needed || !PrintOperandIsRunAsANumber(arg) || !OperandYieldsARealValue(arg)) return arg;
         RejectInstanceInterpolation(arg);
         return new PreEvaluatedExpr(VisitExpression(arg), DeclaredWidthOfName(arg)) { Line = arg.Line };
     }
 
+    // An operand with no effect of its own, read now because a later one has one. Only a
+    // value that would otherwise be read late is taken; a constant, an instance or a buffer
+    // keeps its expression, which the lowering prints the way it always did.
+    private Expression ReadBeforeALaterEffect(Expression e, DataType? declared)
+    {
+        Val v = VisitExpression(e);
+        Val read = SnapshotRead(v);
+        if (ReferenceEquals(read, v) && v is not Temporary) return e;
+        return new PreEvaluatedExpr(read, declared) { Line = e.Line };
+    }
+
     // One interpolation of an f-string. A nested f-string recurses; a part with a format spec
     // always reaches the numeric formatter, so only the effect test applies to it.
-    private Expression PreEvaluateInterpolation(FStringPart part, ref bool written)
+    private Expression PreEvaluateInterpolation(FStringPart part, ref bool written, bool laterEffect)
     {
         Expression e = part.Expr!;
-        if (e is FStringExpr) return PreEvaluatePrintOperand(e, ref written);
-        bool needed = written;
+        if (e is FStringExpr) return PreEvaluatePrintOperand(e, ref written, laterEffect);
+        bool needed = written || laterEffect;
         written = true;
+        if (laterEffect && !OperandCanHaveAnEffect(e) && PrintOperandIsRunAsANumber(e, requireEffect: false)
+            && (!string.IsNullOrEmpty(part.FormatSpec) || StaticStringOf(e) == null && !IsBoolExpr(e)))
+            return ReadBeforeALaterEffect(e, null);
         if (!needed || !OperandCanHaveAnEffect(e) || !OperandYieldsARealValue(e)) return e;
         if (string.IsNullOrEmpty(part.FormatSpec))
         {
@@ -9569,10 +9604,14 @@ public partial class IRGenerator
     // Whether the print lowering would send this operand to the number/float writer, which is
     // the one path that evaluates it as a value. Every earlier branch of EmitPrintArg either
     // already holds the text or writes its own bytes, and is left alone.
-    private bool PrintOperandIsRunAsANumber(Expression a)
+    // <paramref name="requireEffect"/> false asks only about the shape: whether the operand
+    // would be printed as a number, effect or not.
+    private bool PrintOperandIsRunAsANumber(Expression a, bool requireEffect = true)
     {
-        if (!OperandCanHaveAnEffect(a)) return false;
-        if (a is StringLiteral or BooleanLiteral or NoneLiteral or VariableExpr) return false;
+        if (requireEffect && !OperandCanHaveAnEffect(a)) return false;
+        if (a is StringLiteral or BooleanLiteral or NoneLiteral or IntegerLiteral or FloatLiteral
+            or PreEvaluatedExpr) return false;
+        if (requireEffect && a is VariableExpr) return false;
         // `print(e)`, `print(str(e))`, `print(e.args[0])`: the message of a bound exception.
         if (a is CallExpr { Callee: VariableExpr { Name: "str" }, Args: [VariableExpr sv] }
             && TryGetExceptionBinding(sv.Name, out _)) return false;
@@ -9652,7 +9691,7 @@ public partial class IRGenerator
         // written (#371). Reached from print() and from uart.write_str/println, which share
         // this lowering.
         bool fsWritten = false;
-        if (PreEvaluatePrintOperand(fs, ref fsWritten) is FStringExpr prepared) fs = prepared;
+        if (PreEvaluatePrintOperand(fs, ref fsWritten, false) is FStringExpr prepared) fs = prepared;
         string pending = "";
         void Flush() { if (pending.Length > 0) { EmitStreamStr(writeStrFn, pending); pending = ""; } }
         foreach (var part in fs.Parts)
@@ -10380,7 +10419,8 @@ public partial class IRGenerator
         // the order CPython's one-piece write gives (#371). See PreEvaluatePrintOperand.
         bool written = false;
         for (int i = 0; i < posArgs.Count; ++i)
-            posArgs[i] = PreEvaluatePrintOperand(posArgs[i], ref written);
+            posArgs[i] = PreEvaluatePrintOperand(posArgs[i], ref written,
+                posArgs.Skip(i + 1).Any(PrintOperandHasAnEffect));
 
         for (int i = 0; i < posArgs.Count; ++i)
         {

@@ -271,8 +271,14 @@ public class InlineArgumentEvaluatedOnceTests
         "    pass\n\n";
 
     [Theory]
+    [InlineData("print(other(), _c, bump())\n")]
+    [InlineData("print(f\"{other()} {_c} {bump()}\")\n")]
+    [InlineData("print((other(), _c, bump()))\n")]
     [InlineData("def f(a: uint8, b: uint8) -> uint8:\n    return a * 10 + b\n\nGPIOR1.value = f(_c, bump())\n")]
     [InlineData("@inline\ndef f(a, b):\n    return a * 10 + b\n\nGPIOR1.value = f(_c, bump())\n")]
+    [InlineData("GPIOR1.value = _c + bump()\n")]
+    [InlineData("GPIOR1.value = _c < bump()\n")]
+    [InlineData("if _c < bump():\n    GPIOR1.value = 1\n")]
     public void ANameIsReadBeforeALaterOperandsCall(string program)
     {
         // Seeded from a register, so the name holds no constant the folder could print.
@@ -302,5 +308,14 @@ public class InlineArgumentEvaluatedOnceTests
             "_c = GPIOR0.value\n" +
             "GPIOR1.value = f(b=_c, a=bump())\n", optimize: true);
         Assert.False(ReadsCAfterBump(ir));
+    }
+
+    [Theory]
+    [InlineData("print(bump(), other())\n")]
+    [InlineData("print(f\"{bump()} {other()}\")\n")]
+    public void PrintOperandsRunLeftToRight(string program)
+    {
+        var ir = Gen(Bump + Writers + program);
+        Assert.Equal(new[] { "bump", "other" }, CallOrder(ir));
     }
 }
