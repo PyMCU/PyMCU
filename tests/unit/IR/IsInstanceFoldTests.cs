@@ -333,4 +333,55 @@ public class IsInstanceFoldTests
                       && n.Contains("_v")).Should().BeFalse(
             because: "the slice arm is dead once the fold answers False");
     }
+
+    // The same fold asked of an EXPRESSION rather than a name: `isinstance(s + 300, int)`
+    // used to reach the "not provided" refusal while the same test on a name folded.
+
+    [Fact]
+    public void IntCandidateFoldsTrueOnAValueExpression()
+    {
+        var body = Main(Preamble +
+            "s: uint8 = GPIOR0.value\n" +
+            "if isinstance(s + 300, int):\n" +
+            "    GPIOR1.value = 9\n" +
+            "else:\n" +
+            "    GPIOR1.value = 3\n");
+
+        CopiesToGpior(body, 9).Should().BeTrue(
+            because: "s + 300 is an integer expression, so the int arm is the program");
+        HasRuntimeJump(body).Should().BeFalse(
+            because: "the type is fixed at compile time, so no runtime test may remain");
+    }
+
+    [Fact]
+    public void FloatCandidateFoldsFalseOnAValueExpression()
+    {
+        var body = Main(Preamble +
+            "s: uint8 = GPIOR0.value\n" +
+            "if isinstance(s + 300, float):\n" +
+            "    GPIOR1.value = 9\n" +
+            "else:\n" +
+            "    GPIOR1.value = 3\n");
+
+        CopiesToGpior(body, 3).Should().BeTrue(
+            because: "an integer expression is not a float");
+        HasRuntimeJump(body).Should().BeFalse(
+            because: "the type is fixed at compile time, so no runtime test may remain");
+    }
+
+    [Fact]
+    public void StrCandidateFoldsTrueOnAnFStringExpression()
+    {
+        var body = Main(Preamble +
+            "s: uint8 = GPIOR0.value\n" +
+            "if isinstance(f\"v{s}\", str):\n" +
+            "    GPIOR1.value = 9\n" +
+            "else:\n" +
+            "    GPIOR1.value = 3\n");
+
+        CopiesToGpior(body, 9).Should().BeTrue(
+            because: "an f-string is a str");
+        HasRuntimeJump(body).Should().BeFalse(
+            because: "the type is fixed at compile time, so no runtime test may remain");
+    }
 }
