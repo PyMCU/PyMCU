@@ -1115,6 +1115,16 @@ public partial class IRGenerator
             && TryFoldIsinstanceBuiltinTypes(isinstShapeRecv, expr.Args[1]) is { } isinstShape)
             return isinstShape;
 
+        // The same question about an EXPRESSION, `isinstance(s + 300, int)`: its value has
+        // one type too, the type the lowered value carries. Only the name above was asked,
+        // so the expression reached the refusal that says isinstance() is not provided --
+        // while the same test on a name folded.
+        if (callee == "isinstance" && expr.Args.Count == 2
+            && expr.Args[0] is IntegerLiteral or FloatLiteral or StringLiteral or BooleanLiteral
+                or FStringExpr or BinaryExpr or UnaryExpr
+            && TryFoldIsinstanceOfValue(expr.Args[0], expr.Args[1]) is { } isinstValue)
+            return isinstValue;
+
         if (callee == "print") return EmitPrintBuiltin(expr);
 
         if (callee == "ptr" && intrinsicNames.Contains("ptr"))
@@ -12201,6 +12211,46 @@ public partial class IRGenerator
             else if (n == "str") match |= isStr;
             else if (n == "float") match |= isFloat;
             else if (n is "int" or "bool") match |= isInt;
+        }
+        return new Constant(match ? 1 : 0);
+    }
+
+    /// <summary>
+    /// <c>isinstance(expr, int/float/str/bool/...)</c> for a receiver that is not a name: the
+    /// expression's type answers, the same fold the name form does on a bound value. The
+    /// receiver forms admitted here are all free of side effects, so asking the type with
+    /// InferExprType emits nothing -- an f-string in particular cannot be visited as a
+    /// value at all. Null when a candidate is not one of these builtins or the type is not
+    /// one of them either, which leaves the refusal in place.
+    /// </summary>
+    private Constant? TryFoldIsinstanceOfValue(Expression recv, Expression typesExpr)
+    {
+        var cands = typesExpr is TupleExpr t ? t.Elements : new List<Expression> { typesExpr };
+        if (cands.Count == 0) return null;
+        var names = new List<string>();
+        foreach (var c in cands)
+        {
+            if (c is not VariableExpr { Name: "int" or "bool" or "float" or "str" or "bytes"
+                    or "bytearray" or "tuple" or "list" or "slice" } ve)
+                return null;
+            names.Add(ve.Name);
+        }
+
+        bool isBool = IsBoolExpr(recv);
+        bool isStr = recv is StringLiteral or FStringExpr || StaticStringOf(recv) != null;
+        DataType dt = isStr ? DataType.VOID : InferExprType(recv);
+        bool isFloat = !isStr && (recv is FloatLiteral || dt == DataType.FLOAT);
+        bool isInt = !isStr && !isFloat && (recv is IntegerLiteral or BooleanLiteral
+            || IsIntegerType(dt));
+        if (!isStr && !isFloat && !isInt) return null;
+
+        bool match = false;
+        foreach (var n in names)
+        {
+            if (n == "str") match |= isStr;
+            else if (n == "float") match |= isFloat;
+            else if (n == "int") match |= isInt;             // bool is an int too
+            else if (n == "bool") match |= isInt && isBool;
         }
         return new Constant(match ? 1 : 0);
     }
