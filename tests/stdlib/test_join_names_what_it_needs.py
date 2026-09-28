@@ -131,6 +131,29 @@ def test_the_advice_the_refusal_gives_compiles(tmp_path):
     assert ok, out
 
 
+def test_the_advice_copies_the_string_instead_of_formatting_its_address(tmp_path):
+    """`{a}` with `a` a run-time string is its text. It went to the decimal writer, which
+    formatted the buffer's ADDRESS: seed 7 printed "257,b" on the emulator, not "7,b"."""
+    ok, out, mir = compile_(tmp_path, RUNTIME_ELEMENT.replace(
+        '    s = ",".join([a, "b"])\n', '    s = f"{a},b"\n'))
+    assert ok, out
+    body = next(f["body"] for f in mir["functions"] if f["name"].endswith("main"))
+    loads_a = [i for i in body if i["$t"] == "ald" and i["arrayName"].endswith("a")]
+    stores_s = [i for i in body if i["$t"] == "ast" and i["arrayName"].endswith("s")]
+    assert loads_a and stores_s, body
+
+
+def test_an_f_string_cannot_interpolate_the_buffer_it_is_writing(tmp_path):
+    """`s = f"{s}"` reuses s's buffer and length variable, which is reset to 0 before
+    the parts emit; the copy loop's bound is already 0, so s's text would silently drop.
+    (A bigger f-string hits the fixed-size refusal first; this shape fits and would copy.)
+    Refuse instead."""
+    ok, out, _ = compile_(tmp_path, RUNTIME_ELEMENT.replace(
+        '    s = ",".join([a, "b"])\n', '    s = f"{a},b"\n    s = f"{s}"\n'))
+    assert not ok, "self-interpolation compiled; it silently drops s's text"
+    assert "interpolates 's' itself" in out, out
+
+
 COPIED_SEPARATOR = (
     STDOUT_IMPORT
     + "from pymcu.types import inline\n\n\n"

@@ -5448,6 +5448,16 @@ public partial class IRGenerator
             // a = f"{seed}" built "257,b".
             if (RuntimeStrPart(p) is { } rs)
             {
+                // `s = f"{s}"` reuses s's own buffer and length variable; the length is
+                // reset to 0 before the parts emit, so the copy loop's bound is already
+                // zero and s's text is silently dropped. Refuse instead. (A self-reference
+                // that grows past the buffer hits the fixed-size refusal above first.)
+                if (((VariableExpr)p.Expr!).Name == bufName)
+                    throw UserError(
+                        $"'{bufName}' is assigned an f-string that interpolates '{bufName}' "
+                        + "itself. Its buffer is rewritten from the start, so the old text is "
+                        + "gone before it is read: build the new string under another name.",
+                        p.Expr);
                 string ctr = "__fscp_" + fsCopyId++;
                 var ctrE = new VariableExpr(ctr);
                 VisitStatement(new VarDecl(ctr, "uint16", new IntegerLiteral(0)));
