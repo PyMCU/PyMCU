@@ -10164,6 +10164,34 @@ public partial class IRGenerator
                 return;
             }
 
+            // The same character, bound to a NAME. `c = chr(s + 72)` then `print(c)` sent 72: a
+            // constant code point keeps its text through the name, a run-time one is a bare
+            // byte, and the binding is the only thing that says it is a character (#436).
+            if (arg is VariableExpr chrName && CharNameState(chrName.Name) is var chrState and not 0)
+            {
+                if (chrState < 0)
+                    throw UserError(
+                        $"'{chrName.Name}' is bound to chr(...) on one path and to something else "
+                        + "on another, so print() cannot tell whether it holds a character or a "
+                        + "number: on this target a character IS its byte. Print it where each "
+                        + "binding happens, or keep the character in a name of its own.", arg);
+                // A constant code point's text is filed under the name at the binding, the
+                // same place the string branch below would have read it from.
+                if (StaticStringOf(arg) is { } chrNameText)
+                {
+                    EmitStreamStr(writeStrFn, chrNameText);
+                    return;
+                }
+                Val chrVal = VisitExpression(arg);
+                if (chrVal is Constant { Text: { } chrText })
+                    EmitStreamStr(writeStrFn, chrText);
+                else if (chrVal is Constant { Value: >= 0 and <= 255 } chrCode)
+                    EmitStreamStr(writeStrFn, ((char)chrCode.Value).ToString());
+                else
+                    EmitStreamCharVal(chrVal);
+                return;
+            }
+
             // The same character, handed back by a FUNCTION. `def make(n): return chr(n)` then
             // `print(make(66))` sent 66: the branch above recognises the `chr(...)` call by
             // its syntax, and a `return` hides it, so the caller saw a bare byte and the

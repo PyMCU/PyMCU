@@ -2960,7 +2960,41 @@ public partial class IRGenerator
     private void NoteBoolBinding(string name, Expression? value, string? scope)
     {
         if (value is BooleanLiteral) NoteBool(scope, name);
+        else if (value is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 })
+        {
+            NoteScoped(nonBoolScopes, nonBoolNames, scope, name);
+            NoteScoped(charScopes, charNames, scope, name);
+        }
         else NoteNonBool(scope, name);
+    }
+
+    private static void NoteScoped(Dictionary<string, HashSet<string>> scoped, HashSet<string> flat,
+                                   string? scope, string name)
+    {
+        if (scope == null) flat.Add(name);
+        else
+        {
+            if (!scoped.TryGetValue(scope, out var s)) scoped[scope] = s = new();
+            s.Add(name);
+        }
+    }
+
+    // Whether a name holds a CHARACTER at the read: 1 when every binding it has in the
+    // read's scope is a `chr(...)` call, -1 when chr() binds it on some path and something
+    // else on another (the value alone cannot say which it holds), 0 when chr() never binds
+    // it. Same scoping as IsBoolName.
+    private int CharNameState(string name)
+    {
+        string? scope = CurrentBoolScope();
+        bool chr = charNames.Contains(name), other = nonCharNames.Contains(name);
+        if (scope != null)
+        {
+            bool sChr = charScopes.TryGetValue(scope, out var cs) && cs.Contains(name);
+            bool sOther = nonCharScopes.TryGetValue(scope, out var ns) && ns.Contains(name);
+            // A binding in the function's own scope is a different name from the module's.
+            if (sChr || sOther) { chr = sChr; other = sOther; }
+        }
+        return !chr ? 0 : other ? -1 : 1;
     }
 
     private void NoteBool(string? scope, string name)
@@ -2975,6 +3009,7 @@ public partial class IRGenerator
 
     private void NoteNonBool(string? scope, string name)
     {
+        NoteScoped(nonCharScopes, nonCharNames, scope, name);
         if (scope == null) nonBoolNames.Add(name);
         else
         {

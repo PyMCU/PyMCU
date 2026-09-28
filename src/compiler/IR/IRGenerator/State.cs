@@ -380,6 +380,13 @@ public partial class IRGenerator
     private HashSet<string> nonBoolNames = new();
     private readonly Dictionary<string, HashSet<string>> boolScopes = new();
     private readonly Dictionary<string, HashSet<string>> nonBoolScopes = new();
+    // Names bound to `chr(...)`, collected the same way and in the same walk as the bool
+    // names above: a character IS its byte on this target, so only the binding can say that
+    // `c = chr(n)` prints as a character and not as n (#436, through a name).
+    private HashSet<string> charNames = new();
+    private HashSet<string> nonCharNames = new();
+    private readonly Dictionary<string, HashSet<string>> charScopes = new();
+    private readonly Dictionary<string, HashSet<string>> nonCharScopes = new();
 
     // Dict/set literals bound to a name: compile-time CLOSED lookup tables (no storage, no
     // GC). d[k] folds for a constant key or lowers to a compare chain for a runtime key
