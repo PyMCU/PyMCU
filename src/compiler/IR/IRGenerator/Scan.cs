@@ -5826,6 +5826,80 @@ public partial class IRGenerator
     /// with (`fullName.` for an outlined function, `inlineN.callee.` for an
     /// expansion), so the site and the prescan agree on the key.
     /// </summary>
+    /// <summary>
+    /// A condition decided by what the scan can already see: literals, `not`/`and`/`or`, a
+    /// name or an instance field (`self._has_white`) bound to a compile-time constant under
+    /// this expansion's prefix. Null when it cannot tell, which keeps every arm reachable.
+    /// </summary>
+    private bool? FoldAtScan(Expression? e, string prefix, HashSet<string> locallyBound)
+    {
+        bool? ConstName(string key)
+        {
+            for (int hop = 0; hop < 20 && key != null; hop++)
+            {
+                if (!killedConstants.Contains(key) && constantVariables.TryGetValue(key, out int c))
+                    return c != 0;
+                if (!variableAliases.TryGetValue(key, out key!)) break;
+            }
+            return null;
+        }
+        bool? Field(string obj, string member)
+        {
+            string? key = prefix + obj;
+            for (int hop = 0; hop < 20 && key != null; hop++)
+            {
+                string fk = key + "_" + member;
+                if (!killedConstants.Contains(fk) && constantVariables.TryGetValue(fk, out int c))
+                    return c != 0;
+                if (!variableAliases.TryGetValue(key, out key)) break;
+            }
+            return null;
+        }
+        switch (e)
+        {
+            case BooleanLiteral b: return b.Value;
+            case IntegerLiteral i: return i.Value != 0;
+            case NoneLiteral: return false;
+            case UnaryExpr { Op: Frontend.UnaryOp.Not } u:
+                return FoldAtScan(u.Operand, prefix, locallyBound) is { } inner ? !inner : null;
+            case BinaryExpr { Op: Frontend.BinaryOp.And } a:
+            {
+                var l = FoldAtScan(a.Left, prefix, locallyBound);
+                if (l == false) return false;
+                var r = FoldAtScan(a.Right, prefix, locallyBound);
+                return l == true ? r : (r == false ? false : null);
+            }
+            case BinaryExpr { Op: Frontend.BinaryOp.Or } o:
+            {
+                var l = FoldAtScan(o.Left, prefix, locallyBound);
+                if (l == true) return true;
+                var r = FoldAtScan(o.Right, prefix, locallyBound);
+                return l == false ? r : (r == true ? true : null);
+            }
+            case VariableExpr v:
+            {
+                if (ConstName(prefix + v.Name) is { } cq) return cq;
+                // A name the scanned body binds locally shadows every module-scope
+                // binding the bare spelling would fold on; the local's value is not
+                // known yet (the body has not lowered), so the arm stays undecided.
+                // The lowering makes the same check through variableTypes -- already
+                // populated by then -- in TryConstIntTruthiness.
+                if (locallyBound.Contains(v.Name)) return null;
+                if (ConstName(currentModulePrefix + v.Name) is { } cm) return cm;
+                if (constantVariables.TryGetValue(v.Name, out int cv)) return cv != 0;
+                if (localConstantValues.TryGetValue(v.Name, out cv) && !ForeignFlowRead(v.Name))
+                    return cv != 0;
+                if (floatConstantVariables.TryGetValue(v.Name, out double fv)) return fv != 0.0;
+                if (globals.TryGetValue(v.Name, out var sym) && !sym.IsMemoryAddress)
+                    return sym.Value != 0;
+                return null;
+            }
+            case MemberAccessExpr { Object: VariableExpr ov } m:
+                return Field(ov.Name, m.Member);
+            default: return null;
+        }
+    }
+
     private void ScanPromotableEmptyLists(List<Statement> stmts, string prefix)
     {
         var boundEmpty = new HashSet<string>();
@@ -5876,8 +5950,108 @@ public partial class IRGenerator
             }
         }
 
+        // Names this body binds locally: an assignment, declaration, loop or
+        // unpack target, `with ... as` or walrus makes the spelling a local for
+        // the body's whole extent, so a same-spelled module constant must not
+        // decide an `if`'s reachability -- the local's value is not recorded
+        // until the body lowers.
+        var declaredGlobals = TypeInference.WalkStatements(stmts).OfType<GlobalStmt>()
+            .SelectMany(g => g.Names).ToHashSet();
+        var locallyBound = new HashSet<string>();
+        void CollectBound(Expression? e)
+        {
+            switch (e)
+            {
+                case null: break;
+                case VariableExpr t: locallyBound.Add(t.Name); break;
+                case TupleExpr t: foreach (var el in t.Elements) CollectBound(el); break;
+                default: break;
+            }
+        }
+        void CollectBoundInExpr(Expression? e)
+        {
+            switch (e)
+            {
+                case null: break;
+                case WalrusExpr w: locallyBound.Add(w.VarName); CollectBoundInExpr(w.Value); break;
+                case CallExpr call:
+                    CollectBoundInExpr(call.Callee);
+                    foreach (var a in call.Args) CollectBoundInExpr(a);
+                    break;
+                case MemberAccessExpr mem: CollectBoundInExpr(mem.Object); break;
+                case IndexExpr idx: CollectBoundInExpr(idx.Target); CollectBoundInExpr(idx.Index); break;
+                case BinaryExpr bin: CollectBoundInExpr(bin.Left); CollectBoundInExpr(bin.Right); break;
+                case UnaryExpr un: CollectBoundInExpr(un.Operand); break;
+                case TernaryExpr ter:
+                    CollectBoundInExpr(ter.Condition); CollectBoundInExpr(ter.TrueVal); CollectBoundInExpr(ter.FalseVal);
+                    break;
+                case ListExpr le: foreach (var el in le.Elements) CollectBoundInExpr(el); break;
+                case TupleExpr te: foreach (var el in te.Elements) CollectBoundInExpr(el); break;
+                case SetExpr se: foreach (var el in se.Elements) CollectBoundInExpr(el); break;
+                case DictExpr de: foreach (var (k, v) in de.Entries) { CollectBoundInExpr(k); CollectBoundInExpr(v); } break;
+            }
+        }
         foreach (var s in TypeInference.WalkStatements(stmts))
         {
+            switch (s)
+            {
+                case AssignStmt asn: CollectBound(asn.Target); CollectBoundInExpr(asn.Value); break;
+                case AnnAssign ann: locallyBound.Add(ann.Target); CollectBoundInExpr(ann.Value); break;
+                case VarDecl vd: locallyBound.Add(vd.Name); CollectBoundInExpr(vd.Init); break;
+                case AugAssignStmt aug: CollectBound(aug.Target); CollectBoundInExpr(aug.Value); break;
+                case ForStmt fr:
+                    locallyBound.Add(fr.VarName);
+                    if (fr.Var2Name.Length != 0) locallyBound.Add(fr.Var2Name);
+                    CollectBoundInExpr(fr.RangeStart); CollectBoundInExpr(fr.RangeStop);
+                    CollectBoundInExpr(fr.RangeStep); CollectBoundInExpr(fr.Iterable);
+                    break;
+                case TupleUnpackStmt tu:
+                    foreach (var t in tu.Targets) locallyBound.Add(t);
+                    CollectBoundInExpr(tu.Value);
+                    break;
+                case WithStmt wi:
+                    if (wi.AsName.Length != 0) locallyBound.Add(wi.AsName);
+                    CollectBoundInExpr(wi.ContextExpr);
+                    break;
+                case ExprStmt es: CollectBoundInExpr(es.Expr); break;
+                case ReturnStmt ret: CollectBoundInExpr(ret.Value); break;
+                case IfStmt ifs:
+                    CollectBoundInExpr(ifs.Condition);
+                    foreach (var (elifCond, _) in ifs.ElifBranches) CollectBoundInExpr(elifCond);
+                    break;
+                case WhileStmt wh: CollectBoundInExpr(wh.Condition); break;
+                case MatchStmt m: CollectBoundInExpr(m.Target); break;
+            }
+        }
+        locallyBound.ExceptWith(declaredGlobals);
+
+        // An arm a compile-time condition rules out is never lowered, and an append in it
+        // must not decide the binding: pixelbuf's `_getitem` appends the white channel under
+        // `if self._has_white`, which folds to False for an RGB strip, and promoting on that
+        // dead append made every read pay for a heap list (+1540 B on a NeoPixel program).
+        var dead = new HashSet<Statement>();
+        foreach (var ifs in TypeInference.WalkStatements(stmts).OfType<IfStmt>())
+        {
+            var arms = new List<(Expression? Cond, Statement? Body)> { (ifs.Condition, ifs.ThenBranch) };
+            arms.AddRange(ifs.ElifBranches.Select(e => ((Expression?)e.Item1, (Statement?)e.Item2)));
+            arms.Add((null, ifs.ElseBranch));
+            bool decided = false;   // an earlier arm folded True: every later arm is dead
+            foreach (var (cond, body) in arms)
+            {
+                bool? v = cond == null ? true : FoldAtScan(cond, prefix, locallyBound);
+                if (decided || v == false)
+                {
+                    foreach (var d in TypeInference.WalkStatements(body)) dead.Add(d);
+                    continue;
+                }
+                if (v == true) decided = true;
+                else if (cond != null) break;   // undecided: this arm and the rest may run
+            }
+        }
+
+        foreach (var s in TypeInference.WalkStatements(stmts))
+        {
+            if (dead.Contains(s)) continue;
             switch (s)
             {
                 case AssignStmt asn:
@@ -5930,8 +6104,6 @@ public partial class IRGenerator
             }
         }
 
-        var declaredGlobal = TypeInference.WalkStatements(stmts).OfType<GlobalStmt>()
-            .SelectMany(g => g.Names).ToHashSet();
         foreach (var name in boundEmpty)
         {
             if (!appended.Contains(name)) continue;
@@ -5947,7 +6119,7 @@ public partial class IRGenerator
             // global's name is a local (the same rule EmitListAnnAssign applies).
             if (!string.IsNullOrEmpty(currentFunction)
                 && string.IsNullOrEmpty(currentInlinePrefix)
-                && (currentFunction == "main" || declaredGlobal.Contains(name))
+                && (currentFunction == "main" || declaredGlobals.Contains(name))
                 && mutableGlobals.ContainsKey(currentModulePrefix + name))
                 key = currentModulePrefix + name;
             promotableEmptyLists.Add(key);

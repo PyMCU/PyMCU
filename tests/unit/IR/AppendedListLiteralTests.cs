@@ -58,6 +58,43 @@ public class AppendedListLiteralTests
     }
 
     [Fact]
+    public void AnAppendUnderAFoldedBranch_IsNotPromoted()
+    {
+        // adafruit_pixelbuf's `_getitem` appends the white channel under
+        // `if self._has_white`, which folds to False for an RGB strip -- the dead
+        // append must not promote the literal, or every read pays for a heap list.
+        var ir = Gen(
+            "from pymcu.types import uint8, ptr\n" +
+            "GPIOR0: ptr[uint8] = ptr(0x3E)\n" +
+            "def f() -> uint8:\n" +
+            "    v = [GPIOR0.value, GPIOR0.value + 1]\n" +
+            "    if False:\n" +
+            "        v.append(GPIOR0.value + 2)\n" +
+            "    return v[0]\n" +
+            "n: uint8 = f()\n");
+        var fn = Assert.Single(ir.Functions, f => f.Name == "f");
+        Assert.DoesNotContain(fn.Body, i => i is GcAlloc);
+    }
+
+    [Fact]
+    public void AnAppendUnderAFoldedConstantBranch_IsNotPromoted()
+    {
+        // Same dead append, decided through a compile-time name instead of a literal.
+        var ir = Gen(
+            "from pymcu.types import uint8, ptr\n" +
+            "GPIOR0: ptr[uint8] = ptr(0x3E)\n" +
+            "HAS_WHITE = 0\n" +
+            "def f() -> uint8:\n" +
+            "    v = [GPIOR0.value, GPIOR0.value + 1]\n" +
+            "    if HAS_WHITE:\n" +
+            "        v.append(GPIOR0.value + 2)\n" +
+            "    return v[0]\n" +
+            "n: uint8 = f()\n");
+        var fn = Assert.Single(ir.Functions, f => f.Name == "f");
+        Assert.DoesNotContain(fn.Body, i => i is GcAlloc);
+    }
+
+    [Fact]
     public void AnAppendWiderThanTheInferredElements_IsRefused()
     {
         var ex = Assert.ThrowsAny<CompilerError>(() => Gen(
