@@ -454,6 +454,7 @@ public partial class IRGenerator
     {
         try
         {
+            WidthSeeds?.BeginRun();
             return GenerateCore(mainAst, importedModules, config, sourceLines,
                                 moduleSourceLines, projectModules, modulePaths);
         }

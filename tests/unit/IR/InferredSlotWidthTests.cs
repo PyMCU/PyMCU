@@ -357,4 +357,45 @@ public class InferredSlotWidthTests
             .Where(v => v.Check == "storage-width" && v.Detail.Contains("put.off"))
             .Should().BeEmpty();
     }
+
+    [Fact]
+    public void A_seed_filed_mid_run_widens_the_next_run_not_this_one()
+    {
+        // nested-inline-closes-over-self's `c`: `self.value = self.value + 1` is a member
+        // store, so it answers for the promoted sum -- u8+1 asks u16 mid-run 1, u16+1 asks
+        // u32 mid-run 2. A floor that read the seed the moment it was filed widened the
+        // later stores of the SAME run and left its earlier ones narrow: run 1 emitted
+        // u8,u8,u16 under one name and the per-run verify pass saw the miscompile it
+        // exists to catch. The floor is the seed the run began with, so every run stays
+        // a single width and the cascade converges instead of self-reporting.
+        var seeds = new WidthSeeds();
+        var violations = new List<string>();
+        ProgramIR lastIr = null!;
+        for (int run = 1; ; run++)
+        {
+            seeds.BeginRun();
+            lastIr = new IRGenerator { WidthSeeds = seeds }.Generate(
+                new Parser(new Lexer(
+                    "class Counter:\n" +
+                    "    def __init__(self, start: uint8):\n" +
+                    "        self.value = start\n" +
+                    "    def bump_twice(self):\n" +
+                    "        @inline\n" +
+                    "        def bump():\n" +
+                    "            self.value = self.value + 1\n" +
+                    "        bump()\n" +
+                    "        bump()\n" +
+                    "        return self.value\n" +
+                    "c = Counter(5)\n" +
+                    "r: uint16 = c.bump_twice()\n").Tokenize()).ParseProgram(),
+                new Dictionary<string, ProgramNode>(),
+                new DeviceConfig { Arch = "avr" });
+            violations.AddRange(Verifier.Verify(lastIr)
+                .Where(v => v.Check == "storage-width" && v.Detail.Contains("'c'"))
+                .Select(v => $"run{run}: {v.Detail}"));
+            if (!seeds.Grew || run == 5) break;
+        }
+        violations.Should().BeEmpty();
+        ShouldHold(lastIr, "c", 0, uint.MaxValue);
+    }
 }

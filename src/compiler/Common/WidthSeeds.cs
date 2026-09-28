@@ -24,13 +24,23 @@ namespace PyMCU.Common;
 public class WidthSeeds
 {
     private readonly Dictionary<string, DataType> seeds = new();
+    private Dictionary<string, DataType> atRunStart = new();
 
     /// Set by a run that recorded a seed wider than the one it started with.
     public bool Grew { get; private set; }
 
-    public void BeginRun() => Grew = false;
+    public void BeginRun()
+    {
+        atRunStart = new Dictionary<string, DataType>(seeds);
+        Grew = false;
+    }
 
     public DataType? Get(string key) => seeds.TryGetValue(key, out var t) ? t : null;
+
+    /// The seed this run began with -- the floor a choice point may take. A seed filed during
+    /// the run itself must wait for the next one: applying it now would widen the stores still
+    /// to come while leaving the ones already emitted narrow.
+    public DataType? AtRunStart(string key) => atRunStart.TryGetValue(key, out var t) ? t : null;
 
     /// Record that <paramref name="key"/> needs at least <paramref name="need"/>.
     public void Require(string key, DataType need)

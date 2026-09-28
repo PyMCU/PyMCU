@@ -37,7 +37,7 @@ public partial class IRGenerator
     /// earlier run found it needs.
     private DataType SeedSlot(string key, DataType chosen)
     {
-        if (WidthSeeds?.Get(key) is not { } seed || !WidthSeeds.IsInt(chosen)) return chosen;
+        if (WidthSeeds?.AtRunStart(key) is not { } seed || !WidthSeeds.IsInt(chosen)) return chosen;
         return WidthSeeds.Join(chosen, seed);
     }
 
@@ -87,7 +87,7 @@ public partial class IRGenerator
             foreach (var p in f.Params)
             {
                 if (!unannotatedParams.Contains(p)) continue;
-                if (WidthSeeds.Get(key + "#" + p.Name) is not { } ps) continue;
+                if (WidthSeeds.AtRunStart(key + "#" + p.Name) is not { } ps) continue;
                 var have = DataTypeExtensions.StringToDataType(p.Type);
                 string was = p.Type;
                 p.Type = TypeName(p.Type.Length == 0 ? ps : WidthSeeds.Join(have, ps));
@@ -96,7 +96,7 @@ public partial class IRGenerator
                 if (p.UnionMembers != null)
                     p.UnionMembers = p.UnionMembers.Select(m => m == was ? p.Type : m).ToList();
             }
-            if (unannotatedReturns.Contains(f) && WidthSeeds.Get(key + "->") is { } rs)
+            if (unannotatedReturns.Contains(f) && WidthSeeds.AtRunStart(key + "->") is { } rs)
             {
                 var have = DataTypeExtensions.StringToDataType(f.ReturnType);
                 f.ReturnType = TypeName(WidthSeeds.IsInt(have) ? WidthSeeds.Join(have, rs) : rs);
