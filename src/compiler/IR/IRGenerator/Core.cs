@@ -2546,6 +2546,33 @@ public partial class IRGenerator
                 || inlineFunctions.ContainsKey(currentModulePrefix + name)))
             return new Variable(currentModulePrefix + name, DataType.UINT16);
 
+        // A builtin NAMED rather than called: `print(len)`, `f = abs`. CPython hands over the
+        // function (or type) object; there is none here, and the read used to fall through to
+        // a slot nobody writes and print 0. A program that binds the name itself (`sum = 0`,
+        // `def max(...)`) is found by the tables and never reaches this.
+        if (PythonBuiltins.Contains(name) && !IsNameKnownSomewhere(finalLocalName, name, builtinsCount: false))
+        {
+            if (probe) return null;
+            bool isType = PyMCU.Common.PythonBuiltinNames.IsRepresentedType(name)
+                          || name is "list" or "tuple" or "dict" or "set" or "frozenset" or "complex"
+                              or "type" or "object" or "range" or "slice" or "property"
+                              or "classmethod" or "staticmethod" or "super" or "enumerate"
+                              or "zip" or "map" or "filter" or "reversed";
+            if (name is "copyright" or "credits" or "license")
+                throw UserError(
+                    $"'{name}' is the interactive session's text object, and there is no "
+                    + "interpreter or session on the target to show it.", at);
+            throw UserError(isType
+                ? $"'{name}' is a builtin type, named here as a value. Types are resolved when "
+                  + "the program is compiled and no type object exists at run time, so it cannot "
+                  + $"be printed, stored or passed on. Call it (`{name}(...)`) or use it in an "
+                  + "annotation"
+                : $"'{name}' is a builtin function, named here without being called. A function "
+                  + "is not a value on this target -- there are no function objects at run "
+                  + $"time -- so it cannot be printed, stored or passed on. Call it: `{name}(...)`",
+                at);
+        }
+
         if (!IsNameKnownSomewhere(finalLocalName, name))
         {
             // The name may be missing because its defining module REFUSED this target: a
@@ -2638,7 +2665,7 @@ public partial class IRGenerator
     /// variableTypes alone, because the paths that legitimately reach the fallback file their
     /// bindings elsewhere (aliases, instance classes, arrays, literal params).
     /// </summary>
-    private bool IsNameKnownSomewhere(string qualified, string name)
+    private bool IsNameKnownSomewhere(string qualified, string name, bool builtinsCount = true)
     {
         // Compiler-generated names (temporaries, anonymous constructor targets, inline result
         // slots) are never user-written, so they can never be a typo.
@@ -2654,7 +2681,7 @@ public partial class IRGenerator
         // is in scope everywhere, so it was never going to be assigned or imported. The full
         // builtins namespace is used, not a hand-kept subset, so `sorted` and `oct` reach the
         // same diagnostic `round` and `isinstance` do.
-        if (PythonBuiltins.Contains(name)) return true;
+        if (builtinsCount && PythonBuiltins.Contains(name)) return true;
 
         var keys = new List<string> { qualified, name };
         if (!string.IsNullOrEmpty(currentFunction)) keys.Add(currentFunction + "." + name);
