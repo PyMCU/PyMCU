@@ -126,6 +126,60 @@ public class UnhandledRaiseInMainTests
     }
 
     [Fact]
+    public void ARuntimeIntegerDivisionByZeroInMainsOwnBody_Halts()
+    {
+        // ZeroDivisionError from `//` is not a literal `raise`: it is emitted by the
+        // runtime zero-check in Expr.cs, through the same EmitRaiseUnwind helper. Before
+        // this fix its call sites all passed unhandledInMain: false, so a divisor the
+        // compiler cannot see (GPIOR0.value, not a constant) took the SAME broken
+        // propagate-to-caller form as a raise once did -- `SET; RET` with no caller --
+        // and hung silently instead of reaching __pymcu_unhandled_exn (1.0/0.0 in
+        // __fp_div was the float twin of this same bug, not a hang inside the routine).
+        var ir = Gen(Prelude +
+            "def main():\n" +
+            "    divisor: uint8 = GPIOR0.value\n" +
+            "    GPIOR0.value = 10 // divisor\n" +
+            "    while True:\n" +
+            "        pass\n");
+
+        Assert.True(Halts(ir), "an uncaught runtime ZeroDivisionError must reach __pymcu_unhandled_exn");
+        Assert.False(ReturnsToACaller(ir), "main has no caller to return the error to");
+    }
+
+    [Fact]
+    public void ARuntimeFloatDivisionByZeroInMainsOwnBody_Halts()
+    {
+        var ir = Gen(Prelude +
+            "from pymcu.types import float32\n" +
+            "def main():\n" +
+            "    divisor: float32 = float(GPIOR0.value)\n" +
+            "    x: float32 = 1.0 / divisor\n" +
+            "    GPIOR0.value = uint8(x)\n" +
+            "    while True:\n" +
+            "        pass\n");
+
+        Assert.True(Halts(ir), "an uncaught runtime float ZeroDivisionError must reach __pymcu_unhandled_exn");
+        Assert.False(ReturnsToACaller(ir), "main has no caller to return the error to");
+    }
+
+    [Fact]
+    public void ARuntimeDictKeyErrorInMainsOwnBody_Halts()
+    {
+        // KeyError from a dict-literal miss goes through the same helper (ConstTables.cs /
+        // Expr.cs), with the same unhandledInMain: false mistake.
+        var ir = Gen(Prelude +
+            "def main():\n" +
+            "    d = {1: 10, 2: 20}\n" +
+            "    k: uint8 = GPIOR0.value\n" +
+            "    GPIOR0.value = d[k]\n" +
+            "    while True:\n" +
+            "        pass\n");
+
+        Assert.True(Halts(ir), "an uncaught runtime KeyError must reach __pymcu_unhandled_exn");
+        Assert.False(ReturnsToACaller(ir), "main has no caller to return the error to");
+    }
+
+    [Fact]
     public void ACalleeThatReturnsOrRaises_DoesNotEatTheCallersTail()
     {
         // `probe` searches a table: `return` on a hit, `raise` only when the dynamic
