@@ -3959,7 +3959,11 @@ public partial class IRGenerator
     {
         if (fnDef?.Body is not PyMCU.Frontend.Block body) return null;
         bool? seen = null;
-        void ScanStmt(PyMCU.Frontend.Statement st)
+        // WalkStatements yields every statement at any depth in source order, so the
+        // last write to the name is the last answer recorded -- the same order the
+        // lowering visits them in. A nested FunctionDef is not descended into by the
+        // shared walk, which is the scope boundary wanted here.
+        foreach (var st in TypeInference.WalkStatements(body.Statements))
         {
             switch (st)
             {
@@ -3978,26 +3982,9 @@ public partial class IRGenerator
                 case PyMCU.Frontend.ForStmt f when f.VarName == name:
                     // `for n in range(...)` binds ints; any other iterable is not provable.
                     seen = f.RangeStart != null || f.RangeStop != null;
-                    ScanStmt(f.Body);
-                    break;
-                case PyMCU.Frontend.Block b:
-                    foreach (var s in b.Statements) ScanStmt(s);
-                    break;
-                case PyMCU.Frontend.IfStmt i:
-                    ScanStmt(i.ThenBranch);
-                    foreach (var (_, eb) in i.ElifBranches) ScanStmt(eb);
-                    if (i.ElseBranch != null) ScanStmt(i.ElseBranch);
-                    break;
-                case PyMCU.Frontend.WhileStmt w:
-                    ScanStmt(w.Body); break;
-                case PyMCU.Frontend.ForStmt f2:
-                    ScanStmt(f2.Body); break;
-                case PyMCU.Frontend.TryStmt t:
-                    foreach (var s in t.Body) ScanStmt(s);
                     break;
             }
         }
-        foreach (var s in body.Statements) ScanStmt(s);
         return seen;
     }
 
