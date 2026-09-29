@@ -1019,6 +1019,7 @@ public partial class IRGenerator
         if (callee == "hex") return EmitHexBuiltin(expr);
         if (callee == "bin") return EmitBinBuiltin(expr);
         if (callee == "str") return EmitStrBuiltin(expr);
+        if (callee == "repr") return EmitReprBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
         if (callee == "round") return EmitRoundBuiltin(expr);
         if (callee == "memoryview") return EmitMemoryviewBuiltin(expr);
@@ -7891,6 +7892,14 @@ public partial class IRGenerator
         if (v is Variable svv && literalSequenceArrays.Contains(svv.Name))
             return new Variable(EmitSeqReprRuntimeStr("__str" + tempCounter++, svv.Name,
                 tupleBoundNames.Contains(svv.Name) || IsTupleBound(svv.Name), expr), DataType.UINT8);
+        // `str(x)` on a float: MicroPython's 7-significant-digit repr print()
+        // streams, built into a runtime-string buffer by strfmt -- the same
+        // lowering an f-string value would get, for one part.
+        if (v is FloatConstant
+            || (v is Variable sfv && sfv.Type == DataType.FLOAT)
+            || (v is Temporary sft && sft.Type == DataType.FLOAT))
+            return new Variable(EmitFloatReprRuntimeStr("__str" + tempCounter++, v, expr),
+                DataType.UINT8);
         if (!(v is Constant c)) throw UserError("str() argument must be a compile-time constant integer", ArgAt(expr, 0));
         string decstr = c.Text ?? c.Value.ToString();
         if (!stringLiteralIds.ContainsKey(decstr))
@@ -7901,6 +7910,22 @@ public partial class IRGenerator
         }
 
         return new Constant(stringLiteralIds[decstr], decstr);
+    }
+
+    // repr(x): on a float it is str(x) -- PyMCU's float repr follows
+    // MicroPython's 7-significant-digit policy, not CPython's shortest
+    // round-trip one (see _f32_repr). Everything else keeps the table
+    // refusal: no run-time object model exists to describe it.
+    private Val EmitReprBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count == 1 && expr.Args[0] is not KeywordArgExpr
+            && (expr.Args[0] is FloatLiteral
+                || InferExprType(expr.Args[0]) == DataType.FLOAT
+                || (expr.Args[0] is CallExpr { Callee: VariableExpr rc }
+                    && functionReturnTypes.TryGetValue(ResolveCallee(rc.Name), out var rrt)
+                    && rrt == "float")))
+            return EmitStrBuiltin(expr);
+        throw UserError($"repr() is a Python builtin that PyMCU does not provide: {UnsupportedBuiltins["repr"]}.", expr.Callee);
     }
 
     // pow(base, exp): folds compile-time integer operands in place; anything

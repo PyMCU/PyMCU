@@ -5420,10 +5420,25 @@ public partial class IRGenerator
                     bound += Math.Max(w, natural) + 1;
                 }
             }
-            else bound += 11;
+            else bound += FStringPartIsFloat(p.Expr!) ? 19 : 11;
         }
         return bound;
     }
+
+    // A float interpolation: a declared float, a literal, an expression whose inferred
+    // type is float, or a call whose declared return is float. Emission and the static
+    // bound MUST decide this identically -- _fs_frepr can write 19 bytes where the
+    // decimal writers stop at 11, so a miss here would be a buffer overrun, not just
+    // wrong text. A member-access float (obj.x) stays on the integer path it always
+    // took, for the same reason: its type cannot be proven statically.
+    private bool FStringPartIsFloat(Expression e) => e switch
+    {
+        _ when InferExprType(e) == DataType.FLOAT => true,
+        UnaryExpr u => FStringPartIsFloat(u.Operand),
+        CallExpr { Callee: VariableExpr fc } =>
+            functionReturnTypes.TryGetValue(ResolveCallee(fc.Name), out var frt) && frt == "float",
+        _ => false,
+    };
 
     // A plain `{name}` part whose name holds a string built at run time.
     private (string LenVar, int Capacity)? RuntimeStrPart(FStringPart p) =>
@@ -5526,6 +5541,14 @@ public partial class IRGenerator
             {
                 EmitSeqReprInto(strfmtMod, bufName, lenVar, pSeq.Name,
                     tupleBoundNames.Contains(pSeq.Name) || IsTupleBound(pSeqVe.Name));
+            }
+            else if (FStringPartIsFloat(p.Expr!))
+            {
+                // `s = f"{x}"` on a float used to take the integer writer below and
+                // marshal the IEEE-754 bits into it -- `f"{x}"` spelled 0.1 as
+                // "1036831949". The buffer-side twin of uart_write_float is _fs_frepr.
+                EmitStrfmtCall(strfmtMod, lenVar, "_fs_frepr",
+                    new List<Expression> { buf, pos, p.Expr! });
             }
             else
             {
@@ -5654,6 +5677,33 @@ public partial class IRGenerator
         return bufName;
     }
 
+    // `str(x)` on an already-evaluated float: MicroPython's 7-significant-digit
+    // repr in a runtime-string buffer. 20 bytes covers the longest spelling
+    // _fs_frepr writes plus the NUL cap.
+    private string EmitFloatReprRuntimeStr(string bufName, Val fval, Expression blame)
+    {
+        string strfmtMod = RequireStrfmtMod(blame);
+        VisitStatement(new VarDecl(bufName, "bytearray",
+            new CallExpr(new VariableExpr("bytearray"),
+                new List<Expression> { new IntegerLiteral(20) })));
+        string lenVar = "__fslen_" + bufName;
+        VisitStatement(new VarDecl(lenVar, "uint16", new IntegerLiteral(0)));
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + bufName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        runtimeStrVars[qualified] = (lenVar, 20);
+        EmitStrfmtCall(strfmtMod, lenVar, "_fs_frepr",
+            new List<Expression>
+            {
+                new VariableExpr(bufName),
+                new VariableExpr(lenVar),
+                new PreEvaluatedExpr(fval, DataType.FLOAT),
+            });
+        VisitStatement(new AssignStmt(new IndexExpr(new VariableExpr(bufName), new VariableExpr(lenVar)),
+            new IntegerLiteral(0)));
+        return bufName;
+    }
+
     // A pessimistic bound on the repr bytes of a fixed-slot sequence: brackets, ", "
     // separators, a 1-tuple comma, then per element -- a number needs at most an i32's
     // spelling, a bool at most "False", a str its already-computed repr text, and a
@@ -5683,11 +5733,25 @@ public partial class IRGenerator
     // the same runtime-string pair an f-string value would produce.
     private bool TryExpandStrReprValue(string target, Expression value)
     {
-        if (value is not CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } strCall)
+        if (value is not CallExpr { Callee: VariableExpr { Name: "str" or "repr" }, Args.Count: 1 } strCall)
             return false;
         // `str(object=v)` spells the argument with a keyword; binding it is the
         // builtin's own job, and evaluating a KeywordArgExpr as a value refuses.
         if (strCall.Args[0] is KeywordArgExpr) return false;
+        Expression strArg = strCall.Args[0];
+        bool isRepr = strCall.Callee is VariableExpr { Name: "repr" };
+        // `x = str(f)`/`x = repr(f)` on a float: MicroPython's 7-significant-digit
+        // spelling built into the target's runtime-string pair, like an f-string value.
+        if (strArg is FloatLiteral
+            || InferExprType(strArg) == DataType.FLOAT
+            || (strArg is CallExpr { Callee: VariableExpr frc }
+                && functionReturnTypes.TryGetValue(ResolveCallee(frc.Name), out var frt)
+                && frt == "float"))
+        {
+            EmitFloatReprRuntimeStr(target, VisitExpression(strArg), value);
+            return true;
+        }
+        if (isRepr) return false;   // non-float repr keeps the builtin refusal
         string seqKey;
         bool seqIsTuple;
         if (strCall.Args[0] is VariableExpr sve)

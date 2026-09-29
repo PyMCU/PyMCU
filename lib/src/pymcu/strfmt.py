@@ -12,7 +12,7 @@
 # Digit extraction branches on the base (shifts/masks for 2/8/16, //10 for
 # decimal) so no runtime-base division is needed -- portable to every backend.
 from pymcu.types import uint8, uint16, uint32, int32
-from pymcu.hal.uart_text import _float_fmt_digits
+from pymcu.hal.uart_text import _float_fmt_digits, _f32_repr
 
 
 def _fs_text(buf: bytearray, pos: uint16, s: const[str]) -> uint16:
@@ -174,4 +174,20 @@ def _fs_ffmt(buf: bytearray, pos: uint16, value: float, prec: uint8, width: uint
             buf[pos] = digs[j] + 48
             pos = pos + 1
             j = j + 1
+    return pos
+
+
+def _fs_frepr(buf: bytearray, pos: uint16, value: float) -> uint16:
+    # Unformatted float interpolation (`f"{x}"`): the 7-significant-digit repr
+    # that print() streams (MicroPython's float policy), copied into the buffer
+    # -- 19 bytes bounds every
+    # float32 spelling ("-340282346638528859811704183484516925440.0"-shaped
+    # fixed text tops out at sign + 16 + ".0"; science notation is shorter).
+    tmp: uint8[20] = [0] * 20
+    n: uint8 = _f32_repr(value, tmp)
+    i: uint8 = 0
+    while i < n:
+        buf[pos] = tmp[i]
+        pos = pos + 1
+        i = i + 1
     return pos
