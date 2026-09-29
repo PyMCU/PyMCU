@@ -72,6 +72,27 @@ public static class BuiltinExceptionNames
         // resolved at compile time and the handler is dead code, but the name must still
         // resolve for the try to lower at all (docs/rfcs/0008-embedded-files.md).
         ["OverflowError"]        = 13,
+
+        // CPython and MicroPython both put TimeoutError UNDER OSError, and drivers lean on
+        // that: `except OSError` around an I2C transaction is what catches a timed-out
+        // transfer. It is the only builtin with a builtin parent (see Parents below) --
+        // the flat table above stays flat for every other type.
+        ["TimeoutError"]         = 14,
+    };
+
+    /// <summary>
+    /// The one built-in subclass edge this model answers: code -> parent code, for the
+    /// OSError subtree only. CPython's full hierarchy (ZeroDivisionError under
+    /// ArithmeticError, IndexError/KeyError under LookupError, ...) is intentionally NOT
+    /// here: matching it would make every `except ArithmeticError` pay comparisons the flat
+    /// model never emitted, which breaks the promise that a program that does not touch the
+    /// feature keeps byte-identical firmware. User classes get their edge when they are
+    /// scanned -- and only while the chain stays inside this subtree, so `except OSError`
+    /// catches a raised TimeoutError and nothing else about dispatch changes.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Parents = new Dictionary<string, string>
+    {
+        ["TimeoutError"] = "OSError",
     };
 
     /// <summary>

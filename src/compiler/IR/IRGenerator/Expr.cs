@@ -3175,6 +3175,18 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // `e.args[0]` read as a VALUE on a bound exception: the integer the raise was
+        // given, readable when every raise the handler can catch carried one. The
+        // print-context spelling is handled earlier (TryExceptionMessage), and
+        // RefuseBadArgsIndex already refuses any index that is not literal 0.
+        if (expr is
+            {
+                Target: MemberAccessExpr { Object: VariableExpr aiv, Member: "args" },
+                Index: IntegerLiteral { Value: 0 },
+            }
+            && TryGetExceptionBinding(aiv.Name, out var aiBinding))
+            return ExceptionArgsItemValue(aiv.Name, aiBinding.ExnType, expr);
+
         // RFC 0009: a live Optional as the subscript target or the index
         // dispatches on its tag -- the None member raises the TypeError CPython
         // raises for that side.
@@ -6041,6 +6053,15 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // `e.errno` on a bound exception: the integer argument of the raise the handler
+        // caught -- MicroPython's `OSError.errno`. First, ahead of every path that
+        // resolves the object as a name (`e` is no variable and would throw the
+        // binding diagnostic): the check itself refuses, with the reason, when the
+        // handler can catch a non-OSError, or a raise that did not carry an integer.
+        if (expr.Member == "errno" && expr.Object is VariableExpr errnoVe
+            && TryGetExceptionBinding(errnoVe.Name, out var errnoBinding))
+            return ExceptionErrnoValue(errnoVe.Name, errnoBinding.ExnType, expr);
+
         // `cls.string` inside a @classmethod: cls is the receiver class.
         if (expr.Object is VariableExpr clsVe && ClassmethodClsOf(clsVe.Name) is { } mappedCls)
             expr = new MemberAccessExpr(new VariableExpr(mappedCls), expr.Member)

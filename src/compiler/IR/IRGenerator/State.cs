@@ -749,6 +749,13 @@ public partial class IRGenerator
     /// Synthetic function that replays the live exception's print sequence.
     internal const string ExceptionMessagePrinter = "__pymcu_print_exn_msg";
 
+    /// Synthetic function that replays the live exception's ARGS print sequence: the
+    /// same site dispatch as <see cref="ExceptionMessagePrinter"/>, except an errno
+    /// site prints the bare integer (`e.args[0]` is the raw int, where `print(e)` is
+    /// MicroPython's `[Errno n] NAME`). Synthesized only when an errno site exists;
+    /// without one the message printer serves both callers.
+    internal const string ExceptionArgsPrinter = "__pymcu_print_exn_args";
+
     /// Synthetic function the unhandled-exception runtime calls after printing
     /// `E:<Type>`: emits ": " plus the recorded message and the CRLF, or just the CRLF
     /// when the raise carried no message. Reached only from raw asm, which is why the
@@ -771,7 +778,22 @@ public partial class IRGenerator
         public bool IsBool;
         public DataType PrintAs = DataType.INT32;
         public string FormatSpec = "";
+
+        // An OSError raised with an integer argument. In the message printer this piece
+        // renders MicroPython's `[Errno n] NAME` (a literal when the code is a compile-time
+        // constant, a lookup over BuiltinErrnoNames when it is not); in the args printer it
+        // renders the bare integer, because e.args[0] IS the integer -- there is no
+        // formatted-string object to hand back.
+        public bool IsErrnoArg;
+        public int ErrnoConst;
+        public bool ErrnoConstKnown;
     }
+
+
+
+    /// Whether a print of the args form (`print(e.args[0])`, `print(e.args)`) was lowered
+    /// -- the args printer is synthesized only when some caller can reach it.
+    private bool sawExceptionArgsPrint;
 
     private sealed class RaiseMessageSite
     {
@@ -787,6 +809,17 @@ public partial class IRGenerator
     /// being lowered, so a read of it after the handler is an ordinary undefined name.
     private Dictionary<string, (string CodeVar, string ExnType)> exceptionBindings = new();
 
+    /// The raise sites a bound `except ... as` name can catch: the recorded raises whose
+    /// code the handler's alternatives match, minus the codes an earlier sibling handler
+    /// would have caught first. e.errno and e.args[0]-as-a-value are allowed only when
+    /// every site in this list carried an integer argument.
+    private readonly Dictionary<string, List<RaisedSite>> exceptionCatchableSites = new();
+
+    /// Whether some `raise OSError(n)` in the program carries a statically-int argument --
+    /// known before any lowering, so a `print(e.args)` / `print(e.args[0])` emitted ahead
+    /// of the raise still calls the printer whose errno pieces render the bare integer.
+    private bool programRaisesErrnoArg;
+
     // Derived, not copied. BuiltinExceptionNames' own docstring says a second copy of this
     // list would eventually disagree with it, and this WAS that second copy: same six names,
     // written out again, in a different form, in a file nobody reading that warning opens.
@@ -795,6 +828,43 @@ public partial class IRGenerator
     // about it (#245).
     private HashSet<string> exceptionNames = BuiltinExceptionNames.Codes.Keys.ToHashSet();
     private int nextUserExceptionCode = 32;
+
+    // ── the OSError subtree ──────────────────────────────────────────────────
+    //
+    // Exception codes are flat by design (BuiltinExceptionNames says so), with ONE bounded
+    // exception: OSError and the classes under it. `except OSError` matches a raised
+    // TimeoutError, and a user class declared `class F(OSError)` joins the subtree when a
+    // `raise F(...)` exists in the program. Outside the subtree dispatch stays flat --
+    // `except ArithmeticError` still does not catch a ZeroDivisionError -- which is what
+    // keeps the byte count of every program that never raises one identical.
+    //
+    /// Exception code -> parent code, inside the OSError subtree only. Seeded from
+    /// BuiltinExceptionNames.Parents (TimeoutError -> OSError) and grown by the scan for
+    /// user classes whose base is already inside the subtree.
+    private readonly Dictionary<int, int> exceptionParents =
+        BuiltinExceptionNames.Parents.ToDictionary(
+            kv => BuiltinExceptionNames.Codes[kv.Key],
+            kv => BuiltinExceptionNames.Codes[kv.Value]);
+
+    /// The exception codes some `raise` statement in the program can deliver -- resolved
+    /// once, before any try lowers, because a handler can only match a code a raise
+    /// actually produced. Collected with the per-raise records below.
+    private readonly HashSet<int> raisedExnCodes = new();
+
+    /// What a single `raise` statement proves about the exception it can deliver: the
+    /// resolved type code, the statement itself for diagnostics, and the scope its
+    /// argument expression names resolve under. e.errno and e.args[0]-as-a-value are
+    /// allowed only when every raise a handler can catch carries an integer -- this is
+    /// the list that check walks.
+    private sealed class RaisedSite
+    {
+        public int Code;
+        public RaiseStmt Stmt = null!;
+        public string ModulePrefix = "";
+        public string? FnFullName;
+        public FunctionDef? FnDef;
+    }
+    private readonly List<RaisedSite> raisedSites = new();
 
     // Module-level `raise CompileError(...)` guards that survived compile-time if/match
     // folding in an IMPORTED module (e.g. the arch guard in hal/wifi.py once DCE picks the

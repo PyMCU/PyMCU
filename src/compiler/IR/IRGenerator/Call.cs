@@ -1072,10 +1072,29 @@ public partial class IRGenerator
                     + "name, because the test is a comparison against that type's code.",
                     expr.Args[1]);
 
+            // `isinstance(e, OSError)` is true when the caught exception is a TimeoutError
+            // or a user OSError subclass -- the same subtree expansion the dispatcher's
+            // `except OSError` performs, restricted to codes some raise can deliver.
             var isinstResult = MakeTemp(DataType.UINT8);
-            Emit(new Binary(PyMCU.IR.BinaryOp.Equal,
-                            new Variable(isinstBinding.CodeVar, DataType.UINT8),
-                            ResolveBinding(wantedType.Name, wantedType), isinstResult));
+            var exnVar = new Variable(isinstBinding.CodeVar, DataType.UINT8);
+            var isinstCodes = ExpectedExceptionCodes(wantedType.Name, expr);
+            if (isinstCodes.Count <= 1)
+            {
+                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnVar,
+                                ResolveBinding(wantedType.Name, wantedType), isinstResult));
+            }
+            else
+            {
+                Emit(new Copy(new Constant(0), isinstResult));
+                foreach (int c in isinstCodes)
+                {
+                    Temporary hit = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnVar,
+                                    new Constant(c), hit));
+                    Emit(new Binary(PyMCU.IR.BinaryOp.BitOr, isinstResult, hit,
+                                    isinstResult));
+                }
+            }
             return isinstResult;
         }
 
@@ -8520,6 +8539,11 @@ public partial class IRGenerator
             (VariableExpr? recv, List<string> fields) = FieldChainOf(ma);
             if (recv == null) return null;
 
+            // A bound exception is no instance: `e.errno` and every other member read
+            // on it are answered by the exception paths, and resolving the name here
+            // would throw the binding diagnostic before they get asked.
+            if (TryGetExceptionBinding(recv.Name, out _)) return null;
+
             Val objVal = VisitExpression(recv);
             string bse = objVal is Variable ov ? ov.Name : recv.Name;
             bse = ResolveAlias(bse);
@@ -11397,7 +11421,14 @@ public partial class IRGenerator
                 if (indexChecked)
                     EmitExceptionArgsIndexCheck(exnMsgPtr);
                 if (programHasDynamicRaiseMessage)
-                    EmitExceptionMessagePrint();
+                {
+                    // The args-context spelling prints the argument AS an argument: an
+                    // errno-carrying OSError renders the bare integer here, where
+                    // print(e) renders `[Errno n] NAME`. With no errno raise in the
+                    // program EmitExceptionArgsPrint calls the message printer itself.
+                    if (arg is IndexExpr) EmitExceptionArgsPrint();
+                    else EmitExceptionMessagePrint();
+                }
                 else if (indexChecked)
                 {
                     // EmitExceptionArgsIndexCheck already raised IndexError on the zero case
@@ -11417,6 +11448,19 @@ public partial class IRGenerator
                     Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
                     Emit(new Label(noMsg));
                 }
+                return;
+            }
+
+            // `print(e.errno)` prints the integer error code -- a number, not the
+            // `[Errno n] NAME` text print(e) renders. Ahead of the probing branches
+            // below, which resolve the object as a name and would refuse `e` with the
+            // binding diagnostic before the member access is ever visited.
+            if (arg is MemberAccessExpr { Object: VariableExpr errnoObj, Member: "errno" }
+                && TryGetExceptionBinding(errnoObj.Name, out var errnoB))
+            {
+                EmitStreamVal(floatWriteFn,
+                    ExceptionErrnoValue(errnoObj.Name, errnoB.ExnType, arg),
+                    DataType.INT32);
                 return;
             }
 

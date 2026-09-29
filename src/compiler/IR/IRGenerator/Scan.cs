@@ -2045,6 +2045,25 @@ public partial class IRGenerator
                     // inside the defining module, and `from mod import Exc`, bind it.
                     constantVariables[currentModulePrefix + classDef.Name] = exnCode;
                     exceptionNames.Add(classDef.Name);
+
+                    // The OSError subtree is the one place dispatch follows inheritance
+                    // (`except OSError` has to catch a raised TimeoutError or a
+                    // `class F(OSError)`). The edge is recorded only while the chain
+                    // stays inside that subtree: a class based on ValueError gets none,
+                    // so `except ValueError` keeps the flat answer it always had.
+                    foreach (var b in classDef.Bases)
+                    {
+                        int parentCode;
+                        string mangledBase = b.Replace('.', '_');
+                        if (!constantVariables.TryGetValue(mangledBase, out parentCode)
+                            && !constantVariables.TryGetValue(currentModulePrefix + mangledBase, out parentCode)
+                            && !constantVariables.TryGetValue(b, out parentCode))
+                            continue;
+                        if (parentCode == BuiltinExceptionNames.Codes["OSError"]
+                            || exceptionParents.ContainsKey(parentCode))
+                            exceptionParents[exnCode] = parentCode;
+                        break;
+                    }
                     continue;
                 }
 

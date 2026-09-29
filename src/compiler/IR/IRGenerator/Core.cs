@@ -1370,6 +1370,17 @@ public partial class IRGenerator
         programHasDynamicRaiseMessage = programRecordsRaiseMessages
             && ProgramHasDynamicRaiseMessage(mainAst, importedModules.Values);
 
+        // The exception codes raises in this program can deliver, and where each raise's
+        // argument can be classified. `except X` only ever matches a code a raise actually
+        // produced, so a TimeoutError that is never raised costs `except OSError` nothing --
+        // and e.errno / e.args[0]-as-a-value are meaningful only while every raise a handler
+        // can catch put an integer in the arg word. Collected before the first try lowers,
+        // the same point the flags above are fixed.
+        CollectRaisedExceptions(mainAst, importedModules.Values, astToCanonicalPrefix);
+        programRaisesErrnoArg = programRecordsRaiseMessages && raisedSites.Any(s =>
+            ExceptionIsOrDescendsFrom(s.Code, BuiltinExceptionNames.Codes["OSError"])
+            && RaiseSiteArgIsInt(s));
+
         // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
         //
         // Lowering the module level is what BINDS a module-level instance's fields: a Pin's
@@ -1467,6 +1478,13 @@ public partial class IRGenerator
 
         if (programHasDynamicRaiseMessage || (programReportsRaiseMessage && sawRaiseMessageStore))
             irProgram.Functions.Add(SynthesizeExceptionMessagePrinter());
+        // The args-context printer exists only while an errno raise exists AND some
+        // print of `e.args`/`e.args[0]` was lowered to call it -- a program with no
+        // integer OSError raise, or no args-context print, keeps one printer. The gate is
+        // the precomputed flag the call sites already chose on, so the emitted function
+        // and the emitted Call always agree.
+        if (sawExceptionArgsPrint && programRaisesErrnoArg)
+            irProgram.Functions.Add(SynthesizeExceptionArgsPrinter());
         // The unhandled path in the backend calls __pymcu_exn_tail from raw asm after
         // printing `E:<Type>` -- it appends ": <msg>" + CRLF when a message was recorded
         // and just the CRLF when it was not. Only emitted when a raise can carry a
@@ -3302,6 +3320,81 @@ public partial class IRGenerator
         WalkProgram(main);
         foreach (var m in imported) WalkProgram(m);
         return found;
+    }
+
+    /// Every exception code a `raise` in the program can deliver, plus the scope each
+    /// raise's argument names resolve under (raisedExnCodes / raisedSites). A bare `raise`
+    /// and `raise e` on the bound name re-signal the caught code, so they add nothing --
+    /// the raise that built the exception is already in the list.
+    private void CollectRaisedExceptions(
+        PyMCU.Frontend.ProgramNode main,
+        IEnumerable<PyMCU.Frontend.ProgramNode> imported,
+        IReadOnlyDictionary<PyMCU.Frontend.ProgramNode, string> astToCanonicalPrefix)
+    {
+        void Walk(PyMCU.Frontend.Statement? s, string modulePrefix, string classPrefix,
+                  string? fnFullName, PyMCU.Frontend.FunctionDef? fnDef)
+        {
+            foreach (var st in TypeInference.WalkStatements(s))
+            {
+                switch (st)
+                {
+                    case PyMCU.Frontend.RaiseStmt r:
+                        if (TryRaisedTypeCode(r.ErrorType, modulePrefix, out int code))
+                        {
+                            raisedExnCodes.Add(code);
+                            raisedSites.Add(new RaisedSite
+                            {
+                                Code = code,
+                                Stmt = r,
+                                ModulePrefix = modulePrefix,
+                                FnFullName = fnFullName,
+                                FnDef = fnDef,
+                            });
+                        }
+                        break;
+                    case PyMCU.Frontend.FunctionDef fd:
+                        Walk(fd.Body, modulePrefix, classPrefix,
+                             modulePrefix + classPrefix + fd.Name, fd);
+                        break;
+                    case PyMCU.Frontend.ClassDef cd:
+                        Walk(cd.Body, modulePrefix, classPrefix + cd.Name + "_",
+                             fnFullName, fnDef);
+                        break;
+                }
+            }
+        }
+
+        void WalkProgram(PyMCU.Frontend.ProgramNode p, string modulePrefix)
+        {
+            foreach (var st in p.GlobalStatements) Walk(st, modulePrefix, "", null, null);
+            foreach (var fn in p.Functions) Walk(fn.Body, modulePrefix, "", modulePrefix + fn.Name, fn);
+        }
+
+        WalkProgram(main, "");
+        foreach (var m in imported)
+            WalkProgram(m, astToCanonicalPrefix.TryGetValue(m, out var pfx) ? pfx : "");
+    }
+
+    /// The exception code a `raise`'s type name resolves to, or false when it names no
+    /// exception type the program defined -- the same resolution the dispatcher's
+    /// <see cref="ResolveExceptionCode"/> performs, written without a throw so a
+    /// bound-name re-raise (`raise e`) simply reports no code.
+    private bool TryRaisedTypeCode(string errorType, string modulePrefix, out int code)
+    {
+        code = 0;
+        if (errorType.Length == 0 || errorType == "CompileError") return false;
+        if (errorType.Contains('.'))
+        {
+            string head = errorType.Split('.')[0];
+            string qualified = TryImportedAlias(head, out var realMod) && realMod != null
+                ? realMod + errorType.Substring(head.Length)
+                : errorType;
+            string mangled = qualified.Replace('.', '_');
+            return constantVariables.TryGetValue(mangled, out code)
+                || constantVariables.TryGetValue(modulePrefix + mangled, out code);
+        }
+        return constantVariables.TryGetValue(modulePrefix + errorType, out code)
+            || constantVariables.TryGetValue(errorType, out code);
     }
 
     /// Whether any raise carries a non-literal message. The printer has to exist before

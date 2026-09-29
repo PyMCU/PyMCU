@@ -2883,7 +2883,28 @@ public partial class IRGenerator
                 dynamicMessage ??= new VariableExpr(stmt.MessageName) { Line = stmt.Line };
         }
 
-        if (dynamicMessage != null && stmt.ErrorType != "CompileError"
+        // An integer argument (`raise OSError(5)`, `raise OSError(errno.ETIMEDOUT)`,
+        // `raise OSError(code)` where code is a runtime int) is not a message: it is the
+        // word e.errno and e.args[0] read. Classified before the fold, which would
+        // otherwise spell the number into string text and lose the distinction.
+        // An integer argument is classified against the raise's OWN recorded scope, so
+        // the answer here and the one a handler's e.errno check derives from the same
+        // site agree -- in particular inside an @inline expansion, where currentFunction
+        // names the caller but the site names the callee the raise is written in.
+        RaisedSite? ownSite = stmt.ErrorType == "CompileError" ? null
+            : raisedSites.FirstOrDefault(s => ReferenceEquals(s.Stmt, stmt));
+        int intArgConst = 0;
+        bool intArgIsConst = false;
+        bool intArg = dynamicMessage != null && stmt.ErrorType != "CompileError"
+            && IsStaticallyIntExpr(dynamicMessage,
+                ownSite?.ModulePrefix ?? currentModulePrefix ?? "",
+                ownSite?.FnFullName
+                    ?? (inlineStack.Count > 0 && inlineStack[^1].CalleeName.Length > 0
+                        ? inlineStack[^1].CalleeName : currentFunction),
+                ownSite?.FnDef,
+                out intArgConst, out intArgIsConst);
+
+        if (!intArg && dynamicMessage != null && stmt.ErrorType != "CompileError"
             && TryFoldRaiseMessageToString(dynamicMessage, out string folded))
         {
             resolvedMessage = folded;
@@ -3041,7 +3062,16 @@ public partial class IRGenerator
         // the same re-raise, so it writes nothing either.
         bool writesMessage = !string.IsNullOrEmpty(stmt.ErrorType) && !reraisesBound;
         bool dynamicStored = false;
-        if (dynamicMessage != null && programRecordsRaiseMessages && writesMessage)
+        if (intArg && programRecordsRaiseMessages && writesMessage)
+        {
+            // `raise E(n)` with an integer argument: the int lands in the exception arg
+            // word (what e.errno and e.args[0] read) and the site carries a piece that
+            // knows how to print it -- `[Errno n] NAME` for OSError, the bare number for
+            // every other type.
+            EmitIntRaiseArg(dynamicMessage!, stmt, intArgConst, intArgIsConst, code);
+            dynamicStored = true;
+        }
+        else if (!intArg && dynamicMessage != null && programRecordsRaiseMessages && writesMessage)
         {
             EmitDynamicRaiseMessage(dynamicMessage, stmt);
             dynamicStored = true;
@@ -3229,28 +3259,39 @@ public partial class IRGenerator
             string[] alternatives = exnType.Split(',', StringSplitOptions.RemoveEmptyEntries);
             bool catchAll = alternatives.Length == 0
                             || alternatives.Any(a => a is "Exception" or "BaseException");
+            List<int>? expected = null;
             if (!catchAll)
             {
-                if (alternatives.Length == 1)
+                // The codes each alternative accepts. `except OSError` also matches what was
+                // raised UNDER it -- TimeoutError, or a `class F(OSError)` -- but only codes a
+                // raise in this program can actually deliver: the subtree expansion reads
+                // raisedExnCodes, so `except OSError` keeps its single compare in a program
+                // that never raises an OSError subclass.
+                var expectedSets = alternatives
+                    .Select(a => ExpectedExceptionCodes(a, stmt)).ToList();
+                var allExpected = expectedSets.SelectMany(s => s).Distinct().ToList();
+                expected = allExpected;
+                if (allExpected.Count == 1)
                 {
-                    // The single-type form keeps the instructions it has had, to the byte: one
-                    // comparison and a skip. A tuple of one is the same program as a bare name
-                    // and must not cost more than one.
-                    Val expectedCode = ResolveExceptionCode(alternatives[0], stmt);
+                    // The single-code form keeps the instructions it has had, to the byte: one
+                    // comparison and a skip. A tuple of one -- or a base whose subclasses are
+                    // never raised -- is the same program as a bare name and must not cost
+                    // more than one.
+                    Val expectedCode = new Constant(allExpected[0]);
                     Val matchTemp = MakeTemp(DataType.UINT8);
                     Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
                     Emit(new JumpIfZero(matchTemp, skipLabel));
                 }
                 else
                 {
-                    // Each alternative jumps INTO the body, and only after the last one has
+                    // Each candidate jumps INTO the body, and only after the last one has
                     // failed does control fall through to the next handler.
                     string bodyLabel = MakeLabel();
-                    foreach (string alternative in alternatives)
+                    foreach (int cand in allExpected)
                     {
-                        Val expectedCode = ResolveExceptionCode(alternative, stmt);
                         Val matchTemp = MakeTemp(DataType.UINT8);
-                        Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
+                        Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode,
+                                     new Constant(cand), matchTemp));
                         Emit(new JumpIfNotZero(matchTemp, bodyLabel));
                     }
                     Emit(new Jump(skipLabel));
@@ -3272,7 +3313,18 @@ public partial class IRGenerator
             string boundKey = bound == null ? "" : QualifyExceptionBinding(bound);
             bool hadOuter = bound != null && exceptionBindings.TryGetValue(boundKey, out var outerBinding);
             var savedOuter = hadOuter ? exceptionBindings[boundKey] : default;
-            if (bound != null) exceptionBindings[boundKey] = (exnCodeVar, exnType);
+            List<RaisedSite>? outerSites = null;
+            bool hadOuterSites = bound != null
+                && exceptionCatchableSites.TryGetValue(boundKey, out outerSites);
+            if (bound != null)
+            {
+                exceptionBindings[boundKey] = (exnCodeVar, exnType);
+                // The raises this handler can actually see land in it: its own expected
+                // set, minus the codes an earlier sibling already catches. e.errno and
+                // e.args[0]-as-a-value gate on every one of them carrying an integer.
+                exceptionCatchableSites[boundKey] =
+                    CatchableRaiseSites(stmt, i, catchAll, expected);
+            }
 
             foreach (var s in handlerBody)
             {
@@ -3285,6 +3337,8 @@ public partial class IRGenerator
             {
                 if (hadOuter) exceptionBindings[boundKey] = savedOuter;
                 else exceptionBindings.Remove(boundKey);
+                if (hadOuterSites) exceptionCatchableSites[boundKey] = outerSites!;
+                else exceptionCatchableSites.Remove(boundKey);
             }
             handlerCodeStack.RemoveAt(handlerCodeStack.Count - 1);
             if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
@@ -3370,6 +3424,153 @@ public partial class IRGenerator
         throw UserError(
             $"'{name}' is not a known exception type -- no class by that name deriving "
             + "from Exception is defined on the module it names", at);
+    }
+
+    /// <summary>
+    /// The codes an `except` alternative accepts: its own code, plus every code a raise in
+    /// this program can deliver whose class descends from it -- the OSError subtree is the
+    /// one place dispatch follows inheritance (BuiltinExceptionNames.Parents explains why
+    /// the edge set stops there). A name that resolves to a non-constant gets no expansion,
+    /// exactly as before.
+    /// </summary>
+    private List<int> ExpectedExceptionCodes(string name, ASTNode at)
+    {
+        var codes = new List<int>();
+        if (ResolveExceptionCode(name, at) is Constant { } cc)
+            codes.Add(cc.Value);
+        else
+            return codes;
+        foreach (int c in raisedExnCodes)
+            if (!codes.Contains(c) && ExceptionDescendsFrom(c, codes[0]))
+                codes.Add(c);
+        return codes;
+    }
+
+    /// Whether the exception raised under <paramref name="code"/> is a subclass of
+    /// <paramref name="ancestor"/> -- walking the OSError subtree edges the scan recorded.
+    private bool ExceptionDescendsFrom(int code, int ancestor)
+    {
+        for (int c = code; exceptionParents.TryGetValue(c, out int parent); c = parent)
+            if (parent == ancestor) return true;
+        return false;
+    }
+
+    /// <paramref name="code"/> IS <paramref name="ancestor"/> or descends from it.
+    private bool ExceptionIsOrDescendsFrom(int code, int ancestor)
+        => code == ancestor || ExceptionDescendsFrom(code, ancestor);
+
+    /// The raise sites whose code the handler at <paramref name="handlerIndex"/> can
+    /// actually see land in it: its alternatives' expected codes (or every raise, for a
+    /// catch-all `except`), minus the codes an earlier sibling handler catches first. A
+    /// bare `raise`/`raise e` records no site -- it re-signals the exception in flight,
+    /// which one of the listed raises built, so the arg check still sees its origin.
+    private List<RaisedSite> CatchableRaiseSites(TryStmt stmt, int handlerIndex,
+                                               bool catchAll, List<int>? expected)
+    {
+        var earlier = new HashSet<int>();
+        for (int j = 0; j < handlerIndex; j++)
+        {
+            string[] jAlts = stmt.Handlers[j].ExnType
+                .Split(',', StringSplitOptions.RemoveEmptyEntries);
+            if (jAlts.Length == 0 || jAlts.Any(a => a is "Exception" or "BaseException"))
+                earlier.UnionWith(raisedExnCodes);
+            else
+                foreach (var c in jAlts.SelectMany(a => ExpectedExceptionCodes(a, stmt)))
+                    earlier.Add(c);
+        }
+        return raisedSites
+            .Where(s => (catchAll || expected!.Contains(s.Code)) && !earlier.Contains(s.Code))
+            .ToList();
+    }
+
+    /// The argument expression a raise was given, or null for a literal-string message or
+    /// a bare `raise E()`. A MessageName arrives as a bare name, which is exactly the
+    /// VariableExpr the expression form would have carried.
+    private static Expression? RaiseSiteArg(RaisedSite site)
+        => site.Stmt.MessageExpr
+           ?? (site.Stmt.MessageName != null ? new VariableExpr(site.Stmt.MessageName) : null);
+
+    /// Whether the raise this site records carries an integer argument -- the same answer
+    /// VisitRaise got when it lowered the statement, because both ask
+    /// IsStaticallyIntExpr under the site's own scope.
+    private bool RaiseSiteArgIsInt(RaisedSite site)
+        => RaiseSiteArg(site) is { } arg && IsStaticallyInt(site, arg);
+
+    /// The catchable-site list a bound exception name is in scope under -- the same
+    /// qualification ladder TryGetExceptionBinding walks.
+    private bool TryGetExceptionCatchable(string name, out List<RaisedSite> sites)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && exceptionCatchableSites.TryGetValue(currentInlinePrefix + name, out sites!))
+            return true;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && exceptionCatchableSites.TryGetValue(currentFunction + "." + name, out sites!))
+            return true;
+        return exceptionCatchableSites.TryGetValue(name, out sites!);
+    }
+
+    /// `e.errno` on a bound exception. MicroPython's .errno is simply args[0] on any
+    /// exception, but PyMCU keeps the OSError gate the task asks for: reading it where the
+    /// handler could also catch a non-OSError would hand back numbers for exceptions that
+    /// never meant them as error codes. The value itself is the arg word the raise
+    /// stored -- allowed only when every raise this handler can catch carried an integer,
+    /// because there is no value that could serve both a stored string and a stored int.
+    internal Val ExceptionErrnoValue(string boundName, string exnType, Expression at)
+        => ExceptionIntArgValue(boundName, exnType, at, "errno");
+
+    /// `e.args[0]` read as a value: the same stored integer, without the OSError-subtree
+    /// restriction -- args[0] is the raise's argument whatever its type.
+    internal Val ExceptionArgsItemValue(string boundName, string exnType, Expression at)
+        => ExceptionIntArgValue(boundName, exnType, at, "args[0]");
+
+    private Val ExceptionIntArgValue(string boundName, string exnType, Expression at,
+                                   string member)
+    {
+        if (member == "errno")
+        {
+            int osCode = BuiltinExceptionNames.Codes["OSError"];
+            string[] alts = exnType.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            bool osOnly = alts.Length > 0 && alts.All(a =>
+            {
+                string alt = a.Trim();
+                if (alt is "Exception" or "BaseException") return false;
+                return TryExceptionCodeOf(alt, at) is { } c
+                       && ExceptionIsOrDescendsFrom(c, osCode);
+            });
+            if (!osOnly)
+                throw UserError(
+                    $"'{boundName}.errno' is the error code of an OSError -- reading it "
+                    + $"on a '{exnType}' handler, which can also catch exceptions that are "
+                    + "not OSError, would answer a number the raise never meant as an "
+                    + "error code. Catch 'OSError' (or a subclass) to read it.", at);
+        }
+
+        if (!TryGetExceptionCatchable(boundName, out var sites)
+            || !sites.All(RaiseSiteArgIsInt))
+            throw UserError(
+                $"'{boundName}.{member}' reads the raise's integer argument, which only "
+                + "exists when every raise this handler can catch was given one -- "
+                + "a bare raise, a string message, or an argument of unknown type in the "
+                + "code it can catch means there is no integer to read.", at);
+
+        string arg0 = ExceptionArgVar(0);
+        variableTypes[arg0] = DataType.INT32;
+        mutableGlobals[arg0] = DataType.INT32;
+        return new Variable(arg0, DataType.INT32);
+    }
+
+    /// The code an exception-type name resolves to, or null when it names nothing
+    /// raisable -- the non-throwing half of ResolveExceptionCode, for the e.errno gate.
+    private int? TryExceptionCodeOf(string name, ASTNode at)
+    {
+        try
+        {
+            return ResolveExceptionCode(name, at) is Constant c ? c.Value : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// The key an `except ... as` name is held under, qualified the way every other local is,
@@ -3461,7 +3662,7 @@ public partial class IRGenerator
         Emit(new Jump(after));
         Emit(new Label(hasArg));
         if (programHasDynamicRaiseMessage)
-            EmitExceptionMessagePrint();
+            EmitExceptionArgsPrint();
         else
             Emit(new Call(ResolveRuntimeWriteStrFn(),
                 new List<Val> { new Variable(ExceptionMessageVar, DataType.UINT16) },
@@ -3569,6 +3770,235 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentFunction))
             yield return currentFunction + "." + name;
         yield return name;
+    }
+
+    /// <summary>
+    /// Whether a raise's argument is an integer -- decided statically, without evaluating,
+    /// so the answer is the same at the raise and at the `except` that checks e.errno
+    /// before the raising function has lowered. The <paramref name="constVal"/>/
+    /// <paramref name="isConst"/> outs carry the value when it is also a compile-time
+    /// constant (`errno.ETIMEDOUT`, a literal, a folded binary of constants). An
+    /// unprovable shape -- an unannotated name, a call whose return type is undeclared --
+    /// answers false: the raise lowers through the dynamic-message machinery either way,
+    /// which for a single integer piece still stores the arg word, so nothing is lost
+    /// except e.errno, and refusing that is louder than guessing.
+    /// </summary>
+    /// The same answer against a recorded raise site's scope -- the module prefix and the
+    /// function the raise is written in, which may not be the function currently lowering.
+    private bool IsStaticallyInt(RaisedSite site, Expression e)
+        => IsStaticallyIntExpr(e, site.ModulePrefix, site.FnFullName, site.FnDef,
+                               out _, out _);
+
+    private bool IsStaticallyIntExpr(Expression e, string modulePrefix, string? fnFullName,
+                                     PyMCU.Frontend.FunctionDef? fnDef,
+                                     out int constVal, out bool isConst)
+    {
+        constVal = 0;
+        isConst = false;
+        switch (e)
+        {
+            case IntegerLiteral il:
+                constVal = il.Value; isConst = true; return true;
+            case BooleanLiteral:
+            case NoneLiteral:
+            case StringLiteral:
+            case FStringExpr:
+            case TupleExpr:
+            case ListExpr:
+                return false;
+            case VariableExpr ve:
+            {
+                foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
+                {
+                    if (constantVariables.TryGetValue(key, out constVal))
+                    { isConst = true; return true; }
+                }
+                // A str constant name is a message, not an errno.
+                foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
+                    if (ResolveStrConstant(key) != null) return false;
+                // An int-typed parameter or a name an earlier lowering already typed.
+                if (fnFullName != null
+                    && functionParams.TryGetValue(fnFullName, out var ps))
+                {
+                    int pi = ps.IndexOf(ve.Name);
+                    if (pi >= 0 && functionParamTypes.TryGetValue(fnFullName, out var pts)
+                        && pi < pts.Count)
+                        return IsScalarIntType(pts[pi]);
+                }
+                // `n = GPIOR0.value` / `n: uint8 = ...` local to the raising function:
+                // the binding is in the body the site walk recorded, decidable without
+                // lowering it -- and asked BEFORE variableTypes so the answer here and
+                // the answer at the handler's e.errno check (asked before the function
+                // lowers, when variableTypes cannot know it) are the same.
+                if (fnDef != null && LocalIntBinding(fnDef, ve.Name) is { } bound)
+                    return bound;
+                foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
+                {
+                    if (variableTypes.TryGetValue(key, out var vt))
+                        return IsScalarIntType(vt);
+                }
+                foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
+                {
+                    if (mutableGlobals.TryGetValue(key, out var gt))
+                        return IsScalarIntType(gt);
+                }
+                if (globals.TryGetValue(modulePrefix + ve.Name, out var gv)
+                    || globals.TryGetValue(ve.Name, out gv))
+                    return IsScalarIntType(gv.Type);
+                return false;
+            }
+            case MemberAccessExpr ma:
+            {
+                // `errno.ETIMEDOUT`, `mod.CONST`, an instance field a constant was stored
+                // into -- the evaluator answers them all, as a compile-time int.
+                if (TryConstEvalSite(e, modulePrefix, out int cv))
+                { constVal = cv; isConst = true; return true; }
+                // `mod.CONST` where mod is an imported module: filed under
+                // <mod>_<member> in globals (compile-time int) or mutableGlobals, the
+                // same mangling VisitMemberAccess resolves. The constant evaluator does
+                // not climb module members, so the lookup is repeated here.
+                if (ma.Object is VariableExpr mv)
+                {
+                    string moduleBase = modules.ContainsKey(mv.Name)
+                        && TryImportedAlias(mv.Name, out var realMod) && realMod != null
+                        ? realMod.Replace('.', '_') : mv.Name;
+                    string mangled = moduleBase + "_" + ma.Member;
+                    if (globals.TryGetValue(mangled, out var msym))
+                    { constVal = msym.Value; isConst = true; return true; }
+                    if (mutableGlobals.TryGetValue(mangled, out var mt))
+                        return IsScalarIntType(mt);
+                }
+                // `p.value` on a ptr[T] reads the register -- always numeric.
+                if (ma.Member == "value") return true;
+                // `o.field` on a known instance whose declared field type is an int.
+                if (ma.Object is VariableExpr ove
+                    && InstanceClassOfName(ove.Name) is { } fieldCls
+                    && TryGetSlotFieldLayout(fieldCls, ma.Member, out _, out var fieldType,
+                                             out _)
+                    && IsScalarIntType(fieldType))
+                    return true;
+                return false;
+            }
+            case UnaryExpr { Op: AstUnOp.Negate or AstUnOp.BitNot } un:
+            {
+                if (TryConstEvalSite(e, modulePrefix, out int uv))
+                { constVal = uv; isConst = true; return true; }
+                return IsStaticallyIntExpr(un.Operand, modulePrefix, fnFullName, fnDef,
+                                           out _, out _);
+            }
+            case BinaryExpr be:
+            {
+                if (TryConstEvalSite(e, modulePrefix, out int bv))
+                { constVal = bv; isConst = true; return true; }
+                if (StaticStringOf(e) != null) return false;
+                return be.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul
+                        or AstBinOp.FloorDiv or AstBinOp.Mod or AstBinOp.BitAnd
+                        or AstBinOp.BitOr or AstBinOp.BitXor or AstBinOp.LShift
+                        or AstBinOp.RShift or AstBinOp.Pow
+                    && IsStaticallyIntExpr(be.Left, modulePrefix, fnFullName, fnDef,
+                                           out _, out _)
+                    && IsStaticallyIntExpr(be.Right, modulePrefix, fnFullName, fnDef,
+                                           out _, out _);
+            }
+            case CallExpr ce:
+            {
+                if (ce.Callee is VariableExpr { Name: "str" }) return false;
+                if (TryConstEvalSite(e, modulePrefix, out int ccv))
+                { constVal = ccv; isConst = true; return true; }
+                string? calleeKey = ce.Callee is VariableExpr cv2
+                    ? (functionReturnTypes.ContainsKey(modulePrefix + cv2.Name)
+                        ? modulePrefix + cv2.Name
+                        : functionReturnTypes.ContainsKey(cv2.Name) ? cv2.Name : null)
+                    : null;
+                return calleeKey != null
+                    && IsScalarIntType(DataTypeExtensions.StringToDataType(
+                        functionReturnTypes[calleeKey] ?? ""));
+            }
+            case TernaryExpr te:
+            {
+                if (TryConstEvalSite(e, modulePrefix, out int tv))
+                { constVal = tv; isConst = true; return true; }
+                return IsStaticallyIntExpr(te.TrueVal, modulePrefix, fnFullName, fnDef,
+                                           out _, out _)
+                    && IsStaticallyIntExpr(te.FalseVal, modulePrefix, fnFullName, fnDef,
+                                           out _, out _);
+            }
+            default:
+                return TryConstEvalSite(e, modulePrefix, out constVal) && (isConst = true);
+        }
+    }
+
+    /// <summary>
+    /// The qualified keys a name in a raise's own scope resolves under -- the same ladder
+    /// <see cref="RaiseMessageNameKeys"/> climbs for the CURRENT function, applied to the
+    /// recorded site's scope (which may be a function that has not lowered yet).
+    /// </summary>
+    private static IEnumerable<string> RaiseSiteNameKeys(string name, string modulePrefix,
+                                                       string? fnFullName)
+    {
+        if (fnFullName != null) yield return fnFullName + "." + name;
+        if (!string.IsNullOrEmpty(modulePrefix)) yield return modulePrefix + name;
+        yield return name;
+    }
+
+    /// A compile-time int for an expression in a raise's scope, answered by the constant
+    /// evaluator; false (not a throw) when it is not constant, whatever the reason.
+    private bool TryConstEvalSite(Expression e, string modulePrefix, out int value)
+    {
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch (Exception) { }
+        value = 0;
+        return false;
+    }
+
+    /// `n = <expr>` / `n: T = <expr>` inside the raising function: whether the name is
+    /// bound to a statically-int value before the raise -- the last textual write decides,
+    /// matching how the lowering itself would see it. Null when the function never binds
+    /// the name, which is "ask the tables", not "no".
+    private bool? LocalIntBinding(PyMCU.Frontend.FunctionDef? fnDef, string name)
+    {
+        if (fnDef?.Body is not PyMCU.Frontend.Block body) return null;
+        bool? seen = null;
+        void ScanStmt(PyMCU.Frontend.Statement st)
+        {
+            switch (st)
+            {
+                case PyMCU.Frontend.AssignStmt { Target: VariableExpr tv } a
+                    when tv.Name == name:
+                    seen = IsStaticallyIntExpr(a.Value, "", null, null, out _, out _);
+                    break;
+                case PyMCU.Frontend.AnnAssign { Target: var at } an when at == name:
+                    seen = IsScalarIntType(DataTypeExtensions.StringToDataType(an.Annotation))
+                        || (an.Value != null
+                            && IsStaticallyIntExpr(an.Value, "", null, null, out _, out _));
+                    break;
+                case PyMCU.Frontend.VarDecl vd when vd.Name == name:
+                    seen = IsScalarIntType(DataTypeExtensions.StringToDataType(vd.VarType));
+                    break;
+                case PyMCU.Frontend.ForStmt f when f.VarName == name:
+                    // `for n in range(...)` binds ints; any other iterable is not provable.
+                    seen = f.RangeStart != null || f.RangeStop != null;
+                    ScanStmt(f.Body);
+                    break;
+                case PyMCU.Frontend.Block b:
+                    foreach (var s in b.Statements) ScanStmt(s);
+                    break;
+                case PyMCU.Frontend.IfStmt i:
+                    ScanStmt(i.ThenBranch);
+                    foreach (var (_, eb) in i.ElifBranches) ScanStmt(eb);
+                    if (i.ElseBranch != null) ScanStmt(i.ElseBranch);
+                    break;
+                case PyMCU.Frontend.WhileStmt w:
+                    ScanStmt(w.Body); break;
+                case PyMCU.Frontend.ForStmt f2:
+                    ScanStmt(f2.Body); break;
+                case PyMCU.Frontend.TryStmt t:
+                    foreach (var s in t.Body) ScanStmt(s);
+                    break;
+            }
+        }
+        foreach (var s in body.Statements) ScanStmt(s);
+        return seen;
     }
 
     /// <summary>
@@ -3689,6 +4119,62 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Store an integer raise argument: the arg word holds the integer (args[0] IS this
+    /// word -- that is what e.errno and e.args[0]-as-a-value read), and the site id marks
+    /// how it prints. OSError gets the errno piece, which renders `[Errno n] NAME`; every
+    /// other type renders the bare integer, which is also what the site prints when a
+    /// MicroPython subclass of OSError carries one (the name format is OSError-only).
+    /// </summary>
+    private void EmitIntRaiseArg(Expression arg, RaiseStmt at,
+                                 int intArgConst, bool intArgIsConst, Val code)
+    {
+        string arg0 = ExceptionArgVar(0);
+        variableTypes[arg0] = DataType.INT32;
+        mutableGlobals[arg0] = DataType.INT32;
+
+        Val v = intArgIsConst ? new Constant(intArgConst) : VisitExpression(arg);
+        DataType vt = GetValType(v);
+        if (v is not Constant && vt != DataType.INT32)
+        {
+            Temporary widened = MakeTemp(DataType.INT32);
+            Emit(new Copy(v, widened));
+            v = widened;
+        }
+        Emit(new Copy(v, new Variable(arg0, DataType.INT32)));
+
+        var site = new RaiseMessageSite { Id = nextRaiseSiteId++ };
+        if (code is Constant { Value: var codeVal }
+            && ExceptionIsOrDescendsFrom(codeVal, BuiltinExceptionNames.Codes["OSError"]))
+        {
+            site.Pieces.Add(new RaiseMessagePiece
+            {
+                IsErrnoArg = true,
+                IntSlot = intArgIsConst ? -1 : 0,
+                ErrnoConst = intArgConst,
+                ErrnoConstKnown = intArgIsConst,
+            });
+        }
+        else if (intArgIsConst)
+        {
+            site.Pieces.Add(new RaiseMessagePiece { Literal = intArgConst.ToString() });
+        }
+        else
+        {
+            site.Pieces.Add(new RaiseMessagePiece
+            {
+                IntSlot = 0,
+                PrintAs = IsScalarIntType(vt) ? vt : DataType.INT32,
+                IsBool = IsBoolExpr(arg),
+            });
+        }
+
+        DeclareExceptionSiteVar();
+        Emit(new Copy(new Constant(site.Id), new Variable(ExceptionSiteVar, DataType.UINT8)));
+        raiseMessageSites.Add(site);
+        sawRaiseMessageStore = true;
+    }
+
+    /// <summary>
     /// Replay the live exception's message: site 0 is the flash string, any other id is
     /// the print sequence recorded at that raise.
     /// </summary>
@@ -3697,7 +4183,28 @@ public partial class IRGenerator
         Emit(new Call(ExceptionMessagePrinter, new List<Val>(), new NoneVal()));
     }
 
+    /// The args-context print (`print(e.args[0])`, `print(e.args)`): an errno site has a
+    /// second rendering -- the bare integer, not `[Errno n] NAME` -- so it calls its own
+    /// printer. The choice reads the precomputed programRaisesErrnoArg, not the raises
+    /// lowered so far: a handler can print args before the function holding the
+    /// `raise OSError(n)` has lowered.
+    internal void EmitExceptionArgsPrint()
+    {
+        sawExceptionArgsPrint = true;
+        Emit(new Call(programRaisesErrnoArg ? ExceptionArgsPrinter : ExceptionMessagePrinter,
+                      new List<Val>(), new NoneVal()));
+    }
+
     internal Function SynthesizeExceptionMessagePrinter()
+        => SynthesizeExceptionPrinter(ExceptionMessagePrinter, false);
+
+    /// The args-context printer (`print(e.args[0])`, `print(e.args)`): identical site
+    /// dispatch, except an errno piece renders the bare integer -- args[0] IS that
+    /// integer, where print(e)'s rendering is MicroPython's `[Errno n] NAME`.
+    internal Function SynthesizeExceptionArgsPrinter()
+        => SynthesizeExceptionPrinter(ExceptionArgsPrinter, true);
+
+    private Function SynthesizeExceptionPrinter(string printerName, bool argMode)
     {
         var savedInstructions = currentInstructions;
         var savedFunction = currentFunction;
@@ -3710,7 +4217,7 @@ public partial class IRGenerator
         var savedFunctionGlobals = currentFunctionGlobals;
 
         currentInstructions = new List<Instruction>();
-        currentFunction = ExceptionMessagePrinter;
+        currentFunction = printerName;
         currentModulePrefix = "";
         currentInlinePrefix = "";
         inlineDepth = 0;
@@ -3741,7 +4248,7 @@ public partial class IRGenerator
                 string next = MakeLabel();
                 Emit(new JumpIfNotEqual(siteVar, new Constant(site.Id), next));
                 foreach (var piece in site.Pieces)
-                    EmitRaiseMessagePiece(piece, writeStrFn, floatFn);
+                    EmitRaiseMessagePiece(piece, writeStrFn, floatFn, argMode);
                 Emit(new Jump(after));
                 Emit(new Label(next));
             }
@@ -3761,7 +4268,7 @@ public partial class IRGenerator
 
         var fn = new Function
         {
-            Name = ExceptionMessagePrinter,
+            Name = printerName,
             ReturnType = DataType.VOID,
             Body = new List<Instruction>(currentInstructions),
             CanFail = false,
@@ -3852,8 +4359,14 @@ public partial class IRGenerator
         return fn;
     }
 
-    private void EmitRaiseMessagePiece(RaiseMessagePiece piece, string writeStrFn, string floatFn)
+    private void EmitRaiseMessagePiece(RaiseMessagePiece piece, string writeStrFn,
+                                       string floatFn, bool argMode = false)
     {
+        if (piece.IsErrnoArg)
+        {
+            EmitErrnoMessagePiece(piece, writeStrFn, floatFn, argMode);
+            return;
+        }
         if (piece.Literal != null)
         {
             EmitStreamStr(writeStrFn, piece.Literal);
@@ -3918,6 +4431,52 @@ public partial class IRGenerator
         }
 
         EmitStreamVal(floatFn, stored, piece.PrintAs);
+    }
+
+    /// An errno piece -- `raise OSError(n)` with an integer n. print(e) renders
+    /// MicroPython's `[Errno n] NAME`; the args contexts (e.args[0], e.args) render the
+    /// bare integer, because args[0] IS that integer. The name is literal text when the
+    /// code is a compile-time constant, and a scan of BuiltinErrnoNames when it is not --
+    /// a register-read errno still gets its symbolic name. A code outside the table
+    /// prints as the bare integer, which is what MicroPython does with it.
+    private void EmitErrnoMessagePiece(RaiseMessagePiece piece, string writeStrFn,
+                                       string floatFn, bool argMode)
+    {
+        var arg0 = new Variable(ExceptionArgVar(0), DataType.INT32);
+        void PrintInt() => EmitStreamVal(floatFn, arg0, DataType.INT32);
+
+        if (piece.ErrnoConstKnown)
+        {
+            if (argMode || !BuiltinErrnoNames.TryGetName(piece.ErrnoConst, out string name))
+                EmitStreamStr(writeStrFn, piece.ErrnoConst.ToString());
+            else
+                EmitStreamStr(writeStrFn, $"[Errno {piece.ErrnoConst}] {name}");
+            return;
+        }
+        if (argMode)
+        {
+            PrintInt();
+            return;
+        }
+
+        // Runtime integer: the `[Errno ` prefix and the symbolic name only print when the
+        // code is a known errno -- each table entry guards its own name, and the
+        // fall-through is the bare number an unknown code prints as.
+        string done = MakeLabel();
+        foreach (var (code, name) in BuiltinErrnoNames.Names)
+        {
+            string next = MakeLabel();
+            Temporary hit = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, arg0, new Constant(code), hit));
+            Emit(new JumpIfZero(hit, next));
+            EmitStreamStr(writeStrFn, "[Errno ");
+            PrintInt();
+            EmitStreamStr(writeStrFn, "] " + name);
+            Emit(new Jump(done));
+            Emit(new Label(next));
+        }
+        PrintInt();
+        Emit(new Label(done));
     }
 
     private void EmitFinallyBody(TryStmt stmt)
