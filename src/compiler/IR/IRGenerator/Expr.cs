@@ -2012,12 +2012,7 @@ public partial class IRGenerator
             if (expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod
                 && AsFloatCt(v2) is null)
             {
-                Temporary isZero = MakeTemp(DataType.UINT8);
-                Emit(new Binary(BinaryOp.Equal, v2, new FloatConstant(0.0), isZero));
-                string divOk = MakeLabel();
-                Emit(new JumpIfZero(isZero, divOk));
-                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
-                Emit(new Label(divOk));
+                EmitDivModZeroCheck(v2, isFloatOp: true);
             }
 
             Temporary floatDst = MakeTemp(isCompare ? DataType.UINT8 : DataType.FLOAT);
@@ -2058,12 +2053,7 @@ public partial class IRGenerator
             }
             if (fb is not FloatConstant)
             {
-                Temporary isZeroI = MakeTemp(DataType.UINT8);
-                Emit(new Binary(BinaryOp.Equal, fb, new FloatConstant(0.0), isZeroI));
-                string divOkI = MakeLabel();
-                Emit(new JumpIfZero(isZeroI, divOkI));
-                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
-                Emit(new Label(divOkI));
+                EmitDivModZeroCheck(fb, isFloatOp: true);
             }
             Temporary fdst = MakeTemp(DataType.FLOAT);
             Emit(new Binary(BinaryOp.Div, fa, fb, fdst));
@@ -2294,10 +2284,7 @@ public partial class IRGenerator
         // catch dispatcher inside a try, else propagates to the caller via the T-flag.
         if (expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod && v2 is not Constant)
         {
-            string divOk = MakeLabel();
-            Emit(new JumpIfNotZero(v2, divOk));
-            EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
-            Emit(new Label(divOk));
+            EmitDivModZeroCheck(v2, isFloatOp: false);
         }
 
         // A comparison answers about VALUES, so both sides have to be read in a type that can
@@ -2318,6 +2305,35 @@ public partial class IRGenerator
 
         Emit(new Binary(MapBinaryOp(expr.Op), v1, v2, dst));
         return dst;
+    }
+
+    // Emits the runtime "is this divisor zero" guard that / // % raise ZeroDivisionError
+    // through, shared by the three call sites above and by divmod() (Call.cs), which builds
+    // its own Binary(FloorDiv)/Binary(Mod) nodes directly and used to skip this guard
+    // entirely -- a runtime-zero divisor answered a silent 0.0 (or dropped the remainder)
+    // instead of raising (PyMCU float-edges campaign). A compile-time-constant zero divisor
+    // is diagnosed by the caller before this is reached; `divisor` here is always a value
+    // the compiler cannot fold. `isFloatOp` selects the float equality test -- comparing the
+    // VALUE against 0.0 catches -0.0 too, unlike a bit test -- versus the plain integer
+    // JumpIfNotZero.
+    private void EmitDivModZeroCheck(Val divisor, bool isFloatOp)
+    {
+        if (isFloatOp)
+        {
+            Temporary isZero = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.Equal, divisor, new FloatConstant(0.0), isZero));
+            string divOk = MakeLabel();
+            Emit(new JumpIfZero(isZero, divOk));
+            EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
+            Emit(new Label(divOk));
+        }
+        else
+        {
+            string divOk = MakeLabel();
+            Emit(new JumpIfNotZero(divisor, divOk));
+            EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
+            Emit(new Label(divOk));
+        }
     }
 
     /// <summary>
