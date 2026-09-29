@@ -5513,6 +5513,31 @@ public partial class IRGenerator
     /// A class attribute whose class defines no `__get__` is not a descriptor and keeps its
     /// #268 meaning: it is the object, and a method call on it reaches that object's method.
     /// </summary>
+    /// <summary>
+    /// A descriptor class that defines <c>__set_name__</c> expects CPython to call it once, at
+    /// class creation, with <c>(owner, attribute_name)</c> -- a descriptor's only way to learn
+    /// what it is attached to (dataclasses-style libraries use it for their own error messages
+    /// and defaults). PyMCU's rewrite never calls it: nothing in the compiler executes user
+    /// code at "the class body finished evaluating" time, which is when CPython does. A
+    /// descriptor that never reads the name it was given (<c>self.name</c> from inside
+    /// __set_name__) behaves identically either way, but the compiler cannot tell that apart
+    /// from one that does -- measured, a descriptor whose __get__ read that name back answered
+    /// with never-initialised storage instead of the name (#419 follow-up) -- so every access
+    /// is refused instead of risking the silent difference.
+    /// </summary>
+    private void RejectSetNameDescriptor(string attrCls, string owner, string member, Expression site)
+    {
+        if (!ClassDefinesMethod(attrCls, "__set_name__")) return;
+        throw UserError(
+            $"'{owner}.{member}' is a descriptor whose class ('{attrCls}') defines "
+            + "__set_name__. PyMCU does not call it: CPython calls __set_name__ once, at class "
+            + "creation, to tell the descriptor its own owner and attribute name, and nothing "
+            + "in the compiler runs user code at that point. Compute whatever __set_name__ "
+            + "would store some other way (an explicit constructor argument), or drop "
+            + "__set_name__ if nothing reads what it sets.",
+            site);
+    }
+
     private Val? TryDescriptorRead(string? baseName, Val receiver, MemberAccessExpr expr)
     {
         if (!TryFindClassAttribute(baseName, expr.Member, out var owner, out var fullName))
@@ -5520,6 +5545,7 @@ public partial class IRGenerator
         if (!instanceClasses.TryGetValue(fullName, out var attrCls)
             || !ClassDefinesMethod(attrCls, "__get__"))
             return null;
+        RejectSetNameDescriptor(attrCls, owner, expr.Member, expr);
 
         string clsName = ClassNameForDescriptorRewrite(owner);
         var attr = new MemberAccessExpr(new VariableExpr(clsName) { Line = expr.Line }, expr.Member)
@@ -5603,6 +5629,7 @@ public partial class IRGenerator
         if (!instanceClasses.TryGetValue(fullName, out var attrCls)
             || !ClassDefinesMethod(attrCls, "__set__"))
             return false;
+        RejectSetNameDescriptor(attrCls, owner, target.Member, target);
 
         string clsName = ClassNameForDescriptorRewrite(owner);
         var attr = new MemberAccessExpr(new VariableExpr(clsName) { Line = target.Line }, target.Member)
@@ -5636,6 +5663,7 @@ public partial class IRGenerator
             || !instanceClasses.TryGetValue(fullName, out var attrCls)
             || !ClassDefinesMethod(attrCls, "__set__"))
             return false;
+        RejectSetNameDescriptor(attrCls, owner, target.Member, target);
 
         string clsName = ClassNameForDescriptorRewrite(owner);
         var attr = new MemberAccessExpr(new VariableExpr(clsName) { Line = target.Line }, target.Member)
