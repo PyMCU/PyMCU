@@ -7102,6 +7102,21 @@ public partial class IRGenerator
                 optionalTagSlots[qn] = tagVar;
                 optionalMembersByName[qn] = stmt.UnionMembers;
                 unionNameDeclared.Add(qn);
+
+                // `x: Optional[bytearray] = None` (or bytes): the payload is not a scalar
+                // the tag byte can widen to -- it is a POINTER, exactly like a plain
+                // bytearray name's storage today (RFC 0009 decision 4 / section 11.2: "a
+                // buffer's value is a name, not a register; a runtime-Optional buffer
+                // wants tag + aliased storage"). Registering the name in bytearrayParams
+                // here is what lets the existing fresh-buffer rebind below (the one a
+                // real subroutine's Optional[bytearray] PARAMETER already used) also fire
+                // for a plain local -- the two are the same storage shape, and the
+                // parameter path already proved it out.
+                if (stmt.UnionMembers.Any(m => m is "bytearray" or "bytes"))
+                {
+                    bytearrayParams.Add(qn);
+                    variableTypes[qn] = DataType.UINT16;
+                }
             }
             return;
         }
