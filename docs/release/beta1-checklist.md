@@ -22,18 +22,18 @@ behaviour only b1 has. It publishes at step 4b.
 
 **The direction of the freeze reversed on 2026-09-25.** This file was written
 for a freeze that lived on `release-b1` and got merged into `main`. It is now
-the other way round: as of 2026-09-29 (second measurement of the day, after
-the float print policy fix), `main` is 959 commits ahead of `release-b1` in
-this repo, 341 ahead in `pymcu-avr`, 33 ahead in `pymcu-circuitpython` and 50
-ahead in `pymcu-micropython`, and the decision is to freeze from `main`. So
-every `git merge --ff-only release-b1` below became `git branch -f release-b1
-main`, which re-points the frozen branch at what is actually being shipped.
-These four counts move every day main does; re-run
+the other way round: as of 2026-09-29 (third measurement of the day, after
+the descriptor protocol P0 fix), `main` is 966 commits ahead of `release-b1`
+in this repo, 344 ahead in `pymcu-avr`, 33 ahead in `pymcu-circuitpython` and
+50 ahead in `pymcu-micropython`, and the decision is to freeze from `main`.
+So every `git merge --ff-only release-b1` below became `git branch -f
+release-b1 main`, which re-points the frozen branch at what is actually
+being shipped. These four counts move every day main does; re-run
 `git rev-list --count release-b1..main` in each repo before actually cutting
 the release rather than trusting the numbers above.
 
 Nothing here pushes or publishes on its own; each numbered stage ends with a
-manual go/no-go. Note that **nothing is on GitHub yet**: 1383 commits across
+manual go/no-go. Note that **nothing is on GitHub yet**: 1393 commits across
 those four repos are local-only (not counting `pymcu-libraries`, tracked
 separately in step 2), so the pushes below are not routine, they are the
 release.
@@ -65,15 +65,20 @@ cd ~/Repos/pymcu-circuitpython && uv run --with pytest python -m pytest tests/co
 cd ~/Repos/pymcu-micropython && uv run --with pytest python -m pytest tests/parity
 ```
 
-Measured 2026-09-29 against `main` at `7e7b693f` (PyMCU) / `f8f053f`
+Measured 2026-09-29 against `main` at `94013656` (PyMCU) / `ab5cf0e`
 (pymcu-avr) / `f8677cc` (pymcu-circuitpython) / `9f602f0`
-(pymcu-micropython), the second pass of the day, after the float print
-policy fix: `just test-unit` 3332 passed, `just test-stdlib` 2146 passed,
-`pytest tests/driver` 1011 passed, all 0 failures. `pymcu-avr`'s full
-integration suite: 3961 passed, 0 failed. `pymcu-circuitpython`'s
-`tests/corpus` and `tests/parity` are both green after the float-print
-re-baseline (the `42_except_as_e_args` size-gate failure this file used to
-flag is fixed, see [State of the beta](../language/state-of-the-beta.md));
+(pymcu-micropython), the third pass of the day, after the descriptor
+protocol P0 fix: `just test-unit` 3337 passed, `just test-stdlib` 2146
+passed, `pytest tests/driver` 1011 passed, all 0 failures. `pymcu-avr`'s
+full integration suite: 3961 passed, 0 failed. The oracle is 440 probes
+now (4 new ones covering the descriptor fix): C# front end 415 passed/11
+tracked/14 skipped, Python front end 412 passed/14 tracked/14 skipped; the
+one probe that used to cite a stale, closed issue (#391, unrelated to what
+it actually tested) now matches CPython, see State of the beta.
+`pymcu-circuitpython`'s `tests/corpus` and `tests/parity` are both green
+after the float-print re-baseline (the `42_except_as_e_args` size-gate
+failure this file used to flag is fixed, see
+[State of the beta](../language/state-of-the-beta.md));
 `pymcu-micropython`'s full suite (`pytest tests/`, not just `tests/parity`)
 is 888/888, independently re-run and confirmed by this pass. The IR
 verifier (`tools/verify_ir.py` in `pymcu-avr`) shows 0 regressions against

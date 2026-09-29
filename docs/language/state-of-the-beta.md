@@ -31,12 +31,12 @@ significant-digit algorithm.
 | CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 240 symbols (180 provided, 60 allowlisted with a reason), 0 unexpected failures (unchanged by this window's commits) | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
 | MicroPython API parity | Every `machine`/`utime`/`uasyncio`/… symbol the real firmware surface defines, checked against this layer | 374 symbols measured, 0 failures, part of 888 tests passing across this layer's full suite (`pytest tests/`, confirmed 2026-09-29). (`tests/parity/report.py`'s own doc-generation pass separately walks the full CPython/typeshed `asyncio` stub with no filter and reports 393 symbols/52 "missing" for `uasyncio`; that is the generator over-counting, not a gap -- `test_uasyncio_parity.py` restricts itself by design to the ~70-name surface a real MicroPython board actually exposes, and every one of those cases passes) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
 | HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 253 facade/API deviations checked: 5 pass strict, 248 currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
-| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 436 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends | Unchanged by this window's commits: C# front end 410 of 422 run pass (290 match, 117 correctly refused, 3 documented divergences), 12 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way). Python front end 407 of 422 run pass (292 match, 112 refused, 3 divergences), 15 tracked, 14 skipped | [`docs/language/oracle.md`](oracle.md) |
+| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 440 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends (4 new probes since the descriptor protocol fix, 528-531) | C# front end: 415 of 426 run pass, 11 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way). Python front end: 412 of 426 run pass, 14 tracked, 14 skipped. Probe `080_descriptor_get_set.py` moved from tracked to passing this window: see below | [`docs/language/oracle.md`](oracle.md) |
 
-The compiler-repo gates on `7e7b693f`: `just test-unit` 3332 passed, `just
+The compiler-repo gates on `94013656`: `just test-unit` 3337 passed, `just
 test-stdlib` 2146 passed, `pytest tests/driver` 1011 passed, `tools/verify_ir.py`
 0 regressions, all 0 failures. `pymcu-avr`'s full integration suite on
-`f8f053f`: 3961 passed, 0 failed. Everything in this paragraph is quoted from
+`ab5cf0e`: 3961 passed, 0 failed. Everything in this paragraph is quoted from
 the gate this window's author ran, not independently re-run by this pass
 except the MicroPython 888 figure above, which was.
 
@@ -49,19 +49,30 @@ the optimizer already proved dead stops rooting the exception tail`, both in
 
 ## What the oracle knows is wrong
 
-The differential oracle does not just count matches. Its 15 tracked probes
+The differential oracle does not just count matches. Its 14 tracked probes
 (measured 2026-09-29 straight from the `# tracked: #N` headers under
-`tests/oracle/probes/` in the `pymcu-avr` repo, both front ends) cover 12
+`tests/oracle/probes/` in the `pymcu-avr` repo, both front ends) cover 11
 distinct filed issues, each probe an `xfail(strict)` case so the suite stays
 green without hiding them. Three probes are `# frontend: py-parser`-scoped
 (only run, and only xfail, under `PYMCU_PY_PARSER=1`): the C# front end sees
-12 xfails, the Python front end sees all 15.
+11 xfails, the Python front end sees all 14.
 
 | Kind | Issues | What it means for a beta-1 program |
 |---|---|---|
 | Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364) OPEN, [#394](https://github.com/PyMCU/PyMCU/issues/394) OPEN (three probes: nested comprehension, filter, instance comprehension), [#395](https://github.com/PyMCU/PyMCU/issues/395) OPEN, [#401](https://github.com/PyMCU/PyMCU/issues/401) OPEN (two probes: `match` sequence pattern on a real array, and its star-pattern sibling under the Python front end), [#426](https://github.com/PyMCU/PyMCU/issues/426) OPEN, [#449](https://github.com/PyMCU/PyMCU/issues/449) OPEN, [#521](https://github.com/PyMCU/PyMCU/issues/521) OPEN (Python front end only), [#522](https://github.com/PyMCU/PyMCU/issues/522) OPEN, [#525](https://github.com/PyMCU/PyMCU/issues/525) OPEN, [#439](https://github.com/PyMCU/PyMCU/issues/439) OPEN (Python front end only) | An unannotated loop accumulator, list comprehensions with more than one clause, a ZCA `__add__`/`__lt__`, `match/case` on a real array (phantom variables, and never checking arity), a method attached to a class after its definition, a type annotation reached through a module alias, PEP 695 type parameters dropped by the Python front end, an `int8`/`uint8` runtime comparison, and (Python front end only) a `match` tuple pattern taking the wrong branch can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. |
 | Correctly refused, misleading reason | [#400](https://github.com/PyMCU/PyMCU/issues/400) OPEN | Reading an `Enum` member outside a plain assignment RHS gives a diagnostic that says the enum class is undefined rather than naming the real limitation. |
-| Stale issue citation, still open | probe `080_descriptor_get_set.py` cites [#391](https://github.com/PyMCU/PyMCU/issues/391), which is CLOSED and titled "A class with no explicit `__init__` cannot be constructed" -- unrelated to what the probe actually exercises (the descriptor protocol, `__get__`/`__set__` on a class attribute: `b.value` returns a wrong value and `b.value = 5` does not call `__set__`, still reproducing today). No open issue currently tracks the descriptor-protocol gap by its real content; the probe's citation needs correcting to a real issue, filed anew if none exists. Not fixed here per this pass's rules. |
+
+**Fixed today, during this release's own prep.** Probe `080_descriptor_get_set.py`
+cited [#391](https://github.com/PyMCU/PyMCU/issues/391) (CLOSED, unrelated title) for
+a still-reproducing bug this page's earlier draft flagged as a stale citation with no
+real issue tracking it: a class attribute literally named `value` whose class defines
+the descriptor protocol never called `__get__`/`__set__`, silently, because `.value`
+was recognized earlier and unconditionally as the MMIO/collapsed-scalar shortcut,
+exactly the name `adafruit_register` and `digitalio` use. Fixed the same day this
+page flagged it; the probe now matches CPython and is no longer tracked. Three new
+shapes that used to hit the same silent path are now refused with a diagnostic
+instead (probes `529`-`531`): writing a non-data descriptor, reading one through the
+class itself, and a descriptor defining `__set_name__`.
 
 Closed since 2026-09-15 and no longer tracked: `#390` (a field read through
 `with ... as`), `#392` (`bytearray()` assigned to `self.field`), `#396`
