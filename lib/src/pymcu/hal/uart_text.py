@@ -168,43 +168,301 @@ def uart_write_hex(value: int32, flags: uint8):
         shift = shift - 4
 
 
-def uart_write_float(value: float):
-    # Two decimals, rounded, on every architecture. The one-decimal truncating
-    # variants that used to live in three of these files disagreed with this one
-    # about what print_float means, and overflowed their accumulator past 6553.5.
+def _f32_scale(num: uint32, t: int16, w: int16, mode: uint8) -> uint32:
+    # Lazy prefix query: floor(num * 2^t / 10^w) without materializing the
+    # decimal expansion. num * 2^t / 10^w = num * 2^(t-w) / 5^w for w >= 0 and
+    # num * 5^(-w) * 2^(t-w) for w < 0, so the work is a multiply-by-5 chain, a
+    # shift, or a divide-by-5 chain on a 16-bit little-endian limb array (the
+    # type set has no u64; a limb multiply or divide step stays in a u32).
+    # The divide steps must run AFTER the shift so the dividend keeps its low
+    # bits, and a right shift can run after a 5-division because the dropped
+    # remainder can never carry into the quotient.
     #
-    # The integer part is taken straight from the value, never from a scaled
-    # accumulator. Scaling the whole value by 100 first caps what can be printed
-    # at 2**32 / 100, so every float past 42949672.95 came out as the same
-    # saturated number -- 1e8 and 1e9 both printed 21474836.48. That is the
-    # cliff uart_write_float_compact already exists to avoid one width down.
-    # Only the fraction is scaled, and it is below 1.0 by construction.
-    if value < 0.0:
-        uart_write(45)
-        # `-value`, not `0.0 - value`: negation is the sign bit, while the
-        # subtraction is a call into the soft-float library on the parts that
-        # have no FPU. Both give the same answer for every value that reaches
-        # here, which is every value strictly below zero.
-        value = -value
-    int_part: uint32 = uint32(value)
-    frac: uint8 = uint8((value - float(int_part)) * 100.0 + 0.5)
-    if frac >= 100:
-        # The rounding carried out of the fraction: 0.999 is 1.00, not 0.100.
-        frac = 0
-        int_part += 1
-    uart_write_decimal_u32(int_part)
-    uart_write(46)
-    # frac is below 100 by construction, so the tens digit is at most nine
-    # subtractions away. Asking for `//` and `%` instead pulled the whole 8-bit
-    # division runtime into the image: 102 bytes on an ATmega328P, for one pair
-    # of digits that never leaves two figures.
-    tens: uint8 = 48
-    while frac >= 10:
-        frac -= 10
-        tens += 1
-    uart_write(tens)
-    if frac != 0:
-        uart_write(frac + 48)
+    # mode 0 returns the quotient (which fits a u32 on every call the scan
+    # makes) with bit 31 set iff the dropped tail was nonzero. mode 1 answers
+    # the digit just past a deeper cut: (quotient mod 10) << 1 | tail-nonzero.
+    limbs: uint16[16] = [0] * 16
+    limbs[0] = uint16(num & 65535)
+    limbs[1] = uint16(num >> 16)
+    nl: int16 = 2
+    remz: uint8 = 0
+    s: int16 = t - w
+    if w < 0:
+        i: int16 = w
+        while i < 0:
+            c: uint32 = 0
+            j: int16 = 0
+            while j < nl:
+                cur: uint32 = uint32(limbs[j]) * 5 + c
+                limbs[j] = uint16(cur & 65535)
+                c = cur >> 16
+                j = j + 1
+            if c != 0:
+                limbs[nl] = uint16(c)
+                nl = nl + 1
+            i = i + 1
+    if s > 0:
+        bs: int16 = s & 15
+        ws: int16 = s >> 4
+        if bs != 0:
+            c2: uint32 = 0
+            j2: int16 = 0
+            while j2 < nl:
+                cur2: uint32 = (uint32(limbs[j2]) << bs) | c2
+                limbs[j2] = uint16(cur2 & 65535)
+                c2 = cur2 >> 16
+                j2 = j2 + 1
+            if c2 != 0:
+                limbs[nl] = uint16(c2)
+                nl = nl + 1
+        while ws > 0:
+            j3: int16 = nl
+            while j3 > 0:
+                limbs[j3] = limbs[j3 - 1]
+                j3 = j3 - 1
+            limbs[0] = 0
+            nl = nl + 1
+            ws = ws - 1
+    if w > 0:
+        iw: int16 = 0
+        while iw < w:
+            c3: uint32 = 0
+            j4: int16 = nl - 1
+            while j4 >= 0:
+                cur3: uint32 = (c3 << 16) | uint32(limbs[j4])
+                limbs[j4] = uint16(cur3 // 5)
+                c3 = cur3 % 5
+                j4 = j4 - 1
+            if c3 != 0:
+                remz = 1
+            iw = iw + 1
+    if s < 0:
+        ws2: int16 = (0 - s) >> 4
+        bs2: int16 = (0 - s) & 15
+        while ws2 > 0 and nl > 0:
+            if limbs[0] != 0:
+                remz = 1
+            j5: int16 = 0
+            while j5 < nl - 1:
+                limbs[j5] = limbs[j5 + 1]
+                j5 = j5 + 1
+            nl = nl - 1
+            ws2 = ws2 - 1
+        if bs2 != 0 and nl > 0:
+            j6: int16 = nl - 1
+            c4: uint32 = 0
+            mask: uint32 = uint32((1 << bs2) - 1)
+            while j6 >= 0:
+                nc4: uint32 = uint32(limbs[j6]) & mask
+                limbs[j6] = uint16((uint32(limbs[j6]) >> bs2) | (c4 << (16 - bs2)))
+                c4 = nc4
+                j6 = j6 - 1
+            if c4 != 0:
+                remz = 1
+    if mode != 0:
+        c5: uint32 = 0
+        j7: int16 = nl - 1
+        while j7 >= 0:
+            cur5: uint32 = (c5 << 16) | uint32(limbs[j7])
+            c5 = cur5 % 10
+            j7 = j7 - 1
+        return uint32((c5 << 1) | uint32(remz))
+    q: uint32 = uint32(limbs[0])
+    if nl > 1:
+        q = q | (uint32(limbs[1]) << 16)
+    return q | (uint32(remz) << 31)
+
+
+def _f32_repr(value: float, out: bytearray) -> uint8:
+    # print(value)/str(value)/repr(value) for an IEEE-754 binary32, following
+    # MicroPython's float policy (mp_format_float on a single-precision
+    # build): exactly 7 significant digits, half-to-even on the value's exact
+    # decimal expansion, trailing zeros dropped, laid out the way CPython
+    # lays floats out -- fixed notation while the decimal point sits inside
+    # -4..16, scientific outside it, 'inf'/'nan' for the non-finite
+    # encodings, and the sign kept on zero. out gets the characters; returns
+    # the count (<= 19).
+    #
+    # This is NOT the shortest round-trip repr (Ryu/Grisu/Errol): an earlier
+    # version here searched the rounding interval for the shortest digit
+    # count that identifies the float32 exactly, which is what CPython's
+    # repr does for float64. That routine measured ~4.2 KB of AVR flash on
+    # top of _f32_scale's ~2.2 KB, well past the ~2 KB budget for a HAL
+    # helper, and a fixed digit count buys back most of it: no lo/hi bound
+    # tracking, no scan over candidate digit counts, one _f32_scale call for
+    # the digits and one for the rounding decision.
+    bits: uint32 = bitcast(uint32, value)
+    sign: uint32 = bits >> 31
+    e: int16 = int16((bits >> 23) & 255)
+    mant: uint32 = bits & 8388607
+    pos: uint8 = 0
+    if e == 255:
+        if mant != 0:
+            out[0] = 110
+            out[1] = 97
+            out[2] = 110          # 'nan' -- CPython drops a nan's sign bit
+            return 3
+        if sign != 0:
+            out[0] = 45
+            pos = 1
+        out[pos] = 105
+        out[pos + 1] = 110
+        out[pos + 2] = 102        # 'inf'
+        return pos + 3
+    if e == 0 and mant == 0:
+        if sign != 0:
+            out[0] = 45
+            pos = 1
+        out[pos] = 48
+        out[pos + 1] = 46
+        out[pos + 2] = 48         # '0.0' / '-0.0'
+        return pos + 3
+    if sign != 0:
+        out[0] = 45
+        pos = 1
+    m: uint32 = mant | 8388608
+    e2: int16 = e - 150
+    if e == 0:
+        m = mant
+        e2 = -149
+    # he10 = the decimal digit count of the value: the smallest he10 with
+    # 10^(he10-1) <= v. Estimated from bit length -- log10(2) ~ 77/256 and
+    # log2(5) ~ 37/16 -- then corrected by probing the top digit.
+    nb: int16 = 0
+    hb: uint32 = m
+    while hb != 0:
+        hb = hb >> 1
+        nb = nb + 1
+    if e2 >= 0:
+        nb = nb + e2
+    else:
+        nb = nb + (((0 - e2) * 37) >> 4)
+    he10: int16 = ((nb * 77) >> 8) + 1
+    if e2 < 0:
+        he10 = he10 + e2
+    while True:
+        pk: uint32 = _f32_scale(m, e2, he10 - 1, 0) & 2147483647
+        if pk == 0:
+            he10 = he10 - 1
+        elif pk >= 10:
+            he10 = he10 + 1
+        else:
+            break
+    # Exactly 7 significant digits (MicroPython's float32 precision), the
+    # last one half-to-even on the value's exact decimal expansion. w is
+    # that last digit's weight; xf is the rounded 7-digit prefix. A round-up
+    # can carry out to 10**7 (9.9999996 -> 10000000): the digit-extraction
+    # below turns that into an 8th digit and decpt absorbs it, so no special
+    # case is needed here.
+    w: int16 = he10 - 7
+    xf: uint32 = _f32_scale(m, e2, w, 0) & 2147483647
+    vr: uint32 = _f32_scale(m, e2, w - 1, 1)
+    dr: uint32 = vr >> 1
+    if dr > 5 or (dr == 5 and ((vr & 1) != 0 or (xf & 1) != 0)):
+        xf = xf + 1
+    xw: int16 = w
+    # xd gets X's digits least significant first; trailing zeros (the head of
+    # xd) drop, the significant count is nd, and the decimal point sits nd
+    # digits before X * 10**xw itself.
+    xd: uint8[10] = [0] * 10
+    nd: int32 = 0
+    xt: uint32 = xf
+    while xt > 0:
+        xd[nd] = uint8(xt % 10)
+        xt = xt // 10
+        nd = nd + 1
+    decpt: int32 = xw + nd
+    while nd > 1 and xd[0] == 0:
+        zi: int32 = 0
+        while zi < nd - 1:
+            xd[zi] = xd[zi + 1]
+            zi = zi + 1
+        nd = nd - 1
+    if decpt <= -4 or decpt > 16:
+        # d[.ddd]e+NN -- the exponent is always two digits on float32's range.
+        out[pos] = xd[nd - 1] + 48
+        pos = pos + 1
+        if nd > 1:
+            out[pos] = 46
+            pos = pos + 1
+            i3: int32 = 1
+            while i3 < nd:
+                out[pos] = xd[nd - 1 - i3] + 48
+                pos = pos + 1
+                i3 = i3 + 1
+        out[pos] = 101
+        pos = pos + 1
+        ex: int32 = decpt - 1
+        if ex < 0:
+            out[pos] = 45
+            pos = pos + 1
+            ex = 0 - ex
+        else:
+            out[pos] = 43
+            pos = pos + 1
+        out[pos] = uint8(ex // 10) + 48
+        pos = pos + 1
+        out[pos] = uint8(ex % 10) + 48
+        pos = pos + 1
+    elif decpt <= 0:
+        # 0.00ddd -- leading zeros between the point and the digits.
+        out[pos] = 48
+        pos = pos + 1
+        out[pos] = 46
+        pos = pos + 1
+        i4: int32 = decpt
+        while i4 < 0:
+            out[pos] = 48
+            pos = pos + 1
+            i4 = i4 + 1
+        i4 = 0
+        while i4 < nd:
+            out[pos] = xd[nd - 1 - i4] + 48
+            pos = pos + 1
+            i4 = i4 + 1
+    elif nd <= decpt:
+        # ddd000.0 -- the digits, zero-padded out to the point, then '.0'.
+        i5: int32 = 0
+        while i5 < nd:
+            out[pos] = xd[nd - 1 - i5] + 48
+            pos = pos + 1
+            i5 = i5 + 1
+        i5 = nd
+        while i5 < decpt:
+            out[pos] = 48
+            pos = pos + 1
+            i5 = i5 + 1
+        out[pos] = 46
+        pos = pos + 1
+        out[pos] = 48
+        pos = pos + 1
+    else:
+        # dd.ddd -- the point lands inside the digits.
+        i6: int32 = 0
+        while i6 < decpt:
+            out[pos] = xd[nd - 1 - i6] + 48
+            pos = pos + 1
+            i6 = i6 + 1
+        out[pos] = 46
+        pos = pos + 1
+        while i6 < nd:
+            out[pos] = xd[nd - 1 - i6] + 48
+            pos = pos + 1
+            i6 = i6 + 1
+    return pos
+
+
+def uart_write_float(value: float):
+    # MicroPython's 7-significant-digit float policy (see _f32_repr).
+    # The character hopper is cheap insurance: the longest answer is
+    # "-340282346638528859811704183484516925440.0"-shaped fixed notation at
+    # decpt 16, which is 19 bytes.
+    out: uint8[20] = [0] * 20
+    n: uint8 = _f32_repr(value, out)
+    i: uint8 = 0
+    while i < n:
+        uart_write(out[i])
+        i = i + 1
 
 
 def _float_fmt_digits(value: float, prec: uint8, digs: bytearray) -> uint32:

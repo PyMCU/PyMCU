@@ -10,6 +10,7 @@ same way the generated code does.
 """
 
 import ast
+import struct
 import textwrap
 from pathlib import Path
 
@@ -81,13 +82,17 @@ def load(source: Path):
     """Execute every writer a HAL file defines, in one namespace: they call each other."""
     tree = ast.parse(source.read_text())
     wanted = [n for n in tree.body
-              if isinstance(n, ast.FunctionDef) and n.name in WRITERS]
+              if isinstance(n, ast.FunctionDef)
+              and (n.name in WRITERS or n.name in ("_f32_scale", "_f32_repr"))]
     if not wanted:
         return {}
 
     printed = []
     env = {"__narrow": truncate,
            "uart_write": lambda b: printed.append(int(b) & 0xFF),
+           # uart_write_float's only bitcast is a float reinterpreted as its
+           # bit pattern, so the target-type argument can be ignored here.
+           "bitcast": lambda t, v: struct.unpack("<I", struct.pack("<f", v))[0],
            "uint8": lambda v: truncate("uint8", v), "uint16": lambda v: truncate("uint16", v),
            "uint32": lambda v: truncate("uint32", v), "int16": lambda v: truncate("int16", v),
            "int32": lambda v: truncate("int32", v)}
@@ -109,7 +114,7 @@ def load(source: Path):
             return "".join(chr(b) for b in printed)
         return run
 
-    return {n.name: caller(n.name, ARGUMENT_TYPE[n.name]) for n in wanted}
+    return {n.name: caller(n.name, ARGUMENT_TYPE[n.name]) for n in wanted if n.name in WRITERS}
 
 
 ARGUMENT_TYPE = {"uart_write_decimal_u8": "uint8", "uart_write_decimal_u16": "uint16",
