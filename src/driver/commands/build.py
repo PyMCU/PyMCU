@@ -273,31 +273,80 @@ def _imports_board(sources_dir: Path) -> bool:
     return False
 
 
+def _module_level_shadows(tree: ast.Module, name: str) -> bool:
+    """True if *name* is bound at module level (a def, a class, an assignment or
+    an import), which shadows the builtin of the same spelling for every call to
+    the bare name anywhere in the module."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
+            return True
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == name for t in node.targets
+        ):
+            return True
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+            return True
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+            return True
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if (alias.asname or alias.name) == name:
+                    return True
+    return False
+
+
 def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     """Scan .py files in sources_dir.
 
     Returns (has_print, has_uart, has_input):
-      has_print -- True if any file contains a print() call
-      has_uart  -- True if any file explicitly constructs a UART() instance
-      has_input -- True if any file contains an input() call
+      has_print -- True if any file calls the builtin print(): a bare-name call
+                   (`print(...)`, not `lcd.print(...)`) not shadowed by a
+                   module-level `print` of the user's own.
+      has_uart  -- True if any file explicitly constructs a UART() instance: by
+                   its bare name, by an import alias (`from ... import UART as
+                   Serial`), or fully qualified (`pymcu.hal...uart.UART(...)`).
+      has_input -- same rule as has_print, for input().
     """
     has_print = False
     has_uart  = False
     has_input = False
     for py_file in sources_dir.rglob("*.py"):
-        try:
-            # Strip inline comments from each line before matching to avoid
-            # false positives from comment text (e.g. "# Output on UART (9600 baud)")
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
+        tree = _ast_module_or_none(py_file)
+        if tree is None:
+            # Unparseable: fall back to the previous text scan so a construct
+            # CPython's ast can't read never silently drops a real usage.
+            try:
+                lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+                code = "\n".join(line.split("#")[0] for line in lines)
+            except OSError:
+                continue
             if not has_print and _PRINT_RE.search(code):
                 has_print = True
             if not has_uart and _UART_RE.search(code):
                 has_uart = True
             if not has_input and _INPUT_RE.search(code):
                 has_input = True
-        except OSError:
-            pass
+            if has_print and has_uart and has_input:
+                break
+            continue
+
+        print_shadowed = _module_level_shadows(tree, "print")
+        input_shadowed = _module_level_shadows(tree, "input")
+        uart_aliases = {"UART"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "UART":
+                        uart_aliases.add(alias.asname or alias.name)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                bare, attr = _call_target_names(node)
+                if not has_print and bare == "print" and not print_shadowed:
+                    has_print = True
+                if not has_input and bare == "input" and not input_shadowed:
+                    has_input = True
+                if not has_uart and (bare in uart_aliases or attr == "UART"):
+                    has_uart = True
         if has_print and has_uart and has_input:
             break
     return has_print, has_uart, has_input
