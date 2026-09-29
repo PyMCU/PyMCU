@@ -172,10 +172,17 @@ lcd.print_str(f"{hours:02d}:{mins:02d}")
 Compile-time constant
 interpolations (`f"text={const}"`) are folded into the flash string as before.
 
-A **streamed** interpolation accepts a `float` and prints it the way CPython does for the
-common cases — two decimals, rounded, with a trailing zero trimmed but never past the first
-decimal (`3.25`, `-2.25`, `0.05`, `123.75` and `1234.5` all print exactly). `print(x)` on a
-`float` uses the same formatter. Under a `.{N}f` spec the value formats with exactly N
+A **streamed, unformatted** interpolation (`f"{x}"` with no spec) accepts a `float` and
+prints it the way MicroPython does on a float32 build (`mp_format_float`), not the way
+CPython does on a float64: exactly 7 significant digits, half-to-even on the float32's
+exact decimal expansion, trailing zeros dropped, and CPython's own fixed-vs-scientific
+threshold (fixed notation while the decimal point sits inside `-4..16`, scientific
+outside it): `0.1` prints `0.1`, `math.pi` prints `3.1415927` truncated to
+`3.141593` at 7 significant digits, `1e20` prints `1e+20`, `1.0` prints `1.0`.
+`print(x)`, `str(x)` and `repr(x)` on a `float` use the same formatter (`_f32_repr` in
+`lib/src/pymcu/hal/uart_text.py`); see the note on `float` below for why this policy was
+chosen over CPython's shortest round-trip repr. Under a `.{N}f` spec the value formats
+with exactly N
 decimals — the digits come from the float32's exact decimal expansion, so a `.5` boundary
 is a real tie and rounds half-to-even, matching CPython (`f"{2.5:.0f}"` is `"2"`,
 `f"{2.675:.2f}"` is `"2.67"`). Both sink kinds share the formatter, so the value form
@@ -684,6 +691,43 @@ and a parameter annotated `x: ColorUnion` reads it exactly as if the union were 
 pure-assembly helper library. Expect ~200-400 cycles per operation. Subnormals are treated as
 zero; NaN and Inf propagate correctly. `uint32(x * 100.0 + 0.5)` and the other float→int
 casts truncate toward zero on the real value, not on its raw bit pattern.
+
+**Note on the unformatted float print policy:** an unformatted `float` -- `print(x)`,
+`str(x)`, `repr(x)`, `f"{x}"` with no spec -- follows MicroPython's float32 policy
+(`mp_format_float`: 7 significant digits, half-to-even, trailing zeros dropped, CPython's
+fixed-vs-scientific threshold), not CPython's own shortest-round-trip repr. Two designs
+were measured for AVR (`lib/src/pymcu/hal/uart_text.py`, `_f32_repr` + `_f32_scale`, both
+built on the same bignum "decimal-prefix at an arbitrary weight" primitive):
+
+| Design | `_f32_repr` | `_f32_scale` | total |
+| --- | --- | --- | --- |
+| CPython-style shortest round-trip (searches 1..9 significant digits for the shortest one that still identifies the float32) | ~5.8 KB | ~3.1 KB | ~8.9 KB |
+| MicroPython's fixed 7 significant digits (one pass, no search) | ~4.2 KB | ~3.1 KB | ~7.3 KB |
+
+(measured as the byte range between consecutive top-level symbols in an atmega328p build's
+`.elf`, via `avr-objdump -d` / `avr-nm`; the two `_f32_scale` figures differ by ~60 bytes of
+linker branch-relaxation noise around identical code, not a real difference.) Neither design
+reaches a "~2 KB HAL helper" budget -- a correctly-rounded decimal expansion of an arbitrary
+binary32 needs bignum arithmetic (no `uint64` in the AVR backend, so it runs on 16-bit limbs),
+and that dominates the cost before the digit-selection policy on top of it does. The fixed
+7-digit policy was chosen: it is MicroPython's and CircuitPython's own float32 behaviour (the
+compatibility layers' reference), it is ~1.6 KB smaller, and it is unconditionally simpler
+(one `_f32_scale` call for the digits, one for the rounding decision, versus a loop that
+calls it up to four times per candidate digit count).
+
+**Cost**: a program that never reads a `float` pays nothing (`_f32_repr`/`_f32_scale` are
+never linked in). A program with `float` arithmetic but no float print also pays nothing for
+these two symbols specifically -- print's lazy linking is independent of the soft-float
+arithmetic library. A program that prints one `float` (via `print(x)`, the streamed path)
+pays `_f32_repr` + `_f32_scale` in full: measured at 8506 bytes total flash for a minimal
+atmega328p program with one `print(float)`, against 344 bytes for the same program printing
+a `uint8` instead -- but most of that gap is the soft-float support the print did not add
+(`__divsf3`, `__floatunsisf`, the `__div32`/`__mod32` family): the two repr symbols
+themselves are ~4.2 KB + ~3.1 KB = ~7.3 KB of that 8506. The buffered path (`str(x)`,
+`repr(x)`, an unformatted `f"{x}"` value) reuses the same `_f32_repr`/`_f32_scale` and adds
+a small `_fs_frepr` wrapper plus the runtime-string buffer machinery a value interpolation
+already pays for any type: +432 bytes measured over the streamed `print(x)` baseline for
+`s = f"{x}"; print(s)` on the same program.
 ARM and PIC18 have `float` too (RP2040 through the bootrom fast-float library, RP2350
 through the M33 FPU). **PIC16 and RISC-V have no floating point at all** -- even a bare
 `x: float = 1.5` fails there, today with an unlocated backend message rather than a proper
@@ -1130,7 +1174,7 @@ never parks.
 | Built-in | Status | Notes |
 |---|---|---|
 | `print(str)` / `print(int)` | ✅ Supported | Routes to UART |
-| `print(float)` | ✅ Supported | Two rounded decimals, trailing zero trimmed (`3.25`, `1234.5`) |
+| `print(float)` / `str`/`repr`/unformatted `f"{x}"` | ✅ Supported | MicroPython's float32 policy: 7 significant digits, half-to-even, trailing zeros trimmed, CPython's fixed/scientific threshold (`0.1`, `3.141593`, `1e+20`) |
 | `print(bytearray)` / `print(arr[a:b])` | ✅ Supported | CPython repr — `bytearray(b'\xcc\x10')`; length must be compile-time |
 | `range(n)` | ✅ Supported | For-loop bounds, runtime or constant; the counter is sized from the bounds. Also `x in range(...)`, `reversed(range(...))`, `enumerate(range(...))`. Not a value: `r = range(4)` is a `CompileError` |
 | `len(arr)` / `len(b"...")` | ✅ Supported | Compile-time constant fold |
