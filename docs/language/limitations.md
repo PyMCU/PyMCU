@@ -458,9 +458,18 @@ branch is refused, naming the branch.
 | `__new__` | An instance is laid out in static storage with no allocation call, so there is nothing to intercept and no object to hand back | Do the work in `__init__`, or a module-level factory function that returns the instance. Refused where the method is written |
 | `__init_subclass__` | A class is a compile-time layout with no class object and no creation event | Do the work in each subclass's `__init__`. Refused where the method is written |
 | `__del__` | Storage is static, nothing collects an instance, and `del` is refused for the same reason, so there is no moment a destructor could run at | `deinit()` / `close()` called by name, or a `with` block's `__exit__`. The method compiles and is reported as a warning for every class the program constructs |
+| Descriptor `__set_name__` | CPython calls it once, at class creation, to tell the descriptor its own owner and attribute name; nothing in the compiler runs user code at that point | Compute whatever `__set_name__` would store some other way (an explicit constructor argument). Refused by name on every access to the descriptor, read or write |
+| Descriptor read through the class itself (`Box.value`, not `b.value`) | CPython calls `type(attr).__get__(attr, None, Box)`; PyMCU's descriptor rewrite (#360) always evaluates a receiver INSTANCE to pass as `obj`, and there is none here | Read the descriptor through an instance. The explicit spelling still works when the class defines `__get__`: `Box.value.__get__(b, Box)` |
+| Write to a non-data descriptor (`__get__` only, no `__set__`) | CPython lets `b.attr = v` create a per-instance override in `b.__dict__` that shadows the class attribute for later reads; PyMCU lays instances out at compile time and has no per-instance dict to create one in | Add a `__set__` method (a data descriptor is written correctly, #360/#419), or give the instance its own field under a different name |
 | `dataclass` | Metaclass + runtime heap | Manual `@inline` class |
 | `namedtuple` **defaults / rename / module** | Extra factory kwargs | `Name = namedtuple("Name", ("a", "b"))` -- two positional arguments. The assignment is a ZCA class |
 | `namedtuple` index `p[0]` | Not a tuple subclass | Field access `p.x`; `__match_args__` is set so a class pattern binds in field order |
+
+A data descriptor's `__get__`/`__set__` (#360, #419) is reached even when the attribute is
+literally named `value` (`obj.value` on an `adafruit_register`/`digitalio`-style descriptor):
+that name used to fall to the `.value` MMIO-register / collapsed-single-field-instance
+shortcut first and unconditionally, so the descriptor's own methods were never called and the
+read answered with un-constructed storage instead, silently, with no diagnostic.
 
 **Supported:** ZCA `@inline` classes (zero SRAM), `@property` / `@name.setter`,
 single-level class inheritance with `super()`, `with obj:` context managers
