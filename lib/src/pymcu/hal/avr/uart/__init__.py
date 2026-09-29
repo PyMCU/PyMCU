@@ -75,7 +75,15 @@ from pymcu.hal.uart_text import (
     uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32,
 )
 
-if __CHIP__.name == "attiny2313":
+# uart_write_float (the correct formatter: MicroPython's 7-significant-digit
+# float32 policy) pulls in _f32_repr + _f32_scale, ~7.3 KB together -- more
+# than the entire flash of a 4 KB part. attiny2313 (2 KB) was already routed
+# to the compact one-decimal writer for the same reason before this pair
+# existed; attiny4313 and atmega48/48p are 4 KB parts that fit the OLD,
+# wrong, fixed-two-decimals formatter but cannot fit the correct one either.
+# The threshold is flash size, not a chip list: any AVR part with 4 KB or
+# less of flash cannot hold the correct writer, whichever chip it is.
+if __CHIP__.flash_size <= 4096:
     from pymcu.hal.uart_text import uart_write_float_compact as uart_write_float
 else:
     from pymcu.hal.uart_text import uart_write_float
