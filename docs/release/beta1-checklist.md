@@ -22,18 +22,18 @@ behaviour only b1 has. It publishes at step 4b.
 
 **The direction of the freeze reversed on 2026-09-25.** This file was written
 for a freeze that lived on `release-b1` and got merged into `main`. It is now
-the other way round: as of 2026-09-29 (third measurement of the day, after
-the descriptor protocol P0 fix), `main` is 966 commits ahead of `release-b1`
-in this repo, 344 ahead in `pymcu-avr`, 33 ahead in `pymcu-circuitpython` and
-50 ahead in `pymcu-micropython`, and the decision is to freeze from `main`.
-So every `git merge --ff-only release-b1` below became `git branch -f
-release-b1 main`, which re-points the frozen branch at what is actually
-being shipped. These four counts move every day main does; re-run
-`git rev-list --count release-b1..main` in each repo before actually cutting
-the release rather than trusting the numbers above.
+the other way round: as of 2026-09-29 (fourth measurement of the day, after
+the five by-name-not-by-what-it-is fixes), `main` is 972 commits ahead of
+`release-b1` in this repo, 344 ahead in `pymcu-avr`, 33 ahead in
+`pymcu-circuitpython` and 50 ahead in `pymcu-micropython`, and the decision
+is to freeze from `main`. So every `git merge --ff-only release-b1` below
+became `git branch -f release-b1 main`, which re-points the frozen branch at
+what is actually being shipped. These four counts move every day main does;
+re-run `git rev-list --count release-b1..main` in each repo before actually
+cutting the release rather than trusting the numbers above.
 
 Nothing here pushes or publishes on its own; each numbered stage ends with a
-manual go/no-go. Note that **nothing is on GitHub yet**: 1393 commits across
+manual go/no-go. Note that **nothing is on GitHub yet**: 1399 commits across
 those four repos are local-only (not counting `pymcu-libraries`, tracked
 separately in step 2), so the pushes below are not routine, they are the
 release.
@@ -65,11 +65,17 @@ cd ~/Repos/pymcu-circuitpython && uv run --with pytest python -m pytest tests/co
 cd ~/Repos/pymcu-micropython && uv run --with pytest python -m pytest tests/parity
 ```
 
-Measured 2026-09-29 against `main` at `94013656` (PyMCU) / `ab5cf0e`
+Measured 2026-09-29 against `main` at `13703a55` (PyMCU) / `ab5cf0e`
 (pymcu-avr) / `f8677cc` (pymcu-circuitpython) / `9f602f0`
-(pymcu-micropython), the third pass of the day, after the descriptor
-protocol P0 fix: `just test-unit` 3337 passed, `just test-stdlib` 2146
-passed, `pytest tests/driver` 1011 passed, all 0 failures. `pymcu-avr`'s
+(pymcu-micropython), the fourth pass of the day, after five fixes for
+deciding by a name's spelling instead of what it resolves to (a user's own
+`delay_ms`/`sleep_ms`/`delay_us`/`sleep_us` silently never called; a
+comment mentioning `millis_init`/`clock_init`/`ticks_ms`/`micros`
+silently suppressing or injecting the time base; `print`/`input`/`UART`
+detected by text instead of a real call; a user class named like `UART`/
+`LCD` having its own stream method silently swapped for the console UART):
+`just test-unit` 3350 passed, `just test-stdlib` 2146 passed,
+`pytest tests/driver` 1027 passed, all 0 failures. `pymcu-avr`'s
 full integration suite: 3961 passed, 0 failed. The oracle is 440 probes
 now (4 new ones covering the descriptor fix): C# front end 415 passed/11
 tracked/14 skipped, Python front end 412 passed/14 tracked/14 skipped; the

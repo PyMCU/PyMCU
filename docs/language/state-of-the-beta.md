@@ -10,18 +10,20 @@ for the per-backend maturity labels and why.
 This page collects the numbers from the five suites that back that claim,
 each with a link to the page that explains what it measures and how to
 reproduce it. **Measured 2026-09-29** against `pymcu-compiler`/`pymcu-stdlib`
-main at `7e7b693f`, `pymcu-avr` main at `f8f053f`, `pymcu-circuitpython` main
+main at `13703a55`, `pymcu-avr` main at `ab5cf0e`, `pymcu-circuitpython` main
 at `f8677cc`, `pymcu-micropython` main at `9f602f0`, both compiler front ends
-where the suite runs both. This is the second measurement of the day: the
-first (against `6f8d2149`/`07e307f`/`e5d3238`) found the corpus failure and
-the CircuitPython blink-size gap this section used to describe below; both
-were fixed by the float print policy change and the exception-tail fix that
-landed afterward (see the CHANGELOG), so this pass is a re-measurement, not
-a repeat of the same numbers. The float print policy change is this
-window's most user-visible fix outside the suites below: every beta-1
-program that prints a `float` used to get two fixed decimals silently
-(`print(0.001)` printed `0.0`) and now gets MicroPython's real
-significant-digit algorithm.
+where the suite runs both. This is the fourth measurement of the day; each
+earlier one found something the next fixed (the corpus size-gate failure and
+a CircuitPython blink-size gap, the descriptor protocol P0 fix, and now five
+more silent bugs from deciding by a name's spelling rather than what it
+resolves to), so treat this as the current state, not a delta worth
+re-deriving from the earlier ones (see the CHANGELOG for the full history
+of the day). The float print policy change and the descriptor protocol fix
+are this window's most user-visible fixes outside the suites below: every
+beta-1 program that prints a `float` used to get two fixed decimals
+silently (`print(0.001)` printed `0.0`), and a class attribute named `value`
+defining `__get__`/`__set__` (exactly how `adafruit_register`/`digitalio`
+spell a descriptor) never called it.
 
 ## The five suites
 
@@ -33,8 +35,8 @@ significant-digit algorithm.
 | HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 253 facade/API deviations checked: 5 pass strict, 248 currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
 | Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 440 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends (4 new probes since the descriptor protocol fix, 528-531) | C# front end: 415 of 426 run pass, 11 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way). Python front end: 412 of 426 run pass, 14 tracked, 14 skipped. Probe `080_descriptor_get_set.py` moved from tracked to passing this window: see below | [`docs/language/oracle.md`](oracle.md) |
 
-The compiler-repo gates on `94013656`: `just test-unit` 3337 passed, `just
-test-stdlib` 2146 passed, `pytest tests/driver` 1011 passed, `tools/verify_ir.py`
+The compiler-repo gates on `13703a55`: `just test-unit` 3350 passed, `just
+test-stdlib` 2146 passed, `pytest tests/driver` 1027 passed, `tools/verify_ir.py`
 0 regressions, all 0 failures. `pymcu-avr`'s full integration suite on
 `ab5cf0e`: 3961 passed, 0 failed. Everything in this paragraph is quoted from
 the gate this window's author ran, not independently re-run by this pass
@@ -160,6 +162,30 @@ bytes while sixteen cost 4746. The cause is measured and the one-condition
 fix is verified; what is not done is the program-by-program account of
 which corpus programs change size, and that is not work to land days
 before a release.
+
+## Two more, known and not yet filed
+
+Found during this release's own prep (reported by the `b1size` measurement pass, not
+independently reproduced on this page; no oracle probe or fixture pins either one yet,
+and neither has a filed issue):
+
+- **`x.value += n` refuses to compile in a class with more than one field, or one that
+  declares `@property value`, while the identical program with the field renamed to
+  anything other than `value` compiles.** This is the same `.value` MMIO/collapsed-scalar
+  shortcut the descriptor protocol fix above had to out-prioritize, in a shape that fix
+  did not cover: an augmented assignment (`+=`, not a plain read or a plain `=`) on a
+  field literally named `value`, on a class the shortcut does not otherwise treat
+  specially (no descriptor, more than the one field a single-field ZCA collapse allows).
+  Correctly refused rather than silently miscompiled, as far as is known, but the
+  refusal's own diagnostic was not checked for naming the real cause.
+- **A user's own function named `claim` or `asm` becomes reserved the moment any stdlib
+  module imports `pymcu.types`** (which is nearly every stdlib module, directly or
+  transitively) -- a program defining `def claim(...)` or `def asm(...)` for its own
+  purposes collides with a name the compiler treats specially once that import is
+  present, whether or not the program's own code ever imports `pymcu.types` by name
+  itself. Neither the exact failure mode (refusal vs. silent wrong dispatch) nor a
+  minimal repro is recorded here; this row exists so the collision is not lost before
+  someone reproduces and files it properly.
 
 ## What "beta" does and does not claim
 
