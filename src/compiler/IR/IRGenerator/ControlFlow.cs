@@ -3496,6 +3496,95 @@ public partial class IRGenerator
     private bool RaiseSiteArgIsInt(RaisedSite site)
         => RaiseSiteArg(site) is { } arg && IsStaticallyInt(site, arg);
 
+    /// The narrowest DataType this site's integer raise argument is proven to fit: a
+    /// constant's own magnitude, or a runtime expression's declared type resolved under
+    /// the site's own scope (function param, an annotated local, a module global, an
+    /// instance field). Falls back to INT32 -- the arg word's own width -- for anything
+    /// this ladder cannot narrow (a register `.value` read, a computed expression, an
+    /// unannotated local seen only as "some int"); that default is always safe, because
+    /// it is the width the value is already stored at, never a truncation of it.
+    private DataType RaiseSiteArgWidth(RaisedSite site)
+        => RaiseSiteArg(site) is { } arg
+            ? ExprIntWidth(arg, site.ModulePrefix, site.FnFullName, site.FnDef)
+            : DataType.INT32;
+
+    private DataType ExprIntWidth(Expression e, string modulePrefix, string? fnFullName,
+                                  PyMCU.Frontend.FunctionDef? fnDef)
+    {
+        if (IsStaticallyIntExpr(e, modulePrefix, fnFullName, fnDef, out int cv, out bool isConst)
+            && isConst)
+            return ConstIntWidth(cv);
+        if (e is VariableExpr ve)
+        {
+            if (fnFullName != null && functionParams.TryGetValue(fnFullName, out var ps))
+            {
+                int pi = ps.IndexOf(ve.Name);
+                if (pi >= 0 && functionParamTypes.TryGetValue(fnFullName, out var pts)
+                    && pi < pts.Count)
+                    return pts[pi];
+            }
+            if (fnDef != null && LocalIntBindingWidth(fnDef, ve.Name) is { } localWidth)
+                return localWidth;
+            foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
+                if (variableTypes.TryGetValue(key, out var vt)) return vt;
+            foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
+                if (mutableGlobals.TryGetValue(key, out var gt)) return gt;
+            if (globals.TryGetValue(modulePrefix + ve.Name, out var gv)
+                || globals.TryGetValue(ve.Name, out gv))
+                return gv.Type;
+        }
+        if (e is MemberAccessExpr ma && ma.Object is VariableExpr ove
+            && InstanceClassOfName(ove.Name) is { } fieldCls
+            && TryGetSlotFieldLayout(fieldCls, ma.Member, out _, out var fieldType, out _))
+            return fieldType;
+        return DataType.INT32;
+    }
+
+    /// `n: T = <expr>` / `n: T` inside the raising function, T read off the declaration --
+    /// the width half of LocalIntBinding's answer, using the same walk and the same "last
+    /// textual write decides" rule. Null (not false) when the function never annotates the
+    /// name, so the caller's own INT32 default applies rather than a narrower guess.
+    private DataType? LocalIntBindingWidth(PyMCU.Frontend.FunctionDef? fnDef, string name)
+    {
+        if (fnDef?.Body is not PyMCU.Frontend.Block body) return null;
+        DataType? seen = null;
+        foreach (var st in TypeInference.WalkStatements(body.Statements))
+        {
+            switch (st)
+            {
+                case PyMCU.Frontend.AnnAssign { Target: var at } an when at == name:
+                    seen = DataTypeExtensions.StringToDataType(an.Annotation);
+                    break;
+                case PyMCU.Frontend.VarDecl vd when vd.Name == name:
+                    seen = DataTypeExtensions.StringToDataType(vd.VarType);
+                    break;
+            }
+        }
+        return seen;
+    }
+
+    private static DataType ConstIntWidth(int value)
+        => value < 0
+            ? (value >= short.MinValue ? DataType.INT16 : DataType.INT32)
+            : value <= byte.MaxValue ? DataType.UINT8
+            : value <= ushort.MaxValue ? DataType.UINT16
+            : DataType.UINT32;
+
+    /// The width safe for printing e.errno / e.args[0] as a bare integer for a specific
+    /// catch: the widest argument any raise this handler can catch might store, so a
+    /// handler that can see both a small table errno AND a 32-bit seeded one still prints
+    /// both correctly. Every site here already passed the caller's all-int gate.
+    private DataType ExceptionArgPrintWidth(List<RaisedSite> sites)
+    {
+        DataType widest = DataType.UINT8;
+        foreach (var s in sites)
+        {
+            DataType w = RaiseSiteArgWidth(s);
+            if ((int)w > (int)widest) widest = w;
+        }
+        return widest;
+    }
+
     /// The catchable-site list a bound exception name is in scope under -- the same
     /// qualification ladder TryGetExceptionBinding walks.
     private bool TryGetExceptionCatchable(string name, out List<RaisedSite> sites)
@@ -4139,6 +4228,12 @@ public partial class IRGenerator
                 IntSlot = intArgIsConst ? -1 : 0,
                 ErrnoConst = intArgConst,
                 ErrnoConstKnown = intArgIsConst,
+                // Only read when the code is not a compile-time constant (a known
+                // constant renders as a pre-built flash string, never through PrintInt):
+                // the raise argument's own declared width, the same as the sibling
+                // non-errno branch below, so a 32-bit seeded errno is not handed to a
+                // narrower printer than the value it prints.
+                PrintAs = intArgIsConst ? DataType.INT32 : (IsScalarIntType(vt) ? vt : DataType.INT32),
             });
         }
         else if (intArgIsConst)
@@ -4430,7 +4525,10 @@ public partial class IRGenerator
                                        string floatFn, bool argMode)
     {
         var arg0 = new Variable(ExceptionArgVar(0), DataType.INT32);
-        void PrintInt() => EmitStreamVal(floatFn, arg0, DataType.INT32);
+        // piece.PrintAs is this raise site's own declared width (set in EmitIntRaiseArg),
+        // not the arg word's storage width: a table-sized errno prints on the u8/u16
+        // writer, and only a genuinely wide seeded value pays for the 32-bit one.
+        void PrintInt() => EmitStreamVal(floatFn, arg0, piece.PrintAs);
 
         if (piece.ErrnoConstKnown)
         {

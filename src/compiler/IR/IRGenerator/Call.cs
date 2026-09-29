@@ -10916,6 +10916,21 @@ public partial class IRGenerator
             if (sv != null) { pending += sv; continue; }
             if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
             if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
+            // `f"{e.errno}"`: the same bare integer print(e.errno) writes, at the same
+            // per-handler width -- ahead of the generic member-access fallback further
+            // down, which would resolve `e` as a name and refuse it with the binding
+            // diagnostic before this ever runs.
+            if (part.Expr is MemberAccessExpr { Object: VariableExpr fErrnoObj, Member: "errno" }
+                && TryGetExceptionBinding(fErrnoObj.Name, out var fErrnoB))
+            {
+                Flush();
+                DataType fErrnoWidth = TryGetExceptionCatchable(fErrnoObj.Name, out var fErrnoSites)
+                    ? ExceptionArgPrintWidth(fErrnoSites) : DataType.INT32;
+                EmitStreamVal(floatFn,
+                    ExceptionErrnoValue(fErrnoObj.Name, fErrnoB.ExnType, part.Expr!),
+                    fErrnoWidth);
+                continue;
+            }
             // `f"{v}"` naming a literal list/tuple in fixed slots: the repr print()
             // writes. Ahead of ModuleConstListValues -- it would take a LIST down the
             // tuple-bracket path.
@@ -11456,20 +11471,25 @@ public partial class IRGenerator
             // below, which resolve the object as a name and would refuse `e` with the
             // binding diagnostic before the member access is ever visited.
             //
-            // Declared UINT16, not the storage word's own INT32: an errno code is a small
-            // POSIX-style non-negative number (this module's whole constant set fits in a
-            // byte), and ResolveDecimalWriteFn keys off this declared width, not the value's
-            // real one, to pick the print runtime -- INT32 pulls in the 32-bit divider
-            // (uart_write_decimal_i32 -> __div32), the same routine an unrelated arbitrary-
-            // precision `str(x)` needs, for a value that never leaves two decimal digits'
-            // reach. `e.args[0]` (ExceptionArgsItemValue) keeps the wide type: it answers any
-            // raise argument, not just an OSError's code, and cannot make the same promise.
+            // Declared at ExceptionArgPrintWidth's answer, not the storage word's own
+            // INT32: ResolveDecimalWriteFn keys off this declared width, not the value's
+            // real one, to pick the print runtime, and INT32 always pulls in the 32-bit
+            // divider (uart_write_decimal_i32 -> __div32). Every raise this handler can
+            // catch is a known site, so the widest one of them is a compile-time fact --
+            // a table-sized errno costs the u8/u16 writer, and a raise that really can
+            // carry a 32-bit value (a runtime OSError(70000), a 32-bit seeded one) still
+            // gets the wide writer, never a truncated one. `e.args[0]`
+            // (ExceptionArgsItemValue) keeps the wide type for its own VALUE reads: it
+            // answers any raise argument, not only an OSError's, and has no per-handler
+            // site list to narrow against the same way.
             if (arg is MemberAccessExpr { Object: VariableExpr errnoObj, Member: "errno" }
                 && TryGetExceptionBinding(errnoObj.Name, out var errnoB))
             {
+                DataType errnoPrintWidth = TryGetExceptionCatchable(errnoObj.Name, out var errnoSites)
+                    ? ExceptionArgPrintWidth(errnoSites) : DataType.INT32;
                 EmitStreamVal(floatWriteFn,
                     ExceptionErrnoValue(errnoObj.Name, errnoB.ExnType, arg),
-                    DataType.UINT16);
+                    errnoPrintWidth);
                 return;
             }
 

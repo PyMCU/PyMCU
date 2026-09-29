@@ -17,7 +17,7 @@ namespace PyMCU.UnitTests;
 public class ExceptionErrnoTests
 {
     private const string Prelude =
-        "from pymcu.types import uint8, uint16, int32\n" +
+        "from pymcu.types import uint8, uint16, uint32, int32\n" +
         "def uart_write_str(s: const[str]):\n" +
         "    pass\n" +
         "def uart_write_decimal_u8(v: uint8):\n" +
@@ -25,6 +25,8 @@ public class ExceptionErrnoTests
         "def uart_write_decimal_u16(v: uint16):\n" +
         "    pass\n" +
         "def uart_write_decimal_i32(v: int32):\n" +
+        "    pass\n" +
+        "def uart_write_decimal_u32(v: uint32):\n" +
         "    pass\n";
 
     private static ProgramIR Gen(string src) =>
@@ -170,14 +172,14 @@ public class ExceptionErrnoTests
     }
 
     [Fact]
-    public void PrintErrnoDirectlyUsesTheU16Printer()
+    public void PrintErrnoDirectlyUsesTheU8PrinterForATableCode()
     {
-        // print(e.errno) declares the printed value UINT16, not the arg word's own
-        // INT32: an errno code is a small POSIX-style number (this module's whole
-        // constant set fits in a byte), and the declared width is what picks the
-        // decimal-write helper -- INT32 would call the 32-bit divider a value this
-        // small never needs. `n: int32 = e.errno; print(n)` keeps the wide word
-        // (ErrnoReadsTheArgWord above), because that path answers the local's own
+        // print(e.errno) declares the printed value at the width the raise this handler
+        // catches actually needs -- ExceptionArgPrintWidth, not a blanket guess. 110 (and
+        // every code this module's own table names) fits a single byte, so the direct
+        // print is not owed the 32-bit divider (uart_write_decimal_i32 -> __div32) a
+        // wider declared type would call. `n: int32 = e.errno; print(n)` keeps the wide
+        // word (ErrnoReadsTheArgWord above), because that path answers the LOCAL's own
         // declared type, not this call's.
         var main = Fn(Gen(
             "try:\n" +
@@ -185,10 +187,51 @@ public class ExceptionErrnoTests
             "except OSError as e:\n" +
             "    print(e.errno)\n"), "main");
 
-        main.Any(i => i is Call { FunctionName: "uart_write_decimal_u16" })
-            .Should().BeTrue(because: "an errno code is always small and unsigned");
+        main.Any(i => i is Call { FunctionName: "uart_write_decimal_u8" })
+            .Should().BeTrue(because: "110 fits a byte, and the direct print is not owed a wider writer");
+        main.Any(i => i is Call { FunctionName: "uart_write_decimal_u16" or "uart_write_decimal_i32" })
+            .Should().BeFalse(because: "neither writer is owed when the byte one already covers the value");
+    }
+
+    [Fact]
+    public void PrintErrnoDirectlyUsesTheWidePrinterForAConstantOutsideTwoBytes()
+    {
+        // OSError(70000): CPython and MicroPython both print 70000 whole -- narrowing
+        // the print to the table's usual width would silently truncate a code nobody
+        // meant as a POSIX errno. ConstIntWidth reads the RAISE's own value, not an
+        // assumption that every OSError argument is table-sized.
+        var main = Fn(Gen(
+            "try:\n" +
+            "    raise OSError(70000)\n" +
+            "except OSError as e:\n" +
+            "    print(e.errno)\n"), "main");
+
+        main.Any(i => i is Copy { Src: Constant { Value: 70000 }, Dst: Variable { Name: "__exn_arg0" } })
+            .Should().BeTrue(because: "the arg word always holds the raise's real value, whatever prints it");
+        main.Any(i => i is Call { FunctionName: "uart_write_decimal_u32" })
+            .Should().BeTrue(because: "70000 does not fit sixteen bits, table code or not");
+    }
+
+    [Fact]
+    public void PrintErrnoDirectlyUsesTheRaisingSitesDeclaredWidthForARuntimeValue()
+    {
+        // A runtime-seeded errno (GPIOR0.value forced into an int32 local, so the
+        // compiler cannot fold it to a constant) is not a compile-time literal: the
+        // print width has to come from the raise site's OWN declared type
+        // (RaiseSiteArgWidth / LocalIntBindingWidth), or a genuinely wide runtime code
+        // would print truncated instead of whole.
+        var main = Fn(Gen(
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "def make_wide():\n" +
+            "    x: int32 = 70000 + GPIOR0.value\n" +
+            "    raise OSError(x)\n" +
+            "try:\n" +
+            "    make_wide()\n" +
+            "except OSError as e:\n" +
+            "    print(e.errno)\n"), "main");
+
         main.Any(i => i is Call { FunctionName: "uart_write_decimal_i32" })
-            .Should().BeFalse(because: "the 32-bit divider it pulls in is not owed here");
+            .Should().BeTrue(because: "the raising function declares x int32, and the seeded value needs every bit of it");
     }
 
     [Fact]
