@@ -2619,43 +2619,53 @@ public partial class IRGenerator
 
         if (TryIntExponent(ev, out int exp))
         {
-            if (exp < 0)
+            // A negative integer exponent on an INTEGER base is refused: Python's ** would
+            // widen the result to float, and PyMCU does not implement that promotion here.
+            // A FLOAT base with a negative integer exponent (`x ** -1`) is not that case at
+            // all -- it is ordinary float exponentiation (`2.0 ** -1 == 0.5`) -- so it falls
+            // through to the powf path below like any other float exponent would, instead of
+            // being refused just because the exponent happened to parse as an int literal.
+            if (exp < 0 && !baseFloat)
                 throw UserError(
                     $"{form}: negative exponent not supported (Python would return a float)", at);
 
-            if (!baseFloat && bv is Constant cb)
+            if (exp >= 0)
             {
-                int res = 1;
-                for (int k = 0; k < exp; ++k) res *= cb.Value;
-                return new Constant(res);
+                if (!baseFloat && bv is Constant cb)
+                {
+                    int res = 1;
+                    for (int k = 0; k < exp; ++k) res *= cb.Value;
+                    return new Constant(res);
+                }
+
+                if (exp == 0) return baseFloat ? new FloatConstant(1.0) : new Constant(1);
+                if (exp == 1) return bv;
+                if (exp > 16)
+                    throw UserError(
+                        $"{form}: exponent too large to unroll (max 16 for a runtime base); use a loop",
+                        at);
+
+                static DataType BumpTier(DataType t) => t switch
+                {
+                    DataType.UINT8 => DataType.UINT16,
+                    DataType.INT8 => DataType.INT16,
+                    DataType.UINT16 => DataType.UINT32,
+                    DataType.INT16 => DataType.INT32,
+                    _ => t,
+                };
+
+                Val acc = bv;
+                for (int k = 1; k < exp; ++k)
+                {
+                    DataType mt = DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(bv));
+                    if (mt is not DataType.FLOAT) mt = BumpTier(mt);
+                    Temporary md = MakeTemp(mt);
+                    Emit(new Binary(MapBinaryOp(AstBinOp.Mul), acc, bv, md));
+                    acc = md;
+                }
+                return acc;
             }
-
-            if (exp == 0) return baseFloat ? new FloatConstant(1.0) : new Constant(1);
-            if (exp == 1) return bv;
-            if (exp > 16)
-                throw UserError(
-                    $"{form}: exponent too large to unroll (max 16 for a runtime base); use a loop",
-                    at);
-
-            static DataType BumpTier(DataType t) => t switch
-            {
-                DataType.UINT8 => DataType.UINT16,
-                DataType.INT8 => DataType.INT16,
-                DataType.UINT16 => DataType.UINT32,
-                DataType.INT16 => DataType.INT32,
-                _ => t,
-            };
-
-            Val acc = bv;
-            for (int k = 1; k < exp; ++k)
-            {
-                DataType mt = DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(bv));
-                if (mt is not DataType.FLOAT) mt = BumpTier(mt);
-                Temporary md = MakeTemp(mt);
-                Emit(new Binary(MapBinaryOp(AstBinOp.Mul), acc, bv, md));
-                acc = md;
-            }
-            return acc;
+            // exp < 0 && baseFloat falls through to the powf path below.
         }
 
         // A runtime integer exponent on an integer base stays refused: Python would
@@ -2675,7 +2685,22 @@ public partial class IRGenerator
         double? fb = AsCt(bv);
         double? fe = AsCt(ev);
         if (fb.HasValue && fe.HasValue)
+        {
+            // Math.Pow answers +Infinity for Pow(0, negative) and NaN for a negative base
+            // with a non-integral exponent -- neither is a value, and folding to it would
+            // silently disagree with what the exact same expression raises at RUNTIME
+            // through __pymcu_powf (RuntimeHelpers.cs), whose two checks this mirrors: `0.0
+            // to a negative power` and `negative base needs an integral exponent` (the
+            // latter is CPython's own math.pow domain -- (-8.0) ** (1/3) is complex in
+            // Python and PyMCU has no complex type, so it is refused like math.pow's is).
+            if (fb.Value == 0.0 && fe.Value < 0.0)
+                throw UserError($"{form}: 0.0 cannot be raised to a negative power", at);
+            if (fb.Value < 0.0 && fe.Value != Math.Truncate(fe.Value))
+                throw UserError(
+                    $"{form}: a negative base needs an integral exponent (Python would "
+                    + "return a complex number, which PyMCU does not have)", at);
             return new FloatConstant((float)Math.Pow(fb.Value, fe.Value));
+        }
 
         Val ToFloat(Val x)
         {
@@ -2687,8 +2712,19 @@ public partial class IRGenerator
             return ft;
         }
 
+        // Forward to __pymcu_powf directly (RuntimeHelpers.cs) instead of emitting a raw
+        // Binary(Pow): the AVR backend lowers IrBinOp.Pow to a bare `CALL powf` -- avr-libc's
+        // libm powf, which has none of Python's pow() domain checks -- while __pymcu_powf is
+        // the SAME routine EmitPowBuiltin's runtime-float case already calls for the bare
+        // pow() builtin. The two spellings are documented as "one algorithm, one place"
+        // (RuntimeHelpers.cs), but only pow() actually took it; ** took a second, unchecked
+        // path, so `0.0 ** -1` and `(-8.0) ** 0.5` silently answered whatever IEEE-754 powf
+        // gave (inf, or a real number for a negative base) instead of raising like pow() does.
+        // __pymcu_powf is registered unconditionally (RegisterRuntimeHelpers) and lowered
+        // lazily from the Call instructions that actually name it (LowerCalledRuntimeHelpers),
+        // so a program whose ** never reaches this fallback still pays nothing for it.
         Temporary dst = MakeTemp(DataType.FLOAT);
-        Emit(new Binary(BinaryOp.Pow, ToFloat(bv), ToFloat(ev), dst));
+        Emit(new Call("__pymcu_powf", new List<Val> { ToFloat(bv), ToFloat(ev) }, dst));
         return dst;
     }
 
