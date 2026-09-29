@@ -108,4 +108,32 @@ public class DescriptorValueNameCollisionTests
             DataDescriptorProgram + "buf[0] = Box.value\n"));
         Assert.Contains("through the class itself", ex.Message);
     }
+
+    // A descriptor whose class defines __set_name__ expects CPython to call it once, at class
+    // creation, so the descriptor learns its own owner and attribute name. PyMCU's rewrite
+    // never calls it -- nothing runs user code at "the class body finished evaluating" time --
+    // so a descriptor that reads what __set_name__ would have stored answers with
+    // never-initialised storage instead. Refused by name on every access, not just the ones
+    // that would observably differ: whether __set_name__'s effect is actually read back is not
+    // something the compiler tries to prove.
+    [Fact]
+    public void ADescriptorDefiningSetName_IsRefused()
+    {
+        var src =
+            "buf = bytearray([0, 0])\n" +
+            "class Slot:\n" +
+            "    def __set_name__(self, owner, name) -> None:\n" +
+            "        pass\n" +
+            "    def __get__(self, obj, objtype=None) -> uint8:\n" +
+            "        return obj.raw + 1\n" +
+            "class Box:\n" +
+            "    value = Slot()\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self.raw = 3\n" +
+            "b = Box()\n" +
+            "buf[0] = b.value\n";
+
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(src));
+        Assert.Contains("__set_name__", ex.Message);
+    }
 }
