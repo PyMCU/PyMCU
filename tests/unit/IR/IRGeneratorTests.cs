@@ -545,6 +545,32 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void IntCastOfAFloatConstantOutOfInt32Range_RaisesErrorInsteadOfGarbage()
+    {
+        // `(int)fc.Value` is UNSPECIFIED by the C# spec for a double outside int's range;
+        // `int(1e10)` measured as -1 on the build host before this was guarded (a JIT/platform
+        // truncation artifact, not a value anyone chose), and CPython's own int(1e10) --
+        // 10000000000 -- does not fit any PyMCU integer type either (32-bit widest), so there
+        // is no value to silently fold to here.
+        const string src =
+            "def main():\n" +
+            "    x: int32 = int(1e10)\n";
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("does not fit any PyMCU integer type", ex.Message);
+    }
+
+    [Fact]
+    public void IntCastOfAFloatConstantWithinInt32Range_StillFolds()
+    {
+        var ir = GenerateIR(
+            "def main():\n" +
+            "    x: uint32 = uint32(3000000000.0)\n" +
+            "    print(x)\n");
+        Assert.Contains(ir.Functions.Single(f => f.Name == "main").Body.OfType<Copy>(),
+            c => c.Src is Constant { Value: unchecked((int)3000000000) });
+    }
+
+    [Fact]
     public void FoldedBitwiseConstant_FullWidth_StillCompiles()
     {
         // Bitwise/shift idioms that use the full width must NOT be range-flagged.
