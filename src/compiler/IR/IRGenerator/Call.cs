@@ -11455,12 +11455,21 @@ public partial class IRGenerator
             // `[Errno n] NAME` text print(e) renders. Ahead of the probing branches
             // below, which resolve the object as a name and would refuse `e` with the
             // binding diagnostic before the member access is ever visited.
+            //
+            // Declared UINT16, not the storage word's own INT32: an errno code is a small
+            // POSIX-style non-negative number (this module's whole constant set fits in a
+            // byte), and ResolveDecimalWriteFn keys off this declared width, not the value's
+            // real one, to pick the print runtime -- INT32 pulls in the 32-bit divider
+            // (uart_write_decimal_i32 -> __div32), the same routine an unrelated arbitrary-
+            // precision `str(x)` needs, for a value that never leaves two decimal digits'
+            // reach. `e.args[0]` (ExceptionArgsItemValue) keeps the wide type: it answers any
+            // raise argument, not just an OSError's code, and cannot make the same promise.
             if (arg is MemberAccessExpr { Object: VariableExpr errnoObj, Member: "errno" }
                 && TryGetExceptionBinding(errnoObj.Name, out var errnoB))
             {
                 EmitStreamVal(floatWriteFn,
                     ExceptionErrnoValue(errnoObj.Name, errnoB.ExnType, arg),
-                    DataType.INT32);
+                    DataType.UINT16);
                 return;
             }
 

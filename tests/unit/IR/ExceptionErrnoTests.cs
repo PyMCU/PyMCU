@@ -170,6 +170,28 @@ public class ExceptionErrnoTests
     }
 
     [Fact]
+    public void PrintErrnoDirectlyUsesTheU16Printer()
+    {
+        // print(e.errno) declares the printed value UINT16, not the arg word's own
+        // INT32: an errno code is a small POSIX-style number (this module's whole
+        // constant set fits in a byte), and the declared width is what picks the
+        // decimal-write helper -- INT32 would call the 32-bit divider a value this
+        // small never needs. `n: int32 = e.errno; print(n)` keeps the wide word
+        // (ErrnoReadsTheArgWord above), because that path answers the local's own
+        // declared type, not this call's.
+        var main = Fn(Gen(
+            "try:\n" +
+            "    raise OSError(110)\n" +
+            "except OSError as e:\n" +
+            "    print(e.errno)\n"), "main");
+
+        main.Any(i => i is Call { FunctionName: "uart_write_decimal_u16" })
+            .Should().BeTrue(because: "an errno code is always small and unsigned");
+        main.Any(i => i is Call { FunctionName: "uart_write_decimal_i32" })
+            .Should().BeFalse(because: "the 32-bit divider it pulls in is not owed here");
+    }
+
+    [Fact]
     public void AnUnknownErrnoCodeRendersTheBareInteger()
     {
         var ir = Gen(
