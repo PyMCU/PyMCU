@@ -252,7 +252,7 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     return has_print, has_uart, has_input
 
 
-_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']|\.join\s*\(|str\s*\(''')
+_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']|\.join\s*\(|str\s*\(|repr\s*\(''')
 
 
 def _detect_fstring_value_usage(sources_dir: Path) -> bool:
