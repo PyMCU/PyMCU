@@ -8744,7 +8744,20 @@ public partial class IRGenerator
         // Float constant to integer cast: fold at compile time (e.g. uint16(0.5 * 1000) -> 500).
         if (v is FloatConstant fc && dstType != DataType.FLOAT)
         {
-            int val = (int)fc.Value;
+            // `(int)fc.Value` is UNSPECIFIED by the C# spec for a double outside int's range --
+            // `int(1e10)` measured as -1 on this host (a JIT/platform truncation artifact, not
+            // a chosen value), and nothing says another host answers the same -1. CPython's
+            // int(1e10) is the exact 10000000000, which no PyMCU integer type (32-bit widest)
+            // can hold either way, so there is no CPython value to match here; the honest
+            // answer is the compile-time refusal every other constant that does not fit its
+            // type already gets (Fold(), above), not a silently different platform-dependent
+            // bit pattern each time the compiler itself is rebuilt on a different host.
+            if (fc.Value < int.MinValue || fc.Value > uint.MaxValue)
+                throw UserError(
+                    $"{callee}({fc.Value}): the value does not fit any PyMCU integer type "
+                    + "(the widest is 32-bit); the compiler cannot silently choose which bits "
+                    + "to keep", ArgAt(expr, 0));
+            int val = fc.Value > int.MaxValue ? unchecked((int)(uint)fc.Value) : (int)fc.Value;
             switch (dstType)
             {
                 case DataType.UINT8: val = (byte)val; break;
