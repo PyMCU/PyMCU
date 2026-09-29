@@ -10680,6 +10680,26 @@ public partial class IRGenerator
         Flush();
     }
 
+    // True when `cls` is the bare class `name` AND that binding traces back to a pymcu stdlib
+    // module whose dotted path ends in `.moduleTail` -- not a user class that merely shares the
+    // bare name (a user's own `class UART`, or a driver class like `BleUART`/`MyLCD` that used
+    // to match on EndsWith alone). classModuleMap records, per bare class name, the prefix of
+    // the module the class was actually DEFINED in ("" for a class the entry file itself
+    // declares), so this resolves the class by where it comes from, not by how it is spelled.
+    // True when `cls` -- the qualified class name instanceClasses tracks for the instance
+    // (module prefix + bare name, e.g. "pymcu_hal_avr_uart_UART"; just the bare name, with no
+    // prefix, for a class the entry file declares itself) -- resolves to the pymcu stdlib class
+    // `name` from a module whose dotted path ends in `.moduleTail`. A user class that merely
+    // shares or ends in the same bare spelling (a user's own `class UART`, or a driver class
+    // like `BleUART`/`MyLCD`, both of which used to match on EndsWith alone) carries no such
+    // prefix and is excluded.
+    private bool IsStdlibClass(string cls, string name, string moduleTail)
+    {
+        if (cls == name || !cls.EndsWith("_" + name)) return false;
+        string prefix = cls.Substring(0, cls.Length - name.Length);
+        return prefix.StartsWith("pymcu_") && prefix.EndsWith(moduleTail + "_");
+    }
+
     // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes
     // (println appends a newline). Also accepts a runtime-string variable (an f-string-as-value
     // buffer), streamed up to its tracked length. Returns null when this is not a stream method
@@ -10709,7 +10729,7 @@ public partial class IRGenerator
 
         Val sObj = VisitExpression(sm.Object);
         if (sObj is not Variable svObj) return null;
-        if (!instanceClasses.TryGetValue(svObj.Name, out var sCls) || !sCls.EndsWith("UART")) return null;
+        if (!instanceClasses.TryGetValue(svObj.Name, out var sCls) || !IsStdlibClass(sCls, "UART", "uart")) return null;
 
         string wfn = ResolveWriteStrFn();
         if (sfs != null)
@@ -10984,7 +11004,7 @@ public partial class IRGenerator
 
         Val obj = VisitExpression(sm.Object);
         if (obj is not Variable vobj) return null;
-        if (!instanceClasses.TryGetValue(vobj.Name, out var cls) || !cls.EndsWith("LCD")) return null;
+        if (!instanceClasses.TryGetValue(vobj.Name, out var cls) || !IsStdlibClass(cls, "LCD", "lcd")) return null;
 
         string pending = "";
         void FlushStr()
