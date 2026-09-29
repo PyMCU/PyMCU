@@ -728,6 +728,16 @@ themselves are ~4.2 KB + ~3.1 KB = ~7.3 KB of that 8506. The buffered path (`str
 a small `_fs_frepr` wrapper plus the runtime-string buffer machinery a value interpolation
 already pays for any type: +432 bytes measured over the streamed `print(x)` baseline for
 `s = f"{x}"; print(s)` on the same program.
+
+**Tiny AVR parts (<= 4 KB flash) never link the correct repr in the first place:**
+`_f32_repr` + `_f32_scale` alone (~7.3 KB) exceed the whole flash of an attiny2313 (2 KB),
+attiny4313, atmega48 or atmega48p (4 KB each), so `pymcu.hal.avr.uart` routes any chip with
+`__CHIP__.flash_size <= 4096` to `uart_write_float_compact` instead (one decimal, no
+significant-digit search, does not exist as a public API -- it is what `print(float)` and
+`u.print_float(x)` compile to on those parts). This is a coarser, deliberately-wrong-past-one-
+decimal fallback, the same tradeoff the compact writer already made for attiny2313 before this
+fix; it is not MicroPython's policy and not documented as CPython-faithful. A part with more
+than 4 KB (atmega88 at 8 KB and up) gets the correct writer.
 ARM and PIC18 have `float` too (RP2040 through the bootrom fast-float library, RP2350
 through the M33 FPU). **PIC16 and RISC-V have no floating point at all** -- even a bare
 `x: float = 1.5` fails there, today with an unlocated backend message rather than a proper
