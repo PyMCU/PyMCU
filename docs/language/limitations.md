@@ -296,7 +296,7 @@ match read_sensor():
     case STATUS_OK:    ...
     case STATUS_RANGE: ...
 ```
-| A bounded exception object | `except E as e:` binds a name (#369). One exception is live at a time, so the object is two static facts and no allocation: the type code the dispatcher already compares, and the flash address of a string-literal message. `print(e)`, `str(e)` and `e.args[0]` read the message; `isinstance(e, X)` compares the code. Every other use of `e` is refused by a sentence naming those four. A message that is not a literal stays refused, and a field set in a user exception's `__init__` is not available yet. `except*` (exception groups) is still refused by name |
+| A bounded exception object | `except E as e:` binds a name (#369). One exception is live at a time, so the object is a type code plus one argument word and no allocation: the code the dispatcher already compares, and either the flash address of a string-literal message or the integer a raise carried. `print(e)`, `str(e)`, `e.args[0]`, `e.args` and `len(e.args)` read it; `isinstance(e, X)` compares the code. An integer argument to `OSError` or a subclass is `e.errno`, and `print(e)` renders `[Errno n] NAME` in MicroPython's spelling rather than CPython's `[Errno n] <strerror>` or `n` -- CPython leaves `.errno` unset on a one-argument raise, so `e.errno` itself is also refused unless the handler only catches OSError descendants and every raise it can reach was given an integer. Every other use of `e` is refused by a sentence naming the supported reads. A field set in a user exception's `__init__` is not available yet. `except*` (exception groups) is still refused by name |
 :::
 
 **`CompileError` — compile-time intrinsic:**
