@@ -3032,6 +3032,45 @@ public partial class IRGenerator
             return;
         }
 
+        // The descriptor protocol wins over the `.value` MMIO/collapsed-scalar write below, the
+        // same priority Expr.cs gives it on the read side. Without this, `b.value = 5` on a
+        // class attribute whose class defines __set__ (adafruit_register's Struct/RWBits/RWBit,
+        // or any user descriptor spelled the CircuitPython way) took the register path instead
+        // of calling __set__, silently dropping the store into a collapsed scalar the
+        // descriptor's own reads never look at (#419).
+        if (memExpr2.Member == "value" && IsDescriptorMemberWrite(memExpr2))
+        {
+            Val descrReceiver = VisitExpression(memExpr2.Object);
+            string? descrBaseName = descrReceiver switch
+            {
+                Variable dv => dv.Name,
+                Temporary dt => dt.Name,
+                _ => null,
+            };
+            if (TryDescriptorWrite(descrBaseName, descrReceiver, memExpr2, value))
+                return;
+        }
+
+        // A class attribute whose class defines __get__ but not __set__ is a NON-DATA
+        // descriptor. In CPython, `b.value = v` there creates a per-instance override in
+        // `b.__dict__` that shadows the class attribute for every later read through `b` --
+        // the class's __get__ is never called again for this instance. PyMCU lays instances
+        // out at compile time and has no per-instance dict to create that override in, so
+        // there is no correct lowering for this write. Refused by name, the same way an
+        // ordinary undeclared field is refused below (out of the `.value` special case,
+        // which would otherwise silently take the MMIO/collapsed-scalar path and write to
+        // storage the descriptor's __get__ never reads back (#419) -- every later
+        // `b.value` keeps answering through __get__ as if the write never happened).
+        if (memExpr2.Member == "value" && IsNonDataDescriptorMember(memExpr2, out var ndOwner))
+            throw UserError(
+                $"'{ndOwner}' has no field 'value' -- assigning it here creates a name of its "
+                + "own rather than reaching the object, because PyMCU lays instances out at "
+                + "compile time. 'value' is a non-data descriptor here (its class defines "
+                + "__get__ but not __set__); CPython would let this write shadow it with a "
+                + "per-instance attribute, which PyMCU has no per-instance storage to create. "
+                + "Add a __set__ method to make it a data descriptor, or correct the spelling.",
+                memExpr2);
+
         // A field literally named "value" (Base/Sub's `self.value` in #430, but any class is
         // exposed to this) collides with the MMIO/pointer `.value` write below, which has no
         // guard at all here (unlike its read-side counterpart in Expr.cs): every write to
