@@ -693,51 +693,90 @@ zero; NaN and Inf propagate correctly. `uint32(x * 100.0 + 0.5)` and the other f
 casts truncate toward zero on the real value, not on its raw bit pattern.
 
 **Note on the unformatted float print policy:** an unformatted `float` -- `print(x)`,
-`str(x)`, `repr(x)`, `f"{x}"` with no spec -- follows MicroPython's float32 policy
-(`mp_format_float`: 7 significant digits, half-to-even, trailing zeros dropped, CPython's
-fixed-vs-scientific threshold), not CPython's own shortest-round-trip repr. Two designs
-were measured for AVR (`lib/src/pymcu/hal/uart_text.py`, `_f32_repr` + `_f32_scale`, both
-built on the same bignum "decimal-prefix at an arbitrary weight" primitive):
+`str(x)`, `repr(x)`, `f"{x}"` with no spec -- follows MicroPython's ACTUAL float32 print
+algorithm, ported from `py/formatfloat.c`'s `mp_format_float` (the `MICROPY_FLOAT_FORMAT_
+IMPL_APPROX` path every float32 MicroPython/CircuitPython port builds with by default: `fmt
+= 'g'`, `prec = MP_FLOAT_REPR_PREC`). This is neither CPython's shortest-round-trip repr nor
+an exact decimal expansion: MicroPython's own reference scales by powers of ten using FLOAT32
+arithmetic (`mp_decimal_exp`: `10**n = 2**n * 5**n`, the `2**n` part folded into the
+IEEE-754 exponent field for free, the `5**n` part a real float32 multiply/divide built from
+repeated multiplication by 5.0, no bignum, no libm `pow`), then searches 6 to 9 significant
+digits for the first one whose own scaling reconstructs the original value exactly. Because
+the scaling itself is approximate, that search is not always right in its OWN last digit
+either -- and this port matches that on purpose, not despite it (see "Measured against real
+MicroPython" below).
 
-| Design | `_f32_repr` | `_f32_scale` | total |
-| --- | --- | --- | --- |
-| CPython-style shortest round-trip (searches 1..9 significant digits for the shortest one that still identifies the float32) | ~5.8 KB | ~3.1 KB | ~8.9 KB |
-| MicroPython's fixed 7 significant digits (one pass, no search) | ~4.2 KB | ~3.1 KB | ~7.3 KB |
+`lib/src/pymcu/hal/uart_text.py`'s `_f32_repr`, `_f32_decimal_exp`, `_f32_order` and
+`_f32_pow5` are this port. Two earlier designs were tried and rejected on size, in order:
 
-(measured as the byte range between consecutive top-level symbols in an atmega328p build's
-`.elf`, via `avr-objdump -d` / `avr-nm`; the two `_f32_scale` figures differ by ~60 bytes of
-linker branch-relaxation noise around identical code, not a real difference.) Neither design
-reaches a "~2 KB HAL helper" budget -- a correctly-rounded decimal expansion of an arbitrary
-binary32 needs bignum arithmetic (no `uint64` in the AVR backend, so it runs on 16-bit limbs),
-and that dominates the cost before the digit-selection policy on top of it does. The fixed
-7-digit policy was chosen: it is MicroPython's and CircuitPython's own float32 behaviour (the
-compatibility layers' reference), it is ~1.6 KB smaller, and it is unconditionally simpler
-(one `_f32_scale` call for the digits, one for the rounding decision, versus a loop that
-calls it up to four times per candidate digit count).
+| Design | total (4 symbols, atmega328p) | Why rejected |
+| --- | --- | --- |
+| CPython-style shortest round-trip, exact bignum digits (16-bit limbs, no `uint64` on AVR) | ~8.9 KB | +6.3 KB on any program that prints a float; broke 2 real fixtures |
+| MicroPython's policy, but exact bignum digits fixed at 7 significant digits | ~7.3 KB | Not MicroPython's actual output (it uses 6..9 digits, decided by a round-trip check) *and* still too big |
+| **MicroPython's actual algorithm, float32 arithmetic, `mp_decimal_exp`'s bisection dropped (see below) -- CHOSEN** | **~3.85 KB** | Ships |
 
-**Cost**: a program that never reads a `float` pays nothing (`_f32_repr`/`_f32_scale` are
-never linked in). A program with `float` arithmetic but no float print also pays nothing for
-these two symbols specifically -- print's lazy linking is independent of the soft-float
-arithmetic library. A program that prints one `float` (via `print(x)`, the streamed path)
-pays `_f32_repr` + `_f32_scale` in full: measured at 8506 bytes total flash for a minimal
-atmega328p program with one `print(float)`, against 344 bytes for the same program printing
-a `uint8` instead -- but most of that gap is the soft-float support the print did not add
-(`__divsf3`, `__floatunsisf`, the `__div32`/`__mod32` family): the two repr symbols
-themselves are ~4.2 KB + ~3.1 KB = ~7.3 KB of that 8506. The buffered path (`str(x)`,
-`repr(x)`, an unformatted `f"{x}"` value) reuses the same `_f32_repr`/`_f32_scale` and adds
-a small `_fs_frepr` wrapper plus the runtime-string buffer machinery a value interpolation
-already pays for any type: +432 bytes measured over the streamed `print(x)` baseline for
-`s = f"{x}"; print(s)` on the same program.
+(measured as the byte range between consecutive top-level symbols in an atmega328p `.elf`,
+via `avr-objdump -d` / `avr-nm`, on a build with `PYMCU_NO_OPT` off.) Per symbol: `_f32_pow5`
+~278 B, `_f32_decimal_exp` ~764 B, `_f32_order` ~472 B, `_f32_repr` ~2336 B. `_f32_repr` alone
+is still over a "~1.5 KB per symbol" target; most of that is the digit-layout code (scientific
+vs fixed notation, leading/trailing zeros), which is shared with, and no smaller in, the
+earlier rejected designs -- narrowing its loop counters and buffer index from `int32` to `int8`
+(AVR is an 8-bit core; a 32-bit compare/increment there is 4 instructions where an 8-bit one is
+1) cut it from ~5.1 KB to ~3.85 KB in one pass and is the reason it fits at all.
 
-**Tiny AVR parts (<= 4 KB flash) never link the correct repr in the first place:**
-`_f32_repr` + `_f32_scale` alone (~7.3 KB) exceed the whole flash of an attiny2313 (2 KB),
-attiny4313, atmega48 or atmega48p (4 KB each), so `pymcu.hal.avr.uart` routes any chip with
-`__CHIP__.flash_size <= 4096` to `uart_write_float_compact` instead (one decimal, no
-significant-digit search, does not exist as a public API -- it is what `print(float)` and
+**Simplification from the real algorithm:** `mp_format_float`'s `APPROX` path does not stop at
+a single scaling estimate per digit count -- when the estimate does not round-trip, it runs a
+dichotomic bisection (`err_range` halving) that nudges the mantissa's last 1-2 digits toward an
+exact match before giving up and trying one more significant digit. That bisection measured
+larger by itself than this whole HAL helper's budget. This port drops it: one `_f32_decimal_exp`
+call produces the digit-count estimate directly, and if it does not round-trip, the search
+tries one more significant digit (6 up to 9) instead of correcting the mantissa in place.
+
+**Measured against real MicroPython:** a `micropython` unix-port binary was built during this
+work with `MICROPY_FLOAT_IMPL_FLOAT` (`ports/unix/variants/float32ref`, not committed here) to
+get real reference output instead of guessing at the C algorithm's behaviour. Every named/
+representative value tested (the encargo's probe list, plus sensor-realistic magnitudes: 3.3,
+12.34, 250.75, -40.0, 1013.25, 9.81, and values computed on real AVR hardware in the emulator)
+matches exactly, on both front ends. Over ~6000 uniformly random float32 bit patterns in a
+sensor-realistic magnitude band (1e-6 .. 1e9), ~4.9% differ from the real binary, always in the
+last significant digit, never in digit count or magnitude -- the bisection this port drops.
+Over ~4000 fully random bit patterns (dominated by subnormals and 1e±35-ish extremes, atypical
+of embedded sensor code), the rate rises to ~11%, same failure shape. The reference binary and
+the probe scripts are not part of this repo; the measured rates are reproducible from
+`py/formatfloat.c` + `py/parsenum.c`'s `mp_decimal_exp` in any MicroPython checkout.
+
+**Cost**: a program that never reads a `float` pays nothing (none of the four symbols are
+linked in). A program with `float` arithmetic but no float print also pays nothing for them --
+print's lazy linking is independent of the soft-float arithmetic library. A program that
+prints one `float` (via `print(x)`, the streamed path) pays all four in full: measured at 5806
+bytes total flash for a minimal atmega328p program with one `print(float)`, against 344 bytes
+for the same program printing a `uint8` instead -- of that gap, the four repr symbols are
+~3.85 KB, the rest is soft-float support the print did not add (`__divsf3`, `__floatunsisf`,
+the `__div32`/`__mod32` family). The buffered path (`str(x)`, `repr(x)`, an unformatted
+`f"{x}"` value) reuses the same four symbols and adds a small `_fs_frepr` wrapper plus the
+runtime-string buffer machinery a value interpolation already pays for any type.
+
+Measured on real Adafruit CircuitPython driver libraries, unmodified, via their own
+`test01_simpletest_verbatim.py` (the beta's "N of 20 simpletests build unmodified" metric):
+`cp-hcsr04` (prints a float distance every loop) grew from 3300 to 7268 bytes (10% to 22% of
+an atmega328p's flash); `cp-tcs34725` (prints five floats: lux, color temperature, RGB) grew
+from 23170 to 27364 bytes (70% to 83%); `cp-bmp280`, `cp-ina219` and `cp-veml7700` were
+unchanged (their simpletest scripts do not reach the unformatted float print path). All five
+still build. Two `pymcu-avr` integration fixtures that print floats
+(`surfacecov-tcs34725-b`'s optimized build, `adafruit-bmp280-unmodified-loop`'s optimized
+AND unoptimized builds) also still fit after the same int8-narrowing pass; see that repo's
+`tests/integration/Differential/DifferentialCorpus.cs` history for the exact figures measured
+at each stage.
+
+**Tiny AVR parts (<= 4 KB flash) never link the correct repr in the first place:** the four
+repr symbols together (~3.85 KB) exceed the whole flash of an attiny2313 (2 KB), attiny4313,
+atmega48 or atmega48p (4 KB each), so `pymcu.hal.avr.uart` routes any chip with
+`__CHIP__.flash_size <= 4096` to `uart_write_float_compact` instead (one decimal, none of the
+four symbols, does not exist as a public API -- it is what `print(float)` and
 `u.print_float(x)` compile to on those parts). This is a coarser, deliberately-wrong-past-one-
 decimal fallback, the same tradeoff the compact writer already made for attiny2313 before this
-fix; it is not MicroPython's policy and not documented as CPython-faithful. A part with more
-than 4 KB (atmega88 at 8 KB and up) gets the correct writer.
+fix; it is not MicroPython's policy and not documented as its output either. A part with more
+than 4 KB (atmega88 at 8 KB and up) gets the real algorithm.
 ARM and PIC18 have `float` too (RP2040 through the bootrom fast-float library, RP2350
 through the M33 FPU). **PIC16 and RISC-V have no floating point at all** -- even a bare
 `x: float = 1.5` fails there, today with an unlocated backend message rather than a proper
@@ -1184,7 +1223,7 @@ never parks.
 | Built-in | Status | Notes |
 |---|---|---|
 | `print(str)` / `print(int)` | ✅ Supported | Routes to UART |
-| `print(float)` / `str`/`repr`/unformatted `f"{x}"` | ✅ Supported | MicroPython's float32 policy: 7 significant digits, half-to-even, trailing zeros trimmed, CPython's fixed/scientific threshold (`0.1`, `3.141593`, `1e+20`) |
+| `print(float)` / `str`/`repr`/unformatted `f"{x}"` | ✅ Supported | MicroPython's real float32 print algorithm (`py/formatfloat.c`'s `mp_format_float`): 6 to 9 significant digits decided by a round-trip check, float32 scaling, CPython's fixed/scientific threshold (`0.1`, `3.1415928`, `1e+20`) |
 | `print(bytearray)` / `print(arr[a:b])` | ✅ Supported | CPython repr — `bytearray(b'\xcc\x10')`; length must be compile-time |
 | `range(n)` | ✅ Supported | For-loop bounds, runtime or constant; the counter is sized from the bounds. Also `x in range(...)`, `reversed(range(...))`, `enumerate(range(...))`. Not a value: `r = range(4)` is a `CompileError` |
 | `len(arr)` / `len(b"...")` | ✅ Supported | Compile-time constant fold |
