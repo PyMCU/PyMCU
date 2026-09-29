@@ -84,10 +84,10 @@ PyMCU compiles a **statically-typed subset of Python** into bare-metal firmware 
 The same binary you would write in C.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/PyMCU/PyMCU/main/docs/_static/images/blink-demo.gif" alt="PyMCU demo: MicroPython-flavoured blink compiled to 150 bytes and flashed to an Arduino Uno" width="860">
+  <img src="https://raw.githubusercontent.com/PyMCU/PyMCU/main/docs/_static/images/blink-demo.gif" alt="PyMCU demo: MicroPython-flavoured blink compiled to 146 bytes and flashed to an Arduino Uno" width="860">
 </p>
 
-<p align="center"><em>A real session: 9 lines of Python &rarr; <code>pymcu build</code> &rarr; <strong>150 bytes of flash</strong> &rarr; running on an Arduino Uno.
+<p align="center"><em>A real session: 9 lines of Python &rarr; <code>pymcu build</code> &rarr; <strong>146 bytes of flash</strong> &rarr; running on an Arduino Uno.
 Then the delay is edited, rebuilt and reflashed &mdash; the whole loop takes seconds.</em></p>
 
 ---

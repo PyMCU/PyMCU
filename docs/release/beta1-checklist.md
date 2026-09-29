@@ -212,7 +212,7 @@ pip install --pre pymcu-circuitpython
 
 mkdir /tmp/pymcu-b1-blink && cd /tmp/pymcu-b1-blink
 pymcu new .          # scaffold; pick AVR / arduino_uno
-pymcu build          # expect the ~46/150-byte scaffold blink; see [[mac-limpia-e2e-y-empaquetado-flashers]]
+pymcu build          # expect the ~46/146-byte scaffold blink; see [[mac-limpia-e2e-y-empaquetado-flashers]]
 
 # The unmodified Adafruit example the beta claims:
 pymcu install adafruit-circuitpython-hcsr04

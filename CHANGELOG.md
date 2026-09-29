@@ -22,11 +22,73 @@ the wrong value into an unannotated field it returned (#429), and
 was a constant (#430). That release was never published, and on
 2026-09-25 the decision reversed: ship from `main` as it stands rather than
 from the frozen branch. This section is regenerated against `main` at
-`6f8d2149` (2026-09-29), 1684 commits past `v0.1.0a10`. See
+`7e7b693f` (2026-09-29), 1708 commits past `v0.1.0a10`. See
 [State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
 for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
+
+### Added (2026-09-29, user-visible)
+
+- **hal/ir/driver**: `print(x)`/`str(x)`/`f"{x}"`/`repr(x)` on a `float` now format the
+  way MicroPython/CircuitPython actually do on a float32 build (`mp_format_float`'s real
+  algorithm, ported instruction for instruction, not an approximation of it): 6 to 9
+  significant digits, whichever is the fewest whose own round-trip matches, half-to-even
+  rounding, CPython's fixed-vs-scientific threshold, `inf`/`-inf`/`nan`/`-0.0` handled by
+  name. **This replaces the two-fixed-decimals output every beta-1 program printing a
+  float has had until now**: `print(0.001)` used to print `0.0` and now prints `0.001`;
+  `print(math.radians(180.0))` used to print `3.14` and now prints `3.1415927`. `repr()` on
+  a float is `str()`; on anything else it is still refused (PyMCU has no run-time object
+  model to describe an arbitrary object). Cost: 0 bytes for a program that never prints a
+  float; ~3.85 KB of AVR flash for the first one that does (down from ~7.3 KB measured for
+  an earlier, rejected CPython-style shortest-round-trip design), +432 B for the buffered
+  `str`/`repr`/f-string-value path on top of that. AVR parts with 4 KB of flash or less
+  (attiny2313/4313, atmega48/48p) fall back to a coarser compact writer that cannot fit the
+  full algorithm; this fallback now triggers on `__CHIP__.flash_size <= 4096` instead of
+  matching `attiny2313` by name, which had silently stopped three other tiny parts from
+  building the moment a program printed a float. See
+  [Language Limitations](docs/language/limitations.md) for the measured accuracy against a
+  real `micropython` unix-port binary and the two designs that were tried and rejected.
+
+### Fixed (2026-09-29)
+
+- **ir**: a runtime (non-constant) `ZeroDivisionError` from `/`, `//`, `%` or `divmod()`,
+  or a `KeyError` from a missed dict/list lookup, written directly in `main`'s own body
+  (no enclosing function, no enclosing `try`) used to silently spin forever in
+  `__pymcu_halt` instead of printing `E:ZeroDivisionError`/`E:KeyError` and halting like
+  every other unhandled raise at that scope. The six runtime zero-check call sites and the
+  `KeyError` raise all passed the wrong `unhandledInMain` flag; now routed the same way a
+  literal `raise` statement already was.
+- **ir**: `divmod()` now runs the same zero-divisor check `/`/`//`/`%` do (a runtime-zero
+  divisor silently returned garbage instead of raising); a compile-time-constant zero
+  divisor (int or float) is refused; `divmod()` not unpacked into exactly two targets is
+  refused instead of silently discarding the remainder; a mixed int/float `divmod()` no
+  longer mistypes the float divisor's width.
+- **ir**: `x ** negative_int` on a float base (`2.0 ** -1`) computes instead of being
+  refused outright; the refusal now only fires for an integer base widening to float,
+  which is genuinely unimplemented. `**` and `pow()` now reach the same domain-checked
+  `__pymcu_powf` for a runtime base, instead of `**` falling through to a bare
+  `CALL powf` with none of `pow()`'s `ValueError` domain checks (`0.0 ** -1`,
+  `(-8.0) ** 0.5`). A compile-time-constant `0.0 ** -1` or `(-8.0) ** (1/3)` is now
+  refused at compile time instead of silently folding to `+Infinity`/`NaN`.
+- **ir**: a float constant outside `int32`/`uint32`'s range (`int(1e10)`) is refused at
+  compile time instead of folding through an unspecified C# `(int)`-cast, which measured
+  as `-1` on this build host for no principled reason (a different .NET version has no
+  reason to agree). A value that fits still folds exactly as before.
+- **ir**: `print(e.args[0])` in an `except ... as e` handler no longer asks twice whether
+  the raise carried a message (the index check already proved it non-zero and never
+  returns from the zero branch); saves 6 bytes on the pattern.
+- **ir**: a raise-with-message the optimizer already proved unreachable stops pulling in
+  `__pymcu_exn_tail` (the crash report's `": <msg>"` trailer). It was rooted by name alone
+  whenever the function existed anywhere in the program, regardless of whether anything
+  still calls it; `import board` pulling in `busio`'s error-message helpers cost every
+  CircuitPython program 30 bytes of unreachable report machinery for a message no
+  reachable raise could produce. This is what had CircuitPython's canonical blink at 178 B
+  instead of the 148 B `Direction.OUTPUT`'s PORT-before-DDR clear actually costs; see the
+  blink table below.
+- **docs**: the blink size table (native HAL / MicroPython / CircuitPython) is now 146 B /
+  146 B / 148 B, not the stale 150 B / 150 B / 152 B, reflecting the constant-delay-counter
+  fold and the exception-tail fix above.
 
 ### Added
 
@@ -1306,7 +1368,7 @@ in this project's convention).
 ### Full commit log
 
 <details>
-<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 943 more commits landed on `main` between 83f05312 and 6f8d2149 (2026-09-29, 1684 total since v0.1.0a10) -- see the "Added"/"Fixed (2026-09-25 to 2026-09-29)" sections above for the condensed, by-area account of that window, and `git log 83f05312..6f8d2149` for every individual subject.</summary>
+<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 967 more commits landed on `main` between 83f05312 and 7e7b693f (2026-09-29, 1708 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-29) for the condensed, by-area account of that window, and `git log 83f05312..7e7b693f` for every individual subject.</summary>
 
 ### Added
 
