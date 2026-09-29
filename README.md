@@ -100,9 +100,9 @@ configure PB5 as output, then loop `LED on → wait 500 ms → LED off → wait 
 | Source | **Total flash** | SRAM |
 |---|---|---|
 | **C** (`avr-gcc -Os`) | 176 B | 0 B |
-| **PyMCU** (native HAL) | **150 B** | 0 B |
-| **PyMCU** (MicroPython API) | **150 B** | 0 B |
-| **PyMCU** (CircuitPython API) | **152 B** | 0 B |
+| **PyMCU** (native HAL) | **146 B** | 0 B |
+| **PyMCU** (MicroPython API) | **146 B** | 0 B |
+| **PyMCU** (CircuitPython API) | **148 B** | 0 B |
 | **Arduino** (IDE defaults) | 924 B | 9 B |
 
 PyMCU produces a **smaller binary than C** here. Why?
@@ -166,7 +166,7 @@ while True:
 ```
 
 ```bash
-pymcu build   # → dist/firmware.hex  (150 bytes flash, 0 bytes SRAM)
+pymcu build   # → dist/firmware.hex  (146 bytes flash, 0 bytes SRAM)
 pymcu flash   # → avrdude upload to Arduino Uno
 ```
 
