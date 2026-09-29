@@ -330,6 +330,61 @@ and go directly to the halt loop.
 **Supported:** `assert condition, msg` as a compile-time check — a statically false assertion
 is a `CompileError`; a true or runtime assertion is stripped.
 
+**A raise directly in `main`'s own body used to hang instead of halting.** The unhandled-exception
+path above (`E:<TypeName>` then halt) was only reached by an exception RETURNING into `main`
+from a callee. A `raise` statement written directly in `main` (or reached through an `@inline`
+expansion there) already took the correct form. But `ZeroDivisionError` from a runtime `/` `//`
+`%` and `KeyError` from a dict/list lookup are emitted by the compiler's own runtime checks, not
+a literal `raise`, and those checks used a different, silently broken form for this one case:
+`1.0 / 0.0` (or `10 // x` with a runtime-zero `x`) written directly at the top level, uncaught,
+spun forever with nothing on UART0 instead of printing `E:ZeroDivisionError`. Fixed; both now
+print and halt like any other unhandled exception. A program that catches the exception, or
+that reaches it through a function call rather than directly at the top level, was never
+affected.
+
+### Float edge cases (division by zero, `pow`, rounding, NaN/inf)
+
+Measured against CPython for `1.0 / 0.0` and its neighbours (float-edges campaign):
+
+| Expression | CPython | PyMCU | Notes |
+|---|---|---|---|
+| `x / 0.0`, `x // 0.0`, `x % 0.0` (runtime `x`) | `ZeroDivisionError` | `ZeroDivisionError` | Catchable with `except ZeroDivisionError` |
+| `divmod(x, 0.0)` (runtime `x`, unpacked) | `ZeroDivisionError` | `ZeroDivisionError` | Was silently returning a garbage quotient with no remainder before the fix above |
+| `x / 0` (int **literal** zero, any `x`) | `ZeroDivisionError` at runtime | `CompileError` | A literal `0` divisor is refused at compile time whatever the dividend is, matching every other `/ // %` site — deliberate, not CPython's runtime behaviour. Only a divisor the compiler cannot see (a variable, or an expression) reaches the runtime check |
+| `0.0 / 0.0` | `ZeroDivisionError` | `ZeroDivisionError` | |
+| `int(float('inf'))`, `int(float('nan'))` | `OverflowError`, `ValueError` | **Not measured** | `float("inf")` / `float("nan")` are not accepted as literals (`CompileError: not a number`); PyMCU has no way to construct an infinity or NaN value from source today, so these two rows could not be exercised. `float('inf') > 1e38` and any NaN comparison are unmeasured for the same reason |
+| `int(1e10)` (a float constant past int32/uint32 range) | `10000000000` (exact) | `CompileError` | No PyMCU integer type is 64-bit; the constant is refused instead of silently keeping an unspecified bit pattern (fixed — see below) |
+| `round(2.5)` / `round(3.5)` / `round(-2.5)` | `2` / `4` / `-2` (banker's rounding) | `2` / `4` / `-2` | Matches |
+| `round(x, 2)` | rounds to 2 places | `CompileError` | `round()` with a `ndigits` argument is not implemented; the diagnostic names `int(x + 0.5)` / `int(x - 0.5)` as the (non-equivalent) escape hatch |
+| `abs(-0.0)` | `0.0` | `0.0` | Matches |
+| `-0.0 == 0.0` | `True` | `True` | Matches |
+| `math.isnan` / `isinf` / `isfinite` | exist | **absent** | Not implemented — `math` only has `sqrt`/`log`/`exp`/`radians`, each added because a specific measured library needed it (see the Built-ins table); nobody has needed these yet |
+| `x ** 0.5` | real sqrt | matches | Routes through `__pymcu_powf` |
+| `(-8.0) ** (1/3)` | complex number | `CompileError` (compile-time-constant) or runtime `ValueError` | PyMCU has no complex type; refused instead of silently answering NaN. Fixed as part of this campaign — see below |
+| `0.0 ** -1` | `ZeroDivisionError` | `CompileError` (constant) / runtime `ValueError` | PyMCU's `pow()`/`**` share `math.pow`'s domain (`ValueError`), not `**`'s own (`ZeroDivisionError`) — a pre-existing, deliberate choice (see `__pymcu_powf`'s own comments in `RuntimeHelpers.cs`), not something this campaign changed |
+| `uint8 + float` | float result | float result | Matches |
+| `int32 * float` with a value `> 2**24` | float64 precision | float32 precision | Not a bug: PyMCU floats are `float32` everywhere (the target's native width), and `float32` cannot exactly represent every integer past `2**24` (16777216) — measured: `16777217.0` (an integer one past that boundary) prints as `16777216.0` under both front ends. CPython's `float` is `float64` and represents both cases exactly, so a program relying on exact integer values above `2**24` through a float diverges by design, not by bug |
+
+**Fixed by this campaign** (root causes, not workarounds — see the compiler's own commit history
+on `fix/float-edges` for the exact `fichero:linea`):
+
+- The "hang instead of halt" bug above (`EmitRaiseUnwind`'s `unhandledInMain` flag was `false`
+  at the runtime zero-check and `KeyError` call sites, `true` only for a literal `raise`).
+- `divmod()` skipped the zero-check entirely (it built its `Binary(FloorDiv)`/`Binary(Mod)`
+  nodes directly instead of going through the checked path `/ // %` use), and answered the
+  quotient alone — silently discarding the remainder — whenever it was not unpacked into
+  exactly two targets.
+- `x ** -1` (a float base, integer-literal negative exponent) was refused outright; only
+  `x ** -1.0` worked. Now both compute.
+- `**`'s runtime-float fallback emitted a raw `Binary(Pow)`, which the AVR backend lowers to
+  avr-libc's unchecked `powf` — `0.0 ** -1` and `(-8.0) ** 0.5` silently answered whatever
+  IEEE-754 `powf` gave instead of raising, even though `pow(0.0, -1)` already raised correctly
+  for the identical value. Both spellings now call the one domain-checked `__pymcu_powf`.
+- A float constant that overflows int32 when cast (`int(1e10)`) folded through a bare C#
+  `(int)fc.Value`, which the C# spec leaves unspecified for a double outside int's range —
+  measured as `-1` on the build host, an artifact of the JIT, not a chosen value. Now refused
+  at compile time instead.
+
 ---
 
 ## Functions and closures
@@ -1087,8 +1142,8 @@ never parks.
 | `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
 | `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold; a generator expression argument unrolls the same way (`all(0 <= c <= 255 for c in val)`, adafruit_pixelbuf) and short-circuits like CPython -- the iterable's length must be compile-time known |
 | `sum(genexp)` / `min(genexp)` / `max(genexp)` | ✅ Supported | Same compile-time unroll; `sum` honours its `start` argument and a `for ... if` clause filters. Nowhere else does a generator expression exist -- there is no iterator object to pass around |
-| `divmod(a, b)` | ✅ Supported | Compile-time or runtime |
-| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float via `__pymcu_powf` (#463) |
+| `divmod(a, b)` | ✅ Supported | Compile-time or runtime, **only unpacked into two targets**: `q, r = divmod(a, b)`. PyMCU has no general runtime tuple value, so `v = divmod(a, b)` or `print(divmod(a, b))` is a compile-time refusal naming the gap rather than silently answering the quotient alone. A runtime-zero divisor (int or float) raises `ZeroDivisionError`, the same guard `/` `//` `%` use |
+| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | ✅ Supported | Compile-time integer fold; runtime integer unroll; runtime float (including a negative integer exponent on a float base, `x ** -1`) via `__pymcu_powf` (#463) — both spellings reach the same domain-checked routine. `0.0 ** negative` raises `ValueError` (matching `math.pow`'s domain, not CPython's `**`/`pow()`, which raise `ZeroDivisionError` for the same value — a deliberate choice, not a bug: see the float-edges note below). A negative base with a non-integral exponent (`(-8.0) ** 0.5`) also raises `ValueError`; CPython returns a complex number, which PyMCU has no type for |
 | `math.sqrt/exp/log/radians(x)` | ✅ Supported | Software float, run-time argument. `sqrt` is Newton-Raphson after a scale reduction; `log` and `exp` are the two halves of `__pymcu_powf`'s series; `radians` is a scaling multiply that folds for a constant angle. Each body lowers LAZILY, so `import math` with no call costs 0 bytes and a program carries only what it calls. Only these four: each is here because a measured library stops without it (max31865, thermistor, sgp30, mpu6050/lsm6ds). `math.pi` / `math.e` are not defined: a module-level float constant in an imported module is storage nothing initialises |
 | Forward-reference annotation `"Name"` | ✅ Supported | A type named as a string literal (PEP 484), the spelling every Adafruit driver uses for its own `__enter__` return. The quotes come off and the name inside is resolved and checked like any other, in `AnnotationText` so both front ends read it the same way |
 | `hex(n)` / `bin(n)` | ✅ Supported | Compile-time only |

@@ -164,7 +164,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `collections.namedtuple` | Compile-time class factory: `Name = namedtuple("Name", ("a", "b"))` becomes a ZCA class with those fields, `__len__` and `__match_args__`. The bound name is the class. Last construct unmodified `adafruit_irremote` stopped on |
 | `isinstance(x, T)` | Compile-time fold: ZCA instance vs class/subclass (#424); value vs `tuple`/`list`/`int` from known shape (#423) -- the receiver resolves through an inline-parameter alias, a keyword argument, or a module-level string's own text (adafruit_neopixel `pixel_order`); `isinstance(x, slice)` is always False -- nothing is a runtime slice (adafruit_pixelbuf `__setitem__`); a `None`-bound name answers False to every builtin |
 | `is` / `is not` | Maps to `==` / `!=` (identity = equality on bare-metal) |
-| `divmod(a, b)` built-in | Returns `(quotient, remainder)`; compile-time fold or `__div8`/`__mod8` |
+| `divmod(a, b)` built-in | Returns `(quotient, remainder)`, only when unpacked into two targets; compile-time fold or `__div8`/`__mod8`; a runtime-zero divisor raises `ZeroDivisionError` |
 | `bitcast(T, v)` built-in | Reinterpret raw bytes as type `T`; float<->uint32 via register swap; compile-time fold for constant operands |
 | `hex(n)` / `bin(n)` (compile-time) | Fold to `"0xff"` / `"0b101"` string constant |
 | `sum(iterable)` | Compile-time fold or unrolled additions over fixed-size array |
@@ -188,7 +188,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Named sequence | `pins = [11, 12, 13]` and `pins = (11, 12, 13)` iterate the same way at any length: at most 8 constant elements unroll against the literal, past that the name gets a fixed array the loop walks. Unannotated, the element width is the widest element's, so a 16-bit table stays 16-bit |
 | `reversed(iterable)` | `for x in reversed([1,2,3]):` — compile-time reverse unroll; `reversed(range(a, b, s))` is the same range walked down (runtime bounds with a unit step) |
 | `str(n)` compile-time | `str(42)` → `"42"` string constant; compile-time `n` only |
-| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | Compile-time integer fold; runtime integer unroll; runtime float via `__pymcu_powf` (#463) |
+| `pow(x, n)` / `x ** n` / `math.pow(x, n)` | Compile-time integer fold; runtime integer unroll; runtime float (including a negative integer exponent on a float base) via `__pymcu_powf` (#463) -- both spellings share the one domain-checked routine |
 | `math.sqrt/exp/log/radians(x)` | Software float, run-time argument. `sqrt` is Newton-Raphson after a scale reduction; `log` and `exp` are the two halves of `__pymcu_powf`'s series; `radians` is a scaling multiply that folds for a constant angle. Each body lowers LAZILY, so `import math` with no call costs 0 bytes and a program carries only what it calls. Only these four: each is here because a measured library stops without it (max31865, thermistor, sgp30, mpu6050/lsm6ds). `math.pi` / `math.e` are not defined: a module-level float constant in an imported module is storage nothing initialises |
 | Forward-reference annotation `"Name"` | A type named as a string literal (PEP 484), the spelling every Adafruit driver uses for its own `__enter__` return. The quotes come off and the name inside is resolved and checked like any other, in `AnnotationText` so both front ends read it the same way |
 
