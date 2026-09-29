@@ -165,27 +165,43 @@ before a release.
 
 ## Two more, known and not yet filed
 
-Found during this release's own prep (reported by the `b1size` measurement pass, not
-independently reproduced on this page; no oracle probe or fixture pins either one yet,
-and neither has a filed issue):
+Measured on the AVR emulator during this release's own prep, both compiler front ends,
+against `main`. Neither has an oracle probe or a fixture pinning it yet, and neither has
+a filed issue. Both are compile-time refusals, not silent wrong values.
 
-- **`x.value += n` refuses to compile in a class with more than one field, or one that
-  declares `@property value`, while the identical program with the field renamed to
-  anything other than `value` compiles.** This is the same `.value` MMIO/collapsed-scalar
-  shortcut the descriptor protocol fix above had to out-prioritize, in a shape that fix
-  did not cover: an augmented assignment (`+=`, not a plain read or a plain `=`) on a
-  field literally named `value`, on a class the shortcut does not otherwise treat
-  specially (no descriptor, more than the one field a single-field ZCA collapse allows).
-  Correctly refused rather than silently miscompiled, as far as is known, but the
-  refusal's own diagnostic was not checked for naming the real cause.
-- **A user's own function named `claim` or `asm` becomes reserved the moment any stdlib
-  module imports `pymcu.types`** (which is nearly every stdlib module, directly or
-  transitively) -- a program defining `def claim(...)` or `def asm(...)` for its own
-  purposes collides with a name the compiler treats specially once that import is
-  present, whether or not the program's own code ever imports `pymcu.types` by name
-  itself. Neither the exact failure mode (refusal vs. silent wrong dispatch) nor a
-  minimal repro is recorded here; this row exists so the collision is not lost before
-  someone reproduces and files it properly.
+- **`x.value += n` refuses to compile in a class with more than one field, in one that
+  declares `@property value` with a setter, and through a non-simple receiver
+  (`w.sensor.value += n`), while the identical program with the field renamed to
+  anything other than `value` compiles and runs.** This is the same `.value`
+  MMIO/collapsed-scalar shortcut the descriptor protocol fix above had to
+  out-prioritize, in a shape that fix does not cover: an augmented assignment, not a
+  plain read or a plain `=` (a simple `=` through a non-simple receiver still works). A
+  class with exactly one field named `value` still compiles and matches CPython.
+  ```python
+  class Sensor:
+      def __init__(self):
+          self.value: uint8 = 3
+          self.step: uint8 = 1
+  s = Sensor()
+  s.value += 8   # CompileError here
+  ```
+  `augmented assignment to .value requires a pointer or register target`
+  (`Assign.cs` around line 9880-9935). Renaming `value` to `amount` (keeping the second
+  field) compiles and prints `11`, matching CPython, on both front ends.
+- **A user's own function named `claim` or `asm` is refused as soon as the program
+  imports anything from a chip module** (`from pymcu.chips.atmega328p import GPIOR0` is
+  enough; the program need not import `pymcu.types` itself, the chip module does it
+  transitively), because the compiler's own intrinsics of those names take over the
+  call.
+  ```python
+  from pymcu.chips.atmega328p import GPIOR0
+  def claim(x: uint8) -> uint8:
+      return x + 1
+  print(claim(5))   # CompileError here
+  ```
+  `claim() takes claim(key, value, owner="", hint="")` (the intrinsic's own signature).
+  `def asm(x): ...` called the same way gives `asm() argument must be a compile-time
+  string literal`. Both confirmed on both front ends.
 
 ## What "beta" does and does not claim
 
