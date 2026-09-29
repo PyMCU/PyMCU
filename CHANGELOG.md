@@ -22,11 +22,34 @@ the wrong value into an unannotated field it returned (#429), and
 was a constant (#430). That release was never published, and on
 2026-09-25 the decision reversed: ship from `main` as it stands rather than
 from the frozen branch. This section is regenerated against `main` at
-`7e7b693f` (2026-09-29), 1708 commits past `v0.1.0a10`. See
+`94013656` (2026-09-29), 1715 commits past `v0.1.0a10`. See
 [State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
 for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
+
+### Fixed (2026-09-29, silent wrong value, P0)
+
+- **ir**: a class attribute literally named `value` whose class defines the descriptor
+  protocol (`__get__`/`__set__`) never called it: `.value` was recognized earlier and
+  unconditionally as the MMIO register load / single-field instance collapse shortcut
+  (`PORTB.value`, a ZCA wrapper's collapsed scalar), so `b.value` answered with
+  un-constructed storage (`0`) and `b.value = v` wrote to storage nothing read back,
+  both silently, with no diagnostic. `value` is exactly the name `adafruit_register` and
+  `digitalio` use for their own descriptors, so this could reach any unmodified driver
+  built on either. The descriptor check now runs before the `.value` shortcut claims the
+  read/write, the same priority the existing `@property` guard already had. Oracle probe
+  `080_descriptor_get_set.py`, tracked since before beta 1 as filed compiler bug #391 (a
+  stale citation to an unrelated closed issue, corrected during this release's prep), now
+  matches CPython and is no longer tracked.
+- **ir**: three related shapes that used to silently read/write the wrong storage are now
+  refused with a diagnostic instead: writing a non-data descriptor (`__get__` only, no
+  `__set__`) named `value` (CPython would create a per-instance override PyMCU's
+  compile-time layout has no room for); reading a descriptor through the class itself
+  (`Box.value`, no instance to pass as `__get__`'s `obj`); and a descriptor whose class
+  defines `__set_name__` (CPython calls it once at class-creation time, which nothing in
+  PyMCU's compiler executes, so a descriptor that reads back what `__set_name__` would
+  have stored answered with never-initialized storage).
 
 ### Added (2026-09-29, user-visible)
 
@@ -1368,7 +1391,7 @@ in this project's convention).
 ### Full commit log
 
 <details>
-<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 967 more commits landed on `main` between 83f05312 and 7e7b693f (2026-09-29, 1708 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-29) for the condensed, by-area account of that window, and `git log 83f05312..7e7b693f` for every individual subject.</summary>
+<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 974 more commits landed on `main` between 83f05312 and 94013656 (2026-09-29, 1715 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-29) for the condensed, by-area account of that window, and `git log 83f05312..94013656` for every individual subject.</summary>
 
 ### Added
 
