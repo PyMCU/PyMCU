@@ -2016,7 +2016,7 @@ public partial class IRGenerator
                 Emit(new Binary(BinaryOp.Equal, v2, new FloatConstant(0.0), isZero));
                 string divOk = MakeLabel();
                 Emit(new JumpIfZero(isZero, divOk));
-                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: false);
+                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
                 Emit(new Label(divOk));
             }
 
@@ -2062,7 +2062,7 @@ public partial class IRGenerator
                 Emit(new Binary(BinaryOp.Equal, fb, new FloatConstant(0.0), isZeroI));
                 string divOkI = MakeLabel();
                 Emit(new JumpIfZero(isZeroI, divOkI));
-                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: false);
+                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
                 Emit(new Label(divOkI));
             }
             Temporary fdst = MakeTemp(DataType.FLOAT);
@@ -2296,7 +2296,7 @@ public partial class IRGenerator
         {
             string divOk = MakeLabel();
             Emit(new JumpIfNotZero(v2, divOk));
-            EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: false);
+            EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
             Emit(new Label(divOk));
         }
 
@@ -2944,7 +2944,7 @@ public partial class IRGenerator
             // which is the same instruction the run-time key path emits for the same miss.
             if (tryCatchStack.Count > 0)
             {
-                EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: false);
+                EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: true);
                 return MakeTemp(DataType.UINT8);
             }
 
@@ -3009,7 +3009,7 @@ public partial class IRGenerator
         else
         {
             // No key matched: raise KeyError (caught by an enclosing try, else propagates).
-            EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: false);
+            EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: true);
         }
         Emit(new Label(endL));
         return result;

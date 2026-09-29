@@ -483,7 +483,7 @@ public partial class IRGenerator
     {
         string ok = MakeLabel();
         Emit(new JumpIfLessThan(idx, new Constant(n), ok));
-        EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: false);
+        EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: true);
         Emit(new Label(ok));
     }
 
