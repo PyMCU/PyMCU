@@ -398,21 +398,18 @@ def _inject_strfmt_preamble(entry_point: Path, generated_dir: Path) -> tuple[Pat
 
 
 def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
-    """Return True if any source file reads the Timer0 time base.
+    """Return True if any source file actually calls into the Timer0 time base.
 
     Covers MicroPython ticks_ms()/ticks_us()/micros() and CircuitPython
     time.monotonic()/monotonic_ns()/supervisor.ticks_ms(): all of them read
     the millis/micros counter, which stays frozen at 0 until millis_init()
     arms the overflow ISR -- a monotonic()-scheduled loop then never fires.
+    A call is required (ast-checked): the same spelling in a comment does not
+    reserve Timer0.
     """
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            text = py_file.read_text(encoding="utf-8", errors="ignore")
-            if _TICKS_MS_RE.search(text):
-                return True
-        except OSError:
-            pass
-    return False
+    return _source_has_named_call(
+        sources_dir, {"ticks_ms", "ticks_us", "micros", "monotonic", "monotonic_ns"}
+    )
 
 
 def _detect_async_def_usage(sources_dir: Path) -> bool:
