@@ -1,37 +1,57 @@
 # State of the beta
 
-Beta 1 (`0.1.0b1`) covers three packages: the compiler frontend and stdlib
-(this repo), the AVR backend (`pymcu-avr`), and the CircuitPython
-compatibility layer (`pymcu-circuitpython`). ARM/RP2040/RP2350, PIC, and
-RISC-V stay alpha on purpose. See [Supported targets](https://github.com/PyMCU/PyMCU#supported-targets)
+Beta 1 (`0.1.0b1`) covers six packages: the compiler frontend and stdlib
+(this repo), the AVR backend (`pymcu-avr`), the CircuitPython compatibility
+layer (`pymcu-circuitpython`), and the MicroPython compatibility layer
+(`pymcu-micropython`, added to the beta-1 scope 2026-09-26). ARM/RP2040/RP2350,
+PIC, and RISC-V stay alpha on purpose. See [Supported targets](https://github.com/PyMCU/PyMCU#supported-targets)
 for the per-backend maturity labels and why.
 
 This page collects the numbers from the five suites that back that claim,
 each with a link to the page that explains what it measures and how to
-reproduce it.
+reproduce it. **Measured 2026-09-29** against `pymcu-compiler`/`pymcu-stdlib`
+main at `6f8d2149`, `pymcu-avr` main at `07e307f`, `pymcu-circuitpython` main
+at `e5d3238`, both compiler front ends where the suite runs both.
 
 ## The five suites
 
 | Suite | What it measures | Result | Docs |
 |---|---|---|---|
-| User-program corpus | 49 user-style AVR programs, each with an expected build outcome and a size gate | 49 programs | [`pymcu-circuitpython/docs/corpus.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/corpus.md) |
-| CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 230 symbols (175 provided, 55 allowlisted with a reason) | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
-| MicroPython API parity | Every `machine`/`utime`/`network`/… symbol upstream defines, checked against this layer | 292 symbols (74 provided, 218 allowlisted with a reason) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
-| HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 191 facade/API deviations currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
-| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 109 probes compiled and run on the AVR emulator, diffed against CPython running the same source | 109 probes: 78 match (7 documented divergences), 11 correctly refused, 20 tracked as filed compiler bugs (`xfail(strict)`, suite green) | [`docs/language/oracle.md`](oracle.md) |
+| User-program corpus | 51 user-style AVR programs, each with an expected build outcome and a size gate | 50 of 51 pass; 1 exceeds its size gate (below) | [`pymcu-circuitpython/docs/corpus.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/corpus.md) |
+| CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 240 symbols (180 provided, 60 allowlisted with a reason), 0 unexpected failures | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
+| MicroPython API parity | Every `machine`/`utime`/`uasyncio`/… symbol the real firmware surface defines, checked against this layer | 374 symbols measured, 0 failures. (`tests/parity/report.py`'s own doc-generation pass separately walks the full CPython/typeshed `asyncio` stub with no filter and reports 393 symbols/52 "missing" for `uasyncio`; that is the generator over-counting, not a gap -- `test_uasyncio_parity.py` restricts itself by design to the ~70-name surface a real MicroPython board actually exposes, and every one of those cases passes) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
+| HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 253 facade/API deviations checked: 5 pass strict, 248 currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
+| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 436 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends | C# front end: 410 of 422 run pass (290 match, 117 correctly refused, 3 documented divergences), 12 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way. Python front end: 407 of 422 run pass (292 match, 112 refused, 3 divergences), 15 tracked, 14 skipped | [`docs/language/oracle.md`](oracle.md) |
+
+**The one corpus failure**: `42_except_as_e_args.py` (`try: raise RuntimeError("Timed out")
+except RuntimeError as e: print(e.args[0])`) grew from a committed baseline of 384 bytes to
+466 bytes (+21%), past the suite's 10% growth tolerance. Both front ends still print
+`Timed out`, matching CPython -- this is a size regression, not a silent miscompile. Cause
+not diagnosed here (out of scope for this pass); flagged for the orchestrator to bisect
+against the 384-byte baseline commit.
 
 ## What the oracle knows is wrong
 
-The differential oracle does not just count matches. Its 20 tracked probes
-(as of 2026-09-15; re-verify at freeze, since this list is regenerated from
-`docs/language/oracle.md`'s "Compiler bugs, by cause" table) are 13 filed,
-open compiler bugs, each an `xfail(strict)` case so the suite stays green
-without hiding them:
+The differential oracle does not just count matches. Its 15 tracked probes
+(measured 2026-09-29 straight from the `# tracked: #N` headers under
+`tests/oracle/probes/` in the `pymcu-avr` repo, both front ends) cover 12
+distinct filed issues, each probe an `xfail(strict)` case so the suite stays
+green without hiding them. Three probes are `# frontend: py-parser`-scoped
+(only run, and only xfail, under `PYMCU_PY_PARSER=1`): the C# front end sees
+12 xfails, the Python front end sees all 15.
 
 | Kind | Issues | What it means for a beta-1 program |
 |---|---|---|
-| Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364), [#390](https://github.com/PyMCU/PyMCU/issues/390), [#394](https://github.com/PyMCU/PyMCU/issues/394) (one of its three probes), [#395](https://github.com/PyMCU/PyMCU/issues/395), [#396](https://github.com/PyMCU/PyMCU/issues/396), [#397](https://github.com/PyMCU/PyMCU/issues/397), [#401](https://github.com/PyMCU/PyMCU/issues/401) | An unannotated loop accumulator, a field read through `with ... as`, a nested comprehension, a ZCA `__add__`/`__lt__`, `len(instance)`, two-index `__setitem__`, and `match` on an array can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. Three that were here were fixed on 2026-09-26 and their probes now match CPython: `#393` (folded `hex`/`bin`/`str`), `#399` (a one-character index) and `#398` (`list[T].append()` on the heap, which now prints 2 and 5 where it printed 0 and 0). |
-| Correctly refused, misleading reason | [#391](https://github.com/PyMCU/PyMCU/issues/391), [#392](https://github.com/PyMCU/PyMCU/issues/392), [#400](https://github.com/PyMCU/PyMCU/issues/400) (plus two of #394's three probes) | The build fails with a `CompileError` rather than shipping a wrong answer, but the message names the wrong cause (a class with no explicit `__init__`, `bytearray()` assigned to `self.field`, and an `Enum` member read outside a plain assignment all give a diagnostic that points somewhere other than the real limitation). |
+| Silently wrong value (no diagnostic, wrong answer) | [#364](https://github.com/PyMCU/PyMCU/issues/364) OPEN, [#394](https://github.com/PyMCU/PyMCU/issues/394) OPEN (three probes: nested comprehension, filter, instance comprehension), [#395](https://github.com/PyMCU/PyMCU/issues/395) OPEN, [#401](https://github.com/PyMCU/PyMCU/issues/401) OPEN (two probes: `match` sequence pattern on a real array, and its star-pattern sibling under the Python front end), [#426](https://github.com/PyMCU/PyMCU/issues/426) OPEN, [#449](https://github.com/PyMCU/PyMCU/issues/449) OPEN, [#521](https://github.com/PyMCU/PyMCU/issues/521) OPEN (Python front end only), [#522](https://github.com/PyMCU/PyMCU/issues/522) OPEN, [#525](https://github.com/PyMCU/PyMCU/issues/525) OPEN, [#439](https://github.com/PyMCU/PyMCU/issues/439) OPEN (Python front end only) | An unannotated loop accumulator, list comprehensions with more than one clause, a ZCA `__add__`/`__lt__`, `match/case` on a real array (phantom variables, and never checking arity), a method attached to a class after its definition, a type annotation reached through a module alias, PEP 695 type parameters dropped by the Python front end, an `int8`/`uint8` runtime comparison, and (Python front end only) a `match` tuple pattern taking the wrong branch can each compute the wrong answer with no error. Each has a fixture pinning today's wrong output so a silent fix does not regress. |
+| Correctly refused, misleading reason | [#400](https://github.com/PyMCU/PyMCU/issues/400) OPEN | Reading an `Enum` member outside a plain assignment RHS gives a diagnostic that says the enum class is undefined rather than naming the real limitation. |
+| Stale issue citation, still open | probe `080_descriptor_get_set.py` cites [#391](https://github.com/PyMCU/PyMCU/issues/391), which is CLOSED and titled "A class with no explicit `__init__` cannot be constructed" -- unrelated to what the probe actually exercises (the descriptor protocol, `__get__`/`__set__` on a class attribute: `b.value` returns a wrong value and `b.value = 5` does not call `__set__`, still reproducing today). No open issue currently tracks the descriptor-protocol gap by its real content; the probe's citation needs correcting to a real issue, filed anew if none exists. Not fixed here per this pass's rules. |
+
+Closed since 2026-09-15 and no longer tracked: `#390` (a field read through
+`with ... as`), `#392` (`bytearray()` assigned to `self.field`), `#396`
+(`len(instance)`), `#397` (two-index `__setitem__`), `#393` (folded
+`hex`/`bin`/`str`), `#398` (`list[T].append()` on the heap), and `#399` (a
+one-character index) -- all fixed and untracked between the 2026-09-15
+freeze and today.
 
 The distinction from "silent" as the term is used for the beta-1 exit bar:
 every probe above is filed, disclosed here, and enforced by a test that
