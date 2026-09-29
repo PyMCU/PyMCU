@@ -10,25 +10,42 @@ for the per-backend maturity labels and why.
 This page collects the numbers from the five suites that back that claim,
 each with a link to the page that explains what it measures and how to
 reproduce it. **Measured 2026-09-29** against `pymcu-compiler`/`pymcu-stdlib`
-main at `6f8d2149`, `pymcu-avr` main at `07e307f`, `pymcu-circuitpython` main
-at `e5d3238`, both compiler front ends where the suite runs both.
+main at `7e7b693f`, `pymcu-avr` main at `f8f053f`, `pymcu-circuitpython` main
+at `f8677cc`, `pymcu-micropython` main at `9f602f0`, both compiler front ends
+where the suite runs both. This is the second measurement of the day: the
+first (against `6f8d2149`/`07e307f`/`e5d3238`) found the corpus failure and
+the CircuitPython blink-size gap this section used to describe below; both
+were fixed by the float print policy change and the exception-tail fix that
+landed afterward (see the CHANGELOG), so this pass is a re-measurement, not
+a repeat of the same numbers. The float print policy change is this
+window's most user-visible fix outside the suites below: every beta-1
+program that prints a `float` used to get two fixed decimals silently
+(`print(0.001)` printed `0.0`) and now gets MicroPython's real
+significant-digit algorithm.
 
 ## The five suites
 
 | Suite | What it measures | Result | Docs |
 |---|---|---|---|
-| User-program corpus | 51 user-style AVR programs, each with an expected build outcome and a size gate | 50 of 51 pass; 1 exceeds its size gate (below) | [`pymcu-circuitpython/docs/corpus.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/corpus.md) |
-| CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 240 symbols (180 provided, 60 allowlisted with a reason), 0 unexpected failures | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
-| MicroPython API parity | Every `machine`/`utime`/`uasyncio`/… symbol the real firmware surface defines, checked against this layer | 374 symbols measured, 0 failures. (`tests/parity/report.py`'s own doc-generation pass separately walks the full CPython/typeshed `asyncio` stub with no filter and reports 393 symbols/52 "missing" for `uasyncio`; that is the generator over-counting, not a gap -- `test_uasyncio_parity.py` restricts itself by design to the ~70-name surface a real MicroPython board actually exposes, and every one of those cases passes) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
+| User-program corpus | 51 user-style AVR programs, each with an expected build outcome and a size gate | 51 of 51 pass (re-baselined after the float print fix: `42_except_as_e_args.py` moved from 384 to 460 bytes, and 4 float-printing programs each grew ~4 KB, both accepted) | [`pymcu-circuitpython/docs/corpus.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/corpus.md) |
+| CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 240 symbols (180 provided, 60 allowlisted with a reason), 0 unexpected failures (unchanged by this window's commits) | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
+| MicroPython API parity | Every `machine`/`utime`/`uasyncio`/… symbol the real firmware surface defines, checked against this layer | 374 symbols measured, 0 failures, part of 888 tests passing across this layer's full suite (`pytest tests/`, confirmed 2026-09-29). (`tests/parity/report.py`'s own doc-generation pass separately walks the full CPython/typeshed `asyncio` stub with no filter and reports 393 symbols/52 "missing" for `uasyncio`; that is the generator over-counting, not a gap -- `test_uasyncio_parity.py` restricts itself by design to the ~70-name surface a real MicroPython board actually exposes, and every one of those cases passes) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
 | HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 253 facade/API deviations checked: 5 pass strict, 248 currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
-| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 436 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends | C# front end: 410 of 422 run pass (290 match, 117 correctly refused, 3 documented divergences), 12 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way. Python front end: 407 of 422 run pass (292 match, 112 refused, 3 divergences), 15 tracked, 14 skipped | [`docs/language/oracle.md`](oracle.md) |
+| Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 436 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends | Unchanged by this window's commits: C# front end 410 of 422 run pass (290 match, 117 correctly refused, 3 documented divergences), 12 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way). Python front end 407 of 422 run pass (292 match, 112 refused, 3 divergences), 15 tracked, 14 skipped | [`docs/language/oracle.md`](oracle.md) |
 
-**The one corpus failure**: `42_except_as_e_args.py` (`try: raise RuntimeError("Timed out")
-except RuntimeError as e: print(e.args[0])`) grew from a committed baseline of 384 bytes to
-466 bytes (+21%), past the suite's 10% growth tolerance. Both front ends still print
-`Timed out`, matching CPython -- this is a size regression, not a silent miscompile. Cause
-not diagnosed here (out of scope for this pass); flagged for the orchestrator to bisect
-against the 384-byte baseline commit.
+The compiler-repo gates on `7e7b693f`: `just test-unit` 3332 passed, `just
+test-stdlib` 2146 passed, `pytest tests/driver` 1011 passed, `tools/verify_ir.py`
+0 regressions, all 0 failures. `pymcu-avr`'s full integration suite on
+`f8f053f`: 3961 passed, 0 failed. Everything in this paragraph is quoted from
+the gate this window's author ran, not independently re-run by this pass
+except the MicroPython 888 figure above, which was.
+
+**The corpus size gate is clean again.** `42_except_as_e_args.py` and the
+CircuitPython-blink exception-tail gap this section used to flag here were
+both explained and fixed by commits that landed after the first measurement
+today (`fix(ir): print(e.args[0]) does not ask twice...` and `fix(ir): a raise
+the optimizer already proved dead stops rooting the exception tail`, both in
+`pymcu-compiler`); see its CHANGELOG for the mechanism.
 
 ## What the oracle knows is wrong
 
