@@ -90,4 +90,62 @@ public class BuiltinArithmeticTests
         var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
         Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
     }
+
+    // ---- divmod() zero-divisor and bare-value bugs found by the float-edges campaign -------
+    //
+    // EmitDivmodBuiltin used to build its Binary(FloorDiv)/Binary(Mod) nodes directly instead
+    // of going through the checked binary-expression codegen that / // % use, so a divisor the
+    // compiler could not fold to a constant skipped the zero-check entirely: `q, r =
+    // divmod(1.0, x)` with a run-time x == 0.0 silently answered (inf, nan)-shaped garbage
+    // instead of raising ZeroDivisionError. And when the call was not unpacked into exactly two
+    // targets -- `v = divmod(a, b)`, `print(divmod(a, b))` -- it silently answered the
+    // QUOTIENT ALONE, dropping the remainder with no diagnostic, contradicting the documented
+    // "returns (quotient, remainder)".
+
+    [Fact]
+    public void DivmodWithARuntimeIntegerZeroDivisor_Raises()
+    {
+        var ir = Gen(
+            "b: uint8 = GPIOR0.value\n" +
+            "q, r = divmod(17, b)\n" +
+            "print(q)\n");
+
+        // A raise directly in main with no enclosing try reaches __pymcu_unhandled_exn
+        // through a SignalError whose CatchLabel is the landing right before that call
+        // (see UnhandledRaiseInMainTests) -- CatchLabel == null is the OTHER, broken form
+        // (SET; RET with no caller), so the halt call itself is what to assert on.
+        Assert.Contains(Main(ir).OfType<SignalError>(), s => s.Code is Constant { Value: 6 });
+        Assert.Contains(Main(ir).OfType<Call>(), c => c.FunctionName == "__pymcu_unhandled_exn");
+    }
+
+    [Fact]
+    public void DivmodWithARuntimeFloatZeroDivisor_Raises()
+    {
+        var ir = Gen(
+            "x: float = float(GPIOR0.value)\n" +
+            "q, r = divmod(1.0, x)\n" +
+            "print(q)\n");
+
+        Assert.Contains(Main(ir).OfType<SignalError>(), s => s.Code is Constant { Value: 6 });
+        Assert.Contains(Main(ir).OfType<Call>(), c => c.FunctionName == "__pymcu_unhandled_exn");
+    }
+
+    [Fact]
+    public void DivmodOfAConstantZeroDivisor_IsRefusedAtCompileTime()
+    {
+        Assert.Contains("divmod(): division by zero",
+            Assert.ThrowsAny<Exception>(() => Gen("q, r = divmod(17, 0)\n")).Message);
+        Assert.Contains("divmod(): division by zero",
+            Assert.ThrowsAny<Exception>(() => Gen("q, r = divmod(1.0, 0.0)\n")).Message);
+    }
+
+    [Theory]
+    [InlineData("v = divmod(17, 5)\n")]
+    [InlineData("print(divmod(17, 5))\n")]
+    public void ABareDivmodResult_IsRefused(string body)
+    {
+        string msg = Assert.ThrowsAny<Exception>(() => Gen(body)).Message;
+        Assert.Contains("divmod() returns a 2-tuple", msg);
+        Assert.Contains("q, r = divmod(a, b)", msg);
+    }
 }
