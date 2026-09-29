@@ -180,6 +180,57 @@ _UART_RE     = re.compile(r'\bUART\s*\(')
 _TICKS_MS_RE = re.compile(r'\b(?:ticks_ms|monotonic|monotonic_ns|ticks_us|micros)\s*\(')
 _INPUT_RE    = re.compile(r'\binput\s*\(')
 _ASYNC_DEF_RE = re.compile(r'^\s*async\s+def\s', re.MULTILINE)
+
+
+def _ast_module_or_none(py_file: Path) -> Optional[ast.Module]:
+    """Parse a source file with ast; return the tree, or None if it cannot be read
+    or parsed (a construct CPython's ast rejects but PyMCU's own parser accepts).
+    Callers fall back to a text-based heuristic when this returns None, so an
+    unparseable file never silently loses a real usage.
+    """
+    try:
+        text = py_file.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    try:
+        return ast.parse(text)
+    except SyntaxError:
+        return None
+
+
+def _call_target_names(node: ast.Call) -> tuple:
+    """Return (bare_name, attr_name) for a Call's callee: bare_name is set for a
+    plain-name call (`f(...)`), attr_name for an attribute call (`x.f(...)`)."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id, None
+    if isinstance(func, ast.Attribute):
+        return None, func.attr
+    return None, None
+
+
+def _source_has_named_call(sources_dir: Path, names: set) -> bool:
+    """True if any .py file contains an actual call to one of *names*, as a bare
+    name (`millis_init()`) or through an attribute (`timer.millis_init()`).
+    Ignores the same spelling sitting in a comment, a string or a docstring --
+    those never run, unlike a substring match over the raw text.
+    """
+    for py_file in sources_dir.rglob("*.py"):
+        tree = _ast_module_or_none(py_file)
+        if tree is None:
+            try:
+                text = py_file.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if any(re.search(r'\b' + re.escape(n) + r'\s*\(', text) for n in names):
+                return True
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                bare, attr = _call_target_names(node)
+                if bare in names or attr in names:
+                    return True
+    return False
 # `raise Name(<anything>)` -- an exception raised with a message. The unhandled
 # report prints it through the console string writers, which nothing links in
 # unless print() (or this) pulled them in.
@@ -382,15 +433,15 @@ def _detect_async_def_usage(sources_dir: Path) -> bool:
     return False
 
 
-def _sources_contain(sources_dir: Path, token: str) -> bool:
-    """Return True if any .py file under sources_dir mentions *token* (substring match)."""
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            if token in py_file.read_text(encoding="utf-8", errors="ignore"):
-                return True
-        except OSError:
-            pass
-    return False
+def _sources_call(sources_dir: Path, name: str) -> bool:
+    """Return True if any .py file under sources_dir actually calls *name*.
+
+    Used to skip auto-injecting an init preamble (millis_init(), clock_init())
+    the sources already call themselves -- a substring match used to trip on
+    the same spelling sitting in a comment, disabling the injection while the
+    real init call never ran.
+    """
+    return _source_has_named_call(sources_dir, {name})
 
 
 # ---------------------------------------------------------------------------
@@ -1522,8 +1573,8 @@ def build(
             _millis_reason = "async def (asyncio.ticks)"
         # Either way the time base runs, and the compiler is told so (see
         # PymcuCompiler.compile(timebase=...)).
-        _timebase = bool(_millis_reason) or _sources_contain(sources_dir, "millis_init")
-        if _millis_reason and not _sources_contain(sources_dir, "millis_init"):
+        _timebase = bool(_millis_reason) or _sources_call(sources_dir, "millis_init")
+        if _millis_reason and not _sources_call(sources_dir, "millis_init"):
             entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir, _millis_reason)
             _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
@@ -1544,7 +1595,7 @@ def build(
         # which does the same before main(). Injected LAST so clock_init() runs first, ahead
         # of any stdout/ticks preamble that depends on the final clk_sys / clk_peri. Skipped
         # if the user already calls clock_init() (idempotent, but avoids a redundant pass).
-        if target == "rp2350" and not _sources_contain(sources_dir, "clock_init"):
+        if target == "rp2350" and not _sources_call(sources_dir, "clock_init"):
             entry_point, _n = _inject_clock_init_preamble(entry_point, generated_dir)
             _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
