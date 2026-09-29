@@ -1,6 +1,32 @@
 # Changelog — pymcu-compiler / pymcu-stdlib
 
-## Unreleased
+## 0.1.0b1 (Unreleased)
+
+Beta 1 covers the frontend (parser, IR, diagnostics) and the AVR backend as a
+matched pair: everything below was found or fixed compiling and running real
+programs against AVR silicon or the AVR emulator, and it ships with a
+regression test. The ARM/RP2040/RP2350, PIC, and RISC-V backends stay alpha
+on purpose (see their own CHANGELOG entries), but every frontend fix here
+applies to them too, since the frontend is shared across all backends.
+`pymcu-avr`, `pymcu-circuitpython` and `pymcu-micropython` move to
+`0.1.0b1` alongside this package; `pymcu-sdk` moves in lockstep because the
+release gate requires the compiler, stdlib, and SDK to publish at the same
+version.
+
+**First frozen at `83f05312` (2026-09-15), re-frozen from `main` since.**
+The 2026-09-15 freeze waited on three silent wrong-code bugs found by an
+orphan-method probe sweep the night before: a nested `@inline` function
+silently lost writes it made to `self` (#427), a factory function threaded
+the wrong value into an unannotated field it returned (#429), and
+`super().method()` miscomputed when a subclass field's constructor argument
+was a constant (#430). That release was never published, and on
+2026-09-25 the decision reversed: ship from `main` as it stands rather than
+from the frozen branch. This section is regenerated against `main` at
+`6f8d2149` (2026-09-29), 1684 commits past `v0.1.0a10`. See
+[State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
+for what the differential oracle still knows is wrong and discloses on
+purpose, as opposed to bugs like the three above that were silent until
+found.
 
 ### Added
 
@@ -535,28 +561,58 @@
   `machine.Timer.__del__` faithfully; the warning fires only where an instance is actually
   built, so a program that merely imports the module stays quiet.
 
-## 0.1.0b1 (Unreleased, prepared 2026-09-15)
+### Added (2026-09-25 to 2026-09-29)
 
-Beta 1 covers the frontend (parser, IR, diagnostics) and the AVR backend as a
-matched pair: everything below was found or fixed compiling and running real
-programs against AVR silicon or the AVR emulator, and it ships with a
-regression test. The ARM/RP2040/RP2350, PIC, and RISC-V backends stay alpha
-on purpose (see their own CHANGELOG entries), but every frontend fix here
-applies to them too, since the frontend is shared across all backends.
-`pymcu-avr` and `pymcu-circuitpython` move to `0.1.0b1` alongside this
-package; `pymcu-sdk` moves in lockstep because the release gate requires the
-compiler, stdlib, and SDK to publish at the same version.
+- **ir**: `e.args` in an `except ... as e` handler reads as the tuple of the `raise`'s
+  constructor argument.
+- **frontend**: a `raise ClassName()` call with no argument is distinguished at parse time
+  from one with an argument, instead of both reaching the IR the same way.
+- **frontend**: a parameter every call site hands a string literal or a `str` value infers
+  `str`, instead of needing an explicit annotation.
+- **ir**: a list literal a function `.append()`s to is allocated on the heap, so its
+  lifetime survives the function returning it.
+- **ir**: `enumerate()` accepts a compile-time constant `start` argument.
+- **hal/avr/pwm**: an exact Timer1 PWM channel can be retuned at run time and keeps its
+  duty cycle across the retune (the CircuitPython buzzer idiom).
+- **hal/avr/uart**: `reinit`, `deinit` and `tx_empty` (#451).
+- **hal/irq**: `save_and_disable_interrupts` / `restore_interrupts` (#353).
 
-**Frozen for release at `83f05312`.** The freeze waited on three silent
-wrong-code bugs found by an orphan-method probe sweep the night before:
-a nested `@inline` function silently lost writes it made to `self`
-(#427), a factory function threaded the wrong value into an unannotated
-field it returned (#429), and `super().method()` miscomputed when a
-subclass field's constructor argument was a constant (#430). All three
-are fixed and covered by a regression fixture; see
-[State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
-for what the differential oracle still knows is wrong and discloses on
-purpose, as opposed to bugs like these three that were silent until found.
+### Fixed (2026-09-25 to 2026-09-29)
+
+129 fixes landed in this window (full subjects: `git log f3b21bf1..6f8d2149`), 116 of them
+in the IR generator. Grouped by what kept going wrong:
+
+- **Width and type inference**: an unannotated accumulator, slot, or return now takes the
+  width its first store (or its inference) actually needs instead of guessing from the seed
+  it began with; an integer literal from 2^31 up is a `uint32`; a `const[float]` parameter's
+  default is folded as the constant it is; a `str` parameter compares and holds by flash
+  address consistently.
+- **Buffers and parameters that shadow**: a scalar local or parameter no longer silently
+  aliases a module-level buffer of the same name (and vice versa for `bytes`/`ptr`); a
+  buffer handed to a parameter never binds to one that holds a plain number; passing,
+  slicing, `len()`-ing and subscripting a buffer parameter now all reach the caller's
+  argument rather than a stale copy.
+- **Evaluation order and side effects**: call arguments, keyword-to-positional binds, item
+  assignments and sequence-argument elements are each evaluated exactly once, in the order
+  written, instead of sometimes twice or reordered.
+- **`None` / `Optional` tracking**: a `None` reaching a name through a call result, a field
+  read, or an installed module's global prints as `None` and narrows correctly through
+  `and`/`or` and `is None`, instead of losing the tag partway through.
+- **Inline/ZCA frames**: an `@inline` expansion is named after the function it expands in,
+  starts from a clean frame for dunders/setters/`super()`, and a raise inside one now
+  unwinds through the caller's `finally` and re-raises the saved code instead of whatever a
+  scratch register happened to hold.
+- **Module-level globals**: a `const`, a walrus target, an `asm()` operand and a nested
+  field of a module-level instance are now filed under the module/frame that actually owns
+  them, closing several cases where a name crossing a frame silently became local.
+- **Numeric builtins**: `divmod()`, `pow()`, `sum()`, `reversed()`, `isinstance()`, `chr()`
+  and a bare builtin name (no call) each had a specific wrong-output or wrong-diagnostic
+  case fixed.
+- The remaining fixes are in the frontend (5, mostly comprehension/optional diagnostics),
+  the optimizer (3), the SDK (2), the AVR I2C HAL (1), and the driver (1).
+
+Every one of the 129 ships with a regression test in the same commit ([[feedback_cada_bug_un_test]]
+in this project's convention).
 
 ### Zero cost
 - A call argument that HOLDS a compile-time constant binds the parameter as that constant, not
@@ -1250,7 +1306,7 @@ purpose, as opposed to bugs like these three that were silent until found.
 ### Full commit log
 
 <details>
-<summary>All 741 commits since v0.1.0a10, grouped by Conventional Commit type</summary>
+<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 943 more commits landed on `main` between 83f05312 and 6f8d2149 (2026-09-29, 1684 total since v0.1.0a10) -- see the "Added"/"Fixed (2026-09-25 to 2026-09-29)" sections above for the condensed, by-area account of that window, and `git log 83f05312..6f8d2149` for every individual subject.</summary>
 
 ### Added
 
