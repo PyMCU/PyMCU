@@ -22,14 +22,19 @@ behaviour only b1 has. It publishes at step 4b.
 
 **The direction of the freeze reversed on 2026-09-25.** This file was written
 for a freeze that lived on `release-b1` and got merged into `main`. It is now
-the other way round: `main` is 572 commits ahead of `release-b1` in this repo
-and 208 ahead in `pymcu-avr`, and the decision is to freeze from `main`. So
-every `git merge --ff-only release-b1` below became `git branch -f release-b1
-main`, which re-points the frozen branch at what is actually being shipped.
+the other way round: as of 2026-09-29, `main` is 935 commits ahead of
+`release-b1` in this repo, 337 ahead in `pymcu-avr`, 31 ahead in
+`pymcu-circuitpython` and 50 ahead in `pymcu-micropython`, and the decision
+is to freeze from `main`. So every `git merge --ff-only release-b1` below
+became `git branch -f release-b1 main`, which re-points the frozen branch at
+what is actually being shipped. These four counts move every day main does;
+re-run `git rev-list --count release-b1..main` in each repo before actually
+cutting the release rather than trusting the numbers above.
 
 Nothing here pushes or publishes on its own; each numbered stage ends with a
-manual go/no-go. Note that **nothing is on GitHub yet**: 855 commits across
-five repos are local-only, so the pushes below are not routine, they are the
+manual go/no-go. Note that **nothing is on GitHub yet**: 1353 commits across
+those four repos are local-only (not counting `pymcu-libraries`, tracked
+separately in step 2), so the pushes below are not routine, they are the
 release.
 
 ## 0. Pre-flight
@@ -54,10 +59,20 @@ grep -h 'pymcu-stdlib>=\|pymcu-sdk>=' \
 # Suites green in each repo (see AGENTS.md / CLAUDE.md for the compiler
 # rebuild step before test-unit).
 cd ~/Repos/PyMCU && just test-unit && uv run --with pytest python -m pytest tests/driver
-cd ~/Repos/pymcu-avr && dotnet test    # integration suite, ~1550 tests
+cd ~/Repos/pymcu-avr && dotnet test    # integration suite: 4508 tests (3953 pass, 555 skipped), measured 2026-09-29
 cd ~/Repos/pymcu-circuitpython && uv run --with pytest python -m pytest tests/corpus tests/parity
 cd ~/Repos/pymcu-micropython && uv run --with pytest python -m pytest tests/parity
 ```
+
+Measured 2026-09-29 against `main` at `6f8d2149` (PyMCU) / `07e307f` (pymcu-avr):
+`just test-unit` 3311/3317 (6 skipped), `just test-stdlib` 2081 passed/36
+skipped/248 xfailed, `pytest tests/driver` 940 passed/18 skipped, all 0
+failures. `pymcu-circuitpython`'s `tests/corpus` is 50/51 (one size-gate
+regression, see [State of the beta](../language/state-of-the-beta.md)) and
+`tests/parity` 240/240; `pymcu-micropython`'s `tests/parity` 374/374. The IR
+verifier (`tools/verify_ir.py` in `pymcu-avr`) shows 0 regressions against
+its baseline (1 cleared entry). None of this replaces re-running the suites
+against whatever commit is actually about to be tagged.
 
 **Known gotcha introduced by this release:** `pymcu-avr`'s `pymcu-sdk` pin
 was tightened to `>=0.1.0b1` (it used to float at `>=0.1.0a4`, which is the
