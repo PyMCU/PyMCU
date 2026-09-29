@@ -22,11 +22,65 @@ the wrong value into an unannotated field it returned (#429), and
 was a constant (#430). That release was never published, and on
 2026-09-25 the decision reversed: ship from `main` as it stands rather than
 from the frozen branch. This section is regenerated against `main` at
-`94013656` (2026-09-29), 1715 commits past `v0.1.0a10`. See
+`13703a55` (2026-09-29), 1721 commits past `v0.1.0a10`. See
 [State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
 for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
+
+### Fixed (2026-09-29, five bugs from deciding by a name's spelling, not what it is)
+
+Every one of these five treated a name (a function, a comment, a class) by how it was
+spelled rather than by what it actually resolves to, and every one was silent: the build
+succeeded and the wrong thing happened, or the right thing never happened.
+
+- **ir**: a program's own `def sleep_ms(n)` / `sleep_us` / `delay_ms` / `delay_us` was
+  never called. The call dispatcher rewrote any callee spelled that way, bare or
+  `time_`/`pymcu_time_`-prefixed, to `pymcu.time`'s delay routine before ever looking
+  the name up, and when that module was not loaded, to the first `@inline` function
+  whose name happened to end the same way. Two calls printed `0` instead of `302` (a
+  counter the user's own function incremented), at module level, from a function and
+  from an `@inline`, in both front ends. The MicroPython layer's own
+  `time.sleep_ms(ms: uint32)` became the 16-bit stdlib delay too, so `sleep_ms(65636)`
+  slept 100 ms instead of the requested duration. **Visible consequence**: a call to
+  `delay_ms`/`sleep_ms`/`delay_us`/`sleep_us` that names no defined or imported function
+  is now refused at compile time; before this fix it silently compiled against whichever
+  `*_delay_ms`-suffixed function the fallback found first.
+- **driver**: a comment mentioning `millis_init`/`clock_init` anywhere in a source file
+  used to suppress the automatic time-base preamble the same way an actual call would,
+  because the check was a raw text search over the whole file, comments and strings
+  included. A comment like `# millis_init() is called elsewhere` left Timer0 (or, on
+  RP2350, the clock) never armed: `micros()`/`ticks_ms()` stayed frozen at `0` for the
+  whole run, silently. Now parses each source file and only counts an actual `Call`
+  AST node (bare name or attribute), falling back to the old text scan only when a
+  file cannot be parsed.
+- **driver**: the same text-substring bug reserved Timer0 for `ticks_ms()`/`micros()`
+  usage: a comment merely mentioning `ticks_ms`, `ticks_us`, `micros` or `monotonic`
+  anywhere in the file injected the time-base preamble for a program that never reads
+  the time base at all, silently taking Timer0 from a program that wanted it for
+  something else.
+- **driver**: `lcd.print(...)` or `pin.input(...)` on a user's own class was detected as
+  a call to the builtin `print()`/`input()` by a bare word-boundary regex that matches
+  right after a dot, silently injecting a UART on PD0/PD1 the program never asked for
+  and that its own driver class may already be using those pins for. A `UART` imported
+  under an alias (`from pymcu.hal.uart import UART as Serial; Serial(9600)`) was not
+  recognized at all, so a second, real UART got injected on top of the user's own.
+  Detection is now a real `ast.Call` whose callee is the bare name (not an attribute),
+  skipped when the module itself shadows `print`/`input`, and a `UART()` construction
+  is recognized through its import alias or as a qualified call.
+- **ir**: `uart.println(f"...")`/`.write_str(f"...")` and `lcd.print_str(f"...")`
+  decided "is this the stdlib class" by `cls.EndsWith("UART")`/`cls.EndsWith("LCD")`.
+  A user class merely named that way (`class BleUART`, `class SoftUART`, `class MyLCD`)
+  matched too: `ble.println(f"hi {x}")` silently skipped the user's own `println()`
+  method entirely and streamed straight to the console UART instead, stealing PD0/PD1
+  for a wire nothing asked for; confirmed on real firmware in avr8sharp, the user
+  class's own body never ran and the build succeeded as if nothing were wrong. The
+  check now requires the qualified-name shape only a real stdlib instance carries (an
+  underscore boundary and a `pymcu_`-prefixed module tail), which a same-named user
+  class does not have. **Visible consequence**: `ble.println(f"...")` on a user class
+  now either runs the user's own method for real (assign the f-string to a variable
+  first) or is refused at compile time with the existing f-string-position diagnostic
+  when passed directly, in place of the silent swap to the console UART.
 
 ### Fixed (2026-09-29, silent wrong value, P0)
 
@@ -1391,7 +1445,7 @@ in this project's convention).
 ### Full commit log
 
 <details>
-<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 974 more commits landed on `main` between 83f05312 and 94013656 (2026-09-29, 1715 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-29) for the condensed, by-area account of that window, and `git log 83f05312..94013656` for every individual subject.</summary>
+<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 980 more commits landed on `main` between 83f05312 and 13703a55 (2026-09-29, 1721 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-29) for the condensed, by-area account of that window, and `git log 83f05312..13703a55` for every individual subject.</summary>
 
 ### Added
 
