@@ -686,6 +686,98 @@ public class OptimizerPassTests
             .Should().BeEquivalentTo(["main", "a", "b"]);
     }
 
+    // ─── Unhandled-exception report machinery ────────────────────────────────
+    //
+    // __pymcu_exn_tail is reached only from raw asm the AVR backend emits on the
+    // unhandled-exception path, so no Call in IR ever names it: ComputeReachableFunctions
+    // has to root it by NAME whenever a message a raise recorded needs to survive to
+    // print. It used to root it whenever the function merely EXISTED, regardless of
+    // whether the message store that justified adding it in the first place was itself
+    // still reachable -- a raise inside a function nothing calls (busio.I2C's error
+    // helpers when the program never builds a busio.I2C) stayed rooted, and CircuitPython
+    // blink paid 30 bytes for a message no run of the program could ever produce.
+
+    [Fact]
+    public void DFE_RemovesExnTail_WhenNoReachableRaiseRecordsAMessage()
+    {
+        var prog = MakeProgramWithFunctions(
+            new Function { Name = "main", Body = [new Return(new Constant(0))] },
+            // A raise-with-message inside a function main never calls -- the shape of
+            // busio.I2C's error helper when the program never builds a busio.I2C.
+            new Function
+            {
+                Name = "unused_raiser",
+                Body =
+                [
+                    new Copy(new FlashStrAddr("__cstr_0"), new Variable("__exn_msg", DataType.UINT16)),
+                    new Return(new Constant(0)),
+                ],
+            },
+            new Function
+            {
+                Name = "__pymcu_print_exn_msg",
+                Body = [new Return(new Constant(0))],
+            },
+            new Function
+            {
+                Name = "__pymcu_exn_tail",
+                Body =
+                [
+                    new Call("__pymcu_print_exn_msg", [], new Temporary("r")),
+                    new Return(new Constant(0)),
+                ],
+            });
+        prog.Globals.Add(new Variable("__exn_msg", DataType.UINT16));
+
+        var optimized = Optimizer.Optimize(prog);
+        optimized.Functions.Should().NotContain(f => f.Name == "unused_raiser");
+        optimized.Functions.Should().NotContain(f => f.Name == "__pymcu_exn_tail",
+            "no reachable raise records a message, so nothing prints one");
+        optimized.Functions.Should().NotContain(f => f.Name == "__pymcu_print_exn_msg",
+            "its only caller (the tail) is gone too");
+    }
+
+    [Fact]
+    public void DFE_KeepsExnTail_WhenAReachableRaiseRecordsAMessage()
+    {
+        var prog = MakeProgramWithFunctions(
+            new Function
+            {
+                Name = "main",
+                Body =
+                [
+                    // main itself raises with a message -- reachable, unlike the fixture above.
+                    new Copy(new FlashStrAddr("__cstr_0"), new Variable("__exn_msg", DataType.UINT16)),
+                    new Return(new Constant(0)),
+                ],
+            },
+            new Function
+            {
+                Name = "__pymcu_print_exn_msg",
+                Body = [new Return(new Constant(0))],
+            },
+            new Function
+            {
+                Name = "__pymcu_exn_tail",
+                Body =
+                [
+                    new Call("__pymcu_print_exn_msg", [], new Temporary("r")),
+                    new Return(new Constant(0)),
+                ],
+            });
+        // A real program declares __exn_msg as a module global (it is read from a
+        // different function -- the printer -- than the one that writes it), which is
+        // what keeps ordinary dead-store elimination from treating main's write as a
+        // local nobody reads. Without this the store this test means to keep alive
+        // would itself be gone before ComputeReachableFunctions ever asked about it.
+        prog.Globals.Add(new Variable("__exn_msg", DataType.UINT16));
+
+        var optimized = Optimizer.Optimize(prog);
+        optimized.Functions.Should().ContainSingle(f => f.Name == "__pymcu_exn_tail",
+            "main's own raise recorded a message that reaches this point");
+        optimized.Functions.Should().ContainSingle(f => f.Name == "__pymcu_print_exn_msg");
+    }
+
     // ─── Dead Variable Store Elimination ─────────────────────────────────────
 
     [Fact]

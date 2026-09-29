@@ -382,21 +382,82 @@ public static class Optimizer
             if (reachable.Add(name)) worklist.Enqueue(name);
         }
 
+        void Drain()
+        {
+            while (worklist.Count > 0)
+            {
+                if (!callGraph.TryGetValue(worklist.Dequeue(), out var callees)) continue;
+                foreach (var callee in callees) Enqueue(callee);
+            }
+        }
+
         Enqueue("main");
         foreach (var func in program.Functions.Where(f => f.IsInterrupt || f.IsExportC))
             Enqueue(func.Name);
+        // Drained BEFORE the __pymcu_exn_tail root below is decided: that decision asks
+        // whether a message survives in code the program already reaches, and a function
+        // that is itself unreachable (busio.I2C's error helpers when nothing ever builds
+        // a busio.I2C) must not count just because it still carries a raise with a
+        // message. Counting it would re-root the tail through the back door for every
+        // program that merely IMPORTS a module whose unused code happens to raise one.
+        Drain();
+
         // __pymcu_exn_tail is reached only from raw asm the backend emits on the
         // unhandled-exception path -- no IR instruction calls it, so without this
         // root the report's ": <msg>" would be pruned here before codegen sees it.
-        foreach (var func in program.Functions.Where(f => f.Name == "__pymcu_exn_tail"))
-            Enqueue(func.Name);
-
-        while (worklist.Count > 0)
+        //
+        // Rooted only when a message actually survives in code the program already
+        // reaches, not merely because the function exists: it used to be rooted by name
+        // alone, so a raise inside a function nothing calls -- board.py's `from busio
+        // import I2C as _board_i2c` pulls in busio.I2C's `_i2c_fail_io`/`_i2c_fail_nodev`,
+        // which raise OSError with a message, even though `import board` never calls
+        // I2C() -- still paid for the whole report. Measured: blink under CircuitPython's
+        // digitalio (which imports pymcu.hal.gpio via `board`) paid 30 bytes of report
+        // machinery for a message no reachable raise ever recorded.
+        if (ProgramStillRecordsRaiseMessage(program, reachable))
         {
-            if (!callGraph.TryGetValue(worklist.Dequeue(), out var callees)) continue;
-            foreach (var callee in callees) Enqueue(callee);
+            foreach (var func in program.Functions.Where(f => f.Name == "__pymcu_exn_tail"))
+                Enqueue(func.Name);
+            Drain();
         }
+
         return reachable;
+    }
+
+    // Whether some function OTHER than the report machinery itself still writes a real
+    // exception message: a literal raise stores the flash address of its interned text
+    // in __exn_msg (IRGenerator.State.ExceptionMessageVar), and a dynamic one (f-string,
+    // concatenation, call) stores a non-zero site id in __exn_site
+    // (IRGenerator.State.ExceptionSiteVar). Both names are duplicated here as literals,
+    // the same way the AVR backend already names __pymcu_exn_tail as a literal across
+    // the repo boundary -- Optimizer.cs cannot see IRGenerator's internal consts without
+    // a namespace that collides with the class of the same name.
+    //
+    // Asked only after OptimizeFunction has run per function (the loop above) AND only
+    // about functions the program already reaches WITHOUT the tail (the `reachable` set
+    // ComputeReachableFunctions has built so far): a message store sitting in a branch
+    // that pass just proved unreachable no longer counts, and neither does one sitting in
+    // a whole function nothing calls -- both would just re-root __pymcu_exn_tail through
+    // the back door for a message no run of this program can ever produce.
+    private static bool ProgramStillRecordsRaiseMessage(ProgramIR program, HashSet<string> reachable)
+    {
+        const string exceptionMessageVar = "__exn_msg";
+        const string exceptionSiteVar = "__exn_site";
+        foreach (var func in program.Functions)
+        {
+            if (!reachable.Contains(func.Name)) continue;
+            if (func.Name is "__pymcu_exn_tail" or "__pymcu_print_exn_msg")
+                continue;
+            foreach (var instr in func.Body)
+            {
+                if (instr is not Copy c) continue;
+                if (c.Dst is Variable { Name: exceptionMessageVar } && c.Src is not Constant { Value: 0 })
+                    return true;
+                if (c.Dst is Variable { Name: exceptionSiteVar } && c.Src is Constant { Value: not 0 })
+                    return true;
+            }
+        }
+        return false;
     }
 
 // Detects a synchronous-call cycle (direct or mutual recursion) in the call graph.
