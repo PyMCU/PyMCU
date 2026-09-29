@@ -1,13 +1,14 @@
 """A 4 KB AVR part cannot hold the correct float repr; it must not try to.
 
-uart_write_float (MicroPython's 7-significant-digit float32 policy) pulls in
-_f32_repr + _f32_scale, about 7.3 KB together -- more than the entire flash
-of a 4 KB part. lib/src/pymcu/hal/avr/uart/__init__.py routes any AVR chip
-with flash_size <= 4096 to uart_write_float_compact (one decimal, no
-_f32_repr/_f32_scale) instead. Regression: before this routing covered only
-"attiny2313" by name, print(float) silently stopped building on the other
-4 KB parts (attiny4313, atmega48, atmega48p) the day _f32_repr replaced the
-old two-fixed-decimals formatter, because they were not on that list.
+uart_write_float (MicroPython's real float32 print algorithm, ported from
+py/formatfloat.c) pulls in _f32_repr, _f32_decimal_exp, _f32_order and
+_f32_pow5, about 3.9 KB together -- more than the entire flash of a 4 KB
+part. lib/src/pymcu/hal/avr/uart/__init__.py routes any AVR chip with
+flash_size <= 4096 to uart_write_float_compact (one decimal, none of the
+four) instead. Regression: before this routing covered only "attiny2313" by
+name, print(float) silently stopped building on the other 4 KB parts
+(attiny4313, atmega48, atmega48p) the day _f32_repr replaced the old
+two-fixed-decimals formatter, because they were not on that list.
 
 This builds a real firmware image per chip through the driver and inspects
 the generated assembly, the same way test_avr_geometry_vs_vendor.py does --
@@ -63,7 +64,7 @@ def test_a_4kb_or_smaller_part_uses_the_compact_writer(tmp_path, chip):
     text = build(tmp_path, chip)
     assert "f32_repr" not in text, (
         f"{chip} ({TINY_FLASH[chip]} B flash) linked in the full float repr "
-        "(~7.3 KB), which cannot fit -- it should have used "
+        "(~3.9 KB), which cannot fit -- it should have used "
         "uart_write_float_compact instead")
 
 
@@ -72,5 +73,5 @@ def test_a_bigger_part_uses_the_correct_writer(tmp_path, chip):
     text = build(tmp_path, chip)
     assert "f32_repr" in text, (
         f"{chip} ({ROOMY_FLASH[chip]} B flash, room for the correct writer) "
-        "used the compact one-decimal fallback instead of the correct "
-        "7-significant-digit repr")
+        "used the compact one-decimal fallback instead of MicroPython's "
+        "float32 print algorithm")

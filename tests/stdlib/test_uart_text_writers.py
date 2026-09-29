@@ -27,7 +27,7 @@ LEGACY = ["avr/uart/avr.py", "avr/uart/atmega32u4.py", "avr/uart/attiny2313.py",
           "pic18/pic18_uart.py", "pic14/pic14_uart.py", "rp/console.py"]
 
 
-WIDTH = {"uint8": 8, "uint16": 16, "uint32": 32, "int16": 16, "int32": 32}
+WIDTH = {"uint8": 8, "uint16": 16, "uint32": 32, "int16": 16, "int32": 32, "int8": 8}
 
 
 def truncate(name, value):
@@ -37,7 +37,16 @@ def truncate(name, value):
     the generated code does. Letting it through as a float made the oracle carry
     fractions into digit arithmetic and print 1.5 as "1.50" -- a wrong answer
     from the instrument, which is worse than a wrong answer from the code.
+
+    A `float`-annotated local rounds to float32 on every write too, not just
+    integers: _f32_repr's algorithm (MicroPython's mp_decimal_exp) is only
+    correct in single precision, and Python's native float ops run in double
+    -- without this, the host silently gets MORE precision than the chip
+    ever has, and the round-trip checks the algorithm depends on stop
+    matching what the compiled code actually decides.
     """
+    if name == "float":
+        return struct.unpack("<f", struct.pack("<f", value))[0]
     bits = WIDTH.get(name)
     if bits is None:
         return value
@@ -48,8 +57,11 @@ def truncate(name, value):
 
 
 class Narrow(ast.NodeTransformer):
-    """Wrap every write to an annotated local in its own type, and each augmented
-    assignment to one, so `value -= 100` cannot go negative on a uint8."""
+    """Wrap every write to an annotated local in its own type: a plain
+    Assign (`value = value * 5.0`), not just AugAssign (`value -= 100`) --
+    the float32 repr helpers reassign with the former throughout, never the
+    latter, so a version of this class that only caught AugAssign left every
+    float local running in double precision after its first store."""
 
     def __init__(self):
         self.types = {}
@@ -58,7 +70,7 @@ class Narrow(ast.NodeTransformer):
         self.generic_visit(node)
         if isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
             name = node.annotation.id
-            if name in WIDTH and node.value is not None:
+            if (name in WIDTH or name == "float") and node.value is not None:
                 self.types[node.target.id] = name
                 node.value = ast.Call(func=ast.Name(id="__narrow", ctx=ast.Load()),
                                       args=[ast.Constant(name), node.value], keywords=[])
@@ -77,25 +89,40 @@ class Narrow(ast.NodeTransformer):
                     keywords=[]))
         return node
 
+    def visit_Assign(self, node):
+        self.generic_visit(node)
+        if (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in self.types):
+            name = node.targets[0].id
+            node.value = ast.Call(func=ast.Name(id="__narrow", ctx=ast.Load()),
+                                  args=[ast.Constant(self.types[name]), node.value], keywords=[])
+        return node
+
 
 def load(source: Path):
     """Execute every writer a HAL file defines, in one namespace: they call each other."""
     tree = ast.parse(source.read_text())
     wanted = [n for n in tree.body
               if isinstance(n, ast.FunctionDef)
-              and (n.name in WRITERS or n.name in ("_f32_scale", "_f32_repr"))]
+              and (n.name in WRITERS
+                   or n.name in ("_f32_pow5", "_f32_decimal_exp", "_f32_order", "_f32_repr"))]
     if not wanted:
         return {}
 
     printed = []
+    uint32_fn = lambda v: truncate("uint32", v)
     env = {"__narrow": truncate,
            "uart_write": lambda b: printed.append(int(b) & 0xFF),
-           # uart_write_float's only bitcast is a float reinterpreted as its
-           # bit pattern, so the target-type argument can be ignored here.
-           "bitcast": lambda t, v: struct.unpack("<I", struct.pack("<f", v))[0],
+           # The repr helpers bitcast both directions (float->bits to read a
+           # value's IEEE-754 fields, bits->float to rebuild the scaled
+           # result), so dispatch on which callable was passed as the target
+           # type instead of assuming one direction.
+           "bitcast": lambda t, v: (struct.unpack("<I", struct.pack("<f", v))[0] if t is uint32_fn
+                                     else struct.unpack("<f", struct.pack("<I", int(v) & 0xFFFFFFFF))[0]),
            "uint8": lambda v: truncate("uint8", v), "uint16": lambda v: truncate("uint16", v),
-           "uint32": lambda v: truncate("uint32", v), "int16": lambda v: truncate("int16", v),
-           "int32": lambda v: truncate("int32", v)}
+           "uint32": uint32_fn, "int16": lambda v: truncate("int16", v),
+           "int32": lambda v: truncate("int32", v), "int8": lambda v: truncate("int8", v),
+           "float": lambda v: truncate("float", v)}
     body = []
     for node in wanted:
         node = Narrow().visit(ast.parse(textwrap.dedent(ast.unparse(node))).body[0])
