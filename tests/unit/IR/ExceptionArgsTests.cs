@@ -69,6 +69,26 @@ public class ExceptionArgsTests
         main.Any(i => i is Copy { Src: FlashStrAddr, Dst: Variable { Name: "__exn_msg" } }).Should().BeTrue(because: "the IndexError carries CPython's 'tuple index out of range'");
     }
 
+    [Fact]
+    public void PrintOfArgsZeroDoesNotAskTwiceWhetherThereWasAMessage()
+    {
+        // fix/b1-size: EmitExceptionArgsIndexCheck already raises IndexError on the zero
+        // case and never falls through from it, so by the time print(e.args[0]) goes to
+        // stream the message, __exn_msg is proven non-zero. A second JumpIfZero guarding
+        // that write asked the same question the index check just answered -- 6 bytes on
+        // pymcu-circuitpython's `42_except_as_e_args.py` corpus fixture for every build.
+        var main = Fn(Gen(
+            "try:\n" +
+            "    raise E1(\"boom\")\n" +
+            "except E1 as e:\n" +
+            "    print(e.args[0])\n"), "main");
+
+        main.Count(i => i is JumpIfNotZero { Condition: Variable { Name: "__exn_msg" } })
+            .Should().Be(1, because: "EmitExceptionArgsIndexCheck asks it once");
+        main.Any(i => i is JumpIfZero { Condition: Variable { Name: "__exn_msg" } })
+            .Should().BeFalse(because: "the value is already proven non-zero past the index check");
+    }
+
     private static string FlashText(ProgramIR ir, string name) =>
         new string(ir.Functions.SelectMany(f => f.Body).OfType<FlashData>()
             .Single(fd => fd.Name == name).Bytes.TakeWhile(b => b != 0)

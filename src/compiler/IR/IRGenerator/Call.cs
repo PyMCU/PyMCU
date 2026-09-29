@@ -11038,10 +11038,21 @@ public partial class IRGenerator
                 // `e.args[0]` of an exception raised with no argument is CPython's IndexError:
                 // args is the empty tuple. A raise without a message leaves the word at zero
                 // (and the site id with it), which is what tells the two apart here.
-                if (arg is IndexExpr)
+                bool indexChecked = arg is IndexExpr;
+                if (indexChecked)
                     EmitExceptionArgsIndexCheck(exnMsgPtr);
                 if (programHasDynamicRaiseMessage)
                     EmitExceptionMessagePrint();
+                else if (indexChecked)
+                {
+                    // EmitExceptionArgsIndexCheck already raised IndexError on the zero case
+                    // and does not return from that branch, so exnMsgPtr is proven non-zero
+                    // by the time control reaches here -- the zero guard below would just be
+                    // asking the same question twice. `print(e.args[0])` used to pay for both:
+                    // the check's own IndexError machinery AND a second, always-false zero
+                    // jump wrapped around the print it guards.
+                    Emit(new Call(ResolveRuntimeWriteStrFn(), new List<Val> { exnMsgPtr }, new NoneVal()));
+                }
                 else
                 {
                     // Zero is "raised with no message": print nothing, as str(E()) is ''.
