@@ -144,7 +144,34 @@ public partial class IRGenerator
         catch { return null; }
     }
 
+    /// <summary>
+    /// Thin wrapper around <see cref="VisitCallCore"/>: while a call's callee is `<x>.__get__`
+    /// or `<x>.__set__`, marks that `<x>` is being evaluated as a descriptor's bound `self`,
+    /// not as a plain value read.
+    ///
+    /// The descriptor protocol (#360/#419) is spelled `Dev.reg.__get__(d, Dev)` explicitly and
+    /// by hand as often as it is reached implicitly through `d.reg` -- adafruit_register users
+    /// and the compiler's own descriptor rewrite both write exactly this shape, `<ClassName>.
+    /// <attr>` immediately followed by `.__get__(...)`/`.__set__(...)`. Reading `<ClassName>.
+    /// <attr>` any OTHER way -- as a final value, with no `__get__`/`__set__` call riding on it
+    /// -- is the class-level descriptor read CPython answers with `type(attr).__get__(attr,
+    /// None, ClassName)` and PyMCU refuses by name (VisitMemberAccess). Without this flag that
+    /// refusal could not tell "the user is about to call __get__ themselves" from "the user
+    /// wants Box.value as a value", and rejected the former along with the latter.
+    /// </summary>
     private Val VisitCall(CallExpr expr)
+    {
+        bool savedSelfRewrite = insideDescriptorSelfRewrite;
+        if (expr.Callee is MemberAccessExpr { Member: "__get__" or "__set__" })
+            insideDescriptorSelfRewrite = true;
+        try
+        {
+            return VisitCallCore(expr);
+        }
+        finally { insideDescriptorSelfRewrite = savedSelfRewrite; }
+    }
+
+    private Val VisitCallCore(CallExpr expr)
     {
         // The return-list bookkeeping below belongs to THIS call: a builtin or method
         // path that never sets it must not inherit the previous call's text (a

@@ -862,6 +862,15 @@ public partial class IRGenerator
     /// the line the reader has to edit is the callee's. Issue #164.
     private bool inlineTracksCalleeLine = false;
 
+    /// True while VisitCall is evaluating the receiver of a `<ClassName>.<attr>.__get__(...)` or
+    /// `.__set__(...)` call -- the descriptor instance itself, bound as `self` to the call. Set
+    /// generically in VisitCall (Call.cs) so it covers both the compiler's OWN synthesized
+    /// rewrite (TryDescriptorRead/Write/SeqWrite, PyMCU#360) and the identical shape a user
+    /// writes by hand (`Dev.reg.__get__(d, Dev)`, DescriptorProtocolTests' explicit-spelling
+    /// control). Without this flag the class-level-read refusal in VisitMemberAccess could not
+    /// tell either apart from a plain `Box.value` read and rejected both (#419 follow-up).
+    private bool insideDescriptorSelfRewrite = false;
+
     /// The line of the statement currently being lowered INSIDE an @inline body whose file is
     /// known. Separate from `currentStmtLine`, which stays on the call, because the two kinds
     /// of diagnostic want opposite ends: one is about the callee's code, the other about the

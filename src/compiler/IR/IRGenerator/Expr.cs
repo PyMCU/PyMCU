@@ -5404,7 +5404,21 @@ public partial class IRGenerator
         if (baseName == null || ReceiverClassThroughAliases(baseName) is not { } cls
             || string.IsNullOrEmpty(cls))
             return false;
+        return TryFindClassAttributeFromClass(cls, member, out declaringClass, out fullName);
+    }
 
+    /// <summary>
+    /// The class-walking half of <see cref="TryFindClassAttribute"/>, starting directly from a
+    /// class name rather than from an instance receiver -- what a bare <c>Box.value</c> read
+    /// needs (there is no instance to resolve a receiver's class from) while
+    /// <c>TryFindClassAttribute</c> keeps resolving an instance's class through its aliases
+    /// first, for every call site that already does that today.
+    /// </summary>
+    private bool TryFindClassAttributeFromClass(
+        string cls, string member, out string declaringClass, out string fullName)
+    {
+        declaringClass = "";
+        fullName = "";
         string? cur = cls;
         for (int depth = 0; cur != null && depth < 20; depth++)
         {
@@ -5537,6 +5551,44 @@ public partial class IRGenerator
         return TryFindClassAttribute(baseName, expr.Member, out _, out var fullName)
             && instanceClasses.TryGetValue(fullName, out var attrCls)
             && ClassDefinesMethod(attrCls, "__get__");
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> writes a class attribute whose class defines
+    /// <c>__set__</c> -- the write-side twin of <c>IsDescriptorMemberRead</c>, asked before the
+    /// `.value` MMIO/collapsed-scalar write claims the assignment for itself instead of calling
+    /// the descriptor.
+    /// </summary>
+    private bool IsDescriptorMemberWrite(MemberAccessExpr expr)
+    {
+        if (expr.Object is not VariableExpr recv
+            || ReceiverNameForLookup(recv) is not { } baseName)
+            return false;
+        return TryFindClassAttribute(baseName, expr.Member, out _, out var fullName)
+            && instanceClasses.TryGetValue(fullName, out var attrCls)
+            && ClassDefinesMethod(attrCls, "__set__");
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> writes a class attribute whose class defines
+    /// <c>__get__</c> but not <c>__set__</c> -- a non-data descriptor. CPython lets such a
+    /// write shadow the descriptor with a per-instance attribute; PyMCU has no per-instance
+    /// storage to create one in, so the write site refuses instead of guessing. <paramref
+    /// name="ownerCls"/> is the class whose body declares the attribute, for the diagnostic.
+    /// </summary>
+    private bool IsNonDataDescriptorMember(MemberAccessExpr expr, out string ownerCls)
+    {
+        ownerCls = "";
+        if (expr.Object is not VariableExpr recv
+            || ReceiverNameForLookup(recv) is not { } baseName)
+            return false;
+        if (!TryFindClassAttribute(baseName, expr.Member, out var owner, out var fullName)
+            || !instanceClasses.TryGetValue(fullName, out var attrCls) || attrCls == null)
+            return false;
+        if (!ClassDefinesMethod(attrCls, "__get__") || ClassDefinesMethod(attrCls, "__set__"))
+            return false;
+        ownerCls = owner;
+        return true;
     }
 
     /// <summary>
@@ -6086,6 +6138,34 @@ public partial class IRGenerator
         // Guarded here rather than by gating the mangling on `varExpr` naming a module: the
         // test is the slot branch's own, so the two cannot disagree about which reads belong
         // to it.
+        // `Box.value` -- a descriptor read THROUGH THE CLASS rather than through an instance.
+        // CPython calls `type(attr).__get__(attr, None, Box)`, obj=None, and it is the
+        // descriptor's own choice what that means (adafruit_register's descriptors mostly
+        // return themselves; a hand-written one can do anything). PyMCU's descriptor rewrite
+        // (#360/#419) always evaluates a receiver INSTANCE to pass as obj -- there is no
+        // instance here, only the class name, so there is nothing correct to evaluate. Refused
+        // by name instead of falling through to the module-member mangling below, which read
+        // the flattened `Box_value` slot as a plain value and answered with storage nothing
+        // had initialised through __get__ (#419) -- e.g. 0 where CPython calls __get__.
+        //
+        // Skipped while a descriptor rewrite is evaluating its OWN synthesized `ClassName.attr`
+        // (insideDescriptorSelfRewrite): that read has this exact shape -- a bare class name
+        // object -- but means something different: it names the descriptor INSTANCE itself, to
+        // hand to __get__/__set__ as `self`, not a user-written class-level attribute read.
+        if (!insideDescriptorSelfRewrite
+            && expr.Object is VariableExpr clsAccessVe && classNames.Contains(clsAccessVe.Name)
+            && TryFindClassAttributeFromClass(clsAccessVe.Name, expr.Member, out _, out var caFull)
+            && instanceClasses.TryGetValue(caFull, out var caAttrCls) && caAttrCls != null
+            && ClassDefinesMethod(caAttrCls, "__get__"))
+            throw UserError(
+                $"'{clsAccessVe.Name}.{expr.Member}' reads a descriptor through the class "
+                + "itself, not through an instance. PyMCU does not support this: __get__ is "
+                + $"only called when '{expr.Member}' is reached through an instance "
+                + $"(`b.{expr.Member}`), because there is no running representation of the "
+                + "class itself to pass as __get__'s obj/type arguments here. Read it through "
+                + "an instance instead.",
+                expr);
+
         if (expr.Object is VariableExpr slotVe && NamesABoxedField(slotVe.Name, expr.Member))
         {
             // Fall through to the slot read below.
@@ -6264,6 +6344,26 @@ public partial class IRGenerator
         // never toggled anything.
         if (expr.Member == "value" && propertyGetters.Count > 0 && IsPropertyGetterRead(expr))
             return VisitCall(new CallExpr(expr, new List<Expression>()));
+
+        // The descriptor protocol also wins over the `.value` pointer/register shortcut below,
+        // the same way a @property getter does just above (#391 fix landed the getter guard;
+        // this is its __get__ counterpart). Without it, a class attribute literally named
+        // "value" whose class defines __get__ -- adafruit_register's Struct/RWBits/RWBit and
+        // any user descriptor spelled the CircuitPython way -- fell into the collapsed-scalar
+        // read below, which knows nothing of __get__ and just hands back the receiver itself
+        // (or its collapsed field), silently skipping the descriptor call entirely (#419).
+        if (expr.Member == "value" && IsDescriptorMemberRead(expr))
+        {
+            Val descrReceiver = VisitExpression(expr.Object);
+            string? descrBaseName = descrReceiver switch
+            {
+                Variable dv => dv.Name,
+                Temporary dt => dt.Name,
+                _ => null,
+            };
+            if (TryDescriptorRead(descrBaseName, descrReceiver, expr) is { } descrVal)
+                return descrVal;
+        }
 
         if (expr.Member == "value" && !IsKnownInstanceField(expr.Object, "value"))
         {
