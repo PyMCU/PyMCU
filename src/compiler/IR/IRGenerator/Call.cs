@@ -8133,51 +8133,75 @@ public partial class IRGenerator
             Constant c => c.Value < 0 ? DataType.INT16
                           : c.Value <= 0xFF ? DataType.UINT8
                           : c.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+            // Was falling to the UINT8 default below, so a FloatConstant operand's width lost
+            // to an integer operand's whenever the integer type was 4 bytes wide -- rt then
+            // picked the integer type for a divmod() that mixes int and float (Python promotes
+            // the pair to float, like `divmod(5, 2.5)`), and the float divisor was divided as
+            // whatever bit pattern its four bytes happened to hold as an integer.
+            FloatConstant => DataType.FLOAT,
             _ => DataType.UINT8,
         };
         DataType ta = ValType(aVal), tb = ValType(bVal);
-        DataType rt = ta.SizeOf() >= tb.SizeOf() ? ta : tb;
+        DataType rt = ta is DataType.FLOAT || tb is DataType.FLOAT ? DataType.FLOAT
+            : ta.SizeOf() >= tb.SizeOf() ? ta : tb;
         if (rt == DataType.UNKNOWN || rt.SizeOf() == 0) rt = DataType.UINT8;
+
+        // Dividing by a literal zero is a compile-time error whatever the dividend is, the
+        // same rule the / // % operators apply (Expr.cs) -- for BOTH an int and a float
+        // constant divisor. Checked once here, ahead of every path below, because those paths
+        // used to build their Binary(FloorDiv)/Binary(Mod) nodes straight from aVal/bVal
+        // without ever routing through the checked binary-expression codegen that / // %
+        // normally goes through, so a float-constant zero divisor reached the emitted
+        // division unchecked and an integer one only got the int-constant fold's own check.
+        if ((bVal is Constant zc && zc.Value == 0) || (bVal is FloatConstant zfc && zfc.Value == 0.0))
+            throw UserError("divmod(): division by zero", ArgAt(expr, 1));
+
+        // divmod() returns a 2-tuple in Python; PyMCU has no general runtime tuple value, only
+        // the compile-time unpack `q, r = divmod(a, b)`. Outside that shape this used to fall
+        // through to the code below and silently answer the QUOTIENT ALONE -- `v = divmod(a, b)`
+        // and `print(divmod(a, b))` both dropped the remainder with no diagnostic, contradicting
+        // the docs (LANGUAGE_ROADMAP.md / limitations.md both say divmod "returns
+        // (quotient, remainder)"). Refusing names the real gap instead of quietly answering a
+        // different, smaller value than the one Python's divmod() actually returns.
+        if (pendingTupleCount != 2)
+            throw UserError(
+                "divmod() returns a 2-tuple (quotient, remainder); PyMCU only supports "
+                + "unpacking it directly into two targets -- `q, r = divmod(a, b)`. A bare "
+                + "divmod() result (assigned to one variable, printed, or passed on) is not "
+                + "supported", expr.Callee);
 
         if (aVal is Constant ca && bVal is Constant cb)
         {
-            if (cb.Value == 0) throw UserError("divmod(): division by zero", ArgAt(expr, 1));
             // Python's divmod floors: divmod(-17, 5) is (-4, 3). C#'s / and % truncate
             // toward zero and answered (-3, -2).
             long lq = (long)ca.Value / cb.Value;
             if ((ca.Value ^ cb.Value) < 0 && lq * cb.Value != ca.Value) lq--;
             int q = unchecked((int)lq);
             int r = unchecked((int)((long)ca.Value - lq * cb.Value));
-            if (pendingTupleCount == 2)
-            {
-                string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-                string qn = bBase + ".divmod_q" + tempCounter;
-                string rn = bBase + ".divmod_r" + (tempCounter + 1);
-                tempCounter += 2;
-                // The operands' width, as the run-time division below stores it, made signed
-                // when a result is negative: sizing each slot to its own value left the
-                // remainder of divmod(-17, 5) a uint8 that a later divmod(17, -5) reused.
-                DataType ct = WidestElemType(new List<int> { q, r });
-                if (rt.SizeOf() > ct.SizeOf())
-                    ct = !(q < 0 || r < 0) || rt.IsSigned() ? rt
-                        : rt.SizeOf() >= 4 ? DataType.INT32 : DataType.INT16;
-                DataType qt = ct, rtt = ct;
-                Emit(new Copy(new Constant(q), new Variable(qn, qt)));
-                Emit(new Copy(new Constant(r), new Variable(rn, rtt)));
-                // The unpack sizes each target from its slot; an unregistered slot sized
-                // it uint8, and -4 printed as 252.
-                variableTypes[qn] = qt;
-                variableTypes[rn] = rtt;
-                constantVariables[qn] = q;
-                constantVariables[rn] = r;
-                lastTupleResults = new List<string> { qn, rn };
-                return new NoneVal();
-            }
-
-            return new Constant(q);
+            string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
+            string qn = bBase + ".divmod_q" + tempCounter;
+            string rn = bBase + ".divmod_r" + (tempCounter + 1);
+            tempCounter += 2;
+            // The operands' width, as the run-time division below stores it, made signed
+            // when a result is negative: sizing each slot to its own value left the
+            // remainder of divmod(-17, 5) a uint8 that a later divmod(17, -5) reused.
+            DataType ct = WidestElemType(new List<int> { q, r });
+            if (rt.SizeOf() > ct.SizeOf())
+                ct = !(q < 0 || r < 0) || rt.IsSigned() ? rt
+                    : rt.SizeOf() >= 4 ? DataType.INT32 : DataType.INT16;
+            DataType qt = ct, rtt = ct;
+            Emit(new Copy(new Constant(q), new Variable(qn, qt)));
+            Emit(new Copy(new Constant(r), new Variable(rn, rtt)));
+            // The unpack sizes each target from its slot; an unregistered slot sized
+            // it uint8, and -4 printed as 252.
+            variableTypes[qn] = qt;
+            variableTypes[rn] = rtt;
+            constantVariables[qn] = q;
+            constantVariables[rn] = r;
+            lastTupleResults = new List<string> { qn, rn };
+            return new NoneVal();
         }
 
-        if (pendingTupleCount == 2)
         {
             string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
             string qn = bBase + ".divmod_q" + tempCounter;
@@ -8190,6 +8214,10 @@ public partial class IRGenerator
             variableTypes[qn] = rt;
             variableTypes[rn] = rt;
 
+            // A divisor the compiler cannot fold still has to raise, exactly as the operators
+            // do -- the compile-time constant case above already rejected a literal zero.
+            EmitDivModZeroCheck(bVal, isFloatOp: rt is DataType.FLOAT);
+
             // Emit the quotient and remainder as the same FloorDiv/Mod the // and %
             // operators produce, adjacent and sharing operands, so the AVR backend's
             // divmod fusion folds the pair into a single division call.
@@ -8198,10 +8226,6 @@ public partial class IRGenerator
             lastTupleResults = new List<string> { qn, rn };
             return new NoneVal();
         }
-
-        Temporary qTmp = MakeTemp(rt);
-        Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qTmp));
-        return qTmp;
     }
 
     // uint8(x)/int16(x)/… numeric cast: constant- and float-constant-fold, else a
