@@ -14,7 +14,7 @@
 #                                                  above, or toward zero
 #   pow(x, y)                                   -- x raised to y, software float
 
-from pymcu.types import uint8, uint16, int16, int32, inline
+from pymcu.types import uint8, uint16, uint32, int16, int32, inline
 
 
 @inline
@@ -193,3 +193,29 @@ def exp(x: float) -> float:
 def radians(x: float) -> float:
     """x degrees in radians."""
     return x * 0.017453292519943295
+
+
+# isnan/isinf/isfinite (P2 AVR gaps bundle, item 5): a float32's exponent field is all
+# ones (255) for both infinity and NaN, distinguished by the mantissa (zero for
+# infinity, nonzero for NaN) -- the same bit-pattern read _f32_repr (uart_text.py) has
+# used since it was written to print "inf"/"nan" correctly. No runtime helper: three
+# bit operations apiece, folds for a constant argument like any other @inline body.
+@inline
+def isnan(x: float) -> bool:
+    """True if x is a NaN, as CPython's math.isnan does."""
+    bits: uint32 = bitcast(uint32, x)
+    return ((bits >> 23) & 255) == 255 and (bits & 8388607) != 0
+
+
+@inline
+def isinf(x: float) -> bool:
+    """True if x is positive or negative infinity, as CPython's math.isinf does."""
+    bits: uint32 = bitcast(uint32, x)
+    return ((bits >> 23) & 255) == 255 and (bits & 8388607) == 0
+
+
+@inline
+def isfinite(x: float) -> bool:
+    """True if x is neither an infinity nor a NaN, as CPython's math.isfinite does."""
+    bits: uint32 = bitcast(uint32, x)
+    return ((bits >> 23) & 255) != 255
