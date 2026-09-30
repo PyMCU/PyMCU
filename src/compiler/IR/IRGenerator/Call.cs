@@ -4846,7 +4846,25 @@ public partial class IRGenerator
                     // SRAM arrays (variable-indexed) are passed as buffer pointers — use
                     // "bytearray" so overloads that accept bytearray parameters are selected.
                     // Try all three qualified forms since the set may use different prefixes.
-                    string qKey = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + v.Name : v.Name;
+                    //
+                    // qKey ("<enclosing function>.<bare name>") is a FALLBACK guess for when
+                    // `key`'s own alias-chasing (from currentInlinePrefix) finds nothing --
+                    // useful outside any inline expansion, where currentInlinePrefix is empty
+                    // and `key` is just the bare name itself. INSIDE an inline expansion,
+                    // `key` is already the properly scoped "<inline-frame>.<name>", and qKey's
+                    // guess (currentFunction, the OUTERMOST function, "." + the bare name)
+                    // stops being a fallback and becomes a coincidence: it matches whenever an
+                    // UNRELATED variable in the outer scope happens to share the same bare
+                    // name. `uart.write(buf[j])`, `buf` a variable-indexed array, forwarded
+                    // through the MicroPython compat layer's machine.UART.write(uint8) (whose
+                    // OWN parameter is also spelled "buf") to the native HAL's write(bytearray)
+                    // overload: qKey = "main.buf" happened to name the CALLER's own array,
+                    // wrongly selecting the bytearray overload for a plain uint8 read
+                    // (#p2avr-7, found adding the native write(bytearray) overload this
+                    // fallback had never been exercised against before).
+                    bool insideInline = !string.IsNullOrEmpty(currentInlinePrefix);
+                    string qKey = !insideInline && !string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + v.Name : key;
                     if (arraysWithVariableIndex.Contains(key) || arraysWithVariableIndex.Contains(qKey) ||
                         arraysWithVariableIndex.Contains(v.Name) ||
                         moduleSramArrays.Contains(key) || moduleSramArrays.Contains(qKey) ||
@@ -4899,7 +4917,6 @@ public partial class IRGenerator
                 first = false;
                 suffix += ArgTypeSuffix(arg);
             }
-
             if (string.IsNullOrEmpty(suffix)) suffix = "void";
 
             var mangled = callee + "___" + suffix;
