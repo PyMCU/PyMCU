@@ -2025,6 +2025,16 @@ public partial class IRGenerator
                     && ParamNeedsRuntimeLen(func, p.Name))
                     runtimeLenParams.Add(fullName + "." + p.Name);
 
+                // `Optional[bytearray]`/`Optional[bytes]` (or a Union with one and None) on a
+                // REAL subroutine's parameter: RFC 0009 excludes buffers from the scalar tag
+                // (decision 4), so this parameter needs the separate pointer+presence-byte
+                // mechanism (Statements.cs, WithBufferParamTags) instead of
+                // functionParamTags/WithParamTags. adafruit_onewire's own
+                // `_search_rom(self, l_rom: Optional[ReadableBuffer], diff)` -- a method with
+                // a tuple return, called once but inside a loop, which does not force-inline.
+                if (!func.IsInline && p.Type is "bytearray" or "bytes" && p.UnionMembers != null)
+                    bufferOptionalParams.Add(fullName + "." + p.Name);
+
                 @params.Add(p.Name);
                 paramTypes.Add(ParamStorageType(func, p.Type));
             }
@@ -2520,6 +2530,17 @@ public partial class IRGenerator
                                     if (!func.IsInline && p.Type.Length == 0
                                         && IsSubscriptedInBody(func.Body, p.Name))
                                         bytearrayParams.Add(fullName + "." + p.Name);
+                                    // Same two rules as top-level functions (above): a
+                                    // buffer parameter the body measures at run time gets
+                                    // a hidden length, and an Optional[bytearray]/[bytes]
+                                    // one gets the pointer+presence-tag mechanism --
+                                    // adafruit_onewire's own `_search_rom` is a METHOD.
+                                    if (!func.IsInline && p.Type is "bytearray" or "bytes"
+                                        && ParamNeedsRuntimeLen(func, p.Name))
+                                        runtimeLenParams.Add(fullName + "." + p.Name);
+                                    if (!func.IsInline && p.Type is "bytearray" or "bytes"
+                                        && p.UnionMembers != null)
+                                        bufferOptionalParams.Add(fullName + "." + p.Name);
                                     @params.Add(p.Name);
                                     paramTypes.Add(ParamStorageType(func, p.Type));
                                 }

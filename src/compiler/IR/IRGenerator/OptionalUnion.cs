@@ -654,6 +654,19 @@ public partial class IRGenerator
         foreach (var (key, _, fn) in allDefs)
         {
             var list = fn.Params.Select(p => p.UnionMembers).ToList();
+            // `Optional[bytearray]`/`Optional[bytes]` (or a Union with one and None) is not
+            // a scalar tagged union at all -- RFC 0009 decision 4, the same exclusion
+            // ResolveOptionalReturns applies to a return of this shape. Nulled out HERE,
+            // before it ever reaches `unionParamsOf`/`reach`/`functionParamTags`, so this
+            // pass never claims the parameter regardless of whether `realFns.Contains(key)`
+            // happens to be true yet (a class method reaches this loop through
+            // `instanceMethodDefs` even before the inline-vs-real decision is final, so the
+            // `ValidateUnionMembers` throw below -- gated on `realFns` -- is not a reliable
+            // backstop for a method). Statements.cs's `bufferOptionalParams` is the real
+            // mechanism for this parameter; this pass must leave it alone.
+            for (int li = 0; li < list.Count; ++li)
+                if (list[li] is { } lm && IsNullableNonScalar(lm))
+                    list[li] = null;
             if (list.All(m => m == null)) continue;
             // A fixed-ABI callable never grows a tag byte -- an extern declaration is
             // not in functionsToCompile at all, so this check stands outside realFns.

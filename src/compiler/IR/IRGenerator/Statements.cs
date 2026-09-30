@@ -713,13 +713,43 @@ public partial class IRGenerator
 
             variableTypes[qualifiedParam] = paramDt;
 
+            // RFC 0009 excludes buffers from the scalar tagged-union payload (decision 4 --
+            // an instance/buffer is not a value a register can carry). Checked BEFORE the
+            // scalar functionParamTags/functionParamProven branches below because the
+            // resolve pass that fills those two tables (OptionalUnion.cs, ResolveOptionalParams)
+            // gates its OWN buffer exclusion (ValidateUnionMembers) on `realFns.Contains(key)`
+            // -- true for a plain function at that point, but NOT yet true for a class
+            // method (a method is reached through `instanceMethodDefs` instead, which skips
+            // the gate), so a method's buffer-Optional parameter could slip into
+            // `functionParamTags` with a scalar (wrong-width) representation before this
+            // branch had a chance to claim it. Checking `bufferOptionalParams` first, always,
+            // makes that ordering accident harmless regardless of which table the resolve
+            // pass also populated.
+            if (bufferOptionalParams.Contains(qualifiedParam))
+            {
+                // The separate mechanism RFC 0009 section 11.2 names as the open question's
+                // likely answer -- "tag byte + the existing name-binding machinery" --
+                // applied to a REAL subroutine's parameter instead of only a local
+                // (Assign.cs's rebind path). The pointer travels exactly like a plain
+                // bytearray parameter's storage already does; the sibling tag rides the wire
+                // right after it, the same position a scalar Optional parameter's tag would.
+                string tagParam = qualifiedParam + "$tag";
+                (irFunc.TagParams ??= new List<int>()).Add(irFunc.Params.Count);
+                irFunc.Params.Add(tagParam);
+                variableTypes[tagParam] = DataType.UINT8;
+                variableTypes[qualifiedParam] = DataType.UINT16;
+                bytearrayParams.Add(qualifiedParam);
+                optionalTagSlots[qualifiedParam] = new Variable(tagParam, DataType.UINT8);
+                optionalMembersByName[qualifiedParam] = param.UnionMembers!;
+                bufferOptionalParamTags[currentFunction + "." + param.Name] = tagParam;
+            }
             // RFC 0009 section 10: a union-annotated parameter the call sites can hand
             // more than one member carries a run-time tag byte, staged by the caller
             // as the argument right after the payload. The callee binds it to a
             // sibling `p$tag` slot, which is what `param is None` reads in the body.
             // A parameter every caller provably fills with one member is not tagged
             // (functionParamTags has no entry) and keeps the exact code it had before.
-            if (param.UnionMembers != null
+            else if (param.UnionMembers != null
                 && functionParamTags.TryGetValue(fullName, out var paramTags)
                 && paramIndex < paramTags.Count && paramTags[paramIndex] is { } tagMembers)
             {

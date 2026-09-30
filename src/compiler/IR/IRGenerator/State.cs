@@ -1450,6 +1450,29 @@ public partial class IRGenerator
     /// </summary>
     private HashSet<string> runtimeLenParams = new();
 
+    /// <summary>
+    /// Qualified "func.param" keys (real, non-inline subroutines) declared
+    /// `Optional[bytearray]`/`Optional[bytes]` (or a Union with one of those and None).
+    /// Filled by the scan (Scan.cs) before any body lowers -- like `runtimeLenParams`, and
+    /// for the same reason: a call site compiled before its callee's own parameter setup
+    /// must still answer the same question. RFC 0009 excludes buffers from the scalar
+    /// tagged-union payload (decision 4 / section 11.2 -- "a buffer's value is a name, not a
+    /// register"), so this is a SEPARATE, narrower mechanism: the parameter's own storage
+    /// (a pointer, exactly like a plain bytearray parameter already is) plus a sibling
+    /// presence byte, staged on the wire immediately after the pointer -- the parameter
+    /// counterpart of the local-buffer rebind mechanism (Assign.cs), not the scalar wire tag
+    /// `functionParamTags`/`WithParamTags` carry.
+    /// </summary>
+    private HashSet<string> bufferOptionalParams = new();
+
+    /// <summary>
+    /// Qualified "func.param" buffer-Optional key -> its hidden presence-tag parameter
+    /// (qualified), set once Statements.cs has run for that function. 0 = the pointer names
+    /// a real buffer, 1 = None. Mirrors `bufferLengthParams`'s shape; kept separate because
+    /// it answers a different question (is it here at all, not how long is it).
+    /// </summary>
+    private Dictionary<string, string> bufferOptionalParamTags = new();
+
     // Depth counter for runtime-conditional branches currently being compiled.
     // > 0 means we are inside a branch whose predicate could not be folded at compile time.
     // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)

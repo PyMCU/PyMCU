@@ -704,6 +704,7 @@ public partial class IRGenerator
                                     }
                                 }
                                 oArgs = WithParamTags(callee, oArgs, oArgExprs);
+                                oArgs = WithBufferParamTags(callee, oArgs, oArgExprs);
                                 oArgs = WithParamLens(callee, oArgs, oArgExprs);
                             }
 
@@ -2251,6 +2252,7 @@ public partial class IRGenerator
         // RFC 0009: a tagged union parameter's member byte rides as the argument
         // right after its payload; a callee with none keeps the list untouched.
         argValuesL = WithParamTags(callee, argValuesL, callArgs);
+        argValuesL = WithBufferParamTags(callee, argValuesL, callArgs);
         // A buffer parameter the callee measures at run time gets its length appended
         // after every other argument; a callee with none keeps the list untouched.
         argValuesL = WithParamLens(callee, argValuesL, callArgs);
@@ -6575,6 +6577,7 @@ public partial class IRGenerator
         }
 
         iaArgs = WithParamTags(iaMethod, iaArgs, iaArgExprs);
+        iaArgs = WithBufferParamTags(iaMethod, iaArgs, iaArgExprs);
         iaArgs = WithParamLens(iaMethod, iaArgs, iaArgExprs);
 
         bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
@@ -6718,6 +6721,7 @@ public partial class IRGenerator
             fwdArgExprs.Add(a is KeywordArgExpr fKw2 ? fKw2.Value : a);
         }
         fwdArgs = WithParamTags(target, fwdArgs, fwdArgExprs);
+        fwdArgs = WithBufferParamTags(target, fwdArgs, fwdArgExprs);
         fwdArgs = WithParamLens(target, fwdArgs, fwdArgExprs);
 
         // RFC 0001 (write-back), sibling case: the callee is a mutator that returns its
@@ -6973,6 +6977,69 @@ public partial class IRGenerator
         result.AddRange(args);
         result.AddRange(extra);
         return result;
+    }
+
+    /// <summary>
+    /// The call-site counterpart of the hidden presence-tag parameter Statements.cs appends
+    /// for a real subroutine's `Optional[bytearray]`/`Optional[bytes]` parameter
+    /// (`bufferOptionalParams`, Scan.cs) -- the parameter-crossing half of the local-buffer
+    /// rebind mechanism (Assign.cs), kept separate from RFC 0009's scalar
+    /// `functionParamTags`/`WithParamTags` because buffers are excluded from that payload
+    /// (decision 4). Interleaved right after its own payload argument, matching where
+    /// Statements.cs put the parameter -- unlike `WithParamLens`'s length, which is appended
+    /// at the very end. Composes with a PRIOR `WithParamTags` pass on the same call by
+    /// walking the declared parameter list and, for a position that pass already tagged,
+    /// carrying its inserted tag argument through unmodified before deciding about the next
+    /// declared position -- so a function mixing a scalar-tagged parameter with a
+    /// buffer-tagged one still lines up. A callee with no buffer-Optional parameter returns
+    /// <paramref name="args"/> untouched.
+    /// </summary>
+    private List<Val> WithBufferParamTags(string callee, List<Val> args,
+        IReadOnlyList<Expression>? argExprs = null, int argOffset = 0)
+    {
+        if (!functionParams.TryGetValue(callee, out var pnames)) return args;
+        bool any = false;
+        for (int p = 0; p < pnames.Count; ++p)
+            if (bufferOptionalParams.Contains(callee + "." + pnames[p])) { any = true; break; }
+        if (!any) return args;
+
+        functionParamTags.TryGetValue(callee, out var ptags);
+        var result = new List<Val>(args.Count + 2);
+        int origPos = 0;
+        for (int i = 0; i < args.Count;)
+        {
+            result.Add(args[i]);
+            i++;
+            if (origPos >= pnames.Count) continue;
+            // A position WithParamTags already tagged staged its byte as the VERY NEXT
+            // argument -- carry it through before this pass considers the position after.
+            if (ptags != null && origPos < ptags.Count && ptags[origPos] != null && i < args.Count)
+            {
+                result.Add(args[i]);
+                i++;
+            }
+            if (bufferOptionalParams.Contains(callee + "." + pnames[origPos]))
+            {
+                int ai = origPos + argOffset;
+                Expression? ae = argExprs != null && ai >= 0 && ai < argExprs.Count ? argExprs[ai] : null;
+                result.Add(BufferPresenceTagVal(ae));
+            }
+            origPos++;
+        }
+        return result;
+    }
+
+    /// The presence byte a buffer-Optional argument contributes: 1 when the expression
+    /// spells None outright, the source's own live tag when it already carries one (`rom` in
+    /// scan()'s loop, forwarded unchanged -- Optional-ness crosses this call boundary the
+    /// same way it crossed the local rebind), else 0 -- a plain, always-present buffer.
+    private Val BufferPresenceTagVal(Expression? ae)
+    {
+        if (ae == null || ae is NoneLiteral) return new Constant(1);
+        if (ae is VariableExpr ve && OptionalKeyOf(ve.Name) is { } key
+            && optionalTagSlots.TryGetValue(key, out var srcTag))
+            return srcTag;
+        return new Constant(0);
     }
 
     // ── Built-in functions (each handled when callee matches; always returns or throws) ──
