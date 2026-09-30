@@ -139,12 +139,37 @@ public class BuiltinArithmeticTests
             Assert.ThrowsAny<Exception>(() => Gen("q, r = divmod(1.0, 0.0)\n")).Message);
     }
 
-    [Theory]
-    [InlineData("v = divmod(17, 5)\n")]
-    [InlineData("print(divmod(17, 5))\n")]
-    public void ABareDivmodResult_IsRefused(string body)
+    // P2 AVR gaps bundle, item 3: `v = divmod(a, b)` (bound to one name) and
+    // `print(divmod(a, b))` used to be refused outright -- PyMCU had no general runtime
+    // tuple VALUE and only supported the two-target unpack. Both now read the same
+    // multi-return-call sentinel `q, r = divmod(a, b)` and `f()` (a regular tuple-returning
+    // call) already answer through (pendingTupleCount == -1, lastTupleResults), so they
+    // bind/print the tuple the same way any other tuple-returning call does.
+    [Fact]
+    public void BindingADivmodResultToOneName_IsNowATuple()
     {
-        string msg = Assert.ThrowsAny<Exception>(() => Gen(body)).Message;
+        // (quotient, remainder) prints as a 2-tuple: one decimal write per element (q=3,
+        // r=2), not a single write of some collapsed scalar.
+        var ir = Gen("v = divmod(17, 5)\nprint(v)\n");
+        var calls = Main(ir).OfType<Call>().ToList();
+        Assert.Equal(2, calls.Count(c => c.FunctionName.Contains("uart_write_decimal")));
+    }
+
+    [Fact]
+    public void PrintingADivmodResultDirectly_PrintsTheTuple()
+    {
+        var ir = Gen("print(divmod(17, 5))\n");
+        var calls = Main(ir).OfType<Call>().ToList();
+        Assert.Equal(2, calls.Count(c => c.FunctionName.Contains("uart_write_decimal")));
+    }
+
+    // A position that is not an unpack, a single-name binding, or a print() argument --
+    // there is still no general runtime tuple VALUE to pass around.
+    [Fact]
+    public void ADivmodResultPassedAsAnArgument_IsStillRefused()
+    {
+        string msg = Assert.ThrowsAny<Exception>(() => Gen(
+            "def show(t):\n    print(t)\nshow(divmod(17, 5))\n")).Message;
         Assert.Contains("divmod() returns a 2-tuple", msg);
         Assert.Contains("q, r = divmod(a, b)", msg);
     }
