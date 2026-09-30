@@ -785,6 +785,29 @@ public partial class IRGenerator
             }
         }
 
+        // A plain (non-library-mode) buffer parameter whose BODY measures it at run time --
+        // `len(param)` or `for x in param:`, marked by the scan (ParamNeedsRuntimeLen). Same
+        // wire shape as Library mode's kernel ABI (a hidden length appended after the declared
+        // parameters, `len(buf)` already reads bufferLengthParams), but per-parameter and only
+        // where the body actually needs it: a function that never measures its buffer pays
+        // nothing extra, and one that does gets exactly one hidden uint16/32 argument, not
+        // every buffer parameter in the program.
+        if (!funcNode.IsInline && !funcNode.IsInterrupt)
+        {
+            foreach (var param in funcNode.Params)
+            {
+                if (param.Type != "bytearray" && param.Type != "bytes") continue;
+                string bufName = currentFunction + "." + param.Name;
+                if (bufferLengthParams.ContainsKey(bufName)) continue; // Library mode already gave it one.
+                if (!runtimeLenParams.Contains(bufName)) continue;
+                string lenName = currentFunction + ".__len_" + param.Name;
+                irFunc.Params.Add(lenName);
+                variableTypes[lenName] = DataTypeExtensions.PointerWidth >= 4
+                    ? DataType.UINT32 : DataType.UINT16;
+                bufferLengthParams[bufName] = lenName;
+            }
+        }
+
         // No clearing of arraysWithVariableIndex here: the set records which arrays own
         // contiguous SRAM storage, and that is a property of the storage, not of the function
         // being compiled. The scan below still adds this function's own variable-indexed

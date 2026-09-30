@@ -1438,6 +1438,18 @@ public partial class IRGenerator
     /// </summary>
     private Dictionary<string, string> bufferLengthParams = new();
 
+    /// <summary>
+    /// Qualified "func.param" keys (real, non-inline subroutines) whose `bytearray`/`bytes`
+    /// parameter the BODY measures at run time -- `len(param)` or `for x in param:` where the
+    /// element count is not otherwise known at compile time. Filled by the scan
+    /// (ParamNeedsRuntimeLen, Scan.cs) before any body lowers. A parameter never marked here
+    /// costs nothing extra: no hidden argument, no `bufferLengthParams` entry, the exact code
+    /// PyMCU already emitted. One a caller passes a differently-sized buffer to on every call,
+    /// or the same size every time -- there is no per-callsite monomorphization for a real
+    /// subroutine's buffer parameter, so both need the same answer, and this is it.
+    /// </summary>
+    private HashSet<string> runtimeLenParams = new();
+
     // Depth counter for runtime-conditional branches currently being compiled.
     // > 0 means we are inside a branch whose predicate could not be folded at compile time.
     // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)

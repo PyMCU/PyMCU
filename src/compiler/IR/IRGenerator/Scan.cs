@@ -2015,6 +2015,16 @@ public partial class IRGenerator
                         || (transitiveBufferParams?.Contains(p.Name) ?? false)))
                     bytearrayParams.Add(fullName + "." + p.Name);
 
+                // A `bytearray`/`bytes` parameter the body measures at run time -- `len(p)`
+                // or `for x in p:` where the element count is not a compile-time fact (see
+                // ParamNeedsRuntimeLen). Marked here, before any body lowers, so Statements.cs's
+                // per-function parameter setup can synthesize the hidden length argument the
+                // same way LibraryMode's kernel ABI already does, and only for the parameters
+                // that actually need it.
+                if (!func.IsInline && p.Type is "bytearray" or "bytes"
+                    && ParamNeedsRuntimeLen(func, p.Name))
+                    runtimeLenParams.Add(fullName + "." + p.Name);
+
                 @params.Add(p.Name);
                 paramTypes.Add(ParamStorageType(func, p.Type));
             }
@@ -5898,6 +5908,105 @@ public partial class IRGenerator
         }
 
         foreach (var s in TypeInference.WalkStatements(body))
+            Handle(s);
+        return found;
+    }
+
+    /// Whether the body measures a `bytearray`/`bytes` parameter's length at RUN TIME:
+    /// `len(name)` or `for x in name:`. Neither has a compile-time answer for a real
+    /// subroutine's plain buffer parameter -- there is no per-callsite monomorphization,
+    /// so a caller passing an 8-byte buffer and one passing a 4-byte buffer to the same
+    /// function need the same code, not two compiled bodies. Marked here so Statements.cs
+    /// can give exactly these parameters (and no others) a hidden length argument.
+    private static bool ParamNeedsRuntimeLen(FunctionDef func, string name)
+    {
+        bool found = false;
+
+        void Expr(Expression? e)
+        {
+            if (e == null || found) return;
+            switch (e)
+            {
+                case CallExpr { Callee: VariableExpr { Name: "len" } } lc:
+                    if (lc.Args.Count == 1 && lc.Args[0] is VariableExpr lv && lv.Name == name)
+                    {
+                        found = true;
+                        return;
+                    }
+                    Expr(lc.Callee);
+                    foreach (var a in lc.Args) Expr(a);
+                    return;
+                case IndexExpr idx: Expr(idx.Target); Expr(idx.Index); return;
+                case SliceExpr sl: Expr(sl.Start); Expr(sl.Stop); Expr(sl.Step); return;
+                case BinaryExpr b: Expr(b.Left); Expr(b.Right); return;
+                case UnaryExpr u: Expr(u.Operand); return;
+                case TernaryExpr t: Expr(t.Condition); Expr(t.TrueVal); Expr(t.FalseVal); return;
+                case WalrusExpr w: Expr(w.Value); return;
+                case AwaitExpr aw: Expr(aw.Operand); return;
+                case YieldExpr y: Expr(y.Value); return;
+                case MemberAccessExpr m: Expr(m.Object); return;
+                case StarArgExpr st: Expr(st.Value); return;
+                case DoubleStarArgExpr dst: Expr(dst.Value); return;
+                case KeywordArgExpr kw: Expr(kw.Value); return;
+                case CallExpr c:
+                    Expr(c.Callee);
+                    foreach (var a in c.Args) Expr(a);
+                    return;
+                case ListExpr le: foreach (var el in le.Elements) Expr(el); return;
+                case TupleExpr te: foreach (var el in te.Elements) Expr(el); return;
+                case SetExpr se: foreach (var el in se.Elements) Expr(el); return;
+                case Frontend.DictExpr de:
+                    foreach (var (k, v) in de.Entries) { Expr(k); Expr(v); }
+                    return;
+                case FStringExpr fs: foreach (var part in fs.Parts) Expr(part.Expr); return;
+                case ListCompExpr lc2:
+                    Expr(lc2.Element); Expr(lc2.Iterable); Expr(lc2.Iterable2); Expr(lc2.Filter);
+                    return;
+                case GeneratorExpr gx:
+                    Expr(gx.Element); Expr(gx.Iterable); Expr(gx.Iterable2); Expr(gx.Filter);
+                    return;
+                default: return;
+            }
+        }
+
+        void Handle(Statement s)
+        {
+            if (found) return;
+            switch (s)
+            {
+                case ForStmt f:
+                    if (f.Iterable is VariableExpr fv && fv.Name == name) { found = true; return; }
+                    Expr(f.RangeStart); Expr(f.RangeStop); Expr(f.RangeStep); Expr(f.Iterable);
+                    return;
+                case ExprStmt es: Expr(es.Expr); return;
+                case AssignStmt a: Expr(a.Target); Expr(a.Value); return;
+                case AugAssignStmt ag: Expr(ag.Target); Expr(ag.Value); return;
+                case AnnAssign an: Expr(an.Value); return;
+                case VarDecl vd: Expr(vd.Init); return;
+                case ReturnStmt r: Expr(r.Value); return;
+                case TupleUnpackStmt tu: Expr(tu.Value); return;
+                case AssertStmt asrt: Expr(asrt.Condition); return;
+                case RaiseStmt rs: Expr(rs.MessageExpr); return;
+                case IfStmt i:
+                    Expr(i.Condition);
+                    foreach (var (cond, _) in i.ElifBranches) Expr(cond);
+                    return;
+                case WhileStmt w: Expr(w.Condition); return;
+                case WithStmt wi: Expr(wi.ContextExpr); return;
+                case MatchStmt m:
+                    Expr(m.Target);
+                    foreach (var br in m.Branches) { Expr(br.Pattern); Expr(br.Guard); }
+                    return;
+                case FunctionDef nested:
+                    if (nested.Params.Any(p => p.Name == name)) return;
+                    foreach (var ns in TypeInference.WalkStatements(nested.Body))
+                        Handle(ns);
+                    return;
+                default: return;
+            }
+        }
+
+        foreach (var s in TypeInference.WalkStatements(func.Body))
             Handle(s);
         return found;
     }

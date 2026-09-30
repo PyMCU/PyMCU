@@ -704,6 +704,7 @@ public partial class IRGenerator
                                     }
                                 }
                                 oArgs = WithParamTags(callee, oArgs, oArgExprs);
+                                oArgs = WithParamLens(callee, oArgs, oArgExprs);
                             }
 
                             // RFC 0001 (write-back): a single-field void mutator returns its
@@ -2250,6 +2251,9 @@ public partial class IRGenerator
         // RFC 0009: a tagged union parameter's member byte rides as the argument
         // right after its payload; a callee with none keeps the list untouched.
         argValuesL = WithParamTags(callee, argValuesL, callArgs);
+        // A buffer parameter the callee measures at run time gets its length appended
+        // after every other argument; a callee with none keeps the list untouched.
+        argValuesL = WithParamLens(callee, argValuesL, callArgs);
 
         // A "void" entry is also the parser's default for an UNANNOTATED def whose
         // return type inference found nothing it could name -- `def f(): return
@@ -6571,6 +6575,7 @@ public partial class IRGenerator
         }
 
         iaArgs = WithParamTags(iaMethod, iaArgs, iaArgExprs);
+        iaArgs = WithParamLens(iaMethod, iaArgs, iaArgExprs);
 
         bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
                       || iaRt == "void" || iaRt == "None";
@@ -6713,6 +6718,7 @@ public partial class IRGenerator
             fwdArgExprs.Add(a is KeywordArgExpr fKw2 ? fKw2.Value : a);
         }
         fwdArgs = WithParamTags(target, fwdArgs, fwdArgExprs);
+        fwdArgs = WithParamLens(target, fwdArgs, fwdArgExprs);
 
         // RFC 0001 (write-back), sibling case: the callee is a mutator that returns its
         // updated field because Model A passes the field BY VALUE. This method's own copy
@@ -6917,6 +6923,56 @@ public partial class IRGenerator
             return indDst;
         }
         throw UserError($"Callable array '{idxArr.Name}' not found or element type is not Callable", expr.Callee);
+    }
+
+    /// <summary>
+    /// The call-site counterpart of the hidden length parameter Statements.cs appends for a
+    /// `bytearray`/`bytes` parameter the callee measures at run time (ParamNeedsRuntimeLen,
+    /// Scan.cs, recorded in `runtimeLenParams`; Library mode gives every buffer parameter one
+    /// unconditionally). One length argument per qualifying parameter, APPENDED after every
+    /// declared/tagged argument already staged in <paramref name="args"/> -- not interleaved
+    /// after each payload the way a union member tag is, because that is where Statements.cs
+    /// put the matching hidden parameter ("after the declared parameters so their positions do
+    /// not move"). The length itself is whatever `len()` would answer for the same argument
+    /// expression AT THE CALL SITE: the caller always knows its own buffer's size, even when
+    /// the callee -- compiled once for every caller -- cannot. A callee with no
+    /// length-needing parameter returns <paramref name="args"/> untouched.
+    ///
+    /// Deciding "does this parameter need one" from `runtimeLenParams`/`functionParamDeclared`
+    /// rather than from `bufferLengthParams` matters for call ORDER: those two are filled by
+    /// Scan.cs, a pass that runs for every function before any body lowers, so a call site
+    /// compiled before its callee's own body (the ordinary case -- PyMCU has no forward-decl
+    /// requirement) still gets the right answer. `bufferLengthParams` itself is only
+    /// guaranteed to hold the callee's entry once THAT function's own parameter setup has run.
+    /// </summary>
+    private List<Val> WithParamLens(string callee, List<Val> args,
+        IReadOnlyList<Expression>? argExprs = null, int argOffset = 0)
+    {
+        if (!functionParams.TryGetValue(callee, out var pnames)) return args;
+        List<Val>? extra = null;
+        for (int p = 0; p < pnames.Count; ++p)
+        {
+            bool needsLen = runtimeLenParams.Contains(callee + "." + pnames[p])
+                || (LibraryMode
+                    && functionParamDeclared.TryGetValue(callee, out var declTypes)
+                    && p < declTypes.Count && declTypes[p] is "bytearray" or "bytes");
+            if (!needsLen) continue;
+            int i = p + argOffset;
+            Expression? ae = argExprs != null && i >= 0 && i < argExprs.Count ? argExprs[i] : null;
+            if (ae == null)
+                throw UserError(
+                    $"the buffer passed to '{callee}''s parameter '{pnames[p]}' needs a "
+                    + "run-time length, and this call site has no argument expression to "
+                    + "measure it from (a default value, perhaps) -- pass the buffer directly");
+            Val lenVal = EmitLenBuiltin(
+                new CallExpr(new VariableExpr("len"), new List<Expression> { ae }) { Line = ae.Line });
+            (extra ??= new List<Val>()).Add(lenVal);
+        }
+        if (extra == null) return args;
+        var result = new List<Val>(args.Count + extra.Count);
+        result.AddRange(args);
+        result.AddRange(extra);
+        return result;
     }
 
     // ── Built-in functions (each handled when callee matches; always returns or throws) ──
