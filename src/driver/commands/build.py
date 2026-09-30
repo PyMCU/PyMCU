@@ -449,6 +449,40 @@ def _inject_strfmt_preamble(entry_point: Path, generated_dir: Path) -> tuple[Pat
     )
 
 
+# round(x, n) on a FLOAT x (P2 AVR gaps bundle, item 2): the IR generator resolves the
+# two-argument builtin to a call on pymcu.round2's _pymcu_round2, by import alias exactly
+# like pymcu.strfmt above. An integer x folds at compile time and needs no import.
+_ROUND2_RE = re.compile(r'''round\s*\([^()]*,''')
+
+
+def _detect_round2_usage(sources_dir: Path) -> bool:
+    """Return True if any .py file calls round(x, n) -- two positional arguments.
+
+    Over-inclusive on purpose: round(5, 2) (an int x, which folds without the helper)
+    also matches, and the injected module is plain functions DCE drops when unused.
+    """
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+            if _ROUND2_RE.search(code):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _inject_round2_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Inject the pymcu.round2 import that round(x, n) on a float lowering resolves."""
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: round(x, n) helper\n",
+        import_line="import pymcu.round2 as _pymcu_round2\n",
+        call_line="pass",
+    )
+
+
 def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
     """Return True if any source file actually calls into the Timer0 time base.
 
@@ -1615,6 +1649,15 @@ def build(
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
             _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
+                      verbose=is_verbose)
+
+        # round(x, n) on a float: inject pymcu.round2 the same way.
+        if _detect_round2_usage(sources_dir):
+            entry_point, _n = _inject_round2_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("round(x, n) detected — injecting pymcu.round2 import",
                       verbose=is_verbose)
 
         # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
