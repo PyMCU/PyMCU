@@ -22,6 +22,7 @@ public static class IrSerializer
     {
         TypeInfoResolver = PymcuIrContext.Default,
         WriteIndented = false,
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
 
     /// <summary>Serialize <paramref name="program"/> to the file at <paramref name="path"/>.</summary>
@@ -47,7 +48,15 @@ public static class IrSerializer
 [JsonSourceGenerationOptions(
     WriteIndented = false,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    // float('inf') / float('nan') (P2 AVR gaps bundle, item 5): a FloatConstant carrying
+    // one of these values reaches this serializer on every build (the .mir the frontend
+    // hands each backend), and System.Text.Json refuses +-Infinity/NaN as numbers by
+    // default -- "cannot be written as valid JSON" -- even though the value itself is a
+    // perfectly good IEEE-754 float32. The named literals ("Infinity", "-Infinity",
+    // "NaN") are valid JSON5/JS and every backend reads through this same generated
+    // context, so both sides agree.
+    NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals)]
 [JsonSerializable(typeof(ProgramIR))]
 [JsonSerializable(typeof(DeviceGeometry))]
 [JsonSerializable(typeof(Dictionary<string, int>))]
