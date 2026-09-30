@@ -5197,7 +5197,26 @@ public partial class IRGenerator
                 if (AnchorNameOf(ma.Object) is { } outer)
                 {
                     string flat = outer + "_" + ma.Member;
-                    if (instanceClasses.ContainsKey(flat)) return flat;
+                    if (instanceClasses.ContainsKey(flat))
+                    {
+                        // `self.i2c = i2c` (Assign.cs's alias-of-a-recognized-instance
+                        // branch, RFC 0013 P0 slot-alias-identity) registers <flat> as
+                        // BOTH a known instanceClasses entry AND an alias of the
+                        // instance it was assigned from -- the field is not its own
+                        // object, it IS the aliased one. Chasing here, the same way the
+                        // VariableExpr case above already does, is what makes a method
+                        // call dispatched through this receiver (`self.i2c.try_lock()`)
+                        // resolve to the ALIASED instance's real storage instead of
+                        // force-inlining against <flat> and minting a second, disjoint
+                        // copy of the aliased instance's fields.
+                        string cur = flat;
+                        for (int d = 0; d < 20 && variableAliases.TryGetValue(cur, out var nx); d++)
+                        {
+                            if (nx == null || nx.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                            cur = nx;
+                        }
+                        return cur;
+                    }
                     // The write that registers <outer>_<member> can sit behind a branch
                     // boundary the join already closed: a coroutine's `self.a = Acc(s)`
                     // runs in one state arm while `self.a.add(1)` lowers in the next, and
@@ -6549,6 +6568,28 @@ public partial class IRGenerator
         }
 
         var flattenedName = baseName + "_" + expr.Member;
+
+        // `self.i2c = i2c` (Assign.cs's alias-of-a-recognized-instance branch, RFC
+        // 0013 P0 slot-alias-identity) registers the flattened field name as BOTH a
+        // known instanceClasses entry AND an alias of the instance it was assigned
+        // from -- the field is not its own object, it IS the aliased one. Chase it
+        // here, on the READ side, the same way the write side already keeps it: a
+        // read reached through the field (`self.i2c.try_lock()`, a bare
+        // `self.i2c`) must resolve to the ALIASED instance's real storage, not to
+        // a second, disjoint name that happens to share the field's own flattened
+        // prefix. Bounded and skipping scratch names, exactly like every other
+        // alias chase in this file.
+        if (instanceClasses.ContainsKey(flattenedName))
+        {
+            string chased = flattenedName;
+            for (int fd = 0; fd < 20 && variableAliases.TryGetValue(chased, out var fnext); fd++)
+            {
+                if (fnext == null || fnext.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                chased = fnext;
+            }
+            if (chased != flattenedName && instanceClasses.ContainsKey(chased))
+                flattenedName = chased;
+        }
 
         if (constantVariables.TryGetValue(flattenedName, out int cv)) return new Constant(cv);
         if (constantAddressVariables.TryGetValue(flattenedName, out int ca))
