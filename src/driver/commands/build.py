@@ -352,13 +352,16 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     return has_print, has_uart, has_input
 
 
-_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']|\.join\s*\(|str\s*\(|repr\s*\(''')
+_FSTRING_VALUE_RE = re.compile(
+    r'''=\s*f["']|\.join\s*\(|str\s*\(|repr\s*\(|hex\s*\(|bin\s*\(|oct\s*\(''')
 
 
 def _detect_fstring_value_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file assigns an f-string to a name (`s = f"..."`)
-    or calls str.join (a join over a generator/comprehension materializes
-    through the same pymcu.strfmt helpers).
+    """Return True if any .py file assigns an f-string to a name (`s = f"..."`),
+    calls str.join (a join over a generator/comprehension materializes through
+    the same pymcu.strfmt helpers), or calls str()/repr()/hex()/bin()/oct() on
+    a run-time value (hex(x) etc. of a non-constant argument builds its digits
+    into a buffer the same way).
 
     Over-inclusive on purpose (a fully-constant f-string assignment also matches):
     the injected pymcu.strfmt helpers are plain module functions, so anything
