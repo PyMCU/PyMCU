@@ -4156,6 +4156,54 @@ public partial class IRGenerator
                     $"directly, or write the loop over the length you have (`for i in range(n): " +
                     $"v = {sqBadVe.Name}[i]`).", sqBadVe);
 
+            // `for b in data` over a plain (non-arena) bytearray/bytes PARAMETER whose
+            // element count is a run-time fact (ParamNeedsRuntimeLen, Scan.cs -- crc8's
+            // `for byte in data`, adafruit_onewire's own bus.py): a real counter loop, `b`
+            // read one element at a time through the ordinary indexed subscript the
+            // parameter's pointer already answers -- no arena, no new read primitive, only
+            // the trip count comes from somewhere new (the hidden length argument
+            // Statements.cs appended). The length is materialised into a local first, the
+            // same reason the arena loop below does it: an inline parameter re-resolved
+            // inside a nested expansion answers a name from the wrong scope.
+            if (stmt.Iterable is VariableExpr paramItVe
+                && !string.IsNullOrEmpty(currentFunction)
+                && bufferLengthParams.TryGetValue(currentFunction + "." + paramItVe.Name,
+                    out string? paramLenSrc))
+            {
+                DataType paramLenDt = variableTypes.TryGetValue(paramLenSrc, out var pld)
+                    ? pld : DataType.UINT16;
+                string lenLocal = $"__buflen_itr_len_{++sliceLoopId}";
+                string idxLocal = $"__buflen_itr_i_{++sliceLoopId}";
+                // Same qualification a bare local of THIS function/expansion resolves under
+                // elsewhere (Assign.cs's qualified-name pattern): `currentInlinePrefix` only
+                // when an inline expansion is live, else `currentFunction + "."`, else bare.
+                // The arena loop below gets away with `currentInlinePrefix + name` alone
+                // because an arena buffer is reached almost exclusively from inside an
+                // expansion; a plain buffer PARAMETER is read from the real subroutine's own
+                // (non-inline) body just as often, where that shortcut names a key nothing
+                // else answers to and the length copy landed on a variable the read below,
+                // qualified the ordinary way, never saw -- the loop then compared its trip
+                // counter against a slot that was never written (read as 0) and ran zero
+                // times, no diagnostic, silently wrong.
+                string lenQ = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + lenLocal
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + lenLocal : lenLocal);
+
+                variableTypes[lenQ] = paramLenDt;
+                Emit(new Copy(new Variable(paramLenSrc, paramLenDt), new Variable(lenQ, paramLenDt)));
+
+                var paramBody = new Block();
+                paramBody.Statements.Add(new AssignStmt(
+                    new VariableExpr(stmt.VarName),
+                    new IndexExpr(new VariableExpr(paramItVe.Name), new VariableExpr(idxLocal))));
+                if (stmt.Body is Block paramOb) paramBody.Statements.AddRange(paramOb.Statements);
+                else paramBody.Statements.Add(stmt.Body);
+                VisitStatement(new ForStmt(idxLocal,
+                    new IntegerLiteral(0), new VariableExpr(lenLocal), null, paramBody)
+                    { Line = stmt.Line });
+                return;
+            }
+
             // `for b in buf` over an arena-allocated bytearray (neopixel_write's frame
             // loop, handed `self._post_brightness_buffer`): the region's byte length is a
             // run-time value, so this is a real counter loop -- `b` is read one byte at a
