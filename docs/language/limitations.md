@@ -362,7 +362,7 @@ Measured against CPython for `1.0 / 0.0` and its neighbours (float-edges campaig
 | `int(float('inf'))`, `int(float('nan'))` | `OverflowError`, `ValueError` | **Not measured** | `float("inf")` / `float("nan")` are not accepted as literals (`CompileError: not a number`); PyMCU has no way to construct an infinity or NaN value from source today, so these two rows could not be exercised. `float('inf') > 1e38` and any NaN comparison are unmeasured for the same reason |
 | `int(1e10)` (a float constant past int32/uint32 range) | `10000000000` (exact) | `CompileError` | No PyMCU integer type is 64-bit; the constant is refused instead of silently keeping an unspecified bit pattern (fixed, see below) |
 | `round(2.5)` / `round(3.5)` / `round(-2.5)` | `2` / `4` / `-2` (banker's rounding) | `2` / `4` / `-2` | Matches |
-| `round(x, 2)` | rounds to 2 places | `CompileError` | `round()` with a `ndigits` argument is not implemented; the diagnostic names `int(x + 0.5)` / `int(x - 0.5)` as the (non-equivalent) escape hatch |
+| `round(x, 2)` | rounds to 2 places | matches | `ndigits` must be a compile-time constant (-15..15); an int `x` folds at compile time with CPython's own int semantics, a float `x` (constant or run-time) forwards to `pymcu.round2`'s half-to-even digit extraction, the same one the f-string float format spec uses |
 | `abs(-0.0)` | `0.0` | `0.0` | Matches |
 | `-0.0 == 0.0` | `True` | `True` | Matches |
 | `math.isnan` / `isinf` / `isfinite` | exist | **absent** | Not implemented, `math` only has `sqrt`/`log`/`exp`/`radians`, each added because a specific measured library needed it (see the Built-ins table); nobody has needed these yet |
