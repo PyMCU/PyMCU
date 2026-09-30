@@ -19,7 +19,7 @@ from pymcu.chips.rp2040 import (
     IO_BANK0_BASE, GPIO_FUNC_UART,
     UART_FR_TXFF, UART_FR_RXFE,
 )
-from pymcu.types import ptr, uint8, uint32, const, inline
+from pymcu.types import ptr, uint8, uint16, uint32, const, inline
 from pymcu.exceptions import CompileError
 
 # Peripheral clock assumed at the pico-sdk default of 125 MHz. (A future clocks
@@ -74,6 +74,20 @@ class UART:
         while (UART0_FR.value >> UART_FR_TXFF) & 1:
             pass
         UART0_DR.value = data
+
+    @inline
+    def write(self, buf: bytearray):
+        # Overload: a bytes literal (uart.write(b"...")) or any other fixed buffer, sent
+        # one byte at a time -- matches the AVR native HAL and the MicroPython compat
+        # layer's machine.UART.write(buf), which already does this. Named 'buf', not
+        # 'data' like the uint8 overload: two @inline overloads sharing a parameter name
+        # collide in ResolveOverloadedCallee's bytearrayParams tracking (see the AVR HAL's
+        # write(bytearray) for the mechanism, #p2avr-7).
+        i: uint16 = 0
+        n: uint16 = len(buf)
+        while i < n:
+            self.write(buf[i])
+            i = i + 1
 
     @inline
     def read(self) -> uint8:

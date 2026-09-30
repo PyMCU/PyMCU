@@ -111,6 +111,28 @@ class UART:
         uart_write(data)
 
     @inline
+    def write(self, buf: bytearray):
+        # Overload: a bytes literal (uart.write(b"...")) or any other fixed buffer, sent
+        # one byte at a time -- the MicroPython compat layer's machine.UART.write(buf)
+        # already does this over its own _hw.write(); the native HAL lacked the buffer
+        # overload entirely, so a literal bytes argument had no write() it could bind to.
+        #
+        # Named 'buf', not 'data' like the uint8 overload just above: bytearrayParams is
+        # keyed by "<qualified function name>.<param name>" WITHOUT the per-overload
+        # mangled suffix (Statements.cs), so two @inline overloads of the same method
+        # that happen to share a parameter NAME collide in that one set -- the uint8
+        # overload's "data" would read as a bytearray param too, and `uart.write(buf[j])`
+        # (a scalar element read) through an intermediate inline expansion silently
+        # picked THIS overload instead of the uint8 one, then failed on `len()` of a
+        # value that was never an array (found via the MicroPython compat layer's own
+        # machine.UART.write(uint8) forwarding to self._hw.write(buf), #p2avr-7).
+        i: uint16 = 0
+        n: uint16 = len(buf)
+        while i < n:
+            uart_write(buf[i])
+            i = i + 1
+
+    @inline
     def read(self) -> uint8:
         return uart_read()
 

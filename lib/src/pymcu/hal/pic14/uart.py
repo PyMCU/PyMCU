@@ -26,6 +26,20 @@ class UART:
         uart_write(data)
 
     @inline
+    def write(self, buf: bytearray):
+        # Overload: a bytes literal (uart.write(b"...")) or any other fixed buffer, sent
+        # one byte at a time -- matches the AVR native HAL and the MicroPython compat
+        # layer's machine.UART.write(buf), which already does this. Named 'buf', not
+        # 'data' like the uint8 overload: two @inline overloads sharing a parameter name
+        # collide in ResolveOverloadedCallee's bytearrayParams tracking (see the AVR HAL's
+        # write(bytearray) for the mechanism, #p2avr-7).
+        i: uint16 = 0
+        n: uint16 = len(buf)
+        while i < n:
+            self.write(buf[i])
+            i = i + 1
+
+    @inline
     def read(self) -> uint8:
         return uart_read()
 
