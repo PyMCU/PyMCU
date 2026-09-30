@@ -179,6 +179,25 @@ public class HexBinOctRuntimeTests
         Assert.DoesNotContain(calls, c => c.FunctionName.Contains("uart_write_decimal"));
     }
 
+    [Fact]
+    public void AnnotatedAssigningHexOfARuntimeValue_BuildsABuffer_NotAScalarCopy()
+    {
+        // The unannotated form above (`s = hex(x)`) was fixed for #p2avr-1; the ANNOTATED
+        // form (`s: str = hex(x)`) is the same call in a VarDecl instead of a plain Assign
+        // and was not wired to the same buffer builder, so it still fell to the generic
+        // scalar Copy path and took the digit buffer's first byte as a number.
+        var ir = Gen(
+            "import pymcu.strfmt as _pymcu_strfmt\n" +
+            "def show(x: uint8):\n" +
+            "    s: str = hex(x)\n" +
+            "    print(s)\n" +
+            "show(GPIOR0.value)\n",
+            StrfmtModule);
+        var calls = Calls(ir);
+        Assert.Contains(calls, c => c.FunctionName.Contains("_fs_fmt"));
+        Assert.DoesNotContain(calls, c => c.FunctionName.Contains("uart_write_decimal"));
+    }
+
     // --- RFC 0014 decision 4: a user's own def hex/bin/oct/round shadows the builtin ---
 
     [Fact]

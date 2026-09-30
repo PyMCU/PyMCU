@@ -6423,6 +6423,18 @@ public partial class IRGenerator
         if (stmt.Init != null && TryExpandFStringValue(stmt.Name, stmt.Init))
             return;
 
+        // `s: str = hex(v)/bin(v)/oct(v)` or `s: str = str(v)/repr(v)` of a run-time value
+        // (or any annotation -- same reasoning as the f-string case just above): these were
+        // only wired into the UNANNOTATED assignment form (`s = hex(v)`). The annotated form
+        // fell through to the generic scalar Copy path below and took the digit/repr
+        // buffer's first byte as a plain number -- `s: str = hex(x + 200); print(s)` printed
+        // "255" instead of "0xc8", the same silent wrong answer #p2avr-1 already named and
+        // fixed for the unannotated form, just not for this one.
+        if (stmt.Init != null && TryExpandBaseReprValue(stmt.Name, stmt.Init))
+            return;
+        if (stmt.Init != null && TryExpandStrReprValue(stmt.Name, stmt.Init))
+            return;
+
         // `c: ClassName = ClassName(...)` — a type-annotated instance construction (a typed
         // local parses as a VarDecl). The annotation is just the (redundant) declared type;
         // route through the normal assignment path so the instance->class link and constructor
