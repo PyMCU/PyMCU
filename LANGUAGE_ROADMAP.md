@@ -94,7 +94,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Module | Class / Function | Targets | Notes |
 |--------|-----------------|---------|-------|
 | `pymcu.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
-| `pymcu.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
+| `pymcu.hal.uart` | `UART` | All | `write` (`uint8` or `bytearray` overload — a bytes literal or fixed buffer sends one byte at a time) `/read/write_str/println/print_byte` |
 | `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535); ATtiny85: PB2/PB3/PB4 |
 | `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow`; ATtiny85: Timer0+Timer1 (15 prescaler steps) |
 | `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty/set_freq`. Two channels of the same timer coexist (the COM bits are OR-ed); `set_freq` picks the **nearest** reachable prescaler bucket, which is what keeps `tone()` melodies in tune |

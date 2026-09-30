@@ -155,7 +155,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Module | Coverage |
 |---|---|
 | `pymcu.hal.gpio` | `Pin` — `high/low/toggle/value/irq/pulse_in` |
-| `pymcu.hal.uart` | `UART` — `write/read/read_line/write_str/println/print_byte/available` + RX interrupt |
+| `pymcu.hal.uart` | `UART` — `write` (`uint8` or `bytearray`, so a bytes literal or fixed buffer sends one byte at a time, like the MicroPython compat layer's `machine.UART.write` already did) `/read/read_line/write_str/println/print_byte/available` + RX interrupt |
 | `pymcu.hal.adc` | `AnalogPin` — poll + interrupt; channels `"PC0"`–`"PC5"`, `"TEMP"` (internal sensor), `"VBG"`, `"ADC8"` |
 | `pymcu.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified; CTC mode |
 | `pymcu.hal.pwm` | `PWM` — `start/stop/set_duty/set_freq`; multi-channel (two channels of the same timer coexist — the COM bits are OR-ed). `set_freq` picks the **nearest** reachable prescaler bucket |
