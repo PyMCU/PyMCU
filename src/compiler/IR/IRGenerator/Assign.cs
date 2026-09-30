@@ -5477,6 +5477,49 @@ public partial class IRGenerator
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
         string lenVar = "__fslen_" + target;
 
+        // `s = f"{s}..."`: a part reads TARGET itself, while the assignment is about to
+        // reset target's own length to 0 and start overwriting its bytes from the front.
+        // Snapshot target's CURRENT bytes and length into a private temp buffer first,
+        // then every self-referencing part reads the snapshot instead of target -- a plain
+        // reset-and-reuse would have zeroed the very length a self-referencing part reads
+        // (silently dropping the old text, not just for text written after the self-
+        // reference: the reset happens before ANY part is emitted), and even preserving
+        // the length alone would not save a self-reference that comes after some other
+        // part already overwrote target's low bytes (`f"pre-{s}-post"`).
+        bool selfRef = runtimeStrVars.ContainsKey(qualified) && parts.Any(p =>
+            p.IsExpr && string.IsNullOrEmpty(p.FormatSpec)
+            && p.Expr is VariableExpr srv && srv.Name == target);
+        if (selfRef)
+        {
+            var oldInfo = runtimeStrVars[qualified];
+            string snapBuf = "__fsself_" + target;
+            string snapLen = "__fsselflen_" + target;
+            VisitStatement(new VarDecl(snapBuf, "bytearray",
+                new CallExpr(new VariableExpr("bytearray"),
+                             new List<Expression> { new IntegerLiteral(oldInfo.Capacity) })));
+            VisitStatement(new VarDecl(snapLen, "uint16", new VariableExpr(oldInfo.LenVar)));
+            string cp = "__fsselfcp_" + fsCopyId++;
+            var cpE = new VariableExpr(cp);
+            VisitStatement(new VarDecl(cp, "uint16", new IntegerLiteral(0)));
+            var copyBody = new Block();
+            copyBody.Statements.Add(new AssignStmt(new IndexExpr(new VariableExpr(snapBuf), cpE),
+                new IndexExpr(new VariableExpr(target), cpE)));
+            copyBody.Statements.Add(new AssignStmt(cpE,
+                new BinaryExpr(cpE, Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+            VisitStatement(new WhileStmt(
+                new BinaryExpr(cpE, Frontend.BinaryOp.Less, new VariableExpr(snapLen)), copyBody));
+            string snapQualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + snapBuf
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + snapBuf : snapBuf);
+            runtimeStrVars[snapQualified] = (snapLen, oldInfo.Capacity);
+
+            // Every part naming target, un-specced, now reads the snapshot instead.
+            parts = parts.Select(p => p.IsExpr && string.IsNullOrEmpty(p.FormatSpec)
+                    && p.Expr is VariableExpr prv && prv.Name == target
+                ? new FStringPart { IsExpr = true, Expr = new VariableExpr(snapBuf) { Line = p.Expr.Line } }
+                : p).ToList();
+        }
+
         if (runtimeStrVars.TryGetValue(qualified, out var existing))
         {
             // Re-assignment: reuse the buffer when it fits; a bigger later f-string would
