@@ -82,9 +82,13 @@ public class BuiltinDiagnosticTests
     [Fact]
     public void ABuiltinWithNoSpecificAdvice_StillNamesItselfAndListsWhatExists()
     {
-        var msg = ErrorFor("    a: uint8 = 8\n    b = oct(a)\n");
+        // oct() used to be this test's example (a builtin PyMCU did not implement at all);
+        // the P2 AVR gaps bundle added it alongside hex()/bin(), so it now needs its own
+        // "no specific advice" stand-in -- ascii() has neither a dispatch nor an
+        // UnsupportedBuiltins entry either.
+        var msg = ErrorFor("    a: uint8 = 8\n    b = ascii(a)\n");
 
-        Assert.Contains("oct()", msg);
+        Assert.Contains("ascii()", msg);
         Assert.Contains("PyMCU does not provide", msg);
         Assert.Contains("hex", msg);   // the supported neighbours are named
         Assert.DoesNotContain("typo", msg);

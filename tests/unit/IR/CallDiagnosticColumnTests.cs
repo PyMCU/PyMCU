@@ -74,13 +74,19 @@ public class CallDiagnosticColumnTests
     [Fact]
     public void AnArgumentErrorPointsAtTheArgumentAndNotAtTheCallee()
     {
-        //          1234567890123456
-        // line 4: "    s = hex(a + 1)"  -- the '+' of the argument is at column 15
-        // `a` is read from a register because since PyMCU#331 a local that holds a literal is a
-        // compile-time value, and hex() of a compile-time constant is accepted rather than blamed.
-        var ex = Fails("    a: uint8 = GPIOR0.value\n    s = hex(a + 1)\n");
+        // hex(a + 1) on a run-time a used to be this test's example -- hex() refused any
+        // non-compile-time argument outright. The P2 AVR gaps bundle made that case compile
+        // (a run-time argument now builds its digits into a buffer), so the argument-blame
+        // example is now a STRING argument, which still refuses: CPython raises TypeError
+        // ("'str' object cannot be interpreted as an integer"). A bare string LITERAL is
+        // not column-stamped any more than a bare int one (see the class doc above), so
+        // the argument is a concatenation of two literals -- still a compile-time string,
+        // still a BinaryExpr, blamed at its own operator's column the same way `a + 1` was.
+        //          12345678901234567
+        // line 3: "    print(hex("A"))"  -- the opening quote of "A" is at column 15
+        var ex = Fails("    print(hex(\"A\"))\n");
 
-        Assert.Equal(4, ex.Line);
+        Assert.Equal(3, ex.Line);
         Assert.Equal(15, ex.Column);
     }
 
