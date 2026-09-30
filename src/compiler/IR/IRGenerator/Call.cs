@@ -1021,6 +1021,7 @@ public partial class IRGenerator
 
         if (callee == "hex") return EmitHexBuiltin(expr);
         if (callee == "bin") return EmitBinBuiltin(expr);
+        if (callee == "oct") return EmitOctBuiltin(expr);
         if (callee == "str") return EmitStrBuiltin(expr);
         if (callee == "repr") return EmitReprBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
@@ -1706,7 +1707,7 @@ public partial class IRGenerator
                         ? $"{shown}() is a Python builtin that PyMCU does not provide: {why}."
                         : $"{shown}() is a Python builtin that PyMCU does not provide. There is no "
                           + "import that adds it -- the supported builtins are len, abs, min, max, "
-                          + "sum, any, all, bool, ord, chr, hex, bin, str, pow, divmod, print, "
+                          + "sum, any, all, bool, ord, chr, hex, bin, oct, str, pow, divmod, print, "
                           + "range, enumerate and zip, plus the numeric casts int/float/uint8/"
                           + "int8/uint16/int16/uint32/int32.", expr.Callee);
 
@@ -7842,38 +7843,135 @@ public partial class IRGenerator
         return result;
     }
 
-    // hex(const): intern "0x…" as a flash string literal, return its id (compile-time only).
+    // The CPython spelling of a compile-time constant in a given base: the sign, if
+    // any, goes BEFORE the prefix ("-0x1", not "0x-1"), and a constant that folded
+    // into the Unsigned lane (a raw bit pattern > int.MaxValue, e.g. from a uint32
+    // literal) is never negative to begin with -- .Value there IS the magnitude's
+    // bit pattern, not a two's-complement encoding of something smaller.
+    // hex(-1) used to print "0xffffffff" (C#'s (-1).ToString("x") on the raw
+    // 32-bit pattern) instead of CPython's "-0x1": a silent wrong answer, not a
+    // refusal, for every compile-time NEGATIVE argument.
+    private static string ConstBaseSpelling(Constant c, string prefix, int radix)
+    {
+        ulong mag; bool neg;
+        if (c.Unsigned) { mag = unchecked((uint)c.Value); neg = false; }
+        else if (c.Value < 0) { mag = unchecked((ulong)(-(long)c.Value)); neg = true; }
+        else { mag = (uint)c.Value; neg = false; }
+        string digits = radix switch
+        {
+            16 => mag.ToString("x"),
+            2 => Convert.ToString((long)mag, 2),
+            8 => Convert.ToString((long)mag, 8),
+            _ => mag.ToString(),
+        };
+        return (neg ? "-" : "") + prefix + digits;
+    }
+
+    // hex(x)/oct(x)/bin(x) of a RUN-TIME value: builds the same spelling a compile-time
+    // constant would get, into a buffer through pymcu.strfmt -- the same machinery an
+    // f-string value assignment uses. The sign (if the source looks signed) is written
+    // directly, ahead of the prefix; strfmt._fs_fmt only ever sees the unsigned
+    // magnitude, so it never has to decide where the prefix goes relative to a sign it
+    // would otherwise emit itself.
+    private string EmitIntBaseRuntimeStr(string bufName, Val v, Expression srcExpr,
+                                         int radix, string prefix, Expression blame)
+    {
+        string strfmtMod = RequireStrfmtMod(blame);
+        bool signed = LooksSigned(srcExpr);
+        int digitsMax = radix switch { 16 => 8, 8 => 11, 2 => 32, _ => 10 };
+        int bufSize = 1 + prefix.Length + digitsMax + 1;   // sign + prefix + digits + NUL
+        VisitStatement(new VarDecl(bufName, "bytearray",
+            new CallExpr(new VariableExpr("bytearray"), new List<Expression> { new IntegerLiteral(bufSize) })));
+        string lenVar = "__fslen_" + bufName;
+        VisitStatement(new VarDecl(lenVar, "uint16", new IntegerLiteral(0)));
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + bufName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        runtimeStrVars[qualified] = (lenVar, bufSize);
+
+        var buf = new VariableExpr(bufName);
+        var pos = new VariableExpr(lenVar);
+        Expression valueExpr = new PreEvaluatedExpr(v, signed ? DataType.INT32 : DataType.UINT32);
+        string magVar = "__fsmag_" + bufName;
+        if (signed)
+        {
+            VisitStatement(new VarDecl(magVar, "uint32", new IntegerLiteral(0)));
+            var thenB = new Block();
+            thenB.Statements.Add(new AssignStmt(pos,
+                new CallExpr(new MemberAccessExpr(new VariableExpr(strfmtMod), "_fs_text"),
+                    new List<Expression> { buf, pos, new StringLiteral("-") })));
+            thenB.Statements.Add(new AssignStmt(new VariableExpr(magVar),
+                new CallExpr(new VariableExpr("uint32"), new List<Expression> {
+                    new BinaryExpr(new IntegerLiteral(0), Frontend.BinaryOp.Sub, valueExpr) })));
+            var elseB = new Block();
+            elseB.Statements.Add(new AssignStmt(new VariableExpr(magVar),
+                new CallExpr(new VariableExpr("uint32"), new List<Expression> { valueExpr })));
+            VisitStatement(new IfStmt(
+                new BinaryExpr(valueExpr, Frontend.BinaryOp.Less, new IntegerLiteral(0)),
+                thenB, null, elseB));
+        }
+        else
+        {
+            VisitStatement(new VarDecl(magVar, "uint32", valueExpr));
+        }
+
+        EmitStrfmtCall(strfmtMod, lenVar, "_fs_text",
+            new List<Expression> { buf, pos, new StringLiteral(prefix) });
+        EmitStrfmtCall(strfmtMod, lenVar, "_fs_fmt", new List<Expression>
+        {
+            buf, pos, new VariableExpr(magVar),
+            new IntegerLiteral(radix), new IntegerLiteral(0), new IntegerLiteral(0),
+        });
+        VisitStatement(new AssignStmt(new IndexExpr(buf, pos), new IntegerLiteral(0)));
+        return bufName;
+    }
+
+    // hex(x): a compile-time constant interns its spelling as a flash string literal
+    // (zero run-time cost, unchanged); a run-time value builds the same spelling into
+    // a buffer (#p2avr-1).
     private Val EmitHexBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("hex() expects exactly one argument", expr.Callee);
-        Val v = VisitExpression(expr.Args[0]);
-        if (!(v is Constant c)) throw UserError("hex() argument must be a compile-time constant integer", expr.Args[0]);
-        string hexstr = "0x" + c.Value.ToString("x");
-        if (!stringLiteralIds.ContainsKey(hexstr))
-        {
-            stringLiteralIds[hexstr] = nextStringId;
-            stringIdToStr[nextStringId] = hexstr;
-            nextStringId++;
-        }
-
-        return new Constant(stringLiteralIds[hexstr], hexstr);
+        Val v = RequireIntBaseArg(VisitExpression(expr.Args[0]), "hex", expr.Args[0]);
+        if (v is Constant c) return InternedStringConstant(ConstBaseSpelling(c, "0x", 16));
+        return new Variable(
+            EmitIntBaseRuntimeStr("__hex" + tempCounter++, v, expr.Args[0], 16, "0x", expr),
+            DataType.UINT8);
     }
 
-    // bin(const): intern "0b…" as a flash string literal, return its id (compile-time only).
+    // bin(x): same shape as hex(), base 2.
     private Val EmitBinBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("bin() expects exactly one argument", expr.Callee);
-        Val v = VisitExpression(expr.Args[0]);
-        if (!(v is Constant c)) throw UserError("bin() argument must be a compile-time constant integer", ArgAt(expr, 0));
-        string binstr = "0b" + Convert.ToString(c.Value, 2);
-        if (!stringLiteralIds.ContainsKey(binstr))
-        {
-            stringLiteralIds[binstr] = nextStringId;
-            stringIdToStr[nextStringId] = binstr;
-            nextStringId++;
-        }
+        Val v = RequireIntBaseArg(VisitExpression(expr.Args[0]), "bin", expr.Args[0]);
+        if (v is Constant c) return InternedStringConstant(ConstBaseSpelling(c, "0b", 2));
+        return new Variable(
+            EmitIntBaseRuntimeStr("__bin" + tempCounter++, v, expr.Args[0], 2, "0b", expr),
+            DataType.UINT8);
+    }
 
-        return new Constant(stringLiteralIds[binstr], binstr);
+    // oct(x): same shape as hex(), base 8. Previously unimplemented -- calling it fell
+    // through to the generic "builtin PyMCU does not provide" refusal.
+    private Val EmitOctBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw UserError("oct() expects exactly one argument", expr.Callee);
+        Val v = RequireIntBaseArg(VisitExpression(expr.Args[0]), "oct", expr.Args[0]);
+        if (v is Constant c) return InternedStringConstant(ConstBaseSpelling(c, "0o", 8));
+        return new Variable(
+            EmitIntBaseRuntimeStr("__oct" + tempCounter++, v, expr.Args[0], 8, "0o", expr),
+            DataType.UINT8);
+    }
+
+    // hex()/bin()/oct() refuse a STRING argument (a Constant carrying Text, the same
+    // discriminator print() uses to tell "this constant stands for text" from "this
+    // constant stands for a number" -- see EmitStreamVal). Without this, `hex("A")`
+    // silently hex-encoded the interned string id instead of raising, the way CPython's
+    // TypeError ("'str' object cannot be interpreted as an integer") never lets it.
+    private Val RequireIntBaseArg(Val v, string name, Expression at)
+    {
+        if (v is Constant { Text: { } } || v is FloatConstant)
+            throw UserError($"{name}() argument must be an integer", at);
+        return v;
     }
 
     // str(const): intern the decimal form as a flash string literal (compile-time only).
@@ -8421,7 +8519,7 @@ public partial class IRGenerator
     private static readonly HashSet<string> BuiltinDispatchNames = new(StringComparer.Ordinal)
     {
         "len", "abs", "min", "max", "ord", "chr", "sum", "any", "all", "bool",
-        "hex", "bin", "str", "pow", "divmod", "print", "range", "enumerate", "zip",
+        "hex", "bin", "oct", "str", "pow", "divmod", "print", "range", "enumerate", "zip",
     };
 
     private static readonly Dictionary<string, (string[] Positional, string[] Done, string[] NotYet)>
