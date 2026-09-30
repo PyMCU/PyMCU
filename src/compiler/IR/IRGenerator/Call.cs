@@ -9850,6 +9850,15 @@ public partial class IRGenerator
     private string? StaticStringOf(Expression e)
     {
         if (e is StringLiteral sl) return sl.Value;
+        // `text = f"{'literal string'}"`: a fully compile-time f-string (every part either
+        // literal text or a constant expression) is itself statically known text -- the same
+        // fold VisitFStringExpr performs when the whole expression lowers, answered here
+        // without visiting so the name records its text through the ordinary assign-path
+        // preamble below. Without this, StaticStringOf saw nothing (FStringExpr matched no
+        // case) and the preamble actively CLEARED any text for the name via the "not a known
+        // string" branch; the later scalar Copy then stored the interned string id as a bare
+        // integer, and print(text) wrote "257" for `f"{'literal string'}"` (#p2avr).
+        if (e is FStringExpr fse) return StaticFStringText(fse);
         if (e is VariableExpr ve)
             return ResolveStrConstant(currentInlinePrefix + ve.Name)
                 ?? (!string.IsNullOrEmpty(currentFunction)
@@ -9930,6 +9939,35 @@ public partial class IRGenerator
                 _ => null,
             };
         return null;
+    }
+
+    // The text a fully compile-time f-string folds to, purely (no IR emitted): each part is
+    // either literal text, another statically-known string (recursing through StaticStringOf,
+    // which is what lets a string constant's own interpolation fold here too), or a
+    // compile-time integer (TryFoldInt, which covers an IntegerLiteral and a declared/folded
+    // constant name -- the two shapes TryExpandFStringValue's own IsConstPart already accepts
+    // as "not a runtime value"). The moment one part is neither, this is not a compile-time
+    // f-string and the caller must fall back to whatever the runtime buffer path decides --
+    // returning null, never a partial spelling.
+    private string? StaticFStringText(FStringExpr fs)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var part in FlattenFStringParts(fs))
+        {
+            if (!part.IsExpr) { sb.Append(part.Text); continue; }
+            // A string-valued part ignores its own format spec, matching VisitFStringExpr's
+            // lowering exactly (a format spec on a string interpolation is not applied there
+            // either) -- this fold must agree byte-for-byte with what actually lowers.
+            if (StaticStringOf(part.Expr!) is { } text) { sb.Append(text); continue; }
+            if (TryFoldInt(part.Expr!, out int iv))
+            {
+                sb.Append(string.IsNullOrEmpty(part.FormatSpec)
+                    ? iv.ToString() : FormatFStringInt(iv, part.FormatSpec));
+                continue;
+            }
+            return null;
+        }
+        return sb.ToString();
     }
 
     /// <summary>
