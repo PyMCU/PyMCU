@@ -7040,13 +7040,71 @@ public partial class IRGenerator
     /// spells None outright, the source's own live tag when it already carries one (`rom` in
     /// scan()'s loop, forwarded unchanged -- Optional-ness crosses this call boundary the
     /// same way it crossed the local rebind), else 0 -- a plain, always-present buffer.
+    ///
+    /// A field is checked BEFORE the fallback: `self.maybe_buf` declared
+    /// `Optional[bytearray]`/`Optional[bytes]` has no tag storage of its own yet (RFC 0009
+    /// decision 4 excludes a buffer from the scalar union-field payload the instance
+    /// otherwise carries, EnsureUnionField/IsUnionField above -- there is no PLACE this
+    /// field's own presence lives). Answering 0 here regardless would tell the callee "this
+    /// is always a real buffer" even on the runs where CPython's own attribute is `None`:
+    /// measured, `h.touch(h.maybe_buf, seed)` with `h.maybe_buf` still `None` printed CPython's
+    /// 1 as a run-time `E:TypeError` instead -- not a wrong VALUE, but not CPython's result
+    /// either, and the project rule (`AGENTS.md`) is one of the two, never a third answer.
+    /// Refused here, at the call site whose argument is the field, until a field-level
+    /// buffer-Optional tag exists to answer it honestly.
+    ///
+    /// NOT the whole story: this guards the REAL-subroutine call path (WithBufferParamTags,
+    /// which reaches this method). An @inline expansion's own argument binding reaches the
+    /// field's tag through CarryOptionalTagToParam/TagOfVal instead -- a SEPARATE path this
+    /// method is never consulted from -- and that path found a tag for `h.maybe_buf` (the
+    /// scalar EnsureUnionField mechanism apparently does cover a buffer-shaped field,
+    /// contrary to this comment's assumption above) without the runtime behaviour actually
+    /// matching CPython: the measured E:TypeError above went through THAT path, not this
+    /// one, and this session did not find the reason. NO MEDIDO beyond what is written here
+    /// and in the session's final report.
     private Val BufferPresenceTagVal(Expression? ae)
     {
         if (ae == null || ae is NoneLiteral) return new Constant(1);
         if (ae is VariableExpr ve && OptionalKeyOf(ve.Name) is { } key
             && optionalTagSlots.TryGetValue(key, out var srcTag))
             return srcTag;
+        if (ae is MemberAccessExpr fma && FieldDeclaredBufferOptionalMembers(fma) != null)
+            throw UserError(
+                $"'{fma.Member}' is declared Optional[bytearray]/Optional[bytes] and is "
+                + "passed here to a parameter of the same shape; PyMCU does not yet carry a "
+                + "presence tag for an INSTANCE FIELD of this shape (only a local or a "
+                + "parameter does), so there is no way to tell the callee whether this field "
+                + "is None at the point of this call. Copy it to a local first (`buf = "
+                + $"{fma.Member}; f(buf, ...)`), which does carry the tag.", fma);
         return new Constant(0);
+    }
+
+    /// <paramref name="ma"/>'s declared member list when it names a field declared
+    /// `Optional[bytearray]`/`Optional[bytes]` (or a Union with one of those and None);
+    /// null otherwise, including for a field this class never declared Optional at all --
+    /// a field only ever assigned a real buffer needs no tag and stays free.
+    private List<string>? FieldDeclaredBufferOptionalMembers(MemberAccessExpr ma)
+    {
+        if (ma.Object is not VariableExpr ov) return null;
+        string pfx = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." : "");
+        string baseName = ov.Name;
+        foreach (var cand in new[] { pfx + baseName, baseName })
+        {
+            string b = cand;
+            for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var a); d++) b = a;
+            if (UnionOwnerClass(b) is not { } cls) continue;
+            for (string? c = cls; c != null;)
+            {
+                if (fieldDeclaredUnionMembers.TryGetValue(c + "|" + ma.Member, out var declared)
+                    && declared != null && declared.Any(m => m is "bytearray" or "bytes"))
+                    return declared;
+                if (!classBasePrefixes.TryGetValue(c, out var parent) || string.IsNullOrEmpty(parent))
+                    break;
+                c = parent.EndsWith("_") ? parent[..^1] : parent;
+            }
+        }
+        return null;
     }
 
     // ── Built-in functions (each handled when callee matches; always returns or throws) ──
