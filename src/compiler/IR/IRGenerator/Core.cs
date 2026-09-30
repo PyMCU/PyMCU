@@ -1556,6 +1556,37 @@ public partial class IRGenerator
         foreach (var kvp in staticFieldTypes)
             irProgram.StaticFields[kvp.Key] = kvp.Value;
 
+        // RFC 0013 phase 0c ("static by exclusion", team-lead directive
+        // 2026-09-30): the exact set of names this pass ever bound as a
+        // parameter, a plain local (`x = ...`, `x: T = ...`, a for/comprehension
+        // loop variable, a tuple-unpack target) or a compiler temporary --
+        // already tracked throughout IRGenerator as `boundNames` for name-
+        // resolution and shadow-detection, qualified with the inline-expansion
+        // prefix (`inline{d}.func.x`) or the enclosing function's own name
+        // exactly the way every OTHER lowering decision reads it. A backend
+        // needs this to decide the complement directly: ANY other name that
+        // ends up needing a home (an SRAM slot or a pool register) is not a
+        // function's own parameter/local/temporary, so it is of static
+        // duration and must read zero at boot, with no need to trace the
+        // object graph back to a module-level root or to recognise a
+        // compiler-minted token by its spelling.
+        foreach (var name in boundNames)
+        {
+            irProgram.AutomaticLocals.Add(name);
+            // boundNames qualifies a binding made directly in the synthesized
+            // top-level "main" with a "main." prefix (VisitAssign's bindKey,
+            // matching every other currentFunction-qualified binding), but a
+            // top-level local's own STORAGE name -- what StackAllocator and
+            // the backend actually see in Copy/Binary/etc. operands -- is the
+            // bare name, not "main."-prefixed (main is the synthesized entry
+            // point, not an ordinary named function other locals must be kept
+            // apart from). Record both spellings so the exclusion decision
+            // matches the name a home is actually filed under; recording an
+            // extra spelling nothing ever uses as a storage key is harmless.
+            if (name.StartsWith("main.", StringComparison.Ordinal))
+                irProgram.AutomaticLocals.Add(name["main.".Length..]);
+        }
+
         // Module-level SRAM arrays must be allocated as globals so the overlay
         // algorithm never aliases them with function-local arrays across sibling calls.
         foreach (var name in moduleSramArrays)

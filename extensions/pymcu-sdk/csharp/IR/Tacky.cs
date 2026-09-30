@@ -479,37 +479,26 @@ public class ProgramIR
     // Absent in .mir files from older compilers; deserializes to empty.
     public Dictionary<string, string> CanonicalTemps { get; set; } = new();
 
-    // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0b: the flat
-    // storage name of every field a `self.field`/`obj.field` STORE ever flattens
-    // to, keyed to its declared width -- UNCONDITIONALLY, whether the instance
-    // holding the field is built at module level or inside an ordinary function.
-    //
-    // Phase 0 populated this only when the frontend could trace the field back to
-    // a module-level root (IsModuleInstanceStorage's chain-walk through
-    // topLevelInstanceTargets/ctorArgs). That chain-walk does not follow every
-    // shape a held instance can be built in -- `self.x = Ctor(...)` written
-    // directly inside the OWNER's own __init__ (as opposed to `Ctor(...)` passed
-    // in as a constructor ARGUMENT) is not one of the shapes it resolves -- so a
-    // field nested a few hops under a module-level instance could go unmarked.
-    // That is exactly how busio.I2C's self._locked, reached as
-    // `ss.i2c_device.i2c._locked` under a module-level Seesaw instance, stayed
-    // unrecognised: its backing register was never cleared at boot, kept
-    // whatever the emulator/silicon happened to power on with, and
-    // `while not i2c.try_lock(): pass` span forever.
-    //
-    // Phase 0b closes that class of gap by inverting the test instead of
-    // extending the chain-walk one more hop (RFC 0013 section 3): AUTOMATIC is
-    // exclusively a parameter, local or temporary declared of one function
-    // activation (its own body's, and the inline expansions it contains); a
-    // flattened instance-field name is never one of those, no matter which
-    // instance holds it or how deeply nested the path to it is, so a backend can
-    // safely treat every name in this set as STATIC without needing a proof that
-    // ties it back to a module-level root. Over-including a field of a
-    // genuinely function-scoped instance here costs a few bytes of boot-time
-    // clear (RFC 0013 section 6 -- cleaning storage a program does not need
-    // zeroed is never incorrect, only a byte cost that the ROM gate catches and
-    // must be explained); under-including one is the silent-lockup class of bug
-    // this field exists to rule out.
+    // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0: the flat
+    // storage name of every field the frontend recognises as belonging to an
+    // instance built at module level (busio.I2C's self._locked, a driver's
+    // self._buffer, ...), keyed to its declared width -- populated only when
+    // IsModuleInstanceStorage's chain-walk (topLevelInstanceTargets/ctorArgs)
+    // can trace the field back to a module-level root. That chain-walk does
+    // not follow every shape a held instance can be built in (a field
+    // constructed directly inside its owner's own __init__, as opposed to
+    // passed in as a constructor argument), which is a known, DELIBERATE gap:
+    // phase 0c ("static by exclusion", program.AutomaticLocals below and
+    // StackAllocator's own exclusion pass) is what actually closes it now,
+    // by deciding static-vs-automatic without needing this field to be
+    // complete at all. A version of this field that recorded every store
+    // unconditionally (module-scoped or function-scoped) was tried and
+    // reverted: with no backend left depending on it for that decision, the
+    // wider set only cost bytes for no correctness gain (an expansion-scoped
+    // ZCA field meant to fold to a compile-time constant got swept in and
+    // materialized, measured on compat-mp-blink-toggle, +22 B). Kept at its
+    // phase 0 scope for whatever narrower promotion still reads it
+    // (mutableGlobals' cross-function DSE-safety test, below).
     //
     // This is a strict superset of the names IRGenerator also promotes to
     // Globals via mutableGlobals: that promotion additionally requires the
@@ -524,6 +513,38 @@ public class ProgramIR
     // from older compilers; deserializes to empty, which simply disables this
     // extra coverage and leaves prior behaviour unchanged.
     public Dictionary<string, DataType> StaticFields { get; set; } = new();
+
+    // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0c
+    // ("static by exclusion"): the exact set of names IRGenerator ever bound
+    // as a parameter, a plain local variable (an assignment, an annotated
+    // declaration, a for/comprehension loop variable, a tuple-unpack target)
+    // or a compiler-minted temporary -- qualified with the inline-expansion
+    // prefix where the binding happened inside one, exactly the storage name
+    // the binding actually resolved to. This is the frontend's own
+    // `boundNames`/local-binding bookkeeping, already used throughout
+    // IRGenerator for name resolution and shadow detection, flushed here.
+    //
+    // A backend uses this to decide AUTOMATIC vs STATIC directly, by
+    // exclusion: RFC 0013 section 3 defines automatic storage as exactly a
+    // function's own parameter, local or temporary. Any OTHER name that ends
+    // up needing a home (an SRAM slot or a pool register) is therefore of
+    // static duration and must read zero at boot -- a flattened
+    // `self.field`/`obj.field` storage path is never one of those, however
+    // many hops separate it from a module-level root, and however the
+    // frontend's own object-identity tracking happened to spell it, so no
+    // per-case proof (StaticFields' own module-instance tracing, or a name-
+    // shape guess like the retired IsCompilerMintedStaticToken) is needed to
+    // recognise it: it is simply absent from this set. Over-including a
+    // function-scoped local's temporary alias here costs nothing observable
+    // (RFC 0013 section 6); under-including a static name is the silent-
+    // lockup class of bug this field exists to rule out by construction
+    // rather than by chasing one more nesting pattern.
+    //
+    // Absent in .mir files from older compilers; deserializes to empty, which
+    // makes every home in an old .mir look non-automatic (static) to a
+    // backend that switches to this decision -- the safe direction, never an
+    // incorrect one, per section 6.
+    public HashSet<string> AutomaticLocals { get; set; } = new();
 
     /// <summary>
     /// The target's memory geometry, or a build error when this .mir predates the
