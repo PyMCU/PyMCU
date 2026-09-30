@@ -816,13 +816,117 @@ def assign_one(target, value):
     return {"k": "Assign", "target": expr(target), "value": expr(value), "annotatedType": None}
 
 
+def _split_top_level(text, sep):
+    """Split on `sep` at bracket depth 0. Mirrors AnnotationText.SplitTopLevel /
+    TopLevelPipeMembers (C#) closely enough for the one question this file asks of
+    it: does a bracket survive Normalize, and did the raw text ever spell a union."""
+    parts = []
+    depth = 0
+    cur = []
+    for ch in text:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _is_none_spelling(name):
+    return name.strip() in ("None", "void")
+
+
+def _is_union_annotation(annotation):
+    """True when the RAW annotation text spells `Optional[X]`, `Union[...]` or
+    `X | None` -- i.e. AnnotationText.UnionMembers(annotation) would answer
+    non-null, before Normalize has had a chance to collapse it. Used only to
+    decide AnnAssign-vs-VarDecl/Assign the same way Parser.cs does; the member
+    list itself is read again, from the ANNOTATION FIELD, by
+    PythonAstReader.cs's own call to AnnotationText.UnionMembers -- this does
+    not need to (and does not try to) reproduce that list."""
+    ann = annotation.strip()
+    if len(ann) >= 2 and ann[0] in "\"'" and ann[-1] == ann[0]:
+        inner = ann[1:-1].strip()
+        if inner and '"' not in inner and "'" not in inner:
+            return _is_union_annotation(inner)
+    if "|" in ann:
+        return True
+    lb = ann.find("[")
+    if lb >= 0 and ann.endswith("]"):
+        bare = ann[:lb].rsplit(".", 1)[-1]
+        if bare in ("Optional", "Union"):
+            return True
+    return False
+
+
+def _collapses_to_bracket_free(annotation):
+    """Mirrors the bracket-dropping slice of AnnotationText.Normalize (C#): true
+    when Normalize(annotation) ends up with no '[' at all -- `Optional[bytearray]`
+    normalizes to "bytearray" (a local's declaration becomes a VarDecl, exactly
+    as the hand-written parser's ParseTypeAnnotation already returns the
+    NORMALIZED text before Parser.cs's own `type.Contains('[')` check runs).
+    `Optional[list[int]]` normalizes to "list[int]", which still has a bracket,
+    so this answers False for it -- only the Optional/Union/pipe layers are
+    unwrapped here, same as Normalize itself. Kept in step with
+    AnnotationText.cs's Normalize; change one, change both."""
+    ann = annotation.strip()
+    if len(ann) >= 2 and ann[0] in "\"'" and ann[-1] == ann[0]:
+        inner = ann[1:-1].strip()
+        if inner and '"' not in inner and "'" not in inner:
+            return _collapses_to_bracket_free(inner)
+    if "|" in ann:
+        kept = []
+        for m in _split_top_level(ann, "|"):
+            m = m.strip()
+            if _is_none_spelling(m):
+                continue
+            if m not in kept:
+                kept.append(m)
+        if len(kept) == 1:
+            return _collapses_to_bracket_free(kept[0])
+        return "[" not in ann
+    lb = ann.find("[")
+    if lb < 0 or not ann.endswith("]"):
+        return True
+    bare = ann[:lb].rsplit(".", 1)[-1]
+    if bare in ("Optional", "Union"):
+        members = []
+        for m in _split_top_level(ann[lb + 1:-1], ","):
+            m = m.strip()
+            if not m or _is_none_spelling(m):
+                continue
+            if m not in members:
+                members.append(m)
+        if len(members) == 1:
+            return _collapses_to_bracket_free(members[0])
+        return False
+    return False
+
+
 def s_annassign(node):
     annotation = annotation_of(node.annotation)
     target = node.target
     # The three shapes the C# parser distinguishes, kept exactly: a subscripted
-    # annotation is an AnnAssign, `self.x: T = v` is an annotated member assignment,
-    # and everything else is a declaration.
-    if "[" in annotation:
+    # annotation is an AnnAssign UNLESS Optional/Union collapses it bracket-free
+    # (`Optional[bytearray]` normalizes to "bytearray", so the hand-written
+    # parser's own bracket check -- run on the ALREADY-NORMALIZED text -- never
+    # sees a bracket there; this reader used to test the RAW text and routed
+    # every `Optional[bytearray] = None` local to AnnAssign, one phase before
+    # PythonAstReader.cs ever gets to normalize it, so a local of this shape
+    # never became the VarDecl its CS-front-end twin did. A field annotation
+    # (`self.x: Optional[T]`) is the one case that keeps AnnAssign even after
+    # collapsing -- Parser.cs's own `unionMembers != null && name.Contains('.')`
+    # branch, because a plain Assign node has nowhere to carry the member list.
+    # `self.x: T = v` is an annotated member assignment, and everything else is
+    # a declaration.
+    is_union = _is_union_annotation(annotation)
+    target_is_dotted = isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)
+    if (not _collapses_to_bracket_free(annotation)) or (is_union and target_is_dotted):
         if isinstance(target, ast.Name):
             name = target.id
         elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
