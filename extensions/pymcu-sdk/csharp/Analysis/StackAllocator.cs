@@ -57,6 +57,14 @@ public class StackAllocator
     private readonly Dictionary<string, int> _offsets = new();
     private readonly Dictionary<string, int> _offsetsBase = new();
     private readonly HashSet<string> _globalNames = [];
+    // RFC 0013 phase 0c: array names (ArrayLoad/ArrayStore's own ArrayName),
+    // tracked separately so the "static by exclusion" pass never reclassifies
+    // one. Array placement (module-level vs function-scoped, the overlay that
+    // lets sibling functions share one address) is already handled correctly
+    // by the existing moduleSramArrays/GlobalArrays machinery upstream of this
+    // allocator; this set exists only to keep the new pass from double-
+    // deciding a name that mechanism already owns.
+    private readonly HashSet<string> _arrayNames = [];
     private int _maxStackUsage;
     private int _staticEnd;
 
@@ -69,6 +77,18 @@ public class StackAllocator
     // which Python's own rules already make safe unzeroed (RFC 0013 section 3).
     // Valid after Allocate returns.
     public int StaticEnd => _staticEnd;
+
+    // RFC 0013 phase 0c ("static by exclusion"): every name this allocator
+    // decided is of AUTOMATIC duration -- a function's own parameter, local
+    // or temporary (program.AutomaticLocals, the frontend's own binding
+    // bookkeeping) plus every name ever seen as a compiler Temporary (always
+    // automatic by construction: scratch, single-definition, never a
+    // persistent object's own identity). A backend consults this directly
+    // instead of re-deriving "is this home static" from StaticFields or a
+    // name-shape guess: any home (an SRAM slot here, or a pool register in
+    // the backend's own register allocator) whose name is absent from this
+    // set is static and must read zero at boot. Valid after Allocate returns.
+    public HashSet<string> AutomaticNames { get; } = new(StringComparer.Ordinal);
 
     // Scratch-pool fold keys from the .mir's CanonicalTemps. Consulted by
     // CalculateOffsets instead of the name's own spelling only after the plain
@@ -105,7 +125,9 @@ public class StackAllocator
         _offsetsBase.Clear();
         _callGraph.Clear();
         _globalNames.Clear();
+        _arrayNames.Clear();
         VariableSizes.Clear();
+        AutomaticNames.Clear();
         _maxStackUsage = 0;
         _staticEnd = 0;
 
@@ -126,12 +148,13 @@ public class StackAllocator
             globalOffset += kvp.Value;
         }
 
-        // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0b: a
-        // field of ANY instance -- module-level or function-scoped, StaticFields
-        // is populated unconditionally since phase 0b -- is treated as static
-        // duration here exactly like a module global, whether or not
-        // IRGenerator's own (narrower) mutableGlobals promotion also gave it a
-        // real global entry above. Placed in this same
+        // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0: a
+        // field of a module-level instance (program.StaticFields, populated
+        // when IRGenerator can trace it back to a module-level root -- see
+        // its own doc comment in Tacky.cs) is treated as static duration here
+        // exactly like a module global, whether or not IRGenerator's own
+        // (narrower) mutableGlobals promotion also gave it a real global
+        // entry above. Placed in this same
         // leading, never-recycled region -- not among the automatics a function's
         // frame packs and reuses below -- a name here is skipped by CalculateOffsets
         // exactly as a true global is (the `_globalNames.Contains` guard throughout
@@ -153,6 +176,60 @@ public class StackAllocator
 
         BuildGraph(program);
 
+        // RFC 0013 phase 0c ("static by exclusion", team-lead directive
+        // 2026-09-30): decide AUTOMATIC vs STATIC by exclusion instead of by
+        // proving an object's duration. AUTOMATIC is exactly a function's own
+        // parameter, local or temporary (program.AutomaticLocals, populated
+        // by the frontend's own binding bookkeeping, plus every name any
+        // FunctionNode ever saw as a Temporary -- compiler scratch is
+        // automatic unconditionally, by construction, never a persistent
+        // object's identity). Any OTHER name BuildGraph found as a Local of
+        // some function -- most importantly a flattened `self.field`/
+        // `obj.field` storage path, however many hops separate it from a
+        // module-level root and however the frontend's own object-identity
+        // tracking happened to spell it -- is therefore of STATIC duration:
+        // give it a home in this same leading, never-recycled region
+        // (exactly where Globals/GlobalArrays/StaticFields already sit)
+        // instead of leaving it to the per-function frame-packing overlay
+        // below, which assumes every slot it shares between functions is
+        // write-before-read within one activation (section 3) -- an
+        // assumption that is false for exactly these names.
+        //
+        // _globalNames.Contains is checked first and explicitly, not implied
+        // by AutomaticNames' absence: a module global's OWN qualified binding
+        // key (if boundNames ever recorded one under a function-qualified
+        // spelling that does not match the global's bare storage name) must
+        // never cause it to be handled twice or offset from two places.
+        AutomaticNames.Clear();
+        foreach (var func in program.Functions)
+            foreach (var p in func.Params) AutomaticNames.Add(p);
+        if (program.AutomaticLocals != null)
+            foreach (var n in program.AutomaticLocals) AutomaticNames.Add(n);
+        foreach (var node in _callGraph.Values)
+            foreach (var t in node.Temps) AutomaticNames.Add(t);
+
+        var staticByExclusion = new List<string>();
+        var seenExclusion = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in _callGraph.Values)
+            foreach (var varName in node.Locals)
+            {
+                if (_globalNames.Contains(varName)) continue;
+                if (_arrayNames.Contains(varName)) continue;
+                if (AutomaticNames.Contains(varName)) continue;
+                if (seenExclusion.Add(varName)) staticByExclusion.Add(varName);
+            }
+        foreach (var name in staticByExclusion)
+        {
+            int sz = VariableSizes.GetValueOrDefault(name, 1);
+            _offsets[name] = globalOffset;
+            _globalNames.Add(name);
+            globalOffset += sz;
+        }
+        if (staticByExclusion.Count > 0)
+        {
+            _staticEnd = globalOffset;
+            if (globalOffset > _maxStackUsage) _maxStackUsage = globalOffset;
+        }
         if (_callGraph.ContainsKey("main"))
             CalculateOffsets("main", globalOffset);
 
@@ -317,6 +394,7 @@ public class StackAllocator
                         if (!_globalNames.Contains(al.ArrayName))
                         {
                             node.Locals.Add(al.ArrayName);
+                            _arrayNames.Add(al.ArrayName);
                             // Width registrations MAX (as in RegisterVar): the first
                             // mention is not authoritative -- `b = bytearray([x, y])`
                             // stores a 2-element literal first and a later `b += c`
@@ -339,6 +417,7 @@ public class StackAllocator
                         if (!_globalNames.Contains(ast.ArrayName))
                         {
                             node.Locals.Add(ast.ArrayName);
+                            _arrayNames.Add(ast.ArrayName);
                             VariableSizes[ast.ArrayName] = Math.Max(
                                 VariableSizes.TryGetValue(ast.ArrayName, out var pas) ? pas : 0,
                                 ast.Count * ast.ElemType.SizeOf());
