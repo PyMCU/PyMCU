@@ -143,15 +143,17 @@ def test_the_advice_copies_the_string_instead_of_formatting_its_address(tmp_path
     assert loads_a and stores_s, body
 
 
-def test_an_f_string_cannot_interpolate_the_buffer_it_is_writing(tmp_path):
-    """`s = f"{s}"` reuses s's buffer and length variable, which is reset to 0 before
-    the parts emit; the copy loop's bound is already 0, so s's text would silently drop.
-    (A bigger f-string hits the fixed-size refusal first; this shape fits and would copy.)
-    Refuse instead."""
+def test_an_f_string_interpolating_the_buffer_it_is_writing_now_compiles(tmp_path):
+    """`s = f"{s}"` used to be refused outright: it reuses s's own buffer and length
+    variable, which the naive lowering reset to 0 before the parts emit -- the copy
+    loop's bound was already 0, so s's text silently dropped before the refusal was
+    added. P2 AVR gaps bundle, item 6: a private temp buffer snapshots s's current
+    bytes and length BEFORE either is touched, and every self-referencing part reads
+    the snapshot instead of s, so the assignment now builds the same text it started
+    with rather than either dropping it or refusing the program."""
     ok, out, _ = compile_(tmp_path, RUNTIME_ELEMENT.replace(
         '    s = ",".join([a, "b"])\n', '    s = f"{a},b"\n    s = f"{s}"\n'))
-    assert not ok, "self-interpolation compiled; it silently drops s's text"
-    assert "interpolates 's' itself" in out, out
+    assert ok, out
 
 
 COPIED_SEPARATOR = (
