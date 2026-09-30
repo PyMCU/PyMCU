@@ -708,6 +708,116 @@ public partial class IRGenerator
         }
     }
 
+    // ── transitive closure of a forwarded buffer parameter's own run-time length ──
+
+    /// <summary>
+    /// `ParamNeedsRuntimeLen` (Scan.cs) only sees a parameter's OWN body: `len(p)` or
+    /// `for x in p:`, written there. A parameter that only FORWARDS its buffer onward
+    /// unchanged -- `adafruit_onewire.device`'s own `write(self, buf, *, start=0,
+    /// end=None): self._bus.write(buf, start=start, end=end)`, never itself calling
+    /// `len(buf)` -- answers false, even though the callee it forwards to (`OneWireBus.
+    /// write`) genuinely does. The forwarding parameter then has no `bufferLengthParams`
+    /// entry of its own for `ForwardRuntimeLenToInlineParam` (Call.cs) to read when ITS
+    /// caller inlines through it, and the chain breaks wherever a parameter is a pure
+    /// pass-through with no fixed array behind it at that point (an unmodified library
+    /// two layers of forwarding away from the one that measures).
+    ///
+    /// A fixpoint over every definition's own body: a bytearray/bytes parameter not yet
+    /// marked joins `runtimeLenParams` when the body passes it, unchanged and
+    /// positionally, as the SAME argument position of a call whose own parameter is
+    /// already marked -- directly, or (because this repeats until nothing changes)
+    /// through any number of further forwarding layers. Self-calls only (`self.m(...)`,
+    /// resolved the same way `CollectExpansionTupleReturnBufferOptionalTargets` resolves
+    /// one); a bare-name top-level function call is tried by its own name for the same
+    /// reason `WithParamLens` already answers a top-level callee without a class prefix.
+    /// Independent of compile order (reads only the AST), and run to a fixpoint since one
+    /// forwarding layer's own answer can turn ANOTHER layer's forward true on a later pass.
+    /// </summary>
+    private void ResolveTransitiveRuntimeLenParams(ProgramNode mainAst,
+        Dictionary<string, ProgramNode> importedModules)
+    {
+        var allDefs = new List<(string key, FunctionDef fn)>();
+        var seenDefs = new HashSet<FunctionDef>();
+        foreach (var entry in functionsToCompile)
+        {
+            string key = (entry.Prefix ?? "") + entry.Func.Name;
+            if (seenDefs.Add(entry.Func)) allDefs.Add((key, entry.Func));
+        }
+        foreach (var kv in inlineFunctions)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, kv.Value));
+        foreach (var kv in methodAstByName)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, kv.Value));
+        foreach (var kv in instanceMethodDefs)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, kv.Value));
+        foreach (var fn in mainAst.Functions)
+            if (seenDefs.Add(fn)) allDefs.Add((fn.Name, fn));
+        foreach (var mod in importedModules.Values)
+            foreach (var fn in mod.Functions)
+                if (seenDefs.Add(fn)) allDefs.Add((fn.Name, fn));
+
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var (key, fn) in allDefs)
+            {
+                string? classPrefix = null;
+                bool classPrefixComputed = false;
+                foreach (var p in fn.Params)
+                {
+                    if (p.Type is not ("bytearray" or "bytes")) continue;
+                    string pKey = key + "." + p.Name;
+                    if (runtimeLenParams.Contains(pKey)) continue;
+                    if (!classPrefixComputed)
+                    {
+                        classPrefix = SelfCallClassPrefix(key, fn);
+                        classPrefixComputed = true;
+                    }
+                    foreach (var e in TypeInference.WalkExpressions(fn.Body.Statements))
+                    {
+                        if (e is not CallExpr ce) continue;
+                        string? calleeKey = ce.Callee switch
+                        {
+                            MemberAccessExpr { Object: VariableExpr { Name: "self" }, Member: var m }
+                                when classPrefix != null => classPrefix + m,
+                            // `self._bus.write(...)`, `with self._device as dev: dev.write(...)`
+                            // (the with-bound name resolves through the same field, since
+                            // __enter__ returns self): a call on a FIELD, not on self directly.
+                            // fieldClasses maps "classKey|fieldName" -> the field's own class
+                            // key at scan time; the field's class key already carries its
+                            // module prefix (the same spelling `functionParams` keys methods
+                            // under), so the sibling method joins with "_" the same way a
+                            // bare classPrefix does.
+                            MemberAccessExpr { Object: MemberAccessExpr
+                                { Object: VariableExpr { Name: "self" }, Member: var fld }, Member: var m2 }
+                                when classPrefix != null
+                                    && fieldClasses.TryGetValue(classPrefix[..^1] + "|" + fld, out var fcls)
+                                => fcls + "_" + m2,
+                            VariableExpr { Name: var bn } => bn,
+                            _ => null,
+                        };
+                        if (calleeKey == null || !functionParams.TryGetValue(calleeKey, out var calleeParams))
+                            continue;
+                        bool isSelfCall = ce.Callee is MemberAccessExpr;
+                        for (int ai = 0; ai < ce.Args.Count; ++ai)
+                        {
+                            if (ce.Args[ai] is not VariableExpr { Name: var an } || an != p.Name) continue;
+                            int calleeIdx = ai + (isSelfCall ? 1 : 0);
+                            if (calleeIdx < calleeParams.Count
+                                && runtimeLenParams.Contains(calleeKey + "." + calleeParams[calleeIdx]))
+                            {
+                                runtimeLenParams.Add(pKey);
+                                changed = true;
+                                goto nextParam;
+                            }
+                        }
+                    }
+                    nextParam: ;
+                }
+            }
+        }
+    }
+
     // ── phase 2: union parameters on real subroutines ───────────────────────
 
     /// <summary>

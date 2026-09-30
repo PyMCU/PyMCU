@@ -1642,6 +1642,11 @@ public partial class IRGenerator
         // to a call site that reads the target's tag back.
         ResolveTupleReturnBufferOptionalSlots(mainAst, importedModules);
 
+        // A parameter that only FORWARDS its buffer onward (never calling len()/for-in on
+        // it itself) still needs a run-time length when the callee it forwards to does --
+        // a fixpoint over every definition's own body, independent of compile order.
+        ResolveTransitiveRuntimeLenParams(mainAst, importedModules);
+
         // Whether raises record their message for a later read. Two readers: a handler that
         // binds `except X as e` (#369), and the unhandled-exception report, which prints
         // `E:<Type>: <msg>` through __pymcu_exn_tail. The second needs a raise that actually

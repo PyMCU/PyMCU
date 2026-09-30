@@ -3187,6 +3187,14 @@ public partial class IRGenerator
                 continue;
             }
             string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
+            // The inline-parameter-forwarding counterpart of a real subroutine's hidden
+            // run-time length (WithParamLens): tried BEFORE the dispatch chain below picks a
+            // branch for the REST of this parameter's binding, because the branch a buffer
+            // argument actually takes here varies with how the caller reached it (a plain
+            // name, a property-getter's Temporary result, a constructed anchor, ...) and
+            // `len()`'s own run-time length only needs the NAME whichever branch bound the
+            // argument under, not which branch did the binding.
+            ForwardRuntimeLenToInlineParam(callee, func.Params[paramIdx].Name, paramName, argValues[i]);
             boundParams.Add(paramIdx);
 
             // Remember where this argument was written, for a refusal that is about the
@@ -7036,6 +7044,37 @@ public partial class IRGenerator
         return result;
     }
 
+    /// <summary>
+    /// The inline-parameter-forwarding counterpart of the hidden run-time length a REAL
+    /// subroutine's own buffer parameter gets (Statements.cs, WithParamLens): an @inline
+    /// expansion has no per-call synthesized parameter to give one, only the CALLER's
+    /// argument name to alias -- and when that name is itself a plain forwarded parameter
+    /// several layers up (adafruit_ds18x20's own `_write_scratch(buf)` forwarding to
+    /// `device.write(buf, ...)` forwarding to `bus.write(buf, ...)`, none of which slices or
+    /// measures `buf` itself), the alias chain never reaches a concrete fixed array for
+    /// `len()`'s existing resolution to find. If the CALLER's own name already has an
+    /// established run-time length (because ITS OWN enclosing call bound it the same way,
+    /// recursively, a real subroutine's hidden parameter set one up, or a property-getter's
+    /// Temporary result was itself already forwarded this way) that reference is forwarded
+    /// unchanged -- the same rule CarryOptionalTagToParam already uses for a buffer-Optional
+    /// tag, applied to a buffer's length instead. Tried once per parameter, before the
+    /// dispatch chain below picks a branch for the rest of that parameter's binding, since
+    /// the branch a buffer argument takes varies with how the caller reached it and this
+    /// only needs the NAME whichever branch bound it under -- Variable and Temporary both
+    /// carry one. A parameter the callee never measures (not in <c>runtimeLenParams</c>) is
+    /// untouched, and a caller whose own argument already resolves through the ordinary
+    /// alias-to-a-known-array path needs no forwarding at all: `len()` finds that array
+    /// before ever falling back to this.
+    /// </summary>
+    private void ForwardRuntimeLenToInlineParam(string callee, string origParamName,
+        string qualifiedParamName, Val argVal)
+    {
+        if (!runtimeLenParams.Contains(callee + "." + origParamName)) return;
+        string argName = argVal is Variable av ? av.Name : argVal is Temporary at ? at.Name : "";
+        if (argName.Length > 0 && bufferLengthParams.TryGetValue(argName, out var callerLenVar))
+            bufferLengthParams[qualifiedParamName] = callerLenVar;
+    }
+
     /// The presence byte a buffer-Optional argument contributes: 1 when the expression
     /// spells None outright, the source's own live tag when it already carries one (`rom` in
     /// scan()'s loop, forwarded unchanged -- Optional-ness crosses this call boundary the
@@ -7369,9 +7408,19 @@ public partial class IRGenerator
 
         // Library mode: len() of a buffer parameter reads the hidden length that travels with
         // it. This is the only length a kernel can trust, so it is the one `len()` answers.
-        if (expr.Args[0] is VariableExpr lenBufVe && !string.IsNullOrEmpty(currentFunction)
-            && bufferLengthParams.TryGetValue(currentFunction + "." + lenBufVe.Name, out string lenParam))
-            return new Variable(lenParam, variableTypes[lenParam]);
+        // A real subroutine's own parameter answers through `currentFunction + "." + name`;
+        // an @inline expansion's forwarded parameter (ForwardRuntimeLenToInlineParam) answers
+        // through `currentInlinePrefix + name` instead -- the same two-spelling split the
+        // `for x in buf:` case already needed (Iteration.cs), checked in the same order: the
+        // expansion's own qualified name first, the real-function one otherwise.
+        if (expr.Args[0] is VariableExpr lenBufVe)
+        {
+            string? lenKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + lenBufVe.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + lenBufVe.Name : null);
+            if (lenKey != null && bufferLengthParams.TryGetValue(lenKey, out string lenParam))
+                return new Variable(lenParam, variableTypes[lenParam]);
+        }
 
         throw UserError("len() argument must be a fixed-size array or list literal", ArgAt(expr, 0));
     }

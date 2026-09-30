@@ -61,6 +61,17 @@ public class WalkStatementsGuardTests
         ("OptionalUnion.cs", "ScanIfForRuntimeNone"),
         ("OptionalUnion.cs", "ArmStatements"),
 
+        // Already the shared walk (TypeInference.WalkExpressions(fn.Body.Statements)); the
+        // regex's `[\w.()]*` matches through the wrapping call's own parens to the
+        // `.Statements` argument inside it. Structurally identical calls elsewhere in this
+        // same file (ResolveTupleReturnBufferOptionalSlots's WalkStatements,
+        // CollectExpansionTupleReturnBufferOptionalTargets's WalkStatements) do not trip it;
+        // this one sits inside three more levels of nesting (a fixpoint `while`, an `allDefs`
+        // loop, a per-parameter loop), which is likely what changes what the pattern matches
+        // across. Fixing the regex is a separate, general change; this is the one call site
+        // it currently misreads.
+        ("OptionalUnion.cs", "ResolveTransitiveRuntimeLenParams"),
+
         // The lowering visitor's own dispatch: it must visit each statement in order
         // and keep the try/match structure; flattening it would change the output.
         ("ControlFlow.cs", "VisitTry"),
