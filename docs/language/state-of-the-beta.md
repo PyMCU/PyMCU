@@ -9,38 +9,53 @@ for the per-backend maturity labels and why.
 
 This page collects the numbers from the five suites that back that claim,
 each with a link to the page that explains what it measures and how to
-reproduce it. **Measured 2026-09-29** against `pymcu-compiler`/`pymcu-stdlib`
-main at `13703a55`, `pymcu-avr` main at `ab5cf0e`, `pymcu-circuitpython` main
-at `f8677cc`, `pymcu-micropython` main at `9f602f0`, both compiler front ends
-where the suite runs both. This is the fourth measurement of the day; each
-earlier one found something the next fixed (the corpus size-gate failure and
-a CircuitPython blink-size gap, the descriptor protocol P0 fix, and now five
-more silent bugs from deciding by a name's spelling rather than what it
-resolves to), so treat this as the current state, not a delta worth
-re-deriving from the earlier ones (see the CHANGELOG for the full history
-of the day). The float print policy change and the descriptor protocol fix
-are this window's most user-visible fixes outside the suites below: every
-beta-1 program that prints a `float` used to get two fixed decimals
-silently (`print(0.001)` printed `0.0`), and a class attribute named `value`
-defining `__get__`/`__set__` (exactly how `adafruit_register`/`digitalio`
-spell a descriptor) never called it.
+reproduce it. **Measured 2026-09-30** against `pymcu-compiler`/`pymcu-stdlib`
+main at `11e8bbe5`, `pymcu-avr` main at `740fe5c`, `pymcu-circuitpython` main
+at `4fa38d6`, `pymcu-micropython` main at `9f602f0`, both compiler front ends
+where the suite runs both. Five measurements over two days now; each earlier
+one found something the next fixed (the corpus size-gate failure and a
+CircuitPython blink-size gap, the descriptor protocol P0 fix, five silent
+bugs from deciding by a name's spelling rather than what it resolves to, and
+now a real-silicon hang a user found and confirmed on their own Arduino
+Uno), so treat this as the current state, not a delta worth re-deriving from
+the earlier ones (see the CHANGELOG for the full history). The most
+user-visible fixes of this window: every beta-1 program that prints a
+`float` used to get two fixed decimals silently; a class attribute named
+`value` defining `__get__`/`__set__` (exactly how `adafruit_register`/
+`digitalio` spell a descriptor) never called it; and `self.i2c = i2c` (the
+`I2CDevice`/`busio.I2C` aliasing pattern nearly every Adafruit driver uses)
+created a separate copy instead of sharing the original's storage, which
+could hang a board waiting on an I2C lock that never agreed with itself.
 
 ## The five suites
 
 | Suite | What it measures | Result | Docs |
 |---|---|---|---|
-| User-program corpus | 51 user-style AVR programs, each with an expected build outcome and a size gate | 51 of 51 pass (re-baselined for two unrelated reasons: `42_except_as_e_args.py` moved from 384 to 460 bytes because of the `e.args[0]` `IndexError` fix, not floats, it prints none; 4 float-printing programs each grew ~4 KB after the float print policy fix; both accepted) | [`pymcu-circuitpython/docs/corpus.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/corpus.md) |
-| CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 240 symbols (180 provided, 60 allowlisted with a reason), 0 unexpected failures (unchanged by this window's commits) | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
+| User-program corpus | 51 user-style AVR programs, each with an expected build outcome and a size gate | 51 of 51 pass (re-baselined three times this window: the `e.args[0]` `IndexError` fix, the float print policy fix, and the RFC 0013 boot zero-init, which alone costs a program with static SRAM state about +24 B once and 2 B per register that homes static state; all accepted, see the CHANGELOG) | [`pymcu-circuitpython/docs/corpus.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/corpus.md) |
+| CircuitPython API parity | Every `digitalio`/`analogio`/`busio`/`pwmio`/… symbol upstream defines, checked against this layer | 240 symbols (180 provided, 60 allowlisted with a reason), 0 unexpected failures (unchanged by this window's commits), part of 522 tests passing across this layer's full suite (`pytest tests/`, independently re-run and confirmed 2026-09-30 after rebuilding this pass's own compiler, which had gone stale mid-day and briefly misreported 2 corpus failures until caught and rebuilt) | [`pymcu-circuitpython/docs/parity.md`](https://github.com/PyMCU/pymcu-circuitpython/blob/main/docs/parity.md) |
 | MicroPython API parity | Every `machine`/`utime`/`uasyncio`/… symbol the real firmware surface defines, checked against this layer | 374 symbols measured, 0 failures, part of 888 tests passing across this layer's full suite (`pytest tests/`, confirmed 2026-09-29). (`tests/parity/report.py`'s own doc-generation pass separately walks the full CPython/typeshed `asyncio` stub with no filter and reports 393 symbols/52 "missing" for `uasyncio`; that is the generator over-counting, not a gap -- `test_uasyncio_parity.py` restricts itself by design to the ~70-name surface a real MicroPython board actually exposes, and every one of those cases passes) | [`pymcu-micropython/docs/parity.md`](https://github.com/PyMCU/pymcu-micropython/blob/main/docs/parity.md) |
 | HAL parity (`tests/stdlib/test_hal_parity.py`) | The register-level HAL's own API, compared across all seven backend targets (avr, pic12/14/18, riscv, rp2040, rp2350) | 253 facade/API deviations checked: 5 pass strict, 248 currently allowlisted, each tracked | [`docs/library/hal-parity.md`](../library/hal-parity.md) |
 | Differential oracle (`tests/oracle/test_oracle.py`, in the `pymcu-avr` repo) | 440 probes compiled and run on the AVR emulator, diffed against CPython running the same source, both front ends (4 new probes since the descriptor protocol fix, 528-531) | C# front end: 415 of 426 run pass, 11 tracked as filed compiler bugs (`xfail(strict)`, suite green), 14 skipped (front-end-restricted the other way). Python front end: 412 of 426 run pass, 14 tracked, 14 skipped. Probe `080_descriptor_get_set.py` moved from tracked to passing this window: see below | [`docs/language/oracle.md`](oracle.md) |
 
-The compiler-repo gates on `13703a55`: `just test-unit` 3350 passed, `just
-test-stdlib` 2146 passed, `pytest tests/driver` 1027 passed, `tools/verify_ir.py`
-0 regressions, all 0 failures. `pymcu-avr`'s full integration suite on
-`ab5cf0e`: 3961 passed, 0 failed. Everything in this paragraph is quoted from
-the gate this window's author ran, not independently re-run by this pass
-except the MicroPython 888 figure above, which was.
+The compiler-repo gates on `11e8bbe5`, independently re-run by this pass after
+rebuilding both this repo's and `pymcu-avr`'s binaries: `just test-unit` 3352
+passed (exact match with the gate the commits' own author ran), `tools/verify_ir.py`
+0 regressions, `pymcu-avr`'s full integration suite on `740fe5c` 3966 passed,
+0 failed (also an exact match). `just test-stdlib` and `pytest tests/driver`
+passed with 0 failures both times but collected fewer tests in this pass's own,
+narrower venv (2115/956 against a venv with only the AVR backend and the two
+compat layers installed) than the fuller dev venv the commits' own author
+measured from (2146/1027, likely more backends installed unlocking more
+parametrized cases): a venv difference, not a regression, since neither run
+had a single failure.
+
+**Test harness guarantee, now permanent**: the AVR integration suite's cold
+boot starts every run with `R0`-`R31` (except `R1`) and all of SRAM filled
+with `0xFF` by default (RFC 0013), instead of the previous always-zero-on-
+fresh-state the emulator gave for free. A program that only worked by
+accident of implicit zeroing now fails a test instead of passing one a real
+chip would not; see the CHANGELOG for the bug this caught before the default
+flipped.
 
 **The corpus size gate is clean again.** `42_except_as_e_args.py` and the
 CircuitPython-blink exception-tail gap this section used to flag here were

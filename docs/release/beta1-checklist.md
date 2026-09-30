@@ -22,18 +22,18 @@ behaviour only b1 has. It publishes at step 4b.
 
 **The direction of the freeze reversed on 2026-09-25.** This file was written
 for a freeze that lived on `release-b1` and got merged into `main`. It is now
-the other way round: as of 2026-09-29 (fourth measurement of the day, after
-the five by-name-not-by-what-it-is fixes), `main` is 972 commits ahead of
-`release-b1` in this repo, 344 ahead in `pymcu-avr`, 33 ahead in
-`pymcu-circuitpython` and 50 ahead in `pymcu-micropython`, and the decision
-is to freeze from `main`. So every `git merge --ff-only release-b1` below
-became `git branch -f release-b1 main`, which re-points the frozen branch at
-what is actually being shipped. These four counts move every day main does;
-re-run `git rev-list --count release-b1..main` in each repo before actually
-cutting the release rather than trusting the numbers above.
+the other way round: as of 2026-09-30 (fifth measurement over two days, after
+the RFC 0013 phase 0 memory-model fix for a real-silicon hang), `main` is 983
+commits ahead of `release-b1` in this repo, 356 ahead in `pymcu-avr`, 34
+ahead in `pymcu-circuitpython` and 50 ahead in `pymcu-micropython`, and the
+decision is to freeze from `main`. So every `git merge --ff-only release-b1`
+below became `git branch -f release-b1 main`, which re-points the frozen
+branch at what is actually being shipped. These four counts move every day
+main does; re-run `git rev-list --count release-b1..main` in each repo
+before actually cutting the release rather than trusting the numbers above.
 
 Nothing here pushes or publishes on its own; each numbered stage ends with a
-manual go/no-go. Note that **nothing is on GitHub yet**: 1399 commits across
+manual go/no-go. Note that **nothing is on GitHub yet**: 1423 commits across
 those four repos are local-only (not counting `pymcu-libraries`, tracked
 separately in step 2), so the pushes below are not routine, they are the
 release.
@@ -65,33 +65,40 @@ cd ~/Repos/pymcu-circuitpython && uv run --with pytest python -m pytest tests/co
 cd ~/Repos/pymcu-micropython && uv run --with pytest python -m pytest tests/parity
 ```
 
-Measured 2026-09-29 against `main` at `13703a55` (PyMCU) / `ab5cf0e`
-(pymcu-avr) / `f8677cc` (pymcu-circuitpython) / `9f602f0`
-(pymcu-micropython), the fourth pass of the day, after five fixes for
-deciding by a name's spelling instead of what it resolves to (a user's own
-`delay_ms`/`sleep_ms`/`delay_us`/`sleep_us` silently never called; a
-comment mentioning `millis_init`/`clock_init`/`ticks_ms`/`micros`
-silently suppressing or injecting the time base; `print`/`input`/`UART`
-detected by text instead of a real call; a user class named like `UART`/
-`LCD` having its own stream method silently swapped for the console UART):
-`just test-unit` 3350 passed, `just test-stdlib` 2146 passed,
-`pytest tests/driver` 1027 passed, all 0 failures. `pymcu-avr`'s
-full integration suite: 3961 passed, 0 failed. The oracle is 440 probes
-now (4 new ones covering the descriptor fix): C# front end 415 passed/11
-tracked/14 skipped, Python front end 412 passed/14 tracked/14 skipped; the
-one probe that used to cite a stale, closed issue (#391, unrelated to what
-it actually tested) now matches CPython, see State of the beta.
-`pymcu-circuitpython`'s `tests/corpus` and `tests/parity` are both green
-after the float-print re-baseline (the `42_except_as_e_args` size-gate
-failure this file used to flag is fixed, see
-[State of the beta](../language/state-of-the-beta.md));
-`pymcu-micropython`'s full suite (`pytest tests/`, not just `tests/parity`)
-is 888/888, independently re-run and confirmed by this pass. The IR
-verifier (`tools/verify_ir.py` in `pymcu-avr`) shows 0 regressions against
-its baseline. The compiler-repo and integration-suite figures above are
-quoted from the gate the author of these commits ran, not independently
-re-run by this pass. None of this replaces re-running the suites against
-whatever commit is actually about to be tagged.
+Measured 2026-09-30 against `main` at `11e8bbe5` (PyMCU) / `740fe5c`
+(pymcu-avr) / `4fa38d6` (pymcu-circuitpython) / `9f602f0`
+(pymcu-micropython), the fifth pass over two days, after RFC 0013 phase 0
+(every object of static duration zeroed at boot, fixing a real-silicon
+I2C-lock hang a user found and confirmed on their own Arduino Uno) and an
+alias-identity fix (`self.i2c = i2c` used to copy instead of share storage,
+the `I2CDevice`/`busio.I2C` pattern nearly every Adafruit driver uses).
+Both `just test-unit` (3352) and `pymcu-avr`'s full integration suite
+(3966, 0 failed) were independently re-run and exactly matched by this pass
+after rebuilding both repos' binaries (this pass's own PyMCU-rc binary had
+gone stale mid-morning; caught by a mismatched size on `pymcu-circuitpython`'s
+corpus, see below). `just test-stdlib` and `pytest tests/driver` also passed
+with 0 failures in this pass's own re-run, but collected fewer tests (2115,
+956) than the fuller dev venv the commits' author measured from (2146,
+1027) -- a venv/optional-backend difference, not a regression. The oracle
+is unchanged this round at 440 probes: C# front end 415 passed/11
+tracked/14 skipped, Python front end 412 passed/14 tracked/14 skipped.
+`pymcu-circuitpython`'s full suite (`pytest tests/`, not just
+`tests/corpus`/`tests/parity`) is 522/522, independently re-run and
+confirmed after the corpus re-baseline (initially measured as 520/2 with
+this pass's own stale binary; rebuilding it to `11e8bbe5` resolved both
+failures); `pymcu-micropython`'s full suite remains 888/888, unchanged
+(its main did not move this round). The IR verifier
+(`tools/verify_ir.py` in `pymcu-avr`) shows 0 regressions against its
+baseline. None of this replaces re-running the suites against whatever
+commit is actually about to be tagged.
+
+**Process note for whoever runs this next**: a `dotnet publish`/`dotnet
+test` in `pymcu-avr` resolves its `pymcu-sdk` project reference via the
+`PyMCURepoDir` MSBuild property, which defaults to the SIBLING checkout
+`../PyMCU` (the shared, read-only one) when unset -- pass
+`PyMCURepoDir=<path to your own PyMCU worktree>` explicitly, or a worktree
+build silently compiles against, and writes `bin`/`obj` build artifacts
+into, the shared checkout instead of its own sibling.
 
 **Known gotcha introduced by this release:** `pymcu-avr`'s `pymcu-sdk` pin
 was tightened to `>=0.1.0b1` (it used to float at `>=0.1.0a4`, which is the
