@@ -18,7 +18,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `for i, x in enumerate(iterable)` | Compile-time index counter; `enumerate(range(...))` with runtime bounds keeps a runtime index. `enumerate(s.split(sep))` on compile-time strings unrolls the split chunks, and `enumerate(s)` over one compile-time string iterates its characters: eight or fewer unroll to compile-time pairs, a longer string runs a counter loop over its flash copy with the character a runtime `uint8` `ord()` accepts (adafruit_framebuf `text()`) |
 | `for chunk in s.split(sep)` | Compile-time unroll over a string whose text is known -- literal, module constant or parameter bound to one; `maxsplit` as a compile-time int. A `split()` call as a value is refused: there is no list to hand back |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`) patterns; DCE on `__CHIP__` |
-| `def` (functions) | Typed params, defaults, keyword args, overloading by type |
+| `def` (functions) | Typed params, defaults, keyword args, overloading by type. A local or real-subroutine parameter declared `Optional[bytearray]`/`Optional[bytes]` may be rebound to a fresh buffer under a run-time condition (pointer plus a sibling presence byte). A `bytearray`/`bytes` parameter the body measures with `len()` or `for x in param:` gets a hidden run-time length, gated on actual need |
 | `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
 | Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level executable statements |
 | `class` | Zero-cost flattening, `@inline` methods, constructors |

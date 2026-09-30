@@ -421,6 +421,23 @@ representation itself, in GAS, exactly as RFC 0006 measured its cost model.
    is a name, not a register; a runtime-Optional buffer wants "tag + aliased storage".
    Probably fine (tag byte + the existing name-binding machinery) but needs the alias
    story spelled out before promising it.
+   **Partially closed, 2026-09-29 (adafruit_ds18x20 campaign):** a LOCAL declared
+   `Optional[bytearray]`/`Optional[bytes]` and later rebound to a fresh buffer under a
+   run-time condition, and a REAL (non-inline) subroutine's own parameter of the same
+   shape, both carry the tag-plus-aliased-storage this question asked for
+   (`bytearrayParams`/`optionalTagSlots`/`optionalMembersByName`, Assign.cs/Statements.cs;
+   `bufferOptionalParams`/`bufferOptionalParamTags`, State.cs/Call.cs). NOT closed: a
+   Tuple-returning function whose return carries a buffer slot that can be `None` does not
+   put a presence tag on the wire for that slot, so a CALLER's tuple-unpack target can
+   never inherit the callee's own Optional-ness across loop iterations -- the same
+   parameter, reached through an inline expansion inside a real (non-unrolled) loop whose
+   argument is itself a loop-carried, tuple-unpack-reassigned name, still hits the
+   pre-existing "a buffer travels as a name" refusal (`adafruit_onewire.bus.OneWireBus.
+   scan()`'s `rom, diff = self._search_rom(rom, diff)` inside `for _ in range(0xFF):`,
+   the reason `adafruit_ds18x20` still does not build unmodified). Closing it needs the
+   return-side counterpart of this same mechanism: a `Tuple[bytearray, ...]` return with
+   an Optional buffer slot puts a presence tag on the wire, and a tuple-unpack target
+   picks it up the way a real subroutine's own parameter already does.
 3. **`Optional[Tuple[int, int]]`**: tuple returns are already N named slots per call site;
    an optional tuple is "tag + N slots". No demandant yet.
 4. **Sentinel folding**: where a range proof leaves a payload value free (`x & 0x7F`),
