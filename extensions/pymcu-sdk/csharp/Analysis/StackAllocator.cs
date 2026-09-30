@@ -126,10 +126,12 @@ public class StackAllocator
             globalOffset += kvp.Value;
         }
 
-        // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0: a field
-        // of a module-level instance is static duration exactly like a module
-        // global, whether or not IRGenerator's own (narrower) mutableGlobals
-        // promotion also gave it a real global entry above. Placed in this same
+        // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0b: a
+        // field of ANY instance -- module-level or function-scoped, StaticFields
+        // is populated unconditionally since phase 0b -- is treated as static
+        // duration here exactly like a module global, whether or not
+        // IRGenerator's own (narrower) mutableGlobals promotion also gave it a
+        // real global entry above. Placed in this same
         // leading, never-recycled region -- not among the automatics a function's
         // frame packs and reuses below -- a name here is skipped by CalculateOffsets
         // exactly as a true global is (the `_globalNames.Contains` guard throughout
