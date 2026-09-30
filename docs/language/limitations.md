@@ -157,7 +157,7 @@ longest f-string first — the buffer is sized at the first assignment). `s = f"
 (an f-string that interpolates the name it assigns, P2 AVR gaps bundle, item 6) is
 supported: a private snapshot buffer copies s's current bytes and length before either is
 touched, so every self-referencing part reads the snapshot rather than the buffer it is
-about to overwrite. It still follows the fixed-buffer rule above — a self-reference that
+about to overwrite. It still follows the fixed-buffer rule above -- a self-reference that
 would need more bytes than s's buffer already has still refuses, naming the size, exactly
 like any other reassignment that grows. An int
 interpolation with a format spec (`{v:X}`, `{v:04d}`, `{v:b}`, `{v:o}`) folds to its

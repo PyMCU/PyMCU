@@ -1657,7 +1657,7 @@ def build(
             _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
-            _diag_log("round(x, n) detected — injecting pymcu.round2 import",
+            _diag_log("round(x, n) detected -- injecting pymcu.round2 import",
                       verbose=is_verbose)
 
         # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
