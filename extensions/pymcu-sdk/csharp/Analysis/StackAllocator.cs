@@ -58,8 +58,17 @@ public class StackAllocator
     private readonly Dictionary<string, int> _offsetsBase = new();
     private readonly HashSet<string> _globalNames = [];
     private int _maxStackUsage;
+    private int _staticEnd;
 
     public Dictionary<string, int> VariableSizes { get; } = new();
+
+    // RFC 0013 phase 0: the offset one past the last byte of genuinely STATIC
+    // storage (program.Globals, program.GlobalArrays, program.StaticFields) --
+    // never the whole frame's high-water mark, which also counts ordinary
+    // automatic locals the static allocator packs above this boundary and
+    // which Python's own rules already make safe unzeroed (RFC 0013 section 3).
+    // Valid after Allocate returns.
+    public int StaticEnd => _staticEnd;
 
     // Scratch-pool fold keys from the .mir's CanonicalTemps. Consulted by
     // CalculateOffsets instead of the name's own spelling only after the plain
@@ -98,6 +107,7 @@ public class StackAllocator
         _globalNames.Clear();
         VariableSizes.Clear();
         _maxStackUsage = 0;
+        _staticEnd = 0;
 
         var globalOffset = 0;
         foreach (var globalVar in program.Globals)
@@ -116,6 +126,27 @@ public class StackAllocator
             globalOffset += kvp.Value;
         }
 
+        // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0: a field
+        // of a module-level instance is static duration exactly like a module
+        // global, whether or not IRGenerator's own (narrower) mutableGlobals
+        // promotion also gave it a real global entry above. Placed in this same
+        // leading, never-recycled region -- not among the automatics a function's
+        // frame packs and reuses below -- a name here is skipped by CalculateOffsets
+        // exactly as a true global is (the `_globalNames.Contains` guard throughout
+        // this file), and a backend's static-storage boundary (StaticEnd) can be
+        // read directly off the allocator instead of over-approximated from the
+        // whole frame's high-water mark, which also counts ordinary automatic
+        // locals that Python's own rules already make safe unzeroed (section 3).
+        foreach (var kvp in program.StaticFields)
+        {
+            if (_globalNames.Contains(kvp.Key)) continue; // already a real global; do not double-book
+            VariableSizes[kvp.Key] = kvp.Value.SizeOf();
+            _offsets[kvp.Key] = globalOffset;
+            _globalNames.Add(kvp.Key);
+            globalOffset += VariableSizes[kvp.Key];
+        }
+
+        _staticEnd = globalOffset;
         if (globalOffset > _maxStackUsage) _maxStackUsage = globalOffset;
 
         BuildGraph(program);

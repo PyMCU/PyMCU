@@ -479,6 +479,24 @@ public class ProgramIR
     // Absent in .mir files from older compilers; deserializes to empty.
     public Dictionary<string, string> CanonicalTemps { get; set; } = new();
 
+    // RFC 0013 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13), phase 0: the flat
+    // storage name of every field the frontend recognises as belonging to an
+    // instance built at module level (busio.I2C's self._locked, a driver's
+    // self._buffer, ...), keyed to its declared width. This is a strict
+    // superset of the names IRGenerator also promotes to Globals via
+    // mutableGlobals: that promotion additionally requires the write to be
+    // seen from outside the module's own top-level code, which a constructor
+    // invoked (and inlined) AT module level never satisfies, even though the
+    // object it initialises is exactly as long-lived as a module global.
+    // A backend needs this list regardless of that narrower promotion: an
+    // object of static duration must have its home zero-initialised at boot
+    // whether or not its constructor's own store to it survives dead-store
+    // elimination (RFC 0013 section 4 leaves that removal legal -- the store
+    // is redundant once boot itself guarantees the zero). Absent in .mir
+    // files from older compilers; deserializes to empty, which simply
+    // disables this extra coverage and leaves prior behaviour unchanged.
+    public Dictionary<string, DataType> StaticFields { get; set; } = new();
+
     /// <summary>
     /// The target's memory geometry, or a build error when this .mir predates the
     /// geometry contract. Backends call this instead of touching <see cref="Device"/>,
