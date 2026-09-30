@@ -8350,19 +8350,25 @@ public partial class IRGenerator
         if ((bVal is Constant zc && zc.Value == 0) || (bVal is FloatConstant zfc && zfc.Value == 0.0))
             throw UserError("divmod(): division by zero", ArgAt(expr, 1));
 
-        // divmod() returns a 2-tuple in Python; PyMCU has no general runtime tuple value, only
-        // the compile-time unpack `q, r = divmod(a, b)`. Outside that shape this used to fall
-        // through to the code below and silently answer the QUOTIENT ALONE -- `v = divmod(a, b)`
-        // and `print(divmod(a, b))` both dropped the remainder with no diagnostic, contradicting
-        // the docs (LANGUAGE_ROADMAP.md / limitations.md both say divmod "returns
-        // (quotient, remainder)"). Refusing names the real gap instead of quietly answering a
-        // different, smaller value than the one Python's divmod() actually returns.
-        if (pendingTupleCount != 2)
+        // divmod() returns a 2-tuple in Python; PyMCU has no general runtime tuple VALUE (one
+        // that can be passed around, stored in a field, ...), only fixed result SLOTS. Two
+        // shapes read those slots as a tuple already: `q, r = divmod(a, b)` unpacks them
+        // (pendingTupleCount == 2, checked by the caller), and `v = divmod(a, b)` /
+        // `print(divmod(a, b))` ask for them through the same sentinel every other
+        // multi-return call (`f()`, `obj.prop`) answers through (pendingTupleCount == -1,
+        // read below via lastTupleResults -- see BindNamedTuple and EmitPrintArg's
+        // CallExpr/MemberAccessExpr branch). Outside both shapes (an argument position, a
+        // field write, ...) this used to fall through and silently answer the QUOTIENT
+        // ALONE, contradicting the docs (LANGUAGE_ROADMAP.md / limitations.md both say
+        // divmod "returns (quotient, remainder)"). Refusing names the real gap instead of
+        // quietly answering a different, smaller value than Python's divmod() returns
+        // (#p2avr-3).
+        if (pendingTupleCount != 2 && pendingTupleCount != -1)
             throw UserError(
-                "divmod() returns a 2-tuple (quotient, remainder); PyMCU only supports "
-                + "unpacking it directly into two targets -- `q, r = divmod(a, b)`. A bare "
-                + "divmod() result (assigned to one variable, printed, or passed on) is not "
-                + "supported", expr.Callee);
+                "divmod() returns a 2-tuple (quotient, remainder); PyMCU supports unpacking it "
+                + "into two targets (`q, r = divmod(a, b)`), binding it to one name "
+                + "(`v = divmod(a, b)`), and printing it (`print(divmod(a, b))`) -- not passing "
+                + "it as an argument, storing it in a field, or any other position", expr.Callee);
 
         if (aVal is Constant ca && bVal is Constant cb)
         {
