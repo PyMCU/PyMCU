@@ -8108,7 +8108,26 @@ public partial class IRGenerator
         // path to visit each argument exactly once.
         if (TryFoldInt(expr.Args[0], out int @base) && TryFoldInt(expr.Args[1], out int exp))
         {
-            if (exp < 0) throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
+            if (exp < 0)
+            {
+                // 0 ** negative raises ZeroDivisionError in CPython, an int as much as a
+                // float ("zero to a negative power", same message either width) -- a
+                // genuine run-time exception, not something CPython refuses at compile
+                // time, so this raises here too instead of folding or refusing (#p2avr-4).
+                // Any other negative exponent on an int base is the PRE-EXISTING, separate
+                // refusal below: CPython widens that to a float (`2 ** -1 == 0.5`), a
+                // promotion this compiler does not implement for integer pow().
+                if (@base == 0)
+                {
+                    EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
+                    // A literal placeholder, not MakeTemp: see the identical note in
+                    // LowerPow (Expr.cs) -- the raise never returns, so nothing downstream
+                    // observes this value, but an ever-unwritten Temporary read-never-written
+                    // flagged as if it could (ir-verify).
+                    return new Constant(0);
+                }
+                throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
+            }
             int res = 1;
             for (int k = 0; k < exp; ++k) res *= @base;
             return new Constant(res);
@@ -8125,15 +8144,29 @@ public partial class IRGenerator
                 expr.Args[1], "pow()");
 
         // Runtime float operands lower to a CALL on the __pymcu_powf subroutine -- one
-        // shared software-float implementation, the same one `math.pow` delegates to.
+        // shared software-float implementation, the same one `math.pow` delegates to. The
+        // 0.0-to-a-negative-power guard runs first so the bare builtin gets CPython's own
+        // ZeroDivisionError for that value instead of __pymcu_powf's math.pow-flavored
+        // ValueError (see EmitPowZeroNegGuard, Expr.cs) -- math.pow() itself never reaches
+        // here, it calls __pymcu_powf directly with no guard in front.
         if (functionParams.ContainsKey("__pymcu_powf"))
         {
-            var fwd = new CallExpr(new VariableExpr("__pymcu_powf"), expr.Args)
+            Val ToFloatArg(Val x)
             {
-                Line = expr.Line,
-                Column = expr.Column,
-            };
-            return VisitCall(fwd);
+                if (x is FloatConstant) return x;
+                if (x is Constant ci) return new FloatConstant(ci.Value);
+                if (GetValType(x) == DataType.FLOAT) return x;
+                Temporary ft = MakeTemp(DataType.FLOAT);
+                Emit(new Copy(x, ft));
+                return ft;
+            }
+
+            Val fBase = ToFloatArg(VisitExpression(expr.Args[0]));
+            Val fExp = ToFloatArg(VisitExpression(expr.Args[1]));
+            EmitPowZeroNegGuard(fBase, fExp);
+            Temporary dst = MakeTemp(DataType.FLOAT);
+            Emit(new Call("__pymcu_powf", new List<Val> { fBase, fExp }, dst));
+            return dst;
         }
 
         throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
