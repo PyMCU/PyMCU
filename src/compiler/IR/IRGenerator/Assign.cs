@@ -182,6 +182,10 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr strRvTgt && TryExpandStrReprValue(strRvTgt.Name, stmt.Value))
             return;
 
+        // `x = hex(v)` / `bin(v)` / `oct(v)` on a run-time v: same buffer, bound.
+        if (stmt.Target is VariableExpr baseRvTgt && TryExpandBaseReprValue(baseRvTgt.Name, stmt.Value))
+            return;
+
         // `s = sep.join([...])`: constant fold for all-static strings, and the canonical
         // bytes-to-string idiom `''.join([chr(b) for b in buf])` as a runtime string.
         if (stmt.Target is VariableExpr joinTgt && TryEmitJoinAssign(joinTgt.Name, stmt.Value))
@@ -5870,6 +5874,31 @@ public partial class IRGenerator
             };
         }
         return bound;
+    }
+
+    // `x = hex(v)` / `bin(v)` / `oct(v)` on a RUN-TIME v: the same digit buffer
+    // print(hex(v)) builds, bound to the target name instead of streamed. Without
+    // this, the assignment fell to the generic scalar Copy path and took the
+    // buffer's first byte as a number -- `s = hex(x + 200); print(s)` printed
+    // "255" instead of "0xc8" (#p2avr-1): a silent wrong answer, not a refusal.
+    // A compile-time-constant argument still takes this path rather than
+    // EmitHexBuiltin's flash-string fast path -- the same tradeoff str(<float
+    // literal>) already makes below, simplicity over the last byte of flash.
+    private bool TryExpandBaseReprValue(string target, Expression value)
+    {
+        if (value is not CallExpr
+            { Callee: VariableExpr { Name: "hex" or "bin" or "oct" } baseCallee, Args.Count: 1 } baseCall)
+            return false;
+        if (baseCall.Args[0] is KeywordArgExpr) return false;
+        (int radix, string prefix) = baseCallee.Name switch
+        {
+            "hex" => (16, "0x"),
+            "bin" => (2, "0b"),
+            _ => (8, "0o"),
+        };
+        Val bv = RequireIntBaseArg(VisitExpression(baseCall.Args[0]), baseCallee.Name, baseCall.Args[0]);
+        EmitIntBaseRuntimeStr(target, bv, baseCall.Args[0], radix, prefix, value);
+        return true;
     }
 
     // `x = str(v)` for a literal sequence v: build the repr into a buffer bound to x,
