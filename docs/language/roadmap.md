@@ -43,7 +43,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `seq.index(x)` | On a name bound to a compile-time tuple/list: folds when `x` folds, else a compare chain over the elements that raises `ValueError` on a miss (adafruit_tcs34725 `_GAINS.index(val)`) |
 | `isinstance(x, T)` | Folds at compile time: a ZCA instance against a class or subclass (#424), or a value against the builtins `tuple`/`list`/`int` from its known shape (#423) -- through an inline-parameter alias, a keyword argument, or a module-level string's own text (adafruit_neopixel `pixel_order`); `isinstance(x, slice)` is always False -- nothing is a runtime slice (adafruit_pixelbuf `__setitem__`); a `None`-bound name answers False to every builtin |
 | `is` / `is not` | Maps to `==` / `!=` |
-| `divmod(a, b)` | Returns `(quotient, remainder)`, only when unpacked into two targets (`q, r = divmod(a, b)`); a runtime-zero divisor raises `ZeroDivisionError` |
+| `divmod(a, b)` | Returns `(quotient, remainder)`: unpacked into two targets (`q, r = divmod(a, b)`), bound to one name (`v = divmod(a, b)`), or printed directly (`print(divmod(a, b))`); a runtime-zero divisor raises `ZeroDivisionError` |
 | `bitcast(T, v)` | Reinterpret raw bytes as `T`; float↔uint32; compile-time folding |
 | `hex(n)` / `bin(n)` / `oct(n)` | Compile-time constant interns the flash string (`hex(255)` -> `"0xff"`); a runtime value builds the same spelling into a buffer through `pymcu.strfmt`, streamed by `print()` or bound by `s = hex(n)`. Negative values spell the sign before the base prefix, like CPython |
 | `round(x)` | Compile-time: folds a compile-time `float`/int half-to-even like CPython |
