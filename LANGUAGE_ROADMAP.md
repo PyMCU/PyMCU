@@ -166,7 +166,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `is` / `is not` | Maps to `==` / `!=` (identity = equality on bare-metal) |
 | `divmod(a, b)` built-in | Returns `(quotient, remainder)`, only when unpacked into two targets; compile-time fold or `__div8`/`__mod8`; a runtime-zero divisor raises `ZeroDivisionError` |
 | `bitcast(T, v)` built-in | Reinterpret raw bytes as type `T`; float<->uint32 via register swap; compile-time fold for constant operands |
-| `hex(n)` / `bin(n)` (compile-time) | Fold to `"0xff"` / `"0b101"` string constant |
+| `hex(n)` / `bin(n)` / `oct(n)` | Compile-time constant folds to a `"0xff"` / `"0b101"` / `"0o377"` string constant; a runtime value builds the same spelling into a buffer, streamed by `print()` or bound by `s = hex(n)`. Negative values spell the sign before the base prefix, like CPython |
 | `sum(iterable)` | Compile-time fold or unrolled additions over fixed-size array |
 | `any(iterable)` / `all(iterable)` | Compile-time fold or OR/AND chain |
 

@@ -45,7 +45,8 @@ This page tracks which language and HAL features have been implemented, and what
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)`, only when unpacked into two targets (`q, r = divmod(a, b)`); a runtime-zero divisor raises `ZeroDivisionError` |
 | `bitcast(T, v)` | Reinterpret raw bytes as `T`; float↔uint32; compile-time folding |
-| `hex(n)` / `bin(n)` / `round(x)` | Compile-time: `hex(255)` → `"0xff"`; `round` folds a compile-time `float`/int half-to-even like CPython |
+| `hex(n)` / `bin(n)` / `oct(n)` | Compile-time constant interns the flash string (`hex(255)` -> `"0xff"`); a runtime value builds the same spelling into a buffer through `pymcu.strfmt`, streamed by `print()` or bound by `s = hex(n)`. Negative values spell the sign before the base prefix, like CPython |
+| `round(x)` | Compile-time: folds a compile-time `float`/int half-to-even like CPython |
 | `sum(iterable)` / `any(iterable)` / `all(iterable)` | Compile-time fold or unrolled chain |
 | `all/any/sum/min/max(x ... for x in it)` | A generator expression as the DIRECT argument of a reduction unrolls at compile time over a known-length iterable (tuple/list literal, const sequence, `range` of constants, compile-time string, fixed-size array). `all`/`any` short-circuit like CPython; `sum` honours `start`; a `for ... if` clause filters (adafruit_pixelbuf). Elsewhere a generator expression is refused, naming the five reductions |
 | Compile-time string methods | On a name bound to ONE text (literal, module constant, parameter receiving one -- through `super().__init__` and nested `@inline` calls, `Union[str, ...]` parameters included): `len(s)`, `s[i]`, `needle in s`, `s == "lit"`, `s[a:b]` slices, `str(x)` of a constant, `s.strip()`/`lstrip()`/`rstrip()`, `s.index()`/`s.find()` (miss: catchable `ValueError` / -1), `s.startswith()`/`s.endswith()`, `s.count()`, `s.replace()`, `s.upper()`, `s.lower()` all fold |
