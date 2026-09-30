@@ -3299,6 +3299,69 @@ public partial class IRGenerator
             // Val alone missed it: a later `if self._pin is not None:` in a method then lowered
             // both sides, and the instance that has no pin ran the branch that uses one.
             //
+            // A field assigned a bare reference to another recognized ZCA instance
+            // (`self.i2c = i2c`: aliasing an existing object, not constructing a new
+            // one) must keep that object's IDENTITY -- CPython gives `self.i2c is
+            // i2c` True, and a mutation reached through either name is visible
+            // through the other. This has to run BEFORE the None check below:
+            // `IsNoneValued` chases the same alias/parameter-binding chain this
+            // check does, and a source that ultimately resolves to a real,
+            // registered instance (constructed with `X()`, whose runtime Val is a
+            // placeholder NoneVal because RFC 0006's flattened representation for
+            // instance fields does not exist yet) reads back as "None" to that
+            // heuristic -- so the write fell into the None bucket below, which
+            // marks the field itself None-valued and returns without recording any
+            // alias. A later access through the field (`self.i2c.try_lock()`) then
+            // resolved its receiver by NAME alone and materialized a SECOND,
+            // disjoint copy of the aliased instance's fields instead of reaching
+            // the original's storage: measured on adafruit_bus_device.I2CDevice.i2c
+            // via Seesaw, where `ss.i2c_device.i2c` and the `i2c_bus` it was built
+            // from diverged into two flattened names (`ss_i2c_device_i2c__locked`
+            // and `i2c_bus__locked`) that a lock/unlock through one never updated
+            // for the other. Checked against the AST (`stmt.Value`), not the
+            // possibly-placeholder `value` Val, and against the same qualified-name
+            // candidates and alias chase AnchorNameOf's VariableExpr case uses, so
+            // an aliased parameter resolves inside a force-inline expansion too.
+            if (stmt.Value is VariableExpr aliasSrcVe)
+            {
+                string? aliasKey = null;
+                // Qualified candidates ONLY -- no bare-name fallback. A bare name
+                // here can coincidentally collide with an UNRELATED module-level
+                // instance of the same spelling (fixtures/float-compare-sole-use:
+                // `Timeout.__init__(self, t: float)` binds a scalar parameter
+                // named `t`, force-inlined for the module-level `t = Timeout(0.1)`
+                // -- the bare candidate "t" then matched the OUTER instance's OWN
+                // registration in instanceClasses, and `self._t` got aliased to
+                // the Timeout instance itself instead of storing the float. The
+                // qualified forms (inline-frame-scoped, function-scoped) cannot
+                // make that mistake: a scalar parameter is never registered under
+                // either of them, only a genuine aliased instance is.
+                foreach (var aliasCand in new[]
+                         {
+                             currentInlinePrefix + aliasSrcVe.Name,
+                             string.IsNullOrEmpty(currentFunction)
+                                 ? null : currentFunction + "." + aliasSrcVe.Name,
+                         })
+                {
+                    if (aliasCand == null) continue;
+                    string aliasCur = aliasCand;
+                    for (int ad = 0; ad < 20 && variableAliases.TryGetValue(aliasCur, out var aliasNx); ad++)
+                    {
+                        if (aliasNx == null || aliasNx.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                        aliasCur = aliasNx;
+                    }
+                    if (instanceClasses.ContainsKey(aliasCur)) { aliasKey = aliasCur; break; }
+                }
+                if (aliasKey != null)
+                {
+                    instanceClasses[flattenedName] = instanceClasses[aliasKey];
+                    variableAliases[flattenedName] = FollowAliases(aliasKey);
+                    virtualInstances.Add(flattenedName);
+                    noneValuedNames.Remove(flattenedName);
+                    return;
+                }
+            }
+
             // A call is the one NoneVal that is not a None source: a constructor's void
             // __init__ hands it back too, and `self._src = Counted(0)` is the field
             // receiving the instance the constructor built -- marking it None folded
