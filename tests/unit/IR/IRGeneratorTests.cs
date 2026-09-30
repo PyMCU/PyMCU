@@ -2838,4 +2838,158 @@ public class IRGeneratorTests
 
         Assert.Contains("cannot return a string", ex.Message);
     }
+
+    // ── RFC 0013 P0: slot-alias-identity ────────────────────────────────────
+    // A field that ALIASES an existing instance (`self.bus = bus`, a bare
+    // parameter, not `self.bus = Bus(...)`) must share that instance's
+    // storage: CPython gives `w.device.bus is bus` True, and a mutation
+    // reached through either name is visible through the other. Modeled on
+    // adafruit_bus_device.I2CDevice.i2c via Seesaw -- a nested construction
+    // (Wrapper -> Device, a real `Device(bus, ...)` call) whose own
+    // constructor ALIASES a further-out instance rather than building one.
+    //
+    // Before the fix, `self.bus = bus` fell into the "field assigned None"
+    // bucket: `VisitExpression` on a bare reference to a non-foldable,
+    // multi-field instance has no scalar Val to return, so the compiled
+    // value was the same NoneVal placeholder a void `__init__` hands back
+    // (RFC 0006 section 0), and IsNoneValued's alias chase found `bus`
+    // itself marked None-valued by that SAME placeholder mechanism
+    // (EmitScalarVarAssign, `bus = make_bus(1)`'s own construction, forwarded
+    // through a plain function). The write returned without registering any
+    // alias, and a later access through the field (`self.bus.try_lock()`)
+    // resolved its receiver by NAME alone, minting a second, disjoint
+    // `_locked` storage instead of reaching `bus`'s own -- except this
+    // particular shape (a method call three hops in) does not even get that
+    // far: without the fix, this exact source fails to compile at all,
+    // `PyMCU.Common.CompilerError: call to undefined function
+    // 'w_device_bus_try_lock' (typo, or a missing import?)` -- the minted
+    // name has no body, because the method IS defined, just under the
+    // canonical instance's own mangled name. Measured directly (reverting
+    // just the Assign.cs/Expr.cs half of this commit locally and rerunning
+    // this test) before writing this comment.
+    [Fact]
+    public void AliasedFieldThroughThreeLevels_MutatorSharesIdentityWithOriginal()
+    {
+        const string src =
+            "class Bus:\n" +
+            "    def __init__(self, seed: uint8):\n" +
+            "        self.locked: uint8 = 0\n" +
+            "    def try_lock(self) -> uint8:\n" +
+            "        if self.locked:\n" +
+            "            return 0\n" +
+            "        self.locked = 1\n" +
+            "        return 1\n" +
+            "class Device:\n" +
+            "    def __init__(self, bus, addr: uint8):\n" +
+            "        self.bus = bus\n" +
+            "        self.addr = addr\n" +
+            "    def use(self) -> uint8:\n" +
+            "        return self.bus.try_lock()\n" +
+            "class Wrapper:\n" +
+            "    def __init__(self, bus, extra: uint8):\n" +
+            "        self.device = Device(bus, 0)\n" +
+            "        self.extra = extra\n" +
+            "    def run(self) -> uint8:\n" +
+            "        return self.device.use()\n" +
+            // A plain FUNCTION wrapping the constructor, not a direct `Bus(1)` --
+            // the shape `board.I2C()` has (busio/board.py wraps `busio.I2C(...)`).
+            // A direct class call is exempted from the "constructor's void
+            // __init__ hands back None" marking by its own CallExpr guard
+            // (EmitScalarVarAssign); a function that merely FORWARDS that same
+            // constructor's placeholder return is not -- the fixture's actual
+            // failure needs the wrapper, a bare `bus = Bus(1)` does not
+            // reproduce it.
+            "def make_bus(seed: uint8):\n" +
+            "    return Bus(seed)\n" +
+            "def main():\n" +
+            "    bus = make_bus(1)\n" +
+            "    w = Wrapper(bus, 9)\n" +
+            "    r: uint8 = w.run()\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        static IEnumerable<string?> DstNames(Instruction i) => i switch
+        {
+            Copy c => new[] { (c.Dst as Variable)?.Name, (c.Dst as Temporary)?.Name },
+            ArrayStore a => new[] { a.ArrayName },
+            _ => Array.Empty<string?>(),
+        };
+
+        var lockedTargets = ir.Functions
+            .SelectMany(f => f.Body)
+            .SelectMany(DstNames)
+            .Where(n => n != null && n.EndsWith("locked", StringComparison.Ordinal))
+            .Select(n => n!)
+            .Distinct()
+            .ToList();
+
+        // Exactly one storage location backs `locked`, whichever spelling the
+        // compiler chose for it (`bus_locked`, `main.bus_locked`, ...) -- the
+        // point is there is only ONE, not that a call through `w.run()` and a
+        // direct `bus.try_lock()` would each mint their own.
+        Assert.True(lockedTargets.Count <= 1,
+            "expected a single shared storage for the aliased field's mutator "
+            + $"target, found: {string.Join(", ", lockedTargets)}");
+    }
+
+    // Same identity requirement as the mutator-method test above, for a bare
+    // field write and a bare field read through the alias chain -- no method
+    // call, so this exercises VisitMemberAccess's own flattened-name chase
+    // (Expr.cs) independently of the call-receiver resolution
+    // (AnchorNameOf / EmitInlineFunctionCall) the mutator test exercises.
+    // `bus.locked = 1` writes through the CANONICAL name; `w.device.bus.locked`
+    // reads through the field three hops in. CPython: `w.device.bus is bus`,
+    // so the read sees the write.
+    [Fact]
+    public void AliasedFieldThroughThreeLevels_ReadAndWriteAgreeOnOneStorage()
+    {
+        const string src =
+            "class Bus:\n" +
+            "    def __init__(self, seed: uint8):\n" +
+            "        self.locked: uint8 = 0\n" +
+            "class Device:\n" +
+            "    def __init__(self, bus, addr: uint8):\n" +
+            "        self.bus = bus\n" +
+            "        self.addr = addr\n" +
+            "class Wrapper:\n" +
+            "    def __init__(self, bus, extra: uint8):\n" +
+            "        self.device = Device(bus, 0)\n" +
+            "        self.extra = extra\n" +
+            "def make_bus(seed: uint8):\n" +
+            "    return Bus(seed)\n" +
+            "def main():\n" +
+            "    bus = make_bus(1)\n" +
+            "    w = Wrapper(bus, 9)\n" +
+            "    bus.locked = 1\n" +
+            "    r: uint8 = w.device.bus.locked\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+
+        static string? NameOf(Val v) => v switch
+        {
+            Variable vv => vv.Name,
+            Temporary t => t.Name,
+            _ => null,
+        };
+
+        var writeTargets = body
+            .OfType<Copy>()
+            .Where(c => c.Src is Constant { Value: 1 })
+            .Select(c => NameOf(c.Dst))
+            .Where(n => n != null && n.EndsWith("locked", StringComparison.Ordinal))
+            .Distinct()
+            .ToList();
+
+        var readSources = body
+            .OfType<Copy>()
+            .Select(c => NameOf(c.Src))
+            .Where(n => n != null && n.EndsWith("locked", StringComparison.Ordinal))
+            .Distinct()
+            .ToList();
+
+        Assert.Single(writeTargets);
+        Assert.Contains(writeTargets[0], readSources);
+    }
 }
