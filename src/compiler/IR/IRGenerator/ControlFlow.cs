@@ -138,6 +138,53 @@ public partial class IRGenerator
         _runtimeBranchTokens.RemoveAt(_runtimeBranchTokens.Count - 1);
     }
 
+    // One of the four ORDERED comparisons (< <= > >=), as a jump. jumpIfTrue emits the
+    // DIRECT comparison -- always correct, IEEE754 included, because every backend's
+    // float-compare routine answers the genuine `<`/`<=`/`>`/`>=` question. The opposite
+    // sense (jumpIfTrue == false, used for an `if`'s jump-to-else) used to negate by
+    // swapping to the algebraically opposite operator (NOT(a<b) == a>=b): true for every
+    // ORDERED pair, but NaN makes BOTH a<b and a>=b false, so `if n > 1.0:` with n a NaN
+    // took the then-branch instead of the else CPython takes (P2 AVR gaps bundle, item
+    // 5) -- the swapped operator silently answered a different question for the one case
+    // it was supposed to cover. Integer operands keep the single-jump swapped form (no
+    // unordered case exists to get wrong); a float comparison takes the direct sense to a
+    // label just past an unconditional jump to the real target, which only ever asks the
+    // question every backend gets right.
+    private void EmitOrderedComparisonJump(Val v1, Val v2, Frontend.BinaryOp op, string targetLabel,
+                                           bool jumpIfTrue)
+    {
+        void EmitDirect(string trueTarget)
+        {
+            switch (op)
+            {
+                case Frontend.BinaryOp.Less: Emit(new JumpIfLessThan(v1, v2, trueTarget)); break;
+                case Frontend.BinaryOp.LessEq: Emit(new JumpIfLessOrEqual(v1, v2, trueTarget)); break;
+                case Frontend.BinaryOp.Greater: Emit(new JumpIfGreaterThan(v1, v2, trueTarget)); break;
+                case Frontend.BinaryOp.GreaterEq: Emit(new JumpIfGreaterOrEqual(v1, v2, trueTarget)); break;
+            }
+        }
+
+        if (jumpIfTrue) { EmitDirect(targetLabel); return; }
+
+        bool isFloat = GetValType(v1) == DataType.FLOAT || GetValType(v2) == DataType.FLOAT;
+        if (!isFloat)
+        {
+            switch (op)
+            {
+                case Frontend.BinaryOp.Less: Emit(new JumpIfGreaterOrEqual(v1, v2, targetLabel)); break;
+                case Frontend.BinaryOp.LessEq: Emit(new JumpIfGreaterThan(v1, v2, targetLabel)); break;
+                case Frontend.BinaryOp.Greater: Emit(new JumpIfLessOrEqual(v1, v2, targetLabel)); break;
+                case Frontend.BinaryOp.GreaterEq: Emit(new JumpIfLessThan(v1, v2, targetLabel)); break;
+            }
+            return;
+        }
+
+        string skip = MakeLabel();
+        EmitDirect(skip);
+        Emit(new Jump(targetLabel));
+        Emit(new Label(skip));
+    }
+
     private int EmitOptimizedConditionalJump(Expression cond, string targetLabel, bool jumpIfTrue = false)
     {
         _pendingUndecidedOperand = null;
@@ -553,20 +600,10 @@ public partial class IRGenerator
                     else Emit(new JumpIfEqual(v1, v2, targetLabel));
                     return 1;
                 case Frontend.BinaryOp.Less:
-                    if (jumpIfTrue) Emit(new JumpIfLessThan(v1, v2, targetLabel));
-                    else Emit(new JumpIfGreaterOrEqual(v1, v2, targetLabel));
-                    return 1;
                 case Frontend.BinaryOp.LessEq:
-                    if (jumpIfTrue) Emit(new JumpIfLessOrEqual(v1, v2, targetLabel));
-                    else Emit(new JumpIfGreaterThan(v1, v2, targetLabel));
-                    return 1;
                 case Frontend.BinaryOp.Greater:
-                    if (jumpIfTrue) Emit(new JumpIfGreaterThan(v1, v2, targetLabel));
-                    else Emit(new JumpIfLessOrEqual(v1, v2, targetLabel));
-                    return 1;
                 case Frontend.BinaryOp.GreaterEq:
-                    if (jumpIfTrue) Emit(new JumpIfGreaterOrEqual(v1, v2, targetLabel));
-                    else Emit(new JumpIfLessThan(v1, v2, targetLabel));
+                    EmitOrderedComparisonJump(v1, v2, binExpr.Op, targetLabel, jumpIfTrue);
                     return 1;
             }
         }
