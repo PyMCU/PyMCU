@@ -7673,10 +7673,17 @@ public partial class IRGenerator
 
     /// <summary>
     /// round(x): Python's round-half-even. There is no run-time float rounding routine, so the
-    /// builtin folds only where x is a compile-time constant -- adafruit_ht16k33's
+    /// one-argument builtin folds only where x is a compile-time constant -- adafruit_ht16k33's
     /// `round(15 * brightness)` with the default brightness=1.0 is that shape. A run-time
-    /// argument, or the two-argument form, still gets the honest refusal from
-    /// <see cref="UnsupportedBuiltins"/>.
+    /// one-argument call still gets the honest refusal from <see cref="UnsupportedBuiltins"/>.
+    ///
+    /// round(x, n) (P2 AVR gaps bundle, item 2): n must be a compile-time constant (the digit
+    /// buffer it sizes has to be). An integer x keeps CPython's own int semantics -- n &gt;= 0
+    /// answers x unchanged, n &lt; 0 rounds to a multiple of 10**-n, still an int -- computed
+    /// directly at compile time since there is no float32 precision question for an int. A
+    /// float x (constant or run-time) forwards to pymcu.round2's _pymcu_round2, half-to-even
+    /// on the EXACT decimal expansion of the float32 value, the same algorithm the f-string
+    /// float format spec already uses (#p2avr-2).
     /// </summary>
     private Val EmitRoundBuiltin(CallExpr expr)
     {
@@ -7687,8 +7694,64 @@ public partial class IRGenerator
             if (rv is FloatConstant fc)
                 return new Constant((int)Math.Round(fc.Value, MidpointRounding.ToEven));
         }
+        else if (expr.Args.Count == 2)
+        {
+            if (!TryFoldInt(expr.Args[1], out int n))
+                throw UserError("round()'s ndigits argument must be a compile-time constant "
+                    + "integer", ArgAt(expr, 1));
+            if (n is < -15 or > 15)
+                throw UserError($"round()'s ndigits ({n}) is out of the supported range "
+                    + "-15..15", ArgAt(expr, 1));
+
+            // An integer x: CPython keeps it an int (round(5, 2) == 5, round(1234, -2) ==
+            // 1200), no float32 precision question involved, so this folds directly.
+            // Symmetric around zero: round the MAGNITUDE half-to-even, then restore sign.
+            if (TryFoldInt(expr.Args[0], out int xi))
+            {
+                if (n >= 0) return new Constant(xi);
+                long scale = 1;
+                for (int k = 0; k < -n; ++k) scale *= 10;
+                long ax = xi < 0 ? -(long)xi : xi;
+                long q = ax / scale, r = ax % scale, twice = r * 2;
+                if (twice > scale || (twice == scale && (q & 1) != 0)) q += 1;
+                long result = (xi < 0 ? -q : q) * scale;
+                return new Constant((int)result);
+            }
+
+            // A float x, constant or run-time: pow2(int(x)) is decided by xi failing to
+            // fold above, so anything reaching here that is not a float is refused below.
+            Val xv = VisitExpression(expr.Args[0]);
+            bool isFloatArg = xv is FloatConstant
+                || (xv is Variable fvv && fvv.Type == DataType.FLOAT)
+                || (xv is Temporary fvt && fvt.Type == DataType.FLOAT);
+            if (isFloatArg)
+            {
+                string round2Mod = RequireRound2Mod(expr);
+                var fwd = new CallExpr(
+                    new MemberAccessExpr(new VariableExpr(round2Mod), "_pymcu_round2"),
+                    new List<Expression>
+                    {
+                        new PreEvaluatedExpr(xv, DataType.FLOAT),
+                        new IntegerLiteral(n),
+                    })
+                { Line = expr.Line, Column = expr.Column };
+                return VisitCall(fwd);
+            }
+        }
         throw UserError($"round() is a Python builtin that PyMCU does not provide: "
                         + UnsupportedBuiltins["round"] + ".", expr.Callee);
+    }
+
+    // The module pymcu build injects (`import pymcu.round2 as ...`) when round(x, n) is
+    // seen in the sources -- the same resolve-by-import-alias RequireStrfmtMod uses.
+    private string RequireRound2Mod(Expression blame)
+    {
+        foreach (var kv in importedAliases)
+            if (kv.Value == "pymcu.round2") return kv.Key;
+        throw UserError(
+            "round(x, n) on a float needs the pymcu.round2 helper; `pymcu build` injects it "
+            + "automatically -- if invoking the compiler by hand, add "
+            + "`import pymcu.round2 as _pymcu_round2` to the entry file.", blame);
     }
 
     /// <summary>
