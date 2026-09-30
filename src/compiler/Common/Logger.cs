@@ -36,6 +36,11 @@ namespace PyMCU.Common;
 //       [ARENA_USED]                 -- an arena allocation was lowered (the import
 //                                       resolved); the driver still stages the shim
 //                                       that carries the real ARENA_SIZE
+//       [NEEDS_STRFMT]               -- a run-time string build (f-string value,
+//                                       str()/repr()/hex()/bin()/oct() of a run-time
+//                                       value...) met a missing pymcu.strfmt import
+//       [NEEDS_ROUND2]               -- round(x, n) on a run-time float met a missing
+//                                       pymcu.round2 import
 //     All warnings/errors go to stderr (never pollute the token stream).
 //
 //   Interactive mode (stdout is a real TTY)
@@ -131,6 +136,24 @@ public static class Logger
     {
         if (_isDriverMode)
             Console.WriteLine("[ARENA_USED]");
+    }
+
+    // RFC 0014 decision 5: the driver does not scan source text to decide whether a
+    // program needs the pymcu.strfmt or pymcu.round2 helpers -- only the IR generator
+    // knows, from the call it just resolved, whether the value is a compile-time
+    // constant (nothing to inject) or a run-time one (the helper module must be
+    // loaded). NEEDS_STRFMT/NEEDS_ROUND2 precede the missing-import UserError the same
+    // way NEEDS_ARENA does; the driver injects the import and compiles again.
+    public static void NeedsStrfmt()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[NEEDS_STRFMT]");
+    }
+
+    public static void NeedsRound2()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[NEEDS_ROUND2]");
     }
 
     // ── General logging ──────────────────────────────────────────────────────

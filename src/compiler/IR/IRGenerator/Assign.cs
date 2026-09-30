@@ -5550,11 +5550,14 @@ public partial class IRGenerator
         return true;
     }
 
-    // The strfmt helpers must be loaded (pymcu build injects the import on detection).
+    // The strfmt helpers must be loaded. `pymcu build` does not scan the source for this
+    // (RFC 0014 decision 5) -- it compiles, and on [NEEDS_STRFMT] injects the import and
+    // compiles again, the same protocol the arena allocator uses (see Logger.NeedsStrfmt).
     private string RequireStrfmtMod(Expression blame)
     {
         foreach (var kv in importedAliases)
             if (kv.Value == "pymcu.strfmt") return kv.Key;
+        Logger.NeedsStrfmt();
         throw UserError(
             "building a string with runtime values needs the pymcu.strfmt helpers; " +
             "`pymcu build` injects them automatically -- if invoking the compiler by hand, " +
@@ -5932,6 +5935,13 @@ public partial class IRGenerator
         if (value is not CallExpr
             { Callee: VariableExpr { Name: "hex" or "bin" or "oct" } baseCallee, Args.Count: 1 } baseCall)
             return false;
+        // RFC 0014 decision 4: a user's own `def hex`/`def bin`/`def oct` shadows the
+        // builtin here too -- this pattern-matches the call shape directly, ahead of (and
+        // bypassing) the shadow check VisitCall's builtin ladder makes for every OTHER
+        // call to hex()/bin()/oct(). Without this, `def hex(x): ...; s = hex(v)` still
+        // called the builtin and bound its digit buffer to s, ignoring the user's function
+        // entirely -- silently, no refusal.
+        if (IsBuiltinShadowed(baseCallee.Name)) return false;
         if (baseCall.Args[0] is KeywordArgExpr) return false;
         (int radix, string prefix) = baseCallee.Name switch
         {

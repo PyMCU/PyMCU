@@ -179,6 +179,51 @@ public class HexBinOctRuntimeTests
         Assert.DoesNotContain(calls, c => c.FunctionName.Contains("uart_write_decimal"));
     }
 
+    // --- RFC 0014 decision 4: a user's own def hex/bin/oct/round shadows the builtin ---
+
+    [Fact]
+    public void OwnHexDefinition_ShadowsTheBuiltin_UnannotatedAssign()
+    {
+        // Without the shadow check, `s = hex(v)` matched the call shape directly (ahead of
+        // the ordinary callee dispatch) and bound the BUILTIN's digit buffer to s -- silently
+        // ignoring the user's own function, no refusal, not even a diagnostic.
+        var ir = Gen(
+            "def hex(x: uint8) -> uint8:\n" +
+            "    return x\n" +
+            "def show(x: uint8):\n" +
+            "    s = hex(x)\n" +
+            "    print(s)\n" +
+            "show(GPIOR0.value)\n");
+        var calls = Calls(ir);
+        Assert.DoesNotContain(calls, c => c.FunctionName.Contains("_fs_fmt"));
+        Assert.Contains(calls, c => c.FunctionName.Contains("hex"));
+    }
+
+    [Fact]
+    public void OwnHexDefinition_ShadowsTheBuiltin_AnnotatedAssign()
+    {
+        var ir = Gen(
+            "def hex(x: uint8) -> uint8:\n" +
+            "    return x\n" +
+            "def show(x: uint8):\n" +
+            "    s: str = hex(x)\n" +
+            "    print(s)\n" +
+            "show(GPIOR0.value)\n");
+        var calls = Calls(ir);
+        Assert.DoesNotContain(calls, c => c.FunctionName.Contains("_fs_fmt"));
+        Assert.Contains(calls, c => c.FunctionName.Contains("hex"));
+    }
+
+    [Fact]
+    public void OwnHexDefinition_ShadowsTheBuiltin_DirectCall()
+    {
+        var ir = Gen(
+            "def hex(x: uint8) -> uint8:\n" +
+            "    return x\n" +
+            "print(hex(GPIOR0.value))\n");
+        Assert.DoesNotContain(Calls(ir), c => c.FunctionName.Contains("_fs_fmt"));
+    }
+
     // --- A signed argument's magnitude, not its two's-complement bit pattern ---
 
     [Fact]

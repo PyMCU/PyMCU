@@ -125,4 +125,36 @@ public class Round2Tests
             "print(round(3.14, 99))\n"));
         Assert.Contains("out of the supported range", ex.Message);
     }
+
+    // --- RFC 0014 decision 4: a user's own def round shadows the builtin ---
+    // (P2 AVR gaps bundle, item 1: the driver used to decide whether to inject
+    // pymcu.round2 with a source-text regex, which could not tell a real call from a
+    // comment or the user's own def round. The compiler decides now: a call to a
+    // shadowed name never reaches EmitRoundBuiltin at all.)
+
+    [Fact]
+    public void OwnRoundDefinition_ShadowsTheBuiltin()
+    {
+        var ir = Gen(
+            "def round(a: int, b: int) -> int:\n" +
+            "    return a + b\n" +
+            "print(round(1, 2))\n");
+        Assert.DoesNotContain(Calls(ir), c => c.FunctionName.Contains("_pymcu_round2"));
+        Assert.Contains(Calls(ir), c => c.FunctionName.Contains("round"));
+    }
+
+    [Fact]
+    public void OwnRoundDefinition_StillWorksOnAFloatArgument_WithoutTheHelperImported()
+    {
+        // If the builtin's own shadow check were missing, this would demand the
+        // pymcu.round2 import (RoundOfAFloat_WithoutTheInjectedModule_RefusesByName
+        // above) even though the call never reaches the builtin.
+        var ir = Gen(
+            "def round(x: float, n: int) -> float:\n" +
+            "    return x\n" +
+            "def show(x: float):\n" +
+            "    print(round(x, 2))\n" +
+            "show(GPIOR0.value / 7.0)\n");
+        Assert.DoesNotContain(Calls(ir), c => c.FunctionName.Contains("_pymcu_round2"));
+    }
 }

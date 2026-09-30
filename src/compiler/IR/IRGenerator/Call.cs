@@ -988,8 +988,7 @@ public partial class IRGenerator
         // RFC 0008: open() on an embedded file resolves here, to a compile-time handle
         // over the blob -- there is no filesystem on the chip for it to call into. A
         // program that defined its own `def open` keeps it (the builtin name loses).
-        if (callee == "open" && !functionParams.ContainsKey("open")
-            && !inlineFunctions.ContainsKey("open"))
+        if (callee == "open" && !IsBuiltinShadowed("open"))
             return EmitRomfsOpen(expr);
         if (callee is "os_stat" or "uos_stat" or "pymcu_os_stat") return EmitOsStat(expr);
         if (callee is "os_listdir" or "uos_listdir" or "pymcu_os_listdir") return EmitOsListdir(expr);
@@ -1019,13 +1018,19 @@ public partial class IRGenerator
         if (callee == "all") return EmitAllBuiltin(expr);
         if (callee == "bool") return EmitBoolBuiltin(expr);
 
-        if (callee == "hex") return EmitHexBuiltin(expr);
-        if (callee == "bin") return EmitBinBuiltin(expr);
-        if (callee == "oct") return EmitOctBuiltin(expr);
+        // RFC 0014 decision 4: a Python builtin is shadowed by a user definition of the
+        // same name, as in CPython -- "today only open respects shadowing" no longer
+        // holds for these four. A user's own `def hex`/`def bin`/`def oct`/`def round`
+        // keeps running; the builtin name falls through to the ordinary call dispatch
+        // below, which resolves it against functionParams/inlineFunctions like any
+        // other user function.
+        if (callee == "hex" && !IsBuiltinShadowed("hex")) return EmitHexBuiltin(expr);
+        if (callee == "bin" && !IsBuiltinShadowed("bin")) return EmitBinBuiltin(expr);
+        if (callee == "oct" && !IsBuiltinShadowed("oct")) return EmitOctBuiltin(expr);
         if (callee == "str") return EmitStrBuiltin(expr);
         if (callee == "repr") return EmitReprBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
-        if (callee == "round") return EmitRoundBuiltin(expr);
+        if (callee == "round" && !IsBuiltinShadowed("round")) return EmitRoundBuiltin(expr);
         if (callee == "memoryview") return EmitMemoryviewBuiltin(expr);
 
         // `list(x)` / `tuple(x)` with a single runtime-list argument copy it into a
@@ -7759,12 +7764,23 @@ public partial class IRGenerator
                         + UnsupportedBuiltins["round"] + ".", expr.Callee);
     }
 
-    // The module pymcu build injects (`import pymcu.round2 as ...`) when round(x, n) is
-    // seen in the sources -- the same resolve-by-import-alias RequireStrfmtMod uses.
+    // RFC 0014 decision 4: true when a module-level `def <name>` or inline function of
+    // the given spelling is in scope, which shadows a Python builtin of the same name
+    // the way CPython's own name resolution would. A plain module-level assignment
+    // (`round = something`) is not covered -- functionParams/inlineFunctions only
+    // track defs, the same surface the pre-existing `open` check used.
+    private bool IsBuiltinShadowed(string name)
+        => functionParams.ContainsKey(name) || inlineFunctions.ContainsKey(name);
+
+    // The module pymcu build injects (`import pymcu.round2 as ...`) once round(x, n) on a
+    // run-time float is resolved here -- the same resolve-by-import-alias RequireStrfmtMod
+    // uses. `pymcu build` does not scan the source for this (RFC 0014 decision 5) -- it
+    // compiles, and on [NEEDS_ROUND2] injects the import and compiles again.
     private string RequireRound2Mod(Expression blame)
     {
         foreach (var kv in importedAliases)
             if (kv.Value == "pymcu.round2") return kv.Key;
+        Logger.NeedsRound2();
         throw UserError(
             "round(x, n) on a float needs the pymcu.round2 helper; `pymcu build` injects it "
             + "automatically -- if invoking the compiler by hand, add "
