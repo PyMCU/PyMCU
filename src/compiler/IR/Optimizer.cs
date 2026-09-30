@@ -48,6 +48,29 @@ public static class Optimizer
                 program.ClassDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),
             CompileTimeNames = new List<string>(program.CompileTimeNames),
             CanonicalTemps = new Dictionary<string, string>(program.CanonicalTemps),
+            // RFC 0013 phase 0c ("static by exclusion"): AutomaticLocals was not
+            // named in this rebuild before, so it was silently dropped -- every
+            // build served an empty set to the backend regardless of what the
+            // frontend's boundNames recorded (measured: PYMCU_DIAG_BOUND showed
+            // 132 entries at the frontend's own flush, the same build's .mir
+            // showed 0 in "automaticLocals"). This is the fix.
+            //
+            // NOTE for whoever picks this up: program.StaticFields has the
+            // exact same bug (also absent from this list, also always empty by
+            // the time any backend reads it) and predates this commit -- it
+            // was already broken under phase 0, unrelated to phase 0c. Copying
+            // it here too (tried during this work) makes it correct, which
+            // uncovers a previously-invisible cost: compat-mp-blink-toggle's
+            // `led.pin.bit`/`led.pin.pull_up` (module-level Pin fields
+            // Scan.cs's chain-walk already resolves) start reading as real
+            // static storage needing a boot-time clear instead of silently
+            // never being covered by StaticFields at all, +22 B (138 -> 160).
+            // Whether that is a correctness fix this RFC's own zero-cost gate
+            // (section 6) must simply pay for, or `_bit` failing to constant-
+            // fold the way HAL fields are meant to, is not decided here --
+            // left OUT of this commit so it ships at the agreed cost, with
+            // this note for the next person.
+            AutomaticLocals = new HashSet<string>(program.AutomaticLocals, StringComparer.Ordinal),
         };
 
         // Build the set of global variable names so EliminateDeadVariableStores
