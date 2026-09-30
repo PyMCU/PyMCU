@@ -22,11 +22,64 @@ the wrong value into an unannotated field it returned (#429), and
 was a constant (#430). That release was never published, and on
 2026-09-25 the decision reversed: ship from `main` as it stands rather than
 from the frozen branch. This section is regenerated against `main` at
-`13703a55` (2026-09-29), 1721 commits past `v0.1.0a10`. See
+`11e8bbe5` (2026-09-30), 1732 commits past `v0.1.0a10`. See
 [State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
 for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
+
+### Fixed (2026-09-30, real-silicon hang, P0, RFC 0013 phase 0)
+
+A user found and confirmed on a real Arduino Uno: an SSD1306 OLED wired over I2C
+through `adafruit_bus_device.I2CDevice` never lit up, hanging in
+`while not i2c.try_lock(): pass` before the first byte reached the bus. Two
+independent causes, both invisible in the emulator, which always starts fresh state
+at zero, unlike a real chip at cold boot:
+
+- **ir**: `self.i2c = i2c` (a field write that ALIASES an already-constructed
+  instance, the `adafruit_bus_device.I2CDevice`/`busio.I2C` pattern almost every
+  Adafruit driver uses: a driver constructed inside another driver, handed the bus
+  object to hold onto rather than to build) created a second, disjoint copy of the
+  aliased instance's storage instead of sharing the original's, silently. A lock
+  taken through one copy and checked through the other never agreed, whatever their
+  initial register contents happened to be. Fixed on both the write side (the field
+  write now registers as an alias of the source instance, not a fresh one) and the
+  read side (a method call or read reached through the field now chases that alias
+  to the real storage instead of stopping at the field's own, separate copy).
+- **ir/avr**: PyMCU's generated startup code did not zero every object of *static
+  duration* (module-level state, and any field of an instance a module-level object
+  holds, however many hops deep) before `main` runs. On a real ATmega328P, SRAM and
+  the R2-R15 register file power on with **undefined contents**, not zero; the AVR8Sharp
+  emulator used in every test up to this point always starts both at zero, which
+  masked this class of bug in every test that ever ran there. `busio.I2C._locked`,
+  reached through `I2CDevice.i2c`, could power on nonzero on real hardware and never
+  actually be zero when `try_lock()` first read it, hanging forever on a chip whose
+  register allocation happened to place that state unluckily; whether a given program
+  hung depended on register pressure elsewhere in the same build, which is why the
+  bug reproduced on some Game-of-Life-plus-OLED programs and not their near-identical
+  siblings. The frontend now tracks exactly which flattened names are of static
+  duration (`AUTOMATIC` is exclusively a parameter, local or temporary a function
+  itself declares; everything else, at whatever nesting depth, is static by
+  exclusion) and the AVR backend zeroes every one of them, SRAM slot or R2-R15
+  register home, in the boot-time clear loop. See `docs/rfcs/0013-memory-model.md`
+  for the full model (phase 0 only; later phases are future work).
+
+**Visible cost, accepted by the maintainer**: a program with static-duration state
+in SRAM pays the clear loop once (about +24 bytes measured on real corpus programs,
+see `pymcu-circuitpython`'s CHANGELOG), plus 2 bytes for each register that homes
+static state. A program with no static state of its own (the canonical blinks
+among them) pays nothing: `compat-mp-blink-toggle` stays 138 bytes,
+`compat-cp-blink` stays 148 bytes.
+
+**Test harness guarantee, going forward**: the AVR integration suite's cold boot
+now starts with every register (`R0`-`R31` except `R1`) and all of SRAM filled with
+`0xFF` by default, instead of the emulator's previous always-zero-on-fresh-state
+default, so a program that only works by accident of implicit zeroing fails a test
+instead of passing one that a real chip would not. Measured before flipping the
+default: 3961 correct both poisoned and unpoisoned, 0 incorrect either way (the
+poisoned and unpoisoned skip counts differ only by environment gaps unrelated to
+poisoning, such as a profiler binary not being built in a given run); confirmed
+green again after flipping it.
 
 ### Fixed (2026-09-29, five bugs from deciding by a name's spelling, not what it is)
 
@@ -1445,7 +1498,7 @@ in this project's convention).
 ### Full commit log
 
 <details>
-<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 980 more commits landed on `main` between 83f05312 and 13703a55 (2026-09-29, 1721 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-29) for the condensed, by-area account of that window, and `git log 83f05312..13703a55` for every individual subject.</summary>
+<summary>741 commits from v0.1.0a10 to 83f05312 (2026-09-15 freeze), grouped by Conventional Commit type. 991 more commits landed on `main` between 83f05312 and 11e8bbe5 (2026-09-30, 1732 total since v0.1.0a10) -- see the "Added"/"Fixed" sections above (dated 2026-09-25 to 2026-09-30) for the condensed, by-area account of that window, and `git log 83f05312..11e8bbe5` for every individual subject.</summary>
 
 ### Added
 
