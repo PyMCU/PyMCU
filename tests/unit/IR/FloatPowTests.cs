@@ -119,14 +119,73 @@ public class FloatPowTests
         Assert.False(EmitsRawBinaryPow(ir));
     }
 
+    // P2 AVR gaps bundle, item 4: CPython's ** and pow() raise ZeroDivisionError for
+    // 0.0 ** negative (a genuine RUNTIME exception -- CPython does not refuse this at
+    // compile time), not the ValueError math.pow() raises for the identical value. This
+    // used to be a CompileError for a compile-time-constant operand pair, folding
+    // Math.Pow(0, negative)'s +Infinity into a refusal instead of CPython's actual
+    // exception; it now raises ZeroDivisionError at run time like `0 ** -1`/`pow(0, -1)`
+    // already did for an int base.
     [Fact]
-    public void ZeroToAConstantNegativePower_IsRefusedAtCompileTime()
+    public void ZeroToAConstantNegativePower_RaisesZeroDivisionErrorAtRunTime()
     {
-        // Math.Pow(0, negative) is +Infinity in C#, which would otherwise silently fold to
-        // that instead of raising -- disagreeing with the exact same expression evaluated at
-        // RUNTIME through __pymcu_powf, whose `x == 0.0 and y < 0` check raises ValueError.
-        string msg = Assert.ThrowsAny<Exception>(() => Gen("    y: float = 0.0 ** -1\n")).Message;
-        Assert.Contains("cannot be raised to a negative power", msg);
+        var ir = Gen("    y: float = 0.0 ** -1\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<SignalError>(),
+            r => r.Code is Constant { Value: 6 });
+    }
+
+    [Fact]
+    public void PowOfZeroBaseAndAConstantNegativeExponent_RaisesZeroDivisionErrorAtRunTime()
+    {
+        var ir = Gen("    y: float = pow(0.0, -1)\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<SignalError>(),
+            r => r.Code is Constant { Value: 6 });
+    }
+
+    // math.pow(0.0, -1) is untouched: it is an ordinary stdlib call straight to
+    // __pymcu_powf (its ENTIRE body is `return __pymcu_powf(x, y)`, the shape
+    // lib/src/pymcu/math/__init__.py's real pow() has), which never reaches
+    // LowerPow/EmitPowBuiltin's new guard, so it keeps CPython's OWN math.pow
+    // ValueError for the identical value that ** and pow() now raise ZeroDivisionError
+    // for. A minimal stand-in module, not the real lib/src/pymcu/math -- the point under
+    // test is the DISPATCH (bare builtin vs. an ordinary call), not math's own body.
+    private static readonly Dictionary<string, ProgramNode> MathStub = new()
+    {
+        ["math"] = new Parser(new Lexer(
+            "def pow(x: float, y: float) -> float:\n"
+            + "    return __pymcu_powf(x, y)\n").Tokenize()).ParseProgram(),
+    };
+
+    [Fact]
+    public void MathPowOfZeroBaseAndANegativeExponent_StillCallsPymcuPowf_NoGuard()
+    {
+        var ir = new IRGenerator().Generate(
+            new Parser(new Lexer(
+                "import math\n" + Prelude
+                + "    a: uint8 = GPIOR0.value\n"
+                + "    y: float = math.pow(float(a), -1.0)\n").Tokenize()).ParseProgram(),
+            MathStub, new DeviceConfig { Arch = "avr" });
+        Assert.True(CallsPymcuPowf(ir));
+        // Scoped to MAIN, not the whole program: __pymcu_powf's own body divides by a
+        // couple of runtime loop counters (its log2/exp series), each with the ordinary
+        // `/` operator's own div-by-zero guard -- also code 6, unrelated to this test,
+        // and living in __pymcu_powf's OWN function body, not main's.
+        Assert.DoesNotContain(
+            ir.Functions.Single(f => f.Name == "main").Body.OfType<SignalError>(),
+            r => r.Code is Constant { Value: 6 });
+    }
+
+    [Fact]
+    public void PowOfARuntimeZeroBaseWithARuntimeNegativeExponent_RaisesZeroDivisionError()
+    {
+        // The guard must be a RUN-TIME check, not just a compile-time-constant special
+        // case: a base/exponent the compiler cannot fold still has to raise for the
+        // (0.0, negative) pair it happens to carry when the program runs.
+        var ir = Gen(
+            "    a: uint8 = GPIOR0.value\n" +
+            "    y: float = pow(float(a) * 0.0, 0 - 1 - int16(a))\n");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<SignalError>(),
+            r => r.Code is Constant { Value: 6 });
     }
 
     [Fact]
