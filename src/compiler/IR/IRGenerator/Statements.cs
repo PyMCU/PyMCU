@@ -1724,6 +1724,27 @@ public partial class IRGenerator
                     producedInstanceClasses.Remove(ctx.ResultVars[k]);
                     maybeInstanceClasses.Remove(ctx.ResultVars[k]);
                     scalarMaskedNames.Remove(ctx.ResultVars[k]);
+
+                    // RFC 0009 section 11, open question 2's tuple-return counterpart
+                    // (ResolveTupleReturnBufferOptionalSlots, OptionalUnion.cs): this
+                    // position is a bytearray/bytes slot SOME return in this function
+                    // answers None for. A sibling presence byte rides beside the result
+                    // slot -- 1 when THIS return spells None outright, the source's own
+                    // live tag when it already carries one (forwarded unchanged, the same
+                    // rule a buffer-Optional parameter's call site already uses), else 0.
+                    // Every return of this same tuple-returning function writes the same
+                    // slot name, so whichever one actually fires at run time leaves the
+                    // right byte for the caller's tuple-unpack to pick up.
+                    if (tupleReturnBufferOptionalSlots.TryGetValue(ctx.CalleeName, out var boSlots)
+                        && boSlots.Contains(k))
+                    {
+                        string tagSlot = ctx.ResultVars[k] + "$tag";
+                        variableTypes[tagSlot] = DataType.UINT8;
+                        Emit(new Copy(BufferPresenceTagVal(tup.Elements[k]),
+                            new Variable(tagSlot, DataType.UINT8)));
+                        optionalTagSlots[ctx.ResultVars[k]] = new Variable(tagSlot, DataType.UINT8);
+                        optionalMembersByName[ctx.ResultVars[k]] = new List<string> { declared[k], "None" };
+                    }
                 }
 
                 if (_runtimeBranchDepth <= ctx.EntryBranchDepth)

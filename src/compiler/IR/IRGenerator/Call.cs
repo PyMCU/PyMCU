@@ -3102,6 +3102,13 @@ public partial class IRGenerator
         // names, so the expansion's qualified locals match through SourcePartOf).
         CollectExpansionOptionalCapable(func.Body.Statements);
 
+        // A tuple-unpack inside THIS expansion's own body that receives from a callee whose
+        // return carries a buffer-Optional slot (`rom, diff = self._search_rom(rom, diff)`
+        // inside `scan()`) needs its target registered under THIS expansion's prefix before
+        // any statement runs, not only after the unpack that would otherwise register it too
+        // late for the loop's own first (and only, at compile time) visit to read.
+        CollectExpansionTupleReturnBufferOptionalTargets(func, callee, currentInlinePrefix);
+
         var boundParams = new HashSet<int>();
 
         // Too MANY positional arguments used to be dropped on the floor: the loop below simply

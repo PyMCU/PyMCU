@@ -1633,6 +1633,15 @@ public partial class IRGenerator
         // its callee returns.
         ResolveOptionalParams(mainAst, importedModules, astToCanonicalPrefix);
 
+        // RFC 0009 section 11, open question 2's tuple-return counterpart: a Tuple-return
+        // slot the body sometimes answers None, on a position the declaration types
+        // bytearray/bytes. Independent of the two passes above (a plain `Tuple[bytearray,
+        // int]` return has no ReturnMembers at all), and must be ready before any body
+        // lowers -- a caller's tuple-unpack target is pre-registered from this at its own
+        // expansion's setup (Call.cs), before its first (and, at compile time, only) visit
+        // to a call site that reads the target's tag back.
+        ResolveTupleReturnBufferOptionalSlots(mainAst, importedModules);
+
         // Whether raises record their message for a later read. Two readers: a handler that
         // binds `except X as e` (#369), and the unhandled-exception report, which prints
         // `E:<Type>: <msg>` through __pymcu_exn_tail. The second needs a raise that actually

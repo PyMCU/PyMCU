@@ -11539,6 +11539,25 @@ public partial class IRGenerator
                 variableTypes[dstName] = dt;
                 Emit(new Copy(new Variable(srcName, dt), new Variable(dstName, dt)));
                 if (constantVariables.TryGetValue(srcName, out int cVal)) constantVariables[dstName] = cVal;
+
+                // The tuple-return counterpart of a buffer-Optional parameter's tag
+                // (ResolveTupleReturnBufferOptionalSlots / Statements.cs's tuple-return
+                // writer): the result slot carries a sibling presence byte, and this
+                // unpack target's own tag storage was already minted the same way at this
+                // expansion's setup (CollectExpansionTupleReturnBufferOptionalTargets) --
+                // only the VALUE needs copying here, on every unpack, so a later call
+                // passing `dstName` back finds the right byte regardless of which of the
+                // callee's own returns actually fired at run time.
+                if (optionalTagSlots.TryGetValue(srcName, out var srcTagVal))
+                {
+                    string dstTagSlot = dstName + "$tag";
+                    variableTypes[dstTagSlot] = DataType.UINT8;
+                    Emit(new Copy(srcTagVal, new Variable(dstTagSlot, DataType.UINT8)));
+                    optionalTagSlots[dstName] = new Variable(dstTagSlot, DataType.UINT8);
+                    if (optionalMembersByName.TryGetValue(srcName, out var srcMembers))
+                        optionalMembersByName[dstName] = srcMembers;
+                    bytearrayParams.Add(dstName);
+                }
             }
         }
         else

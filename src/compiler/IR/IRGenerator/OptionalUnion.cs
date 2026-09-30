@@ -604,6 +604,110 @@ public partial class IRGenerator
     private static string UnionDisplay(List<string> members)
         => "Union[" + string.Join(", ", members) + "]";
 
+    // ── tuple-return buffer-Optional slots (RFC 0009 section 11, open question 2) ──
+
+    /// <summary>
+    /// Which tuple-return element positions a function's own body returns a literal
+    /// `None` for, on a slot the declaration types `bytearray`/`bytes` --
+    /// `adafruit_onewire.bus.OneWireBus._search_rom(self, l_rom, diff) -> Tuple[bytearray, int]`,
+    /// whose `if not self.reset(): return None, 0` alongside `return rom, next_diff` is the
+    /// demandant. Independent of compile order and of the scalar `ResolveOptionalReturns`
+    /// pass above (a plain `Tuple[bytearray, int]` return has no `ReturnMembers` at all --
+    /// the tuple machinery already lets a slot answer `None` on some path without one, RFC
+    /// 0009 decision 4's buffer exclusion turned the OTHER way: a payload the tag cannot
+    /// carry needs no tag validation, only a companion presence byte). Reads only the AST,
+    /// so it runs once, before anything lowers, exactly like <see cref="ResolveOptionalReturns"/>
+    /// but without that pass's tag/reachability machinery -- there is no register run to
+    /// widen here, only a sibling byte a caller's tuple-unpack target picks up.
+    /// </summary>
+    private void ResolveTupleReturnBufferOptionalSlots(ProgramNode mainAst,
+        Dictionary<string, ProgramNode> importedModules)
+    {
+        var allDefs = new List<(string key, FunctionDef fn)>();
+        var seenDefs = new HashSet<FunctionDef>();
+        foreach (var entry in functionsToCompile)
+        {
+            string key = (entry.Prefix ?? "") + entry.Func.Name;
+            if (seenDefs.Add(entry.Func)) allDefs.Add((key, entry.Func));
+        }
+        foreach (var kv in inlineFunctions)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, kv.Value));
+        foreach (var kv in methodAstByName)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, kv.Value));
+        foreach (var kv in instanceMethodDefs)
+            if (kv.Value != null && seenDefs.Add(kv.Value)) allDefs.Add((kv.Key, kv.Value));
+        foreach (var fn in mainAst.Functions)
+            if (seenDefs.Add(fn)) allDefs.Add((fn.Name, fn));
+        foreach (var mod in importedModules.Values)
+            foreach (var fn in mod.Functions)
+                if (seenDefs.Add(fn)) allDefs.Add((fn.Name, fn));
+
+        foreach (var (key, fn) in allDefs)
+        {
+            var declared = TupleType.ElementTypes(fn.ReturnType);
+            if (declared.Count == 0) continue;
+            HashSet<int>? slots = null;
+            foreach (var s in TypeInference.WalkStatements(fn.Body.Statements))
+            {
+                if (s is ReturnStmt { Value: TupleExpr tup })
+                    for (int k = 0; k < tup.Elements.Count && k < declared.Count; ++k)
+                        if (declared[k] is "bytearray" or "bytes" && tup.Elements[k] is NoneLiteral)
+                            (slots ??= new HashSet<int>()).Add(k);
+            }
+            if (slots != null) tupleReturnBufferOptionalSlots[key] = slots;
+        }
+    }
+
+    /// <summary>
+    /// The class prefix a self-call inside <paramref name="func"/> resolves against: strip
+    /// this function's own bare name off the END of its qualified <paramref name="callee"/>
+    /// key, the same convention every method of one class shares (`currentModulePrefix` at
+    /// scan time). Null when the key does not end with the function's own name -- an
+    /// unqualified top-level function's key already equals its bare name, so this only
+    /// applies to a real class method.
+    /// </summary>
+    private static string? SelfCallClassPrefix(string callee, FunctionDef func)
+        => callee.EndsWith(func.Name, StringComparison.Ordinal)
+            ? callee[..^func.Name.Length] : null;
+
+    /// <summary>
+    /// Pre-registers a tuple-unpack target inside <paramref name="func"/>'s OWN body
+    /// (`rom, diff = self._search_rom(rom, diff)` inside `scan()`) as buffer-Optional,
+    /// under <paramref name="prefix"/> + the target's bare name -- the SAME qualified
+    /// spelling the name resolves to once the expansion's statements actually lower
+    /// (`currentInlinePrefix` at the point this runs, or the real-function qualifier for
+    /// a callee that stays a real subroutine). Must run BEFORE the body's own statements
+    /// are visited: the call inside `scan()`'s loop reads `rom`'s tag on ITS OWN first
+    /// visit (the loop compiles once; the back-edge is what makes it run every real
+    /// iteration), so the registration has to already exist the first time that argument
+    /// is bound, not only after the unpack that follows it in program order.
+    /// </summary>
+    private void CollectExpansionTupleReturnBufferOptionalTargets(FunctionDef func, string callee,
+        string prefix)
+    {
+        if (tupleReturnBufferOptionalSlots.Count == 0) return;
+        string? classPrefix = SelfCallClassPrefix(callee, func);
+        foreach (var s in TypeInference.WalkStatements(func.Body.Statements))
+        {
+            if (s is not TupleUnpackStmt { Value: CallExpr { Callee: MemberAccessExpr
+                { Object: VariableExpr { Name: "self" }, Member: string m } } } tu)
+                continue;
+            if (classPrefix == null) continue;
+            string calleeKey = classPrefix + m;
+            if (!tupleReturnBufferOptionalSlots.TryGetValue(calleeKey, out var slots)) continue;
+            var calleeElems = functionReturnTypes.TryGetValue(calleeKey, out var calleeRt)
+                ? TupleType.ElementTypes(calleeRt) : new List<string>();
+            foreach (int k in slots)
+            {
+                if (k >= tu.Targets.Count || k >= calleeElems.Count) continue;
+                string targetQ = prefix + tu.Targets[k];
+                bytearrayParams.Add(targetQ);
+                optionalTagSlots[targetQ] = new Variable(targetQ + "$tag", DataType.UINT8);
+                optionalMembersByName[targetQ] = new List<string> { calleeElems[k], "None" };
+            }
+        }
+    }
+
     // ── phase 2: union parameters on real subroutines ───────────────────────
 
     /// <summary>
@@ -3361,11 +3465,23 @@ public partial class IRGenerator
         optionalTagSlots.Remove(paramName);
         optionalMembersByName.Remove(paramName);
         narrowedOptionals.Remove(paramName);
+        bytearrayParams.Remove(paramName);
         if (argName.Length > 0 && TagOfVal(argVal) is { } srcTag)
         {
             optionalTagSlots[paramName] = srcTag;
             if (optionalMembersByName.TryGetValue(argName, out var am))
+            {
                 optionalMembersByName[paramName] = am;
+                // A buffer-shaped tag (RFC 0009 decision 4's separate mechanism) needs
+                // `paramName` in `bytearrayParams` too, or the rebind check a later `if
+                // not param: param = bytearray(N)` reaches (Assign.cs) never sees this
+                // name as a buffer parameter at all and falls through to the plain
+                // "buffer travels as a name" refusal regardless of the tag this method
+                // just carried -- the same three dictionaries a real subroutine's own
+                // buffer-Optional parameter registers together (Statements.cs), here for
+                // the INLINE parameter-forwarding path instead.
+                if (am.Any(mm => mm is "bytearray" or "bytes")) bytearrayParams.Add(paramName);
+            }
             if (narrowedOptionals.TryGetValue(argName, out var nIdx)) narrowedOptionals[paramName] = nIdx;
         }
     }

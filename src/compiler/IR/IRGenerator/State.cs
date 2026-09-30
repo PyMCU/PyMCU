@@ -1473,6 +1473,18 @@ public partial class IRGenerator
     /// </summary>
     private Dictionary<string, string> bufferOptionalParamTags = new();
 
+    /// <summary>
+    /// Callable key (the same qualified spelling as `instanceMethodDefs`/`functionReturnTypes`)
+    /// -> the tuple-return element positions where the body returns a literal `None` for a
+    /// slot the declaration types `bytearray`/`bytes` (RFC 0009 section 11, open question 2's
+    /// "no demandant yet" tuple-return counterpart). Filled once, early, from every candidate's
+    /// own body (ResolveTupleReturnBufferOptionalSlots, OptionalUnion.cs) -- independent of
+    /// compile order, since it only reads the AST. A position never returned as `None` costs
+    /// nothing extra: no companion tag slot, no extra Copy, the exact code the tuple-return
+    /// machinery already emitted.
+    /// </summary>
+    private Dictionary<string, HashSet<int>> tupleReturnBufferOptionalSlots = new();
+
     // Depth counter for runtime-conditional branches currently being compiled.
     // > 0 means we are inside a branch whose predicate could not be folded at compile time.
     // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)
