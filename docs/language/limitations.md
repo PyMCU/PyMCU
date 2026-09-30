@@ -359,13 +359,14 @@ Measured against CPython for `1.0 / 0.0` and its neighbours (float-edges campaig
 | `divmod(x, 0.0)` (runtime `x`, unpacked) | `ZeroDivisionError` | `ZeroDivisionError` | Was silently returning a garbage quotient with no remainder before the fix above |
 | `x / 0` (int **literal** zero, any `x`) | `ZeroDivisionError` at runtime | `CompileError` | A literal `0` divisor is refused at compile time whatever the dividend is, matching every other `/ // %` site, deliberate, not CPython's runtime behaviour. Only a divisor the compiler cannot see (a variable, or an expression) reaches the runtime check |
 | `0.0 / 0.0` | `ZeroDivisionError` | `ZeroDivisionError` | |
-| `int(float('inf'))`, `int(float('nan'))` | `OverflowError`, `ValueError` | **Not measured** | `float("inf")` / `float("nan")` are not accepted as literals (`CompileError: not a number`); PyMCU has no way to construct an infinity or NaN value from source today, so these two rows could not be exercised. `float('inf') > 1e38` and any NaN comparison are unmeasured for the same reason |
+| `int(float('inf'))`, `int(float('nan'))` | `OverflowError`, `ValueError` | `CompileError` | `float("inf")` / `float("nan")` are now accepted literals (P2 AVR gaps bundle, item 5), so this is measured: `int()` of a compile-time infinity or NaN refuses at compile time ("the value does not fit any PyMCU integer type"), the same refusal `int(1e10)` gets (see below) -- deliberate, not CPython's runtime `OverflowError`/`ValueError`, honest rather than silently keeping an unspecified bit pattern |
+| `float('inf') > 1e38` | `True` | `True` | Matches. NaN comparisons: see the dedicated table below |
 | `int(1e10)` (a float constant past int32/uint32 range) | `10000000000` (exact) | `CompileError` | No PyMCU integer type is 64-bit; the constant is refused instead of silently keeping an unspecified bit pattern (fixed, see below) |
 | `round(2.5)` / `round(3.5)` / `round(-2.5)` | `2` / `4` / `-2` (banker's rounding) | `2` / `4` / `-2` | Matches |
 | `round(x, 2)` | rounds to 2 places | matches | `ndigits` must be a compile-time constant (-15..15); an int `x` folds at compile time with CPython's own int semantics, a float `x` (constant or run-time) forwards to `pymcu.round2`'s half-to-even digit extraction, the same one the f-string float format spec uses |
 | `abs(-0.0)` | `0.0` | `0.0` | Matches |
 | `-0.0 == 0.0` | `True` | `True` | Matches |
-| `math.isnan` / `isinf` / `isfinite` | exist | **absent** | Not implemented, `math` only has `sqrt`/`log`/`exp`/`radians`, each added because a specific measured library needed it (see the Built-ins table); nobody has needed these yet |
+| `math.isnan` / `isinf` / `isfinite` | exist | ✅ Supported | Added (P2 AVR gaps bundle, item 5): @inline, three bit operations apiece over the exponent/mantissa split `_f32_repr` (uart_text.py) already used to print "inf"/"nan" correctly |
 | `x ** 0.5` | real sqrt | matches | Routes through `__pymcu_powf` |
 | `(-8.0) ** (1/3)` | complex number | `CompileError` (compile-time-constant) or runtime `ValueError` | PyMCU has no complex type; refused instead of silently answering NaN. Fixed as part of this campaign, see below |
 | `0.0 ** -1` / `pow(0.0, -1)` | `ZeroDivisionError` | `ZeroDivisionError` | Fixed (P2 AVR gaps bundle, item 4): `**` and the bare `pow()` builtin now raise CPython's own `ZeroDivisionError` for this value, a genuine run-time exception even for a compile-time-constant operand pair (CPython does not refuse this at compile time). `math.pow(0.0, -1)` is untouched and still raises `ValueError`, matching CPython's own `math.pow` (a DIFFERENT domain than `**`/`pow()` for the identical value, measured, not assumed) |
@@ -391,6 +392,47 @@ on `fix/float-edges` for the exact `fichero:linea`):
   `(int)fc.Value`, which the C# spec leaves unspecified for a double outside int's range , 
   measured as `-1` on the build host, an artifact of the JIT, not a chosen value. Now refused
   at compile time instead.
+
+### NaN comparisons (P2 AVR gaps bundle, item 5)
+
+Every comparison with a NaN is `False` in CPython except `!=` (always `True`). Measured with
+a NaN built at run time (`float('nan') + float(GPIOR0.value)`, so it cannot fold away):
+
+| Expression (`n` is NaN) | CPython | PyMCU |
+|---|---|---|
+| `n == n` | `False` | `False` |
+| `n != n` | `True` | `True` |
+| `n < 1.0` / `1.0 < n` | `False` | `False` |
+| `n <= 1.0` | `False` | `False` |
+| `n > 1.0` / `1.0 > n` | `False` | `False` |
+| `n >= 1.0` | `False` | `False` |
+| `if n > 1.0: ... else: ...` | takes `else` | takes `else` |
+
+Two silent-wrongcode bugs found and fixed while measuring this, both root-caused to the AVR
+backend/compiler, not worked around:
+
+- The AVR backend lowered every float comparison through GCC's `__cmpsf2`, which answers
+  "greater" (`0x01`) for an UNORDERED (NaN) pair. Harmless for `==`/`!=`/`<`/`<=` (NaN reads
+  as "not equal", "not less", "not less-or-equal" through those checks by coincidence), but
+  `>`/`>=` read that `0x01` as a genuine "greater than": `float('nan') > 1.0` answered `True`.
+  `__gtsf2`/`__gesf2` are libgcc's own routines for those two operators, answering `0xFF`
+  ("not greater"/"not greater-or-equal") for the unordered case instead -- the pairing GCC
+  documents them for. Fixed in both AVR float-compare sites (the boolean-VALUE path and the
+  `if`/`while` branch path).
+- A SEPARATE bug in the compiler's `if`/`while` jump optimizer, independent of the backend:
+  the jump-to-else case negated a comparison by swapping to the algebraically opposite
+  operator (`NOT(a<b) == a>=b`), true for every ORDERED pair but false whenever an operand is
+  NaN (`a<b` and `a>=b` are BOTH false for NaN, so the swap silently answers a different
+  question). `if n > 1.0:` on a NaN `n` took the THEN branch instead of CPython's `else` --
+  and the AVR backend fix above does not cover this, because an `if`/`while` condition never
+  materialises the comparison as a 0/1 value in the first place. Fixed by taking the DIRECT
+  comparison sense (never the swapped operator) for a float operand, to a label just past an
+  unconditional jump to the real target (`EmitOrderedComparisonJump`, `ControlFlow.cs`). The
+  integer path is untouched: there is no unordered case for an int compare, so the cheaper
+  single-jump swapped form stays exactly as it was.
+- These are two of the small number of SILENT MISCOMPILATIONS found in this compiler across
+  both campaigns (float-edges and P2 AVR gaps): a genuinely wrong answer with no diagnostic,
+  not a refusal. `git log` on `fix/p2-avr-gaps` names the exact commits.
 
 ---
 
