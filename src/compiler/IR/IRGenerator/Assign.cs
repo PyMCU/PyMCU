@@ -3343,17 +3343,16 @@ public partial class IRGenerator
                 constantVariables.Remove(flattenedName);
                 killedConstants.Add(flattenedName);
                 variableTypes[flattenedName] = wbType;
-                // RFC 0013 phase 0b (docs/rfcs/0013-memory-model.md, PyMCU-rfc13):
-                // this is another site (distinct from the two further down this
-                // same function) that stores a `self.field`-flattened name via a
-                // real runtime Copy -- this one for a write-back field, given a
-                // real runtime home exactly because the comment above says a
-                // folded constant cannot receive the write-back copy. Same
-                // "static by exclusion" reasoning as the two sites below: never
-                // safe to assume this home is automatic (zero-cost-unwritten) or
-                // safe to overlay, whether the instance holding it is module-
-                // scoped or function-scoped, so it is recorded unconditionally.
-                staticFieldTypes[flattenedName] = wbType;
+                // RFC 0013 phase 0c: not recorded here at all -- see the
+                // reverted note beside the GC_REF branch above. The backend's
+                // static-vs-automatic decision no longer reads StaticFields
+                // (program.AutomaticLocals / StackAllocator's "static by
+                // exclusion" pass owns it now), and this write-back field is,
+                // if anything, MORE likely to be function-scoped (a mutated
+                // ZCA field with no explicit return) than the general case.
+                if (moduleInstanceMutableFields.Contains(flattenedName)
+                    || (baseName != null && IsModuleInstanceStorage(baseName)))
+                    staticFieldTypes[flattenedName] = wbType;
                 return;
             }
 
@@ -3580,21 +3579,19 @@ public partial class IRGenerator
                 else tupleBoundNames.Remove(flattenedName);
                 if (moduleInstanceMutableFields.Contains(flattenedName))
                     mutableGlobals[flattenedName] = DataType.GC_REF;
-                // RFC 0013 phase 0b (docs/rfcs/0013-memory-model.md, PyMCU-rfc13):
-                // recorded UNCONDITIONALLY, not only when IsModuleInstanceStorage can
-                // trace baseName back to a module-level root. Phase 0's gate missed any
-                // field reached through a HELD instance that the chain-walk in Scan.cs
-                // does not follow (`self.x = Ctor(...)` inside __init__ itself, as
-                // opposed to a constructor argument), which is exactly how
-                // busio.I2C._locked went unrecognized three hops under a Seesaw
-                // instance and stayed poisoned after boot. The backend no longer needs
-                // this set to be provably module-rooted: any name a `self.field`/
-                // `obj.field` store ever flattens to is, by construction, not a
-                // function's own parameter/local/temporary (RFC 0013 section 3), so it
-                // is excluded from "automatic" and always zero-initialized at boot
-                // (over-marking a function-scoped instance's field this way costs a
-                // few bytes of boot-time clear, never correctness -- RFC section 6).
-                staticFieldTypes[flattenedName] = DataType.GC_REF;
+                // RFC 0013 phase 0b recorded this unconditionally; reverted for
+                // phase 0c (team-lead directive 2026-09-30): the backend no
+                // longer decides static-vs-automatic from StaticFields at all
+                // (see program.AutomaticLocals / StackAllocator's "static by
+                // exclusion" pass), so widening this set only cost bytes for
+                // no correctness gain -- measured on compat-mp-blink-toggle,
+                // an expansion-scoped `inline2.__init__._r__bit` (a Pin's own
+                // `_bit`, meant to fold to a compile-time constant, never given
+                // real storage) got swept in here and materialized. Back to
+                // the narrower, module-root-provable condition.
+                if (moduleInstanceMutableFields.Contains(flattenedName)
+                    || (baseName != null && IsModuleInstanceStorage(baseName)))
+                    staticFieldTypes[flattenedName] = DataType.GC_REF;
                 Emit(new Copy(value, new Variable(flattenedName, DataType.GC_REF)));
                 return;
             }
@@ -3630,18 +3627,17 @@ public partial class IRGenerator
                 || (baseName != null && IsModuleInstanceStorage(baseName)
                     && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main"))
                 mutableGlobals[flattenedName] = fdt;
-            // RFC 0013 phase 0b (docs/rfcs/0013-memory-model.md, PyMCU-rfc13): every
-            // `self.field`/`obj.field` store is recorded here UNCONDITIONALLY, not
-            // only when the checks above can prove the field module-rooted (those
-            // stay exactly as they were, for the narrower mutableGlobals/cross-
-            // function-DSE-safety promotion, a different concern). "Static by
-            // exclusion": AUTOMATIC is exclusively a parameter, local or temporary
-            // declared of a function (RFC 0013 section 3); a flattened instance-
-            // field name is never one of those, regardless of whether the instance
-            // holding it is itself module-scoped or function-scoped, so it is never
-            // safe to assume zero-initialized or safe to overlay with an unrelated
-            // function's frame slots without proof.
-            staticFieldTypes[flattenedName] = fdt;
+            // RFC 0013 phase 0b recorded this unconditionally; reverted for
+            // phase 0c (team-lead directive 2026-09-30) back to the narrower,
+            // module-root-provable condition -- see the identical note beside
+            // the GC_REF branch above for the measured regression (an
+            // expansion-scoped Pin `_bit` on compat-mp-blink-toggle) that made
+            // the unconditional version cost bytes for no correctness gain
+            // once the backend stopped deciding static-vs-automatic from this
+            // set at all.
+            if (moduleInstanceMutableFields.Contains(flattenedName)
+                || (baseName != null && IsModuleInstanceStorage(baseName)))
+                staticFieldTypes[flattenedName] = fdt;
 
             Emit(new Copy(value, new Variable(flattenedName, fdt)));
             if (fdt != DataType.UINT8) variableTypes[flattenedName] = fdt;
@@ -6241,6 +6237,23 @@ public partial class IRGenerator
     private void VisitVarDecl(VarDecl stmt)
     {
         CheckAnnotationNames(stmt.VarType, stmt);
+
+        // RFC 0013 phase 0c ("static by exclusion"): record the binding up
+        // front, unconditionally, the same way VisitAssign's bare-VariableExpr
+        // branch does at its own entry -- VisitVarDecl has a few dozen
+        // branches below (dict/set literals, f-string expansion, a typed
+        // instance construction, a declared union, a fixed array, a register
+        // alias, the plain scalar fallback...) and each has its own early
+        // return, so recording only at ONE of those exit points (as an
+        // earlier version of this commit did, at the generic scalar path)
+        // missed every other one -- measured: `i: uint16 = 0` inside
+        // pymcu.time.delay_ms took the plain scalar path in one build and
+        // something else in another, and boundNames must not depend on which.
+        // A `self.field` VarDecl (an instance field declared with an
+        // annotation) reaches this too and records a key
+        // (`currentFunction/prefix + "self." + field`) that no real flattened
+        // field name ever matches, so it is inert, never a false automatic.
+        boundNames.Add(QualifyBoundName(stmt.Name));
 
         if (stmt.Init != null && !stmt.VarType.Contains("ptr")
             && !stmt.VarType.Contains("PIORegister"))
