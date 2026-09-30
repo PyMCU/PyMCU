@@ -2686,15 +2686,28 @@ public partial class IRGenerator
         double? fe = AsCt(ev);
         if (fb.HasValue && fe.HasValue)
         {
-            // Math.Pow answers +Infinity for Pow(0, negative) and NaN for a negative base
-            // with a non-integral exponent -- neither is a value, and folding to it would
-            // silently disagree with what the exact same expression raises at RUNTIME
-            // through __pymcu_powf (RuntimeHelpers.cs), whose two checks this mirrors: `0.0
-            // to a negative power` and `negative base needs an integral exponent` (the
-            // latter is CPython's own math.pow domain -- (-8.0) ** (1/3) is complex in
-            // Python and PyMCU has no complex type, so it is refused like math.pow's is).
+            // 0.0 ** negative is CPython's own ZeroDivisionError for ** and pow() -- a
+            // genuine RUNTIME exception (`except ZeroDivisionError` catches it), not
+            // something CPython refuses at compile time, so a compile-time-constant operand
+            // pair raises it here too (P2 AVR gaps bundle, item 4) rather than folding to
+            // Math.Pow's +Infinity (not a value CPython's pow ever answers) or refusing the
+            // program outright. math.pow(0.0, -1) is untouched: it raises ValueError in
+            // CPython too (a different domain than the bare builtin for this one value) and
+            // never reaches this function -- it is an ordinary stdlib call straight to
+            // __pymcu_powf (RuntimeHelpers.cs).
             if (fb.Value == 0.0 && fe.Value < 0.0)
-                throw UserError($"{form}: 0.0 cannot be raised to a negative power", at);
+            {
+                EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
+                // A literal placeholder, not MakeTemp: the raise never returns, so nothing
+                // downstream can observe this value, but a Temporary nobody ever writes
+                // read-never-written flagged it as if it could (ir-verify).
+                return new FloatConstant(0.0);
+            }
+            // A negative base with a non-integral exponent -- NaN in Math.Pow, a complex
+            // number in CPython, which PyMCU has no type for -- stays a compile-time
+            // refusal: unlike the zero-base case above, CPython does not raise an
+            // EXCEPTION here at all (`(-8.0) ** 0.5` succeeds, answering complex), so
+            // there is no runtime behaviour to match by raising instead.
             if (fb.Value < 0.0 && fe.Value != Math.Truncate(fe.Value))
                 throw UserError(
                     $"{form}: a negative base needs an integral exponent (Python would "
@@ -2723,9 +2736,32 @@ public partial class IRGenerator
         // __pymcu_powf is registered unconditionally (RegisterRuntimeHelpers) and lowered
         // lazily from the Call instructions that actually name it (LowerCalledRuntimeHelpers),
         // so a program whose ** never reaches this fallback still pays nothing for it.
+        Val fbv = ToFloat(bv), fev = ToFloat(ev);
+        EmitPowZeroNegGuard(fbv, fev);
         Temporary dst = MakeTemp(DataType.FLOAT);
-        Emit(new Call("__pymcu_powf", new List<Val> { ToFloat(bv), ToFloat(ev) }, dst));
+        Emit(new Call("__pymcu_powf", new List<Val> { fbv, fev }, dst));
         return dst;
+    }
+
+    // `**`/pow()'s OWN 0.0-to-a-negative-power check, run ahead of __pymcu_powf: CPython
+    // raises ZeroDivisionError for this from the bare builtin (** and pow()) but
+    // ValueError from math.pow() for the SAME value -- measured, not assumed (#p2avr-4).
+    // __pymcu_powf's internal check is math.pow's domain (it IS math.pow's implementation,
+    // called directly by lib/src/pymcu/math/__init__.py's pow() with no bare-builtin
+    // wrapper in between), so the bare spelling needs its own check first to get CPython's
+    // actual exception for this one value instead of borrowing math.pow's.
+    private void EmitPowZeroNegGuard(Val floatBase, Val floatExp)
+    {
+        Temporary isZero = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.Equal, floatBase, new FloatConstant(0.0), isZero));
+        Temporary isNeg = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.LessThan, floatExp, new FloatConstant(0.0), isNeg));
+        Temporary bothBad = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.BitAnd, isZero, isNeg, bothBad));
+        string ok = MakeLabel();
+        Emit(new JumpIfZero(bothBad, ok));
+        EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
+        Emit(new Label(ok));
     }
 
     private Val VisitUnary(UnaryExpr expr)
