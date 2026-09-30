@@ -586,6 +586,7 @@ public partial class IRGenerator
 
         globals.Clear();
         mutableGlobals.Clear();
+        staticFieldTypes.Clear();
         functionReturnTypes.Clear();
         functionParams.Clear();
         inlineFunctions.Clear();
@@ -1546,6 +1547,14 @@ public partial class IRGenerator
         {
             irProgram.Globals.Add(new Variable(kvp.Key, kvp.Value));
         }
+
+        // RFC 0013 phase 0: every module-instance field name this pass ever
+        // recognised, independent of whether it also earned the (narrower)
+        // mutableGlobals promotion above. A backend needs this to zero-initialise
+        // the object's home at boot regardless of what dead-store elimination did
+        // to any one write to it.
+        foreach (var kvp in staticFieldTypes)
+            irProgram.StaticFields[kvp.Key] = kvp.Value;
 
         // Module-level SRAM arrays must be allocated as globals so the overlay
         // algorithm never aliases them with function-local arrays across sibling calls.

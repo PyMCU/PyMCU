@@ -3569,6 +3569,11 @@ public partial class IRGenerator
                 else tupleBoundNames.Remove(flattenedName);
                 if (moduleInstanceMutableFields.Contains(flattenedName))
                     mutableGlobals[flattenedName] = DataType.GC_REF;
+                // RFC 0013 phase 0: recorded regardless of the mutableGlobals gate above --
+                // see the unconditional record below for why.
+                if (moduleInstanceMutableFields.Contains(flattenedName)
+                    || (baseName != null && IsModuleInstanceStorage(baseName)))
+                    staticFieldTypes[flattenedName] = DataType.GC_REF;
                 Emit(new Copy(value, new Variable(flattenedName, DataType.GC_REF)));
                 return;
             }
@@ -3600,10 +3605,23 @@ public partial class IRGenerator
             // module-level instance's field stored inside ANY function (a bound-outlined
             // method writes from its own body, which the marker never walks) is cross-function
             // storage by construction.
+            bool isModuleInstanceField = moduleInstanceMutableFields.Contains(flattenedName)
+                || (baseName != null && IsModuleInstanceStorage(baseName));
             if (moduleInstanceMutableFields.Contains(flattenedName)
                 || (baseName != null && IsModuleInstanceStorage(baseName)
                     && !string.IsNullOrEmpty(currentFunction) && currentFunction != "main"))
                 mutableGlobals[flattenedName] = fdt;
+            // RFC 0013 phase 0 (docs/rfcs/0013-memory-model.md, PyMCU-rfc13): this
+            // object is of STATIC duration -- its lifetime is the module's -- the
+            // instant it is a field of a module-level instance, independent of the
+            // "currentFunction != main" test above. That test decides only whether
+            // THIS pass promotes the name to a real mutableGlobal (so a read from a
+            // different function does not fold the constructor's stale value); a
+            // write from inside the module's own top-level code (an inlined
+            // constructor call included) is exactly as static, and the backend needs
+            // to know that regardless of whether this particular write survives
+            // dead-store elimination downstream.
+            if (isModuleInstanceField) staticFieldTypes[flattenedName] = fdt;
 
             Emit(new Copy(value, new Variable(flattenedName, fdt)));
             if (fdt != DataType.UINT8) variableTypes[flattenedName] = fdt;

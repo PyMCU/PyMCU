@@ -1460,6 +1460,11 @@ public partial class IRGenerator
                     // Registering both would give the field two homes and waste the SRAM.
                     var dt = DataTypeExtensions.StringToDataType(ftype);
                     mutableGlobals[currentModulePrefix + instance + "_" + field] = dt;
+                    // RFC 0013 phase 0: this object is static duration (a field of a
+                    // module-level instance) regardless of the mutableGlobals promotion
+                    // above landing on the write-site test too -- see Assign.cs's
+                    // unconditional record for the reason it needs recording independently.
+                    staticFieldTypes[currentModulePrefix + instance + "_" + field] = dt;
                 }
         }
 

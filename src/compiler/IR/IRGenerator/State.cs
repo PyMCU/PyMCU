@@ -446,6 +446,13 @@ public partial class IRGenerator
     // that function reads, and the reader in another function folds the constructor's value.
     private HashSet<string> moduleInstanceMutableFields = new();
 
+    // RFC 0013 phase 0: every module-instance field this pass ever recognises as
+    // such, regardless of moduleInstanceMutableFields' extra "seen outside this
+    // module's own top-level code" requirement. Flushed to irProgram.StaticFields
+    // unconditionally -- a backend needs to zero-initialise this object's home
+    // whether or not the narrower mutableGlobals promotion also fires for it.
+    private Dictionary<string, DataType> staticFieldTypes = new();
+
     // Module-global names (mutableGlobals spelling: currentModulePrefix + name) whose value
     // can differ between program points: written a second time at module level, or declared
     // `global` inside a function/method. RecordLocalConstant refuses them outright -- the
