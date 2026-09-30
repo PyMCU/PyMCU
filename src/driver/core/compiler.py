@@ -133,6 +133,20 @@ class ArenaRequiredError(RuntimeError):
     shim + import and running the frontend once more."""
 
 
+class StrfmtRequiredError(RuntimeError):
+    """pymcuc reported [NEEDS_STRFMT]: the program builds a string from a run-time
+    value (an f-string value, str()/repr()/hex()/bin()/oct() of a run-time value...)
+    but has no pymcu.strfmt import. `pymcu build` answers by injecting the import
+    and running the frontend once more (RFC 0014 decision 5: the compiler decides
+    this from the call it resolved, not a source-text scan)."""
+
+
+class Round2RequiredError(RuntimeError):
+    """pymcuc reported [NEEDS_ROUND2]: the program calls round(x, n) on a run-time
+    float but has no pymcu.round2 import. `pymcu build` answers by injecting the
+    import and running the frontend once more (RFC 0014 decision 5)."""
+
+
 class PyMCUCompiler:
     """
     Wrapper for the core C++ build tool (pymcuc).
@@ -342,6 +356,8 @@ class PyMCUCompiler:
             #   [NEEDS_ARENA] runtime-sized bytearray(n), pymcu.arena not imported
             #   [ARENA_USED]  an arena allocation was lowered (see ArenaRequiredError
             #                 and last_compile_used_arena for how build.py uses these)
+            #   [NEEDS_STRFMT] a run-time string build, pymcu.strfmt not imported
+            #   [NEEDS_ROUND2] round(x, n) on a run-time float, pymcu.round2 not imported
             #
             # stderr is left to pass through directly so VS Code's problem matcher
             # can parse diagnostic lines (file:line:col: severity: msg).
@@ -402,7 +418,9 @@ class PyMCUCompiler:
                     proc.wait()
 
                 needs_arena = "[NEEDS_ARENA]" in buffered
-                if err_text and not needs_arena:
+                needs_strfmt = "[NEEDS_STRFMT]" in buffered
+                needs_round2 = "[NEEDS_ROUND2]" in buffered
+                if err_text and not (needs_arena or needs_strfmt or needs_round2):
                     sys.stderr.write(
                         _remap_diagnostics(err_text, diagnostic_source)
                         if diagnostic_source else err_text)
@@ -437,6 +455,12 @@ class PyMCUCompiler:
             if proc.returncode != 0:
                 if needs_arena:
                     raise ArenaRequiredError(
+                        "Compilation failed (see diagnostics above)")
+                if needs_strfmt:
+                    raise StrfmtRequiredError(
+                        "Compilation failed (see diagnostics above)")
+                if needs_round2:
+                    raise Round2RequiredError(
                         "Compilation failed (see diagnostics above)")
                 raise RuntimeError("Compilation failed (see diagnostics above)")
         except FileNotFoundError:

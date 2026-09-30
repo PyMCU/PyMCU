@@ -29,7 +29,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import binary_for_plugin, get_backend_for_chip, run_backend
-from ..core.compiler import PyMCUCompiler, ArenaRequiredError, map_line
+from ..core.compiler import (
+    PyMCUCompiler,
+    ArenaRequiredError,
+    StrfmtRequiredError,
+    Round2RequiredError,
+    map_line,
+)
 from ..core.project_config import experimental_enabled
 from ..core.boards import (
     board_frequency,
@@ -352,20 +358,25 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     return has_print, has_uart, has_input
 
 
-_FSTRING_VALUE_RE = re.compile(
-    r'''=\s*f["']|\.join\s*\(|str\s*\(|repr\s*\(|hex\s*\(|bin\s*\(|oct\s*\(''')
+_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']|\.join\s*\(|str\s*\(|repr\s*\(''')
 
 
 def _detect_fstring_value_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file assigns an f-string to a name (`s = f"..."`),
-    calls str.join (a join over a generator/comprehension materializes through
-    the same pymcu.strfmt helpers), or calls str()/repr()/hex()/bin()/oct() on
-    a run-time value (hex(x) etc. of a non-constant argument builds its digits
-    into a buffer the same way).
+    """Return True if any .py file assigns an f-string to a name (`s = f"..."`)
+    or calls str.join (a join over a generator/comprehension materializes
+    through the same pymcu.strfmt helpers).
 
     Over-inclusive on purpose (a fully-constant f-string assignment also matches):
     the injected pymcu.strfmt helpers are plain module functions, so anything
-    unused is dropped by DCE.
+    unused is dropped by DCE. hex()/bin()/oct() of a run-time value ALSO needs
+    pymcu.strfmt but is not scanned for here (P2 AVR gaps bundle, item 1 / RFC
+    0014 decision 5): this regex over the source text cannot tell a real call
+    from the same spelling in a comment or a user's own `def hex`, so it used
+    to either miss the real usage or inject the helper unasked. The compiler
+    itself decides now -- it reports [NEEDS_STRFMT] on its stdout token stream
+    once it resolves a call that actually needs the helper and finds the import
+    missing; build() answers that below the same way it already answers
+    [NEEDS_ARENA] (see _compile_frontend's retry loop).
     """
     for py_file in sources_dir.rglob("*.py"):
         try:
@@ -452,24 +463,15 @@ def _inject_strfmt_preamble(entry_point: Path, generated_dir: Path) -> tuple[Pat
 # round(x, n) on a FLOAT x (P2 AVR gaps bundle, item 2): the IR generator resolves the
 # two-argument builtin to a call on pymcu.round2's _pymcu_round2, by import alias exactly
 # like pymcu.strfmt above. An integer x folds at compile time and needs no import.
-_ROUND2_RE = re.compile(r'''round\s*\([^()]*,''')
-
-
-def _detect_round2_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file calls round(x, n) -- two positional arguments.
-
-    Over-inclusive on purpose: round(5, 2) (an int x, which folds without the helper)
-    also matches, and the injected module is plain functions DCE drops when unused.
-    """
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-            if _ROUND2_RE.search(code):
-                return True
-        except OSError:
-            pass
-    return False
+#
+# Whether a given round(x, n) call actually needs the helper is NOT decided here (P2 AVR
+# gaps bundle, item 1 / RFC 0014 decision 5): a source-text scan cannot tell a real call
+# to the builtin from the same spelling in a comment, a string, or a user's own `def
+# round` (which CPython -- and now PyMCU -- lets shadow the builtin). The compiler
+# decides, from the call it just resolved, and reports [NEEDS_ROUND2] on its stdout
+# token stream when the helper is needed and missing; build() answers that below with
+# _inject_round2 (see _compile_frontend's retry loop), the same way it already answers
+# [NEEDS_ARENA].
 
 
 def _inject_round2_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
@@ -1651,14 +1653,9 @@ def build(
             _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
                       verbose=is_verbose)
 
-        # round(x, n) on a float: inject pymcu.round2 the same way.
-        if _detect_round2_usage(sources_dir):
-            entry_point, _n = _inject_round2_preamble(entry_point, generated_dir)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log("round(x, n) detected -- injecting pymcu.round2 import",
-                      verbose=is_verbose)
+        # round(x, n) on a run-time float: NOT detected here (see the comment on
+        # _inject_round2_preamble above) -- the compiler's own [NEEDS_ROUND2] token
+        # drives the injection, in _compile_frontend's retry loop below.
 
         # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
         # ATmega program uses async/await (asyncio.ticks() is the same Timer0
@@ -1818,6 +1815,54 @@ def build(
                         "allocation is runtime-sized and could not be sized exactly -- "
                         "set arena_size in \\[tool.pymcu] to reserve a precise amount)")
 
+            # RFC 0014 decision 5: pymcu.strfmt (a run-time string build -- an f-string
+            # value, str()/repr()/hex()/bin()/oct() of a run-time value) and pymcu.round2
+            # (round(x, n) on a run-time float) are the same story as the arena above --
+            # only the IR generator knows a given call actually needs the helper, so it
+            # reports [NEEDS_STRFMT] / [NEEDS_ROUND2] on the token stream and the driver
+            # injects the import and compiles again. Neither needs a generated shim (no
+            # per-build parameter the way ARENA_SIZE is), so there is no "_USED" token
+            # to answer on an already-successful compile -- unlike the arena.
+
+            def _inject_strfmt() -> None:
+                nonlocal entry_point, _linemap_preamble_offset
+                nonlocal _preamble_map, _diagnostic_source
+                entry_point, _n = _inject_strfmt_preamble(entry_point, generated_dir)
+                _linemap_preamble_offset += _n
+                if str(generated_dir) not in extra_includes:
+                    extra_includes.insert(0, str(generated_dir))
+                _preamble_map = _preamble_line_map(entry_point)
+                _diagnostic_source = (
+                    str(entry_point), str(_original_entry_point), _preamble_map)
+                _diag_log(
+                    "compiler reported a run-time string build -- injecting "
+                    "pymcu.strfmt import", verbose=is_verbose)
+
+            def _inject_round2() -> None:
+                nonlocal entry_point, _linemap_preamble_offset
+                nonlocal _preamble_map, _diagnostic_source
+                entry_point, _n = _inject_round2_preamble(entry_point, generated_dir)
+                _linemap_preamble_offset += _n
+                if str(generated_dir) not in extra_includes:
+                    extra_includes.insert(0, str(generated_dir))
+                _preamble_map = _preamble_line_map(entry_point)
+                _diagnostic_source = (
+                    str(entry_point), str(_original_entry_point), _preamble_map)
+                _diag_log(
+                    "compiler reported round(x, n) on a float -- injecting "
+                    "pymcu.round2 import", verbose=is_verbose)
+
+            # One injector per requirement the compiler can ask for. Each fires at most
+            # once per build (the retry re-resolves the same call against the now-present
+            # import, which does not ask again), so the loop below is bounded by the
+            # injector count plus the final successful attempt -- a program that somehow
+            # needed the arena, then strfmt, then round2 still converges in four tries.
+            _injectors = {
+                ArenaRequiredError: _inject_arena,
+                StrfmtRequiredError: _inject_strfmt,
+                Round2RequiredError: _inject_round2,
+            }
+
             def _compile_frontend(with_ir: bool, ir_file: Path | None = None) -> None:
                 def _run() -> None:
                     compiler.compile(
@@ -1839,13 +1884,19 @@ def build(
                         **({"emit_ir_path": str(ir_file),
                             "diagnostic_source": _diagnostic_source} if with_ir else {}),
                     )
-                try:
-                    _run()
-                    if not compiler.last_compile_used_arena:
-                        return
-                except ArenaRequiredError:
-                    pass
-                _inject_arena()
+                for _attempt in range(len(_injectors) + 1):
+                    try:
+                        _run()
+                    except tuple(_injectors) as exc:
+                        _injectors[type(exc)]()
+                        continue
+                    if compiler.last_compile_used_arena:
+                        _inject_arena()
+                        _run()
+                    return
+                # Unreachable unless two injectors keep undoing each other's fix, which
+                # is a compiler bug, not a program to diagnose here -- run once more and
+                # let the real exception surface rather than swallowing it silently.
                 _run()
 
             try:
