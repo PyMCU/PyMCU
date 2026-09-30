@@ -8539,6 +8539,27 @@ public partial class IRGenerator
         string t = text.Trim();
         if (dstType == DataType.FLOAT)
         {
+            // float("inf") / float("nan") and their sign/case variants (P2 AVR gaps
+            // bundle, item 5): CPython accepts "inf"/"infinity"/"nan", case-insensitive,
+            // with an optional leading +/-, none of which double.TryParse's Float style
+            // recognises on its own (it only takes the exact tokens "Infinity"/"NaN").
+            // The target float32 already round-trips both correctly -- _f32_repr
+            // (lib/src/pymcu/hal/uart_text.py) has printed "inf"/"nan" from the start, by
+            // reading the exponent/mantissa bit pattern directly -- so this was a parsing
+            // gap, not a representation one.
+            string bare = t;
+            bool neg = false;
+            if (bare.Length > 0 && (bare[0] == '+' || bare[0] == '-'))
+            {
+                neg = bare[0] == '-';
+                bare = bare[1..];
+            }
+            string lower = bare.ToLowerInvariant();
+            if (lower is "inf" or "infinity")
+                return new FloatConstant(neg ? float.NegativeInfinity : float.PositiveInfinity);
+            if (lower == "nan")
+                return new FloatConstant(float.NaN);
+
             if (!double.TryParse(t, System.Globalization.NumberStyles.Float,
                                  System.Globalization.CultureInfo.InvariantCulture, out double d))
                 throw UserError($"{callee}(\"{text}\"): not a number", at);
@@ -9489,6 +9510,15 @@ public partial class IRGenerator
             (IsTruthBuiltin(cv.Name) && !functionParams.ContainsKey(ResolveCallee(cv.Name)))
             || functionReturnTypes.GetValueOrDefault(ResolveCallee(cv.Name)) == "bool"
             || boolReturningFunctions.Contains(ResolveCallee(cv.Name)),
+        // A MODULE function (`math.isnan(x)`), mangled the same way VisitCallCore resolves
+        // the call itself (`mangledMod + "_" + member`) -- without this, `print(math.
+        // isnan(x))` sent "1"/"0" where CPython and every other bool spells True/False,
+        // because a module call never matched either the plain-name or the instance-method
+        // branch below (#p2avr-5).
+        MemberAccessExpr cm when cm.Object is VariableExpr cmMod
+            && TryImportedAlias(cmMod.Name, out var cmRealMod) && cmRealMod != null =>
+            functionReturnTypes.GetValueOrDefault(cmRealMod.Replace('.', '_') + "_" + cm.Member) == "bool"
+            || boolReturningFunctions.Contains(cmRealMod.Replace('.', '_') + "_" + cm.Member),
         MemberAccessExpr cm =>
             cm.Object is VariableExpr cobj
             && InstanceClassOfName(cobj.Name) is { } ccls
