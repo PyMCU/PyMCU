@@ -232,7 +232,22 @@ public partial class IRGenerator
             else
             {
                 strConstantVariables.Remove(strKey);
-                if (currentFunction.EndsWith("__module_init", StringComparison.Ordinal))
+                // `main` is the entry file's own top level, not a scope OVER its globals
+                // the way a function is (see LocalScopeKeys/TryGetMultiStr's own comments on
+                // this): `main.<n>` and the bare `<n>` name a single binding, so clearing one
+                // without the other left the stale one behind. ScanGlobals' module-level
+                // pre-scan (run once, before generation, over `name = "literal"` and `name:
+                // str = "literal"`) files a STRING LITERAL initializer's text under the bare
+                // key regardless of `currentFunction` -- the per-statement clear here ran
+                // only for `__module_init` (an imported module's OWN init, a real second
+                // scope), so a later reassignment of the SAME entry-file global to anything
+                // else (an int, a runtime f-string...) cleared "main.text" but left the bare
+                // "text" entry from that one-time pre-scan exactly as it was. A read that
+                // falls back to the bare name (StaticStringOf's VariableExpr case does, last)
+                // then answered with the FIRST assignment's text forever after -- `text =
+                // "long..."` then `text = f"{n}"` kept printing "long..." (#p2avr-3).
+                if (currentFunction.EndsWith("__module_init", StringComparison.Ordinal)
+                    || currentFunction == "main")
                 {
                     string modStrKey2 = currentModulePrefix + strTgt.Name;
                     if (modStrKey2 != strKey && mutableGlobals.ContainsKey(modStrKey2)
@@ -4112,6 +4127,7 @@ public partial class IRGenerator
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + target
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+            ClearStaleConstantText(qualified, target);
             string lenVar = "__jnlen_" + target;
 
             if (runtimeStrVars.TryGetValue(qualified, out var existing))
@@ -5452,6 +5468,37 @@ public partial class IRGenerator
     // any 32-bit decimal; a format spec bounds by max(width, natural-width-for-base)).
     // Returns false for fully-constant f-strings so the existing const-string path keeps
     // producing an interned string.
+    // A name is about to hold a run-time buffer (an f-string value, a join result, a
+    // hex()/bin()/oct()/str()/repr() digit buffer...), never text the compiler can answer
+    // for statically. VisitAssign's own preamble clears exactly this bookkeeping on every
+    // assignment whose right-hand side is NOT known text -- but TryExpandFStringValue and
+    // its siblings below return true and make VisitAssign return EARLY, before that preamble
+    // ever runs. Without this, a name first bound to constant text (`text = "xxxx...x"`, or
+    // -- since the previous commit -- a fully compile-time f-string) and then reassigned to a
+    // genuinely run-time one (`text = f"{n}"`) kept answering reads with the OLD text:
+    // strConstantVariables still had the first assignment's string, runtimeStrVars now also
+    // had the second's buffer, and whichever a reader consulted first (StaticStringOf does,
+    // for print/len/string methods) won -- silently, the stale text, not the new value
+    // (#p2avr-3). Mirrors VisitAssign's preamble else-branch exactly.
+    private void ClearStaleConstantText(string qualified, string bareName)
+    {
+        strConstantVariables.Remove(qualified);
+        multiStrVariables.Remove(qualified);
+        multiStrVariables.Remove(StrBindingKey(bareName));
+        // See the matching comment in VisitAssign's own preamble: `main` (the entry file's
+        // top level) and `__module_init` (an imported module's) both need the bare
+        // module-global key cleared too, or ScanGlobals' one-time pre-scan of a `name =
+        // "literal"` initializer outlives every later reassignment.
+        if (currentFunction.EndsWith("__module_init", StringComparison.Ordinal)
+            || currentFunction == "main")
+        {
+            string modKey = currentModulePrefix + bareName;
+            if (modKey != qualified && mutableGlobals.ContainsKey(modKey)
+                && !multiStrVariables.ContainsKey(modKey))
+                strConstantVariables.Remove(modKey);
+        }
+    }
+
     private bool TryExpandFStringValue(string target, Expression value)
     {
         if (value is not FStringExpr topFs) return false;
@@ -5475,6 +5522,7 @@ public partial class IRGenerator
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+        ClearStaleConstantText(qualified, target);
         string lenVar = "__fslen_" + target;
 
         // `s = f"{s}..."`: a part reads TARGET itself, while the assignment is about to
@@ -5863,6 +5911,7 @@ public partial class IRGenerator
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + bufName
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        ClearStaleConstantText(qualified, bufName);
         runtimeStrVars[qualified] = (lenVar, SeqReprBound(seqKey, isTuple));
         EmitSeqReprInto(strfmtMod, bufName, lenVar, seqKey, isTuple);
         VisitStatement(new AssignStmt(new IndexExpr(new VariableExpr(bufName), new VariableExpr(lenVar)),
@@ -5884,6 +5933,7 @@ public partial class IRGenerator
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + bufName
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        ClearStaleConstantText(qualified, bufName);
         runtimeStrVars[qualified] = (lenVar, 20);
         EmitStrfmtCall(strfmtMod, lenVar, "_fs_frepr",
             new List<Expression>

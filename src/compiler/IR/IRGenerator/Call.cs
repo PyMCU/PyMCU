@@ -7983,6 +7983,7 @@ public partial class IRGenerator
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + bufName
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
+        ClearStaleConstantText(qualified, bufName);
         runtimeStrVars[qualified] = (lenVar, bufSize);
 
         var buf = new VariableExpr(bufName);
