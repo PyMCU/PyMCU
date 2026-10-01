@@ -216,6 +216,19 @@ public partial class IRGenerator
                     return ixElem;
                 break;
             }
+            // RFC 0015 (buffers carry their length) / RFC 0001 (zero-copy instances): a
+            // constructor call (`OneWireAddress(rom)` appended to a `List[OneWireAddress]`)
+            // has no case here at all, so it fell to the UINT8 default below -- wrong for a
+            // single-field class whose one field is a buffer (needs the pointer's real
+            // width, 16 bits on AVR) or any wider scalar. A single-field class collapses to
+            // that field's own value (RFC 0001 Model B handle), so the call's width IS the
+            // field's declared width; a multi-field class has no scalar width to give here
+            // (its elements need a boxed/slot list, not this), so it is left alone, keeping
+            // every existing list-of-numbers append exactly as wide as it already was.
+            case CallExpr callCtor when ClassNameOf(callCtor.Callee) is { } ctorCls
+                && classFieldLayout.TryGetValue(QualifiedClassKey(ctorCls), out var ctorLayout)
+                && ctorLayout.Count == 1:
+                return DataTypeExtensions.StringToDataType(ctorLayout[0].Type);
         }
 
         return DataType.UINT8;
