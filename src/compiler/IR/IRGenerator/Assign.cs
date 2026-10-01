@@ -2249,6 +2249,21 @@ public partial class IRGenerator
         return lastCallReturnListElem;
     }
 
+    // RFC 0015 / RFC 0001: the class-tag counterpart of ListReturnElemType, for `return xs`
+    // where `xs` holds single-field class instances (funcListReturnClass/listVarElemClass).
+    private string? ListReturnElemClass(Expression? source, Val value)
+    {
+        string? valueListKey = value switch
+        {
+            Variable lv when listVarElemClass.ContainsKey(lv.Name) => lv.Name,
+            Temporary lt when listVarElemClass.ContainsKey(lt.Name) => lt.Name,
+            _ => null,
+        };
+        if (valueListKey != null) return listVarElemClass[valueListKey];
+        if (source is not CallExpr) return null;
+        return lastCallReturnListClass;
+    }
+
     // The inner element type for a value that is itself a list[list[T]] -- the
     // same three answer paths as ListReturnElemType, one annotation level down.
     private DataType? ListReturnInnerElemType(Expression? source, Val value)

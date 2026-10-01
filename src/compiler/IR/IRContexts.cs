@@ -34,6 +34,12 @@ public class InlineContext
     // the element type of each inner list the returned payload points at.
     public DataType? ResultListInnerElem { get; set; }
 
+    // RFC 0015 / RFC 0001: the class-tag counterpart of ResultListElem, for `return xs`
+    // where xs holds single-field class instances built by `.append(SomeClass(...))`
+    // (e.g. OneWireBus.scan()'s `devices: List[OneWireAddress]`). Kept alongside
+    // ResultListElem for the same reason -- listVarElemClass is rebuilt at branch joins.
+    public string? ResultListElemClass { get; set; }
+
     // RFC 0009: the tag byte an `-> Optional[X]` callee's result carries. Minted alongside
     // ResultTemp when the callee's declared return members include None; each return writes
     // the member index into it (None is the last member, a payload is index 0).

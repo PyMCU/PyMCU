@@ -183,6 +183,7 @@ public partial class IRGenerator
         lastCallReturnTypeExpr = null;
         lastCallReturnListElem = null;
         lastCallReturnedBufferLocal = false;
+        lastCallReturnListClass = null;
 
         // `f(*xs)` and `f(**d)`: splice the elements of the compile-time sequence and the
         // entries of the compile-time mapping into the argument list before ANY path looks at
@@ -2302,6 +2303,7 @@ public partial class IRGenerator
         // and the result temp is a GC pointer even though no annotation says so.
         lastCallReturnListElem = funcListReturnElems.TryGetValue(callee, out var flre)
             ? flre : (DataType?)null;
+        lastCallReturnListClass = funcListReturnClass.TryGetValue(callee, out var flrc) ? flrc : null;
         // The callee's body has not been compiled yet and its def does not say it returns a
         // list: nothing here can type the result. Refused rather than lowered as the void
         // call it used to be, whose result `print(f())` read out of a stale register.
@@ -2356,6 +2358,12 @@ public partial class IRGenerator
                  && lastCallReturnListElem is { } callListElem)
         {
             listVarElemTypes[dstC.Name] = callListElem;
+            // RFC 0015 / RFC 0001: the class-tag counterpart, right alongside -- a call
+            // returning `List[SomeSingleFieldClass]` tags its bound result the same way
+            // EmitListAppend tags a list built in place, so `x = f(); x[0].field` (or a
+            // method call on the element) dispatches instead of reading an untagged number.
+            if (lastCallReturnListClass is { } callListCls)
+                listVarElemClass[dstC.Name] = callListCls;
         }
         return dstC;
     }
@@ -2654,6 +2662,7 @@ public partial class IRGenerator
             // ResultTemp instead -- the assignment picks it up from the value, so
             // there is no emitted-name entry to read here.
             lastCallReturnListElem = null;
+            lastCallReturnListClass = null;
             result = MakeTemp(
                 functionReturnMembers.TryGetValue(callee, out var resMembers)
                     ? UnionPayloadType(resMembers)
@@ -4344,6 +4353,7 @@ public partial class IRGenerator
             lastCallReturnTypeExpr = expr;
             lastCallReturnListElem = null;
             lastCallReturnedBufferLocal = finishedCtx.ReturnedBufferIsLocal;
+            lastCallReturnListClass = null;
         }
         else
         {
@@ -4358,6 +4368,7 @@ public partial class IRGenerator
             // carrier (a relay's `return make()`, a slot pointer) rather than an
             // instance name: the temp the caller receives still names the class.
             StampProducedClass(result, func?.ReturnType);
+            lastCallReturnListClass = null;
         }
         // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
         // expansion actually walked, which is exact for a body whose branches fold away. A
@@ -4404,6 +4415,9 @@ public partial class IRGenerator
             variableTypes[listRes.Name] = DataType.GC_REF;
             if (finishedCtx.ResultListInnerElem is { } resInnerElem)
                 listInnerElemTypes[listRes.Name] = resInnerElem;
+            // RFC 0015 / RFC 0001: the class-tag counterpart, right alongside.
+            if (finishedCtx.ResultListElemClass is { } resListCls)
+                listVarElemClass[listRes.Name] = resListCls;
         }
 
         currentSourcePath = savedSourcePath;

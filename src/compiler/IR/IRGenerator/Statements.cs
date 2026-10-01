@@ -2047,6 +2047,13 @@ public partial class IRGenerator
                         ctx.ResultListInnerElem = retInnerElem;
                         listInnerElemTypes[ctx.ResultTemp.Name] = retInnerElem;
                     }
+                    // RFC 0015 / RFC 0001: the class-tag counterpart, right alongside --
+                    // `return devices` where devices holds single-field class instances.
+                    if (ListReturnElemClass(stmt.Value, val) is { } retListCls)
+                    {
+                        ctx.ResultListElemClass = retListCls;
+                        listVarElemClass[ctx.ResultTemp.Name] = retListCls;
+                    }
                     // The result temp carries the source's mutability class too, so a
                     // caller that prints it (or binds it to a name) sees a tuple where
                     // the value is one -- same freshness guard as the assign path.
@@ -2155,6 +2162,8 @@ public partial class IRGenerator
                         $"function returns {declRet}; declare the list the same way, like " +
                         $"`v: {declRet} = ...`", stmt);
                 funcListReturnElems[currentFunction] = outListElem;
+                if (ListReturnElemClass(stmt.Value, val) is { } outListCls)
+                    funcListReturnClass[currentFunction] = outListCls;
             }
             // An unannotated return whose inference found no type ("void") still hands the
             // value back in the return register, where the caller reads a byte.

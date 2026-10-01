@@ -746,6 +746,19 @@ public partial class IRGenerator
     // list-ness even though the declaration says nothing about lists.
     private Dictionary<string, DataType> funcListReturnElems = new();
 
+    // RFC 0015 / RFC 0001: the class-tag counterpart of funcListReturnElems, for a
+    // `-> List[SomeSingleFieldClass]` function whose body builds the list with
+    // `.append(SomeSingleFieldClass(...))` (`OneWireBus.scan()`'s `devices`). Without this
+    // a caller that indexes the call's result directly (`f()[0]`) or through a named
+    // binding (`x = f(); x[0]`) got back an untagged scalar -- no class, so a method or
+    // property call on the element, and its own buffer field's length, had no dispatch.
+    private Dictionary<string, string> funcListReturnClass = new();
+
+    // The class-tag counterpart of lastCallReturnListElem: the call site's own list
+    // result temp is tagged from this right after the call, mirroring how
+    // lastCallReturnListElem feeds listVarElemTypes[dstC.Name] (Call.cs).
+    private string? lastCallReturnListClass;
+
     // The sequence name an outlined function's returns agree on (`return tuple(v)`,
     // `return list(v)`, `return v` all answer "v"), recorded at scan time under the
     // function's full name. A module-level `x = f()` compiles BEFORE f's own body

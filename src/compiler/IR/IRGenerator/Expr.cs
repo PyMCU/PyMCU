@@ -559,6 +559,9 @@ public partial class IRGenerator
             variableTypes[listRes.Name] = DataType.GC_REF;
             if (dunderCtx.ResultListInnerElem is { } resInnerElem)
                 listInnerElemTypes[listRes.Name] = resInnerElem;
+            // RFC 0015 / RFC 0001: the class-tag counterpart, right alongside.
+            if (dunderCtx.ResultListElemClass is { } resListCls)
+                listVarElemClass[listRes.Name] = resListCls;
         }
 
         if (result != null) return result;
@@ -3789,6 +3792,38 @@ public partial class IRGenerator
                     ? esd : retElemDt);
             }
 
+            // RFC 0015 / RFC 0001: `f()[k]` where f returns a HEAP list (GC_REF) -- a
+            // growable `List[T]`, unlike the fixed array the branch above answers. Without
+            // this case the result fell all the way through to the bit-test default at the
+            // end of this method: `ow_bus.scan()[0]` (adafruit_onewire, scan() returns
+            // `List[OneWireAddress]` built by appending inside a `while`, so its length is
+            // not known at compile time and it cannot be the arraySizes-based branch above)
+            // silently read bit 0 of the list's own GC pointer instead of loading its first
+            // element -- a silent wrong answer, not a refusal.
+            if (retVarName != null && listVarElemTypes.TryGetValue(retVarName, out var retListElemDt)
+                && retListElemDt != DataType.UNKNOWN)
+            {
+                Val listPtr = new Variable(retVarName, DataType.GC_REF);
+                Val idxVal = VisitExpression(expr.Index);
+                Temporary elemAddr = EmitElemAddr(listPtr, idxVal, retListElemDt.SizeOf());
+                Temporary listResult = MakeTemp(retListElemDt);
+                Emit(new LoadIndirect(elemAddr, listResult, retListElemDt));
+                if (retListElemDt == DataType.GC_REF
+                    && listInnerElemTypes.TryGetValue(retVarName, out var retSubElemDt))
+                    listVarElemTypes[listResult.Name] = retSubElemDt;
+                // The single-field-class tag EmitListAppend/the function-return
+                // propagation recorded for the list, carried onto the loaded element --
+                // mirrors the named-variable list-read site (`devices[i]`) above.
+                if (listVarElemClass.TryGetValue(retVarName, out var retListCls))
+                {
+                    instanceClasses[listResult.Name] = retListCls;
+                    if (classFieldLayout.TryGetValue(retListCls, out var retListLay)
+                        && retListLay.Count == 1)
+                        factoryHandleInstances.Add(listResult.Name);
+                }
+                return listResult;
+            }
+
             // An instance result is subscripted through its __getitem__, the same
             // path `v[1]` takes when v names the instance.
             if (callResult is Variable or Temporary
@@ -4456,6 +4491,20 @@ public partial class IRGenerator
                     if (elemDt == DataType.GC_REF
                         && listInnerElemTypes.TryGetValue(listQ, out var subElemDt))
                         listVarElemTypes[result.Name] = subElemDt;
+                    // RFC 0015 / RFC 0001: `devices[i]` where `devices` holds single-field
+                    // class instances (EmitListAppend recorded which class) -- the loaded
+                    // scalar IS that one field's value (RFC 0001 Model B handle), so re-tag
+                    // it with the class exactly like a nested single-field ZCA field read
+                    // already does, or a property getter call on this element (`devices[i]
+                    // .rom`) and a method call on it both dispatch on a class that is not
+                    // there and the element reads as a bare, untagged number instead.
+                    if (listVarElemClass.TryGetValue(listQ, out var listElemCls))
+                    {
+                        instanceClasses[result.Name] = listElemCls;
+                        if (classFieldLayout.TryGetValue(listElemCls, out var listElemLay)
+                            && listElemLay.Count == 1)
+                            factoryHandleInstances.Add(result.Name);
+                    }
                     return result;
                 }
             }
