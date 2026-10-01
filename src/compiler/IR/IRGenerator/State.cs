@@ -1670,6 +1670,14 @@ public partial class IRGenerator
     // Heap-allocated list[T] support: maps qualified_name → element DataType (GC_REF variables)
     private Dictionary<string, DataType> listVarElemTypes = new();
 
+    // RFC 0015 / RFC 0001: list key -> the class its elements were constructed as, when the
+    // first append is a constructor call for a single-field class (`devices.append(
+    // OneWireAddress(rom))`). The list itself stores only that one field's value per element
+    // (InferExprType's CallExpr case, Core.cs), so a read (`devices[i]`) gets back a bare
+    // scalar with no class of its own -- this is what lets the read site re-tag it, the same
+    // way a nested single-field ZCA field read already re-tags its own result.
+    private Dictionary<string, string> listVarElemClass = new();
+
     // For a list[list[T]] variable: qualified_name → the INNER list's element type.
     // `bins[b]` yields a Temporary whose own element type is T -- the entry lets the
     // second subscript (`bins[b][0]`), a `for kb in bins` loop variable, and nested

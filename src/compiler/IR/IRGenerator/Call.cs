@@ -2385,6 +2385,27 @@ public partial class IRGenerator
         return classNames.Contains(resolved) ? resolved : null;
     }
 
+    /// <summary>
+    /// <paramref name="cls"/>, module-qualified the same way <see cref="ClassAttrKey"/>
+    /// qualifies a class+member key -- but bare, for a lookup keyed by the class alone
+    /// (<c>classFieldLayout</c>). <see cref="ClassNameOf"/> answers with the BARE spelling a
+    /// constructor call was written with, while every per-class table populated during the
+    /// scan (<c>classFieldLayout</c> among them) is keyed by the module-prefixed spelling;
+    /// skipping this step made a single-field class constructed inside `list.append(...)`
+    /// (`devices.append(OneWireAddress(rom))`) miss its own field layout and fall back to
+    /// the untagged, wrong-width default (RFC 0015 / RFC 0001: a list of ZCA instances).
+    /// </summary>
+    private string QualifiedClassKey(string cls)
+    {
+        if (classModuleMap.TryGetValue(cls, out var p) && p != null) return p + cls;
+        foreach (var (bare, pfx) in classModuleMap)
+        {
+            string mangled = (pfx ?? "") + bare;
+            if (string.Equals(mangled, cls, StringComparison.Ordinal)) return mangled;
+        }
+        return currentModulePrefix + cls;
+    }
+
     private string ClassAttrKey(string cls, string member)
     {
         // Bare class names are in classModuleMap (`Mode` -> `adafruit_sht4x_`).
@@ -14444,6 +14465,17 @@ public partial class IRGenerator
                 && listVarElemTypes.TryGetValue(ResolveNameKey(valVar.Name), out var argElem)
                 && argElem != DataType.UNKNOWN)
                 listInnerElemTypes[listVar.Name] = argElem;
+
+            // RFC 0015 / RFC 0001: the first append is a single-field class's constructor
+            // call (`devices.append(OneWireAddress(rom))`) -- record which class, so a later
+            // read of an element can re-tag it (the read site, Expr.cs, is the consumer).
+            // Stored module-qualified: every table the read side re-tags against
+            // (instanceClasses, classFieldLayout) is keyed that way.
+            if (valExpr is CallExpr appendCtor && ClassNameOf(appendCtor.Callee) is { } appendCls
+                && QualifiedClassKey(appendCls) is { } appendClsQ
+                && classFieldLayout.TryGetValue(appendClsQ, out var appendLayout)
+                && appendLayout.Count == 1)
+                listVarElemClass[listVar.Name] = appendClsQ;
         }
 
         // The element type of a list bound to a literal was read off the literal's elements;
