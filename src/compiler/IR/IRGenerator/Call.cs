@@ -3333,7 +3333,20 @@ public partial class IRGenerator
             else
                 typingOnlyValues.Remove(paramName);
             if (argInstanceClass != null)
+            {
                 instanceClasses[paramName] = argInstanceClass;
+                // RFC 0001 Model A (factory handle) / RFC 0015: the handle tag travels with
+                // the class -- a single-field class's instance IS its field's scalar value,
+                // and a parameter bound to one is the SAME handle, not a fresh instance.
+                // Missing this, `self._address` (OneWireDevice's own field, aliased to this
+                // parameter) resolved to a class-tagged name that ResolveMemberArrayName
+                // could not recognize as a handle, and `self._rom` inside the handle's own
+                // @property getter had no identity to chase to the real buffer storage.
+                string? argHandleName = argValues[i] switch
+                { Variable avh => avh.Name, Temporary ath => ath.Name, _ => null };
+                if (argHandleName != null && factoryHandleInstances.Contains(argHandleName))
+                    factoryHandleInstances.Add(paramName);
+            }
             else if (paramIdx < func.Params.Count
                      && ClassKeyFromAnnotation(func.Params[paramIdx].Type ?? "") is { } annCls)
                 instanceClasses[paramName] = annCls;
@@ -3768,7 +3781,15 @@ public partial class IRGenerator
                 // the class would otherwise be lost.
                 PropagateScalarMask(paramName, tArg);
                 if (instanceClasses.TryGetValue(tArg.Name, out var tCls) && tCls != null)
+                {
                     instanceClasses[paramName] = tCls;
+                    // RFC 0001 Model A / RFC 0015: see the matching note on the
+                    // Variable-argument binding above -- the same handle tag, here for a
+                    // Temporary argument (`DS18X20(ow_bus, ow_bus.scan()[0])`'s own
+                    // "address" parameter, bound from the list-read handle directly).
+                    if (factoryHandleInstances.Contains(tArg.Name))
+                        factoryHandleInstances.Add(paramName);
+                }
                 // A zero-copy factory result passed straight in (`rd(make(2))`) is its one
                 // field's scalar. Bound by the ordinary Copy below, the parameter has
                 // storage but no handle tag, so `param.field` flattened to

@@ -7692,6 +7692,25 @@ public partial class IRGenerator
     {
         var objVal = VisitExpression(mem.Object);
         string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+
+        // RFC 0001 Model A (factory handle) / RFC 0015: a single-field class whose one
+        // field is a buffer collapses `self` to that field's own pointer value -- there is
+        // no separate "<name>_<field>" storage to flatten to at all, because the class
+        // never materialized a second name for it (the "scalar single field: self IS the
+        // value" rule VisitMemberAccess already applies to a plain number). `return
+        // self._rom` inside such a class's own method (OneWireAddress.rom, a @property)
+        // needs the SAME rule for its buffer field: self's own resolved identity, followed
+        // through its alias chain to whatever real, sized storage it ultimately came from
+        // (a constructor argument, forwarded transitively from wherever that was built),
+        // is the array -- not a flattened name nothing ever wrote. Checked before the
+        // "_member" flattening below, which is for a MULTI-field instance's own storage.
+        if (baseName != null && factoryHandleInstances.Contains(baseName)
+            && instanceClasses.TryGetValue(baseName, out var handleCls) && handleCls != null
+            && classFieldLayout.TryGetValue(handleCls, out var handleLay)
+            && handleLay.Count == 1 && handleLay[0].Field == mem.Member
+            && TryResolveConstArrayKeyThroughAliases(baseName, out var handleArr))
+            return handleArr;
+
         while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
         if (string.IsNullOrEmpty(baseName)) return null;
         string flat = baseName + "_" + mem.Member;
