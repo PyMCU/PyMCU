@@ -13308,6 +13308,30 @@ public partial class IRGenerator
     // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).
     private Val EmitListAppend(Variable listVar, Expression valExpr)
     {
+        // A class instance has no run-time storage of its own here: a PyMCU instance is a
+        // NAME whose fields are flattened to compile-time storage (`self.x` lives at
+        // `<name>_x`), never a value with an address a byte-array append can copy. Before
+        // this check, `xs.append(Counter(i))` (a fresh instance) and `xs.append(c)` (an
+        // existing named one) both fell through to the generic value path below, which read
+        // the instance's own bare handle -- a name NOTHING ever writes, since only its
+        // flattened fields are assigned. Every element after the first then read back as
+        // uninitialized storage (0), indistinguishable from a real value: `xs[1]` silently
+        // answered `xs[0]`'s field. Refused here, at the append, rather than producing that.
+        string? appendInstCls =
+            valExpr is CallExpr apCtor && ClassNameOf(apCtor.Callee) is { } apCtorCls ? apCtorCls
+            : valExpr is VariableExpr apVe && AnchorNameOf(apVe) is { } apAnchor
+                && instanceClasses.TryGetValue(apAnchor, out var apAnchorCls) ? apAnchorCls
+            : null;
+        if (appendInstCls != null)
+            throw UserError(
+                $"'.append()' cannot take an instance of '{ShortClassNameOf(appendInstCls)}': "
+                + "PyMCU instances are flattened to compile-time storage, so a growable list "
+                + "has nothing to copy into its buffer and would silently repeat one element "
+                + "at every index. Use a fixed-size array of instances instead -- "
+                + $"`xs: {ShortClassNameOf(appendInstCls)}[N]` then "
+                + $"`xs[i] = {ShortClassNameOf(appendInstCls)}(...)` -- which gives each "
+                + "instance real storage and a run-time-indexed read.", valExpr);
+
         DataType elemDt = listVarElemTypes[listVar.Name];
 
         // A promoted `x = []` learns its element type here, from the first
