@@ -1944,7 +1944,17 @@ public partial class IRGenerator
             if (argEvaluated is Variable argArrayVar
                 && !bytearrayParams.Contains(argArrayVar.Name)
                 && !(arg is VariableExpr scalarVe && NameIsLocalScalar(scalarVe.Name))
-                && TryResolveArrayStorageKey(argArrayVar.Name, out var argStorage)
+                // RFC 0015 (buffers carry their length): a buffer reached through a pure
+                // field alias (`self._rom = rom` in a constructor, `return self._rom` in a
+                // property getter) answers arraySizes/len() under its OWN flattened name
+                // (BindArrayAlias copies the size fact onto it so every other query keeps
+                // working), so TryResolveArrayStorageKey's direct arraySizes match stops on
+                // that name instead of reaching the storage which actually owns an address.
+                // Follow the alias chain FIRST -- exactly like EmitLenBuiltin's own lookup
+                // does below -- so a buffer with no storage of its own takes the address of
+                // the value it aliases instead of a label nothing allocates (the undefined
+                // reference to e.g. `h__rom` this fixed, RFC 0015 section 0 layer D).
+                && TryResolveArrayStorageKey(FollowAliases(argArrayVar.Name), out var argStorage)
                 && (arraysWithVariableIndex.Contains(argStorage)
                     || moduleSramArrays.Contains(argStorage)))
             {
@@ -7071,8 +7081,53 @@ public partial class IRGenerator
     {
         if (!runtimeLenParams.Contains(callee + "." + origParamName)) return;
         string argName = argVal is Variable av ? av.Name : argVal is Temporary at ? at.Name : "";
-        if (argName.Length > 0 && bufferLengthParams.TryGetValue(argName, out var callerLenVar))
+        if (argName.Length == 0) return;
+        if (bufferLengthParams.TryGetValue(argName, out var callerLenVar))
+        {
             bufferLengthParams[qualifiedParamName] = callerLenVar;
+            return;
+        }
+        // RFC 0015 (buffers carry their length): the caller's argument can have no RUNTIME
+        // length variable at all and still need forwarding, when its size is a COMPILE-TIME
+        // constant reached through a property getter or a field alias rather than a bare
+        // name (`self._address.rom` -> a bytearray(8) built inside another function,
+        // returned, and stored by a constructor, where `self._address` is itself bound to a
+        // NAMED instance the compiler can trace at compile time). There is then no name at
+        // the call site for the ordinary inline-parameter binding to alias, so len()'s own
+        // alias ladder (below, and the argument-marshalling check in the general call path)
+        // never gets a first hop to start from. Give it the same first hop a bare name
+        // would have gotten: alias the parameter straight to the resolved storage key.
+        // Closes this for every shape measured except the one the unmodified
+        // adafruit_ds18x20 simpletest actually needs: `self._address` there is read back
+        // from a HEAP LIST at a RUNTIME-COMPUTED index (`ow_bus.scan()[0]`), which has no
+        // compile-time name to chase AT ALL -- not a gap this alias fallback can close.
+        // See the session report for the design gap this points at (RFC 0015 phase 1 needs
+        // the real runtime (pointer, length) pair for that shape, not another alias hop).
+        if (TryResolveConstArrayKeyThroughAliases(argName, out var argStorage))
+            variableAliases[qualifiedParamName] = argStorage;
+    }
+
+    /// <summary>
+    /// Walks <paramref name="name"/>'s own key and then its <c>variableAliases</c> chain (up
+    /// to 20 hops, matching every other alias walk in this file), trying
+    /// <see cref="TryResolveArrayStorageKey"/> at each stop, and returns the first hop that
+    /// both resolves AND has a compile-time-known element count in <c>arraySizes</c>. Used to
+    /// find the REAL, sized storage a buffer value traces back to when the only fact in hand
+    /// is a name -- a property getter's result, a field alias, a forwarded parameter -- with
+    /// no run-time length variable of its own (<see cref="ForwardRuntimeLenToInlineParam"/>).
+    /// </summary>
+    private bool TryResolveConstArrayKeyThroughAliases(string name, out string resolvedKey)
+    {
+        string cur = name;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (TryResolveArrayStorageKey(cur, out resolvedKey) && arraySizes.ContainsKey(resolvedKey))
+                return true;
+            if (!variableAliases.TryGetValue(cur, out var next) || next == null) break;
+            cur = next;
+        }
+        resolvedKey = name;
+        return false;
     }
 
     /// The presence byte a buffer-Optional argument contributes: 1 when the expression
