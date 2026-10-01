@@ -859,6 +859,18 @@ public partial class IRGenerator
         if (arraysWithVariableIndex.Contains(src) || arrayViewBase.ContainsKey(src)
             || arrayViewBase.ContainsKey(targetKey))
             arraysWithVariableIndex.Add(targetKey);
+        // RFC 0015 (buffers carry their length): the size half of the pair was already
+        // copied above (arraySizes/bufferLogicalLen); the ADDRESS half needs the same
+        // treatment. `arraysWithVariableIndex` and `moduleSramArrays` are the two disjoint
+        // sets every "does this name have a real, addressable home" check in the compiler
+        // ORs together (Call.cs's buffer-argument marshalling among them) -- propagating
+        // only the first left an alias onto real SRAM storage that was never itself
+        // runtime-indexed (a bytearray(8) built in one function, returned, and stored into
+        // a constructor's field with no indexing of its own) answering `false` to both, so
+        // the marshalling fell back to a bare label reference nothing allocated
+        // (`undefined reference to 'h__rom'` at link time -- RFC 0015 section 0, layer D).
+        if (moduleSramArrays.Contains(src))
+            moduleSramArrays.Add(targetKey);
         if (bytearrayParams.Contains(src)) bytearrayParams.Add(targetKey);
     }
 
