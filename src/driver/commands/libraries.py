@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -78,6 +79,7 @@ MIRROR_INDEX_URL = (
 CACHE_DIR = core_libraries.LIBRARY_INDEX_CACHE_DIR
 CACHE_FILE = core_libraries.LIBRARY_INDEX_CACHE_FILE
 DISTRIBUTION_PREFIX = "pymcu-lib-"
+INDEX_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 # ---------------------------------------------------------------------------
@@ -124,15 +126,29 @@ def _read_cached_index() -> dict | None:
         return None
 
 
+def _cache_is_fresh() -> bool:
+    try:
+        age = time.time() - _cache_file().stat().st_mtime
+    except OSError:
+        return False
+    return age <= INDEX_CACHE_MAX_AGE_SECONDS
+
+
 # Why the last attempt failed, for the caller to show. A module-level value
 # rather than a return value so the existing (index, source) contract stays put:
 # every command asks for it in the one place it reports the failure.
 _LAST_INDEX_ERROR = ""
+_LAST_INDEX_SOURCE = ""
 
 
 def last_index_error() -> str:
     """A human-readable reason the index could not be fetched, or ""."""
     return _LAST_INDEX_ERROR
+
+
+def last_index_source() -> str:
+    """Where the last index came from: network, cache, stale-cache, or ""."""
+    return _LAST_INDEX_SOURCE
 
 
 # Shared with the index builder, which fetches sdists over the same HTTPS and
@@ -173,17 +189,20 @@ def _download_index(url: str) -> dict | None:
 
 def fetch_index(refresh: bool = False) -> tuple[dict, str]:
     """
-    Return (index, source) where source is "network", "cache" or "".
+    Return (index, source), with source "network", "cache", "stale-cache" or "".
 
     A network failure is never fatal on its own: a cached index is worth far
     more than an aborted command, and the caller says where the data came from
     so a stale answer is never passed off as a fresh one.
     """
-    global _LAST_INDEX_ERROR
+    global _LAST_INDEX_ERROR, _LAST_INDEX_SOURCE
     _LAST_INDEX_ERROR = ""
+    _LAST_INDEX_SOURCE = ""
 
-    cached = None if refresh else _read_cached_index()
-    if cached is not None:
+    cached = _read_cached_index()
+    cache_is_fresh = cached is not None and _cache_is_fresh()
+    if not refresh and cache_is_fresh:
+        _LAST_INDEX_SOURCE = "cache"
         return cached, "cache"
 
     for url in _index_urls():
@@ -196,11 +215,14 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
             _cache_file().write_text(json.dumps(payload), encoding="utf-8")
         except OSError:
             pass
+        _LAST_INDEX_SOURCE = "network"
         return payload, "network"
 
-    fallback = _read_cached_index()
+    fallback = cached if cached is not None else _read_cached_index()
     if fallback is not None:
-        return fallback, "cache"
+        source = "cache" if _cache_is_fresh() else "stale-cache"
+        _LAST_INDEX_SOURCE = source
+        return fallback, source
     return {}, ""
 
 
@@ -651,10 +673,22 @@ def resolve_from_index(project: Project, name: str, *, refresh: bool = False
 
     entry = find_entry(index, name)
     if entry is None:
+        if source == "stale-cache":
+            cache_hint = (
+                " This answer came from a stale cached index because its automatic "
+                "refresh failed; retry with --refresh when network access is available."
+            )
+        elif source == "cache":
+            cache_hint = (
+                " This answer came from the cached index; retry with --refresh to "
+                "check for updates."
+            )
+        else:
+            cache_hint = ""
         return None, "", (
             f"'{name}' is not in the PyMCU library index. PyMCU only installs libraries "
             "that are known to compile; to add one, open a PR against the "
-            "pymcu-libraries repository."
+            f"pymcu-libraries repository.{cache_hint}"
         )
 
     reasons = entry_verdict(entry, project.chip, project.flavors)
@@ -727,6 +761,11 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         entry, distribution, error = resolve_from_index(project, name, refresh=refresh)
         if error:
             return result.failed(error)
+        if last_index_source() == "stale-cache":
+            result.log.append(
+                "Using a cached library index older than 24 hours because its "
+                "automatic refresh failed."
+            )
         if str(entry.get("status", "active")) == "unmaintained":
             result.log.append("Note: the index marks this library as unmaintained.")
 
@@ -1050,7 +1089,12 @@ def search(
         if last_index_error():
             console.print(f"[dim]{last_index_error()}[/dim]")
         raise typer.Exit(code=1)
-    if source == "cache" and not json_output:
+    if source == "stale-cache" and not json_output:
+        console.print(
+            "[yellow]Using a cached index older than 24 hours because its automatic "
+            "refresh failed.[/yellow]"
+        )
+    elif source == "cache" and not json_output:
         console.print("[dim]Using the cached index (run with --refresh to update).[/dim]")
 
     chip, flavors = "", []
