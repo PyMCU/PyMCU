@@ -218,6 +218,95 @@ a filed issue. Both are compile-time refusals, not silent wrong values.
   `def asm(x): ...` called the same way gives `asm() argument must be a compile-time
   string literal`. Both confirmed on both front ends.
 
+## Four silent wrong values found after the candidate was cut
+
+Measured on the AVR emulator, both compiler front ends, against this release
+candidate itself. None of the four has an oracle probe, a fixture, or a filed
+issue in the candidate, and none announces itself: every program below builds
+clean and produces a wrong value. Two are already fixed on `fix/p2-avr-gaps`
+and two have a fix in progress on `fix/silent-list-tuple`; all four land in
+beta 2.
+
+- **A top-level name reassigned from a string literal to a run-time-built
+  string keeps the old text.** The first `print` is correct; the second prints
+  the original literal again instead of the new contents.
+  ```python
+  from pymcu.chips.atmega328p import GPIOR0
+  from pymcu.types import uint8
+
+  text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  print(text)                  # the literal
+  n: uint8 = GPIOR0.value      # a run-time value
+  text = f"{n}"
+  print(text)                  # prints the literal again, not "0"
+  ```
+  PyMCU prints the literal twice; CPython prints it once, then `0`. Avoid it by
+  binding the run-time-built string to a different name (`text2 = f"{n}"`),
+  which prints `0`. Fixed on `fix/p2-avr-gaps` (`3f60a96d`), landing in beta 2.
+- **An f-string whose only interpolated part is a string literal prints the
+  compiler's internal string id instead of the text.**
+  ```python
+  text = f"{'literal string'}"
+  print(text)                  # prints 257, not "literal string"
+  ```
+  PyMCU prints `257`; CPython prints `literal string`. Avoid it by assigning
+  the plain literal (`text = "literal string"`). Interpolating a name bound to
+  a literal (`f"{name}"`) goes down a different path that is refused with a
+  diagnostic rather than answered wrongly. Fixed on `fix/p2-avr-gaps`
+  (`ab6aa218`), landing in beta 2.
+- **`list.append()` loses the fields of the instances it appends.** Every
+  element read back from the list reports `0` for its fields whatever the
+  constructor stored, whether the appends run inside `for i in range(N)` or
+  unrolled at top level.
+  ```python
+  from pymcu.types import uint8
+
+
+  class Counter:
+      def __init__(self, n: uint8) -> None:
+          self._n = n
+
+      @property
+      def n(self) -> uint8:
+          return self._n
+
+  xs = []
+  for i in range(2):
+      xs.append(Counter(i))
+  a0 = xs[0]
+  a1 = xs[1]
+  print(a0.n, a1.n)            # prints "0 0", not "0 1"
+  ```
+  PyMCU prints `0 0`; CPython prints `0 1`. Avoid it by building the list as a
+  literal (`xs = [Counter(0), Counter(1)]`, prints `0 1`) or by keeping the
+  instances in separate names. Unrolling the appends does NOT help:
+  `xs.append(c0); xs.append(c1)` with named instances still prints `0 0`. Fix
+  in progress on `fix/silent-list-tuple`, for beta 2.
+- **Unpacking a `(bytearray, scalar)` tuple returned by a function never
+  delivers the buffer.** The scalar element lands; the bytearray name reads
+  back as the zeroed buffer it already was.
+  ```python
+  from pymcu.types import uint8
+
+
+  def search_rom(seed: uint8):
+      new_rom = bytearray(8)
+      new_rom[0] = 40
+      return new_rom, seed
+
+  rom = bytearray(8)
+  diff: uint8 = 7
+  rom, diff = search_rom(9)
+  print(rom[0], len(rom), diff)   # prints "0 8 9", not "40 8 9"
+  ```
+  PyMCU prints `0 8 9` (`diff` does update; only the buffer is lost); CPython
+  prints `40 8 9`. A tuple of two scalars unpacks correctly, and indexing a
+  named result hits the same broken path (`r = search_rom(9); rom = r[0]` is
+  equally wrong). Avoid it by returning the buffer alone
+  (`rom = search_rom(9)` returning just `new_rom`, prints `40 8`) and passing
+  the scalar separately. Fix in progress on `fix/silent-list-tuple`, for
+  beta 2.
+
 ## What "beta" does and does not claim
 
 - **Beta** means: the language surface is implemented and test-covered on

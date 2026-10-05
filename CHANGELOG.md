@@ -28,6 +28,25 @@ for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
 
+### Known issues
+
+Four silent wrong values found after the candidate was cut, none of them
+announced by the compiler and none yet covered by an oracle probe or a filed
+issue in this release. Each is measured, with a minimal reproducer, a
+workaround that works today, and its fix status, in
+[State of the beta](docs/language/state-of-the-beta.md#four-silent-wrong-values-found-after-the-candidate-was-cut).
+All four land in beta 2.
+
+- A top-level name reassigned from a string literal to a run-time-built
+  string (`text = f"{n}"`) keeps printing the old literal.
+- An f-string whose only interpolated part is a string literal
+  (`text = f"{'literal string'}"`) prints the compiler's internal string id
+  instead of the text.
+- `list.append()` loses the fields of the instances it appends: every element
+  read back reports `0` whatever the constructor stored.
+- Unpacking a `(bytearray, scalar)` tuple returned by a function never
+  delivers the buffer; the scalar element lands.
+
 ### Fixed (2026-09-30, real-silicon hang, P0, RFC 0013 phase 0)
 
 A user found and confirmed on a real Arduino Uno: an SSD1306 OLED wired over I2C
