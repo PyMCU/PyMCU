@@ -28,6 +28,15 @@ for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
 
+### Hardware validation
+
+Two unmodified Adafruit libraries ran on a real Arduino Uno with this release's
+compiler: `adafruit_ssd1306` (with `adafruit_framebuf` and `adafruit_bus_device`,
+Game of Life and text on an SSD1306 OLED over I2C) and `adafruit_hcsr04` (its own
+simpletest). Every other Adafruit library figure in this release is a compile and
+emulator measurement, not a run on a board. Details in
+[State of the beta](docs/language/state-of-the-beta.md#what-ran-on-real-hardware-for-this-release).
+
 ### Known issues
 
 Four silent wrong values found after the candidate was cut, none of them

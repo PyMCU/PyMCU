@@ -328,7 +328,7 @@ separates beta from alpha, so it is worth stating per backend rather than in one
 
 | Backend | Hardware record |
 |---|---|
-| **AVR** | Continuously validated on silicon. A logic-analyzer harness on an Arduino Uno decodes the board's UART and diffs it against CPython running the same source, so a semantic divergence is caught rather than argued about. |
+| **AVR** | Continuously validated on silicon. A logic-analyzer harness on an Arduino Uno decodes the board's UART and diffs it against CPython running the same source, so a semantic divergence is caught rather than argued about. Of the Adafruit libraries, only `adafruit_ssd1306` and `adafruit_hcsr04` have run on silicon for beta 1; the rest are compile and emulator measurements. |
 | **ARM** | Confirmed running on real Raspberry Pi silicon (Pico, Pico 2): blink, native f-strings, and the Python RTOS doing preemptive multitasking on the Cortex-M33, with clock and timer timing verified on a logic analyzer to better than 0.01%. What it does not yet have is the continuous differential harness AVR runs. |
 | **PIC** | Partially exercised on silicon (PIC18 GPIO, `delay_ms`, UART TX); most testing is on the PicSharp emulator. For the PIC16 parts listed above the build emits no configuration word, so the image does not boot until you program the fuses yourself. |
 | **RISC-V** | Emulation only, in qemu. It has never been run on a physical CH32V003. |

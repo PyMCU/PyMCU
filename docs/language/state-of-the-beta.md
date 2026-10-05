@@ -218,6 +218,24 @@ a filed issue. Both are compile-time refusals, not silent wrong values.
   `def asm(x): ...` called the same way gives `asm() argument must be a compile-time
   string literal`. Both confirmed on both front ends.
 
+## What ran on real hardware for this release
+
+On 2026-10-04 the release candidate's compiler (`main` at `11e8bbe5`) was run on
+a real Arduino Uno (ATmega328P) with two unmodified Adafruit CircuitPython
+libraries, through the CircuitPython layer:
+
+- `adafruit_ssd1306`, with `adafruit_framebuf` and `adafruit_bus_device`, driving
+  an SSD1306 128x32 OLED over I2C: two Game of Life programs (one drawing with a
+  `pixel()` loop, one with `fill_rect` and `time.sleep`) and a text program using
+  `display.text()` with the `font5x8.bin` font. All three run correctly.
+- `adafruit_hcsr04`, its own `hcsr04_simpletest.py` with only the pins changed
+  (trigger on D5, echo on D2). It reports correct distances.
+
+These are the only two Adafruit libraries that ran on silicon for this release.
+Every other Adafruit figure on this page and in the CHANGELOG (simpletests and
+programs that compile, bus transactions compared against the real interpreter)
+comes from compilation and the AVR emulator, not from a board.
+
 ## Four silent wrong values found after the candidate was cut
 
 Measured on the AVR emulator, both compiler front ends, against this release
@@ -311,7 +329,9 @@ beta 2.
 
 - **Beta** means: the language surface is implemented and test-covered on
   the AVR backend, and it is validated on real silicon (Arduino Uno, logic
-  analyzer differential harness). It does **not** mean every API symbol
+  analyzer differential harness). For libraries, silicon coverage in this
+  release is two Adafruit drivers; see
+  [What ran on real hardware for this release](#what-ran-on-real-hardware-for-this-release). It does **not** mean every API symbol
   above is implemented: the parity suites above exist precisely to make
   the gap explicit and trackable, row by row, rather than asserted.
 - Every allowlisted deviation and every `tracked:#N` / `xfail` entry in
