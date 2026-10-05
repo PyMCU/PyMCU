@@ -236,14 +236,14 @@ Every other Adafruit figure on this page and in the CHANGELOG (simpletests and
 programs that compile, bus transactions compared against the real interpreter)
 comes from compilation and the AVR emulator, not from a board.
 
-## Four silent wrong values found after the candidate was cut
+## Five silent wrong values found after the candidate was cut
 
 Measured on the AVR emulator, both compiler front ends, against this release
-candidate itself. None of the four has an oracle probe, a fixture, or a filed
+candidate itself. None of the five has an oracle probe, a fixture, or a filed
 issue in the candidate, and none announces itself: every program below builds
-clean and produces a wrong value. Two are already fixed on `fix/p2-avr-gaps`
-and two have a fix in progress on `fix/silent-list-tuple`; all four land in
-beta 2.
+clean and produces a wrong value. Two are already fixed on `fix/p2-avr-gaps`,
+two are fixed or refused on `fix/silent-list-tuple`, and one is fixed on
+`fix/name-collision`; all five land in beta 2.
 
 - **A top-level name reassigned from a string literal to a run-time-built
   string keeps the old text.** The first `print` is correct; the second prints
@@ -298,8 +298,9 @@ beta 2.
   PyMCU prints `0 0`; CPython prints `0 1`. Avoid it by building the list as a
   literal (`xs = [Counter(0), Counter(1)]`, prints `0 1`) or by keeping the
   instances in separate names. Unrolling the appends does NOT help:
-  `xs.append(c0); xs.append(c1)` with named instances still prints `0 0`. Fix
-  in progress on `fix/silent-list-tuple`, for beta 2.
+  `xs.append(c0); xs.append(c1)` with named instances still prints `0 0`. On
+  `fix/silent-list-tuple` every one of these shapes is refused at compile time
+  with a diagnostic instead, landing in beta 2.
 - **Unpacking a `(bytearray, scalar)` tuple returned by a function never
   delivers the buffer.** The scalar element lands; the bytearray name reads
   back as the zeroed buffer it already was.
@@ -322,8 +323,30 @@ beta 2.
   named result hits the same broken path (`r = search_rom(9); rom = r[0]` is
   equally wrong). Avoid it by returning the buffer alone
   (`rom = search_rom(9)` returning just `new_rom`, prints `40 8`) and passing
-  the scalar separately. Fix in progress on `fix/silent-list-tuple`, for
+  the scalar separately. Fixed on `fix/silent-list-tuple`, landing in
   beta 2.
+- **Two calls to the same `@inline` function that returns a tuple, indexed in
+  one expression, read the second call's result twice.** Every expansion at the
+  same nesting depth kept its tuple result in the same compiler slots, so the
+  second call overwrote the first one's result before it was read.
+  ```python
+  from pymcu.types import inline, uint8
+  from pymcu.chips.atmega328p import GPIOR0
+
+  @inline
+  def pair(v: uint8) -> (uint8, uint8):
+      return v, v + 1
+
+  s = GPIOR0.value
+  r: uint8 = pair(s + 3)[0] + pair(s + 8)[0]
+  print(r)                     # prints 16, not 11
+  ```
+  PyMCU prints `16`; CPython prints `11`. The same slots make
+  `print(add2(pair(1)[0], pair(9)[0]))` print the tuple `(9, 10)` instead of
+  `10`. Avoid it by binding each call's element to its own name first
+  (`a: uint8 = pair(s + 3)[0]` and `b: uint8 = pair(s + 8)[0]`, then `a + b`),
+  or by unpacking each call (`a, a2 = pair(s + 3)`); both print `11`. Fixed on
+  `fix/name-collision`, landing in beta 2.
 
 ## What "beta" does and does not claim
 

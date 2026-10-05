@@ -39,12 +39,12 @@ emulator measurement, not a run on a board. Details in
 
 ### Known issues
 
-Four silent wrong values found after the candidate was cut, none of them
+Five silent wrong values found after the candidate was cut, none of them
 announced by the compiler and none yet covered by an oracle probe or a filed
 issue in this release. Each is measured, with a minimal reproducer, a
 workaround that works today, and its fix status, in
-[State of the beta](docs/language/state-of-the-beta.md#four-silent-wrong-values-found-after-the-candidate-was-cut).
-All four land in beta 2.
+[State of the beta](docs/language/state-of-the-beta.md#five-silent-wrong-values-found-after-the-candidate-was-cut).
+All five land in beta 2.
 
 - A top-level name reassigned from a string literal to a run-time-built
   string (`text = f"{n}"`) keeps printing the old literal.
@@ -55,6 +55,8 @@ All four land in beta 2.
   read back reports `0` whatever the constructor stored.
 - Unpacking a `(bytearray, scalar)` tuple returned by a function never
   delivers the buffer; the scalar element lands.
+- Two calls to the same `@inline` function returning a tuple, indexed in one
+  expression (`pair(a)[0] + pair(b)[0]`), read the second call's result twice.
 
 ### Fixed (2026-09-30, real-silicon hang, P0, RFC 0013 phase 0)
 
