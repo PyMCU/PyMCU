@@ -424,3 +424,68 @@ class TestBuildUpstreamLibraryIncludeOrder:
         # And the staged upstream directory holds only what it declared.
         assert (tmp_path / "dist" / "_upstream" / "adafruit-circuitpython-hcsr04"
                / "adafruit_hcsr04.py").is_file()
+
+    def test_flat_sitepackages_module_does_not_shadow_the_flavor_package(
+            self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
+        """The flavor's own directory precedes site-packages on the -I list.
+
+        Adafruit-Blinka -- a dependency of every adafruit-circuitpython-* dist --
+        drops flat board.py / digitalio.py / busio.py into site-packages. When
+        that directory won over the flavor package, every CircuitPython build
+        compiled the shim instead of the layer and died on its `import json`.
+        """
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("def main(): pass\n")
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.pymcu]\n"
+            'board = "arduino_uno"\n'
+            "frequency = 16000000\n"
+            'sources = "src"\n'
+            'entry = "main.py"\n'
+            'stdlib = ["circuitpython"]\n'
+        )
+
+        site = self._site_packages(tmp_path)
+        layer = site / "pymcu_circuitpython"
+        (layer / "boards").mkdir(parents=True)
+        (layer / "__init__.py").write_text("")
+        (layer / "digitalio.py").write_text("PIN = 1\n")
+        (layer / "boards" / "arduino_uno.py").write_text("LED = 13\n")
+        # The Blinka-style squatter: same module name, flat in site-packages.
+        (site / "digitalio.py").write_text("import json\n")
+
+        import importlib.machinery
+        import importlib.util
+
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "pymcu_circuitpython":
+                spec = importlib.machinery.ModuleSpec(name, None, is_package=True)
+                spec.submodule_search_locations = [str(layer)]
+                return spec
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+        from src.driver.core.compiler import PyMCUCompiler
+
+        captured: dict = {}
+        original_compile = PyMCUCompiler.compile
+
+        def spy(self, *args, **kwargs):
+            captured["extra_includes"] = list(kwargs.get("extra_includes") or [])
+            return original_compile(self, *args, **kwargs)
+
+        monkeypatch.setattr(PyMCUCompiler, "compile", spy)
+
+        _invoke_build()
+        assert "extra_includes" in captured, "PyMCUCompiler.compile was never called"
+
+        includes = captured["extra_includes"]
+        assert str(layer) in includes
+        assert str(site) in includes
+        assert includes.index(str(layer)) < includes.index(str(site))

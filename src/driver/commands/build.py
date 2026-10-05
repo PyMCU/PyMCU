@@ -1333,8 +1333,16 @@ def build(
             if spec and spec.submodule_search_locations:
                 pkg_dir = Path(list(spec.submodule_search_locations)[0])
                 pkg_parent = pkg_dir.parent
-                extra_includes.append(str(pkg_parent))
+                # The layer's own directory before its parent: site-packages
+                # must stay on the path for `import pymcu_<flavor>.sub`, but a
+                # flat module there shadows the layer's names if it wins the
+                # clash. Adafruit-Blinka's top-level board.py / digitalio.py /
+                # busio.py -- pulled in by every adafruit-circuitpython-* dist
+                # -- used to be picked over the CircuitPython layer's own
+                # modules, and the build then failed inside the shim's
+                # `import json` rather than in anything the program wrote.
                 extra_includes.append(str(pkg_dir))
+                extra_includes.append(str(pkg_parent))
                 flavor_dirs[flavor] = pkg_dir
                 # Collect board_chips supplements
                 extension_board_chips.update(_load_extension_board_chips(flavor))
