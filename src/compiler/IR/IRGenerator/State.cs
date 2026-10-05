@@ -24,6 +24,12 @@ public partial class IRGenerator
 {
     private List<Instruction> currentInstructions = new();
     private int tempCounter = 0;
+    // Sequence component of the tuple-result slot prefix (Call.cs EmitInlineFunctionCall):
+    // one ordinal per expansion so `f()[k]`/`(*f())` slots of two expansions at the same
+    // depth never name one slot. Not tempCounter: bumping that would renumber every
+    // tmp_N minted after any @inline call and churn the MIR of programs that never
+    // return tuples.
+    private int inlineTupleSeq = 0;
     // Pooled scratch temps minted inside inline expansions: tmp_N spelling (so the
     // MIR stays name-identical to a build without pooling) mapped to the canonical
     // "d{depth}_t{k}" slot key the backend allocator folds on. Serialized on

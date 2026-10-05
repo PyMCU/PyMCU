@@ -1916,9 +1916,9 @@ public class IRGeneratorTests
             .Functions.First(f => f.Name == "main").Body;
 
         Assert.Contains(body, i =>
-            i is Copy { Dst: Variable v } && v.Name.EndsWith("iret_1_1") && v.Type == DataType.UINT16);
+            i is Copy { Dst: Variable v } && v.Name.Contains("iret_") && v.Name.EndsWith("_1") && v.Type == DataType.UINT16);
         Assert.Contains(body, i =>
-            i is Copy { Dst: Variable v } && v.Name.EndsWith("iret_1_0") && v.Type == DataType.UINT8);
+            i is Copy { Dst: Variable v } && v.Name.Contains("iret_") && v.Name.EndsWith("_0") && v.Type == DataType.UINT8);
     }
 
     // ── An undefined name is an error, not a read of whatever the RAM held ──

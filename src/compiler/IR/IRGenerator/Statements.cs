@@ -1453,10 +1453,10 @@ public partial class IRGenerator
                         ? slotDt : GetValType(elemVal);
                     variableTypes[ctx.ResultVars[k]] = dt;
                     Emit(new Copy(elemVal, new Variable(ctx.ResultVars[k], dt)));
-                    // The iret_ slots are scratch shared by every expansion at this
-                    // depth: a slot a previous call filled with a constant keeps that
-                    // entry unless it is cleared here, and a later `x = t__k` read
-                    // would fold to the OTHER call's value.
+                    // Several `return` arms inside this one expansion write the same
+                    // result slot: a constant entry an earlier arm filed keeps that
+                    // value unless it is cleared here, and a later `x = t__k` read
+                    // would fold to the OTHER arm's value.
                     // The element may fold through a local the mint-local store bound in
                     // this expansion (`bpp = len(byteorder)` in pixelbuf's parse_byteorder):
                     // its value sits in localConstantValues, not in a Constant Val.

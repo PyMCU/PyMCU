@@ -2460,8 +2460,12 @@ public partial class IRGenerator
         // text, which only a field binding inside the body can resolve -- no signature or
         // TupleExpr scan sees it. The return mints its own slots under this prefix when the
         // call site asked for the tuple by sentinel and got zero.
+        // The sequence component makes every expansion's slots unique: `f()[k]` and `*f()`
+        // hand the caller a slot NAME it may read only after a sibling call's expansion has
+        // run, and a prefix shared per depth let the later expansion overwrite the first
+        // one's result (`pair(a)[0] + pair(b)[0]` read b+a's slot twice).
         string tupleSlotPrefix =
-            $"{(string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction)}.iret_{newDepth}_";
+            $"{(string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction)}.iret_{newDepth}_{inlineTupleSeq++}_";
 
         // `-> (T1, T2)` / `-> tuple[T1, T2]`: the arity is part of the signature, so a call
         // that unpacks a different number of targets is a mismatch worth naming here -- the
@@ -2490,14 +2494,12 @@ public partial class IRGenerator
 
         if (wantTupleCount > 0)
         {
-            string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
             for (int k = 0; k < wantTupleCount; ++k)
             {
-                string slot = $"{bBase}.iret_{newDepth}_{k}";
+                string slot = tupleSlotPrefix + k;
                 tupleResultNames.Add(slot);
                 // The annotated element type widens the result slot; without an annotation the
-                // slot stays uint8, as it has always been. Slot names repeat across expansions
-                // at the same depth, so an unannotated callee must clear a widened predecessor.
+                // slot stays uint8, as it has always been.
                 if (k < declaredTupleElems.Count)
                     variableTypes[slot] = DataTypeExtensions.StringToDataType(declaredTupleElems[k]);
                 else

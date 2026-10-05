@@ -764,9 +764,9 @@ public partial class IRGenerator
     /// `t = f()` where f's expansion just delivered a tuple through
     /// <c>lastTupleResults</c>: materialise one fixed slot per element --
     /// `t__0`, `t__1`, ... -- and register the name as a tuple-valued variable.
-    /// The values are COPIED out of the call's `iret_` slots, which are shared
-    /// scratch reused by the next call at the same depth; aliasing them would
-    /// let a later `g()` overwrite what `t` still names.
+    /// The values are COPIED out of the call's `iret_` slots: each expansion
+    /// mints unique slot names, but `t`'s readers resolve `t__k` spellings, not
+    /// whatever names this call happened to mint.
     /// </summary>
     private void BindNamedTuple(string name)
     {
