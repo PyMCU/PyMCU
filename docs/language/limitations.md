@@ -153,7 +153,7 @@ statically bounded per part (`pymcu.strfmt` lowering, auto-injected by the build
 value form, `len(s)` is the formatted length, `s[i]` is the one-character string at that
 position (`print(s[i])` writes the character, as CPython does), `print(s)` /
 `uart.write_str(s)` stream it, and re-assigning `s` in a loop reuses the buffer (assign the
-longest f-string first — the buffer is sized at the first assignment). `s = f"{s}..."`
+longest f-string first: the buffer is sized at the first assignment). `s = f"{s}..."`
 (an f-string that interpolates the name it assigns, P2 AVR gaps bundle, item 6) is
 supported: a private snapshot buffer copies s's current bytes and length before either is
 touched, so every self-referencing part reads the snapshot rather than the buffer it is
