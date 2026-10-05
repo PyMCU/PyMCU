@@ -1028,8 +1028,12 @@ public partial class IRGenerator
             if (classAttrInits.TryGetValue(mainAst, out var synthClassInit))
                 executableStmts.InsertRange(0, synthClassInit);
 
-            if (executableStmts.Count > 0)
+            bool isImportOnly = mainAst.Imports.Count > 0
+                && mainAst.Functions.Count == 0
+                && mainAst.GlobalStatements.Count == 0;
+            if (executableStmts.Count > 0 || isImportOnly)
             {
+                // An import-only entry still needs the main symbol called by the CRT.
                 var syntheticBlock = new Block();
                 foreach (var s in executableStmts)
                     syntheticBlock.Statements.Add(s);
