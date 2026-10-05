@@ -4,6 +4,7 @@
 # how the dependency is recorded.  No network and no real package installs.
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -156,6 +157,39 @@ class TestIndexFetching:
         assert source == "cache"
         assert index["libraries"][0]["name"] == "dht11"
 
+    def test_a_cache_older_than_24_hours_is_refreshed(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+        cache = tmp_path / "cache.json"
+        cache.write_text(json.dumps({"v": 1, "libraries": []}))
+
+        now = time.time()
+        cmd.os.utime(cache, (now - 25 * 60 * 60,) * 2)
+        tried = []
+
+        def _fake_download(url):
+            tried.append(url)
+            return {"v": 2, "libraries": [{"name": "dht"}]}
+
+        monkeypatch.setattr(cmd, "_download_index", _fake_download)
+        index, source = cmd.fetch_index()
+
+        assert tried == [cmd.DEFAULT_INDEX_URL]
+        assert source == "network"
+        assert index["v"] == 2
+
+    def test_a_stale_cache_is_used_when_refresh_fails(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+        cache = tmp_path / "cache.json"
+        cache.write_text(json.dumps({"v": 1, "libraries": [{"name": "dht11"}]}))
+        now = time.time()
+        cmd.os.utime(cache, (now - 25 * 60 * 60,) * 2)
+        monkeypatch.setattr(cmd, "_download_index", lambda url: None)
+
+        index, source = cmd.fetch_index()
+
+        assert source == "stale-cache"
+        assert index["libraries"][0]["name"] == "dht11"
+
 
 class TestIndexVerdict:
     def test_measured_ok_passes(self):
@@ -203,6 +237,39 @@ class TestInstallCommand:
         result = runner.invoke(app, ["install", "nope"], catch_exceptions=False)
         assert result.exit_code == 1
         assert "not in the PyMCU library index" in unwrapped(result.output)
+
+    def test_unknown_name_from_cache_suggests_refresh(self, tmp_path, monkeypatch):
+        self._project(tmp_path)
+        config = tmp_path / "pyproject.toml"
+        project = cmd.Project(
+            config,
+            cmd.tomlkit.loads(config.read_text()),
+        )
+        monkeypatch.setattr(cmd, "fetch_index", lambda refresh=False: ({"libraries": []}, "cache"))
+
+        _, _, error = cmd.resolve_from_index(project, "dht")
+
+        assert "not in the PyMCU library index" in error
+        assert "--refresh" in error
+
+    def test_install_reports_when_it_uses_a_stale_cache(self, tmp_path, monkeypatch):
+        self._project(tmp_path)
+        config = tmp_path / "pyproject.toml"
+        project = cmd.Project(
+            config,
+            cmd.tomlkit.loads(config.read_text()),
+        )
+        entry = INDEX["libraries"][0]
+        monkeypatch.setattr(
+            cmd, "resolve_from_index",
+            lambda project, name, refresh=False: (entry, "pymcu-lib-dht11", ""),
+        )
+        monkeypatch.setattr(cmd, "last_index_source", lambda: "stale-cache", raising=False)
+        monkeypatch.setattr(cmd, "_needs_environment", lambda project: True)
+
+        result = cmd.install_library(project, "dht11", verify=False)
+
+        assert any("older than 24 hours" in note for note in result.log)
 
     def test_incompatible_chip_is_refused_before_download(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.chdir(tmp_path)
