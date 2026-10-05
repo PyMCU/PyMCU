@@ -331,3 +331,16 @@ def test_the_interpreter_probe_ignores_the_current_directory():
 
     src = inspect.getsource(m._python_for_cp_tools)
     assert '"-P", "-c", probe' in src
+
+
+# ── the ARM backend is an optional plugin ────────────────────────────────────
+
+
+def test_a_missing_arm_backend_is_refused_with_what_to_install(monkeypatch):
+    import sys
+    from src.driver.commands import natmod as natmod_cmd
+
+    # None in sys.modules makes the import raise ImportError, as on an AVR-only setup.
+    monkeypatch.setitem(sys.modules, "pymcu.toolchain.rp2040.llvm", None)
+    with pytest.raises(NatmodError, match="pip install pymcu-arm"):
+        natmod_cmd._arm_toolchain()
