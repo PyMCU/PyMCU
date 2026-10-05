@@ -456,6 +456,14 @@ def new(
                 else []
             )
 
+    # "--stdlib none" is the same answer as typing "none" at the advanced
+    # prompt: the bare compiler with no compat layer at all. Left in the list
+    # it became a pymcu-none requirement -- a distribution that does not
+    # exist -- and a stdlib key that sends `pymcu build` looking for a
+    # pymcu_none import.
+    if stdlib:
+        stdlib = [f for f in stdlib if f != "none"]
+
     # ------------------------------------------------------------------
     # Package manager — auto-detect, then ask if none found
     # ------------------------------------------------------------------
