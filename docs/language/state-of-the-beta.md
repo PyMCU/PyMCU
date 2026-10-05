@@ -245,6 +245,11 @@ clean and produces a wrong value. Two are already fixed on `fix/p2-avr-gaps`,
 two are fixed or refused on `fix/silent-list-tuple`, and one is fixed on
 `fix/name-collision`; all five land in beta 2.
 
+**Status on `main` (2026-10-05).** The fifth one is fixed on `main`
+(`fix/name-collision`, merged). The other four are on their branches, in
+review for beta 2. Until a release carries a fix, the workaround given with
+each one below applies.
+
 - **A top-level name reassigned from a string literal to a run-time-built
   string keeps the old text.** The first `print` is correct; the second prints
   the original literal again instead of the new contents.
