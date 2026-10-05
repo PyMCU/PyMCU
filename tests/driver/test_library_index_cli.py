@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from src.driver.commands import library_index as cli
+from src.driver.core.library_index import UpstreamSubmission
 
 runner = CliRunner()
 
@@ -38,8 +39,9 @@ class TestIndexBuildParsesUpstreamLines:
 
         captured = {}
 
-        def fake_prepare_venv(distributions, venv, *, pre):
+        def fake_prepare_venv(distributions, venv, *, pre, upstream=None):
             captured["distributions"] = list(distributions)
+            captured["upstream"] = list(upstream or [])
             return True
 
         monkeypatch.setattr(cli, "_prepare_venv", fake_prepare_venv)
@@ -52,9 +54,56 @@ class TestIndexBuildParsesUpstreamLines:
         ])
 
         assert result.exit_code == 0, result.output
-        assert captured["distributions"] == [
-            "pymcu-lib-dht", "adafruit-circuitpython-hcsr04",
+        assert captured["distributions"] == ["pymcu-lib-dht"]
+        assert [sub.distribution for sub in captured["upstream"]] == [
+            "adafruit-circuitpython-hcsr04",
         ]
+
+    def test_upstream_installs_no_deps_and_its_layer_is_added(self, tmp_path, monkeypatch):
+        """An upstream dist must not pull Adafruit-Blinka into the measured env.
+
+        Its PyPI metadata requires the shim, but the shim's top-level board.py /
+        digitalio.py / busio.py land in site-packages -- an include root -- and
+        shadow the compat layer's own modules: every circuitpython measurement
+        then failed on Blinka's `import json` instead of on the library's code.
+        """
+        commands = []
+
+        def fake_run(cmd, **kw):
+            commands.append(list(cmd))
+            return type("R", (), {"returncode": 0})()
+
+        monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/uv")
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        submissions = [
+            UpstreamSubmission(
+                distribution="adafruit-circuitpython-hcsr04",
+                provides=("adafruit_hcsr04",), layer="circuitpython",
+                example="upstream-examples/hcsr04.py",
+            ),
+        ]
+        venv = tmp_path / "index-venv"
+        assert cli._prepare_venv(["pymcu-lib-dht"], venv, pre=True,
+                                 upstream=submissions)
+
+        def install_cmd_for(dist):
+            for cmd in commands:
+                if "install" in cmd and cmd[cmd.index("--python") + 2] == dist:
+                    return cmd
+            return None
+
+        upstream_cmd = install_cmd_for("adafruit-circuitpython-hcsr04")
+        assert upstream_cmd is not None
+        assert "--no-deps" in upstream_cmd
+
+        layer_cmd = install_cmd_for("pymcu-circuitpython")
+        assert layer_cmd is not None
+        assert "--no-deps" not in layer_cmd
+
+        for dist in ("pymcu-compiler[all]", "pymcu-lib-dht"):
+            cmd = install_cmd_for(dist)
+            assert cmd is not None and "--no-deps" not in cmd
 
     def test_build_index_receives_the_parsed_submissions_and_repo_root(
             self, tmp_path, monkeypatch, no_real_work):

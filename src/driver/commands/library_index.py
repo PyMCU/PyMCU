@@ -99,7 +99,8 @@ def _report_libraries_file_problems(problems: list[str]) -> None:
         console.print(f"[red]{problem}[/red]")
 
 
-def _prepare_venv(distributions: list[str], venv: Path, *, pre: bool) -> bool:
+def _prepare_venv(distributions: list[str], venv: Path, *, pre: bool,
+                  upstream: "list[UpstreamSubmission] | None" = None) -> bool:
     """Create a throwaway environment holding every listed library."""
     uv = shutil.which("uv")
     if uv is None:
@@ -112,14 +113,40 @@ def _prepare_venv(distributions: list[str], venv: Path, *, pre: bool) -> bool:
         console.print(f"[red]Could not create {venv}.[/red]")
         return False
 
-    ok = True
     # Every backend, not just the one this machine happens to have. The index
     # states which architectures a library builds for, and a missing backend
     # makes that compile fail for a reason that has nothing to do with the
     # library -- publishing it as "does not build on rp2040" would be a
     # measurement of our own environment.
-    for distribution in ["pymcu-compiler[all]", *distributions]:
+    installs: list[tuple[str, bool]] = [("pymcu-compiler[all]", True)]
+    installs += [(d, True) for d in distributions]
+
+    # The compat layer an upstream submission is written against is part of
+    # the environment being measured, like the backends above: nothing else
+    # puts it there -- the distribution's own metadata points at
+    # Adafruit-Blinka instead (see below).
+    installs += [
+        (f"pymcu-{layer}", True)
+        for layer in sorted({sub.layer for sub in upstream or []} - {"native"})
+    ]
+
+    # Upstream distributions install --no-deps on purpose. Their PyPI metadata
+    # requires Adafruit-Blinka: the CPython compatibility shim, whose top-level
+    # board.py / digitalio.py / busio.py land in site-packages -- an include
+    # root both as the layer's package parent and as the stdlib's -- and
+    # shadow the layer's own modules, dragging every measurement into
+    # `import json`. What an entry actually needs to compile is present
+    # without its declared deps: the layer provides board, digitalio, busio
+    # and circuitpython_typing, and a sibling upstream entry the example
+    # imports (the ssd1306 example pulls adafruit_bus_device) is installed
+    # from the same libraries.txt.
+    installs += [(sub.distribution, False) for sub in upstream or []]
+
+    ok = True
+    for distribution, with_deps in installs:
         cmd = [uv, "pip", "install", "--python", str(venv), distribution]
+        if not with_deps:
+            cmd.append("--no-deps")
         if pre:
             cmd.append("--prerelease=allow")
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -171,8 +198,9 @@ def index_build(
         total = len(distributions) + len(upstream_submissions)
         console.print(f"[bold]Preparing[/bold] {total} libraries in {venv} ...")
         _prepare_venv(
-            [*distributions, *(sub.distribution for sub in upstream_submissions)],
+            list(distributions),
             venv, pre=pre,
+            upstream=upstream_submissions,
         )
 
     if not venv.exists():
