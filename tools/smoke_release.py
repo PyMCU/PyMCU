@@ -205,16 +205,51 @@ def run(command: list[str], message: str) -> subprocess.CompletedProcess:
 # 4: the failure that shipped -- a symbol the driver imports and the SDK lacks
 # ---------------------------------------------------------------------------
 
+_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
+
+
+def _catches_import_error(handler: ast.ExceptHandler) -> bool:
+    kinds = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(isinstance(k, ast.Name) and k.id in _IMPORT_ERRORS for k in kinds)
+
+
+def _required_imports(tree: ast.AST) -> list[ast.ImportFrom]:
+    """Every `from ... import ...` the code needs, leaving out the optional ones.
+
+    An import in the body of a `try` that catches ImportError is the driver asking
+    whether an optional backend plugin is installed (`pymcu-arm` provides
+    `pymcu.toolchain.rp2040`), and handling the answer. The SDK does not have to
+    provide it; an unguarded import still does.
+    """
+    found: list[ast.ImportFrom] = []
+
+    def visit(node: ast.AST, guarded: bool) -> None:
+        if isinstance(node, ast.ImportFrom) and not guarded:
+            found.append(node)
+        if isinstance(node, ast.Try):
+            body_guarded = guarded or any(_catches_import_error(h) for h in node.handlers)
+            for child in node.body:
+                visit(child, body_guarded)
+            for child in node.handlers + node.orelse + node.finalbody:
+                visit(child, guarded)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, guarded)
+
+    visit(tree, False)
+    return found
+
+
 def sdk_imports_of(package_dir: Path) -> dict[str, set[str]]:
-    """{module: {name, ...}} for every `from pymcu.toolchain... import ...`."""
+    """{module: {name, ...}} for every required `from pymcu.toolchain... import ...`."""
     wanted: dict[str, set[str]] = {}
     for path in package_dir.rglob("*.py"):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
         except (SyntaxError, OSError):
             continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom) or not node.module:
+        for node in _required_imports(tree):
+            if not node.module:
                 continue
             if not node.module.startswith("pymcu.toolchain") and \
                not node.module.startswith("pymcu.backend"):
