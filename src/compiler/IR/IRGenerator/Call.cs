@@ -13430,20 +13430,16 @@ public partial class IRGenerator
         // flattened fields are assigned. Every element after the first then read back as
         // uninitialized storage (0), indistinguishable from a real value: `xs[1]` silently
         // answered `xs[0]`'s field. Refused here, at the append, rather than producing that.
-        string? appendInstCls =
-            valExpr is CallExpr apCtor && ClassNameOf(apCtor.Callee) is { } apCtorCls ? apCtorCls
-            : valExpr is VariableExpr apVe && AnchorNameOf(apVe) is { } apAnchor
-                && instanceClasses.TryGetValue(apAnchor, out var apAnchorCls) ? apAnchorCls
-            : null;
-        if (appendInstCls != null)
+        //
+        // InstanceClassOfValueExpr spells the instance every way it arrives: a ctor call,
+        // a named instance or instance field, an element read off an instance array, and
+        // a call whose declared return is a class.
+        if (InstanceClassOfValueExpr(valExpr) is { } appendInstCls)
             throw UserError(
                 $"'.append()' cannot take an instance of '{ShortClassNameOf(appendInstCls)}': "
                 + "PyMCU instances are flattened to compile-time storage, so a growable list "
                 + "has nothing to copy into its buffer and would silently repeat one element "
-                + "at every index. Use a fixed-size array of instances instead -- "
-                + $"`xs: {ShortClassNameOf(appendInstCls)}[N]` then "
-                + $"`xs[i] = {ShortClassNameOf(appendInstCls)}(...)` -- which gives each "
-                + "instance real storage and a run-time-indexed read.", valExpr);
+                + "at every index. " + InstanceElementAdvice(appendInstCls), valExpr);
 
         DataType elemDt = listVarElemTypes[listVar.Name];
 
@@ -13642,6 +13638,19 @@ public partial class IRGenerator
         else
         {
             elemVal = VisitExpression(valExpr);
+            // The AST check at the top cannot see every spelling -- a member-callee
+            // factory (`obj.make()`) evaluates to an instance handle that the same
+            // flattened-storage hole swallows. Not on a MemberAccessExpr, though:
+            // `m.value` on a single-field class evaluates to the instance's own
+            // storage, which is the FIELD's byte -- a legal append, not an instance.
+            if (valExpr is not MemberAccessExpr
+                && InstanceClassOfVal(elemVal) is { } lateInstCls)
+                throw UserError(
+                    $"'.append()' cannot take an instance of '{ShortClassNameOf(lateInstCls)}': "
+                    + "PyMCU instances are flattened to compile-time storage, so a growable "
+                    + "list has nothing to copy into its buffer and would silently repeat "
+                    + "one element at every index. " + InstanceElementAdvice(lateInstCls),
+                    valExpr);
         }
         Temporary appendAddr = EmitElemAddr(listVar, tmpLen, elemSize);
         Emit(new StoreIndirect(elemVal, appendAddr, elemDt));

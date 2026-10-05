@@ -3255,6 +3255,21 @@ public partial class IRGenerator
                 "return or store.", expr);
         }
 
+        // `a = xs[i]` / `f(xs[i])` on an instance array (Cls[N], RFC 0001 Model B): the
+        // element is a slot of fields at base+i*stride, not a byte with a value of its
+        // own. Read as a scalar it answered the slot's first field byte -- or a bit of
+        // it -- so `xs[0].n == 5` after `xs[0] = C(5, ...)` could silently answer 1.
+        // `xs[i].field` and `xs[i].method()` address the element correctly; the bare
+        // element cannot be a value.
+        if (expr.Target is VariableExpr ixArrVe && expr.Index is not SliceExpr
+            && InstanceArrayClassOf(expr.Target) is { } ixElemCls)
+            throw UserError(
+                $"'{ixArrVe.Name}[i]' names the {ShortClassNameOf(ixElemCls)} instance stored "
+                + "at slot i, not a byte -- there is no element scalar to read. Read a field "
+                + $"(`{ixArrVe.Name}[i].<field>`) or call a method "
+                + $"(`{ixArrVe.Name}[i].<method>()`); to take the element's address as an "
+                + "object is the part PyMCU cannot do.", expr);
+
         // `sys.implementation.version[i]` (neopixel.py's `version[0] >= 7` feature-detect).
         // RFC 0007 folds this chain through CompileTimeEvaluator in `if`/`match`/`try`
         // conditions, but a condition the frontend cannot finish -- `version[0] >= 7 and
@@ -5014,6 +5029,16 @@ public partial class IRGenerator
 
         for (int k = 0; k < elements.Count; k++)
         {
+            // A heap element slot is a byte (or a GC_REF of the inner list): an
+            // instance's bare handle is a name nothing writes, so `[c]` on a path
+            // that materializes would land storage that was never written.
+            if (elements[k] is not (ListExpr or TupleExpr)
+                && InstanceClassOfValueExpr(elements[k]) is { } litInstCls)
+                throw UserError(
+                    $"a list literal element cannot be an instance of "
+                    + $"'{ShortClassNameOf(litInstCls)}': " + InstanceIsFlattened
+                    + ", so the stored element would read back storage that was never "
+                    + "written. " + InstanceElementAdvice(litInstCls), elements[k]);
             Val ev = elements[k] switch
             {
                 ListExpr innerList => MaterializeSequenceLiteral(innerList.Elements, innerDt, elements[k]),
@@ -5834,7 +5859,9 @@ public partial class IRGenerator
     /// </summary>
     private bool TryDescriptorSeqWrite(MemberAccessExpr target, Expression value)
     {
-        var objVal = VisitExpression(target.Object);
+        var objVal = IsInstanceArrayElemObject(target.Object)
+            ? null
+            : VisitExpression(target.Object);
         string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : null);
         while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
         if (!TryFindClassAttribute(baseName, target.Member, out var owner, out var fullName)

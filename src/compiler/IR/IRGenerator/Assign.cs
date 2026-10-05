@@ -1635,7 +1635,9 @@ public partial class IRGenerator
     // plain assignment (`obj.prop = v`) and augmented assignment (`obj.prop OP= v`).
     private bool TryExpandPropertySetter(MemberAccessExpr memTarget, Func<Val> getArg)
     {
-        var objVal = VisitExpression(memTarget.Object);
+        var objVal = IsInstanceArrayElemObject(memTarget.Object)
+            ? null
+            : VisitExpression(memTarget.Object);
         var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
         while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
             @base = alias;
@@ -4781,6 +4783,33 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Refuse a store whose value is an INSTANCE: the element slot it lands in is a
+    /// byte (or a GC payload slot of scalar width), and the instance's bare handle is
+    /// a name nothing writes -- the element would read back shared/uninitialized
+    /// storage. Asked once per store path with the expression (the AST spellings:
+    /// ctor, name, field, instance-array element, declared-class-returning call) and,
+    /// where it already exists, the evaluated value (the spellings the AST cannot
+    /// see, like a member-callee factory).
+    /// </summary>
+    private void RefuseInstanceElementValue(Expression valExpr, string site, Val? evaluated = null)
+    {
+        // The evaluated-value net catches the spellings the AST cannot see (a member-callee
+        // factory's `self.make()`), but it must not run on a MemberAccessExpr: `m.value` on a
+        // single-field class evaluates to the instance's own storage, which is the FIELD's byte
+        // -- a legal store. A member that is itself a nested instance is already refused by the
+        // AST side (AnchorNameOf resolves `outer_member` through instanceClasses).
+        if (InstanceClassOfValueExpr(valExpr) is { } instCls
+            || (instCls = valExpr is MemberAccessExpr || evaluated == null
+                    ? null
+                    : InstanceClassOfVal(evaluated)) != null)
+            throw UserError(
+                $"{site} cannot take an instance of '{ShortClassNameOf(instCls)}': "
+                + InstanceIsFlattened
+                + ", so the element would read back storage that was never written. "
+                + InstanceElementAdvice(instCls), valExpr);
+    }
+
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
         // Every path below visits the subscript before the value, and CPython evaluates the
@@ -5048,11 +5077,25 @@ public partial class IRGenerator
             else if (frameBinds)
                 qualified = ShadowingFrameKey(ve.Name)!;
 
+            // `xs[i] = v` on an instance array (`xs: Cls[N]`) reaches here only when the
+            // value was NOT a constructor of the element class -- `xs[i] = C(...)` is
+            // dispatched to EmitInstanceArrayStore at the head of the assignment. Any
+            // other value would land on the slot's first field byte.
+            if (instanceArrayClass.TryGetValue(qualified, out var iaTgtCls) && iaTgtCls != null)
+                throw UserError(
+                    $"an element of '{ve.Name}' is a {ShortClassNameOf(iaTgtCls)} object, not "
+                    + $"a byte -- '{ve.Name}[i] = v' would overwrite the slot's first field. "
+                    + $"Construct in place (`{ve.Name}[i] = {ShortClassNameOf(iaTgtCls)}(...)`), "
+                    + $"or write the field (`{ve.Name}[i].<field> = v`).", stmt.Value);
+
             // Bytearray parameter: indirect store through pointer.
             if (bytearrayParams.Contains(qualified))
             {
                 Val idxVal = VisitExpression(indexExpr.Index);
                 Val srcVal = VisitExpression(stmt.Value);
+                // The element is a byte, not an object: an instance's bare handle is a
+                // name nothing writes, and the store would land it where a byte belongs.
+                RefuseInstanceElementValue(stmt.Value, $"an element of '{ve.Name}'", srcVal);
                 Emit(new BytearrayStore(qualified, idxVal, srcVal));
                 return;
             }
@@ -5086,6 +5129,7 @@ public partial class IRGenerator
                     Val listPtr = new Variable(listQ, DataType.GC_REF);
                     Val idxVal = VisitExpression(indexExpr.Index);
                     Val srcVal = VisitExpression(stmt.Value);
+                    RefuseInstanceElementValue(stmt.Value, $"an element of '{ve.Name}'", srcVal);
                     Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
                     Emit(new StoreIndirect(srcVal, elemAddr, elemDt));
                     return;
@@ -5099,6 +5143,7 @@ public partial class IRGenerator
                 {
                     Val idxVal = ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index);
                     Val srcVal = VisitExpression(stmt.Value);
+                    RefuseInstanceElementValue(stmt.Value, $"an element of '{ve.Name}'", srcVal);
                     RemapArrayAccess(qualified, idxVal, out var storeName, out var storeIdx,
                         out var storeSize, out var storeDt);
                     Emit(new ArrayStore(storeName, storeIdx, srcVal, storeDt, storeSize));
@@ -5118,6 +5163,7 @@ public partial class IRGenerator
                         throw UnrolledArrayIndexError(qualified, indexExpr.Target);
                     string elemName = qualified + "__" + elemIdx;
                     Val srcVal = VisitExpression(stmt.Value);
+                    RefuseInstanceElementValue(stmt.Value, $"an element of '{ve.Name}'", srcVal);
                     Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
                 }
 
@@ -5132,6 +5178,7 @@ public partial class IRGenerator
         {
             Val idxVal = ConstArrayIndex(flatStore, VisitExpression(indexExpr.Index), indexExpr.Index);
             Val srcVal = VisitExpression(stmt.Value);
+            RefuseInstanceElementValue(stmt.Value, $"an element of '{memStore.Member}'", srcVal);
             RemapArrayAccess(flatStore, idxVal, out var storeName, out var storeIdx,
                 out var storeSize, out var storeDt);
             Emit(new ArrayStore(storeName, storeIdx, srcVal, storeDt, storeSize));
@@ -5221,6 +5268,11 @@ public partial class IRGenerator
                 }
             }
         }
+
+        // `x[i] = <instance>` on a plain scalar or a runtime pointer lands the instance's
+        // bare handle in a bit or a byte -- the same flattened-storage hole the element
+        // stores above refuse.
+        RefuseInstanceElementValue(stmt.Value, "an indexed store");
 
         var target = VisitExpression(indexExpr.Target);
         var indexVal = VisitExpression(indexExpr.Index);
@@ -10233,7 +10285,9 @@ public partial class IRGenerator
             Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
             // A @property must write back through its setter, not a phantom data field. The
             // getter read above already produced `cur`; route the new value through the setter.
-            if (TryExpandPropertySetter(mfield, () => res)) return;
+            // The table guard is the same one the plain-assign call site runs above.
+            if ((propertySetters.Count > 0 || propertyGetters.Count > 0)
+                && TryExpandPropertySetter(mfield, () => res)) return;
             EmitMemberAssign(new AssignStmt(mfield, mfield) { Line = stmt.Line }, mfield, res);
         }
     }
