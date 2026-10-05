@@ -5832,6 +5832,9 @@ public partial class IRGenerator
             elems.Add(new PreEvaluatedExpr(
                 new Variable(s, variableTypes.TryGetValue(s, out var sdt) ? sdt : DataType.UINT8),
                 null));
+        // The splice consumed the expansion's result list; a scalar-producing
+        // expression wrapped around it must not read them back as its own.
+        lastTupleResults.Clear();
         return elems;
     }
 

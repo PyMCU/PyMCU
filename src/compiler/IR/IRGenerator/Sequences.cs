@@ -807,6 +807,9 @@ public partial class IRGenerator
         arraySizes[key] = elems.Count;
         bufferLogicalLen[key] = elems.Count;
         arrayElemTypes[key] = widest;
+        // The binding consumed the expansion's result list; a scalar-producing
+        // expression wrapped around the call must not read it back as its own.
+        lastTupleResults.Clear();
     }
 
     /// <summary>

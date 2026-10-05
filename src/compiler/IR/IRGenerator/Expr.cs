@@ -3384,6 +3384,11 @@ public partial class IRGenerator
                                          + $"{lastTupleResults.Count} elements",
                                          expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                 string elem = lastTupleResults[tc.Value];
+                // The subscript consumed this expansion's result list: leave it
+                // empty so a scalar-producing expression built around the call
+                // (`print(add2(pair(1)[0], pair(9)[0]))`) does not mistake the
+                // inner expansion's slots for the outer one's result.
+                lastTupleResults.Clear();
                 return new Variable(elem, variableTypes.TryGetValue(elem, out var et)
                     ? et
                     : constantVariables.TryGetValue(elem, out int ec)

@@ -5175,8 +5175,11 @@ public partial class IRGenerator
                         Val callRhs = VisitExpression(stmt.Value);
                         pendingTupleCount = 0;
                         if (lastTupleResults.Count > 0)
+                        {
                             seqRhs = new ListExpr(lastTupleResults
                                 .Select(s => (Expression)new VariableExpr(s)).ToList());
+                            lastTupleResults.Clear();
+                        }
                         else srcVal = callRhs;
                     }
                     if (seqRhs != null)
@@ -5367,9 +5370,13 @@ public partial class IRGenerator
         Val held = VisitExpression(value);
         pendingTupleCount = 0;
         if (lastTupleResults.Count > 0)
-            return new ListExpr(lastTupleResults
+        {
+            var heldSlots = new ListExpr(lastTupleResults
                 .Select(s => (Expression)new VariableExpr(s) { Line = value.Line }).ToList())
                 { Line = value.Line };
+            lastTupleResults.Clear();
+            return heldSlots;
+        }
         return HeldValue(held, value);
     }
 
@@ -10403,12 +10410,14 @@ public partial class IRGenerator
             Val ignored = VisitExpression(stmt.Value);
             pendingTupleCount = 0;
 
-            if (lastTupleResults.Count != stmt.Targets.Count)
-                throw UserError($"Expected {stmt.Targets.Count} tuple results, got {lastTupleResults.Count}");
+            var unpackSlots = new List<string>(lastTupleResults);
+            lastTupleResults.Clear();
+            if (unpackSlots.Count != stmt.Targets.Count)
+                throw UserError($"Expected {stmt.Targets.Count} tuple results, got {unpackSlots.Count}");
 
             for (int k = 0; k < stmt.Targets.Count; ++k)
             {
-                string srcName = lastTupleResults[k];
+                string srcName = unpackSlots[k];
                 string dstName = QualifyTarget(stmt.Targets[k]);
                 // A return element that is itself a compile-time sequence -- `a, t, c =
                 // parse(...)` where parse bound a name to (r, g, b) -- has no scalar
