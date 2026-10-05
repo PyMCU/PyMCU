@@ -199,6 +199,20 @@ public partial class IRGenerator
                         && ReadOnlyBuiltins.Contains(calleeBare.Name)
                         && !programFunctions.Contains(calleeBare.Name))
                         break;
+                    // `xs.extend(...)`: the receiver is the thing written, and no argument
+                    // position carries it. Without the note the const-sequence fold keeps
+                    // answering `xs[k]` with the literal's own elements after the name grew
+                    // -- `xs = [9, 9]; xs.extend([1, 2]); xs[2]` folded against size 2.
+                    if (call.Callee is MemberAccessExpr
+                        {
+                            Member: "append" or "extend" or "insert" or "remove"
+                                or "pop" or "clear" or "sort" or "reverse",
+                            Object: VariableExpr mutObj
+                        })
+                    {
+                        Note(mutObj.Name);
+                        NoteStore(mutObj.Name);
+                    }
                     foreach (var arg in call.Args)
                     {
                         if (arg is VariableExpr av) Note(av.Name);

@@ -13224,16 +13224,72 @@ public partial class IRGenerator
         if (expr.Args.Count != 1)
             throw UserError($"{bufKey}.extend() takes exactly one argument", memC);
 
-        int added = BufferExtendCount(expr.Args[0], bufKey);
+        // The size bump happens once, when the statement lowers, so it is only correct when
+        // every execution of the extend is preceded by the buffer's declaration re-running --
+        // the same run-time branch context the declaration recorded. extend() inside a loop
+        // or a non-folding conditional would grow the buffer a different number of times than
+        // the declaration runs (`buf += src` refuses the same shape for the same reason).
+        var extDeclTokens = bufferDeclBranchTokens.TryGetValue(bufKey, out var extDeclT)
+            ? extDeclT : new List<int>();
+        if (!extDeclTokens.SequenceEqual(_runtimeBranchTokens))
+            throw UserError(
+                $"{memC.Object}.extend() runs in a different context than where "
+                + $"'{memC.Object}' was declared -- inside a loop or conditional it would "
+                + "grow the buffer a different number of times than the declaration runs, "
+                + "but a buffer's size is fixed while compiling. Build it at its final size "
+                + "and slice-assign into it, or keep a write index and store at it.",
+                expr.Args[0]);
+
         // The tail goes at the LOGICAL end: sibling inline expansions share the
         // storage key, and another expansion's extend/+= must not move this one's.
         int current = LogicalArrayLen(bufKey, arraySizes[bufKey]);
-        int grown = Math.Max(current, current + added);
 
-        if (grown > current)
+        // The count runs first: a size known only at run time is refused here, naming
+        // the BUFFER, before any element work can trip its own less helpful message
+        // (`bytes(n)` with a run-time `n` is this case). For a spelled source the
+        // count is just the element count -- no value is evaluated for it.
+        int added = BufferExtendCount(expr.Args[0], bufKey);
+        int grown = Math.Max(current, current + added);
+        if (grown <= current) return new NoneVal();
+
+        arraySizes[bufKey] = Math.Max(arraySizes[bufKey], grown);
+        bufferLogicalLen[bufKey] = grown;
+
+        // When the argument spells its elements out -- a literal, a string, or a name
+        // bound to a compile-time sequence -- the bytes it adds are those elements.
+        // Each one lands through the canonical element store (an indexed AssignStmt),
+        // the same lowering `buf += src` runs per element, so every receiver
+        // representation -- fixed buffer, slot-flattened sequence, growable list --
+        // writes the storage its own reads answer. It used to only COUNT the elements
+        // and zero-fill, and an ArrayStore on the buffer key wrote storage a slot
+        // list's `xs[k]` never reads: `xs.extend([1, 2, 3])` printed 0 0 0 either way.
+        //
+        // `bytes(n)` is NOT a spelled source: its elements are n zeros, which is what
+        // the count-form zero-fill below already emits -- through the counted loop
+        // past the threshold (PyMCU#411) instead of one store per slot.
+        if (BufferExtendElements(expr.Args[0]) is { } extElems)
         {
-            arraySizes[bufKey] = Math.Max(arraySizes[bufKey], grown);
-            bufferLogicalLen[bufKey] = grown;
+            for (int k = 0; k < extElems.Count; ++k)
+            {
+                Expression extEl = extElems[k];
+                if (extEl is ListExpr or TupleExpr)
+                    throw UserError(
+                        $"{bufKey}.extend() takes a flat sequence of bytes -- an "
+                        + "element that is itself a list or tuple has no byte to store.",
+                        extEl);
+                if (InstanceClassOfValueExpr(extEl) is { } extInstCls)
+                    throw UserError(
+                        $"'.extend()' cannot take an instance of "
+                        + $"'{ShortClassNameOf(extInstCls)}': " + InstanceIsFlattened
+                        + ", so the grown byte would read shared storage at every "
+                        + "index. " + InstanceElementAdvice(extInstCls), extEl);
+                VisitStatement(new AssignStmt(
+                    new IndexExpr(memC.Object, new IntegerLiteral(current + k)), extEl));
+            }
+            return new NoneVal();
+        }
+
+        {
             var elem = arrayElemTypes.TryGetValue(bufKey, out var et) ? et : DataType.UINT8;
             // Below the threshold, an unrolled store per slot is smaller: the loop's own code
             // (a compare, a branch, an index increment, a jump back) is a fixed cost that N
@@ -13257,10 +13313,22 @@ public partial class IRGenerator
                 Emit(new Jump(loop));
                 Emit(new Label(done));
             }
-            else
+            else if (!listVarElemTypes.ContainsKey(bufKey)
+                     && !literalSequenceArrays.Contains(bufKey)
+                     && !constSequenceBindings.ContainsKey(bufKey))
             {
                 for (int i = current; i < grown; i++)
                     Emit(new ArrayStore(bufKey, new Constant(i), new Constant(0), elem, grown));
+            }
+            else
+            {
+                // A receiver whose elements are not addressed as buf[i] -- a growable
+                // list or a slot-flattened sequence -- stores each zero through the
+                // canonical element store, the same as the spelled-elements path.
+                for (int i = current; i < grown; i++)
+                    VisitStatement(new AssignStmt(
+                        new IndexExpr(memC.Object, new IntegerLiteral(i)),
+                        new IntegerLiteral(0)));
             }
         }
         return new NoneVal();
@@ -13328,6 +13396,26 @@ public partial class IRGenerator
             + "time. This count is only known at run time. Declare the buffer at its final size "
             + $"(`{bufName} = bytearray(N)`), or extend it by an amount that is a literal or a const.",
             arg);
+    }
+
+    /// <summary>
+    /// The elements an `extend()` argument spells out, or null when it only has a count
+    /// (`bytes(n)`, a name the compiler cannot see into). For those arguments the
+    /// caller falls back to the count-and-zero-fill path.
+    /// </summary>
+    private List<Expression>? BufferExtendElements(Expression arg)
+    {
+        Expression counted = arg is CallExpr { Callee: VariableExpr { Name: "bytes" } } ebc
+                             && ebc.Args.Count == 1
+            ? ebc.Args[0]
+            : arg;
+        if (counted is ListExpr extLit) return extLit.Elements;
+        // `buf.extend("ab")` appends the bytes the string spells: each char's code.
+        if (counted is StringLiteral extStr)
+            return extStr.Value
+                .Select(ch => (Expression)new IntegerLiteral(ch)).ToList();
+        if (ResolveConstSequenceExpr(counted) is { } extSeq) return extSeq;
+        return null;
     }
 
     // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).
