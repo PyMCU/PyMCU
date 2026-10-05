@@ -43,6 +43,17 @@ Each probe carries headers:
   gap is always covered by a *pair* of probes, one per front end, both citing the same
   issue, so the disagreement itself stays visible in the suite rather than being
   silently narrowed to whichever engine happens to run.
+- `# python: >=X.Y` -- optional; the minimum interpreter version the probe's
+  expectation exists under. A construct newer than the parsing Python (a
+  t-string on 3.12, say) fails inside `ast.parse()` with a version-dependent
+  syntax error that is not the diagnostic the probe asserts, so on an older
+  interpreter the probe skips instead of reporting "different diagnostic" for
+  what is really a different question. Under the py-parser front end the
+  version that counts is the translator's (`PYMCU_PYTHON`, else the `python3`
+  `pymcuc` spawns); for `match` and `divergence` probes the CPython oracle
+  half must also run the source, so the host version gates too. A `refuse`
+  probe under the default front end involves no Python parser and is never
+  gated.
 
 Run it from a `pymcu-avr` checkout (with `PyMCU` beside it, both venvs installed):
 
