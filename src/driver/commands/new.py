@@ -176,12 +176,24 @@ def _discover_stdlib_flavors() -> List[str]:
         return []
 
 
-# Floor used when a package cannot be inspected locally. It names a prerelease
+# Floor used when a package cannot be inspected locally: the compiler's own
+# version, since the compat layers release in lockstep with it. The constant
+# is the last resort for environments where even pymcu-compiler has no
+# distribution metadata (this repo's test venv is one). It names a prerelease
 # on purpose: pip only considers prereleases for a requirement when the
 # specifier itself mentions one (or when nothing stable exists at all), so a
 # bare name would make the generated project need `pip install --pre` the day
 # any of these packages ships a stable release.
-_PRERELEASE_FLOOR = "0.1.0a1"
+_PRERELEASE_FLOOR = "0.1.0b1"
+
+
+def _floor() -> str:
+    """Fallback specifier floor: the compiler's version, else the constant."""
+    try:
+        from importlib.metadata import version
+        return version("pymcu-compiler")
+    except Exception:
+        return _PRERELEASE_FLOOR
 
 
 def _pin(pkg_name: str, extra: str = "") -> str:
@@ -197,7 +209,7 @@ def _pin(pkg_name: str, extra: str = "") -> str:
         from importlib.metadata import version
         return f"{pkg_name}{extra}>={version(pkg_name)}"
     except Exception:
-        return f"{pkg_name}{extra}>={_PRERELEASE_FLOOR}"
+        return f"{pkg_name}{extra}>={_floor()}"
 
 
 # Built-in LED per AVR chip: the compat spelling, and the port letter plus bit

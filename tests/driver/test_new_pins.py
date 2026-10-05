@@ -25,9 +25,14 @@ runner = CliRunner()
 # Stand-in for pipx isolation: everything resolves except the stdlib flavor.
 _HIDDEN = "pymcu-micropython"
 
+# The fallback floor now reads the compiler's own version, so it has to hide
+# too: otherwise these tests pass against whatever pymcu-compiler this
+# particular venv happens to have installed, and fail in one that has none.
+_COMPILER = "pymcu-compiler"
+
 
 def _isolated_version(name: str) -> str:
-    if name == _HIDDEN:
+    if name in (_HIDDEN, _COMPILER):
         raise importlib_metadata.PackageNotFoundError(name)
     return importlib_metadata.version(name)
 
@@ -88,8 +93,27 @@ class TestPrereleaseAcceptance:
 
     def test_the_floor_admits_the_versions_actually_published(self, pipx_isolation):
         spec = Requirement(_pin(_HIDDEN)).specifier
-        for version in ("0.1.0a1", "0.1.0a1.post1", "0.1.0a5", "1.0.0"):
+        for version in ("0.1.0b1", "0.1.0b2", "1.0.0"):
             assert spec.contains(version), version
+        # The compat layers release in lockstep with the compiler: a project
+        # scaffolded by b1 has no business resolving an alpha layer.
+        assert not spec.contains("0.1.0a1")
+
+    def test_the_floor_tracks_the_installed_compiler(self):
+        """With no flavor metadata visible, the floor is the compiler version.
+
+        The compat layers release in lockstep with pymcu-compiler, so a floor
+        derived from it can never ask for a layer older than the tool doing
+        the asking -- and cannot go stale the way a hardcoded floor did
+        between 0.1.0a1 and 0.1.0b1.
+        """
+        def _cli_env(name: str) -> str:
+            if name == _COMPILER:
+                return "9.9.9b7"
+            raise importlib_metadata.PackageNotFoundError(name)
+
+        with patch("importlib.metadata.version", side_effect=_cli_env):
+            assert _pin(_HIDDEN) == f"{_HIDDEN}>=9.9.9b7"
 
 
 class TestGeneratedProject:
