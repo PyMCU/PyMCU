@@ -507,6 +507,14 @@ public partial class IRGenerator
     private int pendingTupleCount = 0;
     private List<string> lastTupleResults = new();
 
+    // Parallel to lastTupleResults: which of its indices is a fixed array/bytearray name
+    // rather than a scalar (VisitReturn's ReturnedBufferSlots, surfaced here the same way
+    // ReturnedBuffer surfaces through the single-value return path). Null, not merely empty,
+    // when the call just finished was not a tuple return at all -- VisitTupleUnpack reads it
+    // only alongside a non-empty lastTupleResults, but every reset of lastTupleResults clears
+    // this too so a later, unrelated call cannot inherit a stale slot index.
+    private Dictionary<int, string>? lastTupleResultBuffers;
+
     // `t = f()` where f returns several values: the name is bound to materialised
     // slots `t__0..N-1` (the values are COPIED -- the iret_ slots are shared
     // scratch between call sites at the same depth, so aliasing them would let a

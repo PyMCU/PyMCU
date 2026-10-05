@@ -61,6 +61,21 @@ public class InlineContext
     // elements never move. Null when no buffer was returned (#464).
     public string? ReturnedBuffer { get; set; } = null;
 
+    // The tuple counterpart of ReturnedBuffer: `return buf, val` records which RESULT SLOT
+    // INDICES (into ResultVars) are a fixed array/bytearray name rather than a scalar, keyed
+    // by index. A slot present here was never given a scalar Copy -- there is no byte at the
+    // name itself to copy, every byte lives under arraySizes -- so the caller's unpack must
+    // alias its target to this value instead (mirrors the single-value ReturnedBuffer path
+    // one level up, through VisitTupleUnpack's lastTupleResultBuffers).
+    public Dictionary<int, string>? ReturnedBufferSlots { get; set; }
+
+    // The mirror image of ReturnedBufferSlots: the result slot indices that DID get a scalar
+    // Copy. A return on a second path that delivers a buffer into a slot this set already
+    // holds (or a scalar into a slot ReturnedBufferSlots holds) cannot be bound by the
+    // caller -- the target would read one storage on a path that meant another -- so
+    // VisitReturn refuses the mix instead of compiling it silently.
+    public HashSet<int>? ReturnedScalarSlots { get; set; }
+
     // The constant this expansion's result has been tracked as, if any. Set by the first
     // `return <constant>` that is actually visited; cleared the moment a second REACHABLE
     // return yields a DIFFERENT constant, because then the value is selected at run time.

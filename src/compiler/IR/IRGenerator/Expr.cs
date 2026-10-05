@@ -253,6 +253,16 @@ public partial class IRGenerator
         _ => false,
     };
 
+    /// <summary>
+    /// The one sentence every refusal involving an instance-as-value shares:
+    /// why a name that looks like a value has no bytes a generic path can copy.
+    /// Kept single-sourced so append, index-store, extend and tuple-return all
+    /// name the same cause.
+    /// </summary>
+    internal const string InstanceIsFlattened =
+        "a PyMCU instance is flattened to compile-time storage -- its fields live at " +
+        "their own slots and the name itself has no bytes a scalar slot can hold";
+
     private Val VisitLambdaExpr(LambdaExpr expr)
     {
         string key = "__lambda_" + lambdaCounter++;
@@ -3417,6 +3427,7 @@ public partial class IRGenerator
         if (tupleSrc != null)
         {
             lastTupleResults.Clear();
+            lastTupleResultBuffers = null;
             pendingTupleCount = -1;
             Val callResult = VisitExpression(tupleSrc);
             pendingTupleCount = 0;
@@ -3431,12 +3442,26 @@ public partial class IRGenerator
                     throw new IndexError($"tuple index {tc.Value} out of range for "
                                          + $"{lastTupleResults.Count} elements",
                                          expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+                // A buffer element (`return buf, v`): there is no scalar at the slot --
+                // answering the buffer's own storage name is what `f()[k][j]`, `len(f()[k])`
+                // and `x = f()[k]` (which re-enters the returned-buffer binding below)
+                // all consume.
+                if (lastTupleResultBuffers is { } ixBufs
+                    && ixBufs.TryGetValue(tc.Value, out var ixBuf))
+                {
+                    string ixKey = FollowAliases(ixBuf);
+                    lastTupleResults.Clear();
+                    lastTupleResultBuffers = null;
+                    return new Variable(ixKey, arrayElemTypes.TryGetValue(ixKey, out var ixedt)
+                        ? ixedt : DataType.UINT8);
+                }
                 string elem = lastTupleResults[tc.Value];
                 // The subscript consumed this expansion's result list: leave it
                 // empty so a scalar-producing expression built around the call
                 // (`print(add2(pair(1)[0], pair(9)[0]))`) does not mistake the
                 // inner expansion's slots for the outer one's result.
                 lastTupleResults.Clear();
+                lastTupleResultBuffers = null;
                 return new Variable(elem, variableTypes.TryGetValue(elem, out var et)
                     ? et
                     : constantVariables.TryGetValue(elem, out int ec)
@@ -5065,6 +5090,87 @@ public partial class IRGenerator
             name = next;
         }
         return instanceClasses.TryGetValue(name, out var cls) ? cls : null;
+    }
+
+    // The element class an `arr: Cls[N]` instance array (RFC 0001 Model B) is declared
+    // with, or null when the name is not one. Resolved through the same local/module
+    // spellings TryInstanceArrayFieldAddr uses, plus the alias chain an `arr2 = arr`
+    // rebinding leaves behind. Pure lookup: emits nothing.
+    private string? InstanceArrayClassOf(Expression target)
+    {
+        if (target is not VariableExpr arrVe) return null;
+        string q = string.IsNullOrEmpty(currentFunction) ? arrVe.Name : currentFunction + "." + arrVe.Name;
+        if (!instanceArrayClass.ContainsKey(q) && instanceArrayClass.ContainsKey(arrVe.Name)) q = arrVe.Name;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (instanceArrayClass.TryGetValue(q, out var cls) && cls != null) return cls;
+            if (!variableAliases.TryGetValue(q, out var next) || next == null) break;
+            q = next;
+        }
+        return null;
+    }
+
+    // True when `e` is an `arr[i]` element of a Class[N] instance array -- slot
+    // storage, not a scalar, so evaluating it in value position has nothing to read
+    // (the refusal lives in VisitIndex). The sites that evaluate a member-access
+    // OBJECT only to derive a lookup name skip the eval on this shape instead: an
+    // element's identity is arr+idx, which the name-based tables cannot express, so
+    // skipping yields the same decline the dead-evaluated scratch name produced.
+    private bool IsInstanceArrayElemObject(Expression e)
+        => e is IndexExpr { Index: not SliceExpr and not TupleExpr } iaObj
+           && InstanceArrayClassOf(iaObj.Target) != null;
+
+    /// <summary>
+    /// The class a value-position expression names when it is an INSTANCE -- a
+    /// constructor call, a name or field spelling bound to one (through
+    /// AnchorNameOf's alias walk), a bare element read on an instance array, or a
+    /// call whose declared return type is a class. Null for scalars, buffers and
+    /// everything else. The point: an instance has no scalar storage a generic
+    /// value path can copy -- anywhere one is silently read as a byte (list
+    /// append, index store, extend element, tuple return) the program gets an
+    /// honest refusal instead of the low byte of shared storage.
+    /// </summary>
+    private string? InstanceClassOfValueExpr(Expression e) => e switch
+    {
+        CallExpr ctor when ClassNameOf(ctor.Callee) is { } ctorCls => ctorCls,
+        VariableExpr or MemberAccessExpr when AnchorNameOf(e) is { } instAnchor
+            && instanceClasses.TryGetValue(instAnchor, out var anchorCls) && anchorCls != null
+            => anchorCls,
+        IndexExpr instIx when InstanceArrayClassOf(instIx.Target) is { } ixCls => ixCls,
+        CallExpr factory when factory.Callee is VariableExpr factoryFn
+            && functionReturnTypes.TryGetValue(ResolveCallee(factoryFn.Name), out var factoryRt)
+            && factoryRt != null && classNames.Contains(factoryRt) => factoryRt,
+        _ => null,
+    };
+
+    /// <summary>
+    /// True when a class can be an element of a `Cls[N]` instance array (RFC 0001
+    /// Model B): the contiguous slot layout only exists for a multi-field class --
+    /// a single-field class falls through to the plain scalar-array lowering, where
+    /// `xs[i] = C(...)` has no element object to construct.
+    /// </summary>
+    private bool ClassCanBeElementArray(string cls) =>
+        slotClasses.Contains(cls)
+        || (classFieldLayout.TryGetValue(cls, out var clsLay) && clsLay.Count >= 2);
+
+    /// <summary>
+    /// The advice the instance-as-element refusals share: where a real fix exists
+    /// (a multi-field class can ride Model B), name it; where it does not (a
+    /// single-field class has no element storage), say what DOES work -- storing
+    /// the field -- rather than pointing at the shape that miscompiles.
+    /// </summary>
+    private string InstanceElementAdvice(string cls)
+    {
+        string shortCls = cls.Length > 0 ? ShortClassNameOf(cls) : "Cls";
+        return ClassCanBeElementArray(cls)
+            ? "Give each instance real, run-time-indexed storage instead: declare a "
+              + $"fixed-size element array (`xs: {shortCls}[N]`, then "
+              + $"`xs[i] = {shortCls}(...)`); or store the field you mean, e.g. "
+              + "`xs[i] = c.<field>`."
+            : "Store the field you mean instead (e.g. `xs[i] = c.<field>`), or keep "
+              + "the instances as named variables. A fixed-size element array "
+              + $"(`xs: {shortCls}[N]`) needs a class with at least two fields -- "
+              + $"this one has no element storage to construct into.";
     }
 
     /// <summary>

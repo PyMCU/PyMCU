@@ -1445,7 +1445,77 @@ public partial class IRGenerator
                         continue;
                     }
 
+                    // `return buf, val`: a fixed array/bytearray element, the tuple counterpart
+                    // of the single-value `return <local array>` path above (ReturnedBuffer).
+                    // The element has no scalar of its own -- every byte lives under
+                    // arraySizes[name], not at a slot `VisitExpression` could read -- so record
+                    // the storage key on the context instead of falling to the generic
+                    // VisitExpression+Copy below, which used to read nothing (the array name
+                    // resolves to no scalar storage) and left the result slot, and therefore the
+                    // caller's unpack target, exactly as it started: `rom, diff = f(...)` kept
+                    // whatever bytes `rom` already had instead of the callee's buffer.
+                    string? retBufKey = tup.Elements[k] switch
+                    {
+                        VariableExpr tupRetArr when ResolveArrayVar(tupRetArr.Name) is { } tupArrInfo
+                            => tupArrInfo.Name,
+                        MemberAccessExpr tupRetMem when ResolveMemberArrayName(tupRetMem) is { } tupMemArr
+                            => tupMemArr,
+                        _ => null,
+                    };
+                    if (retBufKey != null)
+                    {
+                        if (ctx.ReturnedBufferSlots is { } prevBufs
+                            && prevBufs.TryGetValue(k, out var prevBuf) && prevBuf != retBufKey)
+                            throw UserError(
+                                $"'{ctx.CalleeName}' returns a different buffer in element {k} "
+                                + "depending on which path ran -- the caller's unpack target "
+                                + "binds one storage key, so each return must hand back the "
+                                + "same one. Return the buffer through a parameter instead.",
+                                tup.Elements[k]);
+                        if (ctx.ReturnedScalarSlots?.Contains(k) == true)
+                            throw UserError(
+                                $"'{ctx.CalleeName}' returns a buffer in element {k} here but "
+                                + "a value on another path -- the caller's unpack target "
+                                + "cannot be a buffer on one path and a scalar on the other. "
+                                + "Return the buffer through a parameter instead.",
+                                tup.Elements[k]);
+                        (ctx.ReturnedBufferSlots ??= new())[k] = retBufKey;
+                        // The iret_ slots are shared scratch: a const sequence or folded
+                        // scalar an earlier call filed under this slot's name must not
+                        // survive into an unpack that reads the slot as a buffer.
+                        constantVariables.Remove(ctx.ResultVars[k]);
+                        floatConstantVariables.Remove(ctx.ResultVars[k]);
+                        strConstantVariables.Remove(ctx.ResultVars[k]);
+                        constSequenceBindings.Remove(ctx.ResultVars[k]);
+                        continue;
+                    }
+                    if (IsSequenceObject(tup.Elements[k]))
+                        throw UserError(
+                            "a bytes or list object cannot be returned as a tuple element. "
+                            + SequenceIsStorage
+                            + " Give the caller the buffer through a parameter instead, or "
+                            + "return just the elements you need.",
+                            tup.Elements[k]);
+                    if (ctx.ReturnedBufferSlots?.ContainsKey(k) == true)
+                        throw UserError(
+                            $"'{ctx.CalleeName}' returns a value in element {k} here but a "
+                            + "buffer on another path -- the caller's unpack target cannot "
+                            + "be a buffer on one path and a scalar on the other.",
+                            tup.Elements[k]);
+                    // `return inst, v`: an instance, like a buffer, has no scalar slot to
+                    // copy -- the bare handle names storage nothing writes, and the
+                    // caller's `t[0]` would read that slot's stale byte as the object.
+                    if (InstanceClassOfValueExpr(tup.Elements[k]) is { } retInstCls)
+                        throw UserError(
+                            $"element {k} of '{ctx.CalleeName}'s tuple return cannot be an "
+                            + $"instance of '{ShortClassNameOf(retInstCls)}': "
+                            + InstanceIsFlattened
+                            + ". Return the fields you need "
+                            + "(`return inst.<field>, val`), or hand the instance to the "
+                            + "caller through a parameter.", tup.Elements[k]);
+
                     Val elemVal = VisitExpression(tup.Elements[k]);
+                    (ctx.ReturnedScalarSlots ??= new()).Add(k);
                     // The result slots carry the annotated element widths when the callee
                     // declared them (see EmitInlineFunctionCall); the element's own width
                     // otherwise, so a uint16 member does not truncate to uint8.

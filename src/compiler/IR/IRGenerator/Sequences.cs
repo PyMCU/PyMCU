@@ -789,6 +789,17 @@ public partial class IRGenerator
         {
             string src = lastTupleResults[k];
             string dst = key + "__" + k;
+            // A buffer element of the callee's `return`: no scalar slot crossed, so
+            // `t__k` becomes another NAME for the callee's storage and `t[k][j]`,
+            // `len(t[k])` and `for` all answer it -- the element copy a scalar slot
+            // would get has no byte to read at the buffer's name.
+            if (lastTupleResultBuffers is { } tupBufs
+                && tupBufs.TryGetValue(k, out var tupBuf))
+            {
+                BindSequenceAlias(dst, FollowAliases(tupBuf));
+                elems.Add(dst);
+                continue;
+            }
             DataType dt = variableTypes.TryGetValue(src, out var sdt)
                 ? sdt
                 : constantVariables.TryGetValue(src, out int srcConst)
@@ -810,6 +821,7 @@ public partial class IRGenerator
         // The binding consumed the expansion's result list; a scalar-producing
         // expression wrapped around the call must not read it back as its own.
         lastTupleResults.Clear();
+        lastTupleResultBuffers = null;
     }
 
     /// <summary>

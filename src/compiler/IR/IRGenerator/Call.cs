@@ -4183,6 +4183,9 @@ public partial class IRGenerator
         lastTupleResults = Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0
             ? new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars)
             : new List<string>();
+        // The buffer-slot counterpart, same reasoning as the comment above: a stale set from
+        // an inner call must not survive into a tuple this call did not return.
+        lastTupleResultBuffers = Enumerable.Last<InlineContext>(inlineStack).ReturnedBufferSlots;
         // A result temporary the expansion allocated itself (a value return in a callee the
         // parser filed as void) is the call's value too.
         result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;
@@ -5864,19 +5867,28 @@ public partial class IRGenerator
     private List<Expression>? TupleResultElementsOf(Expression e)
     {
         lastTupleResults.Clear();
+        lastTupleResultBuffers = null;
         pendingTupleCount = -1;
         VisitExpression(e);
         pendingTupleCount = 0;
         if (lastTupleResults.Count == 0) return null;
 
         var elems = new List<Expression>(lastTupleResults.Count);
-        foreach (var s in lastTupleResults)
+        for (int k = 0; k < lastTupleResults.Count; ++k)
+        {
+            // A buffer element answers its storage name -- the slot holds no scalar,
+            // and the spliced argument must still resolve to array storage.
+            string s = lastTupleResultBuffers is { } splBufs
+                && splBufs.TryGetValue(k, out var splBuf) ? FollowAliases(splBuf)
+                : lastTupleResults[k];
             elems.Add(new PreEvaluatedExpr(
                 new Variable(s, variableTypes.TryGetValue(s, out var sdt) ? sdt : DataType.UINT8),
                 null));
+        }
         // The splice consumed the expansion's result list; a scalar-producing
         // expression wrapped around it must not read them back as its own.
         lastTupleResults.Clear();
+        lastTupleResultBuffers = null;
         return elems;
     }
 
@@ -8485,6 +8497,7 @@ public partial class IRGenerator
             constantVariables[qn] = q;
             constantVariables[rn] = r;
             lastTupleResults = new List<string> { qn, rn };
+            lastTupleResultBuffers = null;
             return new NoneVal();
         }
 
@@ -8510,6 +8523,7 @@ public partial class IRGenerator
             Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qvar));
             Emit(new Binary(BinaryOp.Mod, aVal, bVal, rvar));
             lastTupleResults = new List<string> { qn, rn };
+            lastTupleResultBuffers = null;
             return new NoneVal();
         }
     }
@@ -11769,6 +11783,7 @@ public partial class IRGenerator
             if (arg is MemberAccessExpr or CallExpr)
             {
                 lastTupleResults.Clear();
+                lastTupleResultBuffers = null;
                 pendingTupleCount = -1;
                 Val seqVal = VisitExpression(arg);
                 pendingTupleCount = 0;
@@ -11776,6 +11791,7 @@ public partial class IRGenerator
                 // @inline print_str helper, and an expansion that yields no tuple
                 // slots empties lastTupleResults -- the loop would read nothing.
                 var printSlots = new List<string>(lastTupleResults);
+                var printBufs = lastTupleResultBuffers;
                 if (printSlots.Count > 0)
                 {
                     EmitStreamStr(writeStrFn, "(");
@@ -11783,6 +11799,15 @@ public partial class IRGenerator
                     {
                         if (k > 0) EmitStreamStr(writeStrFn, ", ");
                         string slot = printSlots[k];
+                        // A buffer element prints the bytearray(b'...') repr CPython
+                        // prints, not a byte of its storage -- the same arg form a
+                        // named bytearray takes.
+                        if (printBufs is { } && printBufs.TryGetValue(k, out var printBuf))
+                        {
+                            EmitPrintArg(new VariableExpr(FollowAliases(printBuf))
+                                { Line = arg.Line });
+                            continue;
+                        }
                         EmitPrintArg(new PreEvaluatedExpr(
                             new Variable(slot, variableTypes.TryGetValue(slot, out var sdt)
                                 ? sdt
