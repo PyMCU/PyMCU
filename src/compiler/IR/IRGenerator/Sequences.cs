@@ -870,6 +870,10 @@ public partial class IRGenerator
 
         var elems = new List<string>();
         DataType widest = DataType.UINT8;
+        // `return buf, buf`: two elements answer the SAME object -- a later slot
+        // resolving to storage already materialised binds that first slot's name,
+        // or `t[0]` and `t[1]` would be two copies where CPython has one object.
+        var tupSrcToDst = new Dictionary<string, string>();
         for (int k = 0; k < lastTupleResults.Count; ++k)
         {
             string src = lastTupleResults[k];
@@ -882,10 +886,17 @@ public partial class IRGenerator
             if (lastTupleResultBuffers is { } tupBufs
                 && tupBufs.TryGetValue(k, out var tupBuf))
             {
-                if (lastTupleResultLocalBuffers?.Contains(k) == true)
-                    EmitSequenceCopy(dst, FollowAliases(tupBuf));
+                string canonBuf = FollowAliases(tupBuf);
+                if (tupSrcToDst.TryGetValue(canonBuf, out var firstDst))
+                    BindSequenceAlias(dst, firstDst);
                 else
-                    BindSequenceAlias(dst, FollowAliases(tupBuf));
+                {
+                    if (lastTupleResultLocalBuffers?.Contains(k) == true)
+                        EmitSequenceCopy(dst, canonBuf);
+                    else
+                        BindSequenceAlias(dst, canonBuf);
+                    tupSrcToDst[canonBuf] = dst;
+                }
                 elems.Add(dst);
                 continue;
             }

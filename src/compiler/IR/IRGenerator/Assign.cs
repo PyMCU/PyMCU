@@ -10641,6 +10641,11 @@ public partial class IRGenerator
             if (unpackSlots.Count != stmt.Targets.Count)
                 throw UserError($"Expected {stmt.Targets.Count} tuple results, got {unpackSlots.Count}");
 
+            // `return buf, buf`: two slots answer the SAME object, so a second
+            // target resolving to storage a previous slot already materialised
+            // binds that first destination -- copying again would make `a is b`
+            // false and `a[0] = 9` invisible through `b`.
+            var unpackSrcToDst = new Dictionary<string, string>();
             for (int k = 0; k < stmt.Targets.Count; ++k)
             {
                 string srcName = unpackSlots[k];
@@ -10658,10 +10663,17 @@ public partial class IRGenerator
                 if (unpackBufs is { }
                     && unpackBufs.TryGetValue(k, out var unpackBuf))
                 {
-                    if (unpackLocal?.Contains(k) == true)
-                        EmitSequenceCopy(dstName, FollowAliases(unpackBuf));
+                    string canonBuf = FollowAliases(unpackBuf);
+                    if (unpackSrcToDst.TryGetValue(canonBuf, out var firstDst))
+                        BindSequenceAlias(dstName, firstDst);
                     else
-                        BindSequenceAlias(dstName, FollowAliases(unpackBuf));
+                    {
+                        if (unpackLocal?.Contains(k) == true)
+                            EmitSequenceCopy(dstName, canonBuf);
+                        else
+                            BindSequenceAlias(dstName, canonBuf);
+                        unpackSrcToDst[canonBuf] = dstName;
+                    }
                     continue;
                 }
                 // A return element that is itself a compile-time sequence -- `a, t, c =
