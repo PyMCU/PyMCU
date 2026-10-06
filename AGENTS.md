@@ -69,7 +69,7 @@ Every commit you create must:
 
 - Read the file before editing it. Never guess at structure.
 - Check `LANGUAGE_ROADMAP.md` to understand what is and is not implemented.
-- Check the [Limitations page](https://docs.pymcu.org/limitations/) before adding workarounds for "missing" features — many
+- Check the [Limitations page](https://docs.pymcu.org/limitations/) before adding workarounds for "missing" features: many
   are already supported.
 - Read the [Contributing guide](https://docs.pymcu.org/contributing/) for HAL coding rules and stdlib conventions.
 
@@ -150,7 +150,7 @@ behaviour).
 When implementing a feature:
 - Mark it complete in `LANGUAGE_ROADMAP.md` (root) and the [Roadmap page](https://docs.pymcu.org/roadmap/) of the documentation site.
 - If the feature was previously listed as unsupported, update the [Limitations page](https://docs.pymcu.org/limitations/).
-- Keep both roadmap sources in sync — they must describe the same version history.
+- Keep both roadmap sources in sync: they must describe the same version history.
 
 ---
 
