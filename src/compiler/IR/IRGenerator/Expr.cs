@@ -5175,8 +5175,15 @@ public partial class IRGenerator
         CallExpr factory when factory.Callee is VariableExpr factoryFn
             && functionReturnTypes.TryGetValue(ResolveCallee(factoryFn.Name), out var factoryRt)
             && factoryRt != null && classNames.Contains(factoryRt) => factoryRt,
+        // The receiver's class decides, not the receiver's syntax: FieldOwnerClass answers
+        // a bare name (`factory.make()`) and a class receiver; anything else -- an
+        // attribute chain (`holder.factory.make()`), a call (`get_factory().make()`),
+        // a field on self -- is judged by the TYPE the receiver evaluates to. A receiver
+        // that names no instance keeps answering null and no refusal fires, same as
+        // before -- the check can only ever refuse a receiver it positively resolved.
         CallExpr methodCall when methodCall.Callee is MemberAccessExpr methodMem
-            && FieldOwnerClass(methodMem) is { } methodOwner
+            && (FieldOwnerClass(methodMem)
+                ?? InstanceClassOfValueExpr(methodMem.Object)) is { } methodOwner
             && functionReturnTypes.TryGetValue(methodOwner + "_" + methodMem.Member, out var methodRt)
             && methodRt != null && classNames.Contains(methodRt) => methodRt,
         _ => null,
