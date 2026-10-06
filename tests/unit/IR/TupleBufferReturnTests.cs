@@ -193,4 +193,38 @@ public class TupleBufferReturnTests
         Assert.Contains(ArraysTouched(ir), n => n == "main.a");
         Assert.DoesNotContain(ArraysTouched(ir), n => n == "main.b");
     }
+
+    [Fact]
+    public void AnnotatedCalleeLocalArrayReturnedInTuple_CopiesIntoEachCallerTarget()
+    {
+        // `buf: uint8[1]` is born inside the callee, so each unpack target takes
+        // its bytes home: CPython gives `a` and `b` two different objects and the
+        // second call cannot overwrite the first. The annotated spelling used to
+        // file under `f.buf` -- the caller's spelling, not the expansion's
+        // `inline1.f.buf` -- so the locality check saw outliving storage and
+        // aliased: both targets named the one shared cell and `a[0]` read the
+        // second call's 2 where CPython prints 1.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "def f(n: uint8):\n" +
+            "    buf: uint8[1] = [n]\n" +
+            "    return buf, 0\n\n" +
+            "a, x = f(1)\n" +
+            "b, y = f(2)\n" +
+            "u = a[0]\n" +
+            "v = b[0]\n");
+
+        // One copy home per call, onto that target's own slot. Both expansions
+        // reuse the same `inline1.f.` frame name -- depth, not a call counter --
+        // which is exactly why the copy matters: the frame slot is one shared
+        // cell, so each target must hold its own bytes. Aliased -- as `f.buf`
+        // was -- neither Copy exists at all and both names read that cell.
+        var copies = ir.Functions.SelectMany(fn => fn.Body).OfType<Copy>().ToList();
+        Assert.Contains(copies, c =>
+            c.Src is Variable { Name: "inline1.f.buf__0" }
+            && c.Dst is Variable { Name: "main.a__0" });
+        Assert.Contains(copies, c =>
+            c.Src is Variable { Name: "inline1.f.buf__0" }
+            && c.Dst is Variable { Name: "main.b__0" });
+    }
 }

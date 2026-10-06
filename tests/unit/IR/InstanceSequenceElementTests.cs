@@ -138,6 +138,52 @@ public class InstanceSequenceElementTests
     }
 
     [Fact]
+    public void AChainedMemberCallReturningAnInstance_InATupleReturn_IsRefused()
+    {
+        // `holder.factory.make()`: the receiver is an attribute chain, not a bare
+        // name, and the class lookup only knew the VariableExpr spelling -- the
+        // method's `-> Counter` went unseen, the instance rode a scalar slot, and
+        // the caller's `bool(a)` read False where CPython holds the object.
+        var msg = Refusal(Counter +
+            "class Factory:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._x = 0\n\n" +
+            "    def make(self) -> Counter:\n" +
+            "        return Counter(0)\n\n" +
+            "class Holder:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self.factory = Factory()\n\n" +
+            "holder = Holder()\n\n" +
+            "def f():\n" +
+            "    return holder.factory.make(), 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void ACallReceiverMemberCallReturningAnInstance_InATupleReturn_IsRefused()
+    {
+        // `get_factory().make()`: the receiver is itself a CALL returning the
+        // factory, so no name anchors anywhere -- the method's `-> Counter` can
+        // only come from the receiver's evaluated type, not its syntax.
+        var msg = Refusal(Counter +
+            "class Factory:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._x = 0\n\n" +
+            "    def make(self) -> Counter:\n" +
+            "        return Counter(0)\n\n" +
+            "factory = Factory()\n\n" +
+            "def get_factory() -> Factory:\n" +
+            "    return factory\n\n" +
+            "def f():\n" +
+            "    return get_factory().make(), 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
     public void AnnotatedListInitWithAnInstance_IsRefused()
     {
         // `xs: list[uint8] = [c]` built the heap payload straight from the
