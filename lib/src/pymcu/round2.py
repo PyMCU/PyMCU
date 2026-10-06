@@ -37,19 +37,18 @@ def _pymcu_round2(value: float, n: int32) -> float:
         prec: uint8 = uint8(n)
         digs: uint8[16] = [0] * 16
         int_part: uint32 = _float_fmt_digits(av, prec, digs)
-        frac: uint32 = 0
-        i: uint8 = 0
-        while i < prec:
-            frac = frac * 10 + uint32(digs[i])
-            i = i + 1
-        scale: float = 1.0
-        j: uint8 = 0
-        while j < prec:
-            scale = scale * 10.0
-            j = j + 1
-        result: float = float(int_part)
-        if prec > 0:
-            result = result + float(frac) / scale
+        # Rebuild the fraction as 0.d0 d1 ... d(prec-1) in Horner form, last
+        # digit first: every step is one correctly-rounded float op, and an
+        # error made on an earlier digit is divided by ten at every step that
+        # follows it, so the sum stays inside the last ulp even at prec 15.
+        # The uint32 accumulator this replaced overflowed past nine digits
+        # (round(0.5, 10) read back 0.07050327).
+        fracf: float = 0.0
+        i: uint8 = prec
+        while i > 0:
+            i = i - 1
+            fracf = (fracf + float(digs[i])) / 10.0
+        result: float = float(int_part) + fracf
         if neg != 0:
             result = -result
         return result

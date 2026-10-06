@@ -108,8 +108,9 @@ def bits(value):
 
 CASES = [
     # (value, n): values a float32 represents exactly keep the host and the
-    # chip looking at the same number.
-    (2.675, 2), (1.005, 2),
+    # chip looking at the same number; prec > 9 is the old uint32 overflow.
+    (0.5, 10), (0.5, 15), (1.25, 12), (-2.5, 12), (99999.5, 10),
+    (0.0009765625, 15), (0.123456789, 12), (2.675, 2), (1.005, 2),
     (1234.5, -2), (1750.0, -2), (-1750.0, -2), (999.9, -2), (7.77, 0),
 ]
 
