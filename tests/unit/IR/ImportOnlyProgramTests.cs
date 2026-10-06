@@ -27,4 +27,25 @@ public class ImportOnlyProgramTests
         var ir = Gen("import dht\n");
         Assert.Contains(ir.Functions, f => f.Name == "main");
     }
+
+    [Fact]
+    public void AnEntryFileWithOnlyFunctionDefinitionStillEmitsMain()
+    {
+        var ir = Gen("def f(x):\n    return x\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AnEntryFileWithOnlyClassDefinitionStillEmitsMain()
+    {
+        var ir = Gen("class A:\n    pass\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AnEntryFileWithImportsAndFunctionStillEmitsMain()
+    {
+        var ir = Gen("import dht\n\ndef f(x):\n    return x\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
 }
