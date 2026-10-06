@@ -4719,12 +4719,22 @@ public partial class IRGenerator
             // An alias inherits whatever it lands on: a parameter bound to a scalar
             // (`forward(buf[i])` hands `buf` the element's temp) IS the number and
             // shadows the module-level buffer the bare name would otherwise name;
-            // bound to an array it keeps answering as a buffer.
+            // bound to an array it keeps answering as a buffer. The sequence tables
+            // are asked at every hop, not just the terminal: a chain can pass through
+            // a literal-bound name on the way (`writeto.buffer` -> `write.buf` ->
+            // `listLiteralParams`), and the scalar table may hold a stale width for a
+            // name an earlier call site at this prefix bound by value.
             if (variableAliases.TryGetValue(key, out var alias))
             {
-                for (int d = 0; d < 20 && variableAliases.TryGetValue(alias, out var nxt); d++)
+                for (int d = 0; d < 20; d++)
+                {
+                    if (arraySizes.ContainsKey(alias) || constSequenceBindings.ContainsKey(alias)
+                        || listLiteralParams.ContainsKey(alias) || bytearrayParams.Contains(alias)
+                        || IsBufferStorageName(alias))
+                        return false;
+                    if (!variableAliases.TryGetValue(alias, out var nxt)) break;
                     alias = nxt;
-                if (IsBufferStorageName(alias)) return false;
+                }
                 return variableTypes.ContainsKey(alias) || constantVariables.ContainsKey(alias);
             }
             if (variableTypes.ContainsKey(key)) return true;
