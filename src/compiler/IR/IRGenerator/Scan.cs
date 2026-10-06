@@ -2059,10 +2059,16 @@ public partial class IRGenerator
                             && !constantVariables.TryGetValue(currentModulePrefix + mangledBase, out parentCode)
                             && !constantVariables.TryGetValue(b, out parentCode))
                             continue;
+                        // Multiple bases each contribute an IS-A path (`class F(ValueError,
+                        // OSError)` is caught by `except OSError`). A base outside the OSError
+                        // subtree records no edge but must not end the scan -- a later base may
+                        // still carry one.
                         if (parentCode == BuiltinExceptionNames.Codes["OSError"]
                             || exceptionParents.ContainsKey(parentCode))
+                        {
                             exceptionParents[exnCode] = parentCode;
-                        break;
+                            break;
+                        }
                     }
                     continue;
                 }
