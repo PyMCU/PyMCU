@@ -3360,12 +3360,17 @@ public partial class IRGenerator
 
             // This handler reads the record past whatever nested raises it runs: save the
             // delivered exception into its snapshot words on the matched path. The compare
-            // chain above is already done with R22, so the copies may use it freely.
+            // chain above is already done with R22, so the copies may use it freely. The
+            // mark is tentative: a bare `raise` it never sees leaves it dead weight.
             bool handlerNeedsSnap = snapPrefix != null
                 && (bound != null
                     || TypeInference.WalkStatements(handlerBody).OfType<RaiseStmt>().Any());
+            int snapMarkIndex = -1;
             if (handlerNeedsSnap)
+            {
                 Emit(new ExnRecordMark(snapPrefix!, Restore: false));
+                snapMarkIndex = currentInstructions.Count - 1;
+            }
             handlerSnapStack.Add(handlerNeedsSnap ? snapPrefix : null);
 
             foreach (var s in handlerBody)
@@ -3374,6 +3379,19 @@ public partial class IRGenerator
                 VisitStatement(s);
             }
             _seqTerminated = false;
+
+            // An unbound handler's snapshot is observable only by a re-raise in its body,
+            // which lowers to a restore mark on this prefix -- a fresh `raise X(...)`
+            // writes a record of its own and needs none of it. When no restore landed,
+            // drop the save so it costs no code. A `def` in the body lowers apart from
+            // this list, so its raises cannot be audited here and keep the mark.
+            if (snapMarkIndex >= 0 && bound == null
+                && !TypeInference.WalkStatements(handlerBody).OfType<FunctionDef>().Any()
+                && !currentInstructions.Skip(snapMarkIndex + 1)
+                     .Any(ins => ins is ExnRecordMark rm && rm.Restore && rm.Prefix == snapPrefix))
+            {
+                currentInstructions.RemoveAt(snapMarkIndex);
+            }
 
             if (bound != null)
             {

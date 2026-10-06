@@ -312,6 +312,71 @@ public class ExceptionArgsTests
     }
 
     [Fact]
+    public void AHandlerThatNeverReraisesKeepsNoSnapshot()
+    {
+        // The snapshot guards the caught record against nested handled raises; an
+        // unbound handler whose raises are all fresh (`raise X(...)`) never observes
+        // it, so the save is dead weight -- and it was 46 bytes of it on an unmodified
+        // CircuitPython fixture that sits exactly at the flash limit. The first try's
+        // bound handler keeps the record machinery linked so the absence is measured,
+        // not assumed.
+        var main = Fn(Gen(Boom +
+            "try:\n" +
+            "    boom(0)\n" +
+            "except E1 as x:\n" +
+            "    print(x.args[0])\n" +
+            "try:\n" +
+            "    boom(0)\n" +
+            "except E1:\n" +
+            "    try:\n" +
+            "        raise ValueError(2)\n" +
+            "    except ValueError:\n" +
+            "        raise ValueError(3)\n" +
+            "    finally:\n" +
+            "        pass\n"), "main");
+
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable d }
+                  && (s.Name.StartsWith("__exh_1", StringComparison.Ordinal)
+                      || s.Name.StartsWith("__exh_2", StringComparison.Ordinal)
+                      || d.Name.StartsWith("__exh_1", StringComparison.Ordinal)
+                      || d.Name.StartsWith("__exh_2", StringComparison.Ordinal)))
+            .Should().BeFalse(because: "nothing in either body re-signals a caught record");
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable d }
+                  && (s.Name.StartsWith("__exh_0", StringComparison.Ordinal)
+                      || d.Name.StartsWith("__exh_0", StringComparison.Ordinal)))
+            .Should().BeTrue(because: "the bound handler still snapshots its record");
+    }
+
+    [Fact]
+    public void AnUnboundHandlerWithABareRaiseStillSnapshots()
+    {
+        // No `as e`, but the bare `raise` re-signals the record this handler caught:
+        // a nested handled raise has overwritten the shared words by then, so the
+        // snapshot must stay. The leading bound handler keeps the record fields live.
+        var main = Fn(Gen(Boom +
+            "try:\n" +
+            "    boom(0)\n" +
+            "except E1 as x:\n" +
+            "    print(x.args[0])\n" +
+            "try:\n" +
+            "    try:\n" +
+            "        boom(0)\n" +
+            "    except E1:\n" +
+            "        try:\n" +
+            "            raise ValueError(2)\n" +
+            "        except ValueError:\n" +
+            "            pass\n" +
+            "        raise\n" +
+            "except E1:\n" +
+            "    print(\"caught\")\n"), "main");
+
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable d }
+                 && s.Name.StartsWith("__exh_2", StringComparison.Ordinal)
+                 && d.Name.StartsWith("__exn_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the bare raise restores the caught record from the snapshot");
+    }
+
+    [Fact]
     public void AnEmptyStringArgumentIsAnArgument()
     {
         var ir = Gen(
