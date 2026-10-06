@@ -87,8 +87,11 @@ public class BuiltinArithmeticTests
             "print(q)\n" +
             "print(r)\n");
 
+        // The divisor `GPIOR0.value + 7` is signed int16, so b = -1 is in range
+        // and the quotient a / -1 can be 32768 -- past int16's top. The pair
+        // takes the signed rank that holds it: int32.
         var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
-        Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
+        Assert.Equal(DataType.INT32, ((Variable)q.Dst).Type);
     }
 
     [Fact]
