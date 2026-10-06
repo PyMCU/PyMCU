@@ -311,4 +311,39 @@ public class OverloadBufferArgumentTests
         Assert.True(Uses(ir, 7), "the scalar body must run for a scalar field");
         Assert.False(Uses(ir, 100), "the bytearray body must not run for a scalar field");
     }
+
+    [Fact]
+    public void AScalarThroughAnInlineParameterShadowingAnArrayTakesTheScalarOverload()
+    {
+        // `forward(buf[i])` binds the parameter `buf` to the ELEMENT's value; inside the
+        // expansion `w(buf)` spells that scalar with a bare name that a module-level
+        // array also carries. The bare-name array lookup read through the binding and
+        // typed the argument as the buffer: dispatch first picked the bytearray body,
+        // and once the selection was fixed a second bare-name read still refused the
+        // call as "a buffer for a number parameter".
+        var ir = Gen(Preamble +
+            "class Inner:\n" +
+            "    @inline\n" +
+            "    def w(self, data: bytearray) -> uint8:\n" +
+            "        return data[0] + 100\n" +
+            "    @inline\n" +
+            "    def w(self, data: uint8) -> uint8:\n" +
+            "        return data + 7\n" +
+            "class Outer:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        self.inner = Inner()\n" +
+            "    @inline\n" +
+            "    def forward(self, buf: uint8) -> uint8:\n" +
+            "        return self.inner.w(buf)\n" +
+            "buf: uint8[3] = [7, 8, 9]\n" +
+            "def run(i: uint8) -> uint8:\n" +
+            "    o = Outer()\n" +
+            "    return o.forward(buf[i])\n" +
+            "def main():\n" +
+            "    G.value = run(G.value)\n");
+
+        Assert.True(Uses(ir, 7), "the scalar body must run for an element argument");
+        Assert.False(Uses(ir, 100), "the bytearray body must not run for an element argument");
+    }
 }

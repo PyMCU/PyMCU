@@ -3142,9 +3142,15 @@ public partial class IRGenerator
             // typed from a scalar, or the reverse).
             CheckUnionArgumentMatchesAMember(
                 func, paramIdx, i < rawArgExprs.Count ? rawArgExprs[i] : null, argValues[i]);
+            // The argument EXPRESSION resolved under the caller's scope (`savedPrefix`
+            // while an inline frame is ambient, else the enclosing function) -- asking
+            // its name under the callee's prefix finds an unrelated same-named global.
+            string argScopePfx = savedPrefix.Length > 0 ? savedPrefix
+                : !string.IsNullOrEmpty(currentFunction) && currentFunction != "main"
+                    ? currentFunction + "." : "";
             RefuseBufferForNumberParam(SourceCalleeName(), func.Params[paramIdx].Name,
                 func.Params[paramIdx].Type, i < rawArgExprs.Count ? rawArgExprs[i] : null,
-                argValues[i]);
+                argValues[i], argScopePfx: argScopePfx);
 
             // A register alias bound at an EARLIER call site to the same @inline function
             // survives in constantAddressVariables unless it is cleared here. The parameter key
@@ -4612,21 +4618,28 @@ public partial class IRGenerator
     /// already turned into a base address. A tuple is not counted: it is a compile-time group
     /// of values, not something a callee indexes as bytes.
     /// </summary>
-    private bool ArgumentIsBuffer(Expression? arg, Val? evaluated)
+    /// <param name="argScopePfx">The scope the argument EXPRESSION resolved under: the
+    /// caller's inline prefix at an argument-binding window, where
+    /// `currentInlinePrefix` already names the callee's own expansion. Null asks the
+    /// question in the current scope, as the real-call site always did.</param>
+    private bool ArgumentIsBuffer(Expression? arg, Val? evaluated, string? argScopePfx = null)
     {
         if (evaluated is ArrayBase) return true;
         // A local or parameter holding a number shadows a module-level buffer of the same
         // name: the storage lookups below fall back to the bare spelling, and `b: uint8` in
         // uart_write_byte_repr read as the program's own `b = b"AZ"`.
-        if (arg is VariableExpr shadowVe && NameIsLocalScalar(shadowVe.Name)) return false;
+        if (arg is VariableExpr shadowVe && NameIsLocalScalar(shadowVe.Name, argScopePfx)) return false;
         if (evaluated is Variable ev && IsBufferStorageName(ev.Name)) return true;
+        string argKey(string n) => argScopePfx != null
+            ? argScopePfx + n
+            : (!string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix
+                : currentFunction + ".") + n;
         return arg switch
         {
             ListExpr => true,
             CallExpr { Callee: VariableExpr { Name: "bytes" or "bytearray" or "memoryview" } } => true,
-            VariableExpr ve => NameIsListLiteralSequence(ve.Name)
-                               || IsBufferStorageName((!string.IsNullOrEmpty(currentInlinePrefix)
-                                   ? currentInlinePrefix : currentFunction + ".") + ve.Name),
+            VariableExpr ve => NameIsListLiteralSequence(ve.Name, argScopePfx)
+                               || IsBufferStorageName(argKey(ve.Name)),
             _ => false,
         };
     }
@@ -4634,13 +4647,18 @@ public partial class IRGenerator
     /// A name bound to a bytes or list literal of constants (`z = b"QR"`), which lives as a
     /// compile-time sequence rather than as storage. A tuple or a range bound the same way is
     /// a group of values and is left out.
-    private bool NameIsListLiteralSequence(string name)
-        => !NameIsLocalScalar(name)
+    private bool NameIsListLiteralSequence(string name, string? scopePfx = null)
+    {
+        // `seqName` qualifies the name under the caller's scope when one is given, so a
+        // parameter's binding answers rather than a module-level name that shares it.
+        string seqName = scopePfx != null ? scopePfx + name : name;
+        return !NameIsLocalScalar(name, scopePfx)
            && !IsTupleBound(name)
-           && ResolveConstSequence(name) != null
-           && !rangeBoundSequences.Contains(name)
-           && !(!string.IsNullOrEmpty(currentFunction) && rangeBoundSequences.Contains(currentFunction + "." + name))
-           && !(!string.IsNullOrEmpty(currentInlinePrefix) && rangeBoundSequences.Contains(currentInlinePrefix + name));
+           && ResolveConstSequence(seqName) != null
+           && !rangeBoundSequences.Contains(seqName)
+           && !(scopePfx == null && !string.IsNullOrEmpty(currentFunction) && rangeBoundSequences.Contains(currentFunction + "." + name))
+           && !(scopePfx == null && !string.IsNullOrEmpty(currentInlinePrefix) && rangeBoundSequences.Contains(currentInlinePrefix + name));
+    }
 
     /// A parameter bound to a literal the body cannot use as a compile-time sequence.
     /// A subscript or slice of it assigned (`buf[i] = v`) is refused outright: nothing
@@ -4679,21 +4697,36 @@ public partial class IRGenerator
     }
 
     /// A name the current function or inline expansion binds to a number, which hides any
-    /// sequence or buffer of the same name further out.
-    private bool NameIsLocalScalar(string name)
+    /// sequence or buffer of the same name further out. <paramref name="scopePfx"/> asks the
+    /// question about a DIFFERENT frame -- the caller's, while `currentInlinePrefix` already
+    /// names the callee's inside an argument-binding window.
+    private bool NameIsLocalScalar(string name, string? scopePfx = null)
     {
-        foreach (string? key in new[]
-                 {
-                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
-                     string.IsNullOrEmpty(currentFunction) || currentFunction == "main"
-                         ? null : currentFunction + "." + name,
-                 })
+        string?[] keys = scopePfx != null
+            ? new string?[] { scopePfx.Length > 0 ? scopePfx + name : null }
+            : new string?[]
+            {
+                string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+                string.IsNullOrEmpty(currentFunction) || currentFunction == "main"
+                    ? null : currentFunction + "." + name,
+            };
+        foreach (string? key in keys)
         {
             if (key == null) continue;
             if (arraySizes.ContainsKey(key) || constSequenceBindings.ContainsKey(key)
-                || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key)
-                || variableAliases.ContainsKey(key))
+                || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key))
                 return false;
+            // An alias inherits whatever it lands on: a parameter bound to a scalar
+            // (`forward(buf[i])` hands `buf` the element's temp) IS the number and
+            // shadows the module-level buffer the bare name would otherwise name;
+            // bound to an array it keeps answering as a buffer.
+            if (variableAliases.TryGetValue(key, out var alias))
+            {
+                for (int d = 0; d < 20 && variableAliases.TryGetValue(alias, out var nxt); d++)
+                    alias = nxt;
+                if (IsBufferStorageName(alias)) return false;
+                return variableTypes.ContainsKey(alias) || constantVariables.ContainsKey(alias);
+            }
             if (variableTypes.ContainsKey(key)) return true;
         }
         return false;
@@ -4710,10 +4743,11 @@ public partial class IRGenerator
     /// cut to its low byte (`def f(x): print(x)` printed 0 for `f(b"AB")`).
     private void RefuseBufferForNumberParam(string calleeName, string paramName, string? declared,
                                             Expression? arg, Val? evaluated,
-                                            bool unannotatedScalar = false)
+                                            bool unannotatedScalar = false,
+                                            string? argScopePfx = null)
     {
         if (!(DeclaredTypeIsNumber(declared) || unannotatedScalar)
-            || !ArgumentIsBuffer(arg, evaluated)) return;
+            || !ArgumentIsBuffer(arg, evaluated, argScopePfx)) return;
         string what = arg switch
         {
             ListExpr => "a bytes or list literal",
@@ -4868,6 +4902,12 @@ public partial class IRGenerator
                 if (arg is VariableExpr v)
                 {
                     string key = currentInlinePrefix + v.Name;
+                    // Whether `v.Name` is bound in THIS frame -- an inline parameter or a
+                    // local. When it is, the bare-name array check below must not fire:
+                    // `buf` the scalar parameter shares its spelling with the caller's
+                    // global array `buf`, and reading the bare name would pick the
+                    // bytearray overload for a plain scalar element.
+                    bool nameBoundHere = ShadowingFrameKey(v.Name) != null;
                     for (int depth = 0; depth < 20; depth++)
                     {
                         if (instanceClasses.TryGetValue(key, out string ic)) return ShortClassName(ic);
@@ -4899,7 +4939,7 @@ public partial class IRGenerator
                     string qKey = !insideInline && !string.IsNullOrEmpty(currentFunction)
                         ? currentFunction + "." + v.Name : key;
                     if (arraysWithVariableIndex.Contains(key) || arraysWithVariableIndex.Contains(qKey) ||
-                        arraysWithVariableIndex.Contains(v.Name) ||
+                        (!nameBoundHere && arraysWithVariableIndex.Contains(v.Name)) ||
                         moduleSramArrays.Contains(key) || moduleSramArrays.Contains(qKey) ||
                         bytearrayParams.Contains(key) || bytearrayParams.Contains(qKey))
                         return "bytearray";

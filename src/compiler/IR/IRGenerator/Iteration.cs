@@ -55,6 +55,14 @@ public partial class IRGenerator
     private bool TryResolveArrayStorageKey(string key, out string storageKey)
     {
         if (arraySizes.ContainsKey(key)) { storageKey = key; return true; }
+        // A name bound by ALIAS stands for what the chain lands on: an inline
+        // parameter bound to a buffer argument aliases the buffer's name, and the
+        // storage question must answer about that endpoint, not the alias.
+        string resolved = key;
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(resolved, out var nxt); d++)
+            resolved = nxt;
+        if (resolved != key)
+            return TryResolveArrayStorageKey(resolved, out storageKey);
         int dot = key.LastIndexOf('.');
         if (dot < 0)
         {
@@ -75,8 +83,16 @@ public partial class IRGenerator
             // a function or an inline expansion arrives function-qualified (`main.buf`). The
             // unannotated `bytearray(N)` spelling registers BOTH `main.cfg` and `cfg`, so it
             // already hit the exact match above. (PyMCU#258)
+            //
+            // A qualified name some frame binds to its own storage (`inlineN.f.buf`, a
+            // parameter or local) is never a spelling of the module array its bare suffix
+            // names -- the same check FrameArrayStorage makes.
             string bareSuffix = key[(dot + 1)..];
-            if (arraySizes.ContainsKey(bareSuffix)) { storageKey = bareSuffix; return true; }
+            string owner = key[..dot];
+            bool frameBound = owner != "main"
+                && !owner.EndsWith("___module_init", StringComparison.Ordinal)
+                && FrameKeyBinds(key);
+            if (!frameBound && arraySizes.ContainsKey(bareSuffix)) { storageKey = bareSuffix; return true; }
         }
         storageKey = key;
         return false;
