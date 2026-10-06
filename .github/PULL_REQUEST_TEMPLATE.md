@@ -50,4 +50,4 @@ Describe what you ran. For most changes, the integration suite must be green:
 - [ ] Stdlib sources are **ASCII-only** (no em dashes / non-ASCII — the lexer rejects them).
 - [ ] I fixed root causes in the compiler rather than working around codegen bugs in Python source.
 - [ ] New source files carry the MIT SPDX license header.
-- [ ] I updated the docs where relevant: `LANGUAGE_ROADMAP.md`, `docs/language/roadmap.md`, `docs/language/limitations.md`.
+- [ ] I updated the docs where relevant: `LANGUAGE_ROADMAP.md` here, and the Roadmap and Limitations pages in the PyMCU/pymcu-docs repository (https://docs.pymcu.org).

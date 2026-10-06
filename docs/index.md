@@ -121,7 +121,7 @@ PyMCU's IR to LLVM IR (`thumbv6m-none-eabi` / `thumbv8m.main-none-eabi`).
 The same `Pin` / `UART` HAL — and the MicroPython (`machine`) and CircuitPython
 (`board`, `digitalio`, `busio`) shims — compile to the Pico. Note that `board.LED` is not
 defined for the RP chips: pass the GP number instead (`digitalio.DigitalInOut(25)`). See
-{doc}`language/limitations` for the exact scope and {doc}`examples/rp2040` for runnable
+[the Limitations page](https://docs.pymcu.org/limitations/) for the exact scope and {doc}`examples/rp2040` for runnable
 programs.
 
 ### PIC16, alpha
@@ -208,7 +208,7 @@ compat/index
 :hidden:
 :caption: PyMCU Language
 
-language/index
+language/README
 ```
 
 ```{toctree}
