@@ -13249,17 +13249,13 @@ public partial class IRGenerator
                 + "and slice-assign into it, or keep a write index and store at it.",
                 expr.Args[0]);
 
-        // The tail goes at the LOGICAL end: sibling inline expansions share the
-        // storage key, and another expansion's extend/+= must not move this one's.
-        int current = LogicalArrayLen(bufKey, arraySizes[bufKey]);
-
         // The count runs first: a size known only at run time is refused here, naming
         // the BUFFER, before any element work can trip its own less helpful message
         // (`bytes(n)` with a run-time `n` is this case). For a spelled source the
-        // count is just the element count -- no value is evaluated for it.
+        // count is just the element count -- no value is evaluated for it. The
+        // count form's own argument DOES evaluate here (`bytes(n)` lowers n), which
+        // is still ahead of the receiver's mutation below.
         int added = BufferExtendCount(expr.Args[0], bufKey);
-        int grown = Math.Max(current, current + added);
-        if (grown <= current) return new NoneVal();
 
         // CPython evaluates the whole argument before the receiver mutates: pin every
         // spelled element to the value it holds while len(buf) still answers the size
@@ -13298,6 +13294,16 @@ public partial class IRGenerator
                 extPinned.Add(PinOnce(extEl));
             }
         }
+
+        // The tail goes at the LOGICAL end: sibling inline expansions share the
+        // storage key, and another expansion's extend/+= must not move this one's.
+        // The length is read only NOW, after the argument has fully evaluated:
+        // evaluating it can itself extend this very buffer (`xs.extend([grow()])`
+        // where grow calls xs.extend), and a `current` captured earlier would
+        // place the new bytes on top of the ones the argument's effects appended.
+        int current = LogicalArrayLen(bufKey, arraySizes[bufKey]);
+        int grown = Math.Max(current, current + added);
+        if (grown <= current) return new NoneVal();
 
         arraySizes[bufKey] = Math.Max(arraySizes[bufKey], grown);
         bufferLogicalLen[bufKey] = grown;
