@@ -2119,14 +2119,18 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// Whether an array storage key names a cell born inside the CURRENT frame: a
-    /// function-local `<fn>.<name>` or an expansion-prefixed cell. Such storage dies with
-    /// the frame, so the caller must take the bytes home rather than alias the cell.
-    /// Anything else -- module storage `main.*`, an instance field's flattened array, a
-    /// parameter's forwarded storage -- outlives the call and aliases true.
+    /// Whether an array storage key names a cell born inside the CURRENT expansion:
+    /// the expansion-prefixed cell `<inlinePrefix>...` the callee's locals file under.
+    /// Such storage dies with the frame, so the caller must take the bytes home
+    /// rather than alias the cell. Anything else -- module storage `main.*`, an
+    /// instance field's flattened array, a parameter's forwarded storage -- outlives
+    /// the call and aliases true. That includes `<fn>.<name>` storage of the
+    /// ENCLOSING function: `currentFunction` still names the caller's function while
+    /// the callee expands inside it, so matching on it stole the caller's own
+    /// locals -- a forwarded parameter resolving to `outer.a` read as callee-local
+    /// and was copied, which broke `b is a` on the returned name.
     /// </summary>
     private bool IsCalleeLocalBuffer(string key) =>
-        (!string.IsNullOrEmpty(currentInlinePrefix) && key.StartsWith(currentInlinePrefix))
-        || (!string.IsNullOrEmpty(currentFunction) && key.StartsWith(currentFunction + "."));
+        !string.IsNullOrEmpty(currentInlinePrefix) && key.StartsWith(currentInlinePrefix);
 
 }
