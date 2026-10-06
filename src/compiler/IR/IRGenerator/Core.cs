@@ -1015,13 +1015,16 @@ public partial class IRGenerator
 
         // Synthesize a `main` function from top-level executable statements when the
         // user has not written an explicit `def main():`.  This allows MicroPython-
-        // and CircuitPython-style scripts that have no entry-point wrapper.  Any entry
-        // file with no explicit main gets a synthetic one -- even if its top level
-        // contains only pure declarations (imports, function defs, class defs) -- so
-        // the CRT's call to `main` always resolves.  In library mode there is no CRT
-        // and no entry point, so no synthetic main is emitted.
+        // and CircuitPython-style scripts that have no entry-point wrapper.
+        // In application mode (!LibraryMode): any entry file with no explicit main gets
+        // a synthetic one -- even if its top level contains only pure declarations
+        // (imports, function defs, class defs) -- so the CRT's call to `main`
+        // always resolves.
+        // In library mode (LibraryMode): behave exactly as before -- a synthetic main
+        // is emitted only when there are executable top-level statements or when the
+        // file is import-only (imports but no functions and no global statements).
         bool hasExplicitMain = mainAst.Functions.Any(f => f.Name == "main");
-        if (!hasExplicitMain && !LibraryMode)
+        if (!hasExplicitMain)
         {
             var executableStmts = mainAst.GlobalStatements
                 .Where(s => !IsTopLevelPureDeclaration(s))
@@ -1032,25 +1035,46 @@ public partial class IRGenerator
             if (classAttrInits.TryGetValue(mainAst, out var synthClassInit))
                 executableStmts.InsertRange(0, synthClassInit);
 
-            // An entry file with no executable statements still needs the main symbol
-            // called by the CRT.
-            var syntheticBlock = new Block();
-            foreach (var s in executableStmts)
-                syntheticBlock.Statements.Add(s);
+            bool isImportOnly = mainAst.Imports.Count > 0
+                && mainAst.Functions.Count == 0
+                && mainAst.GlobalStatements.Count == 0;
 
-            var syntheticMain = new FunctionDef("main", new List<Param>(), "None", syntheticBlock);
-            functionsToCompile.Insert(0,
-                new FunctionEntry { Prefix = "", Func = syntheticMain, SourceFile = "main.py", SourcePath = "" });
-            functionReturnTypes["main"] = "None";
-            functionParams["main"] = new List<string>();
-            functionParamTypes["main"] = new List<DataType>();
+            bool shouldEmitSyntheticMain;
+            if (LibraryMode)
+            {
+                // Library mode: original behavior -- emit synthetic main only if there are
+                // executable statements or it's an import-only file.
+                shouldEmitSyntheticMain = executableStmts.Count > 0 || isImportOnly;
+            }
+            else
+            {
+                // Application mode: new behavior -- always emit synthetic main so the CRT
+                // entry point always resolves.
+                shouldEmitSyntheticMain = true;
+            }
 
-            // A top-level script is an entry point too. Running an imported module's own
-            // module level was wired to the explicit `def main():` branch only, so the
-            // MicroPython and CircuitPython shape -- the one with no entry-point wrapper,
-            // and the shape #117 was reported in -- still read every module-level value of
-            // its imported modules as zero, with nothing to say so.
-            EmitImportedModuleInit(syntheticMain, importedModules, astToCanonicalPrefix);
+            if (shouldEmitSyntheticMain)
+            {
+                // An entry file with no executable statements still needs the main symbol
+                // called by the CRT.
+                var syntheticBlock = new Block();
+                foreach (var s in executableStmts)
+                    syntheticBlock.Statements.Add(s);
+
+                var syntheticMain = new FunctionDef("main", new List<Param>(), "None", syntheticBlock);
+                functionsToCompile.Insert(0,
+                    new FunctionEntry { Prefix = "", Func = syntheticMain, SourceFile = "main.py", SourcePath = "" });
+                functionReturnTypes["main"] = "None";
+                functionParams["main"] = new List<string>();
+                functionParamTypes["main"] = new List<DataType>();
+
+                // A top-level script is an entry point too. Running an imported module's own
+                // module level was wired to the explicit `def main():` branch only, so the
+                // MicroPython and CircuitPython shape -- the one with no entry-point wrapper,
+                // and the shape #117 was reported in -- still read every module-level value of
+                // its imported modules as zero, with nothing to say so.
+                EmitImportedModuleInit(syntheticMain, importedModules, astToCanonicalPrefix);
+            }
         }
         else
         {
