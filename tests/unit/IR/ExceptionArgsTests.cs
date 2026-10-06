@@ -377,6 +377,42 @@ public class ExceptionArgsTests
     }
 
     [Fact]
+    public void ABareRaiseInsideAnInlineRestoresTheCatchingHandlerRecord()
+    {
+        // f3: `rer()` is @inline, so its bare `raise` lowers inside the handler that
+        // called it. By then a nested handled ValueError has overwritten the shared
+        // record, and the unwind must restore this handler's snapshot before it
+        // re-signals -- on main there was no snapshot and the outer read saw 2 where
+        // the caught OSError carried 5.
+        var main = Fn(Gen(
+            "from pymcu.types import inline\n" +
+            "@inline\n" +
+            "def rer():\n" +
+            "    raise\n" +
+            "try:\n" +
+            "    try:\n" +
+            "        raise OSError(5)\n" +
+            "    except OSError:\n" +
+            "        try:\n" +
+            "            raise ValueError(2)\n" +
+            "        except ValueError:\n" +
+            "            pass\n" +
+            "        rer()\n" +
+            "except OSError as e:\n" +
+            "    v = e.args[0]\n" +
+            "    print(v)\n"), "main");
+
+        int reraise = main.FindIndex(i => i is SignalError
+            { Code: Variable { Name: var n } } && n.StartsWith("__exn_code_", StringComparison.Ordinal));
+        reraise.Should().BeGreaterOrEqualTo(0, because: "the inlined bare raise re-signals the saved code");
+        main.Take(reraise).Any(i => i is Copy
+                { Src: Variable s, Dst: Variable d }
+                && s.Name.StartsWith("__exh_", StringComparison.Ordinal)
+                && d.Name.StartsWith("__exn_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the snapshot of the handler that called rer() is restored first");
+    }
+
+    [Fact]
     public void AnEmptyStringArgumentIsAnArgument()
     {
         var ir = Gen(
