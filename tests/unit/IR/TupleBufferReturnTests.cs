@@ -137,4 +137,60 @@ public class TupleBufferReturnTests
         Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<Copy>(),
             c => c.Dst is Variable { Name: "main.diff" });
     }
+
+    /// <summary>Array names any function's body stores into.</summary>
+    private static List<string> ArraysStored(ProgramIR ir) =>
+        ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Select(s => s.ArrayName).Distinct().ToList();
+
+    [Fact]
+    public void ForwardedParameterBufferReturnedInTuple_AliasesTheCallerStorage()
+    {
+        // `b is a` in CPython: ident hands the caller's own buffer straight back,
+        // so a write through b lands on a. Classifying `outer.a` as callee-local
+        // -- it carries the enclosing function's `outer.` prefix, not the
+        // expansion's -- copied it to `outer.b` instead, and `b[0] = 9` never
+        // reached `a`.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "def ident(buf: bytearray):\n" +
+            "    return buf, 0\n\n" +
+            "def outer() -> uint8:\n" +
+            "    a = bytearray(1)\n" +
+            "    a[0] = 7\n" +
+            "    b, unused = ident(a)\n" +
+            "    b[0] = 9\n" +
+            "    return a[0]\n\n" +
+            "x = outer()\n");
+
+        // `b[0] = 9` stores straight onto `outer.a`; there is no `outer.b` array
+        // at all -- no copy home, because there is nothing to copy home to.
+        Assert.Contains(ArraysStored(ir), n => n == "outer.a");
+        Assert.DoesNotContain(ArraysStored(ir), n => n == "outer.b");
+    }
+
+    [Fact]
+    public void TheSameBufferInTwoTupleSlots_BindsBothTargetsToOneStorage()
+    {
+        // `a is b` in CPython: `return buf, buf` hands the same object twice. The
+        // callee-local copy still runs -- the bytes leave the frame -- but the
+        // second slot must bind the FIRST target's storage, not a second copy,
+        // or `a[0] = 9` is invisible through `b`.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "def f():\n" +
+            "    buf = bytearray(1)\n" +
+            "    buf[0] = 1\n" +
+            "    return buf, buf\n\n" +
+            "a, b = f()\n" +
+            "a[0] = 9\n" +
+            "q = b[0]\n");
+
+        // One copy home, onto `a`'s storage; `b` aliases it -- `b[0]` loads the
+        // array `a[0] = 9` wrote, and no `main.b` array ever exists.
+        Assert.Contains(ArraysStored(ir), n => n == "main.a");
+        Assert.DoesNotContain(ArraysStored(ir), n => n == "main.b");
+        Assert.Contains(ArraysTouched(ir), n => n == "main.a");
+        Assert.DoesNotContain(ArraysTouched(ir), n => n == "main.b");
+    }
 }

@@ -117,6 +117,41 @@ public class InstanceSequenceElementTests
     }
 
     [Fact]
+    public void AMemberCallReturningAnInstance_InATupleReturn_IsRefused()
+    {
+        // `return factory.make(), 5`: the member-callee spelling declares
+        // `-> Counter` the same as a bare factory call, but the check only knew
+        // the VariableExpr callee -- the call evaluated to a dead handle and the
+        // caller's `bool(a)` read False where CPython sees the object.
+        var msg = Refusal(Counter +
+            "class Factory:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._x = 0\n\n" +
+            "    def make(self) -> Counter:\n" +
+            "        return Counter(0)\n\n" +
+            "factory = Factory()\n\n" +
+            "def f():\n" +
+            "    return factory.make(), 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void AnnotatedListInitWithAnInstance_IsRefused()
+    {
+        // `xs: list[uint8] = [c]` built the heap payload straight from the
+        // evaluated elements -- the one list-literal path that never asked
+        // InstanceClassOfValueExpr -- so `xs[0]` stored the instance's bare
+        // handle and read back False.
+        var msg = Refusal(Counter +
+            "c = Counter(0)\n" +
+            "xs: list[uint8] = [c]\n");
+        Assert.Contains("instance of 'Counter'", msg);
+        Assert.Contains("xs", msg);
+    }
+
+    [Fact]
     public void FieldAccessOnAnInstanceArrayElement_StillCompiles()
     {
         // The read refusal is narrow: xs[i]._n is the supported spelling.

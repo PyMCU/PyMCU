@@ -107,4 +107,34 @@ public class ExtendStoresElementsTests
         Assert.Contains(body, i =>
             i is Copy cp && cp.Dst is Variable { Name: "main.xs__1" });
     }
+
+    [Fact]
+    public void ExtendWhoseArgumentExtendsTheReceiver_AppendsPastTheNestedGrowth()
+    {
+        // `xs.extend([grow()])` where grow() itself extends xs: CPython evaluates
+        // the argument completely before the receiver grows, so [1] becomes
+        // [1, 7, 8] -- the nested claim takes index 1 and the outer element lands
+        // at index 2. Reading the logical end before the argument ran put it at
+        // index 1 instead, overwriting grow's 7, and `xs[1]` read 8.
+        var ir = Gen(
+            "xs = [1]\n\n" +
+            "def grow():\n" +
+            "    xs.extend([7])\n" +
+            "    return 8\n\n" +
+            "xs.extend([grow()])\n" +
+            "n = len(xs)\n" +
+            "a = xs[1]\n");
+
+        var body = AllInstructions(ir);
+        // grow's own extend claims index 1 with its 7, exactly once -- at the
+        // buggy revision the outer store landed on top of it (a second write to
+        // xs__1 carrying grow's pinned result).
+        Assert.Single(body, i => i is Copy c
+            && c.Dst is Variable { Name: "main.xs__1" });
+        Assert.Contains(body, i => StoresConstant(i, 7));
+        // The outer element lands at index 2 -- before the fix there was no
+        // store to xs__2 at all.
+        Assert.Contains(body, i => i is Copy c2
+            && c2.Dst is Variable { Name: "main.xs__2" });
+    }
 }
