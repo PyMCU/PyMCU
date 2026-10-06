@@ -13252,9 +13252,11 @@ public partial class IRGenerator
         int grown = Math.Max(current, current + added);
         if (grown <= current) return new NoneVal();
 
-        arraySizes[bufKey] = Math.Max(arraySizes[bufKey], grown);
-        bufferLogicalLen[bufKey] = grown;
-
+        // CPython evaluates the whole argument before the receiver mutates: pin every
+        // spelled element to the value it holds while len(buf) still answers the size
+        // before the bump -- `xs.extend([len(xs)])` reads 1, not the grown 2. The
+        // per-element refusals run in the same pass, ahead of that element's eval.
+        //
         // When the argument spells its elements out -- a literal, a string, or a name
         // bound to a compile-time sequence -- the bytes it adds are those elements.
         // Each one lands through the canonical element store (an indexed AssignStmt),
@@ -13267,11 +13269,12 @@ public partial class IRGenerator
         // `bytes(n)` is NOT a spelled source: its elements are n zeros, which is what
         // the count-form zero-fill below already emits -- through the counted loop
         // past the threshold (PyMCU#411) instead of one store per slot.
+        List<Expression>? extPinned = null;
         if (BufferExtendElements(expr.Args[0]) is { } extElems)
         {
-            for (int k = 0; k < extElems.Count; ++k)
+            extPinned = new List<Expression>(extElems.Count);
+            foreach (Expression extEl in extElems)
             {
-                Expression extEl = extElems[k];
                 if (extEl is ListExpr or TupleExpr)
                     throw UserError(
                         $"{bufKey}.extend() takes a flat sequence of bytes -- an "
@@ -13283,9 +13286,18 @@ public partial class IRGenerator
                         + $"'{ShortClassNameOf(extInstCls)}': " + InstanceIsFlattened
                         + ", so the grown byte would read shared storage at every "
                         + "index. " + InstanceElementAdvice(extInstCls), extEl);
-                VisitStatement(new AssignStmt(
-                    new IndexExpr(memC.Object, new IntegerLiteral(current + k)), extEl));
+                extPinned.Add(PinOnce(extEl));
             }
+        }
+
+        arraySizes[bufKey] = Math.Max(arraySizes[bufKey], grown);
+        bufferLogicalLen[bufKey] = grown;
+
+        if (extPinned is { })
+        {
+            for (int k = 0; k < extPinned.Count; ++k)
+                VisitStatement(new AssignStmt(
+                    new IndexExpr(memC.Object, new IntegerLiteral(current + k)), extPinned[k]));
             return new NoneVal();
         }
 
