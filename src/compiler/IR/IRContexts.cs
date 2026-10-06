@@ -172,7 +172,7 @@ public class InlineContext
     // around the call). Each one runs the body's own finallys and jumps to its landing, which
     // the expansion emits after it has restored the caller's frame and raises again from
     // there. See EmitRaiseUnwind.
-    public List<(string Label, Val Code, bool UnhandledInMain)> RaiseLandings { get; } = new();
+    public List<(string Label, Val Code, bool UnhandledInMain, string? RestorePrefix)> RaiseLandings { get; } = new();
 
     // Per-expansion counter for the scratch keys MakeTemp hands the allocator inside
     // this frame. A `tmp_{n}` minted in the frame records canonicalTemps entry

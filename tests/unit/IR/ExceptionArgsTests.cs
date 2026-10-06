@@ -44,6 +44,9 @@ public class ExceptionArgsTests
         "        raise E1()\n" +
         "    return k\n";
 
+    private static bool NameEndsWith(Val v, string suffix) =>
+        v is Variable { Name: var n } && n.EndsWith(suffix, StringComparison.Ordinal);
+
     [Fact]
     public void PrintOfTheMessageSkipsTheWriterOnZero()
     {
@@ -53,7 +56,7 @@ public class ExceptionArgsTests
             "except E1 as e:\n" +
             "    print(e)\n"), "main");
 
-        main.Any(i => i is JumpIfZero { Condition: Variable { Name: "__exn_msg" } }).Should().BeTrue();
+        main.Any(i => i is JumpIfZero { Condition: Variable c } && NameEndsWith(c, "_msg")).Should().BeTrue();
     }
 
     [Fact]
@@ -65,7 +68,7 @@ public class ExceptionArgsTests
             "except E1 as e:\n" +
             "    print(e.args[0])\n"), "main");
 
-        main.Any(i => i is JumpIfNotZero { Condition: Variable { Name: "__exn_msg" } }).Should().BeTrue();
+        main.Any(i => i is JumpIfNotZero { Condition: Variable c } && NameEndsWith(c, "_msg")).Should().BeTrue();
         main.Any(i => i is Copy { Src: FlashStrAddr, Dst: Variable { Name: "__exn_msg" } }).Should().BeTrue(because: "the IndexError carries CPython's 'tuple index out of range'");
     }
 
@@ -83,9 +86,9 @@ public class ExceptionArgsTests
             "except E1 as e:\n" +
             "    print(e.args[0])\n"), "main");
 
-        main.Count(i => i is JumpIfNotZero { Condition: Variable { Name: "__exn_msg" } })
+        main.Count(i => i is JumpIfNotZero { Condition: Variable c } && NameEndsWith(c, "_msg"))
             .Should().Be(1, because: "EmitExceptionArgsIndexCheck asks it once");
-        main.Any(i => i is JumpIfZero { Condition: Variable { Name: "__exn_msg" } })
+        main.Any(i => i is JumpIfZero { Condition: Variable c } && NameEndsWith(c, "_msg"))
             .Should().BeFalse(because: "the value is already proven non-zero past the index check");
     }
 
@@ -114,8 +117,8 @@ public class ExceptionArgsTests
         // `e.args` is `()` for the argument-less raise and `('x',)` for one with a
         // message -- which of the two is a run-time fact, so the parens are written
         // unconditionally and the element plus its one-element comma behind
-        // `__exn_msg != 0`.
-        main.Any(i => i is JumpIfNotZero { Condition: Variable { Name: "__exn_msg" } })
+        // `__exn_msg != 0` (the bound name's snapshot word).
+        main.Any(i => i is JumpIfNotZero { Condition: Variable c } && NameEndsWith(c, "_msg"))
             .Should().BeTrue(because: "() or (msg,) is decided by the message word at run time");
         StrWritesOf(ir, "main").Should().Contain("(").And.Contain(",").And.Contain(")");
     }
@@ -131,7 +134,8 @@ public class ExceptionArgsTests
             "    print(x)\n");
         var main = Fn(ir, "main");
 
-        main.Any(i => i is Binary { Op: PyMCU.IR.BinaryOp.NotEqual, Src1: Variable { Name: "__exn_msg" } })
+        main.Any(i => i is Binary { Op: PyMCU.IR.BinaryOp.NotEqual, Src1: Variable s }
+                     && NameEndsWith(s, "_msg"))
             .Should().BeTrue(because: "args is () or (msg,) -- len is 0 or 1, read off the word");
     }
 
@@ -223,6 +227,88 @@ public class ExceptionArgsTests
             "    v = e.args[0]\n");
         act.Should().Throw<PyMCU.Common.CompilerError>()
             .WithMessage("*integer argument*");
+    }
+
+    [Fact]
+    public void ANestedHandledRaiseStillAnswersTheOuterArgumentsItem()
+    {
+        // outer.args[0] read the single live __exn_arg0 word, which a nested
+        // raise-and-catch under the handler had overwritten with the inner raise's
+        // argument -- the read answered 2 where the caught OSError carried 5. The
+        // matched handler now snapshots the delivered record into __exh_<id>_* words
+        // and the value read answers the snapshot.
+        var main = Fn(Gen(
+            "try:\n" +
+            "    raise OSError(5)\n" +
+            "except OSError as outer:\n" +
+            "    try:\n" +
+            "        raise ValueError(2)\n" +
+            "    except ValueError:\n" +
+            "        pass\n" +
+            "    v = outer.args[0]\n" +
+            "    print(v)\n"), "main");
+
+        main.Any(i => i is Copy { Src: Variable { Name: "__exn_arg0" },
+                                  Dst: Variable s } && NameEndsWith(s, "_arg0")
+                       && s.Name.StartsWith("__exh_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the matched handler saves the delivered record");
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable }
+                       && s.Name.StartsWith("__exh_", StringComparison.Ordinal)
+                       && s.Name.EndsWith("_arg0", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the bound read answers the snapshot word, not the shared one");
+    }
+
+    [Fact]
+    public void ANestedHandledRaiseRestoresTheRecordForTheArgsPrinter()
+    {
+        // print(outer.args[0]) goes through the deferred-print printer, which replays
+        // the LIVE record -- so the read restores this binding's snapshot into the
+        // shared words before the call, or the printer would replay the inner raise.
+        var main = Fn(Gen(
+            "try:\n" +
+            "    raise OSError(5)\n" +
+            "except OSError as outer:\n" +
+            "    try:\n" +
+            "        raise ValueError(2)\n" +
+            "    except ValueError:\n" +
+            "        pass\n" +
+            "    print(outer.args[0])\n"), "main");
+
+        int printerCall = main.FindIndex(i => i is Call { FunctionName: "__pymcu_print_exn_args" });
+        printerCall.Should().BeGreaterOrEqualTo(0);
+        main.Take(printerCall).Any(i => i is Copy
+                { Src: Variable s, Dst: Variable { Name: "__exn_arg0" } }
+                && s.Name.StartsWith("__exh_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the snapshot is restored before the printer replays it");
+    }
+
+    [Fact]
+    public void AReraiseInsideAHandlerRestoresTheCaughtRecord()
+    {
+        // A bare `raise` propagates the record of the exception being re-raised; with a
+        // nested handled raise in between, the shared words hold the inner record and the
+        // unwind must restore the handler's snapshot before it signals outward.
+        var main = Fn(Gen(
+            "try:\n" +
+            "    try:\n" +
+            "        raise OSError(5)\n" +
+            "    except OSError as outer:\n" +
+            "        try:\n" +
+            "            raise ValueError(2)\n" +
+            "        except ValueError:\n" +
+            "            pass\n" +
+            "        raise\n" +
+            "except OSError:\n" +
+            "    print(\"caught\")\n"), "main");
+
+        int reraise = main.FindIndex(i => i is SignalError
+            { Code: Variable { Name: var n } } && n.StartsWith("__exn_code_", StringComparison.Ordinal));
+        reraise.Should().BeGreaterOrEqualTo(0, because: "the bare raise re-signals the saved code");
+        main.Take(reraise).Any(i => i is Copy
+                { Src: Variable s, Dst: Variable d }
+                && s.Name.StartsWith("__exh_", StringComparison.Ordinal)
+                && d.Name.StartsWith("__exn_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the snapshot restores the caught record ahead of the signal");
     }
 
     [Fact]

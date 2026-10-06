@@ -6579,18 +6579,23 @@ public partial class IRGenerator
         // time by the message word (and the deferred-print site id, when the program
         // has one). A raise's argument list never holds more than the one message.
         if (expr.Args[0] is MemberAccessExpr { Object: VariableExpr lenArgsObj, Member: "args" }
-            && TryGetExceptionBinding(lenArgsObj.Name, out _))
+            && TryGetExceptionBinding(lenArgsObj.Name, out var lenArgsBinding))
         {
+            string? lenSnap = lenArgsBinding.Snap;
             DeclareExceptionMessageVar();
             Temporary hasArg = MakeTemp(DataType.UINT8);
             Emit(new Binary(BinaryOp.NotEqual,
-                new Variable(ExceptionMessageVar, DataType.UINT16), new Constant(0), hasArg));
+                new Variable(lenSnap != null ? ExnSnapVar(lenSnap, ExceptionMessageVar)
+                                            : ExceptionMessageVar,
+                             DataType.UINT16), new Constant(0), hasArg));
             if (programHasDynamicRaiseMessage)
             {
                 DeclareExceptionSiteVar();
                 Temporary hasSite = MakeTemp(DataType.UINT8);
                 Emit(new Binary(BinaryOp.NotEqual,
-                    new Variable(ExceptionSiteVar, DataType.UINT8), new Constant(0), hasSite));
+                    new Variable(lenSnap != null ? ExnSnapVar(lenSnap, ExceptionSiteVar)
+                                                : ExceptionSiteVar,
+                                 DataType.UINT8), new Constant(0), hasSite));
                 Temporary lenEither = MakeTemp(DataType.UINT8);
                 Emit(new Binary(BinaryOp.BitOr, hasArg, hasSite, lenEither));
                 hasArg = lenEither;
@@ -11469,16 +11474,21 @@ public partial class IRGenerator
             // write_str subroutine already walks flash from a pointer in registers, so this is
             // the same call print makes for every other string with a different operand (#369).
             RefuseBadArgsIndex(arg);
-            if (TryExceptionMessage(arg, out var exnMsgPtr))
+            if (TryExceptionMessage(arg, out var exnMsgPtr, out var exnSnap))
             {
                 // `e.args[0]` of an exception raised with no argument is CPython's IndexError:
                 // args is the empty tuple. A raise without a message leaves the word at zero
                 // (and the site id with it), which is what tells the two apart here.
                 bool indexChecked = arg is IndexExpr;
                 if (indexChecked)
-                    EmitExceptionArgsIndexCheck(exnMsgPtr);
+                    EmitExceptionArgsIndexCheck(exnMsgPtr, exnSnap);
                 if (programHasDynamicRaiseMessage)
                 {
+                    // The printers replay the LIVE record's slots, which a nested handled
+                    // raise under this handler has overwritten -- restore the snapshot
+                    // this binding's name stands for first.
+                    if (exnSnap != null)
+                        Emit(new ExnRecordMark(exnSnap, Restore: true));
                     // The args-context spelling prints the argument AS an argument: an
                     // errno-carrying OSError renders the bare integer here, where
                     // print(e) renders `[Errno n] NAME`. With no errno raise in the
@@ -11541,9 +11551,9 @@ public partial class IRGenerator
             // site id when the program has one), so EmitExceptionArgsTuplePrint emits
             // both halves behind that check.
             if (arg is MemberAccessExpr { Object: VariableExpr argsObj, Member: "args" }
-                && TryGetExceptionBinding(argsObj.Name, out _))
+                && TryGetExceptionBinding(argsObj.Name, out var argsBinding))
             {
-                EmitExceptionArgsTuplePrint(writeStrFn);
+                EmitExceptionArgsTuplePrint(writeStrFn, argsBinding.Snap);
                 return;
             }
 

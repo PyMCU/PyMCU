@@ -724,6 +724,12 @@ public partial class IRGenerator
     // Per-handler saved exception-code variable (innermost last): a bare `raise` re-raises this,
     // so the code survives handler body code that clobbers the error register (R22).
     private List<string> handlerCodeStack = new();
+
+    // Parallel to handlerCodeStack: the snapshot prefix of the try that delivered the
+    // exception this handler runs under. A `raise`/`raise e` inside the handler restores
+    // the record from it, so what propagates is the exception being re-raised and not
+    // whatever a nested handled raise last stored. Null for a try that took no snapshot.
+    private readonly List<string?> handlerSnapStack = new();
     private int exnCodeId = 0;
 
     // ── the bounded exception object (#369) ──────────────────────────────────
@@ -821,10 +827,21 @@ public partial class IRGenerator
     private readonly List<RaiseMessageSite> raiseMessageSites = new();
     private int nextRaiseSiteId = 1;
 
-    /// Names bound by an enclosing `except ... as`, to the per-try variable holding the code
-    /// and to the handler's declared type. A name is in scope only while its handler body is
-    /// being lowered, so a read of it after the handler is an ordinary undefined name.
-    private Dictionary<string, (string CodeVar, string ExnType)> exceptionBindings = new();
+    /// Names bound by an enclosing `except ... as`, to the per-try variable holding the
+    /// code, to the handler's declared type, and to the prefix of the snapshot the try's
+    /// dispatcher saved the delivered record under. The snapshot is what a read of the
+    /// name answers once a nested raise has overwritten the live __exn_* words.
+    private Dictionary<string, (string CodeVar, string ExnType, string? Snap)> exceptionBindings = new();
+
+    /// Placeholder for "copy the live exception record to/from this try's snapshot",
+    /// expanded into real Copy instructions once every raise has lowered and the record's
+    /// field set is known (a raise in a later-lowered function can add an arg slot).
+    /// Never survives Generate -- nothing downstream ever sees one.
+    private sealed record ExnRecordMark(string Prefix, bool Restore) : Instruction;
+
+    /// The snapshot variable a record field lives under for one try: `__exn_arg0` under
+    /// prefix `__exh_3` is `__exh_3_arg0`.
+    private static string ExnSnapVar(string prefix, string field) => prefix + field.Substring(5);
 
     /// The raise sites a bound `except ... as` name can catch: the recorded raises whose
     /// code the handler's alternatives match, minus the codes an earlier sibling handler

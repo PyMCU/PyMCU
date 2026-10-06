@@ -1514,6 +1514,12 @@ public partial class IRGenerator
         // message and the string writer is in the image to print it.
         if (programReportsRaiseMessage && sawRaiseMessageStore)
             irProgram.Functions.Add(SynthesizeExceptionMessageTail());
+
+        // Exception-record snapshots: the field set is complete only now that every
+        // raise has lowered. Each marker becomes the copies that save the record to the
+        // try's __exh_<id>_* words, or restore it from them for a bound-name print or a
+        // re-raise.
+        ExpandExceptionRecordMarks(irProgram);
         LowerCalledRuntimeHelpers(irProgram);
 
         // Inject FlashData instructions (global const[uint8[N]] arrays) into the

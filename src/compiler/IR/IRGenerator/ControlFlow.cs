@@ -3038,9 +3038,10 @@ public partial class IRGenerator
         // the code and message word it stands for are exactly what a bare `raise`
         // re-signals -- so take the bare-raise path for it.
         bool reraisesBound = false;
+        (string CodeVar, string ExnType, string? Snap) reraiseBinding = default;
         Val code;
         if (stmt.ErrorType.Length > 0
-            && TryGetExceptionBinding(stmt.ErrorType, out var reraiseBinding))
+            && TryGetExceptionBinding(stmt.ErrorType, out reraiseBinding))
         {
             code = new Variable(reraiseBinding.CodeVar, DataType.UINT8);
             reraisesBound = true;
@@ -3108,7 +3109,19 @@ public partial class IRGenerator
             Emit(new Copy(new Constant(0), new Variable(ExceptionMessageVar, DataType.UINT16)));
         }
 
-        EmitRaiseUnwind(code, unhandledInMain: true);
+        // A re-raise (bare `raise`, or `raise e` on the bound name) writes no record of
+        // its own: what propagates must be the record of the exception being re-raised,
+        // restored from this handler's snapshot -- a nested handled raise under it has
+        // already overwritten the shared words. A bare `raise` outside any handler
+        // re-signals the in-flight error, whose record is still the live one.
+        string? restorePrefix = null;
+        if (!writesMessage)
+        {
+            restorePrefix = reraisesBound ? reraiseBinding.Snap
+                : handlerSnapStack.Count > 0 ? handlerSnapStack[^1] : null;
+        }
+
+        EmitRaiseUnwind(code, unhandledInMain: true, restorePrefix);
     }
 
     private void VisitTry(TryStmt stmt)
@@ -3136,9 +3149,28 @@ public partial class IRGenerator
         //
         // The code is saved to a stable per-try variable at the dispatcher (below) so it survives
         // handler body code — which may clobber R22 — for a bare `raise` and the dispatch compares.
-        string exnCodeVar = "__exn_code_" + (exnCodeId++);
+        int tryExnId = exnCodeId++;
+        string exnCodeVar = "__exn_code_" + tryExnId;
         variableTypes[exnCodeVar] = DataType.UINT8;   // so the allocator gives it a home
         Val exnCode = new Variable(exnCodeVar, DataType.UINT8);
+
+        // A snapshot of the delivered record is taken at each handler's entry when the
+        // handler can still observe it after the globals move on: a bound `except ... as e`
+        // name answers reads from it, and a re-raise inside the handler propagates it
+        // rather than whatever a nested handled raise last stored. It cannot run at the
+        // dispatcher itself: the copies the marker expands to are free to clobber R22,
+        // which the dispatch compares and the no-match re-signal still read. On the
+        // matched path the compares have already consumed it, and the delivered record
+        // is untouched -- only a handler body writes it.
+        bool snapNeeded = false;
+        for (int i = 0; i < stmt.Handlers.Count; i++)
+        {
+            var (_, snapHandlerBody) = stmt.Handlers[i];
+            if (stmt.BoundName(i) != null
+                || TypeInference.WalkStatements(snapHandlerBody).OfType<RaiseStmt>().Any())
+                snapNeeded = true;
+        }
+        string? snapPrefix = snapNeeded ? "__exh_" + tryExnId : null;
 
         // Compile the try body. After each Call instruction, insert BranchOnError so
         // that any SignalError from the callee jumps to the catch dispatcher.
@@ -3318,13 +3350,23 @@ public partial class IRGenerator
                 && exceptionCatchableSites.TryGetValue(boundKey, out outerSites);
             if (bound != null)
             {
-                exceptionBindings[boundKey] = (exnCodeVar, exnType);
+                exceptionBindings[boundKey] = (exnCodeVar, exnType, snapPrefix);
                 // The raises this handler can actually see land in it: its own expected
                 // set, minus the codes an earlier sibling already catches. e.errno and
                 // e.args[0]-as-a-value gate on every one of them carrying an integer.
                 exceptionCatchableSites[boundKey] =
                     CatchableRaiseSites(stmt, i, catchAll, expected);
             }
+
+            // This handler reads the record past whatever nested raises it runs: save the
+            // delivered exception into its snapshot words on the matched path. The compare
+            // chain above is already done with R22, so the copies may use it freely.
+            bool handlerNeedsSnap = snapPrefix != null
+                && (bound != null
+                    || TypeInference.WalkStatements(handlerBody).OfType<RaiseStmt>().Any());
+            if (handlerNeedsSnap)
+                Emit(new ExnRecordMark(snapPrefix!, Restore: false));
+            handlerSnapStack.Add(handlerNeedsSnap ? snapPrefix : null);
 
             foreach (var s in handlerBody)
             {
@@ -3341,6 +3383,7 @@ public partial class IRGenerator
                 else exceptionCatchableSites.Remove(boundKey);
             }
             handlerCodeStack.RemoveAt(handlerCodeStack.Count - 1);
+            handlerSnapStack.RemoveAt(handlerSnapStack.Count - 1);
             if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
 
             EmitFinallyBody(stmt);
@@ -3649,7 +3692,12 @@ public partial class IRGenerator
                 + "a bare raise, a string message, or an argument of unknown type in the "
                 + "code it can catch means there is no integer to read.", at);
 
-        string arg0 = ExceptionArgVar(0);
+        // The snapshot word, not the shared one: a nested handled raise under this
+        // handler has already overwritten __exn_arg0 with ITS argument.
+        TryGetExceptionBinding(boundName, out var argBinding);
+        string arg0 = argBinding.Snap != null
+            ? ExnSnapVar(argBinding.Snap, ExceptionArgVar(0))
+            : ExceptionArgVar(0);
         variableTypes[arg0] = DataType.INT32;
         mutableGlobals[arg0] = DataType.INT32;
         return new Variable(arg0, DataType.INT32);
@@ -3683,7 +3731,7 @@ public partial class IRGenerator
     /// The binding an `except ... as` name is currently in scope under, if any. The lookup
     /// walks the same qualifications ResolveNameKey does, because the name may be read from
     /// inside an expansion nested under the handler that bound it.
-    private bool TryGetExceptionBinding(string name, out (string CodeVar, string ExnType) binding)
+    private bool TryGetExceptionBinding(string name, out (string CodeVar, string ExnType, string? Snap) binding)
     {
         if (!string.IsNullOrEmpty(currentInlinePrefix)
             && exceptionBindings.TryGetValue(currentInlinePrefix + name, out binding)) return true;
@@ -3700,9 +3748,10 @@ public partial class IRGenerator
     /// `e.args[0]`, which is the one adafruit_dht's simpletest writes. They read the same word
     /// because there is one message and one live exception; `args` is a one-element sequence
     /// by construction, so any index but 0 is refused rather than folded to the same thing.
-    internal bool TryExceptionMessage(Expression e, out Val pointer)
+    internal bool TryExceptionMessage(Expression e, out Val pointer, out string? snapPrefix)
     {
         pointer = new Constant(0);
+        snapPrefix = null;
         string? name = e switch
         {
             VariableExpr v => v.Name,
@@ -3714,24 +3763,31 @@ public partial class IRGenerator
             } => av.Name,
             _ => null,
         };
-        if (name == null || !TryGetExceptionBinding(name, out _)) return false;
+        if (name == null || !TryGetExceptionBinding(name, out var msgBinding)) return false;
 
         DeclareExceptionMessageVar();
-        pointer = new Variable(ExceptionMessageVar, DataType.UINT16);
+        snapPrefix = msgBinding.Snap;
+        // The snapshot word, not the live one: what the name stands for is the record
+        // this try was delivered, which a nested handled raise has since overwritten.
+        pointer = new Variable(
+            snapPrefix != null ? ExnSnapVar(snapPrefix, ExceptionMessageVar) : ExceptionMessageVar,
+            DataType.UINT16);
         return true;
     }
 
     /// `e.args[0]` when the live exception was raised with no argument: its args is `()`,
     /// so the subscript raises IndexError. The message word is zero exactly then -- and the
     /// deferred-print site id too, when the program has one.
-    internal void EmitExceptionArgsIndexCheck(Val pointer)
+    internal void EmitExceptionArgsIndexCheck(Val pointer, string? snapPrefix)
     {
         string hasArg = MakeLabel();
         Emit(new JumpIfNotZero(pointer, hasArg));
         if (programHasDynamicRaiseMessage)
         {
             DeclareExceptionSiteVar();
-            Emit(new JumpIfNotZero(new Variable(ExceptionSiteVar, DataType.UINT8), hasArg));
+            Emit(new JumpIfNotZero(new Variable(
+                snapPrefix != null ? ExnSnapVar(snapPrefix, ExceptionSiteVar) : ExceptionSiteVar,
+                DataType.UINT8), hasArg));
         }
         EmitGuardedBuiltinRaise("IndexError", "tuple index out of range");
         Emit(new Label(hasArg));
@@ -3743,25 +3799,35 @@ public partial class IRGenerator
     /// fact -- the raise leaves the message word zero (and the deferred-print site id
     /// zero) only when it was raised bare -- so both halves are emitted behind the
     /// check rather than chosen here.
-    internal void EmitExceptionArgsTuplePrint(string writeStrFn)
+    internal void EmitExceptionArgsTuplePrint(string writeStrFn, string? snapPrefix)
     {
         EmitStreamStr(writeStrFn, "(");
         string hasArg = MakeLabel();
         string after = MakeLabel();
         DeclareExceptionMessageVar();
-        Emit(new JumpIfNotZero(new Variable(ExceptionMessageVar, DataType.UINT16), hasArg));
+        string msgVar = snapPrefix != null
+            ? ExnSnapVar(snapPrefix, ExceptionMessageVar) : ExceptionMessageVar;
+        Emit(new JumpIfNotZero(new Variable(msgVar, DataType.UINT16), hasArg));
         if (programHasDynamicRaiseMessage)
         {
             DeclareExceptionSiteVar();
-            Emit(new JumpIfNotZero(new Variable(ExceptionSiteVar, DataType.UINT8), hasArg));
+            string siteVar = snapPrefix != null
+                ? ExnSnapVar(snapPrefix, ExceptionSiteVar) : ExceptionSiteVar;
+            Emit(new JumpIfNotZero(new Variable(siteVar, DataType.UINT8), hasArg));
         }
         Emit(new Jump(after));
         Emit(new Label(hasArg));
         if (programHasDynamicRaiseMessage)
+        {
+            // The printer replays the LIVE record's slots: restore this binding's
+            // snapshot first so they hold the caught exception's pieces again.
+            if (snapPrefix != null)
+                Emit(new ExnRecordMark(snapPrefix, Restore: true));
             EmitExceptionArgsPrint();
+        }
         else
             Emit(new Call(ResolveRuntimeWriteStrFn(),
-                new List<Val> { new Variable(ExceptionMessageVar, DataType.UINT16) },
+                new List<Val> { new Variable(msgVar, DataType.UINT16) },
                 new NoneVal()));
         EmitStreamStr(writeStrFn, ",");
         Emit(new Label(after));
@@ -4677,7 +4743,7 @@ public partial class IRGenerator
     // to name the type, which is what the label form of SignalError does: it loads R22 and
     // jumps. The jump lands on the next instruction, which is the call the exception runtime
     // keys off.
-    private void EmitRaiseUnwind(Val code, bool unhandledInMain)
+    private void EmitRaiseUnwind(Val code, bool unhandledInMain, string? restorePrefix = null)
     {
         string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
         int floor = localCatch != null ? tryFinallyFloor[^1] : 0;
@@ -4687,12 +4753,17 @@ public partial class IRGenerator
             var ctx = inlineStack[^1];
             EmitPendingFinally(ctx.FinallyDepth);
             string landing = MakeLabel();
-            ctx.RaiseLandings.Add((landing, code, unhandledInMain));
+            ctx.RaiseLandings.Add((landing, code, unhandledInMain, restorePrefix));
             Emit(new Jump(landing));
             return;
         }
 
         EmitPendingFinally(floor);
+        // The restore belongs between the pending finallys and the signal: a finally can
+        // run a nested handled raise of its own, and the record must be the re-raised
+        // exception's again by the time the next dispatcher snapshots it.
+        if (restorePrefix != null)
+            Emit(new ExnRecordMark(restorePrefix, Restore: true));
         if (unhandledInMain && localCatch == null && currentFunction == "main")
         {
             string unhandled = MakeLabel();
@@ -4712,13 +4783,58 @@ public partial class IRGenerator
         bool savedSeqTerminated = _seqTerminated;
         string after = MakeLabel();
         Emit(new Jump(after));
-        foreach (var (landing, code, unhandledInMain) in ctx.RaiseLandings)
+        foreach (var (landing, code, unhandledInMain, restorePrefix) in ctx.RaiseLandings)
         {
             Emit(new Label(landing));
-            EmitRaiseUnwind(code, unhandledInMain);
+            EmitRaiseUnwind(code, unhandledInMain, restorePrefix);
         }
         Emit(new Label(after));
         _seqTerminated = savedSeqTerminated;
+    }
+
+    /// Expand the ExnRecordMark placeholders left by VisitTry and the re-raise paths.
+    /// The record's field set is complete only now: every raise in the program has
+    /// lowered, so mutableGlobals names every __exn_* word in use. A save expands to
+    /// copies into the try's __exh_<id>_* words, a restore to copies back, and each
+    /// snapshot word is registered so the allocator gives it a home.
+    private void ExpandExceptionRecordMarks(ProgramIR irProgram)
+    {
+        var fields = new List<(string Name, DataType T)>();
+        if (mutableGlobals.ContainsKey(ExceptionMessageVar))
+            fields.Add((ExceptionMessageVar, DataType.UINT16));
+        if (mutableGlobals.ContainsKey(ExceptionSiteVar))
+            fields.Add((ExceptionSiteVar, DataType.UINT8));
+        for (int k = 0; mutableGlobals.ContainsKey(ExceptionArgVar(k)); k++)
+            fields.Add((ExceptionArgVar(k), DataType.INT32));
+        for (int k = 0; mutableGlobals.ContainsKey(ExceptionFloatArgVar(k)); k++)
+            fields.Add((ExceptionFloatArgVar(k), DataType.FLOAT));
+        if (fields.Count == 0)
+        {
+            foreach (var fn in irProgram.Functions)
+                fn.Body.RemoveAll(i => i is ExnRecordMark);
+            return;
+        }
+
+        foreach (var fn in irProgram.Functions)
+        {
+            for (int i = 0; i < fn.Body.Count; i++)
+            {
+                if (fn.Body[i] is not ExnRecordMark m) continue;
+                var copies = new List<Instruction>(fields.Count);
+                foreach (var f in fields)
+                {
+                    string sn = ExnSnapVar(m.Prefix, f.Name);
+                    variableTypes[sn] = f.T;
+                    mutableGlobals[sn] = f.T;
+                    Val snap = new Variable(sn, f.T);
+                    Val live = new Variable(f.Name, f.T);
+                    copies.Add(m.Restore ? new Copy(snap, live) : new Copy(live, snap));
+                }
+                fn.Body.RemoveAt(i);
+                fn.Body.InsertRange(i, copies);
+                i += copies.Count - 1;
+            }
+        }
     }
 
     // Run the pending finally blocks above `floor` (innermost first) on a control-flow exit that
