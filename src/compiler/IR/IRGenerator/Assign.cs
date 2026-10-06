@@ -4943,6 +4943,7 @@ public partial class IRGenerator
             Emit(new LoadIndirect(innerAddr, innerRef, DataType.GC_REF));
             Val idxVal = VisitExpression(indexExpr.Index);
             Val srcVal = VisitExpression(stmt.Value);
+            RefuseInstanceElementValue(stmt.Value, $"an element of '{innerVe.Name}'", srcVal);
             Temporary elemAddr = EmitElemAddr(innerRef, idxVal, innerElemDt.SizeOf());
             Emit(new StoreIndirect(srcVal, elemAddr, innerElemDt));
             return;
