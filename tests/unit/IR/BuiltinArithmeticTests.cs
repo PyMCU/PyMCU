@@ -131,6 +131,36 @@ public class BuiltinArithmeticTests
         Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
     }
 
+    [Fact]
+    public void DivmodOfInt32ByInt8_RefusesWhenTheQuotientCanExceedInt32()
+    {
+        // divmod(INT32_MIN, -1) == (2147483648, 0): the rank formula asks for a width
+        // above int32 that PyMCU does not have, and the clamp stored it back into
+        // int32 where -a wraps to -2147483648. With no wider integer type the pair
+        // is refused when the operands' ranges can actually reach the overflow --
+        // the same ValRange criterion the arithmetic operators promote on.
+        var ex = Assert.ThrowsAny<Exception>(() => Gen(
+            "a: int32 = int32(GPIOR0.value) - 2147483647 - 1\n" +
+            "b: int8 = int8(GPIOR0.value) - 1\n" +
+            "q, r = divmod(a, b)\n"));
+        Assert.Contains("can exceed int32", ex.Message);
+    }
+
+    [Fact]
+    public void DivmodOfInt32ByAPositiveDivisorRangeStillCompiles()
+    {
+        // Only a divisor that can be -1 threatens the quotient: the temporary's
+        // recorded range (0..255) proves b is never -1, so every quotient the pair
+        // produces stays inside int32 and the result keeps the widest type.
+        var ir = Gen(
+            "a: int32 = int32(GPIOR0.value) - 2147483647 - 1\n" +
+            "q, r = divmod(a, int8(GPIOR0.value) + 128)\n" +
+            "print(q)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        Assert.Equal(DataType.INT32, ((Variable)q.Dst).Type);
+    }
+
     // ---- divmod() zero-divisor and bare-value bugs found by the float-edges campaign -------
     //
     // EmitDivmodBuiltin used to build its Binary(FloorDiv)/Binary(Mod) nodes directly instead

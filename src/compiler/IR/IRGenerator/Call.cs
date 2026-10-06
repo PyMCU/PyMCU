@@ -8511,12 +8511,14 @@ public partial class IRGenerator
         static int Rank(DataType t) => t.SizeOf() <= 1 ? 0 : t.SizeOf() == 2 ? 1 : 2;
         static DataType SignedRank(int rank) => rank <= 0 ? DataType.INT8
             : rank == 1 ? DataType.INT16 : DataType.INT32;
+        int needRank = WidthSeeds.IsSigned(ta) || WidthSeeds.IsSigned(tb)
+            ? Math.Max(Rank(ta) + (WidthSeeds.IsSigned(tb) ? 1 : 0),
+                       Rank(tb) + (WidthSeeds.IsSigned(tb) ? 0 : 1))
+            : 0;
         DataType rt = ta is DataType.FLOAT || tb is DataType.FLOAT ? DataType.FLOAT
             : !WidthSeeds.IsSigned(ta) && !WidthSeeds.IsSigned(tb)
                 ? (ta.SizeOf() >= tb.SizeOf() ? ta : tb)
-                : SignedRank(Math.Min(2,
-                    Math.Max(Rank(ta) + (WidthSeeds.IsSigned(tb) ? 1 : 0),
-                             Rank(tb) + (WidthSeeds.IsSigned(tb) ? 0 : 1))));
+                : SignedRank(Math.Min(2, needRank));
         if (rt == DataType.UNKNOWN || rt.SizeOf() == 0) rt = DataType.UINT8;
 
         // Dividing by a literal zero is a compile-time error whatever the dividend is, the
@@ -8528,6 +8530,29 @@ public partial class IRGenerator
         // division unchecked and an integer one only got the int-constant fold's own check.
         if ((bVal is Constant zc && zc.Value == 0) || (bVal is FloatConstant zfc && zfc.Value == 0.0))
             throw UserError("divmod(): division by zero", ArgAt(expr, 1));
+
+        // The width formula caps at int32, the widest PyMCU has; the pair it would need
+        // beyond that is refused rather than wrapped, the same test the arithmetic
+        // operators apply through ValRange before promoting, except there is no wider
+        // rank to promote to. The quotient overflows int32 only through a / -1 = -a: a
+        // signed dividend at int32's floor, or an unsigned one past int32's ceiling,
+        // each needing a divisor that can be -1. The remainder follows the divisor's
+        // sign and |r| < |b|, so only a uint32 divisor can hold an r int32 cannot.
+        if (needRank > 2 && rt == DataType.INT32)
+        {
+            var (aMin, aMax) = ValRange(aVal);
+            var (bMin, bMax) = ValRange(bVal);
+            bool quotientOverflow = bMin <= -1
+                && (aMin < -2147483647L || aMax > 2147483648L);
+            bool remainderOverflow = !WidthSeeds.IsSigned(tb) && bMax > 2147483648L;
+            if (quotientOverflow || remainderOverflow)
+                throw UserError(
+                    $"divmod({TypeName(ta)}, {TypeName(tb)}): the "
+                    + (quotientOverflow ? "quotient" : "remainder")
+                    + " can exceed int32 and PyMCU has no wider integer type to hold it; "
+                    + "narrow the operands (e.g. keep the divisor from being -1) so the "
+                    + "result is representable", expr.Callee);
+        }
 
         // divmod() returns a 2-tuple in Python; PyMCU has no general runtime tuple VALUE (one
         // that can be passed around, stored in a field, ...), only fixed result SLOTS. Two
@@ -8555,8 +8580,18 @@ public partial class IRGenerator
             // toward zero and answered (-3, -2).
             long lq = (long)ca.Value / cb.Value;
             if ((ca.Value ^ cb.Value) < 0 && lq * cb.Value != ca.Value) lq--;
+            long lr = (long)ca.Value - lq * cb.Value;
+            // The pair is computed at int width; a constant answer PyMCU cannot hold
+            // (a == INT32_MIN divided by -1) wraps here and must not become a wrong
+            // value: refuse it, since no wider integer type exists to promote to.
+            var (rtLo, rtHi) = RangeOfType(rt);
+            if (lq < rtLo || lq > rtHi || lr < rtLo || lr > rtHi)
+                throw UserError(
+                    $"divmod({ca.Value}, {cb.Value}): the "
+                    + (lq < rtLo || lq > rtHi ? $"quotient {lq}" : $"remainder {lr}")
+                    + " does not fit in any PyMCU integer type", ArgAt(expr, 1));
             int q = unchecked((int)lq);
-            int r = unchecked((int)((long)ca.Value - lq * cb.Value));
+            int r = unchecked((int)lr);
             string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
             string qn = bBase + ".divmod_q" + tempCounter;
             string rn = bBase + ".divmod_r" + (tempCounter + 1);
