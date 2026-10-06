@@ -8446,8 +8446,22 @@ public partial class IRGenerator
             _ => DataType.UINT8,
         };
         DataType ta = ValType(aVal), tb = ValType(bVal);
+        // The results are signed when either operand is signed, and sized for what a
+        // division can produce, not just the wider operand: the quotient's worst case
+        // is a / -1 = -a (one signed rank above a's own), and the remainder takes the
+        // divisor's sign while |r| < |b| (an unsigned divisor needs one signed rank
+        // above its own to hold b's unsigned maximum). Size alone picked the left
+        // operand's type: divmod(uint8, int8) divided signed but stored into uint8
+        // and printed (-4, -3) as (252, 253).
+        static int Rank(DataType t) => t.SizeOf() <= 1 ? 0 : t.SizeOf() == 2 ? 1 : 2;
+        static DataType SignedRank(int rank) => rank <= 0 ? DataType.INT8
+            : rank == 1 ? DataType.INT16 : DataType.INT32;
         DataType rt = ta is DataType.FLOAT || tb is DataType.FLOAT ? DataType.FLOAT
-            : ta.SizeOf() >= tb.SizeOf() ? ta : tb;
+            : !WidthSeeds.IsSigned(ta) && !WidthSeeds.IsSigned(tb)
+                ? (ta.SizeOf() >= tb.SizeOf() ? ta : tb)
+                : SignedRank(Math.Min(2,
+                    Math.Max(Rank(ta) + (WidthSeeds.IsSigned(tb) ? 1 : 0),
+                             Rank(tb) + (WidthSeeds.IsSigned(tb) ? 0 : 1))));
         if (rt == DataType.UNKNOWN || rt.SizeOf() == 0) rt = DataType.UINT8;
 
         // Dividing by a literal zero is a compile-time error whatever the dividend is, the

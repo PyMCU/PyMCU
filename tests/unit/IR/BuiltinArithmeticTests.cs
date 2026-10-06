@@ -91,6 +91,43 @@ public class BuiltinArithmeticTests
         Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
     }
 
+    [Fact]
+    public void DivmodOfMixedSignOperands_StoresSignedResults()
+    {
+        // The result type used to follow the WIDER operand -- size only, no sign --
+        // so divmod(uint8, int8) divided signed but stored into a uint8 slot and
+        // (-4, -3) printed as (252, 253). The quotient's worst case is a / -1 = -a
+        // (one signed rank above the dividend's own), and the remainder of an
+        // unsigned divisor is non-negative under b's maximum (one signed rank above
+        // the divisor's own when the result is signed).
+        var ir = Gen(
+            "a: uint8 = GPIOR0.value + 17\n" +
+            "b: int8 = int8(GPIOR0.value) - 5\n" +
+            "q, r = divmod(a, b)\n" +
+            "print(q)\n" +
+            "print(r)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        var r = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.r" });
+        Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
+        Assert.Equal(DataType.INT16, ((Variable)r.Dst).Type);
+    }
+
+    [Fact]
+    public void DivmodOfTwoInt8_StoresAQuotientThatHoldsMinusMinOverMinusOne()
+    {
+        // divmod(-128, -1) == (128, 0): the quotient does not fit an int8. The same
+        // rank-by-size rule that truncated uint8/int8 left this one an int8 too.
+        var ir = Gen(
+            "a: int8 = int8(GPIOR0.value) - 128\n" +
+            "b: int8 = int8(GPIOR0.value) - 1\n" +
+            "q, r = divmod(a, b)\n" +
+            "print(q)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        Assert.Equal(DataType.INT16, ((Variable)q.Dst).Type);
+    }
+
     // ---- divmod() zero-divisor and bare-value bugs found by the float-edges campaign -------
     //
     // EmitDivmodBuiltin used to build its Binary(FloorDiv)/Binary(Mod) nodes directly instead
