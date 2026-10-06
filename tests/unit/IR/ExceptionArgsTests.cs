@@ -161,6 +161,71 @@ public class ExceptionArgsTests
     }
 
     [Fact]
+    public void AWritePastTheRaiseDoesNotRetypeTheRaiseArgument()
+    {
+        // The local-binding scan used to take the last TEXTUAL write in the whole
+        // function body, so the unreachable `code: uint8 = 5` retyped the "oops"
+        // binding the raise actually sees -- the raise stored a dead word in
+        // __exn_arg0 and e.args[0] answered it instead of the message.
+        var ir = Gen(
+            "def fail():\n" +
+            "    code = \"oops\"\n" +
+            "    raise E1(code)\n" +
+            "    code: uint8 = 5\n" +
+            "try:\n" +
+            "    fail()\n" +
+            "except E1 as e:\n" +
+            "    print(e)\n");
+        var fail = Fn(ir, "fail");
+
+        fail.Any(i => i is Copy { Src: FlashStrAddr, Dst: Variable { Name: "__exn_msg" } })
+            .Should().BeTrue(because: "code is bound to \"oops\" at the raise, so the message word stores the text");
+        fail.Any(i => i is Copy { Dst: Variable { Name: "__exn_arg0" } })
+            .Should().BeFalse(because: "the dead uint8 write must not turn the raise into an int-arg one");
+    }
+
+    [Fact]
+    public void AReachableIntBindingStillAnswersArgsItem()
+    {
+        // The same rule read forward: `code: uint8 = 9` reaches the raise, so the
+        // argument is the integer and e.args[0] is allowed -- the dead string write
+        // after the raise must not retype it back into a refusal either.
+        var ir = Gen(
+            "def fail():\n" +
+            "    code: uint8 = 9\n" +
+            "    raise E1(code)\n" +
+            "    code = \"oops\"\n" +
+            "try:\n" +
+            "    fail()\n" +
+            "except E1 as e:\n" +
+            "    v = e.args[0]\n" +
+            "    print(v)\n");
+        var fail = Fn(ir, "fail");
+
+        fail.Any(i => i is Copy { Dst: Variable { Name: "__exn_arg0" } })
+            .Should().BeTrue(because: "the reachable uint8 binding makes the raise an int-arg one");
+    }
+
+    [Fact]
+    public void ArgsItemReadOnAStringMessageStillRefuses()
+    {
+        // Once the raise is classified right, `v = e.args[0]` is a value read of a
+        // string message -- which has no integer to answer and must refuse rather
+        // than hand back whatever the arg word happens to hold.
+        var act = () => Gen(
+            "def fail():\n" +
+            "    code = \"oops\"\n" +
+            "    raise E1(code)\n" +
+            "    code: uint8 = 5\n" +
+            "try:\n" +
+            "    fail()\n" +
+            "except E1 as e:\n" +
+            "    v = e.args[0]\n");
+        act.Should().Throw<PyMCU.Common.CompilerError>()
+            .WithMessage("*integer argument*");
+    }
+
+    [Fact]
     public void AnEmptyStringArgumentIsAnArgument()
     {
         var ir = Gen(

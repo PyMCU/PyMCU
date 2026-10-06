@@ -2901,7 +2901,7 @@ public partial class IRGenerator
                 ownSite?.FnFullName
                     ?? (inlineStack.Count > 0 && inlineStack[^1].CalleeName.Length > 0
                         ? inlineStack[^1].CalleeName : currentFunction),
-                ownSite?.FnDef,
+                ownSite?.FnDef, stmt,
                 out intArgConst, out intArgIsConst);
 
         if (!intArg && dynamicMessage != null && stmt.ErrorType != "CompileError"
@@ -3505,13 +3505,15 @@ public partial class IRGenerator
     /// it is the width the value is already stored at, never a truncation of it.
     private DataType RaiseSiteArgWidth(RaisedSite site)
         => RaiseSiteArg(site) is { } arg
-            ? ExprIntWidth(arg, site.ModulePrefix, site.FnFullName, site.FnDef)
+            ? ExprIntWidth(arg, site.ModulePrefix, site.FnFullName, site.FnDef, site.Stmt)
             : DataType.INT32;
 
     private DataType ExprIntWidth(Expression e, string modulePrefix, string? fnFullName,
-                                  PyMCU.Frontend.FunctionDef? fnDef)
+                                  PyMCU.Frontend.FunctionDef? fnDef,
+                                  PyMCU.Frontend.Statement? atStmt)
     {
-        if (IsStaticallyIntExpr(e, modulePrefix, fnFullName, fnDef, out int cv, out bool isConst)
+        if (IsStaticallyIntExpr(e, modulePrefix, fnFullName, fnDef, atStmt,
+                                out int cv, out bool isConst)
             && isConst)
             return ConstIntWidth(cv);
         if (e is VariableExpr ve)
@@ -3523,7 +3525,7 @@ public partial class IRGenerator
                     && pi < pts.Count)
                     return pts[pi];
             }
-            if (fnDef != null && LocalIntBindingWidth(fnDef, ve.Name) is { } localWidth)
+            if (fnDef != null && LocalIntBindingWidth(fnDef, ve.Name, atStmt) is { } localWidth)
                 return localWidth;
             foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
                 if (variableTypes.TryGetValue(key, out var vt)) return vt;
@@ -3542,13 +3544,18 @@ public partial class IRGenerator
 
     /// `n: T = <expr>` / `n: T` inside the raising function, T read off the declaration --
     /// the width half of LocalIntBinding's answer, using the same walk and the same "last
-    /// textual write decides" rule. Null (not false) when the function never annotates the
-    /// name, so the caller's own INT32 default applies rather than a narrower guess.
-    private DataType? LocalIntBindingWidth(PyMCU.Frontend.FunctionDef? fnDef, string name)
+    /// write that can reach the raise decides" rule. Null (not false) when the function
+    /// never annotates the name, so the caller's own INT32 default applies rather than a
+    /// narrower guess.
+    private DataType? LocalIntBindingWidth(PyMCU.Frontend.FunctionDef? fnDef, string name,
+                                         PyMCU.Frontend.Statement? atStmt)
     {
         if (fnDef?.Body is not PyMCU.Frontend.Block body) return null;
         DataType? seen = null;
-        foreach (var st in TypeInference.WalkStatements(body.Statements))
+        bool found = false;
+        var stmts = new List<PyMCU.Frontend.Statement>();
+        CollectStatementsBefore(body.Statements, atStmt, stmts, ref found);
+        foreach (var st in stmts)
         {
             switch (st)
             {
@@ -3876,10 +3883,11 @@ public partial class IRGenerator
     /// function the raise is written in, which may not be the function currently lowering.
     private bool IsStaticallyInt(RaisedSite site, Expression e)
         => IsStaticallyIntExpr(e, site.ModulePrefix, site.FnFullName, site.FnDef,
-                               out _, out _);
+                               site.Stmt, out _, out _);
 
     private bool IsStaticallyIntExpr(Expression e, string modulePrefix, string? fnFullName,
                                      PyMCU.Frontend.FunctionDef? fnDef,
+                                     PyMCU.Frontend.Statement? atStmt,
                                      out int constVal, out bool isConst)
     {
         constVal = 0;
@@ -3919,7 +3927,7 @@ public partial class IRGenerator
                 // lowering it -- and asked BEFORE variableTypes so the answer here and
                 // the answer at the handler's e.errno check (asked before the function
                 // lowers, when variableTypes cannot know it) are the same.
-                if (fnDef != null && LocalIntBinding(fnDef, ve.Name) is { } bound)
+                if (fnDef != null && LocalIntBinding(fnDef, ve.Name, atStmt) is { } bound)
                     return bound;
                 foreach (var key in RaiseSiteNameKeys(ve.Name, modulePrefix, fnFullName))
                 {
@@ -3973,7 +3981,7 @@ public partial class IRGenerator
                 if (TryConstEvalSite(e, modulePrefix, out int uv))
                 { constVal = uv; isConst = true; return true; }
                 return IsStaticallyIntExpr(un.Operand, modulePrefix, fnFullName, fnDef,
-                                           out _, out _);
+                                           atStmt, out _, out _);
             }
             case BinaryExpr be:
             {
@@ -3985,9 +3993,9 @@ public partial class IRGenerator
                         or AstBinOp.BitOr or AstBinOp.BitXor or AstBinOp.LShift
                         or AstBinOp.RShift or AstBinOp.Pow
                     && IsStaticallyIntExpr(be.Left, modulePrefix, fnFullName, fnDef,
-                                           out _, out _)
+                                           atStmt, out _, out _)
                     && IsStaticallyIntExpr(be.Right, modulePrefix, fnFullName, fnDef,
-                                           out _, out _);
+                                           atStmt, out _, out _);
             }
             case CallExpr ce:
             {
@@ -4008,9 +4016,9 @@ public partial class IRGenerator
                 if (TryConstEvalSite(e, modulePrefix, out int tv))
                 { constVal = tv; isConst = true; return true; }
                 return IsStaticallyIntExpr(te.TrueVal, modulePrefix, fnFullName, fnDef,
-                                           out _, out _)
+                                           atStmt, out _, out _)
                     && IsStaticallyIntExpr(te.FalseVal, modulePrefix, fnFullName, fnDef,
-                                           out _, out _);
+                                           atStmt, out _, out _);
             }
             default:
                 return TryConstEvalSite(e, modulePrefix, out constVal) && (isConst = true);
@@ -4041,29 +4049,31 @@ public partial class IRGenerator
     }
 
     /// `n = <expr>` / `n: T = <expr>` inside the raising function: whether the name is
-    /// bound to a statically-int value before the raise -- the last textual write decides,
-    /// matching how the lowering itself would see it. Null when the function never binds
-    /// the name, which is "ask the tables", not "no".
-    private bool? LocalIntBinding(PyMCU.Frontend.FunctionDef? fnDef, string name)
+    /// bound to a statically-int value when control reaches <paramref name="atStmt"/>
+    /// (the raise being classified) -- the last write that can reach it decides, matching
+    /// how the lowering itself would see it. Null when the function never binds the name
+    /// there, which is "ask the tables", not "no".
+    private bool? LocalIntBinding(PyMCU.Frontend.FunctionDef? fnDef, string name,
+                                  PyMCU.Frontend.Statement? atStmt)
     {
         if (fnDef?.Body is not PyMCU.Frontend.Block body) return null;
         bool? seen = null;
-        // WalkStatements yields every statement at any depth in source order, so the
-        // last write to the name is the last answer recorded -- the same order the
-        // lowering visits them in. A nested FunctionDef is not descended into by the
-        // shared walk, which is the scope boundary wanted here.
-        foreach (var st in TypeInference.WalkStatements(body.Statements))
+        bool found = false;
+        var stmts = new List<PyMCU.Frontend.Statement>();
+        CollectStatementsBefore(body.Statements, atStmt, stmts, ref found);
+        foreach (var st in stmts)
         {
             switch (st)
             {
                 case PyMCU.Frontend.AssignStmt { Target: VariableExpr tv } a
                     when tv.Name == name:
-                    seen = IsStaticallyIntExpr(a.Value, "", null, null, out _, out _);
+                    seen = IsStaticallyIntExpr(a.Value, "", null, null, null, out _, out _);
                     break;
                 case PyMCU.Frontend.AnnAssign { Target: var at } an when at == name:
                     seen = IsScalarIntType(DataTypeExtensions.StringToDataType(an.Annotation))
                         || (an.Value != null
-                            && IsStaticallyIntExpr(an.Value, "", null, null, out _, out _));
+                            && IsStaticallyIntExpr(an.Value, "", null, null, null,
+                                                   out _, out _));
                     break;
                 case PyMCU.Frontend.VarDecl vd when vd.Name == name:
                     seen = IsScalarIntType(DataTypeExtensions.StringToDataType(vd.VarType));
@@ -4075,6 +4085,66 @@ public partial class IRGenerator
             }
         }
         return seen;
+    }
+
+    /// The statements that can still execute ahead of <paramref name="atStmt"/>, in
+    /// WalkStatements order. Two differences decide what a binding means at a raise:
+    /// the walk stops when it reaches <paramref name="atStmt"/> itself (a later write
+    /// is not yet a binding there), and a block's tail after a statement that
+    /// AlwaysLeaves is unreachable -- `code = "oops"; raise OSError(code); code: uint8 = 5`
+    /// keeps the string binding at the raise instead of the dead `uint8` write past it
+    /// retyping it. Each statement's own blocks are descended into before its
+    /// termination is asked, the same order WalkStatements yields them, and a nested
+    /// block's dead tail stops only that block's list.
+    private static void CollectStatementsBefore(
+        IEnumerable<PyMCU.Frontend.Statement> stmts, PyMCU.Frontend.Statement? atStmt,
+        List<PyMCU.Frontend.Statement> acc, ref bool found)
+    {
+        foreach (var st in stmts)
+        {
+            if (found) return;
+            if (ReferenceEquals(st, atStmt)) { found = true; return; }
+            acc.Add(st);
+            switch (st)
+            {
+                case PyMCU.Frontend.Block b:
+                    CollectStatementsBefore(b.Statements, atStmt, acc, ref found);
+                    break;
+                case PyMCU.Frontend.IfStmt ifs:
+                    CollectStatementsBefore(new[] { ifs.ThenBranch }, atStmt, acc, ref found);
+                    foreach (var (_, eb) in ifs.ElifBranches)
+                        CollectStatementsBefore(new[] { eb }, atStmt, acc, ref found);
+                    if (ifs.ElseBranch != null)
+                        CollectStatementsBefore(new[] { ifs.ElseBranch }, atStmt, acc,
+                                                ref found);
+                    break;
+                case PyMCU.Frontend.WhileStmt w:
+                    CollectStatementsBefore(new[] { w.Body }, atStmt, acc, ref found);
+                    break;
+                case PyMCU.Frontend.ForStmt f:
+                    CollectStatementsBefore(new[] { f.Body }, atStmt, acc, ref found);
+                    break;
+                case PyMCU.Frontend.WithStmt ws:
+                    CollectStatementsBefore(new[] { ws.Body }, atStmt, acc, ref found);
+                    break;
+                case PyMCU.Frontend.TryStmt t:
+                    CollectStatementsBefore(t.Body, atStmt, acc, ref found);
+                    foreach (var (_, h) in t.Handlers)
+                        CollectStatementsBefore(h, atStmt, acc, ref found);
+                    if (t.Finally != null)
+                        CollectStatementsBefore(t.Finally, atStmt, acc, ref found);
+                    if (t.ElseBody != null)
+                        CollectStatementsBefore(t.ElseBody, atStmt, acc, ref found);
+                    break;
+                case PyMCU.Frontend.MatchStmt m:
+                    foreach (var c in m.Branches)
+                        if (c.Body != null)
+                            CollectStatementsBefore(new[] { c.Body }, atStmt, acc,
+                                                    ref found);
+                    break;
+            }
+            if (found || AlwaysLeaves(st)) return;
+        }
     }
 
     /// <summary>
