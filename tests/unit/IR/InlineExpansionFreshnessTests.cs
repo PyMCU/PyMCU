@@ -66,8 +66,12 @@ public class InlineExpansionFreshnessTests
             "        t = t + x\n" +
             "    return t\n");
         var main = ir.Functions.Single(f => f.Name == "main");
-        // The unrolled loop body reads b[0], b[1], b[2] -- three ArrayLoads, not 24.
-        Assert.Equal(3, main.Body.Count(i => i is ArrayLoad al && al.ArrayName.Contains("buf")));
+        // The unrolled loop body reads b[0], b[1], b[2] -- three ArrayLoads on b's
+        // own storage, not 24. `b` now copies the callee-local buffer home, so the
+        // loads this test counts are the ones on `main.b`, not on the shared
+        // callee cell (the copy itself loads that cell a further declared-count
+        // times, which is the point of it).
+        Assert.Equal(3, main.Body.Count(i => i is ArrayLoad al && al.ArrayName == "main.b"));
     }
 
     /// <summary>

@@ -709,6 +709,91 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Give <paramref name="dstKey"/> its own array storage holding the bytes
+    /// <paramref name="srcKey"/> holds right now. The callee-local counterpart of
+    /// <see cref="BindSequenceAlias"/>: a buffer born inside the callee's frame is one
+    /// cell every call to that function shares, so an alias would make two results the
+    /// same object -- `a, x = f(1); b, y = f(2)` read the last call's write twice. Each
+    /// call's answer is a different object in CPython, so each name takes its bytes home.
+    /// Storage that outlives the call (module buffers, member arrays, forwarded
+    /// parameters) still aliases, which is also the identity CPython gives it.
+    /// </summary>
+    private void EmitSequenceCopy(string dstKey, string srcKey)
+    {
+        variableAliases.Remove(dstKey);
+        constantVariables.Remove(dstKey);
+        strConstantVariables.Remove(dstKey);
+        floatConstantVariables.Remove(dstKey);
+        listLiteralParams.Remove(dstKey);
+        listLiteralParamScopes.Remove(dstKey);
+        constSequenceBindings.Remove(dstKey);
+
+        int n = arraySizes.TryGetValue(srcKey, out int srcN) ? LogicalArrayLen(srcKey, srcN) : 0;
+        DataType elemDt = arrayElemTypes.TryGetValue(srcKey, out var edt) ? edt : DataType.UINT8;
+        arraySizes[dstKey] = n;
+        bufferLogicalLen[dstKey] = n;
+        arrayElemTypes[dstKey] = elemDt;
+        variableTypes[dstKey] = elemDt;
+
+        if (arraysWithVariableIndex.Contains(srcKey) || moduleSramArrays.Contains(srcKey)
+            || arrayViewBase.ContainsKey(srcKey) || flashArrays.Contains(srcKey))
+        {
+            // Real SRAM storage, addressed by name: without these two the constant-index
+            // read path resolves dst__k slots nothing ever wrote, and a run-time index
+            // has no array to land on.
+            arraysWithVariableIndex.Add(dstKey);
+            moduleSramArrays.Add(dstKey);
+            if (n <= 4)
+            {
+                for (int k = 0; k < n; ++k)
+                {
+                    var tmp = MakeTemp(elemDt);
+                    Emit(new ArrayLoad(srcKey, new Constant(k), tmp, elemDt, n));
+                    Emit(new ArrayStore(dstKey, new Constant(k), tmp, elemDt, n));
+                }
+                return;
+            }
+
+            // Past a few elements the unrolled pair-per-byte copy costs more flash than
+            // the loop it expands to: one runtime index, one load, one store.
+            var copyIdx = MakeTemp(DataType.UINT16);
+            Emit(new Copy(new Constant(0), copyIdx));
+            string copyLoop = MakeLabel();
+            string copyDone = MakeLabel();
+            Emit(new Label(copyLoop));
+            Emit(new JumpIfGreaterOrEqual(copyIdx, new Constant(n), copyDone));
+            var elem = MakeTemp(elemDt);
+            Emit(new ArrayLoad(srcKey, copyIdx, elem, elemDt, n));
+            Emit(new ArrayStore(dstKey, copyIdx, elem, elemDt, n));
+            Emit(new AugAssign(BinaryOp.Add, copyIdx, new Constant(1)));
+            Emit(new Jump(copyLoop));
+            Emit(new Label(copyDone));
+            return;
+        }
+
+        // A slot-flattened source -- `x = [n]` or `x = b"ab"` inside the callee keeps
+        // its elements in __k slots, not in one addressable array -- copies slot to
+        // slot so `dst[k]` resolves the same shape, and carries the compile-time
+        // element bindings so a folded read (`b"ab"[0]` -> 97) still folds.
+        if (literalSequenceArrays.Contains(srcKey))
+            literalSequenceArrays.Add(dstKey);
+        if (literalSeqElemKinds.TryGetValue(srcKey, out var srcKinds))
+            literalSeqElemKinds[dstKey] = srcKinds;
+        if (constSequenceBindings.TryGetValue(srcKey, out var srcSeq))
+            constSequenceBindings[dstKey] = srcSeq;
+        if (ctArrayConstElements.TryGetValue(srcKey, out var srcConstElems))
+            ctArrayConstElements[dstKey] = srcConstElems;
+        for (int k = 0; k < n; ++k)
+        {
+            string srcSlot = srcKey + "__" + k;
+            string dstSlot = dstKey + "__" + k;
+            DataType slotDt = variableTypes.TryGetValue(srcSlot, out var st) ? st : elemDt;
+            variableTypes[dstSlot] = slotDt;
+            Emit(new Copy(new Variable(srcSlot, slotDt), new Variable(dstSlot, slotDt)));
+        }
+    }
+
+    /// <summary>
     /// Alias <paramref name="targetKey"/> to array storage AND copy the size
     /// (and view window, if any) onto the new name. A second <c>super()</c>
     /// hop receives <c>VisitVariable</c> as the parameter's own key, not the
@@ -790,13 +875,17 @@ public partial class IRGenerator
             string src = lastTupleResults[k];
             string dst = key + "__" + k;
             // A buffer element of the callee's `return`: no scalar slot crossed, so
-            // `t__k` becomes another NAME for the callee's storage and `t[k][j]`,
-            // `len(t[k])` and `for` all answer it -- the element copy a scalar slot
-            // would get has no byte to read at the buffer's name.
+            // `t__k` binds to the returned storage -- a copy home when the storage
+            // died with the callee's frame, another NAME for it when it outlives the
+            // call. Either way `t[k][j]`, `len(t[k])` and `for` answer the bytes --
+            // the element copy a scalar slot would get has no byte to read there.
             if (lastTupleResultBuffers is { } tupBufs
                 && tupBufs.TryGetValue(k, out var tupBuf))
             {
-                BindSequenceAlias(dst, FollowAliases(tupBuf));
+                if (lastTupleResultLocalBuffers?.Contains(k) == true)
+                    EmitSequenceCopy(dst, FollowAliases(tupBuf));
+                else
+                    BindSequenceAlias(dst, FollowAliases(tupBuf));
                 elems.Add(dst);
                 continue;
             }
@@ -822,6 +911,7 @@ public partial class IRGenerator
         // expression wrapped around the call must not read it back as its own.
         lastTupleResults.Clear();
         lastTupleResultBuffers = null;
+        lastTupleResultLocalBuffers = null;
     }
 
     /// <summary>

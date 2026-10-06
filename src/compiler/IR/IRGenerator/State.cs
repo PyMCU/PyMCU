@@ -515,6 +515,15 @@ public partial class IRGenerator
     // this too so a later, unrelated call cannot inherit a stale slot index.
     private Dictionary<int, string>? lastTupleResultBuffers;
 
+    // The slot indices of lastTupleResultBuffers whose storage died with the callee's frame:
+    // the caller's name takes the bytes home as its own storage instead of aliasing the one
+    // cell every call to that function shares. Mirrors InlineContext.ReturnedLocalBufferSlots.
+    private HashSet<int>? lastTupleResultLocalBuffers;
+
+    // The single-value counterpart of lastTupleResultLocalBuffers: true when the last call's
+    // returned buffer (InlineContext.ReturnedBuffer) was born inside the callee's frame.
+    private bool lastCallReturnedBufferLocal;
+
     // `t = f()` where f returns several values: the name is bound to materialised
     // slots `t__0..N-1` (the values are COPIED -- the iret_ slots are shared
     // scratch between call sites at the same depth, so aliasing them would let a

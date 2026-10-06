@@ -3443,6 +3443,7 @@ public partial class IRGenerator
         {
             lastTupleResults.Clear();
             lastTupleResultBuffers = null;
+            lastTupleResultLocalBuffers = null;
             pendingTupleCount = -1;
             Val callResult = VisitExpression(tupleSrc);
             pendingTupleCount = 0;
@@ -3465,8 +3466,14 @@ public partial class IRGenerator
                     && ixBufs.TryGetValue(tc.Value, out var ixBuf))
                 {
                     string ixKey = FollowAliases(ixBuf);
+                    // `x = f()[k]` binds through the same returned-buffer path `x = f()`
+                    // uses: hand it the element's locality so a callee-local cell is
+                    // taken home rather than aliased (two `f()[k]` reads would share it).
+                    lastCallReturnedBufferLocal =
+                        lastTupleResultLocalBuffers?.Contains(tc.Value) == true;
                     lastTupleResults.Clear();
                     lastTupleResultBuffers = null;
+                    lastTupleResultLocalBuffers = null;
                     return new Variable(ixKey, arrayElemTypes.TryGetValue(ixKey, out var ixedt)
                         ? ixedt : DataType.UINT8);
                 }
@@ -3477,6 +3484,7 @@ public partial class IRGenerator
                 // inner expansion's slots for the outer one's result.
                 lastTupleResults.Clear();
                 lastTupleResultBuffers = null;
+                lastTupleResultLocalBuffers = null;
                 return new Variable(elem, variableTypes.TryGetValue(elem, out var et)
                     ? et
                     : constantVariables.TryGetValue(elem, out int ec)

@@ -1457,7 +1457,14 @@ public partial class IRGenerator
                     ? currentInlinePrefix + bufTgt.Name
                     : (!string.IsNullOrEmpty(currentFunction)
                         ? currentFunction + "." + bufTgt.Name : bufTgt.Name);
-                BindSequenceAlias(bufKey, retBufName);
+                // A buffer born inside the callee's frame is one cell every call
+                // shares: the target takes the bytes home, or `x = f(1); z = f(2)`
+                // would make both names the same object. Storage that outlives the
+                // call keeps the alias -- the object identity CPython gives it.
+                if (lastCallReturnedBufferLocal)
+                    EmitSequenceCopy(bufKey, retBufName);
+                else
+                    BindSequenceAlias(bufKey, retBufName);
                 return;
             }
         }
@@ -5239,6 +5246,7 @@ public partial class IRGenerator
                     {
                         lastTupleResults = new List<string>();
                         lastTupleResultBuffers = null;
+                        lastTupleResultLocalBuffers = null;
                         pendingTupleCount = -1;
                         Val callRhs = VisitExpression(stmt.Value);
                         pendingTupleCount = 0;
@@ -5251,6 +5259,7 @@ public partial class IRGenerator
                                         ? FollowAliases(rhsBuf) : s)).ToList());
                             lastTupleResults.Clear();
                             lastTupleResultBuffers = null;
+                            lastTupleResultLocalBuffers = null;
                         }
                         else srcVal = callRhs;
                     }
@@ -5444,6 +5453,7 @@ public partial class IRGenerator
         if (value is not CallExpr) return PinOnce(value);
         lastTupleResults = new List<string>();
         lastTupleResultBuffers = null;
+        lastTupleResultLocalBuffers = null;
         pendingTupleCount = -1;
         Val held = VisitExpression(value);
         pendingTupleCount = 0;
@@ -5457,6 +5467,7 @@ public partial class IRGenerator
                 { Line = value.Line };
             lastTupleResults.Clear();
             lastTupleResultBuffers = null;
+            lastTupleResultLocalBuffers = null;
             return heldSlots;
         }
         return HeldValue(held, value);
@@ -10616,13 +10627,16 @@ public partial class IRGenerator
             // unpack left behind -- its count could coincidentally match the targets.
             lastTupleResults = new List<string>();
             lastTupleResultBuffers = null;
+            lastTupleResultLocalBuffers = null;
             Val ignored = VisitExpression(stmt.Value);
             pendingTupleCount = 0;
 
             var unpackSlots = new List<string>(lastTupleResults);
             var unpackBufs = lastTupleResultBuffers;
+            var unpackLocal = lastTupleResultLocalBuffers;
             lastTupleResults.Clear();
             lastTupleResultBuffers = null;
+            lastTupleResultLocalBuffers = null;
             if (unpackSlots.Count != stmt.Targets.Count)
                 throw UserError($"Expected {stmt.Targets.Count} tuple results, got {unpackSlots.Count}");
 
@@ -10633,14 +10647,20 @@ public partial class IRGenerator
                 // `rom, diff = f()` where element k of the callee's `return` was its
                 // fixed buffer: no scalar ever lived at the slot name -- the Copy
                 // below would read the buffer's name as a byte and land nothing --
-                // so the target becomes another NAME for that storage, the same
-                // binding `rom = f()` takes one level up (VisitAssign's
-                // ReturnedBuffer path). Reads AND writes then reach the callee's
-                // array: `rom[i]` answers what the function put there.
+                // so the target binds to the returned storage the way `rom = f()`
+                // does one level up (VisitAssign's ReturnedBuffer path). A buffer
+                // born in the callee's frame is one cell every call shares: the
+                // target takes the bytes home as its OWN storage, or `a` and `b`
+                // off two calls read the last write twice. Storage that outlives
+                // the call keeps the alias, which is the object identity CPython
+                // gives it -- reads AND writes then reach the buffer it names.
                 if (unpackBufs is { }
                     && unpackBufs.TryGetValue(k, out var unpackBuf))
                 {
-                    BindSequenceAlias(dstName, FollowAliases(unpackBuf));
+                    if (unpackLocal?.Contains(k) == true)
+                        EmitSequenceCopy(dstName, FollowAliases(unpackBuf));
+                    else
+                        BindSequenceAlias(dstName, FollowAliases(unpackBuf));
                     continue;
                 }
                 // A return element that is itself a compile-time sequence -- `a, t, c =

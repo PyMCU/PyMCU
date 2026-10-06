@@ -11,8 +11,10 @@ namespace PyMCU.UnitTests;
 /// `rom, diff = f(...)` where `f` writes a bytearray and returns `(buf, scalar)`: the
 /// tuple unpack used to give the caller's `rom` its own storage, so every `rom[k]`
 /// read back whatever that storage held -- never the bytes the callee wrote. CPython
-/// sees the same object; PyMCU must alias the destination onto the returned buffer,
-/// the way a single-value `b = f()` buffer return already does.
+/// sees a different object per call: a buffer born inside the callee's frame is one
+/// cell every call shares, so the target takes its bytes home as its OWN storage;
+/// a buffer that outlives the call (member storage, module globals, a forwarded
+/// parameter) still aliases it, which is the object identity CPython gives it.
 ///
 /// Covered in both tuple positions, for a force-inlined ordinary `def` and for an
 /// explicit `@inline`, because those are the two spellings a driver uses.
@@ -53,14 +55,14 @@ public class TupleBufferReturnTests
             "y = rom[2]\n" +
             "z = diff\n");
 
-        // The load must name the callee's buffer storage, not a fresh `rom` array
-        // that the callee never wrote. Without the alias the unpack emitted copies
-        // into `rom`'s own slots and `rom[1]` read those.
-        var loads = ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>()
-            .Where(l => l.Index is Constant { Value: 1 or 2 }).ToList();
-        loads.Should().NotBeEmpty(because: "rom[1] and rom[2] are constant-indexed reads");
-        loads.Should().OnlyContain(l => l.ArrayName.EndsWith(".buf"),
-            because: "the destination aliases the callee's buffer storage");
+        // The reads must name `rom`'s own storage, filled from the callee's bytes
+        // at the unpack. Without the copy-home the target aliased the callee's one
+        // shared cell and a second call's write would overwrite `rom` underneath.
+        var loads = ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>().ToList();
+        Assert.Contains(loads, l => l.Index is Constant { Value: 1 } && l.ArrayName == "main.rom");
+        Assert.Contains(loads, l => l.Index is Constant { Value: 2 } && l.ArrayName == "main.rom");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>(),
+            s => s.ArrayName == "main.rom");
     }
 
     [Fact]
@@ -74,11 +76,13 @@ public class TupleBufferReturnTests
             "z = diff\n");
 
         Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>(),
-            l => l.Index is Constant { Value: 1 } && l.ArrayName.EndsWith(".buf"));
+            l => l.Index is Constant { Value: 1 } && l.ArrayName == "main.rom");
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>(),
+            s => s.ArrayName == "main.rom");
     }
 
     [Fact]
-    public void BufferReturn_FromAnExplicitInline_AliasesTheSameWay()
+    public void BufferReturn_FromAnExplicitInline_CopiesTheSameWay()
     {
         var ir = Gen(
             "from pymcu.types import uint8\n\n" +
@@ -88,7 +92,35 @@ public class TupleBufferReturnTests
             "x = rom[1]\n");
 
         Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>(),
-            l => l.Index is Constant { Value: 1 } && l.ArrayName.EndsWith(".buf"));
+            l => l.Index is Constant { Value: 1 } && l.ArrayName == "main.rom");
+    }
+
+    [Fact]
+    public void TwoCallsToTheSameCalleeLocalBuffer_GetTheirOwnStorage()
+    {
+        // `a` and `b` are different objects in CPython: f's local buf is one cell
+        // every call shares, so aliasing it made both names read the last write.
+        // A callee-local buffer now copies its bytes into the target's own array;
+        // a buffer that outlives the call still aliases (member storage, module
+        // globals, forwarded parameters).
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" + Fill +
+            "    return buf, 0\n\n" +
+            "a, x = f(1)\n" +
+            "b, y = f(2)\n" +
+            "p = a[0]\n" +
+            "q = b[0]\n");
+
+        var loads = ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>()
+            .Where(l => l.Index is Constant { Value: 0 })
+            .Select(l => l.ArrayName).ToList();
+        Assert.Contains(loads, n => n == "main.a");
+        Assert.Contains(loads, n => n == "main.b");
+        // And each target's storage was actually filled from the callee's bytes.
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Select(s => s.ArrayName).ToList();
+        Assert.Contains(stores, n => n == "main.a");
+        Assert.Contains(stores, n => n == "main.b");
     }
 
     [Fact]

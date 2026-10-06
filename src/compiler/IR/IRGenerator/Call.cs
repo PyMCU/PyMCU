@@ -181,6 +181,7 @@ public partial class IRGenerator
         // call's text is the one that survives for the assignment to read.
         lastCallReturnTypeText = null;
         lastCallReturnListElem = null;
+        lastCallReturnedBufferLocal = false;
 
         // `f(*xs)` and `f(**d)`: splice the elements of the compile-time sequence and the
         // entries of the compile-time mapping into the argument list before ANY path looks at
@@ -4186,6 +4187,7 @@ public partial class IRGenerator
         // The buffer-slot counterpart, same reasoning as the comment above: a stale set from
         // an inner call must not survive into a tuple this call did not return.
         lastTupleResultBuffers = Enumerable.Last<InlineContext>(inlineStack).ReturnedBufferSlots;
+        lastTupleResultLocalBuffers = Enumerable.Last<InlineContext>(inlineStack).ReturnedLocalBufferSlots;
         // A result temporary the expansion allocated itself (a value return in a callee the
         // parser filed as void) is the call's value too.
         result ??= Enumerable.Last<InlineContext>(inlineStack).ResultTemp;
@@ -4196,6 +4198,7 @@ public partial class IRGenerator
         {
             lastCallReturnTypeText = "bytearray";
             lastCallReturnListElem = null;
+            lastCallReturnedBufferLocal = finishedCtx.ReturnedBufferIsLocal;
         }
         else
         {
@@ -4204,6 +4207,7 @@ public partial class IRGenerator
             // body happened to call last.
             lastCallReturnTypeText = func?.ReturnType;
             lastCallReturnListElem = null;
+            lastCallReturnedBufferLocal = false;
         }
         // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
         // expansion actually walked, which is exact for a body whose branches fold away. A
@@ -5868,6 +5872,7 @@ public partial class IRGenerator
     {
         lastTupleResults.Clear();
         lastTupleResultBuffers = null;
+        lastTupleResultLocalBuffers = null;
         pendingTupleCount = -1;
         VisitExpression(e);
         pendingTupleCount = 0;
@@ -5889,6 +5894,7 @@ public partial class IRGenerator
         // expression wrapped around it must not read them back as its own.
         lastTupleResults.Clear();
         lastTupleResultBuffers = null;
+        lastTupleResultLocalBuffers = null;
         return elems;
     }
 
@@ -8498,6 +8504,7 @@ public partial class IRGenerator
             constantVariables[rn] = r;
             lastTupleResults = new List<string> { qn, rn };
             lastTupleResultBuffers = null;
+            lastTupleResultLocalBuffers = null;
             return new NoneVal();
         }
 
@@ -8524,6 +8531,7 @@ public partial class IRGenerator
             Emit(new Binary(BinaryOp.Mod, aVal, bVal, rvar));
             lastTupleResults = new List<string> { qn, rn };
             lastTupleResultBuffers = null;
+            lastTupleResultLocalBuffers = null;
             return new NoneVal();
         }
     }
@@ -11784,6 +11792,7 @@ public partial class IRGenerator
             {
                 lastTupleResults.Clear();
                 lastTupleResultBuffers = null;
+                lastTupleResultLocalBuffers = null;
                 pendingTupleCount = -1;
                 Val seqVal = VisitExpression(arg);
                 pendingTupleCount = 0;

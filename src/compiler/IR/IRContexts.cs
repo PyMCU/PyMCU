@@ -76,6 +76,20 @@ public class InlineContext
     // VisitReturn refuses the mix instead of compiling it silently.
     public HashSet<int>? ReturnedScalarSlots { get; set; }
 
+    // The subset of ReturnedBufferSlots whose storage was born inside THIS frame and dies
+    // with it: a `buf = bytearray(n)` local or an expansion cell. Two calls to the same
+    // function share that one cell, so a caller-side name must take the bytes home (its own
+    // storage) rather than alias -- `a, x = f(1); b, y = f(2)` would otherwise make `a` and
+    // `b` the same object and read the last call's write twice. Slots not listed here name
+    // storage that outlives the call (a module buffer, an instance field's array, a
+    // parameter's forwarded storage) and keep the alias, which is also the object identity
+    // CPython gives them.
+    public HashSet<int>? ReturnedLocalBufferSlots { get; set; }
+
+    // The single-value counterpart of ReturnedLocalBufferSlots: true when ReturnedBuffer
+    // names storage born inside this frame.
+    public bool ReturnedBufferIsLocal { get; set; } = false;
+
     // The constant this expansion's result has been tracked as, if any. Set by the first
     // `return <constant>` that is actually visited; cleared the moment a second REACHABLE
     // return yields a DIFFERENT constant, because then the value is selected at run time.

@@ -1270,6 +1270,7 @@ public partial class IRGenerator
             {
                 var retCtx = inlineStack.Last();
                 retCtx.ReturnedBuffer = retArrInfo.Name;
+                retCtx.ReturnedBufferIsLocal = IsCalleeLocalBuffer(retArrInfo.Name);
                 retCtx.ResultAssigned = true;
                 if (_runtimeBranchDepth <= retCtx.EntryBranchDepth)
                     retCtx.ResultReturnedUnconditionally = true;
@@ -1480,6 +1481,8 @@ public partial class IRGenerator
                                 + "Return the buffer through a parameter instead.",
                                 tup.Elements[k]);
                         (ctx.ReturnedBufferSlots ??= new())[k] = retBufKey;
+                        if (IsCalleeLocalBuffer(retBufKey))
+                            (ctx.ReturnedLocalBufferSlots ??= new()).Add(k);
                         // The iret_ slots are shared scratch: a const sequence or folded
                         // scalar an earlier call filed under this slot's name must not
                         // survive into an unpack that reads the slot as a buffer.
@@ -2114,5 +2117,16 @@ public partial class IRGenerator
                 return true;
         return false;
     }
+
+    /// <summary>
+    /// Whether an array storage key names a cell born inside the CURRENT frame: a
+    /// function-local `<fn>.<name>` or an expansion-prefixed cell. Such storage dies with
+    /// the frame, so the caller must take the bytes home rather than alias the cell.
+    /// Anything else -- module storage `main.*`, an instance field's flattened array, a
+    /// parameter's forwarded storage -- outlives the call and aliases true.
+    /// </summary>
+    private bool IsCalleeLocalBuffer(string key) =>
+        (!string.IsNullOrEmpty(currentInlinePrefix) && key.StartsWith(currentInlinePrefix))
+        || (!string.IsNullOrEmpty(currentFunction) && key.StartsWith(currentFunction + "."));
 
 }
