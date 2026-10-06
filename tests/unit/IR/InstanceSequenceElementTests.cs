@@ -104,6 +104,19 @@ public class InstanceSequenceElementTests
     }
 
     [Fact]
+    public void NestedListElementStoreOfAnInstance_IsRefused()
+    {
+        // `bins[0][0] = c` takes the nested-list fast path, which stored the
+        // bare instance handle's stale byte -- `bool(bins[0][0])` read False
+        // where CPython sees the object and prints True.
+        var msg = Refusal(Counter +
+            "bins: list[list[uint8]] = [[0]]\n" +
+            "bins[0][0] = Counter(0)\n");
+        Assert.Contains("instance of 'Counter'", msg);
+        Assert.Contains("bins", msg);
+    }
+
+    [Fact]
     public void FieldAccessOnAnInstanceArrayElement_StillCompiles()
     {
         // The read refusal is narrow: xs[i]._n is the supported spelling.

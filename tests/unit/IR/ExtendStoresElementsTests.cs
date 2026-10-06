@@ -69,6 +69,26 @@ public class ExtendStoresElementsTests
     }
 
     [Fact]
+    public void ExtendEvaluatesTheArgumentBeforeGrowingTheReceiver()
+    {
+        // `xs.extend([len(xs)])`: CPython reads len(xs) = 1 before the receiver
+        // mutates, so xs[1] is 1. Lowering the argument after the size bump
+        // reads the grown length and stores 2 instead.
+        var ir = Gen(
+            "xs = [9]\n" +
+            "xs.extend([len(xs)])\n" +
+            "a = xs[1]\n");
+
+        var body = AllInstructions(ir);
+        Assert.Contains(body, i =>
+            (i is Copy cp1 && cp1.Dst is Variable { Name: "main.xs__1" } && cp1.Src is Constant { Value: 1 })
+            || (i is ArrayStore s1 && s1.ArrayName == "main.xs" && s1.Src is Constant { Value: 1 }));
+        Assert.DoesNotContain(body, i =>
+            (i is Copy cp2 && cp2.Dst is Variable { Name: "main.xs__1" } && cp2.Src is Constant { Value: 2 })
+            || (i is ArrayStore s2 && s2.ArrayName == "main.xs" && s2.Index is Constant { Value: 1 } && s2.Src is Constant { Value: 2 }));
+    }
+
+    [Fact]
     public void ExtendFromAnotherSequence_StoresEachElementIntoTheReceiver()
     {
         var ir = Gen(
