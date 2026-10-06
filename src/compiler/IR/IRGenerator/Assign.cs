@@ -611,7 +611,9 @@ public partial class IRGenerator
         if (stmt.Target is IndexExpr ciTgt && ciTgt.Target is VariableExpr ciArr
             && stmt.Value is CallExpr ciCall && ciCall.Callee is VariableExpr ciCallee)
         {
-            string ciQ = string.IsNullOrEmpty(currentFunction) ? ciArr.Name : currentFunction + "." + ciArr.Name;
+            string ciQ = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + ciArr.Name
+                : (string.IsNullOrEmpty(currentFunction) ? ciArr.Name : currentFunction + "." + ciArr.Name);
             if (!instanceArrayClass.ContainsKey(ciQ) && instanceArrayClass.ContainsKey(ciArr.Name)) ciQ = ciArr.Name;
             if (instanceArrayClass.TryGetValue(ciQ, out var ciCls)
                 && ResolveCallee(ciCallee.Name) == ciCls)
@@ -3891,7 +3893,9 @@ public partial class IRGenerator
         fieldType = DataType.UINT8;
         elemCls = null;
         if (idx.Target is not VariableExpr arrVe) return null;
-        string q = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name;
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + arrVe.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name);
         if (!instanceArrayClass.ContainsKey(q) && instanceArrayClass.ContainsKey(arrVe.Name)) q = arrVe.Name;
         if (!instanceArrayClass.TryGetValue(q, out var cls)) return null;
         if (!TryGetSlotFieldLayout(cls, member, out int fieldOff, out fieldType, out _)) return null;
@@ -8906,6 +8910,20 @@ public partial class IRGenerator
             "itself first); please report this as a PyMCU bug.", at);
     }
 
+    /// <summary>
+    /// The storage key a fixed-size `name: T[N]` declaration binds. Inside an inline
+    /// expansion the array is the CALLEE's local, so it files under the expansion prefix
+    /// like every other callee-local binding (`x = bytearray(n)`, `x = []`, scalars) --
+    /// filing it under `currentFunction` meant the caller's spelling: every expansion of
+    /// the same function shared one cell, a `return buf, ...` then aliased that cell
+    /// instead of copying home (a, _ = f(1); b, _ = f(2) read the last call's write
+    /// twice), and a caller- or module-level name of the same spelling was rewritten.
+    /// </summary>
+    private string FixedArrayKey(string name) =>
+        !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (string.IsNullOrEmpty(currentFunction) ? name : currentFunction + "." + name);
+
     private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
     {
         string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
@@ -8927,8 +8945,7 @@ public partial class IRGenerator
             int n = int.Parse(inner);
             var layout = classFieldLayout[elemAnno];
             int stride = layout.Sum(f => SlotFieldFootprint(elemAnno, f.Field, f.Type));
-            string arrQ = string.IsNullOrEmpty(currentFunction)
-                ? stmt.Target : currentFunction + "." + stmt.Target;
+            string arrQ = FixedArrayKey(stmt.Target);
             arraySizes[arrQ] = n * stride;
             bufferLogicalLen[arrQ] = n * stride;
             arrayElemTypes[arrQ] = DataType.UINT8;
@@ -8944,9 +8961,7 @@ public partial class IRGenerator
         {
             int count = int.Parse(inner);
             DataType elemDt = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, bracket));
-            string qualified = string.IsNullOrEmpty(currentFunction)
-                ? stmt.Target
-                : currentFunction + "." + stmt.Target;
+            string qualified = FixedArrayKey(stmt.Target);
             // Synthesized main: fall back to the module-level name registered by ScanGlobals.
             // Only where the module level is being REPLAYED, which is the entry point and a
             // module's synthesized __module_init. It used to fire in ANY function, so a
@@ -8961,8 +8976,13 @@ public partial class IRGenerator
             // wrapped into the low bytes. Measured: writing 99 at index 257 and reading it back
             // printed 0, on a clean build with no diagnostic. Renaming the array to a name the
             // stdlib does not use made it correct, which is what pinned it to the collision.
-            bool replayingModuleLevel = currentFunction == "main"
-                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+            //
+            // An inline expansion is not a module replay: currentFunction still names the
+            // CALLER (often "main" at top level), so without the prefix guard a callee's
+            // `buf: uint8[N]` walked this fallback and rewrote the module's `buf`.
+            bool replayingModuleLevel = string.IsNullOrEmpty(currentInlinePrefix)
+                && (currentFunction == "main"
+                    || currentFunction.EndsWith("___module_init", StringComparison.Ordinal));
             if (replayingModuleLevel
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;

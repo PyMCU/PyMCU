@@ -771,6 +771,16 @@ public partial class IRGenerator
             return;
         }
 
+        // A `Cls[N]` instance array's bytes mean nothing without the element class
+        // and stride -- carry both so `dst[i] = C(...)` and `dst[i].method()` keep
+        // answering the same element semantics the alias would have given them.
+        if (instanceArrayClass.TryGetValue(srcKey, out var srcArrCls))
+        {
+            instanceArrayClass[dstKey] = srcArrCls;
+            if (instanceArrayStride.TryGetValue(srcKey, out var srcStride))
+                instanceArrayStride[dstKey] = srcStride;
+        }
+
         // A slot-flattened source -- `x = [n]` or `x = b"ab"` inside the callee keeps
         // its elements in __k slots, not in one addressable array -- copies slot to
         // slot so `dst[k]` resolves the same shape, and carries the compile-time

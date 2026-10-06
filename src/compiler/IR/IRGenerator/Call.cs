@@ -2879,14 +2879,13 @@ public partial class IRGenerator
         }
 
         // Register the callee's runtime-indexed local arrays so they are allocated as SRAM (not
-        // register element-vars). An inlined fixed array is qualified with the enclosing function
-        // (currentFunction), same as the load site, so scan under that prefix. The per-function
+        // register element-vars). An inlined fixed array is qualified with the expansion's own
+        // prefix (FixedArrayKey), same as the load site, so scan under that prefix. The per-function
         // prescan only sees the caller's own body, never an inlined callee's locals, so without
         // this a runtime-indexed local array inside an @inline hit "subscript must be constant".
         if (func != null)
         {
-            ScanForVariableIndexedArrays(func.Body.Statements,
-                string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + ".",
+            ScanForVariableIndexedArrays(func.Body.Statements, newPrefix,
                 // The callee's own class, when it is a method: `Radio_send` minus `_send`. This
                 // is the path that matters for a nested `self.m(...)`, because the per-function
                 // prescan never sees an inlined callee's body (see the note above).
@@ -6233,8 +6232,9 @@ public partial class IRGenerator
     {
         if (memC.Object is not IndexExpr { Target: VariableExpr iaArr } iaIdx) return null;
 
-        string iaQ = !string.IsNullOrEmpty(currentFunction)
-            ? currentFunction + "." + iaArr.Name : iaArr.Name;
+        string iaQ = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + iaArr.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + iaArr.Name : iaArr.Name);
         if (!instanceArrayClass.ContainsKey(iaQ) && instanceArrayClass.ContainsKey(iaArr.Name))
             iaQ = iaArr.Name;
         if (!instanceArrayClass.TryGetValue(iaQ, out var iaCls)) return null;

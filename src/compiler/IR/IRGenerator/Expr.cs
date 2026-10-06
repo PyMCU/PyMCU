@@ -5132,7 +5132,9 @@ public partial class IRGenerator
     private string? InstanceArrayClassOf(Expression target)
     {
         if (target is not VariableExpr arrVe) return null;
-        string q = string.IsNullOrEmpty(currentFunction) ? arrVe.Name : currentFunction + "." + arrVe.Name;
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + arrVe.Name
+            : (string.IsNullOrEmpty(currentFunction) ? arrVe.Name : currentFunction + "." + arrVe.Name);
         if (!instanceArrayClass.ContainsKey(q) && instanceArrayClass.ContainsKey(arrVe.Name)) q = arrVe.Name;
         for (int depth = 0; depth < 20; depth++)
         {
