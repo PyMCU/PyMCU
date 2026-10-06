@@ -8543,16 +8543,20 @@ public partial class IRGenerator
                 initElements = new List<Val>();
                 listInnerElemTypes.TryGetValue(qualified, out var declaredInner);
                 foreach (var e in le.Elements)
+                {
                     // `bins: list[list[uint16]] = [[p, 0]]`: a literal element has no
                     // value position of its own -- materialize it into its own heap
                     // object so the outer payload stores a real pointer.
-                    initElements.Add(e is ListExpr innerLit
+                    Val ev = e is ListExpr innerLit
                         ? MaterializeSequenceLiteral(innerLit.Elements,
                             declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
                         : e is TupleExpr innerTup
                         ? MaterializeSequenceLiteral(innerTup.Elements,
                             declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
-                        : VisitExpression(e));
+                        : VisitExpression(e);
+                    RefuseInstanceElementValue(e, $"an element of '{stmt.Target}'", ev);
+                    initElements.Add(ev);
+                }
                 if (le.Elements.Count > capacity) capacity = le.Elements.Count;
             }
 
