@@ -128,5 +128,5 @@ sphinx-autobuild . _build/html
 2. Each commit follows Conventional Commits format.
 3. All integration tests pass (`dotnet test ...`).
 4. A test is added for any new compiler or HAL feature.
-5. `LANGUAGE_ROADMAP.md` and `docs/language/roadmap.md` are updated if applicable.
-6. `docs/language/limitations.md` is updated if the supported/unsupported status changes.
+5. `LANGUAGE_ROADMAP.md` and the [Roadmap page](https://docs.pymcu.org/roadmap/) of the documentation site are updated if applicable.
+6. The [Limitations page](https://docs.pymcu.org/limitations/) is updated if the supported/unsupported status changes.

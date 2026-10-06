@@ -15,7 +15,7 @@ into the IEEE-754 exponent field, the `5**n` part a real multiply/divide),
 search 6 to 9 significant digits for one that round-trips exactly. This is
 NOT CPython's shortest-round-trip repr and NOT an exact decimal expansion:
 its own last significant digit is not always exact, on real MicroPython
-builds as much as here (see docs/language/limitations.md for the measured
+builds as much as here (see https://docs.pymcu.org/limitations/#float-text for the measured
 mismatch rate against a real float32 MicroPython build and why).
 
 `py_ref` below is an independent Python port of the same algorithm (not a
@@ -273,7 +273,7 @@ def test_edge_bit_patterns(f32_repr):
     # Bit patterns whose ONLY claim is that _f32_repr does not crash or
     # produce something that is not a number: the port's own accuracy
     # against real MicroPython is documented, not re-derived, at these
-    # extremes (see docs/language/limitations.md).
+    # extremes (see https://docs.pymcu.org/limitations/#float-text).
     edges = [0x00000001, 0x007fffff, 0x00800000, 0x7f7fffff,
              0x3f800000, 0x40000000, 0x3f000000]
     for bits in edges:
@@ -284,7 +284,7 @@ def test_edge_bit_patterns(f32_repr):
 
 def test_fuzz_matches_the_reference_port_within_the_measured_rate(f32_repr):
     """py_ref (no bisection) and the HAL under test (also no bisection --
-    see docs/language/limitations.md) implement the SAME simplified
+    see https://docs.pymcu.org/limitations/#float-text) implement the SAME simplified
     algorithm, so they should agree far more often than either agrees with
     real MicroPython's bisection-corrected one. A regression here is a
     difference between the HAL and its own Python port, not an accuracy

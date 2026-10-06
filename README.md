@@ -321,7 +321,7 @@ backend are **beta** as of 0.1.0b1. **ARM, PIC and RISC-V remain alpha.**
   is unavailable on PIC; `float`, f-strings, generators and `@interrupt` are unavailable
   on PIC16 (PIC18 has float and generators); and PIC16F84A / PIC16F877A builds emit no
   configuration word, so the resulting image will not boot on real hardware until you
-  program the fuses yourself. See [Language Limitations](docs/language/limitations.md).
+  program the fuses yourself. See the [Limitations](https://docs.pymcu.org/limitations/) page.
 
 **How far each backend has been validated on real hardware.** This is the part that most
 separates beta from alpha, so it is worth stating per backend rather than in one sentence:
@@ -401,7 +401,7 @@ The list below describes the **AVR** backend, which is the beta one. Items marke
 The compiler rejects unsupported features with a clear error at compile time — including the
 ones the hardware cannot honour, such as a runtime pin number, an image larger than the
 chip's flash, or static data that does not fit in SRAM.
-See the [Language Limitations](docs/language/limitations.md) page for the full list.
+See the [Limitations](https://docs.pymcu.org/limitations/) page for the full list.
 
 ---
 

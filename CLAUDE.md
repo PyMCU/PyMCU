@@ -49,7 +49,7 @@ and the language oracle corpus (`just test-oracle`, both front ends) live in the
 4. After each compiler change: `dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo`.
 5. Install the stdlib editable once: `just sync-stdlib` (`uv pip install --no-deps -e lib/`). After that, `lib/src/pymcu/` edits are picked up live — no per-change copy. Do NOT rsync a copy of `lib/src/pymcu/` into `site-packages/pymcu/`: a physical copy there shadows the editable `.pth` and your edits silently stop taking effect.
 6. Run the tests: `just test-unit`, `just test-stdlib` and `pytest tests/driver`.
-7. Update `LANGUAGE_ROADMAP.md`, `docs/language/roadmap.md`, and `docs/language/limitations.md`.
+7. Update `LANGUAGE_ROADMAP.md` and the documentation site (PyMCU/pymcu-docs repository).
 
 ---
 

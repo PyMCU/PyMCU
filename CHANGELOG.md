@@ -23,7 +23,7 @@ was a constant (#430). That release was never published, and on
 2026-09-25 the decision reversed: ship from `main` as it stands rather than
 from the frozen branch. This section is regenerated against `main` at
 `11e8bbe5` (2026-09-30), 1732 commits past `v0.1.0a10`. See
-[State of the beta](docs/language/state-of-the-beta.md#what-the-oracle-knows-is-wrong)
+[State of the beta](https://docs.pymcu.org/state-of-the-beta/#what-the-oracle-knows-is-wrong)
 for what the differential oracle still knows is wrong and discloses on
 purpose, as opposed to bugs like the three above that were silent until
 found.
@@ -35,7 +35,7 @@ compiler: `adafruit_ssd1306` (with `adafruit_framebuf` and `adafruit_bus_device`
 Game of Life and text on an SSD1306 OLED over I2C) and `adafruit_hcsr04` (its own
 simpletest). Every other Adafruit library figure in this release is a compile and
 emulator measurement, not a run on a board. Details in
-[State of the beta](docs/language/state-of-the-beta.md#what-ran-on-real-hardware-for-this-release).
+[State of the beta](https://docs.pymcu.org/state-of-the-beta/#what-ran-on-real-hardware-for-this-release).
 
 ### Known issues
 
@@ -43,7 +43,7 @@ Five silent wrong values found after the candidate was cut, none of them
 announced by the compiler and none yet covered by an oracle probe or a filed
 issue in this release. Each is measured, with a minimal reproducer, a
 workaround that works today, and its fix status, in
-[State of the beta](docs/language/state-of-the-beta.md#five-silent-wrong-values-found-after-the-candidate-was-cut).
+[State of the beta](https://docs.pymcu.org/state-of-the-beta/#five-silent-wrong-values-found-after-the-candidate-was-cut).
 All five land in beta 2.
 
 - A top-level name reassigned from a string literal to a run-time-built
@@ -207,7 +207,7 @@ succeeded and the wrong thing happened, or the right thing never happened.
   full algorithm; this fallback now triggers on `__CHIP__.flash_size <= 4096` instead of
   matching `attiny2313` by name, which had silently stopped three other tiny parts from
   building the moment a program printed a float. See
-  [Language Limitations](docs/language/limitations.md) for the measured accuracy against a
+  [Limitations](https://docs.pymcu.org/limitations/) for the measured accuracy against a
   real `micropython` unix-port binary and the two designs that were tried and rejected.
 
 ### Fixed (2026-09-29)

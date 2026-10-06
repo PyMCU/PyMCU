@@ -9,7 +9,7 @@
 # docs/rfcs/0004-arena-allocator.md for the full design and the once rule the compiler
 # enforces at every allocation site.
 #
-# There is no free(). `list[T]` (docs/language/limitations.md) frees because a list can go
+# There is no free(). `list[T]` (https://docs.pymcu.org/limitations/#dynamic-memory-and-containers) frees because a list can go
 # out of scope inside a loop, and does; a bytearray from alloc() is a permanent buffer for
 # the life of the program, so there is nothing to reclaim and no mark/sweep here -- this is
 # list[T]'s allocator with the GC removed, which is the whole simplification.

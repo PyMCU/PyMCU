@@ -263,7 +263,7 @@ public class ArenaAllocatorTests
             // A genuinely runtime seed: a plain `n: uint16 = 4` module-level literal, passed
             // as a call argument to an @inline constructor, is itself a compile-time
             // constant by the time __init__ sees it ("a call argument that holds a compile-
-            // time constant is passed as that constant" -- docs/language/limitations.md),
+            // time constant is passed as that constant" -- https://docs.pymcu.org/limitations/#dynamic-memory-and-containers),
             // which would take the CONSTANT-size static-array path this feature must not
             // touch, and the test would pass without ever exercising the once rule.
             "n: uint16 = uint16(GPIOR0.value)\n" +

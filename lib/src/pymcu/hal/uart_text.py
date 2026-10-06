@@ -264,7 +264,7 @@ def _f32_repr(value: float, out: bytearray) -> uint8:
     # MICROPY_FLOAT_IMPL_FLOAT): every representative/sensor-range value
     # tested matches exactly; ~11% of uniformly random float32 bit patterns
     # in the same magnitude range differ in the last digit (see
-    # docs/language/limitations.md) -- always by a tiny amount, and always
+    # https://docs.pymcu.org/limitations/#float-text) -- always by a tiny amount, and always
     # because this version needed one more digit than MicroPython's
     # corrected search did to reach the same round-trip guarantee.
     bits: uint32 = bitcast(uint32, value)

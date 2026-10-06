@@ -9,7 +9,7 @@ namespace PyMCU.UnitTests;
 /// <summary>
 /// PyMCU#427. A nested function decorated `@inline`, defined inside a method and reading or
 /// writing `self` of the enclosing method, is the documented way to write a closure
-/// (docs/language/limitations.md:287) -- valid without a `nonlocal self` declaration, since
+/// (https://docs.pymcu.org/limitations/#classes-and-inheritance) -- valid without a `nonlocal self` declaration, since
 /// only self's ATTRIBUTE is mutated; `self` itself is never rebound.
 ///
 /// Nothing forwarded the enclosing method's own `self` binding (its `variableAliases` /
