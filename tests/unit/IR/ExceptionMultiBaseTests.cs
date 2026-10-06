@@ -87,4 +87,29 @@ public class ExceptionMultiBaseTests
         ErrorCodeCompares(main).Should().BeGreaterOrEqualTo(2,
             because: "G descends from F, which descends from OSError");
     }
+
+    [Fact]
+    public void TwoBasesInsideTheSubtreeEachRecordAnEdge()
+    {
+        // `class F(A, B)` where BOTH bases descend from OSError: the scan used to stop
+        // at the first recorded edge (F -> A), so `except B` never saw F and the raise
+        // landed in the catch-all instead. Every in-subtree base carries an edge now,
+        // so `except B` compares against B's code and F's alike.
+        var main = Fn(Gen(
+            "class A(OSError):\n" +
+            "    pass\n" +
+            "class B(OSError):\n" +
+            "    pass\n" +
+            "class F(A, B):\n" +
+            "    pass\n" +
+            "try:\n" +
+            "    raise F(5)\n" +
+            "except B:\n" +
+            "    print(\"caught\")\n" +
+            "except Exception:\n" +
+            "    print(\"wrong\")\n"), "main");
+
+        ErrorCodeCompares(main).Should().BeGreaterOrEqualTo(2,
+            because: "except B accepts B itself and the raised F that descends from it");
+    }
 }

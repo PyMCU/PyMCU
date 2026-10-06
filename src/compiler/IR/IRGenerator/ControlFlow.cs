@@ -3508,11 +3508,24 @@ public partial class IRGenerator
     }
 
     /// Whether the exception raised under <paramref name="code"/> is a subclass of
-    /// <paramref name="ancestor"/> -- walking the OSError subtree edges the scan recorded.
+    /// <paramref name="ancestor"/> -- walking every OSError subtree edge the scan
+    /// recorded (a class with several in-subtree bases descends from each).
     private bool ExceptionDescendsFrom(int code, int ancestor)
     {
-        for (int c = code; exceptionParents.TryGetValue(c, out int parent); c = parent)
-            if (parent == ancestor) return true;
+        var seen = new HashSet<int>();
+        var pending = new Stack<int>();
+        pending.Push(code);
+        while (pending.Count > 0)
+        {
+            int c = pending.Pop();
+            if (!seen.Add(c) || !exceptionParents.TryGetValue(c, out var parents))
+                continue;
+            foreach (int parent in parents)
+            {
+                if (parent == ancestor) return true;
+                pending.Push(parent);
+            }
+        }
         return false;
     }
 

@@ -872,13 +872,15 @@ public partial class IRGenerator
     // `except ArithmeticError` still does not catch a ZeroDivisionError -- which is what
     // keeps the byte count of every program that never raises one identical.
     //
-    /// Exception code -> parent code, inside the OSError subtree only. Seeded from
+    /// Exception code -> its parent codes, inside the OSError subtree only. Seeded from
     /// BuiltinExceptionNames.Parents (TimeoutError -> OSError) and grown by the scan for
-    /// user classes whose base is already inside the subtree.
-    private readonly Dictionary<int, int> exceptionParents =
+    /// user classes; multiple inheritance contributes one edge per base already inside
+    /// the subtree, so `class F(A, B)` with A and B both under OSError descends from
+    /// each -- the map is a DAG, not a chain.
+    private readonly Dictionary<int, List<int>> exceptionParents =
         BuiltinExceptionNames.Parents.ToDictionary(
             kv => BuiltinExceptionNames.Codes[kv.Key],
-            kv => BuiltinExceptionNames.Codes[kv.Value]);
+            kv => new List<int> { BuiltinExceptionNames.Codes[kv.Value] });
 
     /// The exception codes some `raise` statement in the program can deliver -- resolved
     /// once, before any try lowers, because a handler can only match a code a raise
