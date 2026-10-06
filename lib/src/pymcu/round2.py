@@ -29,7 +29,9 @@ def _pymcu_round2(value: float, n: int32) -> float:
     if n >= 0:
         neg: uint8 = 0
         av: float = value
-        if av < 0.0:
+        # The sign comes off the IEEE-754 sign bit, not a comparison: -0.0
+        # fails `av < 0.0` and would lose its minus (round(-0.0, 2) == -0.0).
+        if (bitcast(uint32, av) >> 31) != 0:
             neg = 1
             av = -av
         prec: uint8 = uint8(n)
@@ -60,7 +62,7 @@ def _pymcu_round2(value: float, n: int32) -> float:
             k = k + 1
         scaled: float = value / scale2
         neg2: uint8 = 0
-        if scaled < 0.0:
+        if (bitcast(uint32, scaled) >> 31) != 0:
             neg2 = 1
             scaled = -scaled
         digs0: uint8[1] = [0]
