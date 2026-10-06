@@ -177,9 +177,15 @@ public class IRGeneratorTests
     {
         var ir = GenerateIR("def a():\n    return 1\ndef b():\n    return 2");
 
-        Assert.Equal(2, ir.Functions.Count);
-        Assert.Equal("a", ir.Functions[0].Name);
-        Assert.Equal("b", ir.Functions[1].Name);
+        // Synthetic main is now generated for entry files without executable statements
+        Assert.Equal(3, ir.Functions.Count);
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+        Assert.Contains(ir.Functions, f => f.Name == "a");
+        Assert.Contains(ir.Functions, f => f.Name == "b");
+        var aBody = ir.Functions.First(f => f.Name == "a").Body;
+        var bBody = ir.Functions.First(f => f.Name == "b").Body;
+        Assert.Contains(aBody, i => i is Return);
+        Assert.Contains(bBody, i => i is Return);
     }
 
     [Fact]
@@ -192,7 +198,7 @@ public class IRGeneratorTests
             "    else:\n" +
             "        return 2");
 
-        var body = ir.Functions[0].Body;
+        var body = ir.Functions.First(f => f.Name == "f").Body;
         Assert.Contains(body, i => i is JumpIfZero);
         Assert.Contains(body, i => i is Label);
     }
@@ -202,7 +208,7 @@ public class IRGeneratorTests
     {
         var ir = GenerateIR("def f():\n    while 1:\n        pass");
 
-        var body = ir.Functions[0].Body;
+        var body = ir.Functions.First(f => f.Name == "f").Body;
         Assert.Contains(body, i => i is Jump);
         Assert.True(body.OfType<Label>().Count() >= 2);
     }
@@ -212,7 +218,7 @@ public class IRGeneratorTests
     {
         var ir = GenerateIR("def f(a: int, b: int):\n    return a + b");
 
-        var bin = ir.Functions[0].Body.OfType<Binary>().First();
+        var bin = ir.Functions.First(f => f.Name == "f").Body.OfType<Binary>().First();
         Assert.Equal(IrBinaryOp.Add, bin.Op);
     }
 
@@ -221,7 +227,7 @@ public class IRGeneratorTests
     {
         var ir = GenerateIR("def f(port: ptr):\n    port[0] = 1\n    return port[1]");
 
-        var body = ir.Functions[0].Body;
+        var body = ir.Functions.First(f => f.Name == "f").Body;
         Assert.Contains(body, i => i is BitSet);
         Assert.Contains(body, i => i is BitCheck);
     }
@@ -325,7 +331,7 @@ public class IRGeneratorTests
     {
         var ir = GenerateIR("def f(x):\n    x += 1");
 
-        var aa = ir.Functions[0].Body.OfType<AugAssign>().Single();
+        var aa = ir.Functions.First(f => f.Name == "f").Body.OfType<AugAssign>().Single();
         Assert.Equal(IrBinaryOp.Add, aa.Op);
         Assert.IsType<Constant>(aa.Operand);
         Assert.Equal(1, ((Constant)aa.Operand).Value);
@@ -343,7 +349,7 @@ public class IRGeneratorTests
             "    x <<= 1\n" +
             "    x >>= 1\n";
 
-        var body = GenerateIR(src).Functions[0].Body.OfType<AugAssign>().ToList();
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body.OfType<AugAssign>().ToList();
 
         Assert.Equal(6, body.Count);
         Assert.Equal(IrBinaryOp.Sub,    body[0].Op);
@@ -363,7 +369,7 @@ public class IRGeneratorTests
             "    b = -x\n" +
             "    c = not x\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is Unary { Op: IrUnaryOp.BitNot });
         Assert.Contains(body, i => i is Unary { Op: IrUnaryOp.Neg });
@@ -383,7 +389,7 @@ public class IRGeneratorTests
             "        return 0.0\n" +
             "    return x\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         var notIns = Assert.Single(body, i => i is Unary { Op: IrUnaryOp.Not });
         var unary = (Unary)notIns;
@@ -406,7 +412,7 @@ public class IRGeneratorTests
             "    port[0] = 1\n" +
             "    port[7] = 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is BitSet { Bit: 0 });
         Assert.Contains(body, i => i is BitClear { Bit: 7 });
@@ -419,7 +425,7 @@ public class IRGeneratorTests
         // Explicit ptr[uint8] is required to signal bit-slicing intent.
         const string src = "def f(port: ptr[uint8]):\n    x = port[3]\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is BitCheck { Bit: 3 });
     }
@@ -433,7 +439,7 @@ public class IRGeneratorTests
             "def f(port: ptr[uint8], val: uint8):\n" +
             "    port[3] = val\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is BitWrite { Bit: 3 });
         Assert.DoesNotContain(body, i => i is BitSet);
@@ -854,7 +860,9 @@ public class IRGeneratorTests
         // runtime.
         const string src =
             "def f(x: int16) -> int16:\n" +
-            "    return (x // 4) + (x % 8)\n";
+            "    return (x // 4) + (x % 8)\n" +
+            "def main():\n" +
+            "    f(10)\n";
         // Strength reduction lives in the optimizer, which GenerateIR does not run.
         var ir = Optimizer.Optimize(GenerateIR(src, new DeviceConfig { Arch = "avr" }));
         var body = ir.Functions.Single(fn => fn.Name == "f").Body;
@@ -1248,7 +1256,7 @@ public class IRGeneratorTests
             "def f(reg: ptr[uint16]):\n" +
             "    reg[0] = 1\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         var bs = body.OfType<BitSet>().Single();
         Assert.Equal(0, bs.Bit);
@@ -1268,7 +1276,7 @@ public class IRGeneratorTests
             "    reg: ptr[uint16] = 0\n" +
             "    reg[0] = 1\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.DoesNotContain(body, i => i is BitSet { Target: Variable });
         Assert.Contains(body, i => i is LoadIndirect { Elem: DataType.UINT16 });
@@ -1287,7 +1295,7 @@ public class IRGeneratorTests
             "    while port[5]:\n" +
             "        pass\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfBitClear { Bit: 5 });
         Assert.DoesNotContain(body, i => i is BitCheck);
@@ -1305,7 +1313,7 @@ public class IRGeneratorTests
             "    while not port[5]:\n" +
             "        pass\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfBitSet { Bit: 5 });
         Assert.DoesNotContain(body, i => i is BitCheck);
@@ -1325,7 +1333,7 @@ public class IRGeneratorTests
             "    arr: uint8[4] = [10, 20, 30, 40]\n" +
             "    arr[2] = 99\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.DoesNotContain(body, i => i is ArrayStore);
         // After arr[2]=99 a Copy to the element variable ending in "__2" must exist.
@@ -1344,7 +1352,7 @@ public class IRGeneratorTests
             "    arr[idx] = 7\n" +
             "    x = arr[idx]\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is ArrayStore);
         Assert.Contains(body, i => i is ArrayLoad);
@@ -1365,7 +1373,7 @@ public class IRGeneratorTests
             "    arr[0] = 5\n" +
             "    arr[idx] = 7\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is ArrayStore);
         Assert.DoesNotContain(body, i =>
@@ -1381,7 +1389,7 @@ public class IRGeneratorTests
             "def f():\n" +
             "    buf: uint16[3] = [100, 200, 300]\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         // All Copy instructions whose destination is an array element variable
         // must carry the UINT16 type.
@@ -1583,7 +1591,7 @@ public class IRGeneratorTests
             "        return 1\n" +
             "    return 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfGreaterOrEqual);
         Assert.DoesNotContain(body,
@@ -1600,7 +1608,7 @@ public class IRGeneratorTests
             "        return 1\n" +
             "    return 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfNotEqual);
     }
@@ -1615,7 +1623,7 @@ public class IRGeneratorTests
             "        return 1\n" +
             "    return 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfLessThan);
     }
@@ -1630,7 +1638,7 @@ public class IRGeneratorTests
             "        return 1\n" +
             "    return 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfEqual);
     }
@@ -1656,7 +1664,7 @@ public class IRGeneratorTests
             "        case _:\n" +
             "            return 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         int equalBinaries = body.OfType<Binary>()
             .Count(b => b.Op == IrBinaryOp.Equal);
@@ -1684,7 +1692,7 @@ public class IRGeneratorTests
             "        case _:\n" +
             "            return 0\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body,
             i => i is Return { Value: Constant { Value: 20 } });
@@ -1712,7 +1720,7 @@ public class IRGeneratorTests
             "    while i < n:\n" +
             "        i += 1\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i => i is JumpIfGreaterOrEqual);
         Assert.Contains(body, i => i is AugAssign { Op: IrBinaryOp.Add });
@@ -1735,7 +1743,7 @@ public class IRGeneratorTests
             "    asm(\"NOP\")\n" +
             "    asm(\"NOP\")\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         var asms = body.OfType<InlineAsm>().ToList();
         Assert.Equal(2, asms.Count);
@@ -1752,7 +1760,7 @@ public class IRGeneratorTests
             "    y: uint16 = 500\n" +
             "    return y\n";
 
-        var body = GenerateIR(src).Functions[0].Body;
+        var body = GenerateIR(src).Functions.First(f => f.Name == "f").Body;
 
         Assert.Contains(body, i =>
             i is Copy { Src: Constant { Value: 500 }, Dst: Variable v }
