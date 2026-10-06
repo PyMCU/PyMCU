@@ -4759,9 +4759,11 @@ public partial class IRGenerator
         string shortWritten = ShortClassNameOf(written);
         if (classNames.Contains(shortWritten)) return shortWritten;
 
-        string key = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + recv.Name
-            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + recv.Name : recv.Name);
+        // ResolveNameKey walks the scope ladder (expansion prefix, enclosing
+        // function, module, bare) to the key the receiver's name actually owns --
+        // a module-level `factory` read inside an expansion is `factory`, not
+        // `<prefix>factory`, which the single prefixed probe missed.
+        string key = ResolveNameKey(recv.Name);
         for (int d = 0; d < 20; d++)
         {
             if (instanceClasses.TryGetValue(key, out var cls)) return ShortClassNameOf(cls);

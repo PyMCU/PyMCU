@@ -5173,6 +5173,10 @@ public partial class IRGenerator
         CallExpr factory when factory.Callee is VariableExpr factoryFn
             && functionReturnTypes.TryGetValue(ResolveCallee(factoryFn.Name), out var factoryRt)
             && factoryRt != null && classNames.Contains(factoryRt) => factoryRt,
+        CallExpr methodCall when methodCall.Callee is MemberAccessExpr methodMem
+            && FieldOwnerClass(methodMem) is { } methodOwner
+            && functionReturnTypes.TryGetValue(methodOwner + "_" + methodMem.Member, out var methodRt)
+            && methodRt != null && classNames.Contains(methodRt) => methodRt,
         _ => null,
     };
 
