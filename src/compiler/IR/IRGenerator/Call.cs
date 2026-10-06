@@ -8012,7 +8012,11 @@ public partial class IRGenerator
                                          int radix, string prefix, Expression blame)
     {
         string strfmtMod = RequireStrfmtMod(blame);
-        bool signed = LooksSigned(srcExpr);
+        // Signedness is decided by the VALUE, not only the spelling: LooksSigned has
+        // no CallExpr case, so hex(minus_one()) on an int16-returning function spelled
+        // "0xffffffff". A call result, an index read or anything else that produced a
+        // signed-typed Val gets the sign branch too.
+        bool signed = LooksSigned(srcExpr) || GetValType(v).IsSigned();
         int digitsMax = radix switch { 16 => 8, 8 => 11, 2 => 32, _ => 10 };
         int bufSize = 1 + prefix.Length + digitsMax + 1;   // sign + prefix + digits + NUL
         VisitStatement(new VarDecl(bufName, "bytearray",

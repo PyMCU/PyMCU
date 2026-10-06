@@ -246,6 +246,27 @@ public class HexBinOctRuntimeTests
     // --- A signed argument's magnitude, not its two's-complement bit pattern ---
 
     [Fact]
+    public void HexOfAnInt16ReturningCall_TakesTheSignBranch()
+    {
+        // LooksSigned is a syntax check with no CallExpr case, so a signed-typed
+        // call result took the unsigned lane and hex(minus_one()) spelled
+        // "0xffffffff". The Val's own type now decides too: the sign branch is
+        // the `v < 0` conditional (jumped past when v >= 0) plus the `0 - v`
+        // magnitude write, neither of which exists on the unsigned path.
+        var ir = Gen(
+            "import pymcu.strfmt as _pymcu_strfmt\n" +
+            "def minus_one() -> int16:\n" +
+            "    return -1\n" +
+            "print(hex(minus_one()))\n",
+            StrfmtModule);
+        var body = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.Contains(body, i => i is JumpIfGreaterOrEqual { Src2: Constant { Value: 0 } });
+        Assert.Contains(body, i => i is Binary { Op: PyMCU.IR.BinaryOp.Sub, Src1: Constant { Value: 0 } });
+        Assert.Contains(body.OfType<FlashData>(), fd =>
+            new string(fd.Bytes.TakeWhile(b => b != 0).Select(b => (char)b).ToArray()) == "-");
+    }
+
+    [Fact]
     public void HexOfARuntimeNegativeInt16_WritesSignThenMagnitude()
     {
         // int16 x = -1 - GPIOR0.value (GPIOR0 poisons to 0 in the runner, but the value is
