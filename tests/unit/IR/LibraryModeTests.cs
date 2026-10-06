@@ -94,4 +94,94 @@ public class LibraryModeTests
             library: false));
         Assert.Contains("len()", e.Message);
     }
+
+    [Fact]
+    public void LibraryMode_EntryWithExecutableStatements_CreatesSyntheticMain()
+    {
+        // Library mode with executable top-level statements (e.g., a variable assignment)
+        // should still synthesize a main function, exactly as on main branch.
+        var ir = Gen(
+            "x: uint8 = 5\n" +
+            "def helper() -> int:\n    return 42\n",
+            library: true);
+
+        // Should have synthetic main + helper function
+        Assert.Equal(2, ir.Functions.Count);
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+        Assert.Contains(ir.Functions, f => f.Name == "helper");
+        var mainFn = ir.Functions.First(f => f.Name == "main");
+        // main should contain the variable assignment (executable statement)
+        Assert.NotEmpty(mainFn.Body);
+    }
+
+    [Fact]
+    public void LibraryMode_DeclarationOnlyEntry_NoSyntheticMain()
+    {
+        // Library mode with only declarations (imports, function defs, class defs)
+        // should NOT synthesize a main function.
+        var ir = Gen(
+            "def helper() -> int:\n    return 42\n" +
+            "class Sensor:\n    def __init__(self):\n        pass\n",
+            library: true);
+
+        // Should only have the explicit top-level function, no synthetic main
+        // Class methods are only compiled when instantiated, so Sensor.__init__ is not in IR yet
+        Assert.Single(ir.Functions);
+        Assert.Contains(ir.Functions, f => f.Name == "helper");
+        Assert.DoesNotContain(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void LibraryMode_DeclarationWithInstantiation_CreatesSyntheticMain()
+    {
+        // Library mode with a class instantiation (executable statement)
+        // should synthesize a main function.
+        var ir = Gen(
+            "def helper() -> int:\n    return 42\n" +
+            "class Sensor:\n    def __init__(self):\n        pass\n" +
+            "s = Sensor()\n",
+            library: true);
+
+        // Check what functions are generated
+        var funcNames = ir.Functions.Select(f => f.Name).ToList();
+        Assert.Contains("helper", funcNames);
+        Assert.Contains("main", funcNames);
+        // Sensor.__init__ is compiled when the class is instantiated in main
+        // (may not be present in this test configuration)
+    }
+
+    [Fact]
+    public void LibraryMode_SimpleExecutableStatement_CreatesSyntheticMain()
+    {
+        // Library mode with a simple executable statement (assignment)
+        // should synthesize a main function.
+        var ir = Gen(
+            "x: uint8 = 5\n" +
+            "def helper() -> int:\n    return 42\n",
+            library: true);
+
+        var funcNames = ir.Functions.Select(f => f.Name).ToList();
+        Assert.Contains("helper", funcNames);
+        Assert.Contains("main", funcNames);
+        Assert.Equal(2, funcNames.Count);
+    }
+
+    [Fact]
+    public void LibraryMode_ImportOnlyEntry_CreatesSyntheticMain()
+    {
+        // Library mode with only imports (no functions, no global statements)
+        // should synthesize a main (import-only case from original behavior).
+        var ir = Gen(
+            "import sys\n" +
+            "import os\n",
+            library: true);
+
+        // Should have synthetic main (import-only case)
+        Assert.Single(ir.Functions);
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+        var mainFn = ir.Functions.First(f => f.Name == "main");
+        // main should only have an implicit return (no executable statements)
+        Assert.Single(mainFn.Body);
+        Assert.IsType<Return>(mainFn.Body[0]);
+    }
 }
