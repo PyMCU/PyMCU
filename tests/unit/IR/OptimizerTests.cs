@@ -357,7 +357,9 @@ public class OptimizerTests
         // with no diagnostic (PyMCU#128). The division has to survive optimization.
         var optimized = GenerateAndOptimize(
             "def floor_it(x: float) -> float:\n" +
-            "    return x // 1\n");
+            "    return x // 1\n" +
+            "def main():\n" +
+            "    floor_it(3.5)\n");
 
         var body = optimized.Functions.Single(f => f.Name.EndsWith("floor_it")).Body;
         Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.FloorDiv } b && TouchesFloat(b));
@@ -370,7 +372,9 @@ public class OptimizerTests
         // exists, and hi * 256 becoming a byte placement is what pays for it.
         var optimized = GenerateAndOptimize(
             "def pack(hi: uint8, lo: uint8) -> uint16:\n" +
-            "    return hi * 256 + lo\n");
+            "    return hi * 256 + lo\n" +
+            "def main():\n" +
+            "    pack(1, 2)\n");
 
         var body = optimized.Functions.Single(f => f.Name.EndsWith("pack")).Body;
         Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.LShift });
