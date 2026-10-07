@@ -352,4 +352,25 @@ public class BufferParamTests
         Assert.Contains("'one'", ex.Message);
         Assert.Contains("bytearray", ex.Message);
     }
+
+    [Fact]
+    public void ALocalAliasOfABufferParameter_ForwardsAsTheBuffer()
+    {
+        // `alias = buf` where `buf` is itself a bytearray PARAMETER makes `alias` a buffer
+        // under another name too (PyMCU-review round 3): nothing propagated that fact for a
+        // plain local-to-local copy inside a regular function, unlike an @inline parameter
+        // binding or a function's array RETURN value, which already had their own
+        // propagation -- so `head(alias)` was refused as a scalar reaching a bytearray
+        // parameter instead of compiling, exactly like `head(buf)` directly already did.
+        var ir = Gen(Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def forward(buf: bytearray) -> uint8:\n" +
+            "    alias = buf\n" +
+            "    return head(alias)\n" +
+            "def main():\n" +
+            "    a: uint8 = forward(bytearray([4, 5]))\n");
+
+        Assert.Contains(Body(ir, "forward"), i => i is Call { FunctionName: "head" });
+    }
 }
