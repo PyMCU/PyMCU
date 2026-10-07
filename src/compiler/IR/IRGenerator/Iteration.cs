@@ -3602,6 +3602,19 @@ public partial class IRGenerator
         variableTypes[varName] = counterType;
         var loopVar = new Variable(varName, counterType);
         Emit(new Copy(startVal, loopVar));
+        // A counter the body does not rewrite only ever holds a value of the range:
+        // `for x in range(w)` with w proven 32 keeps `x + dx` in [-1, 32] instead of the
+        // slot's whole [0, 255]. The exit-bound overshoot CounterValueRange includes is
+        // safe: the body's reads all precede it. A body store to the counter voids it --
+        // the loop bottom's own AugAssign would have dropped the fact anyway.
+        {
+            var counterMutated = new HashSet<string>();
+            var counterRecv = new HashSet<(string Instance, string Method)>();
+            CollectMutatedNames(stmt.Body, counterMutated, counterRecv);
+            var (ctrLo, ctrHi) = CounterValueRange(startVal, stopVal, stepVal);
+            if (!counterMutated.Contains(stmt.VarName) && ctrHi is long ctrHiV)
+                variableRanges[varName] = (ctrLo, ctrHiV);
+        }
         // The exit fix-up below compares the counter with where it started; a start that is
         // not a constant is kept in a temporary of its own, since the body may rewrite the
         // variable it was read from.

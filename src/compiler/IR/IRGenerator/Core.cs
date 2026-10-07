@@ -239,6 +239,7 @@ public partial class IRGenerator
             valueTrackingAliases.Clear();
         }
         CheckSlotWrite(inst);
+        TrackVariableRange(inst);
         currentInstructions.Add(inst);
         if (inst is ExnRecordMark { Restore: true } recordMark)
             snapRestorePrefixes.Add(recordMark.Prefix);
