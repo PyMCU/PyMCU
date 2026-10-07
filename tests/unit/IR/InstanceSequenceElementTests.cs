@@ -503,4 +503,113 @@ public class InstanceSequenceElementTests
             "a, b = f(True)\n");
         Assert.Contains(ir.Functions, f => f.Name == "main");
     }
+
+    // Round 3: the value-decided check cut both ways. A scalar VIEW sharing a
+    // single-field carrier's storage -- a field read, a declared-scalar dunder,
+    // an alias of either -- used to inherit the class the alias walk reached.
+    // None of these is the object, so every one must keep compiling.
+
+    private const string SingleField =
+        "from pymcu.types import uint8\n" +
+        "class C:\n" +
+        "    def __init__(self, n: uint8) -> None:\n" +
+        "        self._n = n\n\n" +
+        "    def dup(self) -> \"C\":\n" +
+        "        return C(self._n + 1)\n\n" +
+        "    def __len__(self) -> int:\n" +
+        "        return self._n\n\n" +
+        "def make(n: uint8) -> C:\n" +
+        "    return C(n)\n\n";
+
+    [Fact]
+    public void AScalarFieldOfAProducedInstance_InATupleReturn_StillCompiles()
+    {
+        // `make(3)._n`: the produced value is an instance, but the field read
+        // on it is a scalar sharing the carrier's one byte of storage.
+        var ir = Gen(SingleField +
+            "def f():\n" +
+            "    return make(3)._n, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void LenOfAProducedInstance_InATupleReturn_StillCompiles()
+    {
+        // `len(make(3))`: __len__ declares -> int, so the produced answer is a
+        // scalar wherever its byte physically lives.
+        var ir = Gen(SingleField +
+            "def f():\n" +
+            "    return len(make(3)), 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AScalarFieldOfAMethodReturnedInstance_InATupleReturn_StillCompiles()
+    {
+        // `c.dup()._n`: the same read one hop deeper -- the dispatched callee
+        // declares -> C, and the field read still answers the scalar.
+        var ir = Gen(SingleField +
+            "def f():\n" +
+            "    c = make(3)\n" +
+            "    return c.dup()._n, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AnAliasedScalarField_InATupleReturn_StillCompiles()
+    {
+        // `y = x._n` then `return y, 0`: the alias carries the field's byte,
+        // not the object -- a bind is a read, and this read was a scalar.
+        var ir = Gen(SingleField +
+            "def f():\n" +
+            "    x = make(3)\n" +
+            "    y = x._n\n" +
+            "    return y, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AWalrusBoundInstance_InATupleReturn_IsRefused()
+    {
+        // `(x := make(1))`: the walrus binds the produced instance and hands
+        // it back, so the element is the object -- the binding used to drop
+        // the class the call had just stamped.
+        var msg = Refusal(
+            "from pymcu.types import uint8\n" +
+            "class Pair:\n" +
+            "    def __init__(self, a: uint8, b: uint8) -> None:\n" +
+            "        self.a = a\n" +
+            "        self.b = b\n\n" +
+            "def make(n: uint8) -> Pair:\n" +
+            "    return Pair(n, n + 1)\n\n" +
+            "def f():\n" +
+            "    return (x := make(1)), 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Pair", msg);
+    }
+
+    [Fact]
+    public void AnOrWithAnInstanceOperand_InATupleReturn_IsRefused()
+    {
+        // `c or 7` with a truthy c evaluates to c itself -- the operand, not
+        // its truthiness byte. The element is the instance, refused.
+        var msg = Refusal(
+            "from pymcu.types import uint8\n" +
+            "class C:\n" +
+            "    def __init__(self, n: uint8) -> None:\n" +
+            "        self._n = n\n\n" +
+            "    def __bool__(self) -> bool:\n" +
+            "        return self._n != 0\n\n" +
+            "c = C(1)\n\n" +
+            "def f():\n" +
+            "    return (c or 7), 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("C", msg);
+    }
 }
