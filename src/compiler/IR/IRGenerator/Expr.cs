@@ -112,9 +112,23 @@ public partial class IRGenerator
             else localConstantValues.Remove(key);
             // The expression's value is the value stored NOW, not the slot: handed back as
             // the variable, each element of `[(z := i) for i in range(3)]` read z after the
-            // last iteration had written it.
+            // last iteration had written it. The rhs's produced class rides the walrus the
+            // way it rides an assignment: `(x := make())` IS the instance, so both the
+            // bound name and the result temp carry it into whatever position the walrus
+            // occupies (a tuple element must refuse it). A scalar view rides the other
+            // way: `(x := c.n)` binds the field's byte, never the object.
             Temporary stored = MakeTemp(dt);
             Emit(new Copy(vr, stored));
+            if (ProducedInstanceClassOf(rhs) is { } walrusCls)
+            {
+                producedInstanceClasses[stored.Name] = walrusCls;
+                producedInstanceClasses[key] = walrusCls;
+            }
+            else if (ValIsScalarView(rhs))
+            {
+                scalarMaskedNames.Add(key);
+                scalarMaskedNames.Add(stored.Name);
+            }
             return stored;
         }
 
