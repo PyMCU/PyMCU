@@ -255,4 +255,51 @@ public class ExceptionMultiBaseTests
             "class E(Exception, N, M):\n" +
             "    pass\n");
     }
+
+    [Fact]
+    public void ANameReboundAsItsOwnSubclassMixesIntoAnException()
+    {
+        // `class M(object)` then `class M(M)` then `class E(Exception, M)`: the base
+        // resolves to the binding the name held BEFORE this def -- the previous M, so
+        // the second M extends it and the merge sees a chain, not a cycle. Name-keyed
+        // pseudo-nodes resolved the base to the node being built and recursed until the
+        // stack gave out.
+        Gen(
+            "class M(object):\n" +
+            "    pass\n" +
+            "class M(M):\n" +
+            "    pass\n" +
+            "class E(Exception, M):\n" +
+            "    pass\n");
+    }
+
+    [Fact]
+    public void ANameReboundFromExceptionToPlainClassMixesInAsThePlainClass()
+    {
+        // `class A(Exception)` then `class A(object)` then `class E(Exception, A)`: the
+        // rebinding retires the exception's binding, so the base is the ordinary class
+        // and its lone `object` tail -- not the dead code -- is what C3 merges.
+        Gen(
+            "class A(Exception):\n" +
+            "    pass\n" +
+            "class A(object):\n" +
+            "    pass\n" +
+            "class E(Exception, A):\n" +
+            "    pass\n");
+    }
+
+    [Fact]
+    public void AUserClassNamedLikeAnUnmodelledBuiltinAncestorIsNotConfusedWithIt()
+    {
+        // `class LookupError` (PyMCU's table numbers no such builtin) then
+        // `class E(LookupError, IndexError, Exception)`: the builtin edge
+        // IndexError -> LookupError resolves to a fixed node, never to the user's
+        // class, so no false parent/child order fires. Name-keyed resolution made
+        // IndexError descend from the user's LookupError and refused the line.
+        Gen(
+            "class LookupError(object):\n" +
+            "    pass\n" +
+            "class E(LookupError, IndexError, Exception):\n" +
+            "    pass\n");
+    }
 }
