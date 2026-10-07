@@ -2006,6 +2006,13 @@ public partial class IRGenerator
                     strConstantVariables.Remove(prefix + "." + field);
                     localConstantValues.Remove(prefix + "_" + field);
                     localConstantValues.Remove(prefix + "." + field);
+                    // The same staleness as constantVariables: a field write inside the loop
+                    // (`o.set4()` setting self.w = 4) makes the first iteration's proven range
+                    // for `o.w` wrong on every later pass. Missing this kept `5 % o.w` as the
+                    // first pass's `& 31` forever, instead of re-reading a narrower `o.w` after
+                    // the write (PyMCU golperf review, Codex case 3).
+                    variableRanges.Remove(prefix + "_" + field);
+                    variableRanges.Remove(prefix + "." + field);
                     // The noneValued/narrowed marks may only go where a tag byte answers
                     // `is None` instead: a union field (a None write plus a scalar write)
                     // carries one, so its marks are as stale as a bare name's across the
