@@ -8489,7 +8489,12 @@ public partial class IRGenerator
         {
             Variable x => x.Type,
             Temporary x => x.Type,
-            Constant c => c.Value < 0 ? DataType.INT16
+            // A literal is sized by its own value: every negative used to fold to
+            // INT16, so -2147483648 counted as rank 1 and the a / -1 overflow
+            // refusal below never ran on it -- the pair was sized int32 and the
+            // quotient CPython gives as 2147483648 wrapped back to -2147483648.
+            Constant c => c.Value < -32768 ? DataType.INT32
+                          : c.Value < 0 ? DataType.INT16
                           : c.Value <= 0xFF ? DataType.UINT8
                           : c.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
             // Was falling to the UINT8 default below, so a FloatConstant operand's width lost
