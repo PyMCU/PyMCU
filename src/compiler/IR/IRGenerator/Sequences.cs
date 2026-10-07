@@ -735,6 +735,20 @@ public partial class IRGenerator
         arrayElemTypes[dstKey] = elemDt;
         variableTypes[dstKey] = elemDt;
 
+        // A `Cls[N]` instance array's bytes mean nothing without the element class
+        // and stride -- carry both so `dst[i] = C(...)` and `dst[i].method()` keep
+        // answering the same element semantics the alias would have given them.
+        // This is metadata, not storage: it must land BEFORE the SRAM branch below,
+        // which returns early -- a copied Cls[N] also lives in arraysWithVariableIndex
+        // and moduleSramArrays, so propagating the class past that return left the
+        // destination a byte array and `dst[i]` silently read the slot's first byte.
+        if (instanceArrayClass.TryGetValue(srcKey, out var srcArrCls))
+        {
+            instanceArrayClass[dstKey] = srcArrCls;
+            if (instanceArrayStride.TryGetValue(srcKey, out var srcStride))
+                instanceArrayStride[dstKey] = srcStride;
+        }
+
         if (arraysWithVariableIndex.Contains(srcKey) || moduleSramArrays.Contains(srcKey)
             || arrayViewBase.ContainsKey(srcKey) || flashArrays.Contains(srcKey))
         {
@@ -769,16 +783,6 @@ public partial class IRGenerator
             Emit(new Jump(copyLoop));
             Emit(new Label(copyDone));
             return;
-        }
-
-        // A `Cls[N]` instance array's bytes mean nothing without the element class
-        // and stride -- carry both so `dst[i] = C(...)` and `dst[i].method()` keep
-        // answering the same element semantics the alias would have given them.
-        if (instanceArrayClass.TryGetValue(srcKey, out var srcArrCls))
-        {
-            instanceArrayClass[dstKey] = srcArrCls;
-            if (instanceArrayStride.TryGetValue(srcKey, out var srcStride))
-                instanceArrayStride[dstKey] = srcStride;
         }
 
         // A slot-flattened source -- `x = [n]` or `x = b"ab"` inside the callee keeps
