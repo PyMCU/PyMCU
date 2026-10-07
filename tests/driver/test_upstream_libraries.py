@@ -102,6 +102,19 @@ class TestDiscoverInstalled:
         found = up.discover_installed_upstream(entries, [str(tmp_path)])
         assert found[0].version == "0.4.26"
 
+    def test_installed_adafruit_distribution_marks_an_import_for_index_bootstrap(
+            self, tmp_path):
+        _write_dist(tmp_path, distribution="adafruit-circuitpython-hcsr04",
+                    version="0.4.25", module="adafruit_hcsr04", is_package=False)
+        _write_dist(tmp_path, distribution="adafruit-circuitpython-requests",
+                    version="4.1.17", module="adafruit_requests", is_package=False)
+
+        found = up.installed_upstream_candidates(
+            [str(tmp_path)], {"adafruit_hcsr04"}
+        )
+
+        assert found == ["adafruit-circuitpython-hcsr04"]
+
 
 class TestStageModules:
     def test_stages_a_single_file_module(self, tmp_path):
@@ -222,3 +235,90 @@ class TestResolveUpstreamForTarget:
 
         assert errors == []
         assert len(includes) == 1
+
+    def test_fetched_index_bypasses_an_empty_cache(self, tmp_path, monkeypatch):
+        site, _ = self._installed(tmp_path)
+        monkeypatch.setattr(up, "read_cached_library_index", lambda: (_ for _ in ()).throw(
+            AssertionError("the fetched index must be used directly")))
+
+        includes, skipped, errors = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=["circuitpython"],
+            stage_root=tmp_path / "dist" / "_upstream", index=_index())
+
+        assert errors == []
+        assert skipped == []
+        assert len(includes) == 1
+
+
+class TestBuildIndexBootstrap:
+    def test_an_installed_family_refreshes_when_the_shipped_index_lacks_it(
+            self, monkeypatch, capsys):
+        from src.driver.commands import build
+        from src.driver.commands import libraries as commands
+
+        monkeypatch.setattr(up, "_current_index", lambda: {"v": 1, "libraries": []})
+        monkeypatch.setattr(
+            up, "installed_upstream_candidates",
+            lambda search, modules: ["adafruit-circuitpython-hcsr04"],
+        )
+        fetched = _index()
+        seen = {}
+
+        def fake_fetch(*, refresh=False):
+            seen["refresh"] = refresh
+            return fetched, "network"
+
+        monkeypatch.setattr(commands, "fetch_index", fake_fetch)
+
+        result = build._index_for_installed_upstream(None, {"adafruit_hcsr04"})
+
+        assert up.upstream_entries(result)[-1].distribution == (
+            "adafruit-circuitpython-hcsr04"
+        )
+        assert seen == {"refresh": True}
+        assert "Fetched the library index" in capsys.readouterr().out
+
+    def test_the_shipped_ssd1306_entry_needs_no_network_on_the_first_build(
+            self, monkeypatch):
+        from src.driver.commands import build
+        from src.driver.commands import libraries as commands
+
+        monkeypatch.setattr(up, "read_cached_library_index", lambda: {})
+        monkeypatch.setattr(
+            up, "installed_upstream_candidates",
+            lambda search, modules: ["adafruit-circuitpython-ssd1306"],
+        )
+        monkeypatch.setattr(
+            commands, "fetch_index",
+            lambda **kwargs: (_ for _ in ()).throw(
+                AssertionError("the shipped entry must work offline")
+            ),
+        )
+
+        result = build._index_for_installed_upstream(
+            None, {"adafruit_ssd1306"}
+        )
+
+        assert any(
+            entry.distribution == "adafruit-circuitpython-ssd1306"
+            for entry in up.upstream_entries(result)
+        )
+
+    def test_offline_first_build_explains_an_unbundled_entry_is_unavailable(
+            self, monkeypatch, capsys):
+        from src.driver.commands import build
+        from src.driver.commands import libraries as commands
+
+        monkeypatch.setattr(up, "_current_index", lambda: {})
+        monkeypatch.setattr(
+            up, "installed_upstream_candidates",
+            lambda search, modules: ["adafruit-circuitpython-hcsr04"],
+        )
+        monkeypatch.setattr(commands, "fetch_index", lambda **kwargs: ({}, ""))
+        monkeypatch.setattr(commands, "last_index_error", lambda: "network is offline")
+
+        assert build._index_for_installed_upstream(
+            None, {"adafruit_hcsr04"}) != {}
+        output = capsys.readouterr().out
+        assert "no cached copy exists" in output
+        assert "network is offline" in output
