@@ -192,6 +192,51 @@ public class BuiltinArithmeticTests
         Assert.Equal(DataType.UINT32, ((Variable)q.Dst).Type);
     }
 
+    [Fact]
+    public void DivmodOfUint32Literal_FoldsOnTheUnsignedValue()
+    {
+        // A uint32 literal's Value is its negative int32 pattern: 0xFFFFFFFF read -1,
+        // typed INT16, and folded (-1, 1) where CPython answers (2147483647, 1).
+        var ir = Gen(
+            "q, r = divmod(0xFFFFFFFF, 2)\n" +
+            "print(q)\n" +
+            "print(r)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        var r = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.r" });
+        Assert.Equal(DataType.UINT32, ((Variable)q.Dst).Type);
+        Assert.Equal(2147483647L, (q.Src as Constant)?.AsLong ?? ConstOf(ir, q.Src));
+        Assert.Equal(1L, (r.Src as Constant)?.AsLong ?? ConstOf(ir, r.Src));
+    }
+
+    [Fact]
+    public void DivmodOfUint32LiteralByOne_KeepsTheQuotientUnsigned()
+    {
+        // The whole dividend survives: (4294967295, 0). The quotient's int32 pattern is
+        // -1, so it must carry the Unsigned mark or the next reader folds it back to -1.
+        var ir = Gen(
+            "q, r = divmod(0xFFFFFFFF, 1)\n" +
+            "print(q)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        var c = (q.Src as Constant)
+            ?? (Constant)Main(ir).OfType<Copy>().Single(x => x.Dst == q.Src).Src;
+        Assert.True(c.Unsigned);
+        Assert.Equal(4294967295L, c.AsLong);
+        Assert.Equal(DataType.UINT32, ((Variable)q.Dst).Type);
+    }
+
+    [Fact]
+    public void DivmodOfUint32LiteralByMinusOne_RefusesTheOverflow()
+    {
+        // divmod(4294967295, -1) == (-4294967295, 0): -1 is reachable in the divisor's
+        // range and no PyMCU integer holds the quotient, so the same refusal as the
+        // signed floor case fires -- the pair must not wrap.
+        var ex = Assert.ThrowsAny<Exception>(() => Gen(
+            "q, r = divmod(0xFFFFFFFF, -1)\n"));
+        Assert.Contains("exceed", ex.Message);
+    }
+
     // ---- divmod() zero-divisor and bare-value bugs found by the float-edges campaign -------
     //
     // EmitDivmodBuiltin used to build its Binary(FloorDiv)/Binary(Mod) nodes directly instead
