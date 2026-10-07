@@ -225,4 +225,81 @@ public class BufferParamTests
         Assert.DoesNotContain(Body(ir, "main"),
             i => i is Call c && c.Args.Any(a => a is ArrayBase));
     }
+
+    // enumbuf case 2: `takesbuf(buf[i])` passes ONE ELEMENT to a parameter declared
+    // 'bytearray'. CPython raises TypeError the first time the callee indexes it
+    // ('int' object is not subscriptable); PyMCU instead marshalled the element as if
+    // it were the pointer a real buffer travels as, so `v[0]` read whatever SRAM byte
+    // that number happened to address -- `takesbuf(buf[0])` on `[10, 20, 30]` answered
+    // 255, never an error, never CPython's value.
+    [Fact]
+    public void AnElementSubscriptPassedToABufferParameter_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def takesbuf(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20, 30])\n" +
+            "    a: uint8 = takesbuf(buf[0])\n"));
+
+        Assert.Contains("takesbuf", ex.Message);
+        Assert.Contains("buf[", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    // enumbuf case 1: the same hole from the other side -- `b` from
+    // `for i, b in enumerate(buf)` passed to a 'bytearray' parameter. `b` IS one
+    // element, never the buffer itself; this must refuse exactly like case 2.
+    [Fact]
+    public void AnEnumerateElement_PassedToABufferParameter_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def takesbuf(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20, 30])\n" +
+            "    for i, b in enumerate(buf):\n" +
+            "        a: uint8 = takesbuf(b)\n"));
+
+        Assert.Contains("takesbuf", ex.Message);
+        Assert.Contains("'b'", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    // The enumerate element reaching an INTEGER parameter is the legitimate case the
+    // bug's shape must not touch: `b` is the element CPython hands the body too, and
+    // this already worked before enumbuf (kept here so the new refusal's narrower
+    // scope -- "only shapes that reach a BUFFER parameter" -- has a passing control).
+    [Fact]
+    public void AnEnumerateElement_PassedToANumberParameter_StillCompiles()
+    {
+        var ir = Gen(Preamble +
+                     "def takesint(v: uint8) -> uint8:\n" +
+                     "    return v + 1\n" +
+                     "def main():\n" +
+                     "    buf = bytearray([10, 20, 30])\n" +
+                     "    for i, b in enumerate(buf):\n" +
+                     "        a: uint8 = takesint(b)\n");
+
+        Assert.Contains(Body(ir, "main"), i => i is Call c && c.FunctionName == "takesint");
+    }
+
+    // The whole buffer, passed by name, is the ordinary call this refusal must leave
+    // alone -- `buf` names a real buffer, not one of its elements.
+    [Fact]
+    public void TheWholeBuffer_PassedByName_StillCompiles()
+    {
+        var ir = Gen(Preamble +
+                     "def takesbuf(v: bytearray) -> uint8:\n" +
+                     "    return v[0]\n" +
+                     "def main():\n" +
+                     "    buf = bytearray([10, 20, 30])\n" +
+                     "    a: uint8 = takesbuf(buf)\n");
+
+        Assert.Contains(Body(ir, "main"),
+            i => i is Call c && c.FunctionName == "takesbuf"
+                 && c.Args.Any(a => a is ArrayBase));
+    }
 }

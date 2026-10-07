@@ -1980,10 +1980,15 @@ public partial class IRGenerator
             };
             for (int ai = 0; ai < argValuesL.Count && ai < callArgs.Count
                              && ai < declaredParamTypes.Count && ai < declaredParamNames.Count; ++ai)
+            {
+                var rawArg = callArgs[ai] is KeywordArgExpr kwa ? kwa.Value : callArgs[ai];
                 RefuseBufferForNumberParam(written, declaredParamNames[ai], declaredParamTypes[ai],
-                    callArgs[ai] is KeywordArgExpr kwa ? kwa.Value : callArgs[ai], argValuesL[ai],
+                    rawArg, argValuesL[ai],
                     unannotatedScalar: string.IsNullOrEmpty(declaredParamTypes[ai])
                                        && !bytearrayParams.Contains(callee + "." + declaredParamNames[ai]));
+                RefuseNumberForBufferParam(written, declaredParamNames[ai], declaredParamTypes[ai],
+                    rawArg, argValuesL[ai]);
+            }
         }
 
         // RFC 0009: a live Optional argument bound for a parameter that is not
@@ -3163,6 +3168,9 @@ public partial class IRGenerator
             RefuseBufferForNumberParam(SourceCalleeName(), func.Params[paramIdx].Name,
                 func.Params[paramIdx].Type, i < rawArgExprs.Count ? rawArgExprs[i] : null,
                 argValues[i], argScopePfx: argScopePfx);
+            RefuseNumberForBufferParam(SourceCalleeName(), func.Params[paramIdx].Name,
+                func.Params[paramIdx].Type, i < rawArgExprs.Count ? rawArgExprs[i] : null,
+                argValues[i]);
 
             // A register alias bound at an EARLIER call site to the same @inline function
             // survives in constantAddressVariables unless it is cleared here. The parameter key
@@ -4666,6 +4674,95 @@ public partial class IRGenerator
                                || IsBufferStorageName(argKey(ve.Name)),
             _ => false,
         };
+    }
+
+    /// <summary>
+    /// The mirror of <see cref="RefuseBufferForNumberParam"/>: `takesbuf(buf[i])`, or `b` from
+    /// `for i, b in enumerate(buf)` passed to `takesbuf(b)`, hands ONE ELEMENT -- a number --
+    /// to a parameter declared 'bytearray'/'bytes' or a fixed array. CPython raises
+    /// `TypeError: 'int' object is not subscriptable` the first time the callee indexes it;
+    /// PyMCU instead marshalled the number as if it were the pointer a real buffer travels
+    /// as, so `v[0]` inside the callee read whatever SRAM byte that number happened to
+    /// address (`takesbuf(buf[0])` on `[10, 20, 30]` answered 255, 255, 30 -- never an error,
+    /// never CPython's value). Refused at the argument, naming what was passed and what the
+    /// parameter expects.
+    /// </summary>
+    private void RefuseNumberForBufferParam(string calleeName, string paramName, string? declared,
+                                             Expression? arg, Val? evaluated)
+    {
+        if (!DeclaredTypeIsBuffer(declared) || ArgumentIsBuffer(arg, evaluated)
+            || !ArgumentIsScalarElement(arg)) return;
+        string what = arg switch
+        {
+            IndexExpr { Target: VariableExpr iv } => $"'{iv.Name}[...]', one element,",
+            VariableExpr ve => $"'{ve.Name}', one element,",
+            _ => "a number",
+        };
+        throw UserError(
+            $"'{calleeName}' is passed {what} for parameter '{paramName}', which is declared "
+            + $"'{declared}' and reads a whole buffer. A '{declared}' parameter travels as the "
+            + "buffer's address, so one element would be read back as that address instead of "
+            + "the bytes. Pass the buffer itself, or declare the parameter a number type to "
+            + "take one element.",
+            arg);
+    }
+
+    /// A call argument guaranteed to carry a single number at this call site: a plain
+    /// (non-slice) subscript of a buffer or of a list whose elements are themselves numbers
+    /// (never a list of lists, where the element is a buffer in its own right), or a name
+    /// bound to a local scalar -- which is exactly what an `enumerate()`/`for` loop variable
+    /// is. Narrower than it could be on purpose: a literal or arithmetic expression passed to
+    /// a buffer-typed parameter the callee never actually indexes is not a divergence from
+    /// CPython (TypingOnlyNameTests' `d.take(0)` with an unused `buf` param never raises),
+    /// so only the two shapes the enumerate/subscript bug actually produces are caught here.
+    private bool ArgumentIsScalarElement(Expression? arg) => arg switch
+    {
+        IndexExpr { Index: not SliceExpr } ix => IndexTargetHoldsScalarElements(ix.Target),
+        VariableExpr ve => NameIsScalarAtThisSite(ve.Name),
+        _ => false,
+    };
+
+    /// <see cref="NameIsLocalScalar"/> skips the `main.` qualification and the bare name,
+    /// because it only has to answer whether a module-level buffer is SHADOWED, and a
+    /// top-level scalar has nothing further out to shadow. A loop variable from `for i, b in
+    /// enumerate(buf)` written at top level is bound through <c>QualifyBoundName</c>, which
+    /// qualifies it as `main.b` (or, rarely, the bare module-prefixed name when one already
+    /// exists in <c>mutableGlobals</c>) -- never the plain `b` that helper's two-entry lookup
+    /// tries. This checks every spelling a bound loop/local variable can resolve to, so a
+    /// scalar reaching a buffer-typed parameter is caught regardless of where it was bound.
+    private bool NameIsScalarAtThisSite(string name)
+    {
+        foreach (string? key in new[]
+                 {
+                     string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+                     string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+                     name,
+                 })
+        {
+            if (key == null) continue;
+            if (arraySizes.ContainsKey(key) || constSequenceBindings.ContainsKey(key)
+                || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key)
+                || variableAliases.ContainsKey(key))
+                return false;
+            if (variableTypes.ContainsKey(key)) return true;
+        }
+        return false;
+    }
+
+    /// True when subscripting `target` answers one number rather than another buffer: a real
+    /// bytearray/bytes buffer (every element is one byte), or a heap list registered with a
+    /// scalar element type (not one `listInnerElemTypes` also covers, which marks the element
+    /// as itself a nested list).
+    private bool IndexTargetHoldsScalarElements(Expression target)
+    {
+        if (target is not VariableExpr tv) return false;
+        string prefixed = (!string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix
+            : string.IsNullOrEmpty(currentFunction) || currentFunction == "main" ? ""
+            : currentFunction + ".") + tv.Name;
+        if (IsBufferStorageName(prefixed) || IsBufferStorageName(tv.Name)) return true;
+        string key = ResolveListVarQualified(tv.Name);
+        return key.Length > 0 && listVarElemTypes.ContainsKey(key)
+               && !listInnerElemTypes.ContainsKey(key);
     }
 
     /// A name bound to a bytes or list literal of constants (`z = b"QR"`), which lives as a
