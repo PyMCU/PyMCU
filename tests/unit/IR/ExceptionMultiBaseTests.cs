@@ -170,4 +170,18 @@ public class ExceptionMultiBaseTests
         act.Should().Throw<PyMCU.Common.CompilerError>()
             .Which.Message.Should().Contain("method resolution order");
     }
+
+    [Fact]
+    public void AnExceptionReboundAsItsOwnSubclassCompiles()
+    {
+        // `class A(Exception)` then `class A(A)`: the base resolves to the binding the
+        // name held BEFORE this class registered, which is the rebinding CPython
+        // accepts. Registering the new code first resolved the base to the class being
+        // defined and refused it as self-inheritance.
+        Gen(
+            "class A(Exception):\n" +
+            "    pass\n" +
+            "class A(A):\n" +
+            "    pass\n");
+    }
 }
