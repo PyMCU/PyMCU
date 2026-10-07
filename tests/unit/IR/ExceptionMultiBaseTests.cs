@@ -302,4 +302,18 @@ public class ExceptionMultiBaseTests
             "class E(LookupError, IndexError, Exception):\n" +
             "    pass\n");
     }
+
+    [Fact]
+    public void AnUndefinedExceptionBaseRefuses()
+    {
+        // `class E(Exception, Missing)`: the same definedness check the ordinary-class
+        // path already defers now covers the exception path too -- CPython raises
+        // NameError at class creation.
+        var act = () => Gen(
+            "class E(Exception, Missing):\n" +
+            "    pass\n");
+
+        act.Should().Throw<PyMCU.Common.CompilerError>()
+            .Which.Message.Should().Contain("not defined");
+    }
 }
