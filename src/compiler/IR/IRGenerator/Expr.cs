@@ -1810,11 +1810,16 @@ public partial class IRGenerator
             // otherwise b. Short-circuits b. (`if a and b:` is unaffected since it
             // only tests truthiness; the difference shows in `x = a and b`.)
             // Deciding which operand to keep IS a truth test, so an instance operand goes
-            // through its __bool__ here too.
+            // through its __bool__ here too -- but the selected OPERAND is what the
+            // expression's value is. The rewrite visits only pure-read forms (a name,
+            // a field, a romfs handle), so reading the operand again duplicates nothing.
+            // `andOperand` below answers for the operand itself; `v1a` keeps answering
+            // for its truth value.
             Expression andLeft = LowerInstanceTruthiness(expr.Left);
             Val v1a = VisitExpression(andLeft);
+            Val? andOperand = ReferenceEquals(andLeft, expr.Left) ? null : VisitExpression(expr.Left);
             if (v1a is Constant c1a)
-                return c1a.Value == 0 ? c1a
+                return c1a.Value == 0 ? (andOperand ?? (Val)c1a)
                     : VisitShortCircuitRight(andLeft, expr.Right, true);
 
             Temporary result = MakeTemp(GetValType(v1a));
@@ -1824,11 +1829,11 @@ public partial class IRGenerator
             Val v2b = VisitShortCircuitRight(andLeft, expr.Right, true);
             Emit(new Copy(v2b, result));                 // a truthy -> b
             Emit(new Label(endLabel));
-            // `flag and make()`: the result is whichever operand ran last, so when
-            // either operand produced an instance the temp is its carrier -- tag it
-            // the way a call result is tagged, and a tuple slot reading the value
+            // `flag and make()` and `c and 7`: the result is whichever operand ran last,
+            // so when either operand produced an instance the temp is its carrier -- tag
+            // it the way a call result is tagged, and a tuple slot reading the value
             // sees the class, not the `and` spelling.
-            if ((ProducedInstanceClassOf(v1a) ?? ProducedInstanceClassOf(v2b)) is { } andCls)
+            if ((ProducedInstanceClassOf(andOperand ?? v1a) ?? ProducedInstanceClassOf(v2b)) is { } andCls)
                 producedInstanceClasses[result.Name] = andCls;
             return result;
         }
@@ -1836,11 +1841,13 @@ public partial class IRGenerator
         if (expr.Op == AstBinOp.Or)
         {
             // Python `a or b`: truthy a -> a, otherwise b. Short-circuits b. Choosing between
-            // them is a truth test, so an instance operand goes through its __bool__.
+            // them is a truth test, so an instance operand goes through its __bool__ -- the
+            // operand/result rule is `and`'s twin.
             Expression orLeft = LowerInstanceTruthiness(expr.Left);
             Val v1a = VisitExpression(orLeft);
+            Val? orOperand = ReferenceEquals(orLeft, expr.Left) ? null : VisitExpression(expr.Left);
             if (v1a is Constant c1a)
-                return c1a.Value != 0 ? c1a
+                return c1a.Value != 0 ? (orOperand ?? (Val)c1a)
                     : VisitShortCircuitRight(orLeft, expr.Right, false);
 
             Temporary result = MakeTemp(GetValType(v1a));
@@ -1850,9 +1857,9 @@ public partial class IRGenerator
             Val v2b = VisitShortCircuitRight(orLeft, expr.Right, false);
             Emit(new Copy(v2b, result));                 // a falsy -> b
             Emit(new Label(endLabel));
-            // `flag or make()`: the `and` twin -- the temp is the instance's carrier
-            // when either operand produced one, so the class rides the value.
-            if ((ProducedInstanceClassOf(v1a) ?? ProducedInstanceClassOf(v2b)) is { } orCls)
+            // `flag or make()` and `c or 7`: the `and` twin -- the temp is the instance's
+            // carrier when either operand produced one, so the class rides the value.
+            if ((ProducedInstanceClassOf(orOperand ?? v1a) ?? ProducedInstanceClassOf(v2b)) is { } orCls)
                 producedInstanceClasses[result.Name] = orCls;
             return result;
         }
