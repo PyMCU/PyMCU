@@ -8493,10 +8493,13 @@ public partial class IRGenerator
             // INT16, so -2147483648 counted as rank 1 and the a / -1 overflow
             // refusal below never ran on it -- the pair was sized int32 and the
             // quotient CPython gives as 2147483648 wrapped back to -2147483648.
-            Constant c => c.Value < -32768 ? DataType.INT32
-                          : c.Value < 0 ? DataType.INT16
-                          : c.Value <= 0xFF ? DataType.UINT8
-                          : c.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+            // AsLong, not Value: a uint32 literal's Value is its negative int32
+            // pattern (0xFFFFFFFF reads -1), so Value sized it INT16 and folded
+            // the division on -1 where the number is 4294967295.
+            Constant c => c.AsLong < -32768 ? DataType.INT32
+                          : c.AsLong < 0 ? DataType.INT16
+                          : c.AsLong <= 0xFF ? DataType.UINT8
+                          : c.AsLong <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
             // Was falling to the UINT8 default below, so a FloatConstant operand's width lost
             // to an integer operand's whenever the integer type was 4 bytes wide -- rt then
             // picked the integer type for a divmod() that mixes int and float (Python promotes
@@ -8584,21 +8587,21 @@ public partial class IRGenerator
         if (aVal is Constant ca && bVal is Constant cb)
         {
             // Python's divmod floors: divmod(-17, 5) is (-4, 3). C#'s / and % truncate
-            // toward zero and answered (-3, -2).
-            long lq = (long)ca.Value / cb.Value;
-            if ((ca.Value ^ cb.Value) < 0 && lq * cb.Value != ca.Value) lq--;
-            long lr = (long)ca.Value - lq * cb.Value;
+            // toward zero and answered (-3, -2). AsLong on both sides: Value is the
+            // raw int32 pattern, so an unsigned 0xFFFFFFFF folded as -1 and answered
+            // (-1, 1) where CPython answers (2147483647, 1).
+            long lq = ca.AsLong / cb.AsLong;
+            if ((ca.AsLong ^ cb.AsLong) < 0 && lq * cb.AsLong != ca.AsLong) lq--;
+            long lr = ca.AsLong - lq * cb.AsLong;
             // The pair is computed at int width; a constant answer PyMCU cannot hold
             // (a == INT32_MIN divided by -1) wraps here and must not become a wrong
             // value: refuse it, since no wider integer type exists to promote to.
             var (rtLo, rtHi) = RangeOfType(rt);
             if (lq < rtLo || lq > rtHi || lr < rtLo || lr > rtHi)
                 throw UserError(
-                    $"divmod({ca.Value}, {cb.Value}): the "
+                    $"divmod({ca.AsLong}, {cb.AsLong}): the "
                     + (lq < rtLo || lq > rtHi ? $"quotient {lq}" : $"remainder {lr}")
                     + " does not fit in any PyMCU integer type", ArgAt(expr, 1));
-            int q = unchecked((int)lq);
-            int r = unchecked((int)lr);
             string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
             string qn = bBase + ".divmod_q" + tempCounter;
             string rn = bBase + ".divmod_r" + (tempCounter + 1);
@@ -8606,19 +8609,32 @@ public partial class IRGenerator
             // The operands' width, as the run-time division below stores it, made signed
             // when a result is negative: sizing each slot to its own value left the
             // remainder of divmod(-17, 5) a uint8 that a later divmod(17, -5) reused.
-            DataType ct = WidestElemType(new List<int> { q, r });
+            // Sized on the folded numbers themselves -- the int32 patterns Value would
+            // read for a quotient past 2^31 mislead every width ladder.
+            long mag = Math.Max(lq < 0 ? -lq : lq, lr < 0 ? -lr : lr);
+            bool anyNeg = lq < 0 || lr < 0;
+            DataType ct = anyNeg
+                ? (mag <= 0x7F ? DataType.INT8 : mag <= 0x7FFF ? DataType.INT16 : DataType.INT32)
+                : (mag <= 0xFF ? DataType.UINT8 : mag <= 0xFFFF ? DataType.UINT16 : DataType.UINT32);
             if (rt.SizeOf() > ct.SizeOf())
-                ct = !(q < 0 || r < 0) || rt.IsSigned() ? rt
+                ct = !anyNeg || rt.IsSigned() ? rt
                     : rt.SizeOf() >= 4 ? DataType.INT32 : DataType.INT16;
             DataType qt = ct, rtt = ct;
-            Emit(new Copy(new Constant(q), new Variable(qn, qt)));
-            Emit(new Copy(new Constant(r), new Variable(rn, rtt)));
+            // Constant.Of keeps the Unsigned mark a quotient past int32 needs: a bare
+            // `new Constant(-1)` stores the same bytes but folds back to a signed -1
+            // on the next read instead of 4294967295.
+            Constant qc = Constant.Of(lq)!;
+            Constant rc = Constant.Of(lr)!;
+            Emit(new Copy(qc, new Variable(qn, qt)));
+            Emit(new Copy(rc, new Variable(rn, rtt)));
             // The unpack sizes each target from its slot; an unregistered slot sized
             // it uint8, and -4 printed as 252.
             variableTypes[qn] = qt;
             variableTypes[rn] = rtt;
-            constantVariables[qn] = q;
-            constantVariables[rn] = r;
+            constantVariables[qn] = qc.Value;
+            constantVariables[rn] = rc.Value;
+            if (qc.Unsigned) unsignedConstNames.Add(qn);
+            if (rc.Unsigned) unsignedConstNames.Add(rn);
             lastTupleResults = new List<string> { qn, rn };
             lastTupleResultBuffers = null;
             lastTupleResultLocalBuffers = null;
