@@ -935,7 +935,7 @@ public partial class IRGenerator
     /// compile-time integer constants" for elements that are compile-time constants, and every
     /// guide with more than one pin had to be written out one call per pin (#308).
     /// </summary>
-    private bool BindUnrolledElement(string key, Expression elem)
+    private bool BindUnrolledElement(string key, Expression elem, bool materialize = false)
     {
         // A string element -- a literal, or a name/member bound to one text -- must be
         // asked about BEFORE the general fold: the fold reduces a string to its interned
@@ -963,6 +963,21 @@ public partial class IRGenerator
         {
             constantVariables[key] = iv;
             strConstantVariables.Remove(key);
+            // A compile-time-constant element normally needs no backing storage at all --
+            // every read folds straight to the literal. A `break` changes that: it can leave
+            // the loop at an EARLIER iteration than the last, so the post-loop constant fold
+            // (whatever the LAST iteration bound) has to be dropped (see the `hasBreak` tail
+            // below), and nothing is left to answer a read with unless THIS iteration's value
+            // also landed in real storage. `for v in (1, 2): break` followed by `print(v)`
+            // read uninitialized SRAM once the stale fold was removed, having never had a
+            // Copy to fall back on -- the runtime-element path (BindUnrolledRuntimeElement)
+            // always had one; the all-constant path never did.
+            if (materialize)
+            {
+                DataType mdt = LoopVarStorageType(key, InferExprType(elem));
+                Emit(new Copy(new Constant(iv), new Variable(key, mdt)));
+                variableTypes[key] = mdt;
+            }
             return true;
         }
 
@@ -1702,25 +1717,46 @@ public partial class IRGenerator
         _seqTerminated = false;
     }
 
+    // A plain `for x in range(a, b, c)` whose bounds fold to a compile-time-known trip
+    // count of zero. The parser files this shape's bounds in RangeStart/Stop/Step and
+    // leaves Iterable null (see the long comment further down in VisitFor), so checking
+    // Iterable is enough to tell it apart from every other iterable shape without
+    // depending on anything VisitFor decides later.
+    private bool IsCompileTimeEmptyPlainRange(ForStmt stmt) =>
+        stmt.Iterable == null && RangeFoldedBounds(stmt) is { } b
+        && RangeTripCount(b.Start, b.Stop, b.Step) <= 0;
+
     private void VisitFor(ForStmt stmt)
     {
         // The loop rebinds its variable, so whatever the name held before the loop stops being
         // true inside it. The unroller puts a value back per iteration; a run-time loop does
         // not, and must not answer with the one from before.
-        ForgetLocalConstant(stmt.VarName);
-        if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLocalConstant(stmt.Var2Name);
-        // ForgetLocalConstant above only drops localConstantValues. A tuple/list-literal
-        // for-loop over a bare name now LEAVES that name's constantVariables/
-        // strConstantVariables/floatConstantVariables/constSequenceBindings entry behind on
-        // purpose once ITS loop ends -- CPython keeps the last element bound after the loop.
-        // A LATER, unrelated loop that reuses the same bare name (e.g. a run-time
-        // enumerate() over a fixed array, which never writes those maps for a name it treats
-        // as non-constant) must not inherit that leftover: `for x in b"...": ...` followed by
-        // `for i, x in enumerate(data): ...` read the first loop's last byte instead of the
-        // array's values. Dropped here, unconditionally, before any iterable-kind dispatch,
-        // so every branch starts this loop's variable from a clean slate.
-        ForgetLoopVariableConstantState(stmt.VarName);
-        if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLoopVariableConstantState(stmt.Var2Name);
+        //
+        // Except when the loop is PROVABLY a zero-trip range: Python's for-loop machinery
+        // never calls __next__ a first time there, so it never assigns to the target at
+        // all, and whatever the name held before -- including a compile-time constant an
+        // OUTER loop over this same bare name left behind -- stays exactly as it was.
+        // Forgetting it here unconditionally erased that binding before this function ever
+        // got far enough to notice the range was empty: `for v in (1, 2): for v in
+        // range(0): pass; print(v)` lost the outer `v` (1, then 2) to this inner
+        // statement's mere PRESENCE, not to anything it actually did.
+        if (!IsCompileTimeEmptyPlainRange(stmt))
+        {
+            ForgetLocalConstant(stmt.VarName);
+            if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLocalConstant(stmt.Var2Name);
+            // ForgetLocalConstant above only drops localConstantValues. A tuple/list-literal
+            // for-loop over a bare name now LEAVES that name's constantVariables/
+            // strConstantVariables/floatConstantVariables/constSequenceBindings entry behind on
+            // purpose once ITS loop ends -- CPython keeps the last element bound after the loop.
+            // A LATER, unrelated loop that reuses the same bare name (e.g. a run-time
+            // enumerate() over a fixed array, which never writes those maps for a name it treats
+            // as non-constant) must not inherit that leftover: `for x in b"...": ...` followed by
+            // `for i, x in enumerate(data): ...` read the first loop's last byte instead of the
+            // array's values. Dropped here, unconditionally, before any iterable-kind dispatch,
+            // so every branch starts this loop's variable from a clean slate.
+            ForgetLoopVariableConstantState(stmt.VarName);
+            if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLoopVariableConstantState(stmt.Var2Name);
+        }
 
         // The loop variable (and enumerate's index) is a binding even when no type is filed for
         // it -- a range loop and a runtime-bounded slice both bind a name that never enters
@@ -2013,6 +2049,10 @@ public partial class IRGenerator
             {
                 var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
                 string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                // A `continue` always still runs every iteration's bind before the loop ends,
+                // so the tail fold below stays sound; an actual `break` can end the loop at an
+                // EARLIER iteration than the last, breakOnly: true tells the two apart.
+                bool hasBreak = LoopBodyHasBreakOrContinue(stmt.Body, breakOnly: true);
 
                 // `for pin in (reset_dio, enable_dio, ...)`: each element is an already-built
                 // ZCA instance (adafruit_character_lcd). The same hoist a list argument already
@@ -2113,7 +2153,7 @@ public partial class IRGenerator
                         continue;
                     }
 
-                    if (BindUnrolledElement(varKey, elem))
+                    if (BindUnrolledElement(varKey, elem, materialize: hasBreak))
                     {
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     }
@@ -2133,13 +2173,28 @@ public partial class IRGenerator
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
-                // Not constantVariables.Remove(varKey)/strConstantVariables.Remove(varKey): CPython
-                // leaves the loop variable bound to the LAST element once the loop ends, and for a
-                // literal tuple/list that element is always known at compile time (fixed length, no
-                // "did the loop run" to ask). Stripping the binding here answered `print(v)` after
-                // `for v in (state[0], 7): pass` with a stale value from an EARLIER, non-final
-                // iteration's leftover storage instead of 7 -- wrong even with every element
-                // constant (`for v in (3, 7): pass` read back 255, garbage, not 7).
+                if (hasBreak)
+                {
+                    // A `break` can end the loop at an EARLIER iteration than the last --
+                    // CPython leaves the loop variable bound to whichever element the break's
+                    // OWN iteration was processing, a run-time fact, not the tuple's textual
+                    // last element. `for v in (1, 2): break` followed by `print(v)` answered 2
+                    // (the tuple's last element) instead of 1 (what was actually in scope when
+                    // the break fired): the per-iteration Copy already left the right value in
+                    // v's own storage, only this stale compile-time belief needed to go.
+                    constantVariables.Remove(varKey);
+                    strConstantVariables.Remove(varKey);
+                    floatConstantVariables.Remove(varKey);
+                }
+                // When there is no break, leave constantVariables/strConstantVariables/
+                // floatConstantVariables alone: CPython leaves the loop variable bound to the
+                // LAST element once the loop ends, and for a literal tuple/list that element is
+                // always known at compile time when nothing can exit early (fixed length, no
+                // "did the loop run" to ask). Stripping the binding unconditionally answered
+                // `print(v)` after `for v in (state[0], 7): pass` with a stale value from an
+                // EARLIER, non-final iteration's leftover storage instead of 7 -- wrong even
+                // with every element constant (`for v in (3, 7): pass` read back 255, garbage,
+                // not 7).
                 variableAliases.Remove(varKey);
                 instanceClasses.Remove(varKey);
                 if (varKey2 != null)
@@ -3594,19 +3649,35 @@ public partial class IRGenerator
         // A range that is empty at compile time runs nothing. It used to be lowered as a
         // counter loop that immediately exits, which is a comparison, a jump and a counter of
         // whatever width the bound needed -- and the bound itself, recomputed at run time
-        // (#326). Python never binds the loop variable for an empty range; the run-time
-        // lowering left it at start, so a read after the loop keeps that.
+        // (#326). Python never binds the loop variable for an empty range at all -- not even
+        // to `start` -- so a read after the loop sees whatever the name held BEFORE this
+        // statement, unchanged. Writing `start` here (even only when the name is read
+        // afterwards) answered `for v in (1, 2): for v in range(0): pass; print(v)` with 0, 0
+        // instead of 1, 2 -- the inner empty loop stomped the outer loop's own `v` with a
+        // value Python's for-loop machinery never assigns for a range with no elements.
         if (RangeFoldedBounds(stmt) is { } emptyBounds
             && RangeTripCount(emptyBounds.Start, emptyBounds.Stop, emptyBounds.Step) <= 0)
         {
-            if (loopVarReadAfter.Contains(stmt))
-            {
-                string emptyKey = QualifyLoopVar(stmt.VarName);
-                DataType emptyType = ChooseCounterType(stmt, emptyKey,
+            // Still files a type for the qualified name when it is read afterwards and never
+            // bound at all before this loop (a bare `for v in range(0): pass` as the very
+            // first mention of `v`) -- CPython raises NameError there, which nothing here
+            // models, but leaving variableTypes completely unset would make the later read
+            // look like an undefined-name typo instead. No store: nothing produced a value to
+            // store, and `start` is not one Python would ever have assigned.
+            //
+            // The constantVariables/strConstantVariables/constSequenceBindings/variableAliases
+            // checks cover the OTHER way the name can already be bound: an outer loop's
+            // compile-time constant over this same bare name, which VisitFor's top no longer
+            // forgets for this exact shape (see IsCompileTimeEmptyPlainRange). Without them
+            // this would file a bogus pointer-width variableTypes entry for a name that is
+            // still a perfectly good compile-time constant, shadowing it.
+            string emptyKey = QualifyLoopVar(stmt.VarName);
+            bool alreadyBound = variableTypes.ContainsKey(emptyKey)
+                || constantVariables.ContainsKey(emptyKey) || strConstantVariables.ContainsKey(emptyKey)
+                || constSequenceBindings.ContainsKey(emptyKey) || variableAliases.ContainsKey(emptyKey);
+            if (loopVarReadAfter.Contains(stmt) && !alreadyBound)
+                variableTypes[emptyKey] = ChooseCounterType(stmt, emptyKey,
                     emptyBounds.Start, emptyBounds.Start, exact: true);
-                variableTypes[emptyKey] = emptyType;
-                Emit(new Copy(new Constant(emptyBounds.Start), new Variable(emptyKey, emptyType)));
-            }
             return;
         }
 
