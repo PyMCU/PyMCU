@@ -687,7 +687,11 @@ public partial class IRGenerator
     {
         if (v is Variable varV)
         {
-            if (constantVariables.TryGetValue(varV.Name, out int vcv)) return (vcv, vcv);
+            if (constantVariables.TryGetValue(varV.Name, out int vcv))
+            {
+                long lv = ConstantVariableAsLong(varV.Name, vcv);
+                return (lv, lv);
+            }
             if (!ForeignFlowRead(varV.Name) && localConstantValues.TryGetValue(varV.Name, out int vlv))
                 return (vlv, vlv);
             if (!ForeignGlobalRead(varV.Name) && variableRanges.TryGetValue(varV.Name, out var vr))

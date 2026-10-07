@@ -189,14 +189,32 @@ public partial class IRGenerator
         }
     }
 
+    /// `constantVariables` stores the raw 32-bit pattern a folded name holds (a plain
+    /// `Dictionary&lt;string, int&gt;`), and keeps no sign of its own: `unsignedConstNames`
+    /// is the separate mark `MarkUnsignedName` reads before handing the pattern back as
+    /// a value (the divmod() quotient of 0xFFFFFFFF / 1 registers both: the pattern -1
+    /// in `constantVariables`, and its name in `unsignedConstNames`). Reading the raw
+    /// pattern alone as a range answers -1 instead of 4294967295, which then asked a
+    /// later store to go SIGNED to fit it -- the width-seed mechanism "fixing" a uint32
+    /// local into an int32 one, which is what actually lost the quotient's Unsigned
+    /// mark three steps downstream, not the print path itself (oracle probe 632).
+    private long ConstantVariableAsLong(string name, int raw) =>
+        raw < 0 && unsignedConstNames.Contains(name) ? raw & 0xFFFFFFFFL : raw;
+
     /// What an integer value can hold, as far as the generator knows here.
     private (long Min, long Max)? SlotValueRange(Val v) => v switch
     {
-        Constant c => (c.Value, c.Value),
+        // AsLong, not Value: Value is the raw bit pattern (0xFFFFFFFF reads as the
+        // int32 -1), AsLong is the Unsigned-aware reading ValRange's own Constant
+        // case already uses. A uint32 literal recorded via .Value here fed a
+        // negative "proven" dividend range into DivModResultRange and lost the
+        // quotient's Unsigned mark downstream (oracle probe 632).
+        Constant c => (c.AsLong, c.AsLong),
         Temporary t when WidthSeeds.IsInt(t.Type) =>
             tempRanges.TryGetValue(t.Name, out var r) ? r : RangeOfType(t.Type),
         Variable vv when WidthSeeds.IsInt(vv.Type) =>
-            constantVariables.TryGetValue(vv.Name, out int scv) ? (scv, scv)
+            constantVariables.TryGetValue(vv.Name, out int scv)
+                ? (ConstantVariableAsLong(vv.Name, scv), ConstantVariableAsLong(vv.Name, scv))
             : !ForeignFlowRead(vv.Name) && localConstantValues.TryGetValue(vv.Name, out int slv)
                 ? (slv, slv)
             : !ForeignGlobalRead(vv.Name) && variableRanges.TryGetValue(vv.Name, out var svr) ? svr
@@ -217,10 +235,11 @@ public partial class IRGenerator
     /// (RangeCounterTypeTests.RuntimeBounds_SizeTheCounterFromTheirTypes).
     private (long Min, long Max)? ProvenSourceFact(Val v) => v switch
     {
-        Constant c => (c.Value, c.Value),
+        Constant c => (c.AsLong, c.AsLong),
         Temporary t => tempRanges.TryGetValue(t.Name, out var tr) ? tr : null,
         Variable vv =>
-            constantVariables.TryGetValue(vv.Name, out int scv) ? (scv, scv)
+            constantVariables.TryGetValue(vv.Name, out int scv)
+                ? (ConstantVariableAsLong(vv.Name, scv), ConstantVariableAsLong(vv.Name, scv))
             : !ForeignFlowRead(vv.Name) && localConstantValues.TryGetValue(vv.Name, out int slv) ? (slv, slv)
             : !ForeignGlobalRead(vv.Name) && variableRanges.TryGetValue(vv.Name, out var svr) ? svr
             : null,

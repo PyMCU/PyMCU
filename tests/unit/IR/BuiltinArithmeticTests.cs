@@ -75,6 +75,23 @@ public class BuiltinArithmeticTests
         Assert.Equal(3, (r.Src as Constant)?.Value ?? ConstOf(ir, r.Src));
     }
 
+    [Fact]
+    public void DivmodOfAUint32LiteralPastInt32_KeepsTheQuotientUnsigned()
+    {
+        // divmod(0xFFFFFFFF, 1) == (4294967295, 0): the quotient's int32 BIT PATTERN is
+        // -1, so q must print through the unsigned decimal writer or it reads back as
+        // -1. PyMCU golperf: the generator's proven-range tracking read constantVariables'
+        // raw pattern for q's rebind source without consulting unsignedConstNames, saw a
+        // "negative" value that did not fit uint32, and asked the width-seed mechanism to
+        // widen q to a SIGNED type across a second compile run -- which is what actually
+        // dropped the Unsigned mark three steps downstream of the fold itself.
+        var ir = Gen("q, r = divmod(0xFFFFFFFF, 1)\nprint(q)\nprint(r)\n");
+        var decimalCalls = Main(ir).OfType<Call>()
+            .Where(c => c.FunctionName.Contains("uart_write_decimal")).ToList();
+        Assert.Contains(decimalCalls, c => c.FunctionName.EndsWith("u32"));
+        Assert.DoesNotContain(decimalCalls, c => c.FunctionName.EndsWith("i32"));
+    }
+
     private static int ConstOf(ProgramIR ir, Val v) =>
         ((Constant)Main(ir).OfType<Copy>().Single(c => c.Dst == v).Src).Value;
 
