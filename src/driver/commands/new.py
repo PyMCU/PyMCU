@@ -632,6 +632,14 @@ def new(
 
         if "tool" not in doc:
             doc.add("tool", tomlkit.table())
+        if pkg_manager == "poetry":
+            # PEP 621 owns the dependency list for Poetry 2.  This small table
+            # both tells Poetry that there is no importable root package and
+            # leaves an unambiguous ownership marker for `pymcu install` before
+            # the first poetry.lock has been written.
+            poetry_tool = tomlkit.table()
+            poetry_tool.add("package-mode", False)
+            doc["tool"].add("poetry", poetry_tool)
         doc["tool"].add("pymcu", pymcu_tool)
 
         with open(project_path / "pyproject.toml", "w") as f:
@@ -647,6 +655,12 @@ def new(
                 lines.append(_pin_version(f"pymcu-{flavor}", f"pymcu-{flavor}"))
             with open(project_path / "requirements.txt", "w") as f:
                 f.write("\n".join(lines) + "\n")
+        elif pkg_manager == "poetry":
+            # Keep Poetry's environment where the driver already knows how to
+            # find it.  This also makes a later plain `pymcu build` use the
+            # exact environment that `poetry install` populated.
+            with open(project_path / "poetry.toml", "w") as f:
+                f.write("[virtualenvs]\nin-project = true\n")
 
         # ── Makefile ──────────────────────────────────────────────────
         if pkg_manager == "uv":

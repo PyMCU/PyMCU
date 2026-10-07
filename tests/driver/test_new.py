@@ -286,6 +286,11 @@ class TestMakefileGeneration:
         makefile = (tmp_path / "proj" / "Makefile").read_text()
         assert "poetry install" in makefile
         assert "pymcu sync" in makefile
+        pyproject = (tmp_path / "proj" / "pyproject.toml").read_text()
+        assert "[tool.poetry]" in pyproject
+        assert "package-mode = false" in pyproject
+        poetry_config = (tmp_path / "proj" / "poetry.toml").read_text()
+        assert poetry_config == "[virtualenvs]\nin-project = true\n"
 
     def test_makefile_created_for_pip(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
