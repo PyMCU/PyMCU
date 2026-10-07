@@ -413,6 +413,81 @@ public class ExceptionArgsTests
     }
 
     [Fact]
+    public void ABareRaiseReachedOnlyThroughAnInlineStillSnapshots()
+    {
+        // g2: the handler holds no lexical raise at all -- the bare `raise` lives in a
+        // nested @inline it calls, and the record clobber between them comes from an
+        // ordinary function's handled raise. The decision used to ask whether the body
+        // listed a RaiseStmt, so this handler took no snapshot and the unwind
+        // propagated the record clobber() last stored (2) as if it were the caught
+        // OSError's (5).
+        var main = Fn(Gen(
+            "from pymcu.types import inline\n" +
+            "def clobber():\n" +
+            "    try:\n" +
+            "        raise ValueError(2)\n" +
+            "    except ValueError:\n" +
+            "        pass\n" +
+            "try:\n" +
+            "    try:\n" +
+            "        raise OSError(5)\n" +
+            "    except OSError:\n" +
+            "        @inline\n" +
+            "        def rer():\n" +
+            "            raise\n" +
+            "        clobber()\n" +
+            "        rer()\n" +
+            "except OSError as e:\n" +
+            "    v = e.args[0]\n" +
+            "    print(v)\n"), "main");
+
+        int reraise = main.FindIndex(i => i is SignalError
+            { Code: Variable { Name: var n } } && n.StartsWith("__exn_code_", StringComparison.Ordinal));
+        reraise.Should().BeGreaterOrEqualTo(0, because: "the inlined bare raise re-signals the saved code");
+        main.Take(reraise).Any(i => i is Copy
+                { Src: Variable s, Dst: Variable d }
+                && s.Name.StartsWith("__exh_", StringComparison.Ordinal)
+                && d.Name.StartsWith("__exn_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the snapshot of the handler that called rer() is restored first");
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable d }
+                && s.Name.StartsWith("__exn_", StringComparison.Ordinal)
+                && d.Name.StartsWith("__exh_", StringComparison.Ordinal))
+            .Should().BeTrue(because: "the handler saves the delivered record at its entry");
+    }
+
+    [Fact]
+    public void AnInlineCallWithoutARaiseStillDropsTheSnapshot()
+    {
+        // The save is tentative: a handler that expands an @inline carrying no bare
+        // raise never observes the record, so nothing may be emitted for it. The
+        // leading bound handler keeps the record fields live so the absence is
+        // measured, not assumed.
+        var main = Fn(Gen(
+            "from pymcu.types import inline\n" +
+            Boom +
+            "@inline\n" +
+            "def noop():\n" +
+            "    pass\n" +
+            "try:\n" +
+            "    boom(0)\n" +
+            "except E1 as x:\n" +
+            "    print(x.args[0])\n" +
+            "try:\n" +
+            "    boom(0)\n" +
+            "except E1:\n" +
+            "    noop()\n"), "main");
+
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable d }
+                  && (s.Name.StartsWith("__exh_1", StringComparison.Ordinal)
+                      || d.Name.StartsWith("__exh_1", StringComparison.Ordinal)))
+            .Should().BeFalse(because: "the expanded body never re-signals the record");
+        main.Any(i => i is Copy { Src: Variable s, Dst: Variable d }
+                  && (s.Name.StartsWith("__exh_0", StringComparison.Ordinal)
+                      || d.Name.StartsWith("__exh_0", StringComparison.Ordinal)))
+            .Should().BeTrue(because: "the bound handler still snapshots its record");
+    }
+
+    [Fact]
     public void AnEmptyStringArgumentIsAnArgument()
     {
         var ir = Gen(
