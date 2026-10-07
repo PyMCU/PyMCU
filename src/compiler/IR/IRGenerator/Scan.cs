@@ -2039,15 +2039,6 @@ public partial class IRGenerator
                 if (isException)
                 {
                     int exnCode = nextUserExceptionCode++;
-                    constantVariables[classDef.Name] = exnCode;
-                    // `except mod.Exc:` resolves the class through the qualified key a
-                    // `mod.X` read mangles to. The bare key above stays: `except Exc:`
-                    // inside the defining module, and `from mod import Exc`, bind it.
-                    constantVariables[currentModulePrefix + classDef.Name] = exnCode;
-                    exceptionNames.Add(classDef.Name);
-                    // Registered before the bases resolve below so `class F(F)` sees its
-                    // own name as an exception and the self-inheritance check can refuse.
-                    exceptionCodes.Add(exnCode);
 
                     // The OSError subtree is the one place dispatch follows inheritance
                     // (`except OSError` has to catch a raised TimeoutError or a
@@ -2087,10 +2078,6 @@ public partial class IRGenerator
                     foreach (var b in classDef.Bases)
                     {
                         int node = ExceptionBaseNode(b);
-                        if (node == exnCode)
-                            throw UserError(
-                                $"class '{classDef.Name}' cannot inherit from itself",
-                                classDef);
                         if (!seenBases.Add(node))
                             throw UserError(
                                 $"class '{classDef.Name}' repeats base class '{b}'",
@@ -2106,6 +2093,19 @@ public partial class IRGenerator
                             + "CPython raises TypeError at the class definition",
                             classDef);
                     exceptionDirectBases[exnCode] = baseNodes;
+
+                    // The new binding registers only after the bases resolved:
+                    // `class A(A)` under an earlier `class A(Exception)` must see the
+                    // PREVIOUS A, which is the rebinding CPython accepts -- installing
+                    // the name first resolved the base to the class being defined and
+                    // refused it as self-inheritance.
+                    constantVariables[classDef.Name] = exnCode;
+                    // `except mod.Exc:` resolves the class through the qualified key a
+                    // `mod.X` read mangles to. The bare key above stays: `except Exc:`
+                    // inside the defining module, and `from mod import Exc`, bind it.
+                    constantVariables[currentModulePrefix + classDef.Name] = exnCode;
+                    exceptionNames.Add(classDef.Name);
+                    exceptionCodes.Add(exnCode);
                     continue;
                 }
 
