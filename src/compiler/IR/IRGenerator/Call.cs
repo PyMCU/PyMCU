@@ -4743,6 +4743,20 @@ public partial class IRGenerator
     /// exists in <c>mutableGlobals</c>) -- never the plain `b` that helper's two-entry lookup
     /// tries. This checks every spelling a bound loop/local variable can resolve to, so a
     /// scalar reaching a buffer-typed parameter is caught regardless of where it was bound.
+    ///
+    /// Answers only on POSITIVE proof, never on absence of proof that it is a buffer. The
+    /// earlier shape asked the opposite question -- "is there any reason to think this is a
+    /// buffer?" -- and treated every other name holding ANY registered type as a scalar by
+    /// default. Every new way to forward a buffer under another name (a tuple-unpack target,
+    /// an @inline parameter binding, a function's array return, a plain local-to-local copy,
+    /// now a call result or a tuple-unpack element too) was another shape that default had
+    /// never been taught to exclude, so each one surfaced as its own false refusal in turn.
+    /// Proving a NEGATIVE here instead -- forwarding a buffer is the only thing that must
+    /// never be refused -- would have the same problem in reverse. So the check proves the
+    /// POSITIVE instead: refuse only when the name is traceably bound from one of the few
+    /// shapes that genuinely produce a single number (an element subscript, an enumerate/for
+    /// element over a buffer, or a chain of plain copies from one of those); anything this
+    /// cannot trace that far stays uncompiled-against, not refused.
     private bool NameIsScalarAtThisSite(string name)
     {
         foreach (string? key in new[]
@@ -4753,40 +4767,49 @@ public partial class IRGenerator
                  })
         {
             if (key == null) continue;
-            // TryResolveArrayStorageKey, not a bare arraySizes.ContainsKey(key): a module-level
-            // array declared `buf: uint8[N]` registers BARE ("buf") in arraySizes, but a read
-            // inside a function or an inline expansion arrives qualified ("main.buf") -- the
-            // exact mismatch TryResolveArrayStorageKey's own comment documents (PyMCU#258).
-            // IsBufferStorageName alone is not enough here: it additionally requires SRAM/
-            // variable-index membership, which a small array nothing ever subscripts by a
-            // runtime index (this one) never gets. Without the resolved-key check, `d.scan(buf,
-            // 8)` called twice refused the SECOND call only: "main.buf" matched no exclusion,
-            // fell through to variableTypes.ContainsKey("main.buf") -- a registration left by
-            // the FIRST call's own argument marshal -- and a real buffer looked like a scalar.
+
+            // Walk the alias chain this name was bound through (the same bound depth-20
+            // walk CopyArrayIdentity already uses). A buffer found ANYWHERE along it --
+            // however many plain copies away -- is positive proof the name forwards a
+            // buffer, which always wins over whatever else the chain also looks like:
+            // the generic `x = y` assignment machinery marks EVERY plain copy as a
+            // "value-tracking" candidate (see below), scalar or not, because it exists to
+            // answer a different question (does this survive a label) -- it is not by
+            // itself proof of anything about what kind of value is there.
             //
-            // variableAliases.ContainsKey(key) && !valueTrackingAliases.Contains(key), not a
-            // bare ContainsKey: `one = buf[0]` makes `one` a VALUE-TRACKING alias of the temp
-            // that carried the loaded byte (Assign.cs's `value is Temporary` branch sets this
-            // for every such assignment, structural or not) -- it is filed in variableAliases
-            // for constant-folding, but `one` genuinely holds a number, not a buffer. Treating
-            // every alias as "not a scalar" let `first(one)` -- buf[0]'s value passed to a
-            // bytearray parameter -- compile silently instead of refusing: the exclusion must
-            // only fire for a STRUCTURAL alias (an instance, a buffer forwarded under another
-            // name), which valueTrackingAliases is exactly the set that is NOT.
-            if (arraySizes.ContainsKey(key) || constSequenceBindings.ContainsKey(key)
-                || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key)
-                || (variableAliases.ContainsKey(key) && !valueTrackingAliases.Contains(key))
-                || IsBufferStorageName(key)
-                || TryResolveArrayStorageKey(key, out _))
-                return false;
-            // A value-tracking alias has no entry of its own in variableTypes -- its type
-            // lives on the temp it points at (`one`'s is on `tmp_24`, the load `buf[0]`
-            // produced) -- so checking variableTypes(key) alone missed every one of them
-            // and `one = buf[0]` fell through this whole loop unanswered. The alias exists
-            // ONLY for a number by construction (Assign.cs's value-tracking path never
-            // creates one for an instance or a buffer forward), so its presence answers
-            // "scalar" directly, the same as a real variableTypes entry would.
-            if (valueTrackingAliases.Contains(key) || variableTypes.ContainsKey(key)) return true;
+            // TryResolveArrayStorageKey, not a bare arraySizes.ContainsKey: a module-level
+            // array declared `buf: uint8[N]` registers BARE ("buf") in arraySizes, but a
+            // read inside a function or an inline expansion arrives qualified ("main.buf")
+            // -- the exact mismatch TryResolveArrayStorageKey's own comment documents
+            // (PyMCU#258). IsBufferStorageName alone is not enough: it additionally
+            // requires SRAM/variable-index membership, which a small array nothing ever
+            // subscripts by a runtime index never gets.
+            string cur = key;
+            bool chainIsBuffer = false;
+            for (int depth = 0; depth < 20; depth++)
+            {
+                if (arraySizes.ContainsKey(cur) || constSequenceBindings.ContainsKey(cur)
+                    || listLiteralParams.ContainsKey(cur) || bytearrayParams.Contains(cur)
+                    || IsBufferStorageName(cur) || TryResolveArrayStorageKey(cur, out _))
+                {
+                    chainIsBuffer = true;
+                    break;
+                }
+                if (!variableAliases.TryGetValue(cur, out var next)) break;
+                cur = next;
+            }
+            if (chainIsBuffer) return false;
+
+            // No buffer anywhere in the chain -- the POSITIVE evidence it answers a
+            // scalar is `provenScalarElements`, set only at the handful of sites that
+            // genuinely produce one number from a buffer: a direct element subscript
+            // (`one = buf[0]`), a for/enumerate loop variable over a buffer's elements
+            // (`for i, b in enumerate(buf):`), or a chain of plain copies from one of
+            // those. A bare `variableTypes` entry with no such history at all -- a
+            // tuple-unpack target, an @inline return, a call result the compiler never
+            // modeled as a buffer -- is not positive proof of anything, so it is left
+            // uncompiled-against rather than refused on a guess.
+            if (provenScalarElements.Contains(key)) return true;
         }
         return false;
     }

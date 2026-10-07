@@ -83,6 +83,27 @@ public partial class IRGenerator
                 if (bytearrayParams.Contains(srcKey) || bytearrayParams.Contains(bufAliasSrc.Name))
                     bytearrayParams.Add(bindKey);
             }
+
+            // Positive proof the name holds ONE scalar element of a buffer, for
+            // NameIsScalarAtThisSite (Call.cs): a direct element subscript (`one =
+            // buf[0]`), or a copy from a name already proven that way (`two = one`),
+            // so the proof survives a chain of plain reassignment the same way a
+            // buffer forward does.
+            if (stmt.Value is IndexExpr provenIx && provenIx.Index is not SliceExpr
+                && IndexTargetHoldsScalarElements(provenIx.Target))
+                provenScalarElements.Add(bindKey);
+            else if (stmt.Value is VariableExpr provenSrcVe)
+            {
+                string provenSrcKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + provenSrcVe.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + provenSrcVe.Name
+                        : provenSrcVe.Name);
+                if (provenScalarElements.Contains(provenSrcKey) || provenScalarElements.Contains(provenSrcVe.Name))
+                    provenScalarElements.Add(bindKey);
+                else provenScalarElements.Remove(bindKey);
+            }
+            else provenScalarElements.Remove(bindKey);
         }
 
         // Rebinding the name of a module-level `def`. The name is bound at compile time and
@@ -7109,6 +7130,32 @@ public partial class IRGenerator
                 target = UnionPayloadStoreTarget(uvTgt, val, stmt.Init);
             Emit(new Copy(val, target));
 
+            // Positive proof for NameIsScalarAtThisSite (Call.cs), same shape as the
+            // unannotated and bare-type-annotated forms (VisitAssign) above: a typed
+            // local declaration (`one: uint8 = buf[0]`) is a VarDecl, not an AnnAssign
+            // or a plain AssignStmt, and reaches here instead -- missing this one left
+            // `one: uint8 = buf[0]` unrecognised as a scalar while `one = buf[0]`
+            // (no type) was.
+            if (target is Variable provenTgtVd)
+            {
+                if (stmt.Init is IndexExpr provenIxVd && provenIxVd.Index is not SliceExpr
+                    && IndexTargetHoldsScalarElements(provenIxVd.Target))
+                    provenScalarElements.Add(provenTgtVd.Name);
+                else if (stmt.Init is VariableExpr provenSrcVeVd)
+                {
+                    string provenSrcKeyVd = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + provenSrcVeVd.Name
+                        : (!string.IsNullOrEmpty(currentFunction)
+                            ? currentFunction + "." + provenSrcVeVd.Name
+                            : provenSrcVeVd.Name);
+                    if (provenScalarElements.Contains(provenSrcKeyVd)
+                        || provenScalarElements.Contains(provenSrcVeVd.Name))
+                        provenScalarElements.Add(provenTgtVd.Name);
+                    else provenScalarElements.Remove(provenTgtVd.Name);
+                }
+                else provenScalarElements.Remove(provenTgtVd.Name);
+            }
+
             // `v: list = xs`: the declared name takes the value's element
             // registration -- the annotation deferred it to the initializer.
             if (declaredSeqKey != null && target is Variable seqTarget)
@@ -8540,6 +8587,26 @@ public partial class IRGenerator
                 Emit(new Copy(rhs, annTgt));
             if (stmt.UnionMembers != null)
                 EmitOptionalTagWrite(new Variable(qualified2, type), stmt.Value, rhs);
+
+            // Positive proof for NameIsScalarAtThisSite (Call.cs), same as the plain
+            // (unannotated) assignment above: `one: uint8 = buf[0]` is a direct element
+            // subscript, or a copy from a name already proven that way.
+            if (stmt.Value is IndexExpr provenIxAnn && provenIxAnn.Index is not SliceExpr
+                && IndexTargetHoldsScalarElements(provenIxAnn.Target))
+                provenScalarElements.Add(qualified2);
+            else if (stmt.Value is VariableExpr provenSrcVeAnn)
+            {
+                string provenSrcKeyAnn = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + provenSrcVeAnn.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + provenSrcVeAnn.Name
+                        : provenSrcVeAnn.Name);
+                if (provenScalarElements.Contains(provenSrcKeyAnn)
+                    || provenScalarElements.Contains(provenSrcVeAnn.Name))
+                    provenScalarElements.Add(qualified2);
+                else provenScalarElements.Remove(qualified2);
+            }
+            else provenScalarElements.Remove(qualified2);
 
             // Propagate string constant from rhs to the declared variable so that
             // downstream match/case DCE (e.g. select_port) can fold it.

@@ -501,6 +501,17 @@ public partial class IRGenerator
     // variableAliases keys created by plain scalar `a = b` value tracking: flow-sensitive,
     // cleared at every Label (control-flow join) and on writes to either side.
     private HashSet<string> valueTrackingAliases = new();
+
+    // Qualified names POSITIVELY proven to hold one scalar element of a buffer: bound
+    // directly from a subscript (`one = buf[0]`) or from a for/enumerate loop variable
+    // over a buffer's elements, or copied from a name already in this set. Read by
+    // NameIsScalarAtThisSite (Call.cs) to decide whether an argument reaching a
+    // buffer-typed parameter is refused -- on POSITIVE proof only, never on the mere
+    // absence of proof that a name is a buffer. Not flow-sensitive like
+    // valueTrackingAliases: a name a buffer load bound stays bound to that fact for as
+    // long as nothing else overwrites it, labels included, the same way bytearrayParams
+    // does for the opposite fact.
+    private HashSet<string> provenScalarElements = new();
     private string pendingConstructorTarget = ""; // Target variable for constructor inlining
 
     // Tuple-unpack multi-return support.

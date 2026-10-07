@@ -2520,6 +2520,12 @@ public partial class IRGenerator
                             {
                                 constantVariables[idxKey] = idx++;
                                 constantVariables[valKey] = evv;
+                                // Positive proof for NameIsScalarAtThisSite (Call.cs): the
+                                // value name of `for i, b in enumerate(buf):` is ONE
+                                // element of buf, even when every element folds to a
+                                // compile-time constant and `b` never becomes a real
+                                // Variable at all.
+                                provenScalarElements.Add(valKey);
                                 VisitStatement(stmt.Body);
                             }
                             else
@@ -2590,6 +2596,13 @@ public partial class IRGenerator
                         Temporary lstElemTmp = MakeTemp(lstElemDt);
                         Emit(new LoadIndirect(lstElemAddr, lstElemTmp, lstElemDt));
                         Emit(new Copy(lstElemTmp, lstValVar));
+                        // Positive proof for NameIsScalarAtThisSite (Call.cs): the value
+                        // variable of `for i, b in enumerate(buf):` over a run-time
+                        // buffer/list is ONE element, by construction -- unless the
+                        // element itself is a nested list/instance (GC_REF), which is
+                        // not the scalar shape that check cares about.
+                        if (lstElemDt != DataType.GC_REF) provenScalarElements.Add(lstValQ);
+                        else provenScalarElements.Remove(lstValQ);
 
                         VisitStatement(stmt.Body);
 
@@ -2800,6 +2813,10 @@ public partial class IRGenerator
                                     Val elemVal = VisitIndex(synIdxExpr);
                                     var valVar = new Variable(qualifiedVal, elemDt);
                                     Emit(new Copy(elemVal, valVar));
+                                    // Positive proof for NameIsScalarAtThisSite (Call.cs):
+                                    // the value variable of `for i, b in enumerate(buf):`
+                                    // over a fixed array is ONE element, by construction.
+                                    provenScalarElements.Add(qualifiedVal);
                                 }
                                 else
                                 {
@@ -2812,16 +2829,20 @@ public partial class IRGenerator
                                         // resolves to (qualifiedVal), not the inline-only valKey, so a
                                         // `pin.value = ...` setter inside a def sees the ZCA state.
                                         BindInstanceForIteration(elemKey, qualifiedVal);
+                                        // An instance element, not a scalar one.
+                                        provenScalarElements.Remove(qualifiedVal);
                                     }
                                     else if (constantVariables.TryGetValue(elemKey, out int cv))
                                     {
                                         constantVariables[qualifiedVal] = cv;
+                                        provenScalarElements.Add(qualifiedVal);
                                     }
                                     else
                                     {
                                         var srcVar = new Variable(elemKey, elemDt);
                                         var valVar = new Variable(qualifiedVal, elemDt);
                                         Emit(new Copy(srcVar, valVar));
+                                        provenScalarElements.Add(qualifiedVal);
                                     }
                                 }
 
