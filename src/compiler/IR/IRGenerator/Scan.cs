@@ -2039,6 +2039,15 @@ public partial class IRGenerator
                 if (isException)
                 {
                     int exnCode = nextUserExceptionCode++;
+                    constantVariables[classDef.Name] = exnCode;
+                    // `except mod.Exc:` resolves the class through the qualified key a
+                    // `mod.X` read mangles to. The bare key above stays: `except Exc:`
+                    // inside the defining module, and `from mod import Exc`, bind it.
+                    constantVariables[currentModulePrefix + classDef.Name] = exnCode;
+                    exceptionNames.Add(classDef.Name);
+                    // Registered before the bases resolve below so `class F(F)` sees its
+                    // own name as an exception and the self-inheritance check can refuse.
+                    exceptionCodes.Add(exnCode);
 
                     // The OSError subtree is the one place dispatch follows inheritance
                     // (`except OSError` has to catch a raised TimeoutError or a
@@ -2078,6 +2087,10 @@ public partial class IRGenerator
                     foreach (var b in classDef.Bases)
                     {
                         int node = ExceptionBaseNode(b);
+                        if (node == exnCode)
+                            throw UserError(
+                                $"class '{classDef.Name}' cannot inherit from itself",
+                                classDef);
                         if (!seenBases.Add(node))
                             throw UserError(
                                 $"class '{classDef.Name}' repeats base class '{b}'",
@@ -2093,19 +2106,6 @@ public partial class IRGenerator
                             + "CPython raises TypeError at the class definition",
                             classDef);
                     exceptionDirectBases[exnCode] = baseNodes;
-
-                    // The new binding registers only after the bases resolved:
-                    // `class A(A)` under an earlier `class A(Exception)` must see the
-                    // PREVIOUS A, which is the rebinding CPython accepts -- installing
-                    // the name first resolved the base to the class being defined and
-                    // refused it as self-inheritance.
-                    constantVariables[classDef.Name] = exnCode;
-                    // `except mod.Exc:` resolves the class through the qualified key a
-                    // `mod.X` read mangles to. The bare key above stays: `except Exc:`
-                    // inside the defining module, and `from mod import Exc`, bind it.
-                    constantVariables[currentModulePrefix + classDef.Name] = exnCode;
-                    exceptionNames.Add(classDef.Name);
-                    exceptionCodes.Add(exnCode);
                     continue;
                 }
 
@@ -2125,13 +2125,6 @@ public partial class IRGenerator
                             classDef);
 
                     classNames.Add(classDef.Name);
-                    // A class usable as a mix-in base of a later exception carries its
-                    // ancestry into the C3 merge: `class E(Exception, M, N)` over `N(M)`
-                    // is the same order contradiction CPython's TypeError names. Keyed
-                    // like the exception codes, bare and module-qualified.
-                    var storedBases = realBases.Count > 0 ? realBases : new List<string> { "object" };
-                    classBases[classDef.Name] = storedBases;
-                    classBases[currentModulePrefix + classDef.Name] = storedBases;
                     if (classDef.IsValue) valueClasses.Add(classDef.Name);
                     if (classDef.IsGenerator) generatorClasses.Add(classDef.Name);
                     var oldPrefix = currentModulePrefix;
@@ -3406,41 +3399,8 @@ public partial class IRGenerator
                 || constantVariables.TryGetValue(b, out code))
             && exceptionCodes.Contains(code))
             return code;
-
-        // A name that is not an exception still carries identity into the merge: a
-        // fresh node per occurrence made `class E(M, M)` linearize where CPython sees
-        // a duplicate base, and lost a mixin's own ancestry (`class E(Exception, M, N)`
-        // over `N(M)` is the same order contradiction as two exceptions). One node per
-        // canonical name, with the class's written bases resolved lazily below.
-        string canon = classBases.ContainsKey(currentModulePrefix + mangled) ? currentModulePrefix + mangled
-            : classBases.ContainsKey(mangled) ? mangled
-            : classBases.ContainsKey(b) ? b
-            : builtinMroParent.ContainsKey(b) ? b
-            : currentModulePrefix + mangled;
-        if (mroNodeByName.TryGetValue(canon, out var seen)) return seen;
-        int node = mroNodeNext--;
-        mroNodeByName[canon] = node;
-        if (classBases.TryGetValue(canon, out var written))
-            mroPseudoBaseNames[node] = written;
-        else if (builtinMroParent.TryGetValue(b, out var builtinParent))
-            mroPseudoBaseNames[node] = new List<string> { builtinParent };
-        return node;
+        return mroNodeNext--;
     }
-
-    // CPython's real exception parents among the names PyMCU knows, for the C3 merge
-    // ONLY -- dispatch keeps the flat model (exceptionParents holds the one edge that
-    // pays for itself), so no handler here buys ancestry it never raises against.
-    // `class F(ArithmeticError, ZeroDivisionError)` is an order contradiction because
-    // ZeroDivisionError really descends from ArithmeticError.
-    private static readonly Dictionary<string, string> builtinMroParent = new()
-    {
-        ["ZeroDivisionError"]   = "ArithmeticError",
-        ["OverflowError"]       = "ArithmeticError",
-        ["NotImplementedError"] = "RuntimeError",
-        ["IndexError"]          = "LookupError",
-        ["KeyError"]            = "LookupError",
-        ["LookupError"]         = "Exception",
-    };
 
     // The C3 linearization of one node in the hierarchy PyMCU models: the recorded bases
     // for user exceptions, the one seeded edge (TimeoutError -> OSError) for builtins, and
@@ -3459,15 +3419,7 @@ public partial class IRGenerator
             MroNodeException => new List<int> { MroNodeBaseException },
             _ when exceptionDirectBases.TryGetValue(node, out var d) => d,
             _ when exceptionParents.TryGetValue(node, out var edges) => edges,
-            // A builtin code's real CPython parent when the merge models one
-            // (ZeroDivisionError -> ArithmeticError); every other builtin
-            // keeps its flat Exception parent.
-            _ when node > 0 && BuiltinExceptionNames.TryGetName(node, out var bn)
-                    && builtinMroParent.TryGetValue(bn, out var bp)
-                => new List<int> { ExceptionBaseNode(bp) },
             _ when node > 0 => new List<int> { MroNodeException },
-            _ when mroPseudoBaseNames.TryGetValue(node, out var wb)
-                => ResolveMroPseudoBases(node, wb),
             _ => new List<int> { MroNodeObject },
         };
         var seqs = bases.Select(b => ExceptionMroOf(b)).ToList();
@@ -3479,18 +3431,6 @@ public partial class IRGenerator
         merged.Insert(0, node);
         exceptionMroMemo[node] = merged;
         return merged;
-    }
-
-    // The written bases of a class known only by name, resolved to nodes. A cyclic
-    // or self-referencing ancestry tolerated earlier in the scan breaks to a bare
-    // `object` base rather than recursing; that path is unreachable for real class
-    // graphs since a name has to be scanned before it can name a base.
-    private List<int> ResolveMroPseudoBases(int node, List<string> written)
-    {
-        if (!mroResolving.Add(node)) return new List<int> { MroNodeObject };
-        var resolved = written.Select(ExceptionBaseNode).ToList();
-        mroResolving.Remove(node);
-        return resolved;
     }
 
     // True when the resolved bases of the class being scanned can linearize under C3:

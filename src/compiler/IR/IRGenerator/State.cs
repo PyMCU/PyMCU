@@ -915,28 +915,6 @@ public partial class IRGenerator
     private const int MroNodeObject = -3;
     private int mroNodeNext = -10;
 
-    // One pseudo-node per non-exception base NAME, so the merge sees what a fresh node
-    // per occurrence hid: `class E(M, M)` is the duplicate base CPython refuses, and
-    // `class E(Exception, M, N)` over `N(M)` contradicts N's own order. Canonical key is
-    // the module-qualified spelling; names resolving to no class still dedupe so the
-    // repeated-base refusal stands.
-    private readonly Dictionary<string, int> mroNodeByName = new();
-
-    /// Written base names of a pseudo-node's class, resolved through ExceptionBaseNode
-    /// when the node's own linearization is asked for. Unknown names get no entry and
-    /// behave like a lone `object` base.
-    private readonly Dictionary<int, List<string>> mroPseudoBaseNames = new();
-
-    /// Nodes whose pseudo-base resolution is under way, so a cyclic class graph breaks
-    /// instead of recursing forever (`class A(B)` before B exists, tolerated here, would
-    /// otherwise spin).
-    private readonly HashSet<int> mroResolving = new();
-
-    /// Bare and module-qualified class name -> its written (non-marker) bases, for every
-    /// ordinary class the scan met. `class M:` with no bases records `["object"]`, which
-    /// is exactly CPython's implicit base.
-    private readonly Dictionary<string, List<string>> classBases = new();
-
     /// The exception codes some `raise` statement in the program can deliver -- resolved
     /// once, before any try lowers, because a handler can only match a code a raise
     /// actually produced. Collected with the per-raise records below.
