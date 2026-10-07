@@ -148,13 +148,38 @@ public class ForOverStringConstantsTests
     }
 
     [Fact]
-    public void AnElementThatIsNotAConstant_IsStillRefused()
+    public void AnElementThatIsNotAConstant_CompilesAsARuntimeValue()
     {
-        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Prelude +
+        // enumbuf case 3: `for xx in (x - 1, x, x + 1)` with a run-time `x` is valid
+        // Python -- CPython builds the tuple once, evaluating each element, then iterates
+        // it. Before, ANY non-constant element refused the whole loop, even next to
+        // elements that already unroll as constants. Now each element unrolls on its own
+        // terms: the constant keeps folding (RegisterWrites reads back 1), and the
+        // run-time one copies `v`'s value into the loop variable's own slot (RegisterWrites
+        // has no constant to read back for it, so it answers -1, not the wrong number).
+        var ir = Gen(Prelude +
             "def main():\n" +
             "    v: uint8 = GPIOR0.value\n" +
             "    for p in [1, v]:\n" +
-            "        GPIOR0.value = p\n"));
+            "        GPIOR0.value = p\n");
+        var writes = RegisterWrites(ir);
+        Assert.Equal(2, writes.Count);
+        Assert.Equal(1, writes[0]);
+        Assert.Equal(-1, writes[1]);
+    }
+
+    [Fact]
+    public void ABareFloatLiteralElement_IsStillRefused()
+    {
+        // The float-literal gap (#? -- a separate, pre-existing hole in the constant
+        // evaluator itself, not case 3's "run-time expression" shape) must keep its own
+        // diagnostic: the run-time fallback only takes an element BindUnrolledElement
+        // could not fold for lack of a VALUE, never a bare literal it never tries to fold
+        // as anything but a number.
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Prelude +
+            "def main():\n" +
+            "    for p in [1, 2.5]:\n" +
+            "        pass\n"));
         Assert.Contains("compile-time constants", ex.Message);
     }
 }

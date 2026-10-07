@@ -998,6 +998,38 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The fallback for an element <see cref="BindUnrolledElement"/> could not fold at all --
+    /// not a constant, not a known instance, not a nested sequence: an ordinary run-time
+    /// expression, such as `x - 1` in `for xx in (x - 1, x, x + 1)`. CPython builds the tuple
+    /// by evaluating each element once, in the order written, then iterates it; this is the
+    /// same thing one unrolled iteration at a time, storing the value in the loop variable's
+    /// own slot instead of refusing a tuple literal CPython accepts just because one element
+    /// is not foldable. `BindUnrolledElement` already proved the element is not a pair/number/
+    /// string/instance/nested-sequence shape, and left no instructions behind on the way to
+    /// answering that, so emitting the expression here is the first and only time it runs.
+    /// </summary>
+    private bool BindUnrolledRuntimeElement(string key, Expression elem)
+    {
+        // A bare literal that `BindUnrolledElement` could not fold (today, only a float --
+        // `for a in [1, 2.5]`) is a separate, pre-existing gap in the constant evaluator
+        // itself, not the "non-constant element" case #448 asks for -- `for xx in (x - 1, x,
+        // x + 1)` with a run-time `x`. Leaving a bare literal refused keeps that gap's own
+        // diagnostic (and its column) intact instead of papering over it here.
+        if (elem is TupleExpr or ListExpr or IntegerLiteral or FloatLiteral
+            or StringLiteral or BooleanLiteral) return false;
+        DataType dt = LoopVarStorageType(key, InferExprType(elem));
+        Val v = VisitExpression(elem);
+        Emit(new Copy(v, new Variable(key, dt)));
+        variableTypes[key] = dt;
+        constantVariables.Remove(key);
+        strConstantVariables.Remove(key);
+        floatConstantVariables.Remove(key);
+        constSequenceBindings.Remove(key);
+        variableAliases.Remove(key);
+        return true;
+    }
+
+    /// <summary>
     /// The compile-time TEXT of an element that is not a number: a string literal, a name
     /// bound to one, or a module or class constant such as `board.D2`. Emits nothing -- an
     /// element that turns out to need code is not a constant, and anything it wrote is undone.
@@ -2040,6 +2072,8 @@ public partial class IRGenerator
                             $"each element here is a pair, and '{stmt.VarName}' is one name, so there is " +
                             $"nowhere to put the second value. Write 'for {stmt.VarName}, second in ...' to " +
                             "unpack both.", elem);
+                    else if (BindUnrolledRuntimeElement(varKey, elem))
+                        EmitUnrolledIteration(stmt.Body, llBrk);
                     else throw UserError(
                         "for-in list/tuple iterable elements must be compile-time constants -- a number, "
                         + "a string such as a board pin name, or a name bound to an instance.", elem);
