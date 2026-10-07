@@ -5,6 +5,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import tomlkit as _tomlkit
 
 from src.driver.commands import libraries as cmd
@@ -87,6 +88,52 @@ class TestResolveFromIndexAcceptsUpstream:
 
 
 class TestInstallUpstreamLibrary:
+    @pytest.mark.parametrize(
+        ("manager", "executable", "verb"),
+        (("pip", "pip", "install"), ("uv", "/usr/bin/uv", "add"),
+         ("poetry", "/usr/bin/poetry", "add")),
+    )
+    def test_uses_the_project_manager_recording_path(
+        self, tmp_path, monkeypatch, manager, executable, verb
+    ):
+        project = _project(tmp_path)
+        (tmp_path / ".venv" / "bin").mkdir(parents=True)
+        (tmp_path / ".venv" / "bin" / "python").touch()
+        if manager == "pip":
+            (tmp_path / "requirements.txt").write_text("pymcu-stdlib>=0.1.0b1\n")
+        elif manager == "uv":
+            (tmp_path / "uv.lock").touch()
+            monkeypatch.setattr(cmd, "_uv_bin", lambda: executable)
+        else:
+            (tmp_path / "poetry.lock").touch()
+            monkeypatch.setattr(cmd, "_poetry_bin", lambda: executable)
+
+        monkeypatch.setattr(
+            cmd, "resolve_from_index",
+            lambda project, name, refresh=False: (
+                UPSTREAM_ENTRY, UPSTREAM_ENTRY["distribution"], ""),
+        )
+        monkeypatch.setattr(cmd, "last_index_source", lambda: "bundled")
+        calls = []
+        monkeypatch.setattr(cmd, "_run", lambda args, cwd: calls.append(args) or True)
+        monkeypatch.setattr(
+            cmd, "installed_distribution_version", lambda dist, search: "0.4.25"
+        )
+
+        result = cmd.install_library(project, "adafruit_hcsr04", verify=False)
+
+        assert result.ok, result.message
+        assert calls and verb in calls[0]
+        if manager == "pip":
+            assert calls[0][1:4] == ["-m", "pip", "install"]
+            assert "adafruit-circuitpython-hcsr04>=0.4.25" in (
+                tmp_path / "requirements.txt").read_text()
+        else:
+            assert calls[0][:2] == [executable, "add"]
+            # The mocked manager did not edit the file. The driver must not
+            # duplicate the dependency behind its back.
+            assert "adafruit-circuitpython-hcsr04" not in project.path.read_text()
+
     def test_successful_install(self, tmp_path, monkeypatch):
         project = _project(tmp_path)
         _serve_index(tmp_path, monkeypatch)

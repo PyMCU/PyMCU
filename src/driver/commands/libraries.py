@@ -19,7 +19,8 @@ PyPI carries the bytes; a curated index decides what exists.  PyPI is full of
 Python that cannot compile for a microcontroller, and an install that "works"
 and then breaks the build is worse than one that refuses -- so `pymcu install`
 resolves names against the index at pymcu.org first, checks the target before
-downloading anything, and only then hands the work to uv or pip.
+downloading anything, and only then hands the work to the project's package
+manager.
 
 Nothing is ever installed globally: a library the compiler cannot see in the
 project's .venv might as well not exist.
@@ -438,39 +439,50 @@ def _uv_bin() -> str | None:
     return str(candidate) if candidate.is_file() else None
 
 
+def _poetry_bin() -> str | None:
+    return shutil.which("poetry")
+
+
 def _venv_python(project: Project) -> Path:
     return project.venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 
 
-def _uses_uv_add(project: Project) -> bool:
-    """
-    True when this project is managed by `uv add`.
+def _project_package_manager(project: Project) -> str:
+    """Return the manager that owns this project's dependency graph."""
+    if (project.root / "uv.lock").exists():
+        return "uv"
+    if (project.root / "poetry.lock").exists():
+        return "poetry"
+    # Poetry 2 uses [project] for dependencies. The [tool.poetry] table is
+    # still its ownership marker before the first lock is created, and it also
+    # covers Poetry 1 projects whose dependencies live below that table.
+    if "poetry" in project.doc.get("tool", {}):
+        return "poetry"
+    return "pip"
 
-    That command resolves, installs *and* records the dependency itself, and it
-    creates the environment if there is none -- so when it applies, the driver
-    must not also write to pyproject.toml or it would end up listed twice.
-    """
-    if _uv_bin() is None:
-        return False
-    # A [project] table is standard PEP 621 metadata, not proof that uv owns
-    # the environment. In a project scaffolded with --pkg-manager pip, using
-    # `uv add` re-resolves every existing dependency and can replace editable
-    # installs before the verification build runs. uv.lock is the ownership
-    # marker; otherwise use uv's pip-compatible installer and record the
-    # dependency ourselves.
-    return (project.root / "uv.lock").exists()
+
+def _manager_records_dependencies(project: Project) -> bool:
+    return _project_package_manager(project) in ("uv", "poetry")
+
+
+def _uses_uv_add(project: Project) -> bool:
+    """Compatibility helper for callers that need uv's recording behavior."""
+    return _project_package_manager(project) == "uv" and _uv_bin() is not None
 
 
 def install_command(project: Project, distribution: str, *, pre: bool) -> list[str] | None:
     """The command that installs *distribution* into this project's environment."""
-    uv = _uv_bin()
-    if uv and _uses_uv_add(project):
+    manager = _project_package_manager(project)
+    if manager == "uv":
+        uv = _uv_bin()
+        if uv is None:
+            return None
         return [uv, "add", distribution] + (["--prerelease=allow"] if pre else [])
-    if uv:
-        return (
-            [uv, "pip", "install", "--python", str(project.venv), distribution]
-            + (["--prerelease=allow"] if pre else [])
-        )
+    if manager == "poetry":
+        poetry = _poetry_bin()
+        if poetry is None:
+            return None
+        return [poetry, "add", distribution] + (["--allow-prereleases"] if pre else [])
 
     python = _venv_python(project)
     if not python.exists():
@@ -480,11 +492,17 @@ def install_command(project: Project, distribution: str, *, pre: bool) -> list[s
 
 def uninstall_command(project: Project, distribution: str) -> list[str] | None:
     """The command that removes *distribution* from this project's environment."""
-    uv = _uv_bin()
-    if uv and _uses_uv_add(project):
+    manager = _project_package_manager(project)
+    if manager == "uv":
+        uv = _uv_bin()
+        if uv is None:
+            return None
         return [uv, "remove", distribution]
-    if uv:
-        return [uv, "pip", "uninstall", "--python", str(project.venv), distribution]
+    if manager == "poetry":
+        poetry = _poetry_bin()
+        if poetry is None:
+            return None
+        return [poetry, "remove", distribution]
 
     python = _venv_python(project)
     if not python.exists():
@@ -494,7 +512,14 @@ def uninstall_command(project: Project, distribution: str) -> list[str] | None:
 
 def _needs_environment(project: Project) -> bool:
     """True when the project has no environment and nothing here would create one."""
-    return not project.venv.exists() and not _uses_uv_add(project)
+    if project.venv.exists():
+        return False
+    manager = _project_package_manager(project)
+    if manager == "uv":
+        return _uv_bin() is None
+    if manager == "poetry":
+        return _poetry_bin() is None
+    return True
 
 
 def _run(cmd: list[str], cwd: Path) -> bool:
@@ -509,15 +534,15 @@ def _run(cmd: list[str], cwd: Path) -> bool:
 def _add_dependency(project: Project, requirement: str) -> None:
     """Record the dependency, preserving the file's existing formatting."""
     doc = project.doc
+    req_file = project.root / "requirements.txt"
+    if req_file.exists():
+        lines = req_file.read_text(encoding="utf-8").splitlines()
+        name = requirement.split(">=")[0]
+        lines = [ln for ln in lines if not ln.startswith(name)]
+        lines.append(requirement)
+        req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     if "project" not in doc:
-        req_file = project.root / "requirements.txt"
-        if req_file.exists():
-            lines = req_file.read_text(encoding="utf-8").splitlines()
-            name = requirement.split(">=")[0]
-            lines = [ln for ln in lines if not ln.startswith(name)]
-            lines.append(requirement)
-            req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return
         console.print(
             "[yellow]No \\[project] table and no requirements.txt: the library is "
             "installed but not recorded as a dependency.[/yellow]"
@@ -538,6 +563,12 @@ def _add_dependency(project: Project, requirement: str) -> None:
 
 
 def _remove_dependency(project: Project, distribution: str) -> None:
+    req_file = project.root / "requirements.txt"
+    if req_file.exists():
+        lines = req_file.read_text(encoding="utf-8").splitlines()
+        lines = [ln for ln in lines if not ln.startswith(distribution)]
+        req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     doc = project.doc
     deps = doc.get("project", {}).get("dependencies")
     if deps is None:
@@ -734,8 +765,8 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
                 f"it does not compile for {project.chip}: {detail}"))
         result.log.append(f"Verified: {detail}")
 
-    # `uv add` already recorded it; writing again would list it twice.
-    if not _uses_uv_add(project):
+    # uv and Poetry record it as part of their add command. Pip does not.
+    if not _manager_records_dependencies(project):
         _add_dependency(project, f"{distribution}>={version}")
 
     result.entry = entry
@@ -776,17 +807,19 @@ def install_library(project: Project, name: str, *, verify: bool = True,
             result.log.append("Note: the index marks this library as unmaintained.")
 
     if _needs_environment(project):
+        manager = _project_package_manager(project)
         return result.failed(
-            "This project has no .venv, and nothing here can create one. Run `uv sync` "
-            "(or python -m venv .venv) first: a library the compiler cannot see in the "
-            "project's environment does nothing."
+            f"This {manager}-managed project has no usable environment. Install its "
+            "dependencies first: a library the compiler cannot see in the project's "
+            "environment does nothing."
         )
 
     cmd = install_command(project, distribution, pre=pre)
     if cmd is None:
+        manager = _project_package_manager(project)
         return result.failed(
-            "No .venv in this project and uv is not available. Create the environment "
-            "first (uv sync, or python -m venv .venv)."
+            f"The package manager for this project is {manager}, but its executable or "
+            "environment is not available."
         )
 
     known = {lib.name for lib in _installed_libraries(project)[0]}
@@ -832,8 +865,8 @@ def install_library(project: Project, name: str, *, verify: bool = True,
                 f"it does not compile for {project.chip}: {detail}"))
         result.log.append(f"Verified: {detail}")
 
-    # `uv add` already recorded it; writing again would list it twice.
-    if not _uses_uv_add(project):
+    # uv and Poetry record it as part of their add command. Pip does not.
+    if not _manager_records_dependencies(project):
         _add_dependency(project, f"{distribution}>={lib.version}")
 
     result.library = lib
@@ -861,7 +894,7 @@ def uninstall_library(project: Project, name: str) -> ChangeResult:
     if not _run(cmd, project.root):
         return result.failed(f"Could not uninstall {distribution}.")
 
-    if not _uses_uv_add(project):
+    if not _manager_records_dependencies(project):
         _remove_dependency(project, distribution)
 
     result.message = f"{distribution} removed"

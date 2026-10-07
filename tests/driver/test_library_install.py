@@ -324,11 +324,29 @@ class TestDependencyRecording:
         cmd._remove_dependency(project, "pymcu-lib-dht11")
         assert "pymcu-lib-dht11" not in (tmp_path / "pyproject.toml").read_text()
 
+    def test_pip_project_records_in_requirements(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\ndependencies = []\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\n'
+        )
+        (tmp_path / "requirements.txt").write_text("pymcu-stdlib>=0.1.0b1\n")
+
+        project = cmd._load_project()
+        cmd._add_dependency(project, "pymcu-lib-dht11>=0.2.0")
+
+        assert "pymcu-lib-dht11>=0.2.0" in (
+            tmp_path / "requirements.txt").read_text()
+        assert "pymcu-lib-dht11" not in (tmp_path / "pyproject.toml").read_text()
+
+        cmd._remove_dependency(project, "pymcu-lib-dht11")
+        assert "pymcu-lib-dht11" not in (tmp_path / "requirements.txt").read_text()
+
 
 class TestInstallerChoice:
     """
-    `uv add` records the dependency itself; the driver must not write it twice,
-    and a rollback has to undo the pyproject edit uv already made.
+    The project's lock or Poetry marker owns manager selection. Merely finding
+    uv on PATH must never turn a pip or Poetry project into a uv project.
     """
 
     def _project(self, tmp_path: Path, body: str) -> cmd.Project:
@@ -344,22 +362,74 @@ class TestInstallerChoice:
         assert cmd.install_command(project, "pymcu-lib-dht11", pre=True)[1] == "add"
         assert cmd.uninstall_command(project, "pymcu-lib-dht11")[1] == "remove"
 
-    def test_uv_pip_preserves_a_pip_managed_pep621_project(self, tmp_path, monkeypatch):
+    def test_poetry_add_is_used_for_a_poetry_locked_project(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cmd, "_poetry_bin", lambda: "/usr/bin/poetry")
+        project = self._project(
+            tmp_path,
+            '[project]\nname = "demo"\n\n[tool.pymcu]\nboard = "arduino_uno"\n',
+        )
+        (tmp_path / "poetry.lock").touch()
+
+        assert cmd._project_package_manager(project) == "poetry"
+        assert cmd.install_command(project, "pymcu-lib-dht11", pre=True) == [
+            "/usr/bin/poetry", "add", "pymcu-lib-dht11", "--allow-prereleases",
+        ]
+        assert cmd.uninstall_command(project, "pymcu-lib-dht11") == [
+            "/usr/bin/poetry", "remove", "pymcu-lib-dht11",
+        ]
+
+    def test_poetry_table_is_used_before_the_first_lock(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cmd, "_poetry_bin", lambda: "/usr/bin/poetry")
+        project = self._project(
+            tmp_path,
+            '[project]\nname = "demo"\n\n'
+            '[tool.poetry]\npackage-mode = false\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\n',
+        )
+
+        assert cmd._project_package_manager(project) == "poetry"
+        assert cmd.install_command(project, "pymcu-lib-dht11", pre=False)[1] == "add"
+
+    def test_legacy_poetry_dependencies_identify_poetry(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cmd, "_poetry_bin", lambda: "/usr/bin/poetry")
+        project = self._project(
+            tmp_path,
+            '[tool.poetry]\nname = "demo"\nversion = "0.1.0"\n'
+            '[tool.poetry.dependencies]\npython = ">=3.11"\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\n',
+        )
+
+        assert cmd._project_package_manager(project) == "poetry"
+        assert cmd.install_command(project, "pymcu-lib-dht11", pre=False)[1] == "add"
+
+    def test_pip_is_used_for_a_pip_managed_pep621_project(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(cmd, "_uv_bin", lambda: "/usr/bin/uv")
         project = self._project(
             tmp_path,
             '[project]\nname = "demo"\n\n[tool.pymcu]\nboard = "arduino_uno"\n',
         )
+        python = tmp_path / ".venv" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.touch()
 
-        assert not cmd._uses_uv_add(project)
-        assert "pip" in cmd.install_command(project, "pymcu-lib-dht11", pre=True)
+        assert cmd._project_package_manager(project) == "pip"
+        assert cmd.install_command(project, "pymcu-lib-dht11", pre=True) == [
+            str(project.venv / "bin" / "python"), "-m", "pip", "install",
+            "pymcu-lib-dht11", "--pre",
+        ]
 
-    def test_uv_pip_is_used_without_a_project_table(self, tmp_path, monkeypatch):
+    def test_pip_is_used_without_a_project_table(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(cmd, "_uv_bin", lambda: "/usr/bin/uv")
         project = self._project(tmp_path, '[tool.pymcu]\nboard = "arduino_uno"\n')
-        assert not cmd._uses_uv_add(project)
+        python = tmp_path / ".venv" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.touch()
+        assert cmd._project_package_manager(project) == "pip"
         assert "pip" in cmd.install_command(project, "pymcu-lib-dht11", pre=True)
 
     def test_no_environment_and_no_uv_is_reported(self, tmp_path, monkeypatch):
