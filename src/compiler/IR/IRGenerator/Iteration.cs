@@ -1008,7 +1008,7 @@ public partial class IRGenerator
     /// string/instance/nested-sequence shape, and left no instructions behind on the way to
     /// answering that, so emitting the expression here is the first and only time it runs.
     /// </summary>
-    private bool BindUnrolledRuntimeElement(string key, Expression elem)
+    private bool BindUnrolledRuntimeElement(string key, Expression elem, Val? preEvaluated = null)
     {
         // A bare literal that `BindUnrolledElement` could not fold (today, only a float --
         // `for a in [1, 2.5]`) is a separate, pre-existing gap in the constant evaluator
@@ -1018,7 +1018,12 @@ public partial class IRGenerator
         if (elem is TupleExpr or ListExpr or IntegerLiteral or FloatLiteral
             or StringLiteral or BooleanLiteral) return false;
         DataType dt = LoopVarStorageType(key, InferExprType(elem));
-        Val v = VisitExpression(elem);
+        // preEvaluated, when given, is this element's value already evaluated once in the
+        // tuple/list's own source order, before the loop started (VisitFor's pre-pass) --
+        // CPython builds the literal eagerly, so this must not call VisitExpression a second
+        // time: a side-effecting element (`bump()`) would run twice, and a `break` on an
+        // earlier iteration must not skip a later element's effect it already had.
+        Val v = preEvaluated ?? VisitExpression(elem);
         Emit(new Copy(v, new Variable(key, dt)));
         variableTypes[key] = dt;
         constantVariables.Remove(key);
@@ -2023,8 +2028,44 @@ public partial class IRGenerator
                 string? varKey2 = string.IsNullOrEmpty(stmt.Var2Name) ? null
                     : QualifyLoopVar(stmt.Var2Name);
 
-                foreach (var elem in elems)
+                // CPython builds the tuple/list literal EAGERLY: every element is evaluated
+                // once, in source order, before the loop -- or anything in its body -- runs at
+                // all. Evaluating a run-time element lazily, right before ITS OWN unrolled
+                // iteration, let an earlier iteration's `break` skip a later element's side
+                // effects entirely (`for v in (bump(), bump(), bump()):` with a `break` on the
+                // first iteration never called the third `bump()`, so the counter it bumps
+                // read 2, not 3). Only the single-name form needs this: the pair-unpack path
+                // below already requires every element to fold, so it has no run-time element
+                // to evaluate early.
+                var preEvaluated = new Val?[elems.Count];
+                if (varKey2 == null)
                 {
+                    for (int pi = 0; pi < elems.Count; pi++)
+                    {
+                        var pelem = elems[pi];
+                        if (pelem is ListExpr or TupleExpr) continue; // nested/pair shape, bound in place below
+                        if (BindUnrolledElement(varKey, pelem)) continue; // constant/instance: no side effect to order
+                        if (pelem is IntegerLiteral or FloatLiteral or StringLiteral or BooleanLiteral)
+                            continue; // reported as a refusal in place below, same as before
+                        DataType peDt = LoopVarStorageType(varKey, InferExprType(pelem));
+                        Val peVal = VisitExpression(pelem);
+                        Temporary peSnap = MakeTemp(peDt);
+                        Emit(new Copy(peVal, peSnap));
+                        preEvaluated[pi] = peSnap;
+                    }
+                    // BindUnrolledElement above left a binding for the last element it proved
+                    // constant; the real loop below rebinds fresh per iteration, so clear it
+                    // rather than let this pre-pass's leftover leak into the first iteration.
+                    constantVariables.Remove(varKey);
+                    strConstantVariables.Remove(varKey);
+                    floatConstantVariables.Remove(varKey);
+                    variableAliases.Remove(varKey);
+                    constSequenceBindings.Remove(varKey);
+                }
+
+                for (int ei = 0; ei < elems.Count; ei++)
+                {
+                    var elem = elems[ei];
                     if (varKey2 != null)
                     {
                         // Refuse by naming what the element IS and how many names it carries,
@@ -2072,7 +2113,7 @@ public partial class IRGenerator
                             $"each element here is a pair, and '{stmt.VarName}' is one name, so there is " +
                             $"nowhere to put the second value. Write 'for {stmt.VarName}, second in ...' to " +
                             "unpack both.", elem);
-                    else if (BindUnrolledRuntimeElement(varKey, elem))
+                    else if (BindUnrolledRuntimeElement(varKey, elem, preEvaluated[ei]))
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     else throw UserError(
                         "for-in list/tuple iterable elements must be compile-time constants -- a number, "
@@ -2080,8 +2121,13 @@ public partial class IRGenerator
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
-                constantVariables.Remove(varKey);
-                strConstantVariables.Remove(varKey);
+                // Not constantVariables.Remove(varKey)/strConstantVariables.Remove(varKey): CPython
+                // leaves the loop variable bound to the LAST element once the loop ends, and for a
+                // literal tuple/list that element is always known at compile time (fixed length, no
+                // "did the loop run" to ask). Stripping the binding here answered `print(v)` after
+                // `for v in (state[0], 7): pass` with a stale value from an EARLIER, non-final
+                // iteration's leftover storage instead of 7 -- wrong even with every element
+                // constant (`for v in (3, 7): pass` read back 255, garbage, not 7).
                 variableAliases.Remove(varKey);
                 instanceClasses.Remove(varKey);
                 if (varKey2 != null)

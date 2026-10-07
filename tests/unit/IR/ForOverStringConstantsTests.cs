@@ -169,6 +169,49 @@ public class ForOverStringConstantsTests
     }
 
     [Fact]
+    public void RunTimeElements_AreAllEvaluatedBeforeTheLoopStarts()
+    {
+        // CPython builds (bump(), bump(), bump()) EAGERLY: all three calls happen, in
+        // order, before the loop -- or its body's `break` -- ever runs. Evaluating each
+        // element lazily, right before its own unrolled iteration, let an earlier
+        // iteration's `break` skip a later element's call entirely: the third bump()
+        // was never emitted, so a counter it bumps read one short.
+        var ir = Gen(Prelude +
+            "counter = bytearray([0])\n" +
+            "def bump() -> uint8:\n" +
+            "    counter[0] = counter[0] + 1\n" +
+            "    return counter[0]\n" +
+            "def main():\n" +
+            "    for v in (bump(), bump(), bump()):\n" +
+            "        GPIOR0.value = v\n" +
+            "        if v == 1:\n" +
+            "            continue\n" +
+            "        break\n");
+
+        var calls = ir.Functions.Last(f => f.Name == "main").Body
+            .OfType<Call>().Count(c => c.FunctionName == "bump");
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
+    public void TheLoopVariable_KeepsTheLastElementsValueAfterTheLoop()
+    {
+        // CPython leaves the loop variable bound to the LAST element once a for-loop
+        // over a literal tuple/list ends -- `for v in (state[0], 7): pass; print(v)`
+        // prints 7, the tuple's own last value, not whatever the FIRST (run-time)
+        // element's leftover storage happens to hold. The all-constant case has the
+        // exact same shape: `for v in (3, 7): pass; print(v)` must answer 7 too.
+        var ir = Gen(Prelude +
+            "def main():\n" +
+            "    for v in (3, 7):\n" +
+            "        pass\n" +
+            "    GPIOR0.value = v\n");
+
+        var writes = RegisterWrites(ir);
+        Assert.Contains(7, writes);
+    }
+
+    [Fact]
     public void ABareFloatLiteralElement_IsStillRefused()
     {
         // The float-literal gap (#? -- a separate, pre-existing hole in the constant
