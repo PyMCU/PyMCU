@@ -6507,6 +6507,28 @@ public partial class IRGenerator
             if (k != null) localConstantValues.Remove(k);
     }
 
+    /// <summary>
+    /// Drops every spelling of a name from the compile-time-constant tracking maps a `for`
+    /// loop variable can land in: it is about to be rebound by a fresh loop, so whatever an
+    /// EARLIER loop over a reused bare name left behind must not leak into this one.
+    /// </summary>
+    private void ForgetLoopVariableConstantState(string bareName)
+    {
+        foreach (var k in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + bareName,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + bareName,
+            bareName,
+        })
+        {
+            if (k == null) continue;
+            constantVariables.Remove(k);
+            strConstantVariables.Remove(k);
+            floatConstantVariables.Remove(k);
+            constSequenceBindings.Remove(k);
+        }
+    }
+
     private void InvalidateAliasesForWrite(string name)
     {
         foreach (var k in new[]
