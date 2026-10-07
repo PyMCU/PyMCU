@@ -4763,12 +4763,30 @@ public partial class IRGenerator
             // 8)` called twice refused the SECOND call only: "main.buf" matched no exclusion,
             // fell through to variableTypes.ContainsKey("main.buf") -- a registration left by
             // the FIRST call's own argument marshal -- and a real buffer looked like a scalar.
+            //
+            // variableAliases.ContainsKey(key) && !valueTrackingAliases.Contains(key), not a
+            // bare ContainsKey: `one = buf[0]` makes `one` a VALUE-TRACKING alias of the temp
+            // that carried the loaded byte (Assign.cs's `value is Temporary` branch sets this
+            // for every such assignment, structural or not) -- it is filed in variableAliases
+            // for constant-folding, but `one` genuinely holds a number, not a buffer. Treating
+            // every alias as "not a scalar" let `first(one)` -- buf[0]'s value passed to a
+            // bytearray parameter -- compile silently instead of refusing: the exclusion must
+            // only fire for a STRUCTURAL alias (an instance, a buffer forwarded under another
+            // name), which valueTrackingAliases is exactly the set that is NOT.
             if (arraySizes.ContainsKey(key) || constSequenceBindings.ContainsKey(key)
                 || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key)
-                || variableAliases.ContainsKey(key) || IsBufferStorageName(key)
+                || (variableAliases.ContainsKey(key) && !valueTrackingAliases.Contains(key))
+                || IsBufferStorageName(key)
                 || TryResolveArrayStorageKey(key, out _))
                 return false;
-            if (variableTypes.ContainsKey(key)) return true;
+            // A value-tracking alias has no entry of its own in variableTypes -- its type
+            // lives on the temp it points at (`one`'s is on `tmp_24`, the load `buf[0]`
+            // produced) -- so checking variableTypes(key) alone missed every one of them
+            // and `one = buf[0]` fell through this whole loop unanswered. The alias exists
+            // ONLY for a number by construction (Assign.cs's value-tracking path never
+            // creates one for an instance or a buffer forward), so its presence answers
+            // "scalar" directly, the same as a real variableTypes entry would.
+            if (valueTrackingAliases.Contains(key) || variableTypes.ContainsKey(key)) return true;
         }
         return false;
     }

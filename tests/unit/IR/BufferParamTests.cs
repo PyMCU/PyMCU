@@ -329,4 +329,27 @@ public class BufferParamTests
 
         Assert.NotNull(ir);
     }
+
+    // `one = buf[0]` makes `one` a VALUE-TRACKING alias of the temp that carried the
+    // loaded byte (Assign.cs's `value is Temporary` branch files one for every such
+    // assignment, not only a structural one). NameIsScalarAtThisSite treated ANY
+    // presence in variableAliases as "not a scalar", so `first(one)` -- one element,
+    // passed where the whole buffer belongs -- compiled silently instead of refusing:
+    // `one` held 10, used as an SRAM address, and the call read back whatever byte
+    // sits there.
+    [Fact]
+    public void AValueTrackingAliasOfAnElement_PassedToABufferParameter_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(Preamble +
+            "def first(buf: bytearray) -> uint8:\n" +
+            "    return buf[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20, 30])\n" +
+            "    one: uint8 = buf[0]\n" +
+            "    a: uint8 = first(one)\n"));
+
+        Assert.Contains("first", ex.Message);
+        Assert.Contains("'one'", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
 }
