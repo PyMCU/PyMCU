@@ -161,6 +161,20 @@ public class BuiltinArithmeticTests
         Assert.Equal(DataType.INT32, ((Variable)q.Dst).Type);
     }
 
+    [Fact]
+    public void DivmodOfInt32MinLiteralByInt8_RefusesWhenTheQuotientCanExceedInt32()
+    {
+        // Same refusal as above, but the dividend is the LITERAL -2147483648: every
+        // negative constant was sized INT16 whatever its value, so the rank formula
+        // never asked for a width above int32 and the ValRange refusal was skipped --
+        // the pair compiled to int32 and the quotient 2147483648 printed as
+        // -2147483648. The literal must enter with its own range.
+        var ex = Assert.ThrowsAny<Exception>(() => Gen(
+            "b: int8 = int8(GPIOR0.value) - 1\n" +
+            "q, r = divmod(-2147483648, b)\n"));
+        Assert.Contains("can exceed int32", ex.Message);
+    }
+
     // ---- divmod() zero-divisor and bare-value bugs found by the float-edges campaign -------
     //
     // EmitDivmodBuiltin used to build its Binary(FloorDiv)/Binary(Mod) nodes directly instead
