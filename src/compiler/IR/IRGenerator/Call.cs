@@ -4690,7 +4690,20 @@ public partial class IRGenerator
     private void RefuseNumberForBufferParam(string calleeName, string paramName, string? declared,
                                              Expression? arg, Val? evaluated)
     {
-        if (!DeclaredTypeIsBuffer(declared) || ArgumentIsBuffer(arg, evaluated)
+        // Not ArgumentIsBuffer alone: its shadowing guard (`arg is VariableExpr && NameIsLocalScalar
+        // (bare name)`) asks whether the BARE spelling is shadowed by a local *at the current
+        // inline depth*, and two sibling expansions of the same @inline method share one
+        // generated prefix (`inline1.scan.` for every call to `d.scan(...)` at this call depth,
+        // not one per call site). The first expansion's own parameter binding registers
+        // `inline1.scan.buf` in variableTypes; the second expansion then reads that leftover
+        // entry as "buf is shadowed here" and NameIsLocalScalar silently flips from false to
+        // true -- same arguments, same prefix, different answer. `evaluated` itself still names
+        // the caller's real storage both times, so resolving ITS name directly is the fix: this
+        // mirrors the check's own target name that TryResolveArrayStorageKey's doc comment calls
+        // the bare/qualified mismatch (PyMCU#258), not the shadow question.
+        if (!DeclaredTypeIsBuffer(declared)
+            || ArgumentIsBuffer(arg, evaluated)
+            || (evaluated is Variable realArrVar && TryResolveArrayStorageKey(realArrVar.Name, out _))
             || !ArgumentIsScalarElement(arg)) return;
         string what = arg switch
         {
@@ -4740,9 +4753,20 @@ public partial class IRGenerator
                  })
         {
             if (key == null) continue;
+            // TryResolveArrayStorageKey, not a bare arraySizes.ContainsKey(key): a module-level
+            // array declared `buf: uint8[N]` registers BARE ("buf") in arraySizes, but a read
+            // inside a function or an inline expansion arrives qualified ("main.buf") -- the
+            // exact mismatch TryResolveArrayStorageKey's own comment documents (PyMCU#258).
+            // IsBufferStorageName alone is not enough here: it additionally requires SRAM/
+            // variable-index membership, which a small array nothing ever subscripts by a
+            // runtime index (this one) never gets. Without the resolved-key check, `d.scan(buf,
+            // 8)` called twice refused the SECOND call only: "main.buf" matched no exclusion,
+            // fell through to variableTypes.ContainsKey("main.buf") -- a registration left by
+            // the FIRST call's own argument marshal -- and a real buffer looked like a scalar.
             if (arraySizes.ContainsKey(key) || constSequenceBindings.ContainsKey(key)
                 || listLiteralParams.ContainsKey(key) || bytearrayParams.Contains(key)
-                || variableAliases.ContainsKey(key))
+                || variableAliases.ContainsKey(key) || IsBufferStorageName(key)
+                || TryResolveArrayStorageKey(key, out _))
                 return false;
             if (variableTypes.ContainsKey(key)) return true;
         }

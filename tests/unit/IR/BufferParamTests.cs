@@ -302,4 +302,31 @@ public class BufferParamTests
             i => i is Call c && c.FunctionName == "takesbuf"
                  && c.Args.Any(a => a is ArrayBase));
     }
+
+    // Two sibling expansions of the SAME @inline method, both passed the real buffer by
+    // name: a false positive this refusal must not reintroduce. Two calls at the same
+    // inline depth share one generated prefix (`inline1.scan.` for both, not one per call
+    // site), so the second expansion's own parameter binding can look, through the shared
+    // prefix, like the first expansion's leftover state shadowing the name -- the refusal
+    // must resolve the argument's real storage directly rather than trust that question.
+    [Fact]
+    public void TheWholeBuffer_PassedToTheSameInlineMethodTwice_StillCompiles()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8, inline\n\n" +
+            "class Dev:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        pass\n" +
+            "    @inline\n" +
+            "    def scan(self, buf: bytearray, n: uint8) -> uint8:\n" +
+            "        return buf[0] + n\n" +
+            "def main():\n" +
+            "    d = Dev()\n" +
+            "    buf: uint8[8] = bytearray(8)\n" +
+            "    n: uint8 = d.scan(buf, 8)\n" +
+            "    c: uint8 = d.scan(buf, 8)\n");
+
+        Assert.NotNull(ir);
+    }
 }
