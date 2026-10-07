@@ -212,6 +212,29 @@ public class ForOverStringConstantsTests
     }
 
     [Fact]
+    public void ALoopVariable_DoesNotLeakIntoALaterLoopThatReusesItsBareName()
+    {
+        // The fix above (TheLoopVariable_KeepsTheLastElementsValueAfterTheLoop) leaves the
+        // tuple's last element bound to "x" in constantVariables ON PURPOSE once ITS loop
+        // ends -- CPython does the same. A LATER, unrelated for-loop that rebinds the same
+        // bare name over a genuinely run-time sequence (enumerate() over a fixed array,
+        // never unrolled as a constant) must not inherit that leftover: it read back 173
+        // every iteration instead of the array's own elements (PyMCU "bytes-ops" fixture,
+        // Codex-review regression).
+        var ir = Gen(Prelude +
+            "data: uint8[3] = [10, 20, 30]\n" +
+            "def main():\n" +
+            "    for x in (1, 173):\n" +
+            "        pass\n" +
+            "    for i, x in enumerate(data):\n" +
+            "        GPIOR0.value = x\n");
+
+        var writes = RegisterWrites(ir);
+        Assert.Equal(3, writes.Count);
+        Assert.DoesNotContain(173, writes);
+    }
+
+    [Fact]
     public void ABareFloatLiteralElement_IsStillRefused()
     {
         // The float-literal gap (#? -- a separate, pre-existing hole in the constant
