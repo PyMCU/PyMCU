@@ -184,6 +184,48 @@ public class InstanceSequenceElementTests
     }
 
     [Fact]
+    public void ASeqIndexedReceiverCallReturningAnInstance_InATupleReturn_IsRefused()
+    {
+        // `factories[0].make()`: the receiver is an element of a compile-time
+        // list of instances -- `factories__0` holds the Factory the index names --
+        // but the receiver lookup only knew the `Cls[N]` spelling of an index, so
+        // the method's `-> Counter` went unseen and the instance rode a scalar
+        // slot to the caller's `bool(a)` False where CPython holds the object.
+        var msg = Refusal(Counter +
+            "class Factory:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._x = 0\n\n" +
+            "    def make(self) -> Counter:\n" +
+            "        return Counter(0)\n\n" +
+            "factories = [Factory()]\n\n" +
+            "def f():\n" +
+            "    return factories[0].make(), 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void CopiedInstanceArrayTupleResult_BareElementRead_IsRefused()
+    {
+        // `xs: Pair[1]` is a callee-local instance array the tuple unpack copies
+        // home. The copy used to land only the bytes: a Cls[N] also lives in
+        // arraysWithVariableIndex and moduleSramArrays, so EmitSequenceCopy took
+        // the SRAM branch and returned before instanceArrayClass propagated --
+        // `a[0]` then read the slot's first byte (False) where the alias kept
+        // the element's class and refused, which is what CPython's `True` asks.
+        var msg = Refusal(Pair +
+            "def f():\n" +
+            "    xs: Pair[1] = [Pair(9, 9)]\n" +
+            "    xs[0] = Pair(0, 7)\n" +
+            "    return xs, 0\n\n" +
+            "a, _ = f()\n" +
+            "x = a[0]\n");
+        Assert.Contains("a[i]", msg);
+        Assert.Contains("Pair", msg);
+    }
+
+    [Fact]
     public void AnnotatedListInitWithAnInstance_IsRefused()
     {
         // `xs: list[uint8] = [c]` built the heap payload straight from the

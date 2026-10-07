@@ -195,6 +195,31 @@ public class TupleBufferReturnTests
     }
 
     [Fact]
+    public void ModuleBufferReturnedFromAnInlineCallee_AliasesTheModuleStorage()
+    {
+        // `return buf` names the module's buffer -- `f` never binds it -- so `a`
+        // must alias `buf` itself, not the `inline1.f.buf` expansion spelling
+        // nobody writes. The module's qualified spelling `main.buf` is the same
+        // object (the replay alias proves it), yet LocalScopeBinds counted it as
+        // the callee's own binding: the resolution declined, the unpack aliased
+        // `a` to the phantom expansion key, and `a[0]` read 0 where CPython
+        // reads the 9 the module stored.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "buf: bytearray = bytearray([9])\n\n" +
+            "def f(n: uint8):\n" +
+            "    return buf, 0\n\n" +
+            "a, x = f(1)\n" +
+            "v = a[0]\n");
+
+        // `a[0]` loads the module array `buf` itself. Under the bug it went to
+        // the expansion spelling, so no ArrayLoad names `buf` at all.
+        Assert.Contains(ir.Functions.SelectMany(fn => fn.Body).OfType<ArrayLoad>(),
+            l => l.Index is Constant { Value: 0 } && l.ArrayName == "buf");
+        Assert.DoesNotContain(ArraysTouched(ir), n => n == "inline1.f.buf");
+    }
+
+    [Fact]
     public void AnnotatedCalleeLocalArrayReturnedInTuple_CopiesIntoEachCallerTarget()
     {
         // `buf: uint8[1]` is born inside the callee, so each unpack target takes
