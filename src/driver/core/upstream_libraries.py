@@ -39,6 +39,65 @@ from pathlib import Path
 from .libraries import LAYERS, read_cached_library_index
 
 
+# The upstream entries this driver release was measured against. Keeping the
+# bootstrap rows beside the staging code makes a plain pip install usable on
+# the first build, including offline, while the fetched index can update or
+# replace any row by distribution name.
+BUNDLED_UPSTREAM_ENTRIES = (
+    {
+        "kind": "upstream",
+        "name": "adafruit_framebuf",
+        "distribution": "adafruit-circuitpython-framebuf",
+        "version": "1.6.12",
+        "summary": "CircuitPython framebuf module.",
+        "repository": "https://github.com/adafruit/Adafruit_CircuitPython_framebuf",
+        "license": "MIT",
+        "provides": ["adafruit_framebuf"],
+        "layer": "circuitpython",
+        "measured": {
+            "compiler": "0.1.0b1",
+            "date": "2026-09-21",
+            "targets": {"atmega328p": {"build": "ok", "flash": 442}},
+        },
+        "status": "active",
+    },
+    {
+        "kind": "upstream",
+        "name": "adafruit_bus_device",
+        "distribution": "adafruit-circuitpython-busdevice",
+        "version": "5.2.17",
+        "summary": "CircuitPython bus device classes to manage bus sharing.",
+        "repository": "https://github.com/adafruit/Adafruit_CircuitPython_BusDevice",
+        "license": "MIT",
+        "provides": ["adafruit_bus_device"],
+        "layer": "circuitpython",
+        "measured": {
+            "compiler": "0.1.0b1",
+            "date": "2026-09-21",
+            "targets": {"atmega328p": {"build": "ok", "flash": 796}},
+        },
+        "status": "active",
+    },
+    {
+        "kind": "upstream",
+        "name": "adafruit_ssd1306",
+        "distribution": "adafruit-circuitpython-ssd1306",
+        "version": "2.12.24",
+        "summary": "CircuitPython library for SSD1306 OLED displays.",
+        "repository": "https://github.com/adafruit/Adafruit_CircuitPython_SSD1306",
+        "license": "MIT",
+        "provides": ["adafruit_ssd1306"],
+        "layer": "circuitpython",
+        "measured": {
+            "compiler": "0.1.0b1",
+            "date": "2026-09-21",
+            "targets": {"atmega328p": {"build": "ok", "flash": 6244}},
+        },
+        "status": "active",
+    },
+)
+
+
 @dataclass(frozen=True)
 class UpstreamEntry:
     """One `kind: "upstream"` row of a (fetched or cached) library index."""
@@ -77,6 +136,27 @@ def upstream_entries(index: dict) -> list[UpstreamEntry]:
 
 def _normalize(name: str) -> str:
     return name.strip().lower().replace("_", "-")
+
+
+def with_bundled_upstream(index: dict) -> dict:
+    """Overlay fetched rows on the upstream baseline shipped by the driver."""
+    source = index if isinstance(index, dict) else {}
+    rows: dict[str, dict] = {
+        _normalize(str(entry["distribution"])): dict(entry)
+        for entry in BUNDLED_UPSTREAM_ENTRIES
+    }
+    order = list(rows)
+    for raw in source.get("libraries", []):
+        if not isinstance(raw, dict):
+            continue
+        distribution = _normalize(str(raw.get("distribution", "")))
+        key = distribution or f"__row_{len(order)}"
+        if key not in rows:
+            order.append(key)
+        rows[key] = raw
+    merged = dict(source)
+    merged["libraries"] = [rows[key] for key in order]
+    return merged
 
 
 def find_distribution(distribution: str, search_path: list[str] | None) -> Distribution | None:
@@ -118,6 +198,34 @@ def discover_installed_upstream(entries: list[UpstreamEntry],
                          UpstreamEntry(entry.name, entry.distribution, version,
                                        entry.provides, entry.layer, entry.repository))
     return installed
+
+
+def installed_upstream_candidates(search_path: list[str] | None,
+                                  modules: set[str]) -> list[str]:
+    """
+    Installed distributions that may need the upstream index to be staged.
+
+    Adafruit's CircuitPython distributions are the upstream family PyMCU
+    currently indexes. Their distribution prefix is stable even though their
+    import names are not (``adafruit-circuitpython-busdevice`` provides
+    ``adafruit_bus_device``). RECORD says whether one of them provides a
+    module imported by the entry file, which is enough to decide whether a
+    build needs to bootstrap or refresh the index. The index still supplies
+    the trusted module list and layer; this function does not guess either.
+    """
+    try:
+        found = distributions(path=search_path) if search_path else distributions()
+    except Exception:
+        return []
+
+    candidates: list[str] = []
+    for dist in found:
+        name = (dist.metadata["Name"] if dist.metadata else "") or ""
+        normalized = _normalize(name)
+        if (normalized.startswith("adafruit-circuitpython-")
+                and any(_module_path(dist, module) is not None for module in modules)):
+            candidates.append(normalized)
+    return sorted(set(candidates))
 
 
 def _module_path(dist: Distribution, module: str) -> Path | None:
@@ -189,6 +297,7 @@ def stage_modules(entry: UpstreamEntry, search_path: list[str] | None,
 
 def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[str],
                                 stage_root: Path,
+                                index: dict | None = None,
                                 enforce: bool = True) -> tuple[list[str], list[str], list[str]]:
     """
     Include paths, skip notes and errors for the upstream libraries in play.
@@ -205,7 +314,7 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
     flag already does for manifest libraries: the index measures compatibility
     by compiling, not by trusting the declaration.
     """
-    index = _current_index()
+    index = _current_index() if index is None else with_bundled_upstream(index)
     entries = upstream_entries(index)
     if not entries:
         return [], [], []
@@ -239,7 +348,9 @@ def _current_index() -> dict:
     override = os.environ.get("PYMCU_UPSTREAM_INDEX")
     if override:
         try:
-            return json.loads(Path(override).read_text(encoding="utf-8"))
+            return with_bundled_upstream(
+                json.loads(Path(override).read_text(encoding="utf-8"))
+            )
         except (OSError, json.JSONDecodeError):
-            return {}
-    return read_cached_library_index()
+            return with_bundled_upstream({})
+    return with_bundled_upstream(read_cached_library_index())

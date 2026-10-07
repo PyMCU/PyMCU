@@ -335,13 +335,25 @@ class TestInstallerChoice:
         (tmp_path / "pyproject.toml").write_text(body)
         return cmd._load_project()
 
-    def test_uv_add_is_used_for_a_pep621_project(self, tmp_path, monkeypatch):
+    def test_uv_add_is_used_for_a_uv_locked_project(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(cmd, "_uv_bin", lambda: "/usr/bin/uv")
         project = self._project(tmp_path, '[project]\nname = "demo"\n\n[tool.pymcu]\nboard = "arduino_uno"\n')
+        (tmp_path / "uv.lock").touch()
         assert cmd._uses_uv_add(project)
         assert cmd.install_command(project, "pymcu-lib-dht11", pre=True)[1] == "add"
         assert cmd.uninstall_command(project, "pymcu-lib-dht11")[1] == "remove"
+
+    def test_uv_pip_preserves_a_pip_managed_pep621_project(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cmd, "_uv_bin", lambda: "/usr/bin/uv")
+        project = self._project(
+            tmp_path,
+            '[project]\nname = "demo"\n\n[tool.pymcu]\nboard = "arduino_uno"\n',
+        )
+
+        assert not cmd._uses_uv_add(project)
+        assert "pip" in cmd.install_command(project, "pymcu-lib-dht11", pre=True)
 
     def test_uv_pip_is_used_without_a_project_table(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

@@ -197,8 +197,10 @@ class TestLibrariesListingIncludesUpstream:
                             lambda entries, search: entries)
 
         found = cmd._installed_upstream(project)
-        assert len(found) == 1
-        assert found[0].distribution == "adafruit-circuitpython-hcsr04"
+        assert any(
+            entry.distribution == "adafruit-circuitpython-hcsr04"
+            for entry in found
+        )
 
     def test_no_cache_means_nothing_upstream(self, tmp_path, monkeypatch):
         project = _project(tmp_path)

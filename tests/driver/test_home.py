@@ -136,10 +136,16 @@ class TestPayloads:
         names = [b["name"] for g in body["groups"] for b in g["boards"]]
         assert "arduino_uno" in names and "raspberry_pi_pico" in names
 
-    def test_an_empty_index_is_not_an_error(self, server):
+    def test_the_shipped_upstream_index_is_available_without_network(self, server):
         base, token, _root = server
         _status, body = _get(f"{base}/api/index", token=token)
-        assert body["libraries"] == []
+        assert {
+            entry["distribution"] for entry in body["libraries"]
+        } == {
+            "adafruit-circuitpython-busdevice",
+            "adafruit-circuitpython-framebuf",
+            "adafruit-circuitpython-ssd1306",
+        }
         assert body["error"] == ""
 
 

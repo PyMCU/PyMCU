@@ -59,7 +59,7 @@ from ..core.libraries import (
     site_packages_of,
     ssl_context,
 )
-from ..core.upstream_libraries import installed_distribution_version
+from ..core.upstream_libraries import installed_distribution_version, with_bundled_upstream
 
 console = Console()
 
@@ -227,7 +227,7 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
 
 
 def _entries(index: dict) -> list[dict]:
-    entries = index.get("libraries", [])
+    entries = with_bundled_upstream(index).get("libraries", [])
     return [e for e in entries if isinstance(e, dict)]
 
 
@@ -452,7 +452,13 @@ def _uses_uv_add(project: Project) -> bool:
     """
     if _uv_bin() is None:
         return False
-    return (project.root / "uv.lock").exists() or "project" in project.doc
+    # A [project] table is standard PEP 621 metadata, not proof that uv owns
+    # the environment. In a project scaffolded with --pkg-manager pip, using
+    # `uv add` re-resolves every existing dependency and can replace editable
+    # installs before the verification build runs. uv.lock is the ownership
+    # marker; otherwise use uv's pip-compatible installer and record the
+    # dependency ourselves.
+    return (project.root / "uv.lock").exists()
 
 
 def install_command(project: Project, distribution: str, *, pre: bool) -> list[str] | None:
@@ -970,7 +976,7 @@ def _installed_upstream(project: Project) -> list:
     """
     from ..core.upstream_libraries import discover_installed_upstream, upstream_entries
 
-    index = core_libraries.read_cached_library_index()
+    index = with_bundled_upstream(core_libraries.read_cached_library_index())
     entries = upstream_entries(index)
     if not entries:
         return []

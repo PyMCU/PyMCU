@@ -51,9 +51,67 @@ from ..core.libraries import (
     search_path_for_project as library_search_path,
 )
 from ..core.update_check import get_available_updates, get_installed_pymcu_versions
-from ..core.upstream_libraries import resolve_upstream_for_target
+from ..core import upstream_libraries
 
 console = Console()
+
+
+def _source_imports(path: Path) -> set[str]:
+    """Top-level module names imported directly by one source file."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeError):
+        return set()
+
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module.split(".", 1)[0])
+    return modules
+
+
+def _index_for_installed_upstream(search_path: list[str] | None,
+                                  imported_modules: set[str]) -> dict:
+    """Fetch the index only when an installed upstream family needs it."""
+    cached = upstream_libraries._current_index()
+    candidates = upstream_libraries.installed_upstream_candidates(
+        search_path, imported_modules
+    )
+    if not candidates:
+        return cached
+
+    indexed = {
+        entry.distribution.strip().lower().replace("_", "-")
+        for entry in upstream_libraries.upstream_entries(cached)
+    }
+    if set(candidates).issubset(indexed):
+        return cached
+
+    # Import lazily: library commands already depend on the core staging
+    # module, while the build command only needs their shared fetch/cache
+    # behavior when one of these distributions is actually installed.
+    from . import libraries as library_commands
+
+    fetched, source = library_commands.fetch_index(refresh=True)
+    index = upstream_libraries.with_bundled_upstream(fetched)
+    if source == "network":
+        console.print("[dim]Fetched the library index for installed upstream packages.[/dim]")
+    elif source == "stale-cache":
+        console.print(
+            "[bold yellow]Warning:[/bold yellow] using a library index older than "
+            "24 hours because its automatic refresh failed."
+        )
+    elif not fetched:
+        detail = library_commands.last_index_error()
+        suffix = f"\n  {detail}" if detail else ""
+        console.print(
+            "[bold yellow]Warning:[/bold yellow] installed upstream packages cannot be "
+            "discovered because the library index is unavailable and no cached copy exists."
+            f"{suffix}"
+        )
+    return index
 
 
 def _show_update_hint() -> None:
@@ -1519,11 +1577,18 @@ def build(
         # `digitalio`, `pulseio` or a curated library, and staged into
         # dist/_upstream rather than pointed at site-packages directly (see
         # core/upstream_libraries.py for why).
-        upstream_includes, upstream_skipped, upstream_errors = resolve_upstream_for_target(
-            search_path=library_search_path(pyproject_path.parent.absolute()),
-            flavors=stdlib_flavors,
-            stage_root=output_dir / "_upstream",
-            enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
+        upstream_search_path = library_search_path(pyproject_path.parent.absolute())
+        upstream_index = _index_for_installed_upstream(
+            upstream_search_path, _source_imports(entry_point)
+        )
+        upstream_includes, upstream_skipped, upstream_errors = (
+            upstream_libraries.resolve_upstream_for_target(
+                search_path=upstream_search_path,
+                flavors=stdlib_flavors,
+                stage_root=output_dir / "_upstream",
+                index=upstream_index,
+                enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
+            )
         )
         for note in upstream_skipped:
             console.print(f"[bold yellow]Skipping upstream library[/bold yellow] {note}")
