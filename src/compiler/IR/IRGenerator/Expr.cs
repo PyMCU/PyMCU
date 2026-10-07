@@ -5155,6 +5155,23 @@ public partial class IRGenerator
         => e is IndexExpr { Index: not SliceExpr and not TupleExpr } iaObj
            && InstanceArrayClassOf(iaObj.Target) != null;
 
+    // The class `seq[k]` names when `seq` is a compile-time sequence of instances
+    // (`factories = [Factory()]`, an instance-sequence field): the element is the
+    // flattened instance at `seq__k`, so its class is a lookup, not a load. Null when
+    // the target is not such a sequence or the index does not fold to a constant.
+    // A negative index wraps like the indexing path's does; out of range is not an
+    // answer either -- the index path reports it. Pure lookup: emits nothing.
+    private string? InstanceSeqElemClass(IndexExpr ix)
+    {
+        if (ix.Index is SliceExpr or TupleExpr) return null;
+        if (!TryResolveInstanceSequence(ix.Target, out string seqBase, out int seqCount))
+            return null;
+        if (!TryEvalElemConst(ix.Index, out int idx)) return null;
+        if (idx < 0) idx += seqCount;
+        if (idx < 0 || idx >= seqCount) return null;
+        return instanceClasses.TryGetValue(seqBase + "__" + idx, out var elemCls) ? elemCls : null;
+    }
+
     /// <summary>
     /// The class a value-position expression names when it is an INSTANCE -- a
     /// constructor call, a name or field spelling bound to one (through
@@ -5172,6 +5189,12 @@ public partial class IRGenerator
             && instanceClasses.TryGetValue(instAnchor, out var anchorCls) && anchorCls != null
             => anchorCls,
         IndexExpr instIx when InstanceArrayClassOf(instIx.Target) is { } ixCls => ixCls,
+        // `seq[k]` where `seq` is a compile-time list of instances (`factories =
+        // [Factory(), ...]`): the element is the instance filed at `seq__k`, which is
+        // what the indexing path already lowers it to. A run-time index names no single
+        // class -- the unrolled dispatch is the method-call path's job -- so it declines
+        // and the refusal this feeds simply does not fire, same as before.
+        IndexExpr seqIx when InstanceSeqElemClass(seqIx) is { } seqCls => seqCls,
         CallExpr factory when factory.Callee is VariableExpr factoryFn
             && functionReturnTypes.TryGetValue(ResolveCallee(factoryFn.Name), out var factoryRt)
             && factoryRt != null && classNames.Contains(factoryRt) => factoryRt,
