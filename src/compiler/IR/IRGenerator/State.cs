@@ -889,6 +889,30 @@ public partial class IRGenerator
             kv => BuiltinExceptionNames.Codes[kv.Key],
             kv => new List<int> { BuiltinExceptionNames.Codes[kv.Value] });
 
+    // ── C3/MRO validation for exception classes ─────────────────────────────
+    //
+    // exceptionParents answers IS-A only where dispatch follows it; it deliberately
+    // forgets bases outside the OSError subtree and every ordering between them.
+    // CPython rejects a class at definition when its bases cannot linearize
+    // (`class F(A, B)` over `B(A)`: A first by source order, B first by subclass),
+    // so the scan re-resolves the direct bases -- in order, exceptions and
+    // non-exceptions alike -- and merges their linearizations once, here.
+    private readonly Dictionary<int, List<int>> exceptionDirectBases = new();
+    private readonly Dictionary<int, List<int>> exceptionMroMemo = new();
+
+    /// The codes that name an exception at all: the builtins plus every user class the
+    /// scan has registered. A base name that resolves to a code outside this set resolves
+    /// to an ordinary constant, not an exception, and the C3 check treats it as a mix-in.
+    private readonly HashSet<int> exceptionCodes = BuiltinExceptionNames.Codes.Values.ToHashSet();
+
+    // Nodes that are not exception codes: the three roots every exception's order ends
+    // in, and fresh negatives for bases that are not exceptions at all -- their `object`
+    // tail still constrains the merge exactly the way CPython's does.
+    private const int MroNodeException = -1;
+    private const int MroNodeBaseException = -2;
+    private const int MroNodeObject = -3;
+    private int mroNodeNext = -10;
+
     /// The exception codes some `raise` statement in the program can deliver -- resolved
     /// once, before any try lowers, because a handler can only match a code a raise
     /// actually produced. Collected with the per-raise records below.
