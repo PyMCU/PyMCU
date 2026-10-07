@@ -392,14 +392,35 @@ public partial class IRGenerator
         Expression rowExpr, SliceExpr sl)
     {
         var (w, h) = gridDims[gridKey];
-        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
-        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : w;
         int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
         if (step == 0) throw UserError("Slice step cannot be zero", sl);
-        if (start < 0) start += w;
-        if (stop < 0) stop += w;
-        start = Math.Max(0, Math.Min(start, w));
-        stop = Math.Max(0, Math.Min(stop, w));
+        // CPython's slice.indices(w): the OMITTED bound's default, and the clamp an
+        // explicit negative index normalizes into, both depend on the step's sign --
+        // a negative step's defaults are the LAST index and "before index 0", not 0
+        // and w. Defaulting to the positive-step bounds regardless of sign is what
+        // made `cells[0][::-1]` copy zero elements: start=0, stop=w, and a negative
+        // step immediately fails `i > stop`.
+        // The renormalization (`< 0` means "count from the end") applies only to a bound
+        // the SOURCE actually wrote -- the omitted-bound DEFAULT is already the right end
+        // in absolute terms (w-1 for start, -1 for stop, on a negative step) and must not
+        // be fed back through "+w" as if -1 meant "one before the end" a second time. That
+        // double renormalization turned the default stop -1 into w-1 -- the same index the
+        // default start already used -- so `start == stop` and the loop below never ran.
+        int start, stop;
+        if (step > 0)
+        {
+            start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+            stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : w;
+            if (sl.Start != null) start = start < 0 ? Math.Max(start + w, 0) : Math.Min(start, w);
+            if (sl.Stop != null) stop = stop < 0 ? Math.Max(stop + w, 0) : Math.Min(stop, w);
+        }
+        else
+        {
+            start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : w - 1;
+            stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : -1;
+            if (sl.Start != null) start = start < 0 ? Math.Max(start + w, -1) : Math.Min(start, w - 1);
+            if (sl.Stop != null) stop = stop < 0 ? Math.Max(stop + w, -1) : Math.Min(stop, w - 1);
+        }
         int count = 0;
         for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++count;
 

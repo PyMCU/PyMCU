@@ -403,4 +403,26 @@ public class Grid2dTests
             "    x = g[1]\n");
         Assert.Contains("row", ex.Message);
     }
+
+    [Fact]
+    public void NegativeStepRowSlice_CopiesTheWholeReversedRow()
+    {
+        // The omitted bound's DEFAULT depends on the step's sign: a negative step's
+        // defaults are the last index and "before index 0", not 0 and w. Reusing the
+        // positive-step defaults regardless of sign made `g[0][::-1]` copy zero
+        // elements (start=0, stop=w immediately fails `i > stop`), not the whole row
+        // reversed.
+        var ir = Gen(
+            "def main() -> None:\n" +
+            "    g = [[0] * 3 for _ in range(1)]\n" +
+            "    g[0][0] = 5\n" +
+            "    g[0][1] = 6\n" +
+            "    g[0][2] = 7\n" +
+            "    row = g[0][::-1]\n");
+
+        var copiesToRow = AllBody(ir).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.StartsWith("main.row__", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(3, copiesToRow.Count);
+    }
 }
