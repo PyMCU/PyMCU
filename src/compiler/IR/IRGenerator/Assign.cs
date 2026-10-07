@@ -63,6 +63,26 @@ public partial class IRGenerator
             // the scan stopped at this statement, and what binds now is an
             // ordinary value.
             KillRowAlias(bindTgt.Name);
+
+            // `alias = buf` where `buf` is itself a bytearray/bytes PARAMETER (it travels as
+            // the buffer's address) makes `alias` a buffer under another name too --
+            // forwarding it to a callee declared to take the same type is not "one element".
+            // BindArrayAlias already propagates this same fact for an @inline parameter
+            // binding or a sequence field, and CopyArrayIdentity for a function's array
+            // RETURN value, but neither fires for a plain local-to-local copy inside a
+            // REGULAR function: `alias` reached NameIsScalarAtThisSite with no record
+            // anywhere that it is a buffer, and a buffer forwarded through a second local
+            // name was refused as a scalar reaching a bytearray parameter.
+            if (stmt.Value is VariableExpr bufAliasSrc)
+            {
+                string srcKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + bufAliasSrc.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + bufAliasSrc.Name
+                        : bufAliasSrc.Name);
+                if (bytearrayParams.Contains(srcKey) || bytearrayParams.Contains(bufAliasSrc.Name))
+                    bytearrayParams.Add(bindKey);
+            }
         }
 
         // Rebinding the name of a module-level `def`. The name is bound at compile time and
