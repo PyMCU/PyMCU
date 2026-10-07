@@ -251,4 +251,122 @@ public class InstanceSequenceElementTests
             "b = xs[i]._m\n");
         Assert.Contains(ir.Functions, f => f.Name == "main");
     }
+
+    private const string GetitemFactory =
+        "class Factory:\n" +
+        "    def __init__(self) -> None:\n" +
+        "        self._x = 0\n\n" +
+        "    def make(self) -> Counter:\n" +
+        "        return Counter(0)\n\n" +
+        "class D:\n" +
+        "    def __init__(self) -> None:\n" +
+        "        self._f = Factory()\n\n" +
+        "    def __getitem__(self, k: uint8) -> Factory:\n" +
+        "        return self._f\n\n" +
+        "d = D()\n\n";
+
+    [Fact]
+    public void AGetitemReceiverCallReturningAnInstance_InATupleReturn_IsRefused()
+    {
+        // `d[0].make()`: the receiver comes from __getitem__, a shape no
+        // receiver-syntax probe names -- the dispatched callee's `-> Counter`
+        // is what decides. It used to compile: the caller's `bool(a)` read a
+        // dead slot as False where CPython holds the object.
+        var msg = Refusal(Counter + GetitemFactory +
+            "def f():\n" +
+            "    return d[0].make(), 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void AGetitemResult_InATupleReturn_IsRefused()
+    {
+        // `return d[0], 5`: the element is not a call at all, yet it still
+        // evaluates to the Factory instance the __getitem__ dispatch produced.
+        var msg = Refusal(Counter + GetitemFactory +
+            "def f():\n" +
+            "    return d[0], 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Factory", msg);
+    }
+
+    [Fact]
+    public void AGetattrResolvedReceiverCall_InATupleReturn_IsRefused()
+    {
+        // `getattr(mod, "factory").make()`: the receiver is a compile-time
+        // attribute lookup, another spelling the syntax probe cannot see.
+        var lib = new Parser(new Lexer(Counter +
+            "class Factory:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._x = 0\n\n" +
+            "    def make(self) -> Counter:\n" +
+            "        return Counter(0)\n\n" +
+            "factory = Factory()\n").Tokenize()).ParseProgram();
+        var main = new Parser(new Lexer(
+            "import mod\n\n" +
+            "def f():\n" +
+            "    return getattr(mod, \"factory\").make(), 5\n\n" +
+            "a, b = f()\n").Tokenize()).ParseProgram();
+        var ex = Assert.ThrowsAny<CompilerError>(() =>
+            new IRGenerator().Generate(main,
+                new Dictionary<string, ProgramNode> { ["mod"] = lib },
+                new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("instance", ex.Message);
+        Assert.Contains("Counter", ex.Message);
+    }
+
+    [Fact]
+    public void AModuleFunctionCallReturningAnInstance_InATupleReturn_IsRefused()
+    {
+        // `mod.make()`: the callee is a module attribute, not a bare name, so
+        // the receiver probes never asked what it returns. A single-field
+        // Counter answer would ride the scalar slot; a multi-field Pair one
+        // builds the caller's target through the constructor and leaves the
+        // slot dead -- the declared return type decides both.
+        var lib = new Parser(new Lexer(Counter + Pair +
+            "def make() -> Counter:\n" +
+            "    return Counter(0)\n\n" +
+            "def make_pair() -> Pair:\n" +
+            "    return Pair(1, 2)\n").Tokenize()).ParseProgram();
+        var main = new Parser(new Lexer(
+            "import mod\n\n" +
+            "def f():\n" +
+            "    return mod.make(), 5\n\n" +
+            "def g():\n" +
+            "    return mod.make_pair(), 6\n\n" +
+            "a, b = f()\n" +
+            "c, d = g()\n").Tokenize()).ParseProgram();
+        var ex = Assert.ThrowsAny<CompilerError>(() =>
+            new IRGenerator().Generate(main,
+                new Dictionary<string, ProgramNode> { ["mod"] = lib },
+                new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("instance", ex.Message);
+        Assert.Contains("Counter", ex.Message);
+    }
+
+    [Fact]
+    public void AGetitemReceiverScalarCall_InATupleReturn_StillCompiles()
+    {
+        // The refusal asks the DISPATCHED callee's return type, so a scalar
+        // answer through the same __getitem__ receiver stays legal.
+        var ir = Gen(Counter +
+            "class Factory:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._x = 0\n\n" +
+            "    def val(self) -> uint8:\n" +
+            "        return self._x + 1\n\n" +
+            "class D:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        self._f = Factory()\n\n" +
+            "    def __getitem__(self, k: uint8) -> Factory:\n" +
+            "        return self._f\n\n" +
+            "d = D()\n\n" +
+            "def f():\n" +
+            "    return d[0].val(), 5\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
 }
