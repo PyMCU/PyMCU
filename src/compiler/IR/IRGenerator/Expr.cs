@@ -687,12 +687,13 @@ public partial class IRGenerator
     {
         if (v is Variable varV)
         {
-            if (constantVariables.TryGetValue(varV.Name, out int vcv))
+            if (!ForeignGlobalRead(varV.Name) && constantVariables.TryGetValue(varV.Name, out int vcv))
             {
                 long lv = ConstantVariableAsLong(varV.Name, vcv);
                 return (lv, lv);
             }
-            if (!ForeignFlowRead(varV.Name) && localConstantValues.TryGetValue(varV.Name, out int vlv))
+            if (!ForeignFlowRead(varV.Name) && !ForeignGlobalRead(varV.Name)
+                && localConstantValues.TryGetValue(varV.Name, out int vlv))
                 return (vlv, vlv);
             if (!ForeignGlobalRead(varV.Name) && variableRanges.TryGetValue(varV.Name, out var vr))
                 return vr;
@@ -2144,6 +2145,12 @@ public partial class IRGenerator
         // answers identically even when a is negative (`-1 % 32` is `-1 & 31` = 31).
         // Proving the divisor's value -- not just seeing a literal -- is what lets
         // `(x + dx) % w` with w pinned to 32 lower to a narrow AND instead of __mod32.
+        // Type selection below reads the ORIGINAL divisor, not the mask: `x % n` with
+        // n: uint16 proven 256 becomes `x & 255`, but 255 alone looks like a uint8 to
+        // GetValType, and `int8 % uint16`'s own type (uint16, the wider side) must still
+        // win -- `rem(int8(-1), n=256)` sign-extended -1 through an int8 result instead
+        // of answering 255. The rewrite itself still runs on the mask (v2 below).
+        Val divisorForType = v2;
         AstBinOp emitOp = expr.Op;
         if (emitOp == AstBinOp.Mod && ProvenRange(v2) is (long modP, long modPHi)
             && modP == modPHi && modP >= 2 && (modP & (modP - 1)) == 0
@@ -2154,13 +2161,13 @@ public partial class IRGenerator
         }
 
         DataType t1 = GetValType(v1);
-        DataType t2 = GetValType(v2);
+        DataType t2 = GetValType(divisorForType);
         // A literal operand is type-agnostic (it defaults to uint8), so on a same-size op it
         // would wrongly win and drop the other operand's signedness: `int8(0) - int8(x)` became
         // uint8, making a later `< 0` test unsigned (abs() then returned the value unchanged).
         // Take the non-constant operand's type when exactly one side is a constant.
         bool lConst = v1 is Constant or FloatConstant;
-        bool rConst = v2 is Constant or FloatConstant;
+        bool rConst = divisorForType is Constant or FloatConstant;
         DataType resType;
         if (t1.SizeOf() != t2.SizeOf())
             resType = t1.SizeOf() > t2.SizeOf() ? t1 : t2;   // the wider operand wins (e.g. 256 * u8 -> u16)
