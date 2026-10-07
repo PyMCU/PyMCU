@@ -690,6 +690,20 @@ public partial class IRGenerator
     // spelling, argument splice, or wrapper node is ever consulted.
     private readonly Dictionary<string, string> producedInstanceClasses = new();
 
+    // A scalar view of storage an instance also owns. `x.n` on a single-field class reads
+    // the carrier's own byte, so the val the read produces names the instance while meaning
+    // the field -- and name-keyed state cannot hold both answers for one name. The mask
+    // therefore rides the Val OBJECT (records compare by value, so reference identity is the
+    // only key that does not collide): the read's own result is masked, while every other
+    // val naming the same storage still resolves to the class.
+    private readonly HashSet<Val> scalarViewVals = new(ReferenceEqualityComparer.Instance);
+
+    // A name whose VALUE was produced scalar even though its storage is shared with an
+    // instance: the temp an inlined scalar return lands in, a name bound to a scalar view.
+    // Keyed by name so a copy of the scalar keeps the answer -- the alias walk in
+    // ProducedInstanceClassOf stops at these.
+    private readonly HashSet<string> scalarMaskedNames = new();
+
     // Element type of the most recently emitted call's list result, taken from the
     // callee's emitted `return <list var>` rather than its annotation -- the
     // unannotated counterpart of lastCallReturnTypeText's "list[T]" text.

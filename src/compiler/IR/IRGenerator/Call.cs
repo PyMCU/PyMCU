@@ -3560,6 +3560,7 @@ public partial class IRGenerator
                 }
 
                 variableAliases[paramName] = vArg.Name;
+                PropagateScalarMask(paramName, vArg);
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
@@ -3643,6 +3644,7 @@ public partial class IRGenerator
                 // so the callee's `param.field`/`param.method()` resolves -- the param is bound by
                 // a runtime Copy below (its own var), and alias-following stops at tmp_ names, so
                 // the class would otherwise be lost.
+                PropagateScalarMask(paramName, tArg);
                 if (instanceClasses.TryGetValue(tArg.Name, out var tCls) && tCls != null)
                     instanceClasses[paramName] = tCls;
                 // A zero-copy factory result passed straight in (`rd(make(2))`) is its one
@@ -3896,7 +3898,11 @@ public partial class IRGenerator
                     }
                     noneValuedNames.Remove(paramName);
 
-                    if (kvp.Value is Variable vkw) variableAliases[paramName] = vkw.Name;
+                    if (kvp.Value is Variable vkw)
+                    {
+                        variableAliases[paramName] = vkw.Name;
+                        PropagateScalarMask(paramName, vkw);
+                    }
 
                     // Where this keyword argument was written, on the same terms as a
                     // positional one: a name that already carries an origin hands it down, a

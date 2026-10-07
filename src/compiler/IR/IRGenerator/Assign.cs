@@ -1735,6 +1735,7 @@ public partial class IRGenerator
                     break;
                 case Variable vv:
                     variableAliases[paramName] = vv.Name;
+                    PropagateScalarMask(paramName, vv);
                     // Same as the constant case, for a name that already carries the text
                     // (`msg = "..."` then `lcd.message = msg`).
                     if (ResolveStrConstant(vv.Name) is { } varStr)
@@ -2507,6 +2508,10 @@ public partial class IRGenerator
         if (value is Variable vv2 && target is Variable tv2)
         {
             variableAliases[tv2.Name] = instAnchor ?? vv2.Name;
+            // `y = x.n` on a single-field collapse: the val is the field's byte sharing
+            // the carrier's name -- the alias still tracks the byte, but the class must
+            // not follow it onto y.
+            if (ValIsScalarView(value)) scalarMaskedNames.Add(tv2.Name);
             // An alias to an INSTANCE is structural, not value-tracking: WHICH OBJECT the name
             // stands for does not depend on which path ran, so it has to survive a label. Filed
             // as value-tracking, it was dropped by the first label a loop emits, and
@@ -2525,6 +2530,9 @@ public partial class IRGenerator
             // stop (Temporary.IsScratchName ends the walk), so `s = <call>` would
             // flatten `s.field` to a slot the constructor never wrote.
             variableAliases[tDst.Name] = instAnchor ?? tSrc.Name;
+            // The temp stands for a scalar view of shared storage (`y = make().n`):
+            // the byte aliases across, the class does not.
+            if (ValIsScalarView(value)) scalarMaskedNames.Add(tDst.Name);
             // The same rule the Variable branch applies: an alias to an INSTANCE
             // is structural -- which object the name stands for does not depend
             // on which path ran, so it must survive a label. `r = decode_bits(p)`
@@ -6482,6 +6490,10 @@ public partial class IRGenerator
             // Every write to the name, whatever spelling reaches here, clears what it was
             // known to hold. The two assignment sites put it back when the value is constant.
             localConstantValues.Remove(k);
+            // What the name carried (an instance a call produced, a scalar view mask)
+            // describes the OLD value; a rebind (`x = make()` then `x = 5`) keeps neither.
+            producedInstanceClasses.Remove(k);
+            scalarMaskedNames.Remove(k);
             if (!writeThroughAliases.Contains(k))
                 variableAliases.Remove(k);
         }

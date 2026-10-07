@@ -67,6 +67,7 @@ public partial class IRGenerator
         // What a name IS: aliases, classes, pointer-ness, views.
         public Dictionary<string, string?> VariableAliases = new();
         public Dictionary<string, string?> InstanceClasses = new();
+        public Dictionary<string, string> ProducedInstanceClasses = new();
         public Dictionary<string, string> FieldClasses = new();
         public Dictionary<string, string> ArrayViewBase = new();
         public Dictionary<string, int> ArrayViewOffset = new();
@@ -102,6 +103,11 @@ public partial class IRGenerator
         public HashSet<string> WriteThroughAliases = new();
         public HashSet<string> RangeBoundSequences = new();
         public HashSet<string> TypingOnlyNames = new();
+        public HashSet<string> ScalarMaskedNames = new();
+        // scalarViewVals is deliberately NOT here: it marks the Val OBJECT a scalar
+        // read produced -- a fact about that object, monotone like the class and
+        // function tables, and an object minted inside one arm is unreachable past
+        // the merge anyway.
 
         // RFC 0009: the member a name is narrowed to on this arm, kept only where
         // every reachable arm narrows it to the SAME member.
@@ -131,6 +137,7 @@ public partial class IRGenerator
         MultiStrVariables = multiStrVariables.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
         VariableAliases = new Dictionary<string, string?>(variableAliases),
         InstanceClasses = new Dictionary<string, string?>(instanceClasses),
+        ProducedInstanceClasses = new Dictionary<string, string>(producedInstanceClasses),
         FieldClasses = new Dictionary<string, string>(fieldClasses),
         ArrayViewBase = new Dictionary<string, string>(arrayViewBase),
         ArrayViewOffset = new Dictionary<string, int>(arrayViewOffset),
@@ -158,6 +165,7 @@ public partial class IRGenerator
         WriteThroughAliases = new HashSet<string>(writeThroughAliases),
         RangeBoundSequences = new HashSet<string>(rangeBoundSequences),
         TypingOnlyNames = new HashSet<string>(typingOnlyNames),
+        ScalarMaskedNames = new HashSet<string>(scalarMaskedNames),
         NarrowedOptionals = new Dictionary<string, int>(narrowedOptionals),
         OptionalTagSlots = new Dictionary<string, Val>(optionalTagSlots),
     };
@@ -182,6 +190,7 @@ public partial class IRGenerator
         RestoreInto(multiStrVariables, s.MultiStrVariables);
         RestoreInto(variableAliases, s.VariableAliases);
         RestoreInto(instanceClasses, s.InstanceClasses);
+        RestoreInto(producedInstanceClasses, s.ProducedInstanceClasses);
         RestoreInto(fieldClasses, s.FieldClasses);
         RestoreInto(arrayViewBase, s.ArrayViewBase);
         RestoreInto(arrayViewOffset, s.ArrayViewOffset);
@@ -209,6 +218,7 @@ public partial class IRGenerator
         RestoreInto(writeThroughAliases, s.WriteThroughAliases);
         RestoreInto(rangeBoundSequences, s.RangeBoundSequences);
         RestoreInto(typingOnlyNames, s.TypingOnlyNames);
+        RestoreInto(scalarMaskedNames, s.ScalarMaskedNames);
         RestoreInto(narrowedOptionals, s.NarrowedOptionals);
         RestoreInto(optionalTagSlots, s.OptionalTagSlots);
     }
@@ -280,6 +290,10 @@ public partial class IRGenerator
         instanceClasses = JoinDicts(arms.Select(a => a.InstanceClasses).ToList(), SameResolvedClass);
         foreach (var key in instanceClasses.Keys.ToList())
             instanceClasses[key] = ResolveConcreteClass(instanceClasses[key] ?? "") ?? instanceClasses[key];
+        var joinedProduced = JoinDicts(arms.Select(a => a.ProducedInstanceClasses).ToList(), SameResolvedClass);
+        foreach (var key in joinedProduced.Keys.ToList())
+            joinedProduced[key] = ResolveConcreteClass(joinedProduced[key]) ?? joinedProduced[key];
+        RestoreInto(producedInstanceClasses, joinedProduced);
         fieldClasses = JoinDicts(arms.Select(a => a.FieldClasses).ToList(), SameResolvedClass);
         foreach (var key in fieldClasses.Keys.ToList())
             fieldClasses[key] = ResolveConcreteClass(fieldClasses[key]) ?? fieldClasses[key];
@@ -329,6 +343,7 @@ public partial class IRGenerator
         writeThroughAliases = JoinSets(arms.Select(a => a.WriteThroughAliases).ToList());
         rangeBoundSequences = JoinSets(arms.Select(a => a.RangeBoundSequences).ToList());
         RestoreInto(typingOnlyNames, JoinSets(arms.Select(a => a.TypingOnlyNames).ToList()));
+        RestoreInto(scalarMaskedNames, JoinSets(arms.Select(a => a.ScalarMaskedNames).ToList()));
 
         RestoreInto(narrowedOptionals, JoinDicts(arms.Select(a => a.NarrowedOptionals).ToList()));
         // Tag slots are the union case the doc comment spells out: whichever arm

@@ -389,6 +389,8 @@ public partial class IRGenerator
             // `ptr(<run-time>)` in one expansion left the mark behind for the next.
             RemoveDescendants(runtimePtrVars, sep);
             RemoveDescendants(instanceClasses, sep);
+            RemoveDescendants(producedInstanceClasses, sep);
+            RemoveDescendantsSet(scalarMaskedNames, sep);
             // Heap-list element types are callee-local state too: a `pulses =
             // list(pulses)` rebind in one expansion registers the param name
             // here, and the next expansion's ResolveListVarQualified then

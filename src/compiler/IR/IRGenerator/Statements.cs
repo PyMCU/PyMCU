@@ -1578,6 +1578,10 @@ public partial class IRGenerator
                     else floatConstantVariables.Remove(ctx.ResultVars[k]);
                     strConstantVariables.Remove(ctx.ResultVars[k]);
                     constSequenceBindings.Remove(ctx.ResultVars[k]);
+                    // The iret_ names are shared scratch across expansions too: a mask
+                    // or class an earlier element bind left must not describe this slot.
+                    producedInstanceClasses.Remove(ctx.ResultVars[k]);
+                    scalarMaskedNames.Remove(ctx.ResultVars[k]);
                 }
 
                 EmitPendingFinally(ctx.FinallyDepth);
@@ -1920,6 +1924,12 @@ public partial class IRGenerator
                     // the comparison to be constant-folded at IR-generation time.
                     constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = v.Name;
+                    // `return self.n` on a single-field collapse: the val is the field's
+                    // byte, which shares the carrier's storage -- the alias would hand the
+                    // result the class, so the scalar mask rides the temp's name instead.
+                    // ResultTemp serves every return of the body: an arm returning the
+                    // object itself after one returned the field clears the mask back.
+                    PropagateScalarMask(ctx.ResultTemp.Name, val);
                     // Carry string-constant metadata through the alias
                     if (strConstantVariables.TryGetValue(v.Name, out string? vsv))
                         strConstantVariables[ctx.ResultTemp.Name] = vsv;
@@ -1928,6 +1938,7 @@ public partial class IRGenerator
                 {
                     constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = t.Name;
+                    PropagateScalarMask(ctx.ResultTemp.Name, val);
                     // Carry string-constant metadata through the alias
                     if (strConstantVariables.TryGetValue(t.Name, out string? tsv))
                         strConstantVariables[ctx.ResultTemp.Name] = tsv;

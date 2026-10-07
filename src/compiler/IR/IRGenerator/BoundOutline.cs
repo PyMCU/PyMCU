@@ -1468,6 +1468,8 @@ public partial class IRGenerator
         var savedNoneValued      = new HashSet<string>(noneValuedNames);
         var savedNarrowed        = new Dictionary<string, int>(narrowedOptionals);
         var savedInstanceClasses = new Dictionary<string, string?>(instanceClasses);
+        var savedProducedClasses = new Dictionary<string, string>(producedInstanceClasses);
+        var savedScalarMasked    = new HashSet<string>(scalarMaskedNames);
         var savedBytearrayParams = new HashSet<string>(bytearrayParams);
 
         currentInstructions    = new List<Instruction>();
@@ -1664,6 +1666,8 @@ public partial class IRGenerator
             noneValuedNames.Clear();        foreach (var n in savedNoneValued)       noneValuedNames.Add(n);
             narrowedOptionals.Clear();      foreach (var kv in savedNarrowed)        narrowedOptionals[kv.Key]    = kv.Value;
             instanceClasses.Clear();        foreach (var kv in savedInstanceClasses) instanceClasses[kv.Key]      = kv.Value;
+            producedInstanceClasses.Clear(); foreach (var kv in savedProducedClasses) producedInstanceClasses[kv.Key] = kv.Value;
+            scalarMaskedNames.Clear();       foreach (var n in savedScalarMasked)      scalarMaskedNames.Add(n);
             bytearrayParams.Clear();        foreach (var n in savedBytearrayParams)  bytearrayParams.Add(n);
             RestoreStrippedConsts(strippedConsts);
             boundFieldInitPreamble.RemoveRange(preambleBefore,

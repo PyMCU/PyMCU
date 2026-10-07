@@ -411,6 +411,7 @@ public partial class IRGenerator
             else if (extraArgs[extraIdx] is Variable v)
             {
                 variableAliases[paramKey] = v.Name;
+                PropagateScalarMask(paramKey, v);
                 variableTypes[paramKey] = dt;
             }
             else
@@ -5261,17 +5262,49 @@ public partial class IRGenerator
             producedInstanceClasses[name] = rt;
     }
 
+    /// A val produced by a scalar VIEW of storage an instance also owns -- `x.n` on a
+    /// single-field class, `len(make())`'s result temp -- or a name bound to one. The
+    /// byte is real and copied like any scalar; what it is not is the object.
+    private bool ValIsScalarView(Val v) =>
+        scalarViewVals.Contains(v)
+        || (v is Variable svv ? scalarMaskedNames.Contains(svv.Name)
+            : v is Temporary svt && scalarMaskedNames.Contains(svt.Name));
+
+    /// Bind <paramref name="dstName"/>'s scalar mask from the val it will stand for: an
+    /// alias copies the storage AND the answer, so a scalar view masks the name and any
+    /// other val clears the mask an earlier binding of the same key left.
+    private void PropagateScalarMask(string dstName, Val srcVal)
+    {
+        if (ValIsScalarView(srcVal)) scalarMaskedNames.Add(dstName);
+        else scalarMaskedNames.Remove(dstName);
+    }
+
     /// The class a produced value is an instance of, or null. <see cref="GetValClass"/>
     /// answers for the names that ARE the object (a ctor target, a bound variable, a zca
     /// handle temp); <see cref="producedInstanceClasses"/> rides the same alias walk for
     /// the temps that only CARRY one -- a call result whose dispatched callee declared
-    /// `-> Cls`, a ternary or `and`/`or` temp an arm of which produced one.
+    /// `-> Cls`, a ternary or `and`/`or` temp an arm of which produced one. The masks
+    /// close the other direction: a scalar field read or a declared-scalar result that
+    /// SHARES the carrier's storage (a single-field collapse) is the field, never the
+    /// object -- so the walk stops there instead of following the alias to the class.
     private string? ProducedInstanceClassOf(Val v)
     {
-        if (GetValClass(v) is { Length: > 0 } cls) return cls;
+        if (scalarViewVals.Contains(v)) return null;
         string? name = v switch { Variable pv => pv.Name, Temporary pt => pt.Name, _ => null };
+        // instanceClasses answers first, like GetValClass: its own alias walk cannot be
+        // reused because it does not know the masks, and a masked link means the chain
+        // tops at a scalar producer whatever the names above it carry.
         for (int i = 0; name != null && i < 10; ++i)
         {
+            if (scalarMaskedNames.Contains(name)) return null;
+            if (instanceClasses.TryGetValue(name, out var ic) && ic is { Length: > 0 }) return ic;
+            if (!variableAliases.TryGetValue(name, out var next)) break;
+            name = next;
+        }
+        name = v switch { Variable pv2 => pv2.Name, Temporary pt2 => pt2.Name, _ => null };
+        for (int i = 0; name != null && i < 10; ++i)
+        {
+            if (scalarMaskedNames.Contains(name)) return null;
             if (producedInstanceClasses.TryGetValue(name, out var pc)) return pc;
             if (!variableAliases.TryGetValue(name, out var next)) break;
             name = next;
@@ -7182,9 +7215,17 @@ public partial class IRGenerator
 
         Val result = VisitExpression(expr.Object);
         DataType dt = DataTypeExtensions.StringToDataType(fieldType);
-        if (result is Temporary t && t.Type == dt) return t;
+        if (result is Temporary t && t.Type == dt)
+        {
+            // The call's result temp IS the field (single-field collapse): the read's
+            // value is a scalar sharing the carrier's storage -- mask THIS val so a
+            // tuple slot asks the object, not the byte.
+            scalarViewVals.Add(t);
+            return t;
+        }
         var typed = MakeTemp(dt);
         Emit(new Copy(result, typed));
+        scalarViewVals.Add(typed);
         return typed;
     }
 
@@ -7231,8 +7272,13 @@ public partial class IRGenerator
 
             DataType dt = DataTypeExtensions.StringToDataType(layout[0].Type);
             dt = variableTypes.TryGetValue(storage, out var vt) && vt != DataType.UNKNOWN ? vt : dt;
-            return storage.StartsWith("tmp_", StringComparison.Ordinal)
+            // The handle's one field lives AT the handle's own name, so the val this
+            // read produces names the instance while meaning the scalar. Mask the val
+            // object -- the same name read without `.member` is still the object.
+            Val handleField = storage.StartsWith("tmp_", StringComparison.Ordinal)
                 ? new Temporary(storage, dt) : new Variable(storage, dt);
+            scalarViewVals.Add(handleField);
+            return handleField;
         }
         return null;
     }
