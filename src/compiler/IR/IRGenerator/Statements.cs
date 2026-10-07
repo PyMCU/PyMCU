@@ -1518,22 +1518,21 @@ public partial class IRGenerator
                             + "caller through a parameter.", tup.Elements[k]);
 
                     Val elemVal = VisitExpression(tup.Elements[k]);
-                    // The syntactic probe above can only refuse the receiver spellings it
-                    // knows; every round produced another one it did not -- `d[0].make()`
-                    // (a __getitem__ receiver), `getattr(mod, "f").make()`, `mod.f()`. The
-                    // question is not how the element is WRITTEN but what the call that
-                    // produced it was resolved to: when the dispatched callee returns a
-                    // class the result arrives tagged with that class, and when the
-                    // instance left through a side channel instead (a multi-field return
-                    // builds the caller's target object, not the result temp) the
-                    // callee's own declared return type still names it.
-                    string? retDispatchedCls =
-                        GetValClass(elemVal) is { Length: > 0 } retValCls ? retValCls
-                        : tup.Elements[k] is CallExpr retCallElem
-                          && ReferenceEquals(lastCallReturnTypeExpr, retCallElem)
-                          && lastCallReturnTypeText is { } retCallRt
-                          && ReturnTypeNamesInstanceClass(retCallRt) ? retCallRt
-                        : null;
+                    // The question is not how the element is WRITTEN but what the value
+                    // that landed in it IS: ProducedInstanceClassOf answers for a bound
+                    // name, a ctor root, a zca handle temp, a ternary/`and`/`or` temp an
+                    // arm classed, and any call result temp whose dispatched callee
+                    // declared a class return -- `d[0].make()`, `getattr(mod, "f").make()`,
+                    // `mod.f(*(a, b))`, `relay()`, `(m() if c else m())`, `c and m()` all
+                    // arrive here carrying the class on the value itself.
+                    string? retDispatchedCls = ProducedInstanceClassOf(elemVal)
+                        // One last net for a shape that produced no nameable val: the
+                        // element is the call node itself and its post-dispatch stamp
+                        // names a class.
+                        ?? (tup.Elements[k] is CallExpr retCallElem
+                            && ReferenceEquals(lastCallReturnTypeExpr, retCallElem)
+                            && lastCallReturnTypeText is { } retCallRt
+                            && ReturnTypeNamesInstanceClass(retCallRt) ? retCallRt : null);
                     if (retDispatchedCls != null)
                         throw UserError(
                             $"element {k} of '{ctx.CalleeName}'s tuple return cannot be an "

@@ -682,6 +682,14 @@ public partial class IRGenerator
     // reference is how a reader knows the text describes the call it is asking about.
     private Expression? lastCallReturnTypeExpr;
 
+    // The class a produced temp's VALUE is an instance of, when the temp itself is not the
+    // object's storage: a call result whose dispatched callee declared `-> Cls`, or a
+    // ternary/`and`/`or` temp an arm of which produced one. instanceClasses answers "this
+    // name IS the object" (its fields live under it); this answers "the value that arrived
+    // here names a user class". Read through ProducedInstanceClassOf, so no receiver
+    // spelling, argument splice, or wrapper node is ever consulted.
+    private readonly Dictionary<string, string> producedInstanceClasses = new();
+
     // Element type of the most recently emitted call's list result, taken from the
     // callee's emitted `return <list var>` rather than its annotation -- the
     // unannotated counterpart of lastCallReturnTypeText's "list[T]" text.

@@ -781,6 +781,11 @@ public partial class IRGenerator
                                     : DataTypeExtensions.StringToDataType(
                                         functionReturnTypes[callee]));
                             EmitMaybeTaggedCall(callee, oArgs, oDst);
+                            // A dispatched method declared `-> Cls`: oDst is the produced
+                            // instance's scalar carrier (a slot pointer for a multi-field
+                            // sret), tagged so a wrapper or tuple slot reads the class
+                            // from the value.
+                            StampProducedClass(oDst, rt);
                             InvalidateFieldsWrittenByCall(callee, instName);
                             // `-> list[T]`: the result is the list, and print, len() and
                             // indexing find it by its element type. Unregistered, `print(
@@ -2247,6 +2252,11 @@ public partial class IRGenerator
             : DataType.UINT8;
         Temporary dstC = MakeTemp(retDt);
         EmitMaybeTaggedCall(callee, argValuesL, dstC);
+        // The dispatched callee's declared return names a user class: this temp is that
+        // instance's carrier whatever the call's spelling or splicing was (a `*(...)`
+        // rewrite swaps the node, the value does not care). zca handles additionally
+        // register in instanceClasses below because the temp IS the field.
+        StampProducedClass(dstC, rType);
         // A factory's result is a handle instance whether or not it is bound to a name:
         // `rd(make(2))` binds the parameter to this temporary, and a parameter typed with
         // the class reads its field through the handle only when the handle is known to be
@@ -4218,6 +4228,10 @@ public partial class IRGenerator
             lastCallReturnTypeExpr = expr;
             lastCallReturnListElem = null;
             lastCallReturnedBufferLocal = false;
+            // An inlined callee declared `-> Cls` whose body hands back a scalar
+            // carrier (a relay's `return make()`, a slot pointer) rather than an
+            // instance name: the temp the caller receives still names the class.
+            StampProducedClass(result, func?.ReturnType);
         }
         // Two triggers, because neither sees the other's case. `ResultAssigned` is what the
         // expansion actually walked, which is exact for a body whose branches fold away. A
@@ -5762,6 +5776,9 @@ public partial class IRGenerator
         Temporary? superResult = null;
         if (funcSuper.ReturnType != "void" && funcSuper.ReturnType != "None")
             superResult = MakeTemp(DataTypeExtensions.StringToDataType(funcSuper.ReturnType));
+        // `super().m()` declared `-> Cls`: the result temp is the produced instance's
+        // carrier the same way a direct call's is.
+        StampProducedClass(superResult, funcSuper.ReturnType);
 
         var savedPrefix = currentInlinePrefix;
         var savedMod = currentModulePrefix;
@@ -6213,6 +6230,9 @@ public partial class IRGenerator
         Temporary? result = hasValue
             ? MakeTemp(DataTypeExtensions.StringToDataType(rtName!))
             : null;
+        // The per-element dispatch picks a method at run time; when the resolved
+        // return names a class the merged temp is that instance's carrier.
+        StampProducedClass(result, rtName);
 
         for (int k = 0; k < count; k++)
         {
@@ -6290,6 +6310,9 @@ public partial class IRGenerator
                 ? UnionPayloadType(iaMembers)
                 : DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
         EmitMaybeTaggedCall(iaMethod, iaArgs, iaDst);
+        // `xs[i].m()` dispatched to a callee declared `-> Cls`: iaDst is the produced
+        // instance's carrier, tagged like every other call result.
+        StampProducedClass(iaDst, iaRt);
         return iaDst;
     }
 
@@ -6445,6 +6468,7 @@ public partial class IRGenerator
                 ? UnionPayloadType(tMembers)
                 : DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
         EmitMaybeTaggedCall(target, fwdArgs, tDst);
+        StampProducedClass(tDst, tRt);
         return tDst;
     }
 

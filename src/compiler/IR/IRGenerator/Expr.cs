@@ -488,6 +488,9 @@ public partial class IRGenerator
         // the body ran -- so every two-index dunder subscript with an unannotated return type
         // answered the hardcoded Constant(0) below instead of what the method computed.
         if (result == null) result = dunderCtx.ResultTemp;
+        // `-> Cls` on a dunder (e.g. __getitem__): the result temp is the produced
+        // instance's carrier, tagged like any other dispatched call's.
+        StampProducedClass(result, func.ReturnType);
 
         // The body returned a sequence's slots (`return self._getitem(i)`): the call's value
         // is that storage, as the plain inline path hands it back.
@@ -1806,6 +1809,12 @@ public partial class IRGenerator
             Val v2b = VisitShortCircuitRight(andLeft, expr.Right, true);
             Emit(new Copy(v2b, result));                 // a truthy -> b
             Emit(new Label(endLabel));
+            // `flag and make()`: the result is whichever operand ran last, so when
+            // either operand produced an instance the temp is its carrier -- tag it
+            // the way a call result is tagged, and a tuple slot reading the value
+            // sees the class, not the `and` spelling.
+            if ((ProducedInstanceClassOf(v1a) ?? ProducedInstanceClassOf(v2b)) is { } andCls)
+                producedInstanceClasses[result.Name] = andCls;
             return result;
         }
 
@@ -1826,6 +1835,10 @@ public partial class IRGenerator
             Val v2b = VisitShortCircuitRight(orLeft, expr.Right, false);
             Emit(new Copy(v2b, result));                 // a falsy -> b
             Emit(new Label(endLabel));
+            // `flag or make()`: the `and` twin -- the temp is the instance's carrier
+            // when either operand produced one, so the class rides the value.
+            if ((ProducedInstanceClassOf(v1a) ?? ProducedInstanceClassOf(v2b)) is { } orCls)
+                producedInstanceClasses[result.Name] = orCls;
             return result;
         }
 
@@ -2550,12 +2563,18 @@ public partial class IRGenerator
         }
         ApplyOptionalCondEffect(truthCond, true);
         Val trueVal = VisitExpression(expr.TrueVal);
+        // Read the arm's class NOW, while its branch state is still live: the join
+        // below drops every instanceClasses key only one arm wrote (a ctor root minted
+        // inside the arm, like `make(1)`'s `__cN`, is exactly that), and the value a
+        // class-returning callee produced must be asked about before its proof is gone.
+        string? ternTrueCls = ProducedInstanceClassOf(trueVal);
         int trueTail = currentInstructions.Count;   // where the true copy + jump belong
         var trueArmSnap = TakeBranchState();
         RestoreBranchState(ternSnap);
         ApplyOptionalCondEffect(truthCond, false);
         Emit(new Label(falseLabel));
         Val falseVal = VisitExpression(expr.FalseVal);
+        string? ternFalseCls = ProducedInstanceClassOf(falseVal);
         var falseArmSnap = TakeBranchState();
         // The condition's narrowing belongs to its arm; past the expression the name
         // is whatever the arms agree on -- an arm runs under its own guard, so a
@@ -2574,6 +2593,11 @@ public partial class IRGenerator
         }
         Temporary result = MakeTemp(
             DataTypeExtensions.GetPromotedType(GetValType(trueVal), GetValType(falseVal)));
+        // `make(1) if flag else make(2)`: an arm's val carried the class (a ctor root,
+        // a produced call temp); the merged temp is that instance's carrier now, so the
+        // class rides the value into whatever position the ternary occupies.
+        if ((ternTrueCls ?? ternFalseCls) is { } ternCls)
+            producedInstanceClasses[result.Name] = ternCls;
         Emit(new Copy(falseVal, result));
         Emit(new Label(endLabel));
 
@@ -5223,6 +5247,37 @@ public partial class IRGenerator
         => classNames.Contains(returnType)
            || classFieldLayout.ContainsKey(returnType)
            || ResolveConcreteClass(returnType) != null;
+
+    /// A dispatched callee whose declared return names a user class hands its caller an
+    /// instance on a scalar carrier -- the result temp holds the field byte, the slot
+    /// pointer, or nothing at all. Tag the name so a wrapper (ternary, and/or) or a
+    /// tuple element can read the class from the VALUE, never from the call's spelling.
+    private void StampProducedClass(Val? result, string? returnType)
+    {
+        string? name = result switch
+        { Variable pv => pv.Name, Temporary pt => pt.Name, _ => null };
+        if (name != null
+            && returnType is { } rt && ReturnTypeNamesInstanceClass(rt))
+            producedInstanceClasses[name] = rt;
+    }
+
+    /// The class a produced value is an instance of, or null. <see cref="GetValClass"/>
+    /// answers for the names that ARE the object (a ctor target, a bound variable, a zca
+    /// handle temp); <see cref="producedInstanceClasses"/> rides the same alias walk for
+    /// the temps that only CARRY one -- a call result whose dispatched callee declared
+    /// `-> Cls`, a ternary or `and`/`or` temp an arm of which produced one.
+    private string? ProducedInstanceClassOf(Val v)
+    {
+        if (GetValClass(v) is { Length: > 0 } cls) return cls;
+        string? name = v switch { Variable pv => pv.Name, Temporary pt => pt.Name, _ => null };
+        for (int i = 0; name != null && i < 10; ++i)
+        {
+            if (producedInstanceClasses.TryGetValue(name, out var pc)) return pc;
+            if (!variableAliases.TryGetValue(name, out var next)) break;
+            name = next;
+        }
+        return null;
+    }
 
     /// <summary>
     /// True when a class can be an element of a `Cls[N]` instance array (RFC 0001
