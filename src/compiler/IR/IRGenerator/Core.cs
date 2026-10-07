@@ -1985,13 +1985,29 @@ public partial class IRGenerator
     ///
     /// `global`/`nonlocal` declarations deliberately do not count: they record the bare name
     /// in <c>currentFunctionGlobals</c>, which is the opposite of a local binding.
+    ///
+    /// Inside an expansion the `currentFunction` candidate is the CALLER's scope, so the
+    /// module-level spellings of it must not count either: `main.buf` (or
+    /// `mod___module_init.buf`) is the module's own binding spelled qualified -- the replay
+    /// alias `main.buf -> buf` names the same object -- and a callee name a `global`
+    /// declaration claims means the module's, whatever the caller's qualified tables held.
+    /// Without the exclusions a `return buf` inside an inlined `f` that declares
+    /// `global buf` (or never binds `buf` at all, while the module does) resolved to the
+    /// phantom `inline.f.buf` the sequence-copy helper aliases when the resolution misses.
     /// </summary>
     private bool LocalScopeBinds(string name)
     {
+        bool enclosing = !string.IsNullOrEmpty(currentInlinePrefix);
         foreach (var k in new[]
         {
-            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
-            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+            enclosing ? currentInlinePrefix + name : null,
+            string.IsNullOrEmpty(currentFunction)
+                || (enclosing
+                    && (currentFunction == "main"
+                        || currentFunction.EndsWith("___module_init", StringComparison.Ordinal)
+                        || currentFunctionGlobals.Contains(name)))
+                    ? null
+                    : currentFunction + "." + name,
         })
         {
             if (k == null) continue;

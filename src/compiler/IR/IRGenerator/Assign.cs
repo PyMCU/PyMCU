@@ -8275,9 +8275,11 @@ public partial class IRGenerator
             if (count <= 0)
                 throw UserError("bytearray: could not determine buffer size from initializer.",
                                 annSizeSource);
-            string qualified = string.IsNullOrEmpty(currentFunction)
-                ? stmt.Target
-                : currentFunction + "." + stmt.Target;
+            string qualified = string.IsNullOrEmpty(currentInlinePrefix)
+                ? (string.IsNullOrEmpty(currentFunction)
+                    ? stmt.Target
+                    : currentFunction + "." + stmt.Target)
+                : currentInlinePrefix + stmt.Target;
             // Synthesized main: fall back to the module-level name registered by ScanGlobals.
             // Only where the module level is being REPLAYED, which is the entry point and a
             // module's synthesized __module_init. It used to fire in ANY function, so a
@@ -8292,8 +8294,9 @@ public partial class IRGenerator
             // wrapped into the low bytes. Measured: writing 99 at index 257 and reading it back
             // printed 0, on a clean build with no diagnostic. Renaming the array to a name the
             // stdlib does not use made it correct, which is what pinned it to the collision.
-            bool replayingModuleLevel = currentFunction == "main"
-                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+            bool replayingModuleLevel = (currentFunction == "main"
+                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal))
+                && string.IsNullOrEmpty(currentInlinePrefix);
             if (replayingModuleLevel
                 && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;
