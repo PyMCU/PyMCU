@@ -373,4 +373,50 @@ public class BufferParamTests
 
         Assert.Contains(Body(ir, "forward"), i => i is Call { FunctionName: "head" });
     }
+
+    [Fact]
+    public void ATupleUnpackTarget_BoundFromABufferParameter_ForwardsAsTheBuffer()
+    {
+        // `alias, ignored = (buf, 0)` -- a tuple-unpack target -- is ANOTHER shape that
+        // forwards a buffer parameter under a new name, found by the same review round
+        // as the plain-copy case above. VisitTupleUnpack's own Copy-emission never ran
+        // through the alias/value-tracking bookkeeping a plain `x = y` does, so `alias`
+        // reached NameIsScalarAtThisSite with nothing proving it one way or the other --
+        // which the OLD "assume scalar unless excluded" criterion answered wrong. The
+        // new "positive proof only" criterion answers it right without having to add yet
+        // another exclusion for this one shape.
+        var ir = Gen(Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def forward(buf: bytearray) -> uint8:\n" +
+            "    alias, ignored = (buf, 0)\n" +
+            "    return head(alias)\n" +
+            "def main():\n" +
+            "    a: uint8 = forward(bytearray([4, 5]))\n");
+
+        Assert.Contains(Body(ir, "forward"), i => i is Call { FunctionName: "head" });
+    }
+
+    [Fact]
+    public void ACallResultThatIsJustItsOwnBufferParameter_ForwardsAsTheBuffer()
+    {
+        // `returned = ident(buf)` where `ident` simply returns the bytearray parameter it
+        // was given -- a THIRD shape forwarding a buffer under a new name, found by the
+        // same review round. No CopyArrayIdentity/BindArrayAlias fires for a plain
+        // bytearray-typed return (those two exist for a fixed array's return and an
+        // @inline parameter binding), so `returned` reached NameIsScalarAtThisSite with
+        // no record either way -- same fix as the two cases above, for the same reason.
+        var ir = Gen(Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def ident(v: bytearray) -> bytearray:\n" +
+            "    return v\n" +
+            "def forward(buf: bytearray) -> uint8:\n" +
+            "    returned = ident(buf)\n" +
+            "    return head(returned)\n" +
+            "def main():\n" +
+            "    a: uint8 = forward(bytearray([4, 5]))\n");
+
+        Assert.Contains(Body(ir, "forward"), i => i is Call { FunctionName: "head" });
+    }
 }
