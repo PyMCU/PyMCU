@@ -2526,21 +2526,40 @@ public partial class IRGenerator
         }
         else if (value is Temporary tSrc && target is Variable tDst)
         {
-            // instAnchor, not tSrc: a mid-chain scratch name is where member reads
-            // stop (Temporary.IsScratchName ends the walk), so `s = <call>` would
-            // flatten `s.field` to a slot the constructor never wrote.
-            variableAliases[tDst.Name] = instAnchor ?? tSrc.Name;
-            // The temp stands for a scalar view of shared storage (`y = make().n`):
-            // the byte aliases across, the class does not.
-            if (ValIsScalarView(value)) scalarMaskedNames.Add(tDst.Name);
-            // The same rule the Variable branch applies: an alias to an INSTANCE
-            // is structural -- which object the name stands for does not depend
-            // on which path ran, so it must survive a label. `r = decode_bits(p)`
-            // binds r to the handle the inlined call returned; filed as
-            // value-tracking, the first label a later statement emitted dropped
-            // it, and `r.code[i]` resolved to a phantom `r_code` slot.
-            if (instAnchor == null && ReceiverClassThroughAliases(tSrc.Name) is null)
-                valueTrackingAliases.Add(tDst.Name);
+            if (instAnchor == null && listVarElemTypes.TryGetValue(tSrc.Name, out var carriedListElem))
+            {
+                // `row = cells[y]` on a list[list[T]]: the value is a scratch temp
+                // carrying an inner-list pointer, and copy propagation folds the
+                // Copy into the load so the temp's slot is never written -- an
+                // alias to it resolves later subscripts to a dead name. The
+                // receiving name is itself the list var: its own slot holds the
+                // pointer, which is where len()/row[i]/append must look.
+                listVarElemTypes[tDst.Name] = carriedListElem;
+                if (listInnerElemTypes.TryGetValue(tSrc.Name, out var carriedInner))
+                    listInnerElemTypes[tDst.Name] = carriedInner;
+                else
+                    listInnerElemTypes.Remove(tDst.Name);
+                if (IsTupleBound(tSrc.Name)) tupleBoundNames.Add(tDst.Name);
+                else tupleBoundNames.Remove(tDst.Name);
+            }
+            else
+            {
+                // instAnchor, not tSrc: a mid-chain scratch name is where member reads
+                // stop (Temporary.IsScratchName ends the walk), so `s = <call>` would
+                // flatten `s.field` to a slot the constructor never wrote.
+                variableAliases[tDst.Name] = instAnchor ?? tSrc.Name;
+                // The temp stands for a scalar view of shared storage (`y = make().n`):
+                // the byte aliases across, the class does not.
+                if (ValIsScalarView(value)) scalarMaskedNames.Add(tDst.Name);
+                // The same rule the Variable branch applies: an alias to an INSTANCE
+                // is structural -- which object the name stands for does not depend
+                // on which path ran, so it must survive a label. `r = decode_bits(p)`
+                // binds r to the handle the inlined call returned; filed as
+                // value-tracking, the first label a later statement emitted dropped
+                // it, and `r.code[i]` resolved to a phantom `r_code` slot.
+                if (instAnchor == null && ReceiverClassThroughAliases(tSrc.Name) is null)
+                    valueTrackingAliases.Add(tDst.Name);
+            }
         }
 
         if (string.IsNullOrEmpty(currentFunction))

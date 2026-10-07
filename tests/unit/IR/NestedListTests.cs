@@ -156,4 +156,50 @@ public class NestedListTests
         // The append's grow-path allocation must flag the new buffer too.
         Assert.Contains(main.Body, i => i is GcAlloc a && a.Refs);
     }
+
+    // `row = cells[y]` binds the name to the inner list itself -- CPython alias
+    // semantics, so `row[k] = v` writes through to `cells[y][k]`.
+    [Fact]
+    public void BoundRowNamesItsOwnSlot()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "cells: list[list[uint8]] = [[0, 0], [0, 0]]\n" +
+            "y: uint8 = 1\n" +
+            "row = cells[y]\n" +
+            "row[0] = 9\n" +
+            "q = row[0]\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        // `row` receives the pointer in its own slot, and `row[k]` computes
+        // element addresses from `row`. Before the fix the name aliased the
+        // inner load's scratch temp, copy propagation folded `row = tmp_N`
+        // into the load's dst, and `row[k]` then read a `tmp_N` slot nothing
+        // ever wrote -- the row answered 0 whatever it held.
+        Assert.Contains(main.Body,
+            i => i is Binary b && b.Src1 is Variable { Name: "row" });
+        Assert.DoesNotContain(main.Body,
+            i => i is Binary b && b.Src1 is Variable { Name: { } n } && n.StartsWith("tmp_"));
+        Assert.Contains(main.Body, i => i is StoreIndirect s && s.Elem == DataType.UINT8);
+    }
+
+    [Fact]
+    public void BoundRowInsideAFunctionNamesItsOwnSlot()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "cells: list[list[uint8]] = [[0, 0], [7, 7]]\n\n" +
+            "def f(y: uint8) -> uint8:\n" +
+            "    row = cells[y]\n" +
+            "    row[1] = 42\n" +
+            "    return row[0]\n\n" +
+            "q = f(1)\n");
+        var fBody = ir.Functions.Single(f => f.Name == "f").Body;
+
+        // Same binding inside a callee's frame: `f.row` is the list var.
+        Assert.Contains(fBody,
+            i => i is Binary b && b.Src1 is Variable { Name: "f.row" });
+        Assert.DoesNotContain(fBody,
+            i => i is Binary b && b.Src1 is Variable { Name: { } n } && n.StartsWith("tmp_"));
+    }
 }
