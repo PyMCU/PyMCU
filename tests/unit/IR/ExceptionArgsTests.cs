@@ -456,6 +456,27 @@ public class ExceptionArgsTests
     }
 
     [Fact]
+    public void ABareRaiseInANonInlineCalleeRefuses()
+    {
+        // h1: `def rer(): raise` lowers in the functionsToCompile drain with no
+        // handler scope at all -- handlerCodeStack is empty and its SignalError(0)
+        // propagated whatever record the last handled raise left (the caught
+        // OSError(5) came out as ValueError(2)). There is no snapshot it can name,
+        // so the program is refused instead of silently re-raising the wrong one.
+        var act = () => Gen(
+            "def rer():\n" +
+            "    raise\n" +
+            "try:\n" +
+            "    raise OSError(5)\n" +
+            "except OSError:\n" +
+            "    rer()\n");
+
+        act.Should().Throw<PyMCU.Common.CompilerError>()
+            .Which.Message.Should().Contain("bare `raise`")
+            .And.Contain("@inline");
+    }
+
+    [Fact]
     public void AnInlineCallWithoutARaiseStillDropsTheSnapshot()
     {
         // The save is tentative: a handler that expands an @inline carrying no bare
