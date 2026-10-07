@@ -3051,7 +3051,16 @@ public partial class IRGenerator
         else if (handlerCodeStack.Count > 0)
             code = new Variable(handlerCodeStack[^1], DataType.UINT8);
         else
-            code = new Constant(0);
+            // No enclosing handler in the unit being lowered: a bare `raise` can only
+            // re-signal the stale shared record left by whoever handled last, which
+            // printed the wrong exception rather than refusing. A helper that
+            // re-raises the exception being handled has to expand into the handler's
+            // scope -- that is what `@inline` is for.
+            throw UserError(
+                "bare `raise` with no enclosing except handler: PyMCU re-raises through "
+                + "a snapshot the handler reserves, which a separately compiled function "
+                + "cannot see; mark the helper @inline so the raise expands at the call "
+                + "site", stmt);
 
         // The message, alongside the code. A string literal is one store of the flash address
         // of the interned text (#369). A non-literal (f-string, concatenation, call) stores

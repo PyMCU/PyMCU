@@ -1432,6 +1432,10 @@ public partial class IRGenerator
         // catch at all), never jump at a label or an exn variable only the caller owns.
         var savedTryCatchStack  = tryCatchStack;
         var savedHandlerStack   = handlerCodeStack;
+        // The caller's snapshot prefixes are caller scope too: a bare `raise` in the
+        // shared body would restore the record of whichever handler happened to be
+        // lowering when this body was visited, which is a caller it cannot know.
+        var savedHandlerSnapStack = handlerSnapStack;
         int savedLastLine       = lastLine;
         var savedSourcePath     = currentSourcePath;
         var savedSourceFile     = currentSourceFile;
@@ -1476,6 +1480,7 @@ public partial class IRGenerator
         finallyStack           = new List<List<Statement>>();
         tryCatchStack          = new List<string>();
         handlerCodeStack       = new List<string>();
+        handlerSnapStack       = new List<string?>();
         activeInlineExpansions = new HashSet<string>();
         lastLine               = -1;
         inlineTracksCalleeLine = false;
@@ -1680,6 +1685,7 @@ public partial class IRGenerator
             finallyStack           = savedFinallyStack;
             tryCatchStack          = savedTryCatchStack;
             handlerCodeStack       = savedHandlerStack;
+            handlerSnapStack       = savedHandlerSnapStack;
             lastLine               = savedLastLine;
             currentSourcePath      = savedSourcePath;
             currentSourceFile      = savedSourceFile;
@@ -1743,6 +1749,7 @@ public partial class IRGenerator
         finallyStack           = savedFinallyStack;
         tryCatchStack          = savedTryCatchStack;
         handlerCodeStack       = savedHandlerStack;
+        handlerSnapStack       = savedHandlerSnapStack;
         lastLine               = savedLastLine;
         currentSourcePath      = savedSourcePath;
         currentSourceFile      = savedSourceFile;

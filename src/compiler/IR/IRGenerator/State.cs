@@ -729,7 +729,9 @@ public partial class IRGenerator
     // exception this handler runs under. A `raise`/`raise e` inside the handler restores
     // the record from it, so what propagates is the exception being re-raised and not
     // whatever a nested handled raise last stored. Null for a try that took no snapshot.
-    private readonly List<string?> handlerSnapStack = new();
+    // Reassigned, not just mutated: a body outlined apart (BoundOutline) must see none
+    // of the caller's prefixes, the same exclusion handlerCodeStack gets.
+    private List<string?> handlerSnapStack = new();
 
     // Every ExnRecordMark restore emitted so far, by prefix, in emission order. A handler
     // reads the slice added while ITS body lowered to decide whether its tentative save
