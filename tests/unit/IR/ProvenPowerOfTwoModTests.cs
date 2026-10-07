@@ -112,4 +112,71 @@ public class ProvenPowerOfTwoModTests
         Assert.Contains(mainBody, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
         Assert.DoesNotContain(mainBody, i => i is Binary { Op: IrBinaryOp.Mod or IrBinaryOp.FloorDiv });
     }
+
+    [Fact]
+    public void TheMaskDoesNotNarrowTheResultTypeBelowTheOriginalDivisors()
+    {
+        // Codex review, case 1: `x % n` with x: int8 and n: uint16 proven 256. The
+        // rewrite replaces n with the literal mask 255 BEFORE the result type is
+        // chosen; picking that type from the mask's own narrow look (255 reads as a
+        // uint8) instead of from the original divisor's uint16 sign-extended the
+        // result through int8. rem(int8(-1), 256) is 255 in CPython, not -1.
+        const string src =
+            "def rem(x: int8) -> int16:\n" +
+            "    n: uint16 = 256\n" +
+            "    return x % n\n" +
+            "def main():\n" +
+            "    rem(-1)\n";
+        var body = F(Gen(src), "rem").Body;
+        var and = body.OfType<Binary>().Single(b => b.Op == IrBinaryOp.BitAnd);
+        Assert.Equal(new Constant(255), and.Src2);
+        Assert.NotEqual(DataType.INT8, and.Dst is Temporary dt ? dt.Type : DataType.INT8);
+    }
+
+    [Fact]
+    public void ASharedNonInlineFunctionsParameter_IsNeverProvenFromAnyOneCallSite()
+    {
+        // Codex review, case 2: rem(x, n) is a real (non-@inline) function, so its body
+        // is generated exactly once and must be correct for every call site that shares
+        // its parameter slots. Proving n from ONE call's argument and baking that into
+        // the shared body would be right for that call and wrong for the next one --
+        // rem(5, 32) then rem(5, 4) must answer 5 and 1, not 1 and 1 (the last call's
+        // divisor specializing the one shared `x % n`).
+        const string src =
+            "def rem(x: int16, n: uint16) -> int16:\n" +
+            "    return x % n\n" +
+            "def main():\n" +
+            "    rem(5, 32)\n" +
+            "    rem(5, 4)\n";
+        var body = F(Gen(src), "rem").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd });
+    }
+
+    [Fact]
+    public void ALoopThatWritesTheFieldThroughAMethod_NeverProvesTheDivisorAcrossTheWrite()
+    {
+        // Codex review, case 3: the loop prepass invalidates constantVariables,
+        // strConstantVariables and localConstantValues for a field a called method
+        // writes, but used to leave variableRanges untouched -- the first iteration's
+        // `self.w == 32` proof survived the write `set4()` makes on every later pass.
+        // `5 % o.w` must stay a genuine modulo: the field's value changes inside the
+        // very loop that reads it.
+        const string src =
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self.w: uint16 = 32\n" +
+            "    def set4(self):\n" +
+            "        self.w = 4\n" +
+            "def main():\n" +
+            "    o = Box()\n" +
+            "    i: uint8 = 0\n" +
+            "    while i < 2:\n" +
+            "        y: int16 = 5 % o.w\n" +
+            "        o.set4()\n" +
+            "        i = i + 1\n";
+        var body = F(Gen(src), "main").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
 }
