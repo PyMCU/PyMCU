@@ -72,6 +72,19 @@ class TestResolveFromIndexAcceptsUpstream:
         _, _, error = cmd.resolve_from_index(project, "adafruit_hcsr04")
         assert "circuitpython" in error
 
+    def test_bundled_entry_resolves_offline_without_a_cache(self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        monkeypatch.setattr(cmd, "fetch_index", lambda refresh=False: ({}, ""))
+        monkeypatch.setattr(cmd, "last_index_error", lambda: "network is offline")
+
+        entry, distribution, error = cmd.resolve_from_index(
+            project, "adafruit_ssd1306"
+        )
+
+        assert error == ""
+        assert entry["kind"] == "upstream"
+        assert distribution == "adafruit-circuitpython-ssd1306"
+
 
 class TestInstallUpstreamLibrary:
     def test_successful_install(self, tmp_path, monkeypatch):

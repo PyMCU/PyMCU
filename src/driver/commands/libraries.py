@@ -669,16 +669,16 @@ def resolve_from_index(project: Project, name: str, *, refresh: bool = False
     Returns (entry, distribution, error). A non-empty error means no, and says
     why in the words the user needs to act on.
     """
-    index, source = fetch_index(refresh=refresh)
-    if not index:
-        detail = f" {last_index_error()}" if last_index_error() else ""
-        return None, "", (
-            f"Could not reach the library index at {_index_url()} and no cached copy "
-            f"is available.{detail}"
-        )
-
+    fetched, source = fetch_index(refresh=refresh)
+    index = with_bundled_upstream(fetched)
     entry = find_entry(index, name)
     if entry is None:
+        if not fetched:
+            detail = f" {last_index_error()}" if last_index_error() else ""
+            return None, "", (
+                f"Could not reach the library index at {_index_url()} and no cached copy "
+                f"is available.{detail}"
+            )
         if source == "stale-cache":
             cache_hint = (
                 " This answer came from a stale cached index because its automatic "
@@ -1083,7 +1083,8 @@ def search(
         False, "--json", help="Emit the results as JSON on stdout (for IDE integrations)."),
 ):
     """Search the PyMCU library index."""
-    index, source = fetch_index(refresh=refresh)
+    fetched, source = fetch_index(refresh=refresh)
+    index = with_bundled_upstream(fetched)
     if not index:
         if json_output:
             print(json.dumps({
