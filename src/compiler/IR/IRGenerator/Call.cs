@@ -8547,7 +8547,9 @@ public partial class IRGenerator
         {
             var (aMin, aMax) = ValRange(aVal);
             var (bMin, bMax) = ValRange(bVal);
-            bool quotientOverflow = bMin <= -1
+            // `bMin <= -1` alone is not proof: -1 must be reachable inside the
+            // divisor's range, which a constant -2's [-2, -2] never contains.
+            bool quotientOverflow = bMin <= -1 && -1 <= bMax
                 && (aMin < -2147483647L || aMax > 2147483648L);
             bool remainderOverflow = !WidthSeeds.IsSigned(tb) && bMax > 2147483648L;
             if (quotientOverflow || remainderOverflow)
