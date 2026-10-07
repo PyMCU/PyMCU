@@ -189,15 +189,6 @@ public partial class IRGenerator
     // type appear here; anything absent falls back to the full range of its type.
     private Dictionary<string, (long Min, long Max)> tempRanges = new();
 
-    // Value range (inclusive) of integer variables, keyed by the variable's name -- the
-    // same job tempRanges does for temporaries. A variable's proven range is what a Copy
-    // store last wrote into it, or the bounds of the range() loop that minted it. It is a
-    // program-point fact: joins at branch merges, drops wherever a store's value is not
-    // provably bounded, and drops for names a loop carries (a read the body's own writes
-    // do not dominate can see the previous iteration's value). Anything absent falls back
-    // to the full range of the variable's type.
-    private Dictionary<string, (long Min, long Max)> variableRanges = new();
-
     private Dictionary<string, ModuleScope> modules = new();
 
     private HashSet<string> classNames = new(); // Tracks known class names for callee resolution

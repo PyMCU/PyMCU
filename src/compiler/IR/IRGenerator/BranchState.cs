@@ -50,10 +50,6 @@ public partial class IRGenerator
         public Dictionary<string, int> ConstantAddressVariables = new();
         public Dictionary<string, (string LenVar, int Capacity)> RuntimeStrVars = new();
         public Dictionary<string, (long Min, long Max)> TempRanges = new();
-        // Proven value ranges of named slots: the join is the interval union when every
-        // arm knows a range for the name (arms may disagree on WHERE in it the value
-        // landed), and a drop when any arm knows nothing -- presence is the fact.
-        public Dictionary<string, (long Min, long Max)> VariableRanges = new();
         public Dictionary<string, DataType> RuntimePtrVars = new();
         public Dictionary<string, int> BufferLogicalLen = new();
         // bufferDeclBranchTokens is deliberately NOT here: it records the run-time
@@ -134,7 +130,6 @@ public partial class IRGenerator
         ConstantAddressVariables = new Dictionary<string, int>(constantAddressVariables),
         RuntimeStrVars = new Dictionary<string, (string, int)>(runtimeStrVars),
         TempRanges = new Dictionary<string, (long, long)>(tempRanges),
-        VariableRanges = new Dictionary<string, (long, long)>(variableRanges),
         RuntimePtrVars = new Dictionary<string, DataType>(runtimePtrVars),
         BufferLogicalLen = new Dictionary<string, int>(bufferLogicalLen),
         StrConstantVariables = new Dictionary<string, string?>(strConstantVariables),
@@ -188,7 +183,6 @@ public partial class IRGenerator
         RestoreInto(constantAddressVariables, s.ConstantAddressVariables);
         RestoreInto(runtimeStrVars, s.RuntimeStrVars);
         RestoreInto(tempRanges, s.TempRanges);
-        RestoreInto(variableRanges, s.VariableRanges);
         RestoreInto(runtimePtrVars, s.RuntimePtrVars);
         RestoreInto(bufferLogicalLen, s.BufferLogicalLen);
         RestoreInto(strConstantVariables, s.StrConstantVariables);
@@ -282,7 +276,6 @@ public partial class IRGenerator
         constantAddressVariables = JoinDicts(arms.Select(a => a.ConstantAddressVariables).ToList());
         runtimeStrVars = JoinDicts(arms.Select(a => a.RuntimeStrVars).ToList());
         tempRanges = JoinDicts(arms.Select(a => a.TempRanges).ToList());
-        variableRanges = JoinRanges(arms.Select(a => a.VariableRanges).ToList());
         runtimePtrVars = JoinDicts(arms.Select(a => a.RuntimePtrVars).ToList());
         RestoreInto(bufferLogicalLen, JoinDicts(arms.Select(a => a.BufferLogicalLen).ToList()));
         variableAliases = JoinDicts(arms.Select(a => a.VariableAliases).ToList());
@@ -412,30 +405,6 @@ public partial class IRGenerator
                     result.Remove(key);
                     break;
                 }
-        return result;
-    }
-
-    /// The join for proven value ranges: a name keeps a fact only when every reachable
-    /// arm knows one, and the fact is the interval union of what each arm left --
-    /// `x = 5` on one arm and `x = 7` on another merge as x in [5, 7], and an arm that
-    /// knows nothing vetoes the name entirely.
-    private static Dictionary<string, (long Min, long Max)> JoinRanges(
-        List<Dictionary<string, (long Min, long Max)>> arms)
-    {
-        var result = new Dictionary<string, (long Min, long Max)>();
-        if (arms.Count == 0) return result;
-        foreach (var (key, first) in arms[0])
-        {
-            long lo = first.Min, hi = first.Max;
-            bool all = true;
-            for (int i = 1; i < arms.Count; i++)
-            {
-                if (!arms[i].TryGetValue(key, out var r)) { all = false; break; }
-                lo = Math.Min(lo, r.Min);
-                hi = Math.Max(hi, r.Max);
-            }
-            if (all) result[key] = (lo, hi);
-        }
         return result;
     }
 

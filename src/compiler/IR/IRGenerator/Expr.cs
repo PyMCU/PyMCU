@@ -675,30 +675,34 @@ public partial class IRGenerator
         }
     }
 
-    // Like ValRange, but for a Variable also trusts a proven narrower fact: a local
-    // constant (the same fact branch folding trusts) or the last-store bound
-    // TrackVariableRange recorded. Used only where acting on a narrower-than-declared
-    // bound is the whole point -- sizing an arithmetic result or a mint decision so
-    // `(x + dx) % w` sees w's real value of 32, not uint8's full [0, 255] -- and never by
-    // a comparison: ComparisonType/FoldComparisonByRange stay declared-type-only, or a
-    // single-call-site function's literal argument would fold branches those tests
-    // exist to keep as real runtime comparisons (ComparisonRangeTests, ComparisonPrintsBoolTests).
-    private (long Min, long Max) ProvenRange(Val v)
+    // The exact value v holds when it is a Constant, or a Variable the EXISTING
+    // constant-folding tables already prove constant -- never a guess from a declared
+    // type, and never from a bespoke range analysis of its own. Three rounds of silent
+    // regressions (a shared non-inline function's parameter proven from one call site, a
+    // loop-carried name surviving the loop's own invalidation, a field write through a
+    // method not voiding an earlier proof) came from giving the mod rewrite its own
+    // flow-sensitive tracking; these two tables are what the rest of the compiler
+    // already reads the same way, guarded the same way, for the same "is this name
+    // provably one value here" question (Call.cs, ControlFlow.cs, Scan.cs,
+    // Statements.cs): constantVariables for a module-level name (the only kind it ever
+    // holds -- EmitScalarVarAssign routes anything inside a function to
+    // localConstantValues instead), and localConstantValues -- guarded by
+    // ForeignFlowRead, which excludes a read from a DIFFERENT function than the one
+    // that wrote it -- for everything else, including a field written once in __init__
+    // and read through a local inside another method (self.width in Life.step()).
+    // Neither table ever receives a parameter's argument, so a shared non-inline
+    // function's parameter is never "proven" from any one call site in the first place.
+    // ConstantVariableAsLong undoes constantVariables' raw-32-bit-pattern storage for a
+    // name unsignedConstNames marks (divmod()'s own quotient, oracle probe 632).
+    private long? ProvenConstantDivisor(Val v)
     {
-        if (v is Variable varV)
-        {
-            if (!ForeignGlobalRead(varV.Name) && constantVariables.TryGetValue(varV.Name, out int vcv))
-            {
-                long lv = ConstantVariableAsLong(varV.Name, vcv);
-                return (lv, lv);
-            }
-            if (!ForeignFlowRead(varV.Name) && !ForeignGlobalRead(varV.Name)
-                && localConstantValues.TryGetValue(varV.Name, out int vlv))
-                return (vlv, vlv);
-            if (!ForeignGlobalRead(varV.Name) && variableRanges.TryGetValue(varV.Name, out var vr))
-                return vr;
-        }
-        return ValRange(v);
+        if (v is Constant c) return c.AsLong;
+        if (v is not Variable vv) return null;
+        if (constantVariables.TryGetValue(vv.Name, out int cv))
+            return ConstantVariableAsLong(vv.Name, cv);
+        if (!ForeignFlowRead(vv.Name) && localConstantValues.TryGetValue(vv.Name, out int lv))
+            return lv;
+        return null;
     }
 
     // Range of `a op b` for the promoting operators, or null when it cannot be bounded
@@ -2152,9 +2156,8 @@ public partial class IRGenerator
         // of answering 255. The rewrite itself still runs on the mask (v2 below).
         Val divisorForType = v2;
         AstBinOp emitOp = expr.Op;
-        if (emitOp == AstBinOp.Mod && ProvenRange(v2) is (long modP, long modPHi)
-            && modP == modPHi && modP >= 2 && (modP & (modP - 1)) == 0
-            && modP <= int.MaxValue + 1L)
+        if (emitOp == AstBinOp.Mod && ProvenConstantDivisor(v2) is long modP
+            && modP >= 2 && (modP & (modP - 1)) == 0 && modP <= int.MaxValue + 1L)
         {
             emitOp = AstBinOp.BitAnd;
             v2 = new Constant((int)(modP - 1));
@@ -2237,9 +2240,7 @@ public partial class IRGenerator
         else if (emitOp is AstBinOp.BitAnd && IsIntegerType(resType))
         {
             // `(x + dx) % 32` reaches here as the mask `& 31` from the rewrite above;
-            // recording [0, 31] is what lets the destination mint a byte. v1 is the sum
-            // temp (tempRanges, unaffected by the Variable-only ProvenRange distinction)
-            // and v2 is the mask constant, so plain ValRange already sees both exactly.
+            // recording [0, 31] is what lets the destination mint a byte.
             resRange = BinaryResultRange(emitOp, ValRange(v1), ValRange(v2));
         }
 

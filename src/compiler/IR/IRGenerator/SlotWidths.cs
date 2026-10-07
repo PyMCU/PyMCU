@@ -212,132 +212,8 @@ public partial class IRGenerator
         Constant c => (c.AsLong, c.AsLong),
         Temporary t when WidthSeeds.IsInt(t.Type) =>
             tempRanges.TryGetValue(t.Name, out var r) ? r : RangeOfType(t.Type),
-        Variable vv when WidthSeeds.IsInt(vv.Type) =>
-            !ForeignGlobalRead(vv.Name) && constantVariables.TryGetValue(vv.Name, out int scv)
-                ? (ConstantVariableAsLong(vv.Name, scv), ConstantVariableAsLong(vv.Name, scv))
-            : !ForeignFlowRead(vv.Name) && !ForeignGlobalRead(vv.Name)
-                && localConstantValues.TryGetValue(vv.Name, out int slv)
-                ? (slv, slv)
-            : !ForeignGlobalRead(vv.Name) && variableRanges.TryGetValue(vv.Name, out var svr) ? svr
-            : RangeOfType(vv.Type),
+        Variable vv when WidthSeeds.IsInt(vv.Type) => RangeOfType(vv.Type),
         MemoryAddress m when WidthSeeds.IsInt(m.Type) => RangeOfType(m.Type),
-        _ => null,
-    };
-
-    /// A fact about the VALUE a Val carries, never a guess from its declared type: a
-    /// Constant is exact, a Temporary answers only from a recorded computed range, and a
-    /// Variable answers only from a tracked constant or proven-range entry. Null for
-    /// everything SlotValueRange would otherwise default to the type's full range for --
-    /// that default is sound as a BOUND on the source, but wrong to copy forward as a fact
-    /// about the DESTINATION: `n: uint16 = GPIOR0.value` is a real uint8 register with no
-    /// entry of its own, so SlotValueRange(GPIOR0) falls back to its declared [0, 255], and
-    /// recording that as a fact about `n` silently narrowed a uint16 loop bound the project
-    /// deliberately leaves at its declared width when the source is not provably exact
-    /// (RangeCounterTypeTests.RuntimeBounds_SizeTheCounterFromTheirTypes).
-    private (long Min, long Max)? ProvenSourceFact(Val v) => v switch
-    {
-        Constant c => (c.AsLong, c.AsLong),
-        Temporary t => tempRanges.TryGetValue(t.Name, out var tr) ? tr : null,
-        Variable vv =>
-            !ForeignGlobalRead(vv.Name) && constantVariables.TryGetValue(vv.Name, out int scv)
-                ? (ConstantVariableAsLong(vv.Name, scv), ConstantVariableAsLong(vv.Name, scv))
-            : !ForeignFlowRead(vv.Name) && !ForeignGlobalRead(vv.Name)
-                && localConstantValues.TryGetValue(vv.Name, out int slv) ? (slv, slv)
-            : !ForeignGlobalRead(vv.Name) && variableRanges.TryGetValue(vv.Name, out var svr) ? svr
-            : null,
-        _ => null,
-    };
-
-    /// Qualified names are built as `currentFunction + "." + name` throughout the
-    /// generator (an inline expansion's own currentFunction already carries its
-    /// "inline1.callee" prefix, so this needs no separate case for it). A write whose
-    /// destination does not start with the CURRENT frame's own prefix is being made
-    /// into somebody else's frame -- an argument copy into a callee's parameter slot,
-    /// emitted from the caller just before the Call -- and is never a fact this frame
-    /// can stand behind.
-    private bool NameOwnedByCurrentFrame(string qualifiedName)
-    {
-        string owner = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-        return qualifiedName.StartsWith(owner + ".", StringComparison.Ordinal);
-    }
-
-    /// Keeps variableRanges honest at every emitted instruction: a Copy records the
-    /// proven range of what it carried into the slot (the slot's own type range when the
-    /// value's range exceeds it, which is exactly what a truncating store leaves), and
-    /// any other write to a named slot drops the fact -- an augmented assign's operand is
-    /// not the stored range, a call's result is not bounded by the call, a bit write
-    /// changes one bit, and a fused op's arithmetic is the same answer a Copy would ask.
-    /// Globals that a function or a second site also writes never record a range: their
-    /// reads in other frames cannot rely on the last store this walk happened to pass.
-    private void TrackVariableRange(Instruction inst)
-    {
-        switch (inst)
-        {
-            case Copy { Dst: Variable dv } cp:
-                if (!WidthSeeds.IsInt(dv.Type)
-                    || optionalMembersByName.ContainsKey(dv.Name)
-                    || reassignedGlobals.Contains(dv.Name)
-                    || functionWrittenGlobals.Contains(dv.Name)
-                    || cp.Src is Constant { Text: not null }
-                    // A write into a name this frame does not own: an argument copy into a
-                    // CALLEE's shared parameter slot, written from the CALLER's frame before
-                    // the Call. The callee's own body is generated once and must be correct
-                    // for every call site, so the last caller's argument is not a fact about
-                    // the parameter there -- `rem(5, 32)` then `rem(5, 4)` left `rem.n` proven
-                    // 4 for BOTH calls' lowering of `x % n` (PyMCU golperf review, Codex case 2).
-                    || !NameOwnedByCurrentFrame(dv.Name))
-                {
-                    variableRanges.Remove(dv.Name);
-                    break;
-                }
-                // ProvenSourceFact, not SlotValueRange: a source that is itself just "some
-                // variable of some type" (GPIOR0, a uint8 register with no entry of its own)
-                // must not hand the destination its declared type's range as if it were a
-                // proven value -- that silently narrowed a uint16 loop bound read from an
-                // 8-bit register (RangeCounterTypeTests.RuntimeBounds_SizeTheCounterFromTheirTypes).
-                if (ProvenSourceFact(cp.Src) is var (cpLo, cpHi)
-                    && RangeOfType(dv.Type) is var (cpSL, cpSH)
-                    && cpLo >= cpSL && cpHi <= cpSH)
-                {
-                    // Only a value that already fits this slot's current type is a fact:
-                    // one that does not is the width-seed mechanism still widening the slot
-                    // across runs, not a true bound on the variable. Recording the slot's
-                    // own (too-narrow) range here would make NoteStoreRange's accumulator
-                    // check believe the overflow already fits, and the seed this store needs
-                    // would never be filed -- see the InferredSlotWidthTests this broke.
-                    variableRanges[dv.Name] = (cpLo, cpHi);
-                }
-                else variableRanges.Remove(dv.Name);
-                break;
-            case AugAssign { Target: Variable av }:
-                variableRanges.Remove(av.Name);
-                break;
-            default:
-                if (VariableWriteTarget(inst) is { } wn) variableRanges.Remove(wn);
-                break;
-        }
-    }
-
-    /// The named slot an instruction writes, when the write is not a Copy/AugAssign --
-    /// those carry their own case. Dsts are almost always fresh temporaries; the switch
-    /// exists for the rare fused emission that drops the fact instead of trusting it.
-    private static string? VariableWriteTarget(Instruction inst) => inst switch
-    {
-        Binary b => (b.Dst as Variable)?.Name,
-        Unary u => (u.Dst as Variable)?.Name,
-        Bitcast b => (b.Dst as Variable)?.Name,
-        Call c => (c.Dst as Variable)?.Name,
-        IndirectCall ic => (ic.Dst as Variable)?.Name,
-        BitCheck b => (b.Dst as Variable)?.Name,
-        BitSet b => (b.Target as Variable)?.Name,
-        BitClear b => (b.Target as Variable)?.Name,
-        BitWrite b => (b.Target as Variable)?.Name,
-        LoadIndirect l => (l.Dst as Variable)?.Name,
-        ArrayLoad a => (a.Dst as Variable)?.Name,
-        ArrayLoadFlash a => (a.Dst as Variable)?.Name,
-        FlashLoadPtr f => (f.Dst as Variable)?.Name,
-        BytearrayLoad b => (b.Dst as Variable)?.Name,
-        GcAlloc g => (g.Dst as Variable)?.Name,
         _ => null,
     };
 
@@ -359,23 +235,12 @@ public partial class IRGenerator
         DataType need;
         if (readsItself)
         {
-            if (variableRanges.TryGetValue(key, out var proven))
-            {
-                // A proven value range names exactly what the slot can ever hold: this
-                // store's range joined with what it held before is the narrowest honest
-                // ask -- sign and width at once, where the operand-type join below had to
-                // jump straight to int32 for a u16 slot that dips negative.
-                need = NarrowestTypeFor(Math.Min(proven.Min, lo), Math.Max(proven.Max, hi));
-            }
-            else
-            {
-                // An accumulator answers for its sign and for the width of what feeds it, the way
-                // `total = total + r` is as wide as r -- not for the promoted sum, which would ask
-                // for one step more on every run.
-                need = value is { } v && OperandsType(v, 0) is { } fed ? fed : slot;
-                if (lo < 0 && !WidthSeeds.IsSigned(slot))
-                    need = PyMCU.Common.WidthSeeds.Join(need, DataType.INT8);
-            }
+            // An accumulator answers for its sign and for the width of what feeds it, the way
+            // `total = total + r` is as wide as r -- not for the promoted sum, which would ask
+            // for one step more on every run.
+            need = value is { } v && OperandsType(v, 0) is { } fed ? fed : slot;
+            if (lo < 0 && !WidthSeeds.IsSigned(slot))
+                need = PyMCU.Common.WidthSeeds.Join(need, DataType.INT8);
         }
         else need = NarrowestTypeFor(lo, hi);
         RequireSlot(key, slot, need);

@@ -1967,11 +1967,6 @@ public partial class IRGenerator
                     MaterializeConstantBinding(key);
                 constantVariables.Remove(key);
                 strConstantVariables.Remove(key);
-                // A loop-carried name (a read that no write in the body dominates) can
-                // hold the previous iteration's value, so its proven range is void; a
-                // name whose reads all follow an in-body write recomputes its range the
-                // same way every pass -- the body's own stores keep it true.
-                if (readsFirst) variableRanges.Remove(key);
                 // A loop body is lowered once and runs many times, so what the name held on the
                 // first iteration is not what a call inside the loop may hand a callee.
                 localConstantValues.Remove(key);
@@ -2006,13 +2001,6 @@ public partial class IRGenerator
                     strConstantVariables.Remove(prefix + "." + field);
                     localConstantValues.Remove(prefix + "_" + field);
                     localConstantValues.Remove(prefix + "." + field);
-                    // The same staleness as constantVariables: a field write inside the loop
-                    // (`o.set4()` setting self.w = 4) makes the first iteration's proven range
-                    // for `o.w` wrong on every later pass. Missing this kept `5 % o.w` as the
-                    // first pass's `& 31` forever, instead of re-reading a narrower `o.w` after
-                    // the write (PyMCU golperf review, Codex case 3).
-                    variableRanges.Remove(prefix + "_" + field);
-                    variableRanges.Remove(prefix + "." + field);
                     // The noneValued/narrowed marks may only go where a tag byte answers
                     // `is None` instead: a union field (a None write plus a scalar write)
                     // carries one, so its marks are as stale as a bare name's across the
@@ -2063,16 +2051,6 @@ public partial class IRGenerator
     /// </summary>
     private bool ForeignFlowRead(string name) =>
         currentFunction is not ("" or "main") && reassignedGlobals.Contains(name);
-
-    /// Like ForeignFlowRead, but for `variableRanges` (TrackVariableRange/SlotWidths.cs):
-    /// that map is not reassignment-specific, so it needs the wider mutableGlobals test,
-    /// not just the reassigned subset. A module global's value at the point `main` (or a
-    /// module-level @inline it pulls in) stored it is not ordered against a read inside
-    /// an unrelated function -- `w: uint16 = 0` read inside `def f` is not "always 0" just
-    /// because nothing else in this program happens to reassign it; InferredSlotWidthTests'
-    /// accumulator sizing (`c = c + w`) is specifically testing that this is NOT folded.
-    private bool ForeignGlobalRead(string name) =>
-        currentFunction is not ("" or "main") && mutableGlobals.ContainsKey(name);
 
     /// <summary>
     /// True when <paramref name="key"/> already resolves to runtime storage: a variable, a
