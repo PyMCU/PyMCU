@@ -212,6 +212,41 @@ public class ForOverStringConstantsTests
     }
 
     [Fact]
+    public void ABreak_KeepsTheElementTheBrokenIterationWasProcessing()
+    {
+        // A `break` can end the loop at an EARLIER iteration than the last -- CPython
+        // leaves the loop variable bound to whichever element the break's OWN iteration
+        // was processing, a run-time fact, not the tuple's textual last element
+        // (PyMCU-review round 3). `for v in (1, 2): break; print(v)` answered 2 (the
+        // tuple's last element, same unconditional fold as the no-break case above)
+        // instead of 1 (what was actually in scope when the break fired).
+        //
+        // A break makes the post-loop value flow-dependent, so it is no longer a
+        // compile-time constant at all (RegisterWrites' plain "is it a literal" check
+        // does not apply here, unlike the no-break test above): the fix instead
+        // MATERIALIZES each iteration's element into v's own real storage, so the read
+        // after the loop goes through that -- never through the unconditional "last
+        // element" fold.
+        var ir = Gen(Prelude +
+            "def main():\n" +
+            "    for v in (1, 2):\n" +
+            "        break\n" +
+            "    GPIOR0.value = v\n");
+
+        // Iteration 1's own materialize Copy (Constant 2 -> main.v) is still emitted --
+        // it is iteration 0's break that makes it unreachable at RUN time, a jump this
+        // check does not need to follow. What matters is that iteration 0 materializes
+        // its own element, and that the read after the loop goes through the real
+        // variable rather than a "last element" fold.
+        var body = ir.Functions.Last(f => f.Name == "main").Body;
+        Assert.Contains(body,
+            i => i is Copy { Src: Constant { Value: 1 }, Dst: Variable { Name: "main.v" } });
+        Assert.Contains(body,
+            i => i is Copy { Src: Variable { Name: "main.v" }, Dst: Variable { Name: var n } }
+                 && n.EndsWith("GPIOR0", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ALoopVariable_DoesNotLeakIntoALaterLoopThatReusesItsBareName()
     {
         // The fix above (TheLoopVariable_KeepsTheLastElementsValueAfterTheLoop) leaves the
