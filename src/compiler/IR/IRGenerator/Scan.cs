@@ -2077,6 +2077,11 @@ public partial class IRGenerator
                     var seenBases = new HashSet<int>();
                     foreach (var b in classDef.Bases)
                     {
+                        // #279's deferred definedness check covers this path too:
+                        // `class E(Exception, Missing)` is the same NameError CPython
+                        // raises at class creation, which the constant lookup above
+                        // skipped silently.
+                        pendingBaseChecks.Add((classDef, b, currentModulePrefix, currentSourcePath));
                         int node = ExceptionBaseNode(b);
                         if (!seenBases.Add(node))
                             throw UserError(
