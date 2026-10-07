@@ -2045,9 +2045,6 @@ public partial class IRGenerator
                     // inside the defining module, and `from mod import Exc`, bind it.
                     constantVariables[currentModulePrefix + classDef.Name] = exnCode;
                     exceptionNames.Add(classDef.Name);
-                    // Registered before the bases resolve below so `class F(F)` sees its
-                    // own name as an exception and the self-inheritance check can refuse.
-                    exceptionCodes.Add(exnCode);
 
                     // The OSError subtree is the one place dispatch follows inheritance
                     // (`except OSError` has to catch a raised TimeoutError or a
@@ -2075,37 +2072,6 @@ public partial class IRGenerator
                                 edges.Add(parentCode);
                         }
                     }
-
-                    // CPython builds the class only when its bases linearize under C3;
-                    // the edges above keep IS-A facts and cannot express the ordering
-                    // constraints, so `class F(A, B)` over `B(A)` would compile where
-                    // CPython raises TypeError. Resolve the bases in source order --
-                    // exceptions to their code, the three roots and non-exception bases
-                    // to pseudo-nodes -- and refuse the hierarchy that cannot merge.
-                    var baseNodes = new List<int>();
-                    var seenBases = new HashSet<int>();
-                    foreach (var b in classDef.Bases)
-                    {
-                        int node = ExceptionBaseNode(b);
-                        if (node == exnCode)
-                            throw UserError(
-                                $"class '{classDef.Name}' cannot inherit from itself",
-                                classDef);
-                        if (!seenBases.Add(node))
-                            throw UserError(
-                                $"class '{classDef.Name}' repeats base class '{b}'",
-                                classDef);
-                        baseNodes.Add(node);
-                    }
-                    if (!ExceptionBasesLinearize(baseNodes))
-                        throw UserError(
-                            $"cannot create a consistent method resolution order (MRO) "
-                            + $"for class '{classDef.Name}' from bases "
-                            + $"({string.Join(", ", classDef.Bases)}): a base must not be "
-                            + "listed ahead of a class that derives from it; "
-                            + "CPython raises TypeError at the class definition",
-                            classDef);
-                    exceptionDirectBases[exnCode] = baseNodes;
                     continue;
                 }
 
@@ -3377,98 +3343,6 @@ public partial class IRGenerator
             }
         }
         return found;
-    }
-
-    // The node one declared exception base contributes to the C3 merge: the code the name
-    // resolves to when it names a registered exception (the same three spellings the edge
-    // lookup above tries), a pseudo-node for the three roots, or a fresh node per
-    // non-exception base -- its `object` tail still constrains the merge the way
-    // CPython's does, which is what lets `class F(Exception, Mixin)` still be refused or
-    // accepted on the same terms.
-    private int ExceptionBaseNode(string b)
-    {
-        switch (b)
-        {
-            case "object": return MroNodeObject;
-            case "BaseException": return MroNodeBaseException;
-            case "Exception": return MroNodeException;
-        }
-        string mangled = b.Replace('.', '_');
-        if ((constantVariables.TryGetValue(mangled, out int code)
-                || constantVariables.TryGetValue(currentModulePrefix + mangled, out code)
-                || constantVariables.TryGetValue(b, out code))
-            && exceptionCodes.Contains(code))
-            return code;
-        return mroNodeNext--;
-    }
-
-    // The C3 linearization of one node in the hierarchy PyMCU models: the recorded bases
-    // for user exceptions, the one seeded edge (TimeoutError -> OSError) for builtins, and
-    // the shared Exception -> BaseException -> object tail every exception ends in. A
-    // base that is not an exception hangs straight off object, so a mix-in ahead of a
-    // base does not get refused for an ordering CPython itself accepts. null when the
-    // node's own bases cannot linearize -- unreachable for a registered class, which the
-    // check at its definition already passed.
-    private List<int>? ExceptionMroOf(int node)
-    {
-        if (exceptionMroMemo.TryGetValue(node, out var memo)) return memo;
-        var bases = node switch
-        {
-            MroNodeObject => new List<int>(),
-            MroNodeBaseException => new List<int> { MroNodeObject },
-            MroNodeException => new List<int> { MroNodeBaseException },
-            _ when exceptionDirectBases.TryGetValue(node, out var d) => d,
-            _ when exceptionParents.TryGetValue(node, out var edges) => edges,
-            _ when node > 0 => new List<int> { MroNodeException },
-            _ => new List<int> { MroNodeObject },
-        };
-        var seqs = bases.Select(b => ExceptionMroOf(b)).ToList();
-        if (seqs.Any(s => s == null)) return null;
-        var work = seqs.Select(s => s!).ToList();
-        work.Add(new List<int>(bases));
-        var merged = C3MergeException(work);
-        if (merged == null) return null;
-        merged.Insert(0, node);
-        exceptionMroMemo[node] = merged;
-        return merged;
-    }
-
-    // True when the resolved bases of the class being scanned can linearize under C3:
-    // each base's own linearization merged with the base list itself, which is what makes
-    // `class F(A, B)` over `B(A)` refuse -- A leads the source order while B's own order
-    // already demands B before A.
-    private bool ExceptionBasesLinearize(List<int> bases)
-    {
-        var seqs = bases.Select(b => ExceptionMroOf(b)).ToList();
-        if (seqs.Any(s => s == null)) return false;
-        var work = seqs.Select(s => s!).ToList();
-        work.Add(new List<int>(bases));
-        return C3MergeException(work) != null;
-    }
-
-    // The C3 merge itself: repeatedly take the first head that occurs in no remaining
-    // tail; a pass with no eligible head means the order constraints contradict.
-    private static List<int>? C3MergeException(List<List<int>> seqs)
-    {
-        var result = new List<int>();
-        var work = seqs.Select(s => new List<int>(s)).ToList();
-        while (work.Any(s => s.Count > 0))
-        {
-            int pick = 0;
-            bool found = false;
-            foreach (var seq in work)
-            {
-                if (seq.Count == 0 || work.Any(o => o.Skip(1).Contains(seq[0]))) continue;
-                pick = seq[0];
-                found = true;
-                break;
-            }
-            if (!found) return null;
-            result.Add(pick);
-            foreach (var seq in work)
-                if (seq.Count > 0 && seq[0] == pick) seq.RemoveAt(0);
-        }
-        return result;
     }
 
     // True when the class's own __init__ delegates to its base ctor. Such a subclass gains the
