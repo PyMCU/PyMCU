@@ -913,36 +913,29 @@ public partial class IRGenerator
     private const int MroNodeException = -1;
     private const int MroNodeBaseException = -2;
     private const int MroNodeObject = -3;
-    // CPython's LookupError, which PyMCU's code table does not number: a fixed node so
-    // the builtin edges IndexError -> LookupError -> Exception model the real ancestry
-    // without resolving the name through user bindings -- a `class LookupError` of the
-    // program's own must never become IndexError's parent.
-    private const int MroNodeLookupError = -4;
     private int mroNodeNext = -10;
 
-    /// The class-binding graph the C3 merge walks, keyed by NODE rather than by name so a
-    /// rebinding keeps its own identity: every class definition -- exception codes
-    /// included -- binds its name to a fresh node here, bare and module-qualified, and a
-    /// base spelling resolves to whatever the name bound at that point of the scan.
-    /// `class A(A)` under an earlier `class A(Exception)` then sees the previous A, and
-    /// `class M(M)` under an earlier `class M(object)` extends that M instead of looping.
-    private readonly Dictionary<string, int> mroNameNode = new();
+    // One pseudo-node per non-exception base NAME, so the merge sees what a fresh node
+    // per occurrence hid: `class E(M, M)` is the duplicate base CPython refuses, and
+    // `class E(Exception, M, N)` over `N(M)` contradicts N's own order. Canonical key is
+    // the module-qualified spelling; names resolving to no class still dedupe so the
+    // repeated-base refusal stands.
+    private readonly Dictionary<string, int> mroNodeByName = new();
 
-    /// Node -> its direct bases as resolved nodes, recorded at definition time: once a
-    /// def's own bases are stored they never change, so the merge walks a fixed DAG and
-    /// no later rebinding can rewrite an earlier class's ancestry.
-    private readonly Dictionary<int, List<int>> mroDefBases = new();
+    /// Written base names of a pseudo-node's class, resolved through ExceptionBaseNode
+    /// when the node's own linearization is asked for. Unknown names get no entry and
+    /// behave like a lone `object` base.
+    private readonly Dictionary<int, List<string>> mroPseudoBaseNames = new();
 
-    /// One node per unresolved base spelling (`class E(Exception, Missing)`, tolerated
-    /// as a leaf the way the ordinary-class path tolerates a forward reference), so a
-    /// repeated unknown name still reads as the duplicate CPython names.
-    private readonly Dictionary<string, int> mroUnknownNode = new();
+    /// Nodes whose pseudo-base resolution is under way, so a cyclic class graph breaks
+    /// instead of recursing forever (`class A(B)` before B exists, tolerated here, would
+    /// otherwise spin).
+    private readonly HashSet<int> mroResolving = new();
 
-    /// Nodes whose MRO expansion is on the current recursion path. The base lists are
-    /// resolved before each node exists, which makes cycles impossible to build, and
-    /// this guard is what makes that structural guarantee a hard one: a revisited node
-    /// answers a lone-object tail instead of recursing until the stack gives out.
-    private readonly HashSet<int> mroVisiting = new();
+    /// Bare and module-qualified class name -> its written (non-marker) bases, for every
+    /// ordinary class the scan met. `class M:` with no bases records `["object"]`, which
+    /// is exactly CPython's implicit base.
+    private readonly Dictionary<string, List<string>> classBases = new();
 
     /// The exception codes some `raise` statement in the program can deliver -- resolved
     /// once, before any try lowers, because a handler can only match a code a raise

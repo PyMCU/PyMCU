@@ -2077,11 +2077,6 @@ public partial class IRGenerator
                     var seenBases = new HashSet<int>();
                     foreach (var b in classDef.Bases)
                     {
-                        // #279's deferred definedness check covers this path too:
-                        // `class E(Exception, Missing)` is the same NameError CPython
-                        // raises at class creation, which the constant lookup above
-                        // skipped silently.
-                        pendingBaseChecks.Add((classDef, b, currentModulePrefix, currentSourcePath));
                         int node = ExceptionBaseNode(b);
                         if (!seenBases.Add(node))
                             throw UserError(
@@ -2111,8 +2106,6 @@ public partial class IRGenerator
                     constantVariables[currentModulePrefix + classDef.Name] = exnCode;
                     exceptionNames.Add(classDef.Name);
                     exceptionCodes.Add(exnCode);
-                    mroNameNode[classDef.Name] = exnCode;
-                    mroNameNode[currentModulePrefix + classDef.Name] = exnCode;
                     continue;
                 }
 
@@ -2132,37 +2125,13 @@ public partial class IRGenerator
                             classDef);
 
                     classNames.Add(classDef.Name);
-                    // A name rebound from an exception to an ordinary class -- `class
-                    // A(Exception)` then `class A(object)` -- stops naming the earlier
-                    // exception: the stale entries resolved a later `class
-                    // E(Exception, A)` base to the dead code and refused a hierarchy
-                    // CPython accepts. Only a USER exception's binding is cleared; a
-                    // builtin name stays bound (shadowing one is pathological and the
-                    // runtime raise machinery still answers it), and a same-named
-                    // ordinary constant is the other path's business.
-                    if (!BuiltinExceptionNames.Codes.ContainsKey(classDef.Name)
-                        && exceptionNames.Remove(classDef.Name))
-                    {
-                        if (constantVariables.TryGetValue(classDef.Name, out int stale)
-                            && exceptionCodes.Contains(stale))
-                            constantVariables.Remove(classDef.Name);
-                        string stalePrefixed = currentModulePrefix + classDef.Name;
-                        if (constantVariables.TryGetValue(stalePrefixed, out stale)
-                            && exceptionCodes.Contains(stale))
-                            constantVariables.Remove(stalePrefixed);
-                    }
                     // A class usable as a mix-in base of a later exception carries its
                     // ancestry into the C3 merge: `class E(Exception, M, N)` over `N(M)`
-                    // is the same order contradiction CPython's TypeError names. The
-                    // node's bases resolve while the names still bind the classes seen
-                    // so far -- `class M(M)` extends the previous M -- and the name
-                    // rebinds only after, so the def never resolves to itself.
-                    int mroNode = mroNodeNext--;
-                    mroDefBases[mroNode] = realBases.Count > 0
-                        ? realBases.Select(ExceptionBaseNode).ToList()
-                        : new List<int> { MroNodeObject };
-                    mroNameNode[classDef.Name] = mroNode;
-                    mroNameNode[currentModulePrefix + classDef.Name] = mroNode;
+                    // is the same order contradiction CPython's TypeError names. Keyed
+                    // like the exception codes, bare and module-qualified.
+                    var storedBases = realBases.Count > 0 ? realBases : new List<string> { "object" };
+                    classBases[classDef.Name] = storedBases;
+                    classBases[currentModulePrefix + classDef.Name] = storedBases;
                     if (classDef.IsValue) valueClasses.Add(classDef.Name);
                     if (classDef.IsGenerator) generatorClasses.Add(classDef.Name);
                     var oldPrefix = currentModulePrefix;
@@ -3417,11 +3386,12 @@ public partial class IRGenerator
         return found;
     }
 
-    // The node one declared exception base contributes to the C3 merge, resolved by
-    // BINDING and not by spelling: each class definition bound its name to its own
-    // node, so `class A(A)` sees the previous A, a name rebound to an ordinary class
-    // no longer carries the dead code, and a `class LookupError` of the user's own
-    // cannot collide with the fixed node the builtin edges point at.
+    // The node one declared exception base contributes to the C3 merge: the code the name
+    // resolves to when it names a registered exception (the same three spellings the edge
+    // lookup above tries), a pseudo-node for the three roots, or a fresh node per
+    // non-exception base -- its `object` tail still constrains the merge the way
+    // CPython's does, which is what lets `class F(Exception, Mixin)` still be refused or
+    // accepted on the same terms.
     private int ExceptionBaseNode(string b)
     {
         switch (b)
@@ -3431,71 +3401,57 @@ public partial class IRGenerator
             case "Exception": return MroNodeException;
         }
         string mangled = b.Replace('.', '_');
-        // The name's current binding, same triple of spellings the edge lookup above
-        // tries: user exceptions resolve to their code, ordinary classes to the node
-        // the definition bound its name to.
-        if (mroNameNode.TryGetValue(mangled, out int bound)
-            || mroNameNode.TryGetValue(currentModulePrefix + mangled, out bound)
-            || mroNameNode.TryGetValue(b, out bound))
-            return bound;
-        // `from drv import M` binds M to the defining module's class -- `as` rebinding
-        // included, through the original name aliasToOriginal remembers.
-        if (importedAliases.TryGetValue(b, out var baseModule) && baseModule != null)
-        {
-            string orig = aliasToOriginal.TryGetValue(b, out var o) && o != null ? o : b;
-            if (mroNameNode.TryGetValue(baseModule.Replace('.', '_') + "_" + orig.Replace('.', '_'), out bound))
-                return bound;
-        }
-        // A builtin exception or a `N = M` alias bound through the constant table --
-        // only while the value really is an exception code, so a name the program
-        // rebinding to a number or an ordinary class cannot smuggle one in.
         if ((constantVariables.TryGetValue(mangled, out int code)
                 || constantVariables.TryGetValue(currentModulePrefix + mangled, out code)
                 || constantVariables.TryGetValue(b, out code))
             && exceptionCodes.Contains(code))
             return code;
-        // An unresolved spelling still gets one node, so `class E(M, M)` sees the
-        // duplicate CPython names; the leaf's lone-object tail keeps the merge honest.
-        string canon = currentModulePrefix + mangled;
-        if (mroUnknownNode.TryGetValue(canon, out var seen)) return seen;
-        return mroUnknownNode[canon] = mroNodeNext--;
+
+        // A name that is not an exception still carries identity into the merge: a
+        // fresh node per occurrence made `class E(M, M)` linearize where CPython sees
+        // a duplicate base, and lost a mixin's own ancestry (`class E(Exception, M, N)`
+        // over `N(M)` is the same order contradiction as two exceptions). One node per
+        // canonical name, with the class's written bases resolved lazily below.
+        string canon = classBases.ContainsKey(currentModulePrefix + mangled) ? currentModulePrefix + mangled
+            : classBases.ContainsKey(mangled) ? mangled
+            : classBases.ContainsKey(b) ? b
+            : builtinMroParent.ContainsKey(b) ? b
+            : currentModulePrefix + mangled;
+        if (mroNodeByName.TryGetValue(canon, out var seen)) return seen;
+        int node = mroNodeNext--;
+        mroNodeByName[canon] = node;
+        if (classBases.TryGetValue(canon, out var written))
+            mroPseudoBaseNames[node] = written;
+        else if (builtinMroParent.TryGetValue(b, out var builtinParent))
+            mroPseudoBaseNames[node] = new List<string> { builtinParent };
+        return node;
     }
 
-    // CPython's real exception parents among the codes PyMCU numbers, for the C3 merge
+    // CPython's real exception parents among the names PyMCU knows, for the C3 merge
     // ONLY -- dispatch keeps the flat model (exceptionParents holds the one edge that
     // pays for itself), so no handler here buys ancestry it never raises against.
     // `class F(ArithmeticError, ZeroDivisionError)` is an order contradiction because
-    // ZeroDivisionError really descends from ArithmeticError. Keyed by CODE, and the
-    // LookupError rung is the fixed node rather than the name, so no user binding can
-    // shadow the edge.
-    private static readonly Dictionary<int, int> builtinMroParent = new()
+    // ZeroDivisionError really descends from ArithmeticError.
+    private static readonly Dictionary<string, string> builtinMroParent = new()
     {
-        [BuiltinExceptionNames.Codes["ZeroDivisionError"]]    = BuiltinExceptionNames.Codes["ArithmeticError"],
-        [BuiltinExceptionNames.Codes["OverflowError"]]        = BuiltinExceptionNames.Codes["ArithmeticError"],
-        [BuiltinExceptionNames.Codes["NotImplementedError"]]  = BuiltinExceptionNames.Codes["RuntimeError"],
-        [BuiltinExceptionNames.Codes["IndexError"]]           = MroNodeLookupError,
-        [BuiltinExceptionNames.Codes["KeyError"]]             = MroNodeLookupError,
-        [MroNodeLookupError]                                  = MroNodeException,
+        ["ZeroDivisionError"]   = "ArithmeticError",
+        ["OverflowError"]       = "ArithmeticError",
+        ["NotImplementedError"] = "RuntimeError",
+        ["IndexError"]          = "LookupError",
+        ["KeyError"]            = "LookupError",
+        ["LookupError"]         = "Exception",
     };
 
     // The C3 linearization of one node in the hierarchy PyMCU models: the recorded bases
-    // for user exceptions, the one seeded edge (TimeoutError -> OSError) for builtins, the
-    // real-parent map for the rest, and the shared Exception -> BaseException -> object
-    // tail every exception ends in. A base that is not an exception hangs straight off
-    // object, so a mix-in ahead of a base does not get refused for an ordering CPython
-    // itself accepts. null when the node's own bases cannot linearize -- unreachable
-    // for a registered class, which the check at its definition already passed.
-    //
-    // Every node's base list was fixed while the name still bound its predecessor, so
-    // the graph is a DAG and the visiting guard is structural rather than needed -- but
-    // it is the piece of the recursion that cannot be skipped: a `class M(M)` that once
-    // crashed the scan through a self-referential name resolves to the previous M now,
-    // and anything that still revisited the node answers a lone-object tail instead of
-    // overflowing the stack.
+    // for user exceptions, the one seeded edge (TimeoutError -> OSError) for builtins, and
+    // the shared Exception -> BaseException -> object tail every exception ends in. A
+    // base that is not an exception hangs straight off object, so a mix-in ahead of a
+    // base does not get refused for an ordering CPython itself accepts. null when the
+    // node's own bases cannot linearize -- unreachable for a registered class, which the
+    // check at its definition already passed.
     private List<int>? ExceptionMroOf(int node)
     {
         if (exceptionMroMemo.TryGetValue(node, out var memo)) return memo;
-        if (!mroVisiting.Add(node)) return new List<int> { MroNodeObject };
         var bases = node switch
         {
             MroNodeObject => new List<int>(),
@@ -3503,27 +3459,38 @@ public partial class IRGenerator
             MroNodeException => new List<int> { MroNodeBaseException },
             _ when exceptionDirectBases.TryGetValue(node, out var d) => d,
             _ when exceptionParents.TryGetValue(node, out var edges) => edges,
-            _ when builtinMroParent.TryGetValue(node, out var bp)
-                => new List<int> { bp },
+            // A builtin code's real CPython parent when the merge models one
+            // (ZeroDivisionError -> ArithmeticError); every other builtin
+            // keeps its flat Exception parent.
+            _ when node > 0 && BuiltinExceptionNames.TryGetName(node, out var bn)
+                    && builtinMroParent.TryGetValue(bn, out var bp)
+                => new List<int> { ExceptionBaseNode(bp) },
             _ when node > 0 => new List<int> { MroNodeException },
-            _ when mroDefBases.TryGetValue(node, out var wb) => wb,
+            _ when mroPseudoBaseNames.TryGetValue(node, out var wb)
+                => ResolveMroPseudoBases(node, wb),
             _ => new List<int> { MroNodeObject },
         };
-        List<int>? result = null;
         var seqs = bases.Select(b => ExceptionMroOf(b)).ToList();
-        if (!seqs.Any(s => s == null))
-        {
-            var work = seqs.Select(s => s!).ToList();
-            work.Add(new List<int>(bases));
-            result = C3MergeException(work);
-            if (result != null)
-            {
-                result.Insert(0, node);
-                exceptionMroMemo[node] = result;
-            }
-        }
-        mroVisiting.Remove(node);
-        return result;
+        if (seqs.Any(s => s == null)) return null;
+        var work = seqs.Select(s => s!).ToList();
+        work.Add(new List<int>(bases));
+        var merged = C3MergeException(work);
+        if (merged == null) return null;
+        merged.Insert(0, node);
+        exceptionMroMemo[node] = merged;
+        return merged;
+    }
+
+    // The written bases of a class known only by name, resolved to nodes. A cyclic
+    // or self-referencing ancestry tolerated earlier in the scan breaks to a bare
+    // `object` base rather than recursing; that path is unreachable for real class
+    // graphs since a name has to be scanned before it can name a base.
+    private List<int> ResolveMroPseudoBases(int node, List<string> written)
+    {
+        if (!mroResolving.Add(node)) return new List<int> { MroNodeObject };
+        var resolved = written.Select(ExceptionBaseNode).ToList();
+        mroResolving.Remove(node);
+        return resolved;
     }
 
     // True when the resolved bases of the class being scanned can linearize under C3:
