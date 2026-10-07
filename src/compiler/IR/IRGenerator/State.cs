@@ -730,6 +730,13 @@ public partial class IRGenerator
     // the record from it, so what propagates is the exception being re-raised and not
     // whatever a nested handled raise last stored. Null for a try that took no snapshot.
     private readonly List<string?> handlerSnapStack = new();
+
+    // Every ExnRecordMark restore emitted so far, by prefix, in emission order. A handler
+    // reads the slice added while ITS body lowered to decide whether its tentative save
+    // stays: a restore can land in an instruction list other than the body's own -- a
+    // class's methods lower apart while the handler's entry still sits on the snapshot
+    // stack -- so scanning the current list would miss it.
+    private readonly List<string> snapRestorePrefixes = new();
     private int exnCodeId = 0;
 
     // ── the bounded exception object (#369) ──────────────────────────────────

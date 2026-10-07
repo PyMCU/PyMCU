@@ -3162,15 +3162,12 @@ public partial class IRGenerator
         // which the dispatch compares and the no-match re-signal still read. On the
         // matched path the compares have already consumed it, and the delivered record
         // is untouched -- only a handler body writes it.
-        bool snapNeeded = false;
-        for (int i = 0; i < stmt.Handlers.Count; i++)
-        {
-            var (_, snapHandlerBody) = stmt.Handlers[i];
-            if (stmt.BoundName(i) != null
-                || TypeInference.WalkStatements(snapHandlerBody).OfType<RaiseStmt>().Any())
-                snapNeeded = true;
-        }
-        string? snapPrefix = snapNeeded ? "__exh_" + tryExnId : null;
+        //
+        // The prefix exists whenever the try has handlers: which handler bodies actually
+        // observe the record is decidable only after they have lowered (a bare `raise`
+        // reached through an @inline call is not a RaiseStmt in this body), so each of
+        // them emits the save tentatively and audits the restore afterwards.
+        string? snapPrefix = stmt.Handlers.Count > 0 ? "__exh_" + tryExnId : null;
 
         // Compile the try body. After each Call instruction, insert BranchOnError so
         // that any SignalError from the callee jumps to the catch dispatcher.
@@ -3361,17 +3358,21 @@ public partial class IRGenerator
             // This handler reads the record past whatever nested raises it runs: save the
             // delivered exception into its snapshot words on the matched path. The compare
             // chain above is already done with R22, so the copies may use it freely. The
-            // mark is tentative: a bare `raise` it never sees leaves it dead weight.
-            bool handlerNeedsSnap = snapPrefix != null
-                && (bound != null
-                    || TypeInference.WalkStatements(handlerBody).OfType<RaiseStmt>().Any());
+            // mark is tentative: a body that never re-signals the record leaves it dead
+            // weight and the audit below drops it.
+            //
+            // The save is emitted for EVERY handler and the real prefix is pushed for the
+            // body either way: a bare `raise` can reach this handler through an @inline it
+            // calls or a nested def -- not a RaiseStmt this body holds -- and only a
+            // non-null stack entry makes the expansion emit the restore the audit counts.
             int snapMarkIndex = -1;
-            if (handlerNeedsSnap)
+            if (snapPrefix != null)
             {
-                Emit(new ExnRecordMark(snapPrefix!, Restore: false));
+                Emit(new ExnRecordMark(snapPrefix, Restore: false));
                 snapMarkIndex = currentInstructions.Count - 1;
             }
-            handlerSnapStack.Add(handlerNeedsSnap ? snapPrefix : null);
+            int restoresBefore = snapRestorePrefixes.Count;
+            handlerSnapStack.Add(snapPrefix);
 
             foreach (var s in handlerBody)
             {
@@ -3382,13 +3383,13 @@ public partial class IRGenerator
 
             // An unbound handler's snapshot is observable only by a re-raise in its body,
             // which lowers to a restore mark on this prefix -- a fresh `raise X(...)`
-            // writes a record of its own and needs none of it. When no restore landed,
-            // drop the save so it costs no code. A `def` in the body lowers apart from
-            // this list, so its raises cannot be audited here and keep the mark.
+            // writes a record of its own and needs none of it. The audit counts every
+            // restore emitted while this body lowered, whichever instruction list it
+            // landed in: a nested @inline expands into this list at the call site, while
+            // a class method lowers apart under the same stack entry. When none landed,
+            // drop the save so it costs no code.
             if (snapMarkIndex >= 0 && bound == null
-                && !TypeInference.WalkStatements(handlerBody).OfType<FunctionDef>().Any()
-                && !currentInstructions.Skip(snapMarkIndex + 1)
-                     .Any(ins => ins is ExnRecordMark rm && rm.Restore && rm.Prefix == snapPrefix))
+                && !snapRestorePrefixes.Skip(restoresBefore).Contains(snapPrefix!))
             {
                 currentInstructions.RemoveAt(snapMarkIndex);
             }

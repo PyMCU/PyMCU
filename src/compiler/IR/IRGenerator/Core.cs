@@ -240,6 +240,8 @@ public partial class IRGenerator
         }
         CheckSlotWrite(inst);
         currentInstructions.Add(inst);
+        if (inst is ExnRecordMark { Restore: true } recordMark)
+            snapRestorePrefixes.Add(recordMark.Prefix);
     }
 
     private void PropagateCtState(string src, string dst)
