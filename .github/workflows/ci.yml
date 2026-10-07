@@ -88,10 +88,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      PYMCU_COMPAT_CIRCUITPYTHON: ${{ github.workspace }}/external/pymcu-circuitpython/src
+      PYMCU_COMPAT_MICROPYTHON: ${{ github.workspace }}/external/pymcu-micropython/src
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # The compat layers this tree pins in external/: the parity scan
+          # measures THEM (PYMCU_COMPAT_* below), not the last PyPI release,
+          # so an allowlist entry for an unpublished layer change is not
+          # reported as unused (PyMCU#515).
+          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -125,10 +134,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      PYMCU_COMPAT_CIRCUITPYTHON: ${{ github.workspace }}/external/pymcu-circuitpython/src
+      PYMCU_COMPAT_MICROPYTHON: ${{ github.workspace }}/external/pymcu-micropython/src
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # The compat layers this tree pins in external/: the parity scan
+          # measures THEM (PYMCU_COMPAT_* below), not the last PyPI release,
+          # so an allowlist entry for an unpublished layer change is not
+          # reported as unused (PyMCU#515).
+          submodules: true
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
