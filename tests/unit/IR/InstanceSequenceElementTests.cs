@@ -369,4 +369,138 @@ public class InstanceSequenceElementTests
             "a, b = f()\n");
         Assert.Contains(ir.Functions, f => f.Name == "main");
     }
+
+    // Round 2: the tuple element is not a call at all. A wrapper expression --
+    // ternary, `and`, `or` -- or a `*(...)` splice produces a scalar temp that only
+    // CARRIES the instance a dispatched callee made, so the check reads the class
+    // off the evaluated value, never off the element's spelling.
+
+    private const string CounterFactory =
+        "from pymcu.types import uint8\n" +
+        "class Counter:\n" +
+        "    def __init__(self, n: uint8) -> None:\n" +
+        "        self._n = n\n\n" +
+        "def make(n: uint8) -> Counter:\n" +
+        "    return Counter(n)\n\n";
+
+    [Fact]
+    public void ATernaryProducingAnInstance_InATupleReturn_IsRefused()
+    {
+        // `(make(1) if flag else make(2))`: the merge temp lost the arms' class
+        // when each arm's proof lived in its own branch state. It compiled and
+        // the caller read a field byte where CPython holds the object.
+        var msg = Refusal(CounterFactory +
+            "def f(flag: bool):\n" +
+            "    return (make(1) if flag else make(2)), 7\n\n" +
+            "a, b = f(True)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void AnAndProducingAnInstance_InATupleReturn_IsRefused()
+    {
+        var msg = Refusal(CounterFactory +
+            "def f(flag: bool):\n" +
+            "    return (flag and make(1)), 7\n\n" +
+            "a, b = f(True)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void AnOrProducingAnInstance_InATupleReturn_IsRefused()
+    {
+        var msg = Refusal(CounterFactory +
+            "def f(flag: bool):\n" +
+            "    return (flag or make(1)), 7\n\n" +
+            "a, b = f(False)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void AVariadicSplicedCall_InATupleReturn_IsRefused()
+    {
+        // `mod.make(*(1, 2))`: the `*args` splice rewrites the CallExpr, so any
+        // stamp tied to the original node is left behind -- the produced temp
+        // is what carries the class.
+        var lib = new Parser(new Lexer(
+            "from pymcu.types import uint8\n" +
+            "class Pair:\n" +
+            "    def __init__(self, n: uint8, m: uint8) -> None:\n" +
+            "        self._n = n\n" +
+            "        self._m = m\n\n" +
+            "def make(x: uint8, y: uint8) -> Pair:\n" +
+            "    return Pair(x, y)\n").Tokenize()).ParseProgram();
+        var main = new Parser(new Lexer(
+            "import mod\n\n" +
+            "def f():\n" +
+            "    return mod.make(*(1, 2)), 7\n\n" +
+            "a, b = f()\n").Tokenize()).ParseProgram();
+        var ex = Assert.ThrowsAny<CompilerError>(() =>
+            new IRGenerator().Generate(main,
+                new Dictionary<string, ProgramNode> { ["mod"] = lib },
+                new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("instance", ex.Message);
+        Assert.Contains("Pair", ex.Message);
+    }
+
+    [Fact]
+    public void AnUnannotatedRelayOfAnInstance_InATupleReturn_IsRefused()
+    {
+        // `relay` declares no return type; its body returns what `make`
+        // dispatched to, and inference records `-> Counter` on it. The temp
+        // the caller receives still names the class.
+        var msg = Refusal(CounterFactory +
+            "def relay():\n" +
+            "    return make(3)\n\n" +
+            "def f():\n" +
+            "    return relay(), 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void AnOutlinedMethodCallInATernary_InATupleReturn_IsRefused()
+    {
+        // The deepest combination: an @outline method dispatched to a real
+        // subroutine, wrapped in a ternary. Neither the call's own syntax
+        // nor a branch-local registration reaches the element check; only
+        // the produced temp does.
+        var msg = Refusal(Counter +
+            "class Fac:\n" +
+            "    def __init__(self) -> None:\n" +
+            "        pass\n\n" +
+            "    @outline\n" +
+            "    def make(self, n: uint8) -> Counter:\n" +
+            "        return Counter(n)\n\n" +
+            "fac = Fac()\n\n" +
+            "def f(flag: bool):\n" +
+            "    return (fac.make(1) if flag else fac.make(2)), 7\n\n" +
+            "a, b = f(True)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Counter", msg);
+    }
+
+    [Fact]
+    public void ATernaryOfScalars_InATupleReturn_StillCompiles()
+    {
+        var ir = Gen(CounterFactory +
+            "def f(flag: bool):\n" +
+            "    return (1 if flag else 2), 7\n\n" +
+            "a, b = f(True)\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void ShortCircuitsOfScalars_InATupleReturn_StillCompile()
+    {
+        var ir = Gen(CounterFactory +
+            "def f(flag: bool):\n" +
+            "    return (flag and 3), (flag or 4)\n\n" +
+            "a, b = f(True)\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
 }
