@@ -180,6 +180,7 @@ public partial class IRGenerator
         // the outer call's own emission sets it after its args -- the outermost
         // call's text is the one that survives for the assignment to read.
         lastCallReturnTypeText = null;
+        lastCallReturnTypeExpr = null;
         lastCallReturnListElem = null;
         lastCallReturnedBufferLocal = false;
 
@@ -2215,6 +2216,7 @@ public partial class IRGenerator
         // return so a bare `x = f()` assignment can register x as that list, not merely widen
         // the UNKNOWN it would otherwise keep.
         lastCallReturnTypeText = rType;
+        lastCallReturnTypeExpr = expr;
         // A live union call carries the widest member's payload width, exactly as the
         // inline result temp above: `Union[...]` resolves to UNKNOWN in StringToDataType
         // and would leave the destination a byte.
@@ -2538,6 +2540,7 @@ public partial class IRGenerator
             // has no StringToDataType case, so the result temp needs GC_REF, not UNKNOWN, and
             // a bare `x = f()` assignment needs the raw text to register x as that list.
             lastCallReturnTypeText = func.ReturnType;
+            lastCallReturnTypeExpr = expr;
             // A live union result carries the widest member's payload width: `Union[...]`
             // has no StringToDataType case either, and typing the temp UNKNOWN made the
             // caller's `t = dhtDevice.temperature` a one-byte destination that dropped the
@@ -4202,6 +4205,7 @@ public partial class IRGenerator
         if (returnedArr != null)
         {
             lastCallReturnTypeText = "bytearray";
+            lastCallReturnTypeExpr = expr;
             lastCallReturnListElem = null;
             lastCallReturnedBufferLocal = finishedCtx.ReturnedBufferIsLocal;
         }
@@ -4211,6 +4215,7 @@ public partial class IRGenerator
             // surviving attribution is this callee's signature, not whatever its
             // body happened to call last.
             lastCallReturnTypeText = func?.ReturnType;
+            lastCallReturnTypeExpr = expr;
             lastCallReturnListElem = null;
             lastCallReturnedBufferLocal = false;
         }

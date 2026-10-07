@@ -676,6 +676,12 @@ public partial class IRGenerator
     // treats the same as "not a list return".
     private string? lastCallReturnTypeText;
 
+    // The CallExpr node whose own emission set lastCallReturnTypeText. A call that returns
+    // through a builtin or special-form path never writes the pair, so the text left behind
+    // is a NESTED call's (one evaluated while binding its arguments): matching the node by
+    // reference is how a reader knows the text describes the call it is asking about.
+    private Expression? lastCallReturnTypeExpr;
+
     // Element type of the most recently emitted call's list result, taken from the
     // callee's emitted `return <list var>` rather than its annotation -- the
     // unannotated counterpart of lastCallReturnTypeText's "list[T]" text.
