@@ -19,7 +19,7 @@ from pymcu.chips.rp2040 import (
     IO_BANK0_BASE, GPIO_FUNC_UART,
     UART_FR_TXFF, UART_FR_RXFE,
 )
-from pymcu.types import ptr, uint8, uint16, uint32, const, inline
+from pymcu.types import ptr, uint8, uint16, uint32, int16, const, inline
 from pymcu.exceptions import CompileError
 
 # Peripheral clock assumed at the pico-sdk default of 125 MHz. (A future clocks
@@ -31,6 +31,25 @@ from pymcu.hal.uart_text import (
     uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
     uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
 )
+
+
+@inline
+def tx_id(pin) -> int16:
+    # This chip's own mux table (CircuitPython's common-hal busio.UART and
+    # MicroPython's machine_uart.c IS_VALID_TX both derive the instance the
+    # same way): TX pads sit at (pin & 3) == 0, and the UART id is bit 3 of
+    # pin + 4. -1 means the pin is not a TX pad on this chip at all.
+    if pin < 0 or pin > 29 or pin & 3:
+        return -1
+    return (pin + 4) >> 3 & 1
+
+
+@inline
+def rx_id(pin) -> int16:
+    # RX half of the same table: (pin & 3) == 1.
+    if pin < 0 or pin > 29 or (pin & 3) != 1:
+        return -1
+    return (pin + 4) >> 3 & 1
 
 
 class UART:

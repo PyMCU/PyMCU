@@ -22,7 +22,7 @@ from pymcu.chips.rp2350 import (
     IO_BANK0_BASE, PADS_BANK0_BASE, GPIO_FUNC_UART,
     UART_FR_TXFF, UART_FR_RXFE,
 )
-from pymcu.types import ptr, uint8, uint16, uint32, const, inline
+from pymcu.types import ptr, uint8, uint16, uint32, int16, const, inline
 from pymcu.exceptions import CompileError
 
 # Peripheral clock assumed at the Pico 2 default of 150 MHz. (A future clocks
@@ -34,6 +34,41 @@ from pymcu.hal.uart_text import (
     uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
     uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
 )
+
+
+@inline
+def tx_id(pin) -> int16:
+    # This chip's own mux table (CircuitPython's common-hal busio.UART and
+    # MicroPython's machine_uart.c IS_VALID_TX both derive the instance the
+    # same way): TX pads sit at every even pin, and the UART id is bit 3 of
+    # pin + 4, same as the RP2040. A pad numbered 2 mod 4 reaches its UART
+    # only through GPIO_FUNC_UART_AUX, which this HAL never writes -- muxing
+    # it anyway would drive nothing, so it is refused here rather than handed
+    # back as a usable id for a caller to mux blind.
+    if pin < 0 or pin > 47 or pin & 1:
+        return -1
+    if pin & 3 == 2:
+        raise CompileError(
+            "this chip's TX pad numbered 2 mod 4 reaches its UART only "
+            "through GPIO_FUNC_UART_AUX, which this HAL never writes. Pick a "
+            "TX pad numbered 0 mod 4 instead (GP0, GP12, GP16, GP28 for "
+            "UART0).")
+    return (pin + 4) >> 3 & 1
+
+
+@inline
+def rx_id(pin) -> int16:
+    # RX half of the same table: every odd pin; pads numbered 3 mod 4 are the
+    # RX half that needs GPIO_FUNC_UART_AUX.
+    if pin < 0 or pin > 47 or (pin & 1) == 0:
+        return -1
+    if pin & 3 == 3:
+        raise CompileError(
+            "this chip's RX pad numbered 3 mod 4 reaches its UART only "
+            "through GPIO_FUNC_UART_AUX, which this HAL never writes. Pick "
+            "an RX pad numbered 1 mod 4 instead (GP1, GP13, GP17, GP29 for "
+            "UART0).")
+    return (pin + 4) >> 3 & 1
 
 
 class UART:
