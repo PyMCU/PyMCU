@@ -639,6 +639,17 @@ public partial class IRGenerator
                 return;
         }
 
+        // `first_row = cells[0][:]` / `old_row = cells[y][:]`: a real copy of a 2-D
+        // grid's row, the row-shaped sibling of the slice-copy just above. A Python
+        // list slice is a fresh list, never a view -- the row itself has no storage
+        // to alias, so the fix is a copy, not a refusal.
+        if (stmt.Target is VariableExpr rowSliceTgt
+            && stmt.Value is IndexExpr { Index: SliceExpr rowSliceIdx, Target: IndexExpr rowSliceSrc }
+            && ResolveGridKey(rowSliceSrc.Target) is { } rowSliceGridKey
+            && rowSliceSrc.Index is not SliceExpr and not TupleExpr
+            && TryEmitInferredRowSliceArray(rowSliceTgt, rowSliceGridKey, rowSliceSrc.Index, rowSliceIdx))
+            return;
+
         if (stmt.Target is IndexExpr indexExpr) { EmitIndexAssign(stmt, indexExpr); return; }
 
         // `cls.string = {}` inside a @classmethod: a dict/set literal is not a value.

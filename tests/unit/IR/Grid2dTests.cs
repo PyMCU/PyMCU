@@ -319,13 +319,47 @@ public class Grid2dTests
     }
 
     [Fact]
-    public void RowSlice_IsRefused()
+    public void RowSlice_CopiesTheRowsElements()
     {
-        var ex = Refused(
+        // enumbuf case 5: a Python list slice is always a fresh copy, never a view --
+        // the refusal's own wording ("a slice would be a view object") was backwards,
+        // and the row itself has no storage of its own to alias anyway. `g[1][0:2]`
+        // copies its two elements into `s`'s own flat slots, the same model the 1-D
+        // `b = a[:]` already uses.
+        var ir = Gen(
             "def main() -> None:\n" +
             "    g = [[0] * 4 for _ in range(3)]\n" +
+            "    g[1][0] = 5\n" +
+            "    g[1][1] = 6\n" +
             "    s = g[1][0:2]\n");
-        Assert.Contains("slice", ex.Message);
+
+        var copiesToS = AllBody(ir).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.StartsWith("main.s__", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(2, copiesToS.Count);
+        Assert.Contains(AllBody(ir).OfType<ArrayLoad>(), l => l.ArrayName == "main.g");
+    }
+
+    [Fact]
+    public void FullRowSlice_InsideALoop_ReusesTheSameFlatSlots()
+    {
+        // `old_row = cells[y][:]` with `y` the loop counter: each unrolled iteration
+        // re-registers and re-fills the SAME `old_row__k` slots -- the copy must not
+        // grow RAM per iteration.
+        var ir = Gen(
+            "def main() -> None:\n" +
+            "    cells = [[0] * 2 for _ in range(3)]\n" +
+            "    for y in range(3):\n" +
+            "        old_row = cells[y][:]\n" +
+            "        x = old_row[0]\n");
+
+        var slotNames = AllBody(ir).OfType<Copy>()
+            .Select(c => c.Dst as Variable)
+            .Where(v => v != null && v!.Name.StartsWith("main.old_row__", StringComparison.Ordinal))
+            .Select(v => v!.Name)
+            .Distinct()
+            .ToList();
+        Assert.Equal(new[] { "main.old_row__0", "main.old_row__1" }, slotNames.OrderBy(n => n));
     }
 
     [Fact]

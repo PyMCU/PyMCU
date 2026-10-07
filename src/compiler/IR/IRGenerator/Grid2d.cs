@@ -373,6 +373,60 @@ public partial class IRGenerator
             VisitExpression(rr.RowIndexExpr), EvalGridIndex(colExpr, w, "column"), src);
     }
 
+    /// <summary>
+    /// `first_row = cells[0][:]`, or `old_row = cells[y][:]` with a run-time `y`: a real
+    /// COPY of the row, same as the 1-D `b = a[:]` model in
+    /// <see cref="TryEmitInferredSliceArray"/> -- flat per-element slots named
+    /// <c>target__k</c>, filled from the row's elements and never touched again by the
+    /// grid. Before, this was refused with "a slice would be a view object", which is
+    /// backwards: a Python list slice is a fresh list, never a view, and the grid's row
+    /// genuinely has no storage of its own to alias -- the fix is the copy, not the
+    /// refusal. The row index is evaluated once and reused for every element, so a
+    /// run-time `y` is read once, not once per column.
+    ///
+    /// Reassigning the same name (`old_row = cells[y][:]` inside `for y in range(3):`)
+    /// re-registers the same flat slots and re-emits their copies -- no new storage per
+    /// iteration, exactly like the 1-D model.
+    /// </summary>
+    private bool TryEmitInferredRowSliceArray(VariableExpr target, string gridKey,
+        Expression rowExpr, SliceExpr sl)
+    {
+        var (w, h) = gridDims[gridKey];
+        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : w;
+        int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+        if (step == 0) throw UserError("Slice step cannot be zero", sl);
+        if (start < 0) start += w;
+        if (stop < 0) stop += w;
+        start = Math.Max(0, Math.Min(start, w));
+        stop = Math.Max(0, Math.Min(stop, w));
+        int count = 0;
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++count;
+
+        string qualified = string.IsNullOrEmpty(currentFunction) ? target.Name : currentFunction + "." + target.Name;
+        if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+            throw UserError($"'{target.Name}' is indexed by a runtime value, so a row slice assigned to "
+                + $"it needs an explicit fixed-size annotation: '{target.Name}: <type>[N] = ...'", target);
+
+        DataType elemDt = arrayElemTypes[gridKey];
+        Val rowV = EvalGridIndex(rowExpr, h, "row");
+
+        arraySizes[qualified] = count;
+        bufferLogicalLen[qualified] = count;
+        arrayElemTypes[qualified] = elemDt;
+        variableTypes[qualified] = elemDt;
+
+        int k = 0;
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step, ++k)
+        {
+            string dstElem = qualified + "__" + k;
+            variableTypes[dstElem] = elemDt;
+            Val elemVal = EmitGridElemLoadVal(gridKey, rowV, new Constant(i));
+            Emit(new Copy(elemVal, new Variable(dstElem, elemDt)));
+        }
+        return true;
+    }
+
     // ---------- initialization --------------------------------------------------
 
     // One row's elements, evaluated once each and stored in order.
