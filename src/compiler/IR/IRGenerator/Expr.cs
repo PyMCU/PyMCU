@@ -5213,6 +5213,18 @@ public partial class IRGenerator
     };
 
     /// <summary>
+    /// True when a resolved callee's declared return type names a user class -- the
+    /// bare spelling (`Counter`), a module-mangled one (`mod_Pair`), or a HAL facade
+    /// key that resolves to a concrete class. The class tables answer in whichever
+    /// spelling the annotation was recorded; a union member list (`Union[...]`) is
+    /// not a class answer here and keeps its own tagged-payload path.
+    /// </summary>
+    private bool ReturnTypeNamesInstanceClass(string returnType)
+        => classNames.Contains(returnType)
+           || classFieldLayout.ContainsKey(returnType)
+           || ResolveConcreteClass(returnType) != null;
+
+    /// <summary>
     /// True when a class can be an element of a `Cls[N]` instance array (RFC 0001
     /// Model B): the contiguous slot layout only exists for a multi-field class --
     /// a single-field class falls through to the plain scalar-array lowering, where

@@ -1518,6 +1518,31 @@ public partial class IRGenerator
                             + "caller through a parameter.", tup.Elements[k]);
 
                     Val elemVal = VisitExpression(tup.Elements[k]);
+                    // The syntactic probe above can only refuse the receiver spellings it
+                    // knows; every round produced another one it did not -- `d[0].make()`
+                    // (a __getitem__ receiver), `getattr(mod, "f").make()`, `mod.f()`. The
+                    // question is not how the element is WRITTEN but what the call that
+                    // produced it was resolved to: when the dispatched callee returns a
+                    // class the result arrives tagged with that class, and when the
+                    // instance left through a side channel instead (a multi-field return
+                    // builds the caller's target object, not the result temp) the
+                    // callee's own declared return type still names it.
+                    string? retDispatchedCls =
+                        GetValClass(elemVal) is { Length: > 0 } retValCls ? retValCls
+                        : tup.Elements[k] is CallExpr retCallElem
+                          && ReferenceEquals(lastCallReturnTypeExpr, retCallElem)
+                          && lastCallReturnTypeText is { } retCallRt
+                          && ReturnTypeNamesInstanceClass(retCallRt) ? retCallRt
+                        : null;
+                    if (retDispatchedCls != null)
+                        throw UserError(
+                            $"element {k} of '{ctx.CalleeName}'s tuple return cannot be an "
+                            + $"instance of '{ShortClassNameOf(retDispatchedCls)}': "
+                            + InstanceIsFlattened
+                            + ". Return the fields you need "
+                            + "(`return inst.<field>, val`), or hand the instance to the "
+                            + "caller through a parameter.", tup.Elements[k]);
+
                     (ctx.ReturnedScalarSlots ??= new()).Add(k);
                     // The result slots carry the annotated element widths when the callee
                     // declared them (see EmitInlineFunctionCall); the element's own width
