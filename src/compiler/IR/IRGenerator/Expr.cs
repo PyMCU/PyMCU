@@ -675,6 +675,27 @@ public partial class IRGenerator
         }
     }
 
+    // Like ValRange, but for a Variable also trusts a proven narrower fact: a local
+    // constant (the same fact branch folding trusts) or the last-store bound
+    // TrackVariableRange recorded. Used only where acting on a narrower-than-declared
+    // bound is the whole point -- sizing an arithmetic result or a mint decision so
+    // `(x + dx) % w` sees w's real value of 32, not uint8's full [0, 255] -- and never by
+    // a comparison: ComparisonType/FoldComparisonByRange stay declared-type-only, or a
+    // single-call-site function's literal argument would fold branches those tests
+    // exist to keep as real runtime comparisons (ComparisonRangeTests, ComparisonPrintsBoolTests).
+    private (long Min, long Max) ProvenRange(Val v)
+    {
+        if (v is Variable varV)
+        {
+            if (constantVariables.TryGetValue(varV.Name, out int vcv)) return (vcv, vcv);
+            if (!ForeignFlowRead(varV.Name) && localConstantValues.TryGetValue(varV.Name, out int vlv))
+                return (vlv, vlv);
+            if (!ForeignGlobalRead(varV.Name) && variableRanges.TryGetValue(varV.Name, out var vr))
+                return vr;
+        }
+        return ValRange(v);
+    }
+
     // Range of `a op b` for the promoting operators, or null when it cannot be bounded
     // cheaply (non-constant or out-of-range shift count). Operands are 16-bit or narrower
     // wherever this is consulted, so the long arithmetic cannot overflow.
@@ -689,16 +710,18 @@ public partial class IRGenerator
     // A signed operand or a negative literal: what brings a sign into an operation.
     private bool CanBeNegative(Val v) => ValRange(v).Min < 0;
 
-    // Range of `a // b` or `a % b` when both are non-negative and the divisor cannot be
-    // zero; null otherwise (a negative operand floors toward minus infinity, and a zero
-    // divisor raises before any value exists).
+    // Range of `a // b` or `a % b` when the divisor cannot be zero. A floor division
+    // with a possibly negative dividend is left unbounded (it floors toward minus
+    // infinity); floor modulo is not: its result carries the divisor's sign, so a
+    // positive divisor confines `a % b` to [0, b) for any dividend -- `(-1) % 32`
+    // is 31 exactly as in CPython. A zero divisor raises before any value exists.
     private static (long Min, long Max)? DivModResultRange(
         AstBinOp op, (long Min, long Max) a, (long Min, long Max) b)
     {
-        if (a.Min < 0 || b.Min < 1) return null;
-        return op == AstBinOp.FloorDiv
-            ? (a.Min / b.Max, a.Max / b.Min)
-            : (0L, Math.Min(a.Max, b.Max - 1));
+        if (b.Min < 1) return null;
+        if (op == AstBinOp.FloorDiv)
+            return a.Min < 0 ? null : (a.Min / b.Max, a.Max / b.Min);
+        return a.Min < 0 ? (0L, b.Max - 1) : (0L, Math.Min(a.Max, b.Max - 1));
     }
 
     private static (long Min, long Max)? BinaryResultRange(
@@ -718,6 +741,13 @@ public partial class IRGenerator
             case AstBinOp.LShift:
                 if (b.Min != b.Max || b.Min < 0 || b.Min > 31) return null;
                 return (a.Min << (int)b.Min, a.Max << (int)b.Min);
+            case AstBinOp.BitAnd when a.Min >= 0 || b.Min >= 0:
+                // `a & b` keeps only bits set on both sides, so a non-negative side
+                // bounds the result by its own maximum and clears the sign bit.
+                long andHi = long.MaxValue;
+                if (a.Min >= 0) andHi = a.Max;
+                if (b.Min >= 0) andHi = Math.Min(andHi, b.Max);
+                return (0L, andHi);
             default: return null;
         }
     }
@@ -2105,6 +2135,20 @@ public partial class IRGenerator
             return fdst;
         }
 
+        // `a % P` with P a proven positive power of two is `a & (P - 1)` at every width:
+        // the low bits of a two's-complement value ARE its floor remainder, so the mask
+        // answers identically even when a is negative (`-1 % 32` is `-1 & 31` = 31).
+        // Proving the divisor's value -- not just seeing a literal -- is what lets
+        // `(x + dx) % w` with w pinned to 32 lower to a narrow AND instead of __mod32.
+        AstBinOp emitOp = expr.Op;
+        if (emitOp == AstBinOp.Mod && ProvenRange(v2) is (long modP, long modPHi)
+            && modP == modPHi && modP >= 2 && (modP & (modP - 1)) == 0
+            && modP <= int.MaxValue + 1L)
+        {
+            emitOp = AstBinOp.BitAnd;
+            v2 = new Constant((int)(modP - 1));
+        }
+
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);
         // A literal operand is type-agnostic (it defaults to uint8), so on a same-size op it
@@ -2123,7 +2167,7 @@ public partial class IRGenerator
         // result never outgrows it, and its signedness decides logical or arithmetic.
         // `0xFFFFFFFF >> (32 - k)` with k: int32 took the count's int32 and shifted the
         // -1 pattern arithmetically, 4294967295 instead of 255.
-        if (expr.Op == AstBinOp.RShift && IsIntegerType(t1) && t1.SizeOf() >= t2.SizeOf())
+        if (emitOp == AstBinOp.RShift && IsIntegerType(t1) && t1.SizeOf() >= t2.SizeOf())
             resType = t1;
 
         // Python-fidelity: integer add/sub/mul/shift PROMOTES the result to the next wider type so
@@ -2139,9 +2183,9 @@ public partial class IRGenerator
         // truncated, so semantics are unchanged, and nothing that was narrow gets widened.
         (long Min, long Max)? resRange = null;
         if (resType is not DataType.FLOAT
-            && expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift)
+            && emitOp is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift)
         {
-            resRange = BinaryResultRange(expr.Op, ValRange(v1), ValRange(v2));
+            resRange = BinaryResultRange(emitOp, ValRange(v1), ValRange(v2));
             var (tMin, tMax) = RangeOfType(resType);
             bool fits = resRange is (long rMin, long rMax) && rMin >= tMin && rMax <= tMax;
             // The wider type must also be able to be NEGATIVE when the result can be. Promoting
@@ -2171,13 +2215,21 @@ public partial class IRGenerator
                     _ => resType,
                 };
         }
-        else if (expr.Op is AstBinOp.FloorDiv or AstBinOp.Mod && IsIntegerType(resType))
+        else if (emitOp is AstBinOp.FloorDiv or AstBinOp.Mod && IsIntegerType(resType))
         {
             // Not promoted -- a quotient or remainder never outgrows its operands -- but
             // bounded, and a consumer needs the bound: `30000 // (u + 7)` is at most 30000,
             // and without it `q + -4585` could not tell a small negative result from a
             // wrapped uint32 one.
-            resRange = DivModResultRange(expr.Op, ValRange(v1), ValRange(v2));
+            resRange = DivModResultRange(emitOp, ValRange(v1), ValRange(v2));
+        }
+        else if (emitOp is AstBinOp.BitAnd && IsIntegerType(resType))
+        {
+            // `(x + dx) % 32` reaches here as the mask `& 31` from the rewrite above;
+            // recording [0, 31] is what lets the destination mint a byte. v1 is the sum
+            // temp (tempRanges, unaffected by the Variable-only ProvenRange distinction)
+            // and v2 is the mask constant, so plain ValRange already sees both exactly.
+            resRange = BinaryResultRange(emitOp, ValRange(v1), ValRange(v2));
         }
 
         // An explicit cast around this op (`uint8(a + b)`) forces fixed-width: compute at the
@@ -2187,7 +2239,7 @@ public partial class IRGenerator
         Temporary dst = MakeTemp(resType);
         if (WidthSeeds != null)
             binaryOperands[dst.Name] = (v1, v2,
-                expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift);
+                emitOp is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift);
         // Record the range so a consumer of this temp promotes on the real values rather
         // than on the storage type. Only when it fits the emitted type: an explicit cast
         // (widthHint) narrows on purpose, and the wrapped value is no longer bounded by it.
@@ -2201,7 +2253,7 @@ public partial class IRGenerator
         // ZeroDivisionError for `a // 0` too, and this used to reach the AVR division routine
         // with a zero divisor and hand back 255 on a clean build. The runtime check further
         // down only guards a divisor the compiler cannot see.
-        if (v2 is Constant { Value: 0 } && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
+        if (v2 is Constant { Value: 0 } && emitOp is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
             throw new ValueError("integer division or modulo by zero",
                 expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
@@ -2211,7 +2263,7 @@ public partial class IRGenerator
             // A shift count outside 0..31 has no meaning for PyMCU's fixed-width ints and
             // would otherwise fold to a wrong value (C# masks the count to 5 bits, so
             // `1 << 99` silently becomes `1 << 3`).
-            if (expr.Op is AstBinOp.LShift or AstBinOp.RShift && (cB.Value < 0 || cB.Value >= 32))
+            if (emitOp is AstBinOp.LShift or AstBinOp.RShift && (cB.Value < 0 || cB.Value >= 32))
             {
                 // A string reaching arithmetic through a variable carries no literal
                 // for the check above to notice, so it arrives here as its interned
@@ -2250,7 +2302,7 @@ public partial class IRGenerator
             Constant Wrap(long result) =>
                 Constant.Of(result) ?? new Constant(unchecked((int)result));
 
-            switch (expr.Op)
+            switch (emitOp)
             {
                 case AstBinOp.Add: return Fold(a + b);
                 case AstBinOp.Sub: return Fold(a - b);
@@ -2304,7 +2356,7 @@ public partial class IRGenerator
         // This allows the if/elif dispatch tree in pin_pulse_in to be fully DCE'd.
         if (v1 is MemoryAddress maL && v2 is MemoryAddress maR)
         {
-            switch (expr.Op)
+            switch (emitOp)
             {
                 case AstBinOp.Equal:     return new Constant(maL.Address == maR.Address ? 1 : 0);
                 case AstBinOp.NotEqual:  return new Constant(maL.Address != maR.Address ? 1 : 0);
@@ -2327,7 +2379,7 @@ public partial class IRGenerator
         // zero divisor is already a compile-time error above). The check guards only a runtime
         // divisor — a non-zero constant divisor pays nothing. SignalError delivers to the local
         // catch dispatcher inside a try, else propagates to the caller via the T-flag.
-        if (expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod && v2 is not Constant)
+        if (emitOp is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod && v2 is not Constant)
         {
             EmitDivModZeroCheck(v2, isFloatOp: false);
         }
@@ -2337,18 +2389,18 @@ public partial class IRGenerator
         // int8 and said True; `int8(100) < 200` materialized the 200 the same way and said
         // False. Widening the operands here fixes every backend at once, because the widths
         // reach the backend already agreed.
-        if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Less
+        if (emitOp is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Less
             or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq)
         {
-            (v1, v2) = FlashStrComparisonOperands(expr.Op, expr.Left, expr.Right, v1, v2, expr);
-            if (FoldComparisonByRange(expr.Op, v1, v2) is { } known)
+            (v1, v2) = FlashStrComparisonOperands(emitOp, expr.Left, expr.Right, v1, v2, expr);
+            if (FoldComparisonByRange(emitOp, v1, v2) is { } known)
                 return new Constant(known ? 1 : 0);
             DataType cmp = ComparisonType(v1, v2);
             v1 = WidenForComparison(v1, cmp, left: true);
             v2 = WidenForComparison(v2, cmp);
         }
 
-        Emit(new Binary(MapBinaryOp(expr.Op), v1, v2, dst));
+        Emit(new Binary(MapBinaryOp(emitOp), v1, v2, dst));
         return dst;
     }
 
