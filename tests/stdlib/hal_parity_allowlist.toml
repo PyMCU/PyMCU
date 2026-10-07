@@ -453,6 +453,12 @@ status = "tracked:#37"
 reason = "CircuitPython adapters should not branch on __CHIP__."
 
 [[deviation]]
+symbol = "compat.circuitpython.pymcu_circuitpython/busio.py:126"
+text = 'if __CHIP__.arch != "avr":'
+status = "tracked:#37"
+reason = "CircuitPython adapters should not branch on __CHIP__. The UART id decision (which UART a pad reaches) and the UART_AUX refusal moved to the native rp2040/rp2350 HAL (tx_id/rx_id); whether tx/rx need routing at all is still this same arch check, same tracked debt as its siblings in this file -- the compiler prunes the dead branch on a literal __CHIP__.arch comparison before resolving names inside it (tx_id/rx_id are only imported on the non-AVR branch), which a HAL-exposed boolean function could not reproduce."
+
+[[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/microcontroller.py:13"
 text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
