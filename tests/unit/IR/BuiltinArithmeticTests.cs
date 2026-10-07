@@ -175,6 +175,23 @@ public class BuiltinArithmeticTests
         Assert.Contains("can exceed int32", ex.Message);
     }
 
+    [Fact]
+    public void DivmodOfInt32MinLiteralByExactMinusTwoStillCompiles()
+    {
+        // The dividend being negative proves nothing about the divisor: -1 must be
+        // reachable inside b's range for the a / -1 overflow to threaten. A constant
+        // -2 has range [-2, -2] -- bMin <= -1 alone wrongly fired on it and refused a
+        // pair whose real quotient is 1073741824.
+        var ir = Gen(
+            "q, r = divmod(-2147483648, -2)\n" +
+            "print(q)\n");
+
+        var q = Main(ir).OfType<Copy>().Single(c => c.Dst is Variable { Name: "main.q" });
+        // The folded pair stores by value: 1073741824 is positive and past int16, so the
+        // slot takes uint32 -- the same convention every positive literal follows.
+        Assert.Equal(DataType.UINT32, ((Variable)q.Dst).Type);
+    }
+
     // ---- divmod() zero-divisor and bare-value bugs found by the float-edges campaign -------
     //
     // EmitDivmodBuiltin used to build its Binary(FloorDiv)/Binary(Mod) nodes directly instead
