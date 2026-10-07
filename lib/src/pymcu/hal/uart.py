@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
-from pymcu.types import inline
+from pymcu.types import inline, int16
 
 if __CHIP__.arch == "avr":
     from pymcu.hal.avr.uart import UART
@@ -18,8 +18,10 @@ elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.uart import UART
 elif __CHIP__.name == "rp2040":
     from pymcu.hal.rp2040.uart import UART
+    from pymcu.hal.rp2040.uart import tx_id as _tx_id_impl, rx_id as _rx_id_impl
 elif __CHIP__.name == "rp2350":
     from pymcu.hal.rp2350.uart import UART
+    from pymcu.hal.rp2350.uart import tx_id as _tx_id_impl, rx_id as _rx_id_impl
 else:
     raise CompileError("UART not supported on this architecture")
 
@@ -29,3 +31,13 @@ def uart_rx_isr():
     match __CHIP__.arch:
         case "avr":
             _avr_uart_rx_isr()
+
+
+@inline
+def tx_id(pin) -> int16:
+    return _tx_id_impl(pin)
+
+
+@inline
+def rx_id(pin) -> int16:
+    return _rx_id_impl(pin)
