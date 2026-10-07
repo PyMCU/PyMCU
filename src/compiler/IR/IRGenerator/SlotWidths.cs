@@ -213,9 +213,10 @@ public partial class IRGenerator
         Temporary t when WidthSeeds.IsInt(t.Type) =>
             tempRanges.TryGetValue(t.Name, out var r) ? r : RangeOfType(t.Type),
         Variable vv when WidthSeeds.IsInt(vv.Type) =>
-            constantVariables.TryGetValue(vv.Name, out int scv)
+            !ForeignGlobalRead(vv.Name) && constantVariables.TryGetValue(vv.Name, out int scv)
                 ? (ConstantVariableAsLong(vv.Name, scv), ConstantVariableAsLong(vv.Name, scv))
-            : !ForeignFlowRead(vv.Name) && localConstantValues.TryGetValue(vv.Name, out int slv)
+            : !ForeignFlowRead(vv.Name) && !ForeignGlobalRead(vv.Name)
+                && localConstantValues.TryGetValue(vv.Name, out int slv)
                 ? (slv, slv)
             : !ForeignGlobalRead(vv.Name) && variableRanges.TryGetValue(vv.Name, out var svr) ? svr
             : RangeOfType(vv.Type),
@@ -238,13 +239,27 @@ public partial class IRGenerator
         Constant c => (c.AsLong, c.AsLong),
         Temporary t => tempRanges.TryGetValue(t.Name, out var tr) ? tr : null,
         Variable vv =>
-            constantVariables.TryGetValue(vv.Name, out int scv)
+            !ForeignGlobalRead(vv.Name) && constantVariables.TryGetValue(vv.Name, out int scv)
                 ? (ConstantVariableAsLong(vv.Name, scv), ConstantVariableAsLong(vv.Name, scv))
-            : !ForeignFlowRead(vv.Name) && localConstantValues.TryGetValue(vv.Name, out int slv) ? (slv, slv)
+            : !ForeignFlowRead(vv.Name) && !ForeignGlobalRead(vv.Name)
+                && localConstantValues.TryGetValue(vv.Name, out int slv) ? (slv, slv)
             : !ForeignGlobalRead(vv.Name) && variableRanges.TryGetValue(vv.Name, out var svr) ? svr
             : null,
         _ => null,
     };
+
+    /// Qualified names are built as `currentFunction + "." + name` throughout the
+    /// generator (an inline expansion's own currentFunction already carries its
+    /// "inline1.callee" prefix, so this needs no separate case for it). A write whose
+    /// destination does not start with the CURRENT frame's own prefix is being made
+    /// into somebody else's frame -- an argument copy into a callee's parameter slot,
+    /// emitted from the caller just before the Call -- and is never a fact this frame
+    /// can stand behind.
+    private bool NameOwnedByCurrentFrame(string qualifiedName)
+    {
+        string owner = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
+        return qualifiedName.StartsWith(owner + ".", StringComparison.Ordinal);
+    }
 
     /// Keeps variableRanges honest at every emitted instruction: a Copy records the
     /// proven range of what it carried into the slot (the slot's own type range when the
@@ -263,7 +278,14 @@ public partial class IRGenerator
                     || optionalMembersByName.ContainsKey(dv.Name)
                     || reassignedGlobals.Contains(dv.Name)
                     || functionWrittenGlobals.Contains(dv.Name)
-                    || cp.Src is Constant { Text: not null })
+                    || cp.Src is Constant { Text: not null }
+                    // A write into a name this frame does not own: an argument copy into a
+                    // CALLEE's shared parameter slot, written from the CALLER's frame before
+                    // the Call. The callee's own body is generated once and must be correct
+                    // for every call site, so the last caller's argument is not a fact about
+                    // the parameter there -- `rem(5, 32)` then `rem(5, 4)` left `rem.n` proven
+                    // 4 for BOTH calls' lowering of `x % n` (PyMCU golperf review, Codex case 2).
+                    || !NameOwnedByCurrentFrame(dv.Name))
                 {
                     variableRanges.Remove(dv.Name);
                     break;
