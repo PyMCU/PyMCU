@@ -67,6 +67,10 @@ pymcu build
 pymcu build -v    # verbose — prints assembler output and full build log
 ```
 
+Poetry and uv projects build against their own environment. If that environment
+cannot be located, the build stops instead of silently using packages beside the
+CLI. `--use-cli-environment` is the explicit opt-in for that fallback.
+
 **Output files:**
 
 | File | Description |

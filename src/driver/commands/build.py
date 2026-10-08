@@ -1298,6 +1298,11 @@ def _print_explain(output_dir) -> None:
 
 def build(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    use_cli_environment: bool = typer.Option(
+        False, "--use-cli-environment",
+        help="Explicitly use the environment running pymcu instead of a Poetry/uv "
+             "project environment.",
+    ),
     stdlib_override: Optional[List[str]] = typer.Option(
         None, "--stdlib",
         help="Override stdlib flavor(s) from pyproject.toml (e.g. --stdlib micropython). "
@@ -1418,7 +1423,8 @@ def build(
         extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
         flavor_dirs: dict[str, Path] = {}           # flavor -> package dir
         project_search_path = library_search_path(
-            pyproject_path.parent.absolute()
+            pyproject_path.parent.absolute(),
+            use_cli_environment=use_cli_environment,
         )
         _warn_environment_input_versions(project_search_path, stdlib_flavors)
 

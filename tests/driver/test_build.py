@@ -13,6 +13,41 @@ runner = CliRunner()
 
 
 class TestProjectEnvironmentInputs:
+    @pytest.mark.parametrize(
+        ("manager", "marker", "command"),
+        [
+            ("poetry", "poetry.lock", "poetry env info --path"),
+            ("uv", "uv.lock", "uv sync"),
+        ],
+    )
+    def test_missing_managed_environment_stops_before_using_cli_packages(
+            self, tmp_path, monkeypatch, unwrapped, manager, marker, command):
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, 'target = "atmega328p"\n')
+        (tmp_path / marker).touch()
+        monkeypatch.setattr(build_cmd.shutil, "which", lambda name: None)
+
+        result = _invoke_build()
+        output = unwrapped(result.output).lower()
+
+        assert result.exit_code == 1
+        assert manager in output
+        assert command in output
+        assert "--use-cli-environment" in output
+
+    def test_explicit_cli_environment_flag_bypasses_managed_lookup(
+            self, tmp_path, monkeypatch, unwrapped):
+        monkeypatch.chdir(tmp_path)
+        _project(tmp_path, "")
+        (tmp_path / "uv.lock").touch()
+
+        result = _invoke_build("--use-cli-environment")
+        output = unwrapped(result.output).lower()
+
+        assert result.exit_code == 1
+        assert "could not locate the uv project environment" not in output
+        assert "no 'board' or 'target'" in output
+
     def test_compat_package_is_found_only_in_project_environment(
             self, tmp_path, monkeypatch):
         site = tmp_path / "site-packages"

@@ -412,6 +412,23 @@ def _poetry_environment(root: Path) -> Path | None:
     return environment if environment.is_dir() else None
 
 
+def project_environment_manager(root: Path) -> str | None:
+    """The package manager whose project environment must supply inputs."""
+    if (root / "uv.lock").is_file():
+        return "uv"
+    if (root / "poetry.lock").is_file():
+        return "poetry"
+    try:
+        document = tomllib.loads(
+            (root / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        if "poetry" in document.get("tool", {}):
+            return "poetry"
+    except (OSError, tomllib.TOMLDecodeError, UnicodeError):
+        pass
+    return None
+
+
 def project_environment(root: Path) -> Path | None:
     """The environment owned by this project, including Poetry's cache."""
     override = os.environ.get(PROJECT_ENVIRONMENT_OVERRIDE)
@@ -423,16 +440,17 @@ def project_environment(root: Path) -> Path | None:
     if in_project.is_dir():
         return in_project
 
-    is_poetry = (root / "poetry.lock").is_file()
-    if not is_poetry:
-        try:
-            document = tomllib.loads(
-                (root / "pyproject.toml").read_text(encoding="utf-8")
-            )
-            is_poetry = "poetry" in document.get("tool", {})
-        except (OSError, tomllib.TOMLDecodeError, UnicodeError):
-            pass
-    return _poetry_environment(root) if is_poetry else None
+    manager = project_environment_manager(root)
+    if manager == "poetry":
+        return _poetry_environment(root)
+    if manager == "uv":
+        configured = os.environ.get("UV_PROJECT_ENVIRONMENT")
+        if configured:
+            environment = Path(configured)
+            if not environment.is_absolute():
+                environment = root / environment
+            return environment if environment.is_dir() else None
+    return None
 
 
 def _editable_project_dir(dist) -> Path | None:
@@ -732,7 +750,9 @@ def include_paths(libraries: list[Library], flavors: list[str]) -> list[str]:
     return paths
 
 
-def search_path_for_project(root: Path) -> list[str] | None:
+def search_path_for_project(
+    root: Path, *, use_cli_environment: bool = False,
+) -> list[str] | None:
     """
     Where to look for this project's libraries, or None to use sys.path.
 
@@ -742,8 +762,20 @@ def search_path_for_project(root: Path) -> list[str] | None:
     .venv is a case the build already warns about, and it must not silently
     lose the project's libraries on top of that.
     """
+    if use_cli_environment:
+        return None
+
+    manager = project_environment_manager(root)
     venv = project_environment(root)
     if venv is None:
+        if manager is not None:
+            command = "poetry env info --path" if manager == "poetry" else "uv sync"
+            raise RuntimeError(
+                f"Could not locate the {manager} project environment; command "
+                f"'{command}' failed or did not produce a usable environment. "
+                f"Run '{command}' and try again, or pass --use-cli-environment "
+                "to explicitly build with the environment running pymcu."
+            )
         return None
     if os.environ.get(PROJECT_ENVIRONMENT_OVERRIDE):
         paths = site_packages_of(venv)
@@ -754,6 +786,14 @@ def search_path_for_project(root: Path) -> list[str] | None:
     except OSError:
         return None
     paths = site_packages_of(venv)
+    if not paths and manager is not None:
+        command = "poetry env info --path" if manager == "poetry" else "uv sync"
+        raise RuntimeError(
+            f"The {manager} project environment at {venv} has no site-packages; "
+            f"command '{command}' did not produce a usable environment. Run "
+            f"'{command}' and try again, or pass --use-cli-environment to "
+            "explicitly build with the environment running pymcu."
+        )
     return paths or None
 
 
