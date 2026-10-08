@@ -85,24 +85,13 @@ public partial class IRGenerator
             }
 
             // Positive proof the name holds ONE scalar element of a buffer, for
-            // NameIsScalarAtThisSite (Call.cs): a direct element subscript (`one =
-            // buf[0]`), or a copy from a name already proven that way (`two = one`),
-            // so the proof survives a chain of plain reassignment the same way a
-            // buffer forward does.
-            if (stmt.Value is IndexExpr provenIx && provenIx.Index is not SliceExpr
-                && IndexTargetHoldsScalarElements(provenIx.Target))
+            // NameIsScalarAtThisSite (Call.cs): any shape ExpressionIsProvenScalarElement
+            // proves -- a direct element subscript (`one = buf[0]`), a copy from a name
+            // already proven that way (`two = one`, which also walks a longer alias chain
+            // than a single hop), a walrus, a ternary whose arms both prove it, or a call
+            // to a function proven to always return one element.
+            if (ExpressionIsProvenScalarElement(stmt.Value))
                 provenScalarElements.Add(bindKey);
-            else if (stmt.Value is VariableExpr provenSrcVe)
-            {
-                string provenSrcKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix + provenSrcVe.Name
-                    : (!string.IsNullOrEmpty(currentFunction)
-                        ? currentFunction + "." + provenSrcVe.Name
-                        : provenSrcVe.Name);
-                if (provenScalarElements.Contains(provenSrcKey) || provenScalarElements.Contains(provenSrcVe.Name))
-                    provenScalarElements.Add(bindKey);
-                else provenScalarElements.Remove(bindKey);
-            }
             else provenScalarElements.Remove(bindKey);
         }
 
@@ -7154,21 +7143,8 @@ public partial class IRGenerator
             // (no type) was.
             if (target is Variable provenTgtVd)
             {
-                if (stmt.Init is IndexExpr provenIxVd && provenIxVd.Index is not SliceExpr
-                    && IndexTargetHoldsScalarElements(provenIxVd.Target))
+                if (stmt.Init != null && ExpressionIsProvenScalarElement(stmt.Init))
                     provenScalarElements.Add(provenTgtVd.Name);
-                else if (stmt.Init is VariableExpr provenSrcVeVd)
-                {
-                    string provenSrcKeyVd = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + provenSrcVeVd.Name
-                        : (!string.IsNullOrEmpty(currentFunction)
-                            ? currentFunction + "." + provenSrcVeVd.Name
-                            : provenSrcVeVd.Name);
-                    if (provenScalarElements.Contains(provenSrcKeyVd)
-                        || provenScalarElements.Contains(provenSrcVeVd.Name))
-                        provenScalarElements.Add(provenTgtVd.Name);
-                    else provenScalarElements.Remove(provenTgtVd.Name);
-                }
                 else provenScalarElements.Remove(provenTgtVd.Name);
             }
 
@@ -8606,22 +8582,9 @@ public partial class IRGenerator
 
             // Positive proof for NameIsScalarAtThisSite (Call.cs), same as the plain
             // (unannotated) assignment above: `one: uint8 = buf[0]` is a direct element
-            // subscript, or a copy from a name already proven that way.
-            if (stmt.Value is IndexExpr provenIxAnn && provenIxAnn.Index is not SliceExpr
-                && IndexTargetHoldsScalarElements(provenIxAnn.Target))
+            // subscript, or any other shape ExpressionIsProvenScalarElement proves.
+            if (ExpressionIsProvenScalarElement(stmt.Value))
                 provenScalarElements.Add(qualified2);
-            else if (stmt.Value is VariableExpr provenSrcVeAnn)
-            {
-                string provenSrcKeyAnn = !string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix + provenSrcVeAnn.Name
-                    : (!string.IsNullOrEmpty(currentFunction)
-                        ? currentFunction + "." + provenSrcVeAnn.Name
-                        : provenSrcVeAnn.Name);
-                if (provenScalarElements.Contains(provenSrcKeyAnn)
-                    || provenScalarElements.Contains(provenSrcVeAnn.Name))
-                    provenScalarElements.Add(qualified2);
-                else provenScalarElements.Remove(qualified2);
-            }
             else provenScalarElements.Remove(qualified2);
 
             // Propagate string constant from rhs to the declared variable so that
@@ -10754,10 +10717,13 @@ public partial class IRGenerator
                                 : unpackSrcVe.Name);
                         if (bytearrayParams.Contains(unpackSrcKey) || bytearrayParams.Contains(unpackSrcVe.Name))
                             bytearrayParams.Add(qualified);
-                        else if (provenScalarElements.Contains(unpackSrcKey)
-                                 || provenScalarElements.Contains(unpackSrcVe.Name))
-                            provenScalarElements.Add(qualified);
                     }
+                    // Any other shape a tuple element can be written as -- a direct
+                    // subscript (`one, ignored = (buf[0], 0)`), a walrus, a ternary, a
+                    // call to a function proven to always return one element -- is the
+                    // same positive proof every other write site propagates.
+                    if (ExpressionIsProvenScalarElement(tup.Elements[k]))
+                        provenScalarElements.Add(qualified);
                     if (snapshots[k] is Constant c)
                     {
                         constantVariables[qualified] = c.Value;
