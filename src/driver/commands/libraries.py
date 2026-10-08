@@ -45,6 +45,8 @@ from typing import Optional
 
 import tomlkit
 import typer
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from rich.console import Console
 from rich.table import Table
 
@@ -533,14 +535,22 @@ def _run(cmd: list[str], cwd: Path) -> bool:
 # pyproject.toml editing
 # ---------------------------------------------------------------------------
 
+def _requirement_name(value: str) -> str | None:
+    """Return the normalized project name from one PEP 508 requirement."""
+    try:
+        return str(canonicalize_name(Requirement(value).name))
+    except InvalidRequirement:
+        return None
+
+
 def _add_dependency(project: Project, requirement: str) -> None:
     """Record the dependency, preserving the file's existing formatting."""
     doc = project.doc
     req_file = project.root / "requirements.txt"
     if req_file.exists():
         lines = req_file.read_text(encoding="utf-8").splitlines()
-        name = requirement.split(">=")[0]
-        lines = [ln for ln in lines if not ln.startswith(name)]
+        name = _requirement_name(requirement)
+        lines = [ln for ln in lines if _requirement_name(ln) != name]
         lines.append(requirement)
         req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return
@@ -556,19 +566,20 @@ def _add_dependency(project: Project, requirement: str) -> None:
         deps = tomlkit.array()
         doc["project"]["dependencies"] = deps
 
-    name = requirement.split(">=")[0]
+    name = _requirement_name(requirement)
     for existing in list(deps):
-        if str(existing).split(">=")[0].split("==")[0].strip() == name:
+        if _requirement_name(str(existing)) == name:
             deps.remove(existing)
     deps.append(requirement)
     project.path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
 def _remove_dependency(project: Project, distribution: str) -> None:
+    name = str(canonicalize_name(distribution))
     req_file = project.root / "requirements.txt"
     if req_file.exists():
         lines = req_file.read_text(encoding="utf-8").splitlines()
-        lines = [ln for ln in lines if not ln.startswith(distribution)]
+        lines = [ln for ln in lines if _requirement_name(ln) != name]
         req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return
     doc = project.doc
@@ -576,7 +587,7 @@ def _remove_dependency(project: Project, distribution: str) -> None:
     if deps is None:
         return
     for existing in list(deps):
-        if str(existing).split(">=")[0].split("==")[0].strip() == distribution:
+        if _requirement_name(str(existing)) == name:
             deps.remove(existing)
     project.path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
