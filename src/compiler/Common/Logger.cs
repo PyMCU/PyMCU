@@ -52,6 +52,8 @@ namespace PyMCU.Common;
 //                                       call; the driver injects it
 //       [NEEDS_EXNMSG]               -- a raise-with-message lowered; the driver
 //                                       links the console string writers
+//       [EMBED] <name>               -- open() resolved a file name; the driver
+//                                       looks it up on the filesystem and embeds it
 //       [STDOUT_OWNED]               -- the program constructs a UART; the driver
 //                                       leaves stdout to it
 //     All warnings/errors go to stderr (never pollute the token stream).
@@ -185,6 +187,8 @@ public static class Logger
     //   NeedsExnmsg -- a raise carried a lowered message; the unhandled report prints
     //     it through the console string writers, which must be linked even when
     //     nothing calls print().
+    //   Embed -- open() resolved a compile-time file name. The token carries the
+    //     literal, and the driver still owns the filesystem lookup.
     //   StdoutOwned -- the program constructs a UART itself, so the driver must not
     //     initialize a second one over stdout.
     public static void NeedsTimebase()
@@ -209,6 +213,12 @@ public static class Logger
     {
         if (_isDriverMode)
             Console.WriteLine("[NEEDS_EXNMSG]");
+    }
+
+    public static void Embed(string name)
+    {
+        if (_isDriverMode)
+            Console.WriteLine($"[EMBED] {name}");
     }
 
     public static void StdoutOwned()

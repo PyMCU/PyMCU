@@ -186,6 +186,12 @@ public partial class IRGenerator
                 + "literal, or keep it in a field or name whose text the compiler knows.",
                 nameExpr);
 
+        // RFC 0014 family 7: the literal name the open() resolved is what the driver
+        // used to scrape out of the source with a regex. Reported before the table
+        // check below, so a build that fails for the missing file still tells the
+        // driver which file to go find.
+        Logger.Embed(name);
+
         string mode = "r";
         if (modeExpr != null)
         {
