@@ -33,6 +33,7 @@ may use compiler-only constructs).
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -590,8 +591,34 @@ def discover_libraries(search_path: list[str] | None = None) -> tuple[list[Libra
 # Chip -> architecture
 # ---------------------------------------------------------------------------
 
-_DEVICE_INFO_ARCH = re.compile(r"""device_info\((?=[^)]*\barch\s*=\s*["']([a-z0-9_]+)["'])""")
 _ARCH_CACHE: dict[tuple[str, tuple[str, ...]], str] = {}
+
+
+def _device_info_arch(source: str) -> str:
+    """The literal `arch=` argument of the file's device_info() call, or "".
+
+    Read off the AST (RFC 0014: the driver decides nothing from source text it
+    can read structurally) -- a `device_info(arch=` line inside a comment or
+    docstring never fooled the compiler either, but the regex could not tell
+    the difference. A file ast cannot parse, or a call whose arch is not a
+    literal, answers "" the same way a missing declaration does.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Name) and func.id == "device_info") \
+                and not (isinstance(func, ast.Attribute) and func.attr == "device_info"):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "arch" and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str):
+                return kw.value.value
+    return ""
 
 
 def chip_arch(chip: str, search_path: list[str] | None = None) -> str:
@@ -627,8 +654,7 @@ def chip_arch(chip: str, search_path: list[str] | None = None) -> str:
             source = Path(spec.origin)
     if source is not None:
         try:
-            match = _DEVICE_INFO_ARCH.search(source.read_text(encoding="utf-8"))
-            arch = match.group(1) if match else ""
+            arch = _device_info_arch(source.read_text(encoding="utf-8"))
         except OSError:
             arch = ""
 
