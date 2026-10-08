@@ -926,6 +926,40 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The ONE type that exactly represents every value both <paramref name="a"/> and
+    /// <paramref name="b"/> can hold, or null when none of this compiler's types does
+    /// (PyMCU-review round 8). Unlike <see cref="PyMCU.Common.WidthSeeds.Join"/>, which
+    /// is a best-effort WIDTH-SEED approximation capped at 32 bits, this answers null
+    /// rather than a type that would silently lose range or kind: int32 and uint32
+    /// together would need 33 bits to hold both exactly, and a float mixed with any
+    /// integer is a different value representation a wider slot of the same kind cannot
+    /// fix.
+    /// </summary>
+    private static DataType? ExactJoin(DataType a, DataType b)
+    {
+        if (a == b) return a;
+        if (!PyMCU.Common.WidthSeeds.IsInt(a) || !PyMCU.Common.WidthSeeds.IsInt(b)) return null;
+        bool sa = PyMCU.Common.WidthSeeds.IsSigned(a), sb = PyMCU.Common.WidthSeeds.IsSigned(b);
+        if (sa == sb) return PyMCU.Common.WidthSeeds.Join(a, b);
+        // Mixed signed/unsigned: a signed type one step above the unsigned one holds
+        // both exactly -- UNLESS the unsigned one is already 32 bits, where "one step
+        // above" would need a signed 64-bit type this compiler has no slot for.
+        DataType unsignedOne = sa ? b : a;
+        if (unsignedOne == DataType.UINT32) return null;
+        return PyMCU.Common.WidthSeeds.Join(a, b);
+    }
+
+    /// The name a type is written as in source, for the refusal message above --
+    /// SlotWidths.cs's own TypeName has no FLOAT case and answers "int32" for it.
+    private static string LoopWidthTypeName(DataType t) => t switch
+    {
+        DataType.UINT8 => "uint8", DataType.INT8 => "int8",
+        DataType.UINT16 => "uint16", DataType.INT16 => "int16",
+        DataType.UINT32 => "uint32", DataType.INT32 => "int32",
+        DataType.FLOAT => "float", _ => t.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>
     /// Binds one unrolled element to the loop variable, and says whether it could. A number
     /// binds as it always has; a STRING binds as a string constant, which is what a `const`
     /// parameter needs and what `case "PD6"` matches on.
@@ -2174,12 +2208,24 @@ public partial class IRGenerator
                 // FIRST iteration is what a read after the loop actually sees, with x
                 // still holding b's full 16 bits -- the backend homes one slot per name
                 // at one width for every iteration, not the last one's alone.
+                //
+                // Not every pair of types has one that holds both exactly (PyMCU-review
+                // round 8): int32 and uint32 together need 33 bits, and a float mixed
+                // with any integer is a different VALUE REPRESENTATION, not just a wider
+                // slot of the same one -- CPython answers by letting the name hold a
+                // DIFFERENT type each iteration, which one static slot cannot. Main
+                // refuses every run-time element in a tuple outright; this keeps that
+                // refusal exactly where an exact common type does not exist, instead of
+                // picking the nearest INTEGER type and silently truncating a float or an
+                // out-of-range unsigned value into it.
                 DataType? widestDt = null;
                 DataType? priorLoopVarDt = null;
+                (DataType A, DataType B)? incompatiblePair = null;
                 if (varKey2 == null)
                 {
                     if (variableTypes.TryGetValue(varKey, out var priorVarDt)
-                        && PyMCU.Common.WidthSeeds.IsInt(priorVarDt))
+                        && priorVarDt is not (DataType.UNKNOWN or DataType.VOID
+                            or DataType.FUNCREF or DataType.GC_REF))
                     {
                         priorLoopVarDt = priorVarDt;
                         widestDt = priorVarDt;
@@ -2187,9 +2233,34 @@ public partial class IRGenerator
                     foreach (var we in elems)
                     {
                         if (we is ListExpr or TupleExpr) continue; // nested/pair shape, not a scalar width
+                        // A bare float or string literal (`for a in [1, 2.5]`) has its own,
+                        // more specific refusal already -- BindUnrolledRuntimeElement's
+                        // "bare literal the constant evaluator cannot fold" gap for a float,
+                        // or the string-constant fold for text. Joining it in here first
+                        // would answer with this check's generic incompatible-types message
+                        // and the wrong caret instead of that one.
+                        if (we is FloatLiteral or StringLiteral) continue;
                         DataType weDt = LoopVarStorageType(varKey, InferExprType(we));
-                        if (!PyMCU.Common.WidthSeeds.IsInt(weDt)) continue;
-                        widestDt = widestDt is { } wd ? PyMCU.Common.WidthSeeds.Join(wd, weDt) : weDt;
+                        if (weDt is DataType.UNKNOWN or DataType.VOID
+                            or DataType.FUNCREF or DataType.GC_REF) continue;
+                        if (widestDt is not { } wd) { widestDt = weDt; continue; }
+                        if (wd == weDt) continue;
+                        if (ExactJoin(wd, weDt) is { } joined) widestDt = joined;
+                        else if (incompatiblePair == null) incompatiblePair = (wd, weDt);
+                    }
+                    if (incompatiblePair is { } bad)
+                    {
+                        bool anyFloat = bad.A == DataType.FLOAT || bad.B == DataType.FLOAT;
+                        string why = anyFloat
+                            ? "a float and an integer are different value representations, not " +
+                              "just different widths of the same one"
+                            : "int32 and uint32 together would need 33 bits to hold both exactly";
+                        throw UserError(
+                            $"'{stmt.VarName}' would have to hold both {LoopWidthTypeName(bad.A)} " +
+                            $"and {LoopWidthTypeName(bad.B)} across this loop's elements, and no " +
+                            $"type here represents both exactly -- {why}. Read the elements as " +
+                            "separate names, or give them a common declared type.",
+                            iter);
                     }
                     // The name's EARLIER binding (`x = a` before this loop) already emitted
                     // its own Copy at ITS OWN width, which nothing here can rewrite after the
