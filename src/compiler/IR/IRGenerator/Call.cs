@@ -11502,6 +11502,13 @@ public partial class IRGenerator
         if (callee.EndsWith("_clock_init", StringComparison.Ordinal)
             && !CalleeDefinedInProgram(callee))
             sawClockInitCall = true;
+
+        if (callee.EndsWith("_millis_init", StringComparison.Ordinal)
+            && !CalleeDefinedInProgram(callee))
+        {
+            Logger.TimebaseInit();
+            return;
+        }
     }
 
     // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes

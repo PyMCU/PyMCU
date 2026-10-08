@@ -41,6 +41,9 @@ namespace PyMCU.Common;
 //                                       value...) met a missing pymcu.strfmt import
 //       [NEEDS_ROUND2]               -- round(x, n) on a run-time float met a missing
 //                                       pymcu.round2 import
+//       [TIMEBASE_INIT]              -- the program resolves millis_init() itself;
+//                                       the driver binds --timebase but injects
+//                                       nothing
 //       [NEEDS_CLOCKS]               -- an RP2350 program lowered no clock_init()
 //                                       call; the driver injects it
 //       [STDOUT_OWNED]               -- the program constructs a UART; the driver
@@ -165,10 +168,19 @@ public static class Logger
     // compile -- they change what the driver stages around the program and then asks
     // for one more pass, the same way [ARENA_USED] does.
     //
+    //   TimebaseInit -- a millis_init() call was resolved in the program's own code,
+    //     so the driver does not inject one (double-arming Timer0 is the failure this
+    //     split exists to avoid) and only binds --timebase.
     //   NeedsClocks -- an RP2350 program ended without a resolved clock_init() call;
     //     the driver injects the preamble the SDK runtime would have run.
     //   StdoutOwned -- the program constructs a UART itself, so the driver must not
     //     initialize a second one over stdout.
+    public static void TimebaseInit()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[TIMEBASE_INIT]");
+    }
+
     public static void NeedsClocks()
     {
         if (_isDriverMode)
