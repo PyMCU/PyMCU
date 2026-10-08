@@ -154,9 +154,10 @@ class TestInstallUpstreamLibrary:
 
         assert result.ok, result.message
         assert calls and verb in calls[0]
+        assert "adafruit-circuitpython-hcsr04==0.4.25" in calls[0]
         if manager == "pip":
             assert calls[0][1:4] == ["-m", "pip", "install"]
-            assert "adafruit-circuitpython-hcsr04>=0.4.25" in (
+            assert "adafruit-circuitpython-hcsr04==0.4.25" in (
                 tmp_path / "requirements.txt").read_text()
         else:
             assert calls[0][:2] == [executable, "add"]
@@ -186,8 +187,30 @@ class TestInstallUpstreamLibrary:
         assert result.entry["kind"] == "upstream"
         assert "0.4.25" in result.message
         # Recorded as a project dependency, the same as a manifest library.
-        assert "adafruit-circuitpython-hcsr04>=0.4.25" in (
+        assert "adafruit-circuitpython-hcsr04==0.4.25" in (
             (tmp_path / "pyproject.toml").read_text())
+
+    def test_rejects_an_installed_version_the_index_did_not_measure(
+            self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        _serve_index(tmp_path, monkeypatch)
+        monkeypatch.setattr(cmd, "_needs_environment", lambda p: False)
+        monkeypatch.setattr(cmd, "install_command", lambda p, dist, pre: ["true"])
+        monkeypatch.setattr(cmd, "_run", lambda *a, **k: True)
+        monkeypatch.setattr(
+            cmd, "installed_distribution_version", lambda dist, search: "2.0"
+        )
+        rolled_back = []
+        monkeypatch.setattr(
+            cmd, "uninstall_command",
+            lambda project, dist: rolled_back.append(dist) or None,
+        )
+
+        result = cmd.install_library(project, "adafruit_hcsr04", verify=False)
+
+        assert not result.ok
+        assert "index measured 0.4.25" in result.message
+        assert rolled_back == ["adafruit-circuitpython-hcsr04"]
 
     def test_not_actually_installed_is_rolled_back(self, tmp_path, monkeypatch):
         project = _project(tmp_path)

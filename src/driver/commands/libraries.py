@@ -769,6 +769,13 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
             project, distribution,
             "it did not install (nothing by that name is in the project's environment)"
         ))
+    expected_version = str(entry.get("version", ""))
+    if version != expected_version:
+        return result.failed(rollback(
+            project, distribution,
+            f"installed version {version}, but the library index measured "
+            f"{expected_version}"
+        ))
 
     if verify:
         ok, detail = verify_upstream_imports(entry, project)
@@ -780,7 +787,7 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
 
     # uv and Poetry record it as part of their add command. Pip does not.
     if not _manager_records_dependencies(project):
-        _add_dependency(project, f"{distribution}>={version}")
+        _add_dependency(project, f"{distribution}=={version}")
 
     result.entry = entry
     result.message = f"{entry.get('name') or distribution} {version} installed"
@@ -827,7 +834,10 @@ def install_library(project: Project, name: str, *, verify: bool = True,
             "environment does nothing."
         )
 
-    cmd = install_command(project, distribution, pre=pre)
+    install_requirement = distribution
+    if entry is not None and str(entry.get("kind", "")) == "upstream":
+        install_requirement = f"{distribution}=={entry['version']}"
+    cmd = install_command(project, install_requirement, pre=pre)
     if cmd is None:
         manager = _project_package_manager(project)
         return result.failed(
@@ -836,7 +846,7 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         )
 
     known = {lib.name for lib in _installed_libraries(project)[0]}
-    result.log.append(f"Installing {distribution} ...")
+    result.log.append(f"Installing {install_requirement} ...")
     if not _run(cmd, project.root):
         return result.failed(f"Installation of {distribution} failed.")
 
