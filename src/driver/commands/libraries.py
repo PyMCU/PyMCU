@@ -539,6 +539,12 @@ def _run(cmd: list[str], cwd: Path) -> bool:
 
 _INLINE_REQUIREMENT_COMMENT = re.compile(r"(?P<body>.*?)(?P<comment>\s+#.*)$")
 _REQUIREMENT_HASHES = re.compile(r"\s+--hash(?:=|\s+).*$")
+_REQUIRE_HASHES_OPTION = re.compile(r"^\s*--require-hashes\b")
+_HASH_OPTION = re.compile(r"\s--hash(?:=|\s+)")
+
+
+class HashLockedRequirementError(Exception):
+    """A requirements.txt dependency is hash-locked and cannot be rewritten."""
 
 
 def _requirement_parts(value: str) -> tuple[str, str]:
@@ -586,19 +592,56 @@ def _requirement_block_value(block: list[str]) -> str:
     return " ".join(parts)
 
 
+def _requirement_block_is_hash_locked(lines: list[str], block: list[str]) -> bool:
+    """
+    Whether *block* must keep its exact hash: either the whole file requires
+    one (`--require-hashes`), or this particular requirement already carries
+    one. `pip install --require-hashes` refuses to run at all if any
+    requirement in the file is missing a hash, so overwriting either case
+    with a plain unhashed line breaks the very next `pip install -r
+    requirements.txt`.
+    """
+    if any(_REQUIRE_HASHES_OPTION.match(line) for line in lines):
+        return True
+    return any(_HASH_OPTION.search(line) for line in block)
+
+
 def _add_dependency(project: Project, requirement: str) -> None:
-    """Record the dependency, preserving the file's existing formatting."""
+    """
+    Record the dependency, preserving the file's existing formatting.
+
+    Raises HashLockedRequirementError instead of touching a hash-locked
+    block whose pinned version does not already match -- there is no hash
+    to compute here, and writing an unhashed line in its place would leave
+    `--require-hashes` to fail on the very next install.
+    """
     doc = project.doc
     req_file = project.root / "requirements.txt"
     if req_file.exists():
         lines = req_file.read_text(encoding="utf-8").splitlines()
         name = _requirement_name(requirement)
+        new_value, _ = _requirement_parts(requirement)
         updated: list[str] = []
         replaced = False
         for block in _requirement_blocks(lines):
             value = _requirement_block_value(block)
             if _requirement_name(value) != name:
                 updated.extend(block)
+                continue
+            if _requirement_block_is_hash_locked(lines, block):
+                existing_value, _ = _requirement_parts(value)
+                if existing_value != new_value:
+                    raise HashLockedRequirementError(
+                        f"{name}: requirements.txt pins this dependency with "
+                        "--hash, and the version to record does not match "
+                        f"what is already pinned ({existing_value!r} vs "
+                        f"{new_value!r}). Regenerate the hashes for the new "
+                        "version and update requirements.txt by hand."
+                    )
+                # Already exactly what we would have recorded; the existing
+                # hash is still valid for it, so the block is left alone.
+                updated.extend(block)
+                replaced = True
                 continue
             if not replaced:
                 _, comment = _requirement_parts(value)
@@ -870,7 +913,10 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
 
     # uv and Poetry record it as part of their add command. Pip does not.
     if not _manager_records_dependencies(project):
-        _add_dependency(project, f"{distribution}=={version}")
+        try:
+            _add_dependency(project, f"{distribution}=={version}")
+        except HashLockedRequirementError as exc:
+            return result.failed(rollback(project, distribution, str(exc)))
 
     result.entry = entry
     result.message = f"{entry.get('name') or distribution} {version} installed"
@@ -973,7 +1019,10 @@ def install_library(project: Project, name: str, *, verify: bool = True,
 
     # uv and Poetry record it as part of their add command. Pip does not.
     if not _manager_records_dependencies(project):
-        _add_dependency(project, f"{distribution}>={lib.version}")
+        try:
+            _add_dependency(project, f"{distribution}>={lib.version}")
+        except HashLockedRequirementError as exc:
+            return result.failed(rollback(project, lib.distribution, str(exc)))
 
     result.library = lib
     result.entry = entry
