@@ -612,4 +612,140 @@ public class InstanceSequenceElementTests
         Assert.Contains("instance", msg);
         Assert.Contains("C", msg);
     }
+
+    // Round 4 (silentfix5): the refusal has to fire when the element is an
+    // instance on only SOME of the paths that reach it, and must stop firing
+    // once a later write has genuinely rebound the name to a scalar.
+
+    [Fact]
+    public void AnInstanceOnOneBranchArm_InATupleReturn_IsRefused()
+    {
+        // `x` is a byte on one arm and a Pair on the other: the merge dropped
+        // the class because the arms disagreed, and the slot copy handed the
+        // caller the scalar path's byte as if it were the object. The flag is
+        // run-time (a caller's parameter) or the dead arm folds away and the
+        // merge never sees the disagreement.
+        var msg = Refusal(Pair +
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "def f(flag: bool):\n" +
+            "    if flag:\n" +
+            "        x = 7\n" +
+            "    else:\n" +
+            "        x = Pair(1, 2)\n" +
+            "    return x, 0\n\n" +
+            "a, b = f(GPIOR0.value != 0)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Pair", msg);
+    }
+
+    [Fact]
+    public void AnInstanceOnOneBranchArm_AsASingleReturn_IsRefused()
+    {
+        // The same merge feeding a bare `return x` -- the tuple check's twin:
+        // the result slot copy would carry the scalar path's byte.
+        var msg = Refusal(Pair +
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "def f(flag: bool):\n" +
+            "    if flag:\n" +
+            "        x = 7\n" +
+            "    else:\n" +
+            "        x = Pair(1, 2)\n" +
+            "    return x\n\n" +
+            "a = f(GPIOR0.value != 0)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Pair", msg);
+    }
+
+    [Fact]
+    public void AnAliasToAProducedInstance_SurvivesALabel_AndIsRefused()
+    {
+        // `x = Pair() if flag else Pair()` binds x to the ternary's result
+        // temp. A label between the bind and the return (`y = gate and 1`
+        // emits one) used to drop the alias as value-tracking state, leaving x
+        // answering as an ordinary scalar.
+        var msg = Refusal(Pair +
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "def f(flag: bool, gate: bool):\n" +
+            "    x = Pair(1, 2) if flag else Pair(3, 4)\n" +
+            "    y = gate and 1\n" +
+            "    return x, 0\n\n" +
+            "a, b = f(GPIOR0.value != 0, GPIOR0.value != 0)\n");
+        Assert.Contains("instance", msg);
+        Assert.Contains("Pair", msg);
+    }
+
+    [Fact]
+    public void AScalarRebindAfterAnInstance_StillCompiles()
+    {
+        // `x = Pair(); x = 5`: the second write rebinds the name to a byte;
+        // the old class no longer describes it.
+        var ir = Gen(Pair +
+            "def f():\n" +
+            "    x = Pair(1, 2)\n" +
+            "    x = 5\n" +
+            "    return x, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AScalarWalrusRebindAfterAnInstance_StillCompiles()
+    {
+        // `y = (x := 5)` is the same write spelled differently.
+        var ir = Gen(Pair +
+            "def f():\n" +
+            "    x = Pair(1, 2)\n" +
+            "    y = (x := 5)\n" +
+            "    return x, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void AScalarLoopVarRebindAfterAnInstance_StillCompiles()
+    {
+        // `for x in [5]` writes x every iteration it runs -- the Pair the name
+        // used to hold is gone the moment the loop binds the element.
+        var ir = Gen(Pair +
+            "def f():\n" +
+            "    x = Pair(1, 2)\n" +
+            "    for x in [5]:\n" +
+            "        pass\n" +
+            "    return x, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void ARuntimeLoopVarRebindAfterAnInstance_StillCompiles()
+    {
+        // `for x in range(3)` rebinds through the run-time counter path, not
+        // the literal unroll -- the pre-loop sweep has to cover it too.
+        var ir = Gen(Pair +
+            "def f():\n" +
+            "    x = Pair(1, 2)\n" +
+            "    y = 0\n" +
+            "    for x in range(3):\n" +
+            "        y = x\n" +
+            "    return y, 0\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void ALoopVarBoundToAnInstanceElement_StillAnswersItsFields()
+    {
+        // `for x in (p,)` rebinds a scalar name to the object: the alias the
+        // iteration binds must clear the stale constant `x = 5` left, or
+        // `x.a` folds to 5 while x IS p.
+        var ir = Gen(Pair +
+            "def f():\n" +
+            "    x = 5\n" +
+            "    p = Pair(1, 2)\n" +
+            "    for x in (p,):\n" +
+            "        return x._n, x._m\n" +
+            "    return 9, 9\n\n" +
+            "a, b = f()\n");
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
 }
