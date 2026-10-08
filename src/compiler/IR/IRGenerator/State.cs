@@ -40,6 +40,14 @@ public partial class IRGenerator
     private Dictionary<string, DataType> mutableGlobals = new();
     private Dictionary<string, DataType> variableTypes = new();
     private Dictionary<string, string?> instanceClasses = new(); // Tracks led -> Pin
+
+    // The class a name may STILL be an instance of after a control-flow merge whose
+    // arms disagreed: `instanceClasses` joins all-agree, so `x = 7` on one arm and
+    // `x = Pair()` on the other dropped the mark and a later scalar read of `x`
+    // silently used a slot the object never wrote. Unioned at every merge instead
+    // (BranchState.JoinBranchStates); emptied wherever a rebind clears the definite
+    // mark, since the same write that kills the class kills the possibility.
+    private Dictionary<string, string> maybeInstanceClasses = new();
     private Dictionary<string, string> methodInstanceTypes = new(); // method -> class
     private Dictionary<string, string?> functionReturnTypes = new();
     private Dictionary<string, List<string>> functionParams = new();

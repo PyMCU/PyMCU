@@ -1286,6 +1286,19 @@ public partial class IRGenerator
                 stmt.Value);
         }
 
+        // The single-value twin of the tuple refusal below: `return x` where a merge
+        // left x bound to an instance on only some paths hands the caller a slot copy
+        // of a byte the object path never wrote. A DEFINITE instance keeps its own
+        // path (the returned-instance machinery or its own refusal), untouched here.
+        if (stmt.Value != null && InstanceClassOfValueExpr(stmt.Value) is null
+            && MaybeInstanceClassOfExpr(stmt.Value) is { } singleMaybeCls)
+            throw UserError(
+                $"the return value of '{(currentFunction ?? "main")}' cannot be an "
+                + $"instance of '{ShortClassNameOf(singleMaybeCls)}': "
+                + InstanceIsFlattened
+                + ". Return the fields you need, or hand the instance to the caller "
+                + "through a parameter.", stmt.Value);
+
         // A `return` escaping a try-with-finally must run the pending finally block(s) first
         // (Python semantics). Evaluate the value, materialize it so the finally can't change it,
         // run the finallies, then return. Handles the common non-inline, non-constructor return;
@@ -1516,6 +1529,19 @@ public partial class IRGenerator
                             + ". Return the fields you need "
                             + "(`return inst.<field>, val`), or hand the instance to the "
                             + "caller through a parameter.", tup.Elements[k]);
+                    // The same refusal when the element is an instance on only SOME of
+                    // the paths that reach this return: `if flag: x = 7` / `else:
+                    // x = Pair()` merges with x still carrying the class in
+                    // maybeInstanceClasses, and the slot copy below would hand the
+                    // caller the scalar path's byte as if it were the object.
+                    if (MaybeInstanceClassOfExpr(tup.Elements[k]) is { } retMaybeCls)
+                        throw UserError(
+                            $"element {k} of '{ctx.CalleeName}'s tuple return cannot be an "
+                            + $"instance of '{ShortClassNameOf(retMaybeCls)}': "
+                            + InstanceIsFlattened
+                            + ". Return the fields you need "
+                            + "(`return inst.<field>, val`), or hand the instance to the "
+                            + "caller through a parameter.", tup.Elements[k]);
 
                     Val elemVal = VisitExpression(tup.Elements[k]);
                     // The question is not how the element is WRITTEN but what the value
@@ -1581,6 +1607,7 @@ public partial class IRGenerator
                     // The iret_ names are shared scratch across expansions too: a mask
                     // or class an earlier element bind left must not describe this slot.
                     producedInstanceClasses.Remove(ctx.ResultVars[k]);
+                    maybeInstanceClasses.Remove(ctx.ResultVars[k]);
                     scalarMaskedNames.Remove(ctx.ResultVars[k]);
                 }
 

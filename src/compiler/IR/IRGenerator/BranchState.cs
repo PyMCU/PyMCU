@@ -67,6 +67,11 @@ public partial class IRGenerator
         // What a name IS: aliases, classes, pointer-ness, views.
         public Dictionary<string, string?> VariableAliases = new();
         public Dictionary<string, string?> InstanceClasses = new();
+        // The union half of the class record: "an arm left this name bound to an
+        // instance" survives the merge even when not every arm agrees, because a
+        // scalar slot cannot represent a value that is a byte on one path and the
+        // object on another. See JoinBranchStates.
+        public Dictionary<string, string> MaybeInstanceClasses = new();
         public Dictionary<string, string> ProducedInstanceClasses = new();
         public Dictionary<string, string> FieldClasses = new();
         public Dictionary<string, string> ArrayViewBase = new();
@@ -137,6 +142,7 @@ public partial class IRGenerator
         MultiStrVariables = multiStrVariables.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
         VariableAliases = new Dictionary<string, string?>(variableAliases),
         InstanceClasses = new Dictionary<string, string?>(instanceClasses),
+        MaybeInstanceClasses = new Dictionary<string, string>(maybeInstanceClasses),
         ProducedInstanceClasses = new Dictionary<string, string>(producedInstanceClasses),
         FieldClasses = new Dictionary<string, string>(fieldClasses),
         ArrayViewBase = new Dictionary<string, string>(arrayViewBase),
@@ -190,6 +196,7 @@ public partial class IRGenerator
         RestoreInto(multiStrVariables, s.MultiStrVariables);
         RestoreInto(variableAliases, s.VariableAliases);
         RestoreInto(instanceClasses, s.InstanceClasses);
+        RestoreInto(maybeInstanceClasses, s.MaybeInstanceClasses);
         RestoreInto(producedInstanceClasses, s.ProducedInstanceClasses);
         RestoreInto(fieldClasses, s.FieldClasses);
         RestoreInto(arrayViewBase, s.ArrayViewBase);
@@ -294,6 +301,26 @@ public partial class IRGenerator
         foreach (var key in joinedProduced.Keys.ToList())
             joinedProduced[key] = ResolveConcreteClass(joinedProduced[key]) ?? joinedProduced[key];
         RestoreInto(producedInstanceClasses, joinedProduced);
+        // The "can still be an instance" half of the class record joins by UNION,
+        // not all-agree: a name one reachable arm left bound to an instance may
+        // carry the object depending on which path ran, and no scalar slot can
+        // represent that. The definite map above answers "is an instance on every
+        // path"; this one answers "is an instance on some path". The produced
+        // map contributes for the same reason: an arm's `x = make()` stamps the
+        // NAME, so its key survives here even where the alias it rode did not.
+        {
+            var joinedMaybe = new Dictionary<string, string>();
+            foreach (var a in arms)
+            {
+                foreach (var kv in a.InstanceClasses)
+                    if (kv.Value != null) joinedMaybe.TryAdd(kv.Key, kv.Value);
+                foreach (var kv in a.ProducedInstanceClasses)
+                    joinedMaybe.TryAdd(kv.Key, kv.Value);
+                foreach (var kv in a.MaybeInstanceClasses)
+                    joinedMaybe.TryAdd(kv.Key, kv.Value);
+            }
+            RestoreInto(maybeInstanceClasses, joinedMaybe);
+        }
         fieldClasses = JoinDicts(arms.Select(a => a.FieldClasses).ToList(), SameResolvedClass);
         foreach (var key in fieldClasses.Keys.ToList())
             fieldClasses[key] = ResolveConcreteClass(fieldClasses[key]) ?? fieldClasses[key];

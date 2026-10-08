@@ -5361,6 +5361,64 @@ public partial class IRGenerator
     };
 
     /// <summary>
+    /// The class a value-position expression may STILL be an instance of when
+    /// <see cref="InstanceClassOfValueExpr"/> answered null: a merge whose arms
+    /// disagreed -- `x = 7` on one path, `x = Pair()` on another -- dropped the
+    /// definite mark but not the fact, which <see cref="maybeInstanceClasses"/>
+    /// carries out of the join. A name on that list is not provably an instance,
+    /// but it is not provably a scalar either, and a slot read for it answers with
+    /// whatever byte the scalar path happened to leave where the object lives.
+    /// Resolves like <see cref="AnchorNameOf"/>: the spellings a name answers to,
+    /// then the alias chain above them.
+    /// </summary>
+    private string? MaybeInstanceClassOfExpr(Expression e)
+    {
+        if (maybeInstanceClasses.Count == 0) return null;
+        switch (e)
+        {
+            case VariableExpr ve:
+                foreach (var cand in new[]
+                         {
+                             currentInlinePrefix + ve.Name,
+                             string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name,
+                             ve.Name,
+                         })
+                {
+                    string cur = cand;
+                    for (int d = 0; d < 20; d++)
+                    {
+                        if (maybeInstanceClasses.TryGetValue(cur, out var c)) return c;
+                        if (!variableAliases.TryGetValue(cur, out var nx)
+                            || nx == null || nx.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                        cur = nx;
+                    }
+                }
+                return null;
+
+            case MemberAccessExpr ma:
+                // Same shape as AnchorNameOf's member case: resolve the receiver to
+                // its anchor, then ask for the flattened field key. The flat key can
+                // itself sit behind an alias (a `self.x = p` branch arm), so the walk
+                // checks the map at every hop.
+                if (AnchorNameOf(ma.Object) is { } outer)
+                {
+                    string cur = outer + "_" + ma.Member;
+                    for (int d = 0; d < 20; d++)
+                    {
+                        if (maybeInstanceClasses.TryGetValue(cur, out var c)) return c;
+                        if (!variableAliases.TryGetValue(cur, out var nx)
+                            || nx == null || nx.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                        cur = nx;
+                    }
+                }
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
     /// True when a resolved callee's declared return type names a user class -- the
     /// bare spelling (`Counter`), a module-mangled one (`mod_Pair`), or a HAL facade
     /// key that resolves to a concrete class. The class tables answer in whichever
