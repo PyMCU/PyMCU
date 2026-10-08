@@ -190,17 +190,27 @@ def _console_scripts_only(dist: Distribution) -> bool:
 
 
 def _pymcu_host_dependencies(found: list[Distribution]) -> set[str]:
-    """Direct host dependencies of the compiler driver installed here."""
-    dependencies: set[str] = set()
+    """Complete installed dependency closure of the compiler driver."""
+    by_name: dict[str, list[Distribution]] = {}
     for dist in found:
         name = (dist.metadata["Name"] if dist.metadata else "") or ""
-        if _normalize(name) != "pymcu-compiler":
-            continue
-        for raw in dist.requires or ():
-            try:
-                dependencies.add(_normalize(Requirement(raw).name))
-            except InvalidRequirement:
-                continue
+        if name:
+            by_name.setdefault(_normalize(name), []).append(dist)
+
+    dependencies = {"pymcu-compiler"}
+    pending = ["pymcu-compiler"]
+    while pending:
+        current = pending.pop()
+        for dist in by_name.get(current, ()):
+            for raw in dist.requires or ():
+                try:
+                    dependency = _normalize(Requirement(raw).name)
+                except InvalidRequirement:
+                    continue
+                if dependency in dependencies:
+                    continue
+                dependencies.add(dependency)
+                pending.append(dependency)
     return dependencies
 
 

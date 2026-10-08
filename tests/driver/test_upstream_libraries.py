@@ -642,6 +642,30 @@ class TestFallbackStaging:
 
         assert found == []
 
+    def test_transitive_compiler_dependencies_are_host_only(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        compiler = _write_modules_dist(
+            site, distribution="pymcu-compiler", version="1.0",
+            modules=("driver",),
+        )
+        rich = _write_modules_dist(
+            site, distribution="rich", version="1.0", modules=("rich",),
+        )
+        _write_modules_dist(
+            site, distribution="mdurl", version="1.0", modules=("mdurl",),
+        )
+        (compiler / "METADATA").write_text(
+            (compiler / "METADATA").read_text() + "Requires-Dist: rich\n"
+        )
+        (rich / "METADATA").write_text(
+            (rich / "METADATA").read_text() + "Requires-Dist: mdurl\n"
+        )
+
+        found = up.discover_fallback_distributions([], [str(site)])
+
+        assert found == []
+
     def test_console_script_only_distribution_is_host_only(self, tmp_path):
         site = tmp_path / "site-packages"
         site.mkdir()

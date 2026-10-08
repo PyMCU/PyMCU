@@ -88,6 +88,32 @@ class TestResolveFromIndexAcceptsUpstream:
 
 
 class TestInstallUpstreamLibrary:
+    def test_post_install_accepts_exact_version_among_duplicate_metadata(
+            self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        environment = tmp_path / ".venv"
+        site = environment / "lib" / "python3.12" / "site-packages"
+        site.mkdir(parents=True)
+        for version in ("0.9", "1.0"):
+            info = site / f"sensor_dist-{version}.dist-info"
+            info.mkdir()
+            (info / "METADATA").write_text(
+                "Metadata-Version: 2.1\n"
+                "Name: sensor-dist\n"
+                f"Version: {version}\n"
+            )
+        monkeypatch.setattr(cmd, "project_environment", lambda root: environment)
+        entry = dict(UPSTREAM_ENTRY)
+        entry.update({"name": "sensor", "distribution": "sensor-dist", "version": "1.0"})
+
+        result = cmd._finish_upstream_install(
+            project, entry, "sensor-dist", verify=False,
+            result=cmd.ChangeResult(True, ""),
+        )
+
+        assert result.ok, result.message
+        assert result.message == "sensor 1.0 installed"
+
     def test_poetry_cached_environment_is_used_for_post_install_discovery(
             self, tmp_path, monkeypatch):
         project = _project(tmp_path)

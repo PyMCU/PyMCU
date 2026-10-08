@@ -65,7 +65,7 @@ from ..core.libraries import (
     site_packages_of,
     ssl_context,
 )
-from ..core.upstream_libraries import installed_distribution_version
+from ..core.upstream_libraries import find_distribution, installed_distribution_version
 
 console = Console()
 
@@ -809,13 +809,18 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
     """
     environment = project_environment(project.root)
     search = site_packages_of(environment) if environment is not None else None
-    version = installed_distribution_version(distribution, search)
+    expected_version = str(entry.get("version", ""))
+    exact = find_distribution(distribution, search, version=expected_version)
+    version = (
+        exact.version or "unknown"
+        if exact is not None
+        else installed_distribution_version(distribution, search)
+    )
     if version is None:
         return result.failed(rollback(
             project, distribution,
             "it did not install (nothing by that name is in the project's environment)"
         ))
-    expected_version = str(entry.get("version", ""))
     if version != expected_version:
         return result.failed(rollback(
             project, distribution,
