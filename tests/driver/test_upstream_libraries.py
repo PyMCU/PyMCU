@@ -563,6 +563,53 @@ class TestFallbackStaging:
 
         assert [item.name for item in found] == ["z-device", "a-generic"]
 
+    def test_embedded_classifier_preserves_namespace_shared_with_host_package(
+            self, tmp_path):
+        site = tmp_path / "site-packages"
+        shared = site / "shared"
+        shared.mkdir(parents=True)
+        (shared / "host.py").write_text("HOST = 1\n")
+        (shared / "device.py").write_text("DEVICE = 1\n")
+
+        host = site / "adafruit_blinka-9.0.dist-info"
+        host.mkdir()
+        (host / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: Adafruit-Blinka\nVersion: 9.0\n"
+        )
+        (host / "top_level.txt").write_text("shared\n")
+        (host / "RECORD").write_text(
+            f"{host.name}/METADATA,,\n{host.name}/top_level.txt,,\n"
+            "shared/host.py,,\n"
+        )
+        embedded = site / "embedded_device-1.0.dist-info"
+        embedded.mkdir()
+        (embedded / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: embedded-device\nVersion: 1.0\n"
+            "Classifier: Programming Language :: Python :: Implementation :: CircuitPython\n"
+        )
+        (embedded / "top_level.txt").write_text("shared\n")
+        (embedded / "RECORD").write_text(
+            f"{embedded.name}/METADATA,,\n{embedded.name}/top_level.txt,,\n"
+            "shared/device.py,,\n"
+        )
+        main = tmp_path / "main.py"
+        main.write_text("import shared.device\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index={}, entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+
+        assert skipped == errors == []
+        assert warned == [
+            "embedded-device is not in the PyMCU library index: "
+            "compiling it unverified"
+        ]
+        assert len(includes) == 1
+        staged = Path(includes[0])
+        assert (staged / "shared" / "device.py").is_file()
+        assert not (staged / "shared" / "host.py").exists()
+
     def test_installed_version_mismatch_is_staged_as_unverified(self, tmp_path):
         site = tmp_path / "site-packages"
         site.mkdir()

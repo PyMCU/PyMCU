@@ -206,11 +206,16 @@ def _installed_distributions(search_path: list[str] | None) -> list[Distribution
 
 def excluded_module_names(found: list[Distribution]) -> set[str]:
     """Modules installed by excluded host-only distributions."""
+    embedded = {
+        module
+        for dist in found if _declares_mcu_compatibility(dist)
+        for module in top_level_modules(dist)
+    }
     excluded: set[str] = set()
     for dist in found:
         if _is_host_only_distribution(dist):
             excluded.update(top_level_modules(dist))
-    return excluded
+    return excluded - embedded
 
 
 def discover_fallback_distributions(
