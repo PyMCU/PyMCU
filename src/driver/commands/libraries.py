@@ -909,6 +909,10 @@ def uninstall_library(project: Project, name: str) -> ChangeResult:
         None,
     )
     distribution = match.distribution if match else name
+    if match is None:
+        entry = find_entry(core_libraries.read_cached_library_index(), name)
+        if entry is not None and str(entry.get("kind", "")) == "upstream":
+            distribution = str(entry.get("distribution") or name)
 
     cmd = uninstall_command(project, distribution)
     if cmd is None:

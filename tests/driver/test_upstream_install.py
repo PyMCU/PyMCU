@@ -319,3 +319,28 @@ class TestLibrariesListingIncludesUpstream:
         project = _project(tmp_path)
         monkeypatch.setattr(cmd.core_libraries, "read_cached_library_index", lambda: {})
         assert cmd._installed_upstream(project) == []
+
+
+class TestUninstallUpstreamLibrary:
+    def test_short_name_resolves_to_cached_upstream_distribution(
+            self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        monkeypatch.setattr(cmd, "_installed_libraries", lambda project: ([], []))
+        monkeypatch.setattr(
+            cmd.core_libraries, "read_cached_library_index", lambda: INDEX
+        )
+        commands = []
+        monkeypatch.setattr(
+            cmd, "uninstall_command",
+            lambda project, distribution: ["remove", distribution],
+        )
+        monkeypatch.setattr(
+            cmd, "_run", lambda args, cwd: commands.append(args) or True
+        )
+        monkeypatch.setattr(cmd, "_manager_records_dependencies", lambda project: True)
+
+        result = cmd.uninstall_library(project, "adafruit_hcsr04")
+
+        assert result.ok
+        assert commands == [["remove", "adafruit-circuitpython-hcsr04"]]
+        assert result.message == "adafruit-circuitpython-hcsr04 removed"
