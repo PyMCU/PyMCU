@@ -27,10 +27,16 @@ compiler can read.
 
 Discovery is entirely import-free, like core.libraries: everything is read
 from `importlib.metadata`, never by importing the distribution's own code.
+Distributions absent from the index use that metadata as an unverified
+fallback, except for the explicit host-only exclusions below.
 """
 
 from __future__ import annotations
 
+import ast
+import json
+import os
+import re
 import shutil
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
@@ -39,63 +45,18 @@ from pathlib import Path
 from .libraries import LAYERS, read_cached_library_index
 
 
-# The upstream entries this driver release was measured against. Keeping the
-# bootstrap rows beside the staging code makes a plain pip install usable on
-# the first build, including offline, while the fetched index can update or
-# replace any row by distribution name.
-BUNDLED_UPSTREAM_ENTRIES = (
-    {
-        "kind": "upstream",
-        "name": "adafruit_framebuf",
-        "distribution": "adafruit-circuitpython-framebuf",
-        "version": "1.6.12",
-        "summary": "CircuitPython framebuf module.",
-        "repository": "https://github.com/adafruit/Adafruit_CircuitPython_framebuf",
-        "license": "MIT",
-        "provides": ["adafruit_framebuf"],
-        "layer": "circuitpython",
-        "measured": {
-            "compiler": "0.1.0b1",
-            "date": "2026-09-21",
-            "targets": {"atmega328p": {"build": "ok", "flash": 442}},
-        },
-        "status": "active",
-    },
-    {
-        "kind": "upstream",
-        "name": "adafruit_bus_device",
-        "distribution": "adafruit-circuitpython-busdevice",
-        "version": "5.2.17",
-        "summary": "CircuitPython bus device classes to manage bus sharing.",
-        "repository": "https://github.com/adafruit/Adafruit_CircuitPython_BusDevice",
-        "license": "MIT",
-        "provides": ["adafruit_bus_device"],
-        "layer": "circuitpython",
-        "measured": {
-            "compiler": "0.1.0b1",
-            "date": "2026-09-21",
-            "targets": {"atmega328p": {"build": "ok", "flash": 796}},
-        },
-        "status": "active",
-    },
-    {
-        "kind": "upstream",
-        "name": "adafruit_ssd1306",
-        "distribution": "adafruit-circuitpython-ssd1306",
-        "version": "2.12.24",
-        "summary": "CircuitPython library for SSD1306 OLED displays.",
-        "repository": "https://github.com/adafruit/Adafruit_CircuitPython_SSD1306",
-        "license": "MIT",
-        "provides": ["adafruit_ssd1306"],
-        "layer": "circuitpython",
-        "measured": {
-            "compiler": "0.1.0b1",
-            "date": "2026-09-21",
-            "targets": {"atmega328p": {"build": "ok", "flash": 6244}},
-        },
-        "status": "active",
-    },
-)
+EXCLUDED_DISTRIBUTIONS = frozenset({
+    "adafruit-blinka",
+    "adafruit-platformdetect",
+    "adafruit-pureio",
+    "pyftdi",
+    "binho-host-adapter",
+    "sysv-ipc",
+    "rpi-gpio",
+    "rpi-ws281x",
+    "typing-extensions",
+    "circuitpython-stubs",
+})
 
 
 @dataclass(frozen=True)
@@ -108,6 +69,16 @@ class UpstreamEntry:
     provides: tuple[str, ...]
     layer: str = "native"
     repository: str = ""
+
+
+@dataclass(frozen=True)
+class FallbackDistribution:
+    """An installed, unindexed distribution and its importable modules."""
+
+    name: str
+    version: str
+    modules: tuple[str, ...]
+    metadata: Distribution
 
 
 def upstream_entries(index: dict) -> list[UpstreamEntry]:
@@ -135,35 +106,96 @@ def upstream_entries(index: dict) -> list[UpstreamEntry]:
 
 
 def _normalize(name: str) -> str:
-    return name.strip().lower().replace("_", "-")
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
 
 
-def with_bundled_upstream(index: dict) -> dict:
-    """Overlay fetched rows on the upstream baseline shipped by the driver."""
-    source = index if isinstance(index, dict) else {}
-    rows: dict[str, dict] = {
-        _normalize(str(entry["distribution"])): dict(entry)
-        for entry in BUNDLED_UPSTREAM_ENTRIES
-    }
-    order = list(rows)
-    for raw in source.get("libraries", []):
-        if not isinstance(raw, dict):
+def _is_excluded_distribution(name: str) -> bool:
+    normalized = _normalize(name)
+    return (normalized in EXCLUDED_DISTRIBUTIONS
+            or (normalized.startswith("micropython-")
+                and normalized.endswith("-stubs")))
+
+
+def top_level_modules(dist: Distribution) -> tuple[str, ...]:
+    """Importable top-level Python names declared by an installed wheel."""
+    declared = dist.read_text("top_level.txt")
+    if declared:
+        names = {
+            line.strip().split(".", 1)[0]
+            for line in declared.splitlines()
+            if line.strip() and line.strip().split(".", 1)[0].isidentifier()
+        }
+        if names:
+            return tuple(sorted(names))
+
+    names: set[str] = set()
+    for entry in dist.files or ():
+        parts = entry.parts
+        if not parts:
             continue
-        distribution = _normalize(str(raw.get("distribution", "")))
-        key = distribution or f"__row_{len(order)}"
-        if key not in rows:
-            order.append(key)
-        rows[key] = raw
-    merged = dict(source)
-    merged["libraries"] = [rows[key] for key in order]
-    return merged
+        top = parts[0]
+        if top.endswith((".dist-info", ".egg-info", ".data")):
+            continue
+        if len(parts) == 1 and top.endswith(".py"):
+            module = Path(top).stem
+            if module.isidentifier():
+                names.add(module)
+        elif top.isidentifier() and str(entry).endswith(".py"):
+            names.add(top)
+    return tuple(sorted(names))
+
+
+def _installed_distributions(search_path: list[str] | None) -> list[Distribution]:
+    try:
+        found = distributions(path=search_path) if search_path else distributions()
+        return list(found)
+    except Exception:
+        return []
+
+
+def excluded_module_names(found: list[Distribution]) -> set[str]:
+    """Modules installed by excluded host-only distributions."""
+    excluded: set[str] = set()
+    for dist in found:
+        name = (dist.metadata["Name"] if dist.metadata else "") or ""
+        if _is_excluded_distribution(name):
+            excluded.update(top_level_modules(dist))
+    return excluded
+
+
+def discover_fallback_distributions(
+    entries: list[UpstreamEntry], search_path: list[str] | None,
+    ignored_distributions: set[str] | None = None,
+) -> list[FallbackDistribution]:
+    """Installed distributions absent from the index and safe to expose."""
+    found = _installed_distributions(search_path)
+    excluded_modules = excluded_module_names(found)
+    ignored = {_normalize(name) for name in (ignored_distributions or set())}
+    ignored.update(_normalize(entry.distribution) for entry in entries)
+
+    fallback: list[FallbackDistribution] = []
+    for dist in found:
+        name = (dist.metadata["Name"] if dist.metadata else "") or ""
+        normalized = _normalize(name)
+        if not name or normalized in ignored or _is_excluded_distribution(name):
+            continue
+        modules = tuple(
+            module for module in top_level_modules(dist)
+            if module not in excluded_modules
+        )
+        if modules:
+            fallback.append(FallbackDistribution(
+                name=name, version=dist.version or "unknown",
+                modules=modules, metadata=dist,
+            ))
+    return sorted(fallback, key=lambda item: _normalize(item.name))
 
 
 def find_distribution(distribution: str, search_path: list[str] | None) -> Distribution | None:
     """The installed `Distribution` matching *distribution*, or None."""
     wanted = _normalize(distribution)
     try:
-        found = distributions(path=search_path) if search_path else distributions()
+        found = _installed_distributions(search_path)
     except Exception:
         return None
     for dist in found:
@@ -200,34 +232,6 @@ def discover_installed_upstream(entries: list[UpstreamEntry],
     return installed
 
 
-def installed_upstream_candidates(search_path: list[str] | None,
-                                  modules: set[str]) -> list[str]:
-    """
-    Installed distributions that may need the upstream index to be staged.
-
-    Adafruit's CircuitPython distributions are the upstream family PyMCU
-    currently indexes. Their distribution prefix is stable even though their
-    import names are not (``adafruit-circuitpython-busdevice`` provides
-    ``adafruit_bus_device``). RECORD says whether one of them provides a
-    module imported by the entry file, which is enough to decide whether a
-    build needs to bootstrap or refresh the index. The index still supplies
-    the trusted module list and layer; this function does not guess either.
-    """
-    try:
-        found = distributions(path=search_path) if search_path else distributions()
-    except Exception:
-        return []
-
-    candidates: list[str] = []
-    for dist in found:
-        name = (dist.metadata["Name"] if dist.metadata else "") or ""
-        normalized = _normalize(name)
-        if (normalized.startswith("adafruit-circuitpython-")
-                and any(_module_path(dist, module) is not None for module in modules)):
-            candidates.append(normalized)
-    return sorted(set(candidates))
-
-
 def _module_path(dist: Distribution, module: str) -> Path | None:
     """
     The file or directory of one top-level module of *dist*, from its RECORD.
@@ -253,6 +257,26 @@ def _module_path(dist: Distribution, module: str) -> Path | None:
     return None
 
 
+def _stage_modules(dist: Distribution, distribution: str, modules: tuple[str, ...],
+                   stage_root: Path) -> Path | None:
+    target = stage_root / distribution
+    if target.exists():
+        shutil.rmtree(target)
+
+    found_any = False
+    for module in modules:
+        source = _module_path(dist, module)
+        if source is None:
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target / source.name, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target / source.name)
+        found_any = True
+    return target if found_any else None
+
+
 def stage_modules(entry: UpstreamEntry, search_path: list[str] | None,
                   stage_root: Path) -> Path | None:
     """
@@ -276,29 +300,126 @@ def stage_modules(entry: UpstreamEntry, search_path: list[str] | None,
     dist = find_distribution(entry.distribution, search_path)
     if dist is None:
         return None
+    return _stage_modules(dist, entry.distribution, entry.provides, stage_root)
 
-    target = stage_root / entry.distribution
-    if target.exists():
-        shutil.rmtree(target)
 
-    found_any = False
-    for module in entry.provides:
-        source = _module_path(dist, module)
-        if source is None:
+def _module_sources(module: str, roots: list[Path]) -> list[tuple[Path, str, bool]]:
+    """The package initializers and leaf file the compiler will load."""
+    parts = module.split(".")
+    for root in roots:
+        leaf_file = root.joinpath(*parts).with_suffix(".py")
+        leaf_init = root.joinpath(*parts, "__init__.py")
+        leaf = leaf_file if leaf_file.is_file() else leaf_init if leaf_init.is_file() else None
+        if leaf is None:
             continue
-        target.mkdir(parents=True, exist_ok=True)
-        if source.is_dir():
-            shutil.copytree(source, target / source.name, dirs_exist_ok=True)
+        sources: list[tuple[Path, str, bool]] = []
+        for length in range(1, len(parts)):
+            init = root.joinpath(*parts[:length], "__init__.py")
+            if init.is_file():
+                sources.append((init, ".".join(parts[:length]), True))
+        sources.append((leaf, module, leaf.name == "__init__.py"))
+        return sources
+    return []
+
+
+def _imports(path: Path, module: str, is_package: bool) -> set[str]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, UnicodeError):
+        return set()
+
+    imported: set[str] = set()
+    package = module if is_package else module.rpartition(".")[0]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            base = package.split(".") if package else []
+            keep = max(0, len(base) - node.level + 1)
+            prefix = base[:keep]
+            if node.module:
+                prefix.extend(node.module.split("."))
+            name = ".".join(prefix)
         else:
-            shutil.copy2(source, target / source.name)
-        found_any = True
-    return target if found_any else None
+            name = node.module or ""
+        if name:
+            imported.add(name)
+            imported.update(
+                f"{name}.{alias.name}" for alias in node.names
+                if alias.name != "*"
+            )
+    return imported
+
+
+def stage_imported_fallback(
+    *, entry_point: Path, roots: list[str], fallback: list[FallbackDistribution],
+    stage_root: Path,
+) -> tuple[list[str], list[str]]:
+    """Stage reachable fallback modules and return includes and warned dists."""
+    resolution_roots = [Path(root) for root in roots]
+    by_module: dict[str, FallbackDistribution] = {}
+    for item in fallback:
+        for module in item.modules:
+            by_module.setdefault(module, item)
+
+    queue: list[tuple[Path, str, bool]] = [(entry_point, "__main__", False)]
+    seen_sources: set[Path] = set()
+    staged: dict[str, Path] = {}
+    warned: set[str] = set()
+
+    while queue:
+        source, module, is_package = queue.pop(0)
+        try:
+            source_key = source.resolve()
+        except OSError:
+            source_key = source
+        if source_key in seen_sources:
+            continue
+        seen_sources.add(source_key)
+
+        for imported in sorted(_imports(source, module, is_package)):
+            sources = _module_sources(imported, resolution_roots)
+            if not sources and "." in imported:
+                parent = imported.rpartition(".")[0]
+                if _module_sources(parent, resolution_roots):
+                    # ``from package import Name`` may name an ordinary
+                    # attribute rather than a submodule. Once the package
+                    # itself resolved from an earlier root, a missing child
+                    # must not pull in another distribution that happens to
+                    # own the same top-level package.
+                    continue
+            top = imported.split(".", 1)[0]
+            owner = by_module.get(top)
+            if not sources and owner is not None:
+                key = _normalize(owner.name)
+                target = staged.get(key)
+                if target is None:
+                    target = _stage_modules(
+                        owner.metadata, owner.name, owner.modules, stage_root
+                    )
+                    if target is None:
+                        continue
+                    staged[key] = target
+                    resolution_roots.append(target)
+                warned.add(owner.name)
+                sources = _module_sources(imported, resolution_roots)
+            queue.extend(sources)
+
+    includes = [str(path) for _, path in sorted(staged.items())]
+    return includes, sorted(warned, key=_normalize)
 
 
 def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[str],
                                 stage_root: Path,
                                 index: dict | None = None,
-                                enforce: bool = True) -> tuple[list[str], list[str], list[str]]:
+                                enforce: bool = True,
+                                entry_point: Path | None = None,
+                                earlier_roots: list[str] | None = None,
+                                ignored_distributions: set[str] | None = None,
+                                ) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Include paths, skip notes and errors for the upstream libraries in play.
 
@@ -314,10 +435,8 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
     flag already does for manifest libraries: the index measures compatibility
     by compiling, not by trusting the declaration.
     """
-    index = _current_index() if index is None else with_bundled_upstream(index)
+    index = _current_index() if index is None else index
     entries = upstream_entries(index)
-    if not entries:
-        return [], [], []
 
     includes: list[str] = []
     skipped: list[str] = []
@@ -338,19 +457,27 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
             )
             continue
         includes.append(str(staged))
-    return includes, skipped, errors
+
+    warned: list[str] = []
+    if entry_point is not None:
+        fallback = discover_fallback_distributions(
+            entries, search_path, ignored_distributions
+        )
+        fallback_includes, warned = stage_imported_fallback(
+            entry_point=entry_point,
+            roots=[*(earlier_roots or []), *includes],
+            fallback=fallback,
+            stage_root=stage_root,
+        )
+        includes.extend(fallback_includes)
+    return includes, skipped, errors, warned
 
 
 def _current_index() -> dict:
-    import json
-    import os
-
     override = os.environ.get("PYMCU_UPSTREAM_INDEX")
     if override:
         try:
-            return with_bundled_upstream(
-                json.loads(Path(override).read_text(encoding="utf-8"))
-            )
+            return json.loads(Path(override).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return with_bundled_upstream({})
-    return with_bundled_upstream(read_cached_library_index())
+            return {}
+    return read_cached_library_index()

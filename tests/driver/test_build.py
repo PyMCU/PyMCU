@@ -487,5 +487,7 @@ class TestBuildUpstreamLibraryIncludeOrder:
 
         includes = captured["extra_includes"]
         assert str(layer) in includes
-        assert str(site) in includes
-        assert includes.index(str(layer)) < includes.index(str(site))
+        # The parent would expose every installed distribution without the
+        # metadata filter. Only selected staged fallback directories may
+        # follow the compat package.
+        assert str(site) not in includes

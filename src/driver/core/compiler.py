@@ -247,6 +247,29 @@ class PyMCUCompiler:
                 self.console.print(f"\\[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
+    @staticmethod
+    def isolate_stdlib(stdlib: str, output_dir: Path) -> Path:
+        """Expose the pymcu package without exposing its site-packages peers."""
+        source = Path(stdlib).resolve()
+        root = output_dir / "_stdlib"
+        package = root / "pymcu"
+        if package.is_symlink():
+            try:
+                if package.resolve() == source:
+                    return root
+            except OSError:
+                pass
+            package.unlink()
+        elif package.exists():
+            shutil.rmtree(package)
+
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            package.symlink_to(source, target_is_directory=True)
+        except OSError:
+            shutil.copytree(source, package)
+        return root
+
     def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None, diagnostic_source: tuple = None, timebase: bool = False, library: bool = False, stdlib_flavor: str = "", embed_files: list = None, profile_path: str = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
@@ -326,8 +349,12 @@ class PyMCUCompiler:
             pass
 
         if stdlib:
-            # Resolving path is critical for C++ compiler if CWD varies or if path is relative
-            include_path = str(Path(stdlib).parent.resolve())
+            # A wheel installs pymcu beside every project dependency. Adding
+            # that shared site-packages directory would bypass the library
+            # metadata filter, so expose only pymcu through an isolated root.
+            include_path = str(self.isolate_stdlib(
+                stdlib, Path(output_file).absolute().parent
+            ))
             stdlib_abs = str(Path(stdlib).resolve())
 
             if verbose:

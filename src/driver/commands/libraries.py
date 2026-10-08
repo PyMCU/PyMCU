@@ -60,7 +60,7 @@ from ..core.libraries import (
     site_packages_of,
     ssl_context,
 )
-from ..core.upstream_libraries import installed_distribution_version, with_bundled_upstream
+from ..core.upstream_libraries import installed_distribution_version
 
 console = Console()
 
@@ -228,7 +228,7 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
 
 
 def _entries(index: dict) -> list[dict]:
-    entries = with_bundled_upstream(index).get("libraries", [])
+    entries = index.get("libraries", []) if isinstance(index, dict) else []
     return [e for e in entries if isinstance(e, dict)]
 
 
@@ -701,8 +701,7 @@ def resolve_from_index(project: Project, name: str, *, refresh: bool = False
     why in the words the user needs to act on.
     """
     fetched, source = fetch_index(refresh=refresh)
-    index = with_bundled_upstream(fetched)
-    entry = find_entry(index, name)
+    entry = find_entry(fetched, name)
     if entry is None:
         if not fetched:
             detail = f" {last_index_error()}" if last_index_error() else ""
@@ -1009,7 +1008,7 @@ def _installed_upstream(project: Project) -> list:
     """
     from ..core.upstream_libraries import discover_installed_upstream, upstream_entries
 
-    index = with_bundled_upstream(core_libraries.read_cached_library_index())
+    index = core_libraries.read_cached_library_index()
     entries = upstream_entries(index)
     if not entries:
         return []
@@ -1117,7 +1116,7 @@ def search(
 ):
     """Search the PyMCU library index."""
     fetched, source = fetch_index(refresh=refresh)
-    index = with_bundled_upstream(fetched)
+    index = fetched
     if not index:
         if json_output:
             print(json.dumps({

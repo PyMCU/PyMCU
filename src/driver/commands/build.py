@@ -56,64 +56,6 @@ from ..core import upstream_libraries
 console = Console()
 
 
-def _source_imports(path: Path) -> set[str]:
-    """Top-level module names imported directly by one source file."""
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeError):
-        return set()
-
-    modules: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(alias.name.split(".", 1)[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules.add(node.module.split(".", 1)[0])
-    return modules
-
-
-def _index_for_installed_upstream(search_path: list[str] | None,
-                                  imported_modules: set[str]) -> dict:
-    """Fetch the index only when an installed upstream family needs it."""
-    cached = upstream_libraries._current_index()
-    candidates = upstream_libraries.installed_upstream_candidates(
-        search_path, imported_modules
-    )
-    if not candidates:
-        return cached
-
-    indexed = {
-        entry.distribution.strip().lower().replace("_", "-")
-        for entry in upstream_libraries.upstream_entries(cached)
-    }
-    if set(candidates).issubset(indexed):
-        return cached
-
-    # Import lazily: library commands already depend on the core staging
-    # module, while the build command only needs their shared fetch/cache
-    # behavior when one of these distributions is actually installed.
-    from . import libraries as library_commands
-
-    fetched, source = library_commands.fetch_index(refresh=True)
-    index = upstream_libraries.with_bundled_upstream(fetched)
-    if source == "network":
-        console.print("[dim]Fetched the library index for installed upstream packages.[/dim]")
-    elif source == "stale-cache":
-        console.print(
-            "[bold yellow]Warning:[/bold yellow] using a library index older than "
-            "24 hours because its automatic refresh failed."
-        )
-    elif not fetched:
-        detail = library_commands.last_index_error()
-        suffix = f"\n  {detail}" if detail else ""
-        console.print(
-            "[bold yellow]Warning:[/bold yellow] installed upstream packages cannot be "
-            "discovered because the library index is unavailable and no cached copy exists."
-            f"{suffix}"
-        )
-    return index
-
-
 def _show_update_hint() -> None:
     """Non-blocking: show one-liner if newer pymcu packages are available on PyPI."""
     try:
@@ -1429,17 +1371,11 @@ def build(
             spec = importlib.util.find_spec(f"pymcu_{flavor}")
             if spec and spec.submodule_search_locations:
                 pkg_dir = Path(list(spec.submodule_search_locations)[0])
-                pkg_parent = pkg_dir.parent
-                # The layer's own directory before its parent: site-packages
-                # must stay on the path for `import pymcu_<flavor>.sub`, but a
-                # flat module there shadows the layer's names if it wins the
-                # clash. Adafruit-Blinka's top-level board.py / digitalio.py /
-                # busio.py -- pulled in by every adafruit-circuitpython-* dist
-                # -- used to be picked over the CircuitPython layer's own
-                # modules, and the build then failed inside the shim's
-                # `import json` rather than in anything the program wrote.
+                # Only the layer package itself belongs on the compiler path.
+                # Its site-packages parent would expose every neighboring
+                # distribution, including Blinka's host-only board and busio
+                # shims, outside the filtered fallback below.
                 extra_includes.append(str(pkg_dir))
-                extra_includes.append(str(pkg_parent))
                 flavor_dirs[flavor] = pkg_dir
                 # Collect board_chips supplements
                 extension_board_chips.update(_load_extension_board_chips(flavor))
@@ -1571,29 +1507,40 @@ def build(
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
-        # Upstream libraries: a plain PyPI distribution the (cached) library
-        # index vouches for and measures, with no pymcu.toml of its own. Added
-        # after the manifest libraries above, so neither can shadow `board`,
-        # `digitalio`, `pulseio` or a curated library, and staged into
-        # dist/_upstream rather than pointed at site-packages directly (see
-        # core/upstream_libraries.py for why).
+        # Plain PyPI distributions have no pymcu.toml. Index-listed ones use
+        # only the metadata the cached index declares. Unindexed ones use the
+        # metadata fallback and are staged only if the program reaches one of
+        # their modules. Both follow the compat and manifest libraries on the
+        # include path, so those curated sources always win a name clash.
         upstream_search_path = library_search_path(pyproject_path.parent.absolute())
-        upstream_index = _index_for_installed_upstream(
-            upstream_search_path, _source_imports(entry_point)
-        )
-        upstream_includes, upstream_skipped, upstream_errors = (
+        resolution_roots = [str(sources_dir), *extra_includes]
+        compiler = PyMCUCompiler(console)
+        stdlib_package = compiler.get_stdlib_path()
+        if stdlib_package:
+            resolution_roots.append(str(compiler.isolate_stdlib(
+                stdlib_package, output_dir
+            )))
+        upstream_includes, upstream_skipped, upstream_errors, upstream_warned = (
             upstream_libraries.resolve_upstream_for_target(
                 search_path=upstream_search_path,
                 flavors=stdlib_flavors,
                 stage_root=output_dir / "_upstream",
-                index=upstream_index,
+                index=upstream_libraries._current_index(),
                 enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
+                entry_point=entry_point,
+                earlier_roots=resolution_roots,
+                ignored_distributions={lib.distribution for lib in libs},
             )
         )
         for note in upstream_skipped:
             console.print(f"[bold yellow]Skipping upstream library[/bold yellow] {note}")
         for problem in upstream_errors:
             console.print(f"[bold yellow]Warning:[/bold yellow] upstream library {problem}")
+        for distribution in upstream_warned:
+            console.print(
+                f"[bold yellow]Warning:[/bold yellow] {distribution} is not in the "
+                "PyMCU library index: compiling it unverified"
+            )
         extra_includes.extend(upstream_includes)
 
         # Shared generated-files directory (board shim + print preamble).
@@ -1815,9 +1762,6 @@ def build(
             except RuntimeError as e:
                 console.print(f"[bold red]Toolchain installation failed:[/bold red] {e}")
                 raise typer.Exit(code=1)
-
-        # 3. Core Compiler Wrapper
-        compiler = PyMCUCompiler(console)
 
         with Progress(
             SpinnerColumn(),

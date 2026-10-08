@@ -105,3 +105,17 @@ class TestGetStdlibPath:
         captured = capsys.readouterr()
         assert "Failed to import" not in captured.out
         assert "Failed to import" not in captured.err
+
+
+class TestIsolateStdlib:
+    def test_exposes_pymcu_without_site_packages_siblings(self, tmp_path):
+        site = tmp_path / "site-packages"
+        package = site / "pymcu"
+        (package / "chips").mkdir(parents=True)
+        (package / "types.py").write_text("VALUE = 1\n")
+        (site / "host_only.py").write_text("VALUE = 2\n")
+
+        root = PyMCUCompiler.isolate_stdlib(str(package), tmp_path / "dist")
+
+        assert (root / "pymcu" / "types.py").is_file()
+        assert not (root / "host_only.py").exists()

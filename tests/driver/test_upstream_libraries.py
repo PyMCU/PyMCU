@@ -40,6 +40,23 @@ def _write_dist(site: Path, *, distribution: str, version: str,
     return dist_info
 
 
+def _write_modules_dist(site: Path, *, distribution: str, version: str,
+                        modules: tuple[str, ...]) -> Path:
+    safe = distribution.replace("-", "_").replace(".", "_")
+    dist_info = site / f"{safe}-{version}.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {distribution}\nVersion: {version}\n"
+    )
+    (dist_info / "top_level.txt").write_text("\n".join(modules) + "\n")
+    records = [f"{dist_info.name}/METADATA,,", f"{dist_info.name}/top_level.txt,,"]
+    for module in modules:
+        (site / f"{module}.py").write_text(f"# {module}\nVALUE = 1\n")
+        records.append(f"{module}.py,,")
+    (dist_info / "RECORD").write_text("\n".join(records) + "\n")
+    return dist_info
+
+
 def _index(distribution="adafruit-circuitpython-hcsr04", version="0.4.25",
           provides=("adafruit_hcsr04",), layer="circuitpython",
           name="", kind="upstream") -> dict:
@@ -102,18 +119,15 @@ class TestDiscoverInstalled:
         found = up.discover_installed_upstream(entries, [str(tmp_path)])
         assert found[0].version == "0.4.26"
 
-    def test_installed_adafruit_distribution_marks_an_import_for_index_bootstrap(
-            self, tmp_path):
+    def test_an_unindexed_distribution_is_a_fallback_candidate(self, tmp_path):
         _write_dist(tmp_path, distribution="adafruit-circuitpython-hcsr04",
                     version="0.4.25", module="adafruit_hcsr04", is_package=False)
-        _write_dist(tmp_path, distribution="adafruit-circuitpython-requests",
-                    version="4.1.17", module="adafruit_requests", is_package=False)
 
-        found = up.installed_upstream_candidates(
-            [str(tmp_path)], {"adafruit_hcsr04"}
-        )
+        found = up.discover_fallback_distributions([], [str(tmp_path)])
 
-        assert found == ["adafruit-circuitpython-hcsr04"]
+        assert [(item.name, item.modules) for item in found] == [
+            ("adafruit-circuitpython-hcsr04", ("adafruit_hcsr04",))
+        ]
 
 
 class TestStageModules:
@@ -182,21 +196,22 @@ class TestResolveUpstreamForTarget:
 
     def test_no_cached_index_means_nothing_upstream(self, tmp_path, monkeypatch):
         monkeypatch.setattr(up, "read_cached_library_index", lambda: {})
-        includes, skipped, errors = up.resolve_upstream_for_target(
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
             search_path=[str(tmp_path)], flavors=[], stage_root=tmp_path / "_upstream")
-        assert (includes, skipped, errors) == ([], [], [])
+        assert (includes, skipped, errors, warned) == ([], [], [], [])
 
     def test_included_when_the_flavor_is_declared(self, tmp_path, monkeypatch):
         site, cache = self._installed(tmp_path)
         monkeypatch.setattr(up, "read_cached_library_index",
                             lambda: json.loads(cache.read_text()))
 
-        includes, skipped, errors = up.resolve_upstream_for_target(
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
             search_path=[str(site)], flavors=["circuitpython"],
             stage_root=tmp_path / "dist" / "_upstream")
 
         assert errors == []
         assert skipped == []
+        assert warned == []
         assert includes == [str(tmp_path / "dist" / "_upstream" / "adafruit-circuitpython-hcsr04")]
 
     def test_skipped_when_the_flavor_is_not_declared(self, tmp_path, monkeypatch):
@@ -204,11 +219,12 @@ class TestResolveUpstreamForTarget:
         monkeypatch.setattr(up, "read_cached_library_index",
                             lambda: json.loads(cache.read_text()))
 
-        includes, skipped, errors = up.resolve_upstream_for_target(
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
             search_path=[str(site)], flavors=[], stage_root=tmp_path / "dist" / "_upstream")
 
         assert includes == []
         assert errors == []
+        assert warned == []
         assert "circuitpython" in skipped[0]
 
     def test_enforce_false_ignores_the_layer_mismatch(self, tmp_path, monkeypatch):
@@ -216,11 +232,12 @@ class TestResolveUpstreamForTarget:
         monkeypatch.setattr(up, "read_cached_library_index",
                             lambda: json.loads(cache.read_text()))
 
-        includes, skipped, errors = up.resolve_upstream_for_target(
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
             search_path=[str(site)], flavors=[], stage_root=tmp_path / "dist" / "_upstream",
             enforce=False)
 
         assert skipped == []
+        assert warned == []
         assert len(includes) == 1
 
     def test_upstream_index_env_override_bypasses_the_cache(self, tmp_path, monkeypatch):
@@ -229,11 +246,12 @@ class TestResolveUpstreamForTarget:
             AssertionError("must not read the cache when PYMCU_UPSTREAM_INDEX is set")))
         monkeypatch.setenv("PYMCU_UPSTREAM_INDEX", str(cache))
 
-        includes, skipped, errors = up.resolve_upstream_for_target(
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
             search_path=[str(site)], flavors=["circuitpython"],
             stage_root=tmp_path / "dist" / "_upstream")
 
         assert errors == []
+        assert warned == []
         assert len(includes) == 1
 
     def test_fetched_index_bypasses_an_empty_cache(self, tmp_path, monkeypatch):
@@ -241,84 +259,104 @@ class TestResolveUpstreamForTarget:
         monkeypatch.setattr(up, "read_cached_library_index", lambda: (_ for _ in ()).throw(
             AssertionError("the fetched index must be used directly")))
 
-        includes, skipped, errors = up.resolve_upstream_for_target(
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
             search_path=[str(site)], flavors=["circuitpython"],
             stage_root=tmp_path / "dist" / "_upstream", index=_index())
 
         assert errors == []
         assert skipped == []
+        assert warned == []
         assert len(includes) == 1
 
 
-class TestBuildIndexBootstrap:
-    def test_an_installed_family_refreshes_when_the_shipped_index_lacks_it(
-            self, monkeypatch, capsys):
-        from src.driver.commands import build
-        from src.driver.commands import libraries as commands
-
-        monkeypatch.setattr(up, "_current_index", lambda: {"v": 1, "libraries": []})
-        monkeypatch.setattr(
-            up, "installed_upstream_candidates",
-            lambda search, modules: ["adafruit-circuitpython-hcsr04"],
+class TestFallbackStaging:
+    def test_exposes_an_imported_module_and_warns_once_for_its_distribution(
+            self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="example-drivers", version="1.0",
+            modules=("sensor_a", "sensor_b"),
         )
-        fetched = _index()
-        seen = {}
+        main = tmp_path / "main.py"
+        main.write_text("import sensor_a\nimport sensor_b\n")
 
-        def fake_fetch(*, refresh=False):
-            seen["refresh"] = refresh
-            return fetched, "network"
-
-        monkeypatch.setattr(commands, "fetch_index", fake_fetch)
-
-        result = build._index_for_installed_upstream(None, {"adafruit_hcsr04"})
-
-        assert up.upstream_entries(result)[-1].distribution == (
-            "adafruit-circuitpython-hcsr04"
-        )
-        assert seen == {"refresh": True}
-        assert "Fetched the library index" in capsys.readouterr().out
-
-    def test_the_shipped_ssd1306_entry_needs_no_network_on_the_first_build(
-            self, monkeypatch):
-        from src.driver.commands import build
-        from src.driver.commands import libraries as commands
-
-        monkeypatch.setattr(up, "read_cached_library_index", lambda: {})
-        monkeypatch.setattr(
-            up, "installed_upstream_candidates",
-            lambda search, modules: ["adafruit-circuitpython-ssd1306"],
-        )
-        monkeypatch.setattr(
-            commands, "fetch_index",
-            lambda **kwargs: (_ for _ in ()).throw(
-                AssertionError("the shipped entry must work offline")
-            ),
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[],
+            stage_root=tmp_path / "_upstream", index={},
+            entry_point=main, earlier_roots=[str(tmp_path)],
         )
 
-        result = build._index_for_installed_upstream(
-            None, {"adafruit_ssd1306"}
+        assert skipped == errors == []
+        assert warned == ["example-drivers"]
+        assert len(includes) == 1
+        staged = Path(includes[0])
+        assert (staged / "sensor_a.py").is_file()
+        assert (staged / "sensor_b.py").is_file()
+
+    def test_blinka_modules_are_derived_from_metadata_and_excluded(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="Adafruit-Blinka", version="9.0",
+            modules=("board", "blinka_test_only"),
+        )
+        found = up._installed_distributions([str(site)])
+        assert up.excluded_module_names(found) == {"board", "blinka_test_only"}
+
+        main = tmp_path / "main.py"
+        main.write_text("import blinka_test_only\n")
+        includes, _, _, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index={}, entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+        assert includes == []
+        assert warned == []
+
+    def test_compat_layer_wins_over_an_unindexed_distribution(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="host-digitalio", version="1.0",
+            modules=("digitalio",),
+        )
+        compat = tmp_path / "compat"
+        compat.mkdir()
+        (compat / "digitalio.py").write_text("VALUE = 1\n")
+        main = tmp_path / "main.py"
+        main.write_text("from digitalio import DigitalInOut\n")
+
+        includes, _, _, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=["circuitpython"],
+            stage_root=tmp_path / "_upstream", index={}, entry_point=main,
+            earlier_roots=[str(tmp_path), str(compat)],
         )
 
-        assert any(
-            entry.distribution == "adafruit-circuitpython-ssd1306"
-            for entry in up.upstream_entries(result)
+        assert includes == []
+        assert warned == []
+
+    def test_indexed_distribution_uses_only_index_modules_without_warning(
+            self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="example-drivers", version="1.0",
+            modules=("indexed_driver", "undeclared_sibling"),
+        )
+        index = _index(
+            distribution="example-drivers", version="1.0",
+            provides=("indexed_driver",), layer="native",
+        )
+        main = tmp_path / "main.py"
+        main.write_text("import indexed_driver\n")
+
+        includes, _, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index=index, entry_point=main, earlier_roots=[str(tmp_path)],
         )
 
-    def test_offline_first_build_explains_an_unbundled_entry_is_unavailable(
-            self, monkeypatch, capsys):
-        from src.driver.commands import build
-        from src.driver.commands import libraries as commands
-
-        monkeypatch.setattr(up, "_current_index", lambda: {})
-        monkeypatch.setattr(
-            up, "installed_upstream_candidates",
-            lambda search, modules: ["adafruit-circuitpython-hcsr04"],
-        )
-        monkeypatch.setattr(commands, "fetch_index", lambda **kwargs: ({}, ""))
-        monkeypatch.setattr(commands, "last_index_error", lambda: "network is offline")
-
-        assert build._index_for_installed_upstream(
-            None, {"adafruit_hcsr04"}) != {}
-        output = capsys.readouterr().out
-        assert "no cached copy exists" in output
-        assert "network is offline" in output
+        assert errors == warned == []
+        assert len(includes) == 1
+        staged = Path(includes[0])
+        assert (staged / "indexed_driver.py").is_file()
+        assert not (staged / "undeclared_sibling.py").exists()
