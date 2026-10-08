@@ -1039,6 +1039,17 @@ public partial class IRGenerator
         if (elem is TupleExpr or ListExpr or IntegerLiteral or FloatLiteral
             or StringLiteral or BooleanLiteral) return false;
         DataType dt = LoopVarStorageType(key, InferExprType(elem));
+        // An EARLIER statement in this same function may already have chosen a NARROWER
+        // width for this bare name (`x = buf[0]` before `for x in (buf,): pass` rebinds it
+        // to the buffer's own address) -- the backend homes one slot per name, so the two
+        // Copy nodes writing it at different widths cannot both be right. RequireSlot asks
+        // for the width seed a NEXT run starts the name at (PyMCU-review round 5): on THIS
+        // run the inconsistency stays, same as every other unannotated-slot case that needs
+        // more than its first store assumed; the driver's seeded recompile is what fixes it,
+        // not a local patch to the Copy already emitted for the earlier binding.
+        if (WidthSeeds != null && variableTypes.TryGetValue(key, out var priorDt)
+            && PyMCU.Common.WidthSeeds.IsInt(priorDt) && PyMCU.Common.WidthSeeds.IsInt(dt))
+            RequireSlot(key, priorDt, dt);
         // preEvaluated, when given, is this element's value already evaluated once in the
         // tuple/list's own source order, before the loop started (VisitFor's pre-pass) --
         // CPython builds the literal eagerly, so this must not call VisitExpression a second

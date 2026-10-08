@@ -1736,8 +1736,17 @@ public partial class IRGenerator
         WarnAboutUnrunnableDestructors();
 
         // Between-passes verifier (PYMCU_VERIFY_IR): the raw generator output is the
-        // stage every later pass trusts, so it is the first thing worth checking.
-        Verifier.Check(irProgram, "generate");
+        // stage every later pass trusts, so it is the first thing worth checking. Not on
+        // a run that already found a slot needing a wider seed (WidthSeeds.Grew): its IR
+        // is about to be discarded for a rerun with that slot correctly seeded from the
+        // start, and the inconsistency only THIS run's narrower-then-wider write pair
+        // produced is not a defect the rerun will still have -- printed here, it survived
+        // as a stale warning with no rerun to retract it (PyMCU-review round 5: a
+        // for-loop-variable rebind to a wider value than an earlier binding of the same
+        // name needed a seed, same as any other unannotated slot that outgrows its first
+        // store, but its own run's "generate" check fired before the seed could apply).
+        if (WidthSeeds == null || !WidthSeeds.Grew)
+            Verifier.Check(irProgram, "generate");
 
         return irProgram;
     }
