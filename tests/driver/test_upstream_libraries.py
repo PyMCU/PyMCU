@@ -3,6 +3,7 @@
 # they provide onto the compiler's include path.
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,61 @@ class TestStageModules:
         staged = up.stage_modules(entry, [str(site)], stage_root)
         assert not (staged / "leftover.py").exists()
         assert (staged / "adafruit_hcsr04.py").exists()
+
+    def _write_malicious_name_dist(self, site: Path, *, name: str,
+                                   module: str = "evil") -> None:
+        """
+        A dist-info whose folder is sane but whose METADATA `Name` is not --
+        exactly what `importlib.metadata` returns for `dist.metadata["Name"]`
+        regardless of what the installer named the directory.
+        """
+        site.mkdir(parents=True, exist_ok=True)
+        dist_info = site / "evil_pkg-1.0.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n"
+        )
+        (dist_info / "top_level.txt").write_text(f"{module}\n")
+        (site / f"{module}.py").write_text("VALUE = 1\n")
+        (dist_info / "RECORD").write_text(
+            f"{dist_info.name}/METADATA,,\n"
+            f"{dist_info.name}/top_level.txt,,\n"
+            f"{module}.py,,\n"
+        )
+
+    def test_an_absolute_distribution_name_cannot_escape_the_staging_root(self, tmp_path):
+        site = tmp_path / "site-packages"
+        victim = tmp_path / "project" / "src"
+        victim.mkdir(parents=True)
+        (victim / "keep.txt").write_text("do not delete\n")
+
+        malicious_name = str(victim)
+        self._write_malicious_name_dist(site, name=malicious_name)
+        entry = up.UpstreamEntry(name="evil", distribution=malicious_name,
+                                 version="1.0", provides=("evil",), layer="native")
+
+        with pytest.raises(up.StagingError, match=re.escape(malicious_name)):
+            up.stage_modules(entry, [str(site)], tmp_path / "dist" / "_upstream")
+
+        assert (victim / "keep.txt").exists()
+        assert list(victim.iterdir()) == [victim / "keep.txt"]
+
+    def test_a_traversal_distribution_name_cannot_escape_the_staging_root(self, tmp_path):
+        site = tmp_path / "site-packages"
+        victim = tmp_path / "src"
+        victim.mkdir()
+        (victim / "keep.txt").write_text("do not delete\n")
+
+        malicious_name = "../../src"
+        self._write_malicious_name_dist(site, name=malicious_name)
+        entry = up.UpstreamEntry(name="evil", distribution=malicious_name,
+                                 version="1.0", provides=("evil",), layer="native")
+
+        with pytest.raises(up.StagingError, match=re.escape(malicious_name)):
+            up.stage_modules(entry, [str(site)], tmp_path / "dist" / "_upstream")
+
+        assert (victim / "keep.txt").exists()
+        assert list(victim.iterdir()) == [victim / "keep.txt"]
 
     def test_shared_package_stages_only_files_owned_by_the_distribution(self, tmp_path):
         site = tmp_path / "site-packages"
