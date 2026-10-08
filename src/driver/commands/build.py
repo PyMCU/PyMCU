@@ -1430,24 +1430,28 @@ def build(
 
         # stdlib_path: inject a local stdlib directory before any installed package
         stdlib_path_override: str | None = pymcu_config.get("stdlib_path", None)
+        resolved_stdlib_path: Path | None = None
         if stdlib_path_override:
-            resolved_stdlib_path = (pyproject_path.parent / stdlib_path_override).resolve()
-            if resolved_stdlib_path.is_dir():
-                extra_includes.append(str(resolved_stdlib_path))
-                _diag_log(f"stdlib_path override: {resolved_stdlib_path}", verbose=is_verbose)
+            candidate = (pyproject_path.parent / stdlib_path_override).resolve()
+            if candidate.is_dir():
+                resolved_stdlib_path = candidate
+                extra_includes.append(str(candidate))
+                _diag_log(f"stdlib_path override: {candidate}", verbose=is_verbose)
             else:
                 console.print(
                     f"[bold yellow]Warning:[/bold yellow] stdlib_path '{stdlib_path_override}' "
-                    f"not found at {resolved_stdlib_path}."
+                    f"not found at {candidate}."
                 )
 
         for flavor in stdlib_flavors:
-            pkg_dir = _package_directory(f"pymcu_{flavor}", project_search_path)
+            pkg_dir = upstream_libraries.stage_distribution_package(
+                f"pymcu-{flavor}", f"pymcu_{flavor}", project_search_path,
+                pyproject_path.parent.absolute() / "dist" / "_compat",
+            )
             if pkg_dir is not None:
-                # Only the layer package itself belongs on the compiler path.
-                # Its site-packages parent would expose every neighboring
-                # distribution, including Blinka's host-only board and busio
-                # shims, outside the filtered fallback below.
+                # Only files RECORD attributes to the selected layer belong on
+                # the compiler path. A second distribution may share the same
+                # physical package directory in site-packages.
                 extra_includes.append(str(pkg_dir))
                 flavor_dirs[flavor] = pkg_dir
                 # Collect board_chips supplements
@@ -1595,13 +1599,16 @@ def build(
         stdlib_package = compiler.get_stdlib_path()
         protected_modules: set[str] = set()
         if stdlib_package:
-            protected_modules.add("pymcu")
             protected_modules.update(
-                upstream_libraries.provided_module_names(Path(stdlib_package))
+                upstream_libraries.stdlib_module_names(Path(stdlib_package))
             )
             resolution_roots.append(str(compiler.isolate_stdlib(
                 stdlib_package, output_dir
             )))
+        if resolved_stdlib_path is not None:
+            protected_modules.update(
+                upstream_libraries.stdlib_module_names(resolved_stdlib_path)
+            )
         for flavor_dir in flavor_dirs.values():
             protected_modules.update(
                 upstream_libraries.provided_module_names(flavor_dir)

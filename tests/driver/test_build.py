@@ -78,6 +78,43 @@ class TestProjectEnvironmentInputs:
             "circuitpython", package
         ) == {"project_board": "project_chip"}
 
+    def test_stdlib_override_protects_every_bare_alias_it_supplies(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _project(
+            tmp_path,
+            'target = "atmega328p"\nstdlib_path = "local-stdlib"\n',
+        )
+        package = tmp_path / "local-stdlib" / "pymcu"
+        package.mkdir(parents=True)
+        (package / "sensor.py").write_text("VALUE = 1\n")
+        captured = {}
+
+        monkeypatch.setattr(build_cmd, "library_search_path", lambda *a, **k: None)
+        monkeypatch.setattr(
+            build_cmd, "resolve_for_target", lambda *a, **k: ([], [], [])
+        )
+        monkeypatch.setattr(
+            build_cmd.PyMCUCompiler, "get_stdlib_path", lambda self: ""
+        )
+        monkeypatch.setattr(
+            build_cmd.upstream_libraries, "_current_index", lambda: {}
+        )
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop after upstream resolution")
+
+        monkeypatch.setattr(
+            build_cmd.upstream_libraries, "resolve_upstream_for_target", capture
+        )
+
+        result = _invoke_build()
+
+        assert result.exit_code == 1
+        assert "sensor" in captured["protected_modules"]
+        assert "pymcu" in captured["protected_modules"]
+
     def test_version_skew_warns_once_with_both_versions(
             self, monkeypatch):
         versions = {
@@ -565,22 +602,18 @@ class TestBuildUpstreamLibraryIncludeOrder:
         (layer / "__init__.py").write_text("")
         (layer / "digitalio.py").write_text("PIN = 1\n")
         (layer / "boards" / "arduino_uno.py").write_text("LED = 13\n")
+        info = site / "pymcu_circuitpython-1.0.dist-info"
+        info.mkdir()
+        (info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pymcu-circuitpython\nVersion: 1.0\n"
+        )
+        (info / "RECORD").write_text(
+            "pymcu_circuitpython/__init__.py,,\n"
+            "pymcu_circuitpython/digitalio.py,,\n"
+            "pymcu_circuitpython/boards/arduino_uno.py,,\n"
+        )
         # The Blinka-style squatter: same module name, flat in site-packages.
         (site / "digitalio.py").write_text("import json\n")
-
-        import importlib.machinery
-        import importlib.util
-
-        real_find_spec = importlib.util.find_spec
-
-        def fake_find_spec(name, *args, **kwargs):
-            if name == "pymcu_circuitpython":
-                spec = importlib.machinery.ModuleSpec(name, None, is_package=True)
-                spec.submodule_search_locations = [str(layer)]
-                return spec
-            return real_find_spec(name, *args, **kwargs)
-
-        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
 
         from src.driver.core.compiler import PyMCUCompiler
 
@@ -597,7 +630,12 @@ class TestBuildUpstreamLibraryIncludeOrder:
         assert "extra_includes" in captured, "PyMCUCompiler.compile was never called"
 
         includes = captured["extra_includes"]
-        assert str(layer) in includes
+        isolated = (
+            tmp_path / "dist" / "_compat" / "pymcu-circuitpython"
+            / "pymcu_circuitpython"
+        )
+        assert str(isolated) in includes
+        assert (isolated / "digitalio.py").read_text() == "PIN = 1\n"
         # The parent would expose every installed distribution without the
         # metadata filter. Only selected staged fallback directories may
         # follow the compat package.

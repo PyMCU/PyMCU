@@ -138,6 +138,34 @@ class TestDiscoverInstalled:
 
 
 class TestStageModules:
+    def test_compat_staging_exposes_only_the_selected_distribution_files(
+            self, tmp_path):
+        site = tmp_path / "site-packages"
+        package = site / "pymcu_circuitpython"
+        package.mkdir(parents=True)
+        (package / "machine.py").write_text("OWNED = 1\n")
+        (package / "host.py").write_text("HOST_ONLY = 1\n")
+        for distribution, leaf in (
+            ("pymcu-circuitpython", "machine.py"),
+            ("host-helpers", "host.py"),
+        ):
+            info = site / f"{distribution.replace('-', '_')}-1.0.dist-info"
+            info.mkdir()
+            (info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {distribution}\nVersion: 1.0\n"
+            )
+            (info / "RECORD").write_text(
+                f"{info.name}/METADATA,,\npymcu_circuitpython/{leaf},,\n"
+            )
+
+        staged = up.stage_distribution_package(
+            "pymcu-circuitpython", "pymcu_circuitpython", [str(site)],
+            tmp_path / "_compat",
+        )
+
+        assert (staged / "machine.py").is_file()
+        assert not (staged / "host.py").exists()
+
     def test_stages_a_single_file_module(self, tmp_path):
         site = tmp_path / "site-packages"
         _write_dist(site, distribution="adafruit-circuitpython-hcsr04", version="0.4.25",

@@ -560,6 +560,21 @@ def stage_modules(entry: UpstreamEntry, search_path: list[str] | None,
     return _stage_modules(dist, entry.distribution, entry.provides, stage_root)
 
 
+def stage_distribution_package(
+    distribution: str, package: str, search_path: list[str] | None,
+    stage_root: Path,
+) -> Path | None:
+    """Expose only the files *distribution* owns below one package."""
+    dist = find_distribution(distribution, search_path)
+    if dist is None:
+        return None
+    staged = _stage_modules(dist, distribution, (package,), stage_root)
+    if staged is None:
+        return None
+    package_dir = staged.joinpath(*package.split("."))
+    return package_dir if package_dir.is_dir() else None
+
+
 def _module_sources(module: str, roots: list[Path]) -> list[tuple[Path, str, bool]]:
     """The package initializers and leaf file the compiler will load."""
     parts = module.split(".")
@@ -606,6 +621,16 @@ def provided_module_names(package: Path) -> set[str]:
                     names.add(child.name)
             except OSError:
                 continue
+    return names
+
+
+def stdlib_module_names(root: Path) -> set[str]:
+    """Top-level names and bare aliases supplied by a stdlib include root."""
+    names = provided_module_names(root)
+    package = root if root.name == "pymcu" else root / "pymcu"
+    if package.is_dir():
+        names.add("pymcu")
+        names.update(provided_module_names(package))
     return names
 
 
