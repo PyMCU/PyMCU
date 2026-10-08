@@ -979,6 +979,8 @@ public partial class IRGenerator
 
         callee = ResolveOverloadedCallee(callee, expr);
 
+        ReportDriverNeeds(callee);
+
         // One check for every builtin, before the dispatch below. Issue #226.
         expr = CheckBuiltinKeywords(expr, callee);
 
@@ -11443,6 +11445,59 @@ public partial class IRGenerator
         if (cls == name || !cls.EndsWith("_" + name)) return false;
         string prefix = cls.Substring(0, cls.Length - name.Length);
         return prefix.StartsWith("pymcu_") && prefix.EndsWith(moduleTail + "_");
+    }
+
+    // ── RFC 0014 family 7: driver tokens at the resolution chokepoint ─────────────
+    //
+    // Everything the driver used to learn by scanning source text, reported from the
+    // call it just resolved instead. `callee` at this point is the resolved binding
+    // (module prefix + declared name), so the checks below ask what the call IS, not
+    // how it was spelled: a user `x.monotonic()` resolves to `X_monotonic` defined in
+    // the program and reports nothing (p17), and `import time as t; t.ticks_ms()`
+    // resolves to the compat layer's ticks_ms whatever the alias was.
+    //
+    // Emitted only for callsites in the program's own code -- a stdlib module expanded
+    // inline reaches the same leaf functions from its own callsites (asyncio.ticks
+    // reads the same micros), and deciding on those would reserve a timer the program
+    // never asked about. The two exceptions take all callsites: a UART construction is
+    // ownership wherever it is constructed (the micropython-compat machine.UART wraps
+    // the stdlib one inside its own module), and a raise-with-message inside imported
+    // code lowers to the same report machinery.
+
+    /// Whether the call being lowered sits in a file that is the program's own --
+    /// the entry module (empty source path) or a module the loader recorded under
+    /// the project root, the same test WarnLoopAccumulator makes.
+    private bool CallsiteIsProgramCode()
+    {
+        if (string.IsNullOrEmpty(currentSourcePath)) return true;
+        foreach (var m in projectModules)
+            if (modulePaths.TryGetValue(m, out var mp) && mp == currentSourcePath)
+                return true;
+        return false;
+    }
+
+    /// Whether the resolved callee was declared in a file of the program itself.
+    /// functionModulePrefix keys the module the scan found the function in; a name
+    /// it does not know (a builtin, an intrinsic, an unresolved spelling) is not a
+    /// program declaration either.
+    private bool CalleeDefinedInProgram(string callee)
+    {
+        if (!functionModulePrefix.TryGetValue(callee, out var pfx)) return false;
+        if (string.IsNullOrEmpty(pfx)) return true;
+        return projectModules.Contains(pfx[..^1].Replace('_', '.'));
+    }
+
+    private void ReportDriverNeeds(string callee)
+    {
+        // A UART construction reports regardless of callsite: the micropython
+        // compat layer's machine.UART wraps the stdlib class inside machine.py,
+        // and that inner construction is the ownership the driver must see.
+        string ctorClass = callee.EndsWith("___init__", StringComparison.Ordinal)
+            ? callee[..^9] : callee;
+        if (IsStdlibClass(ctorClass, "UART", "uart"))
+            Logger.StdoutOwned();
+
+        if (!CallsiteIsProgramCode()) return;
     }
 
     // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes

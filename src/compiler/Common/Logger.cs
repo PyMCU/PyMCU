@@ -41,6 +41,8 @@ namespace PyMCU.Common;
 //                                       value...) met a missing pymcu.strfmt import
 //       [NEEDS_ROUND2]               -- round(x, n) on a run-time float met a missing
 //                                       pymcu.round2 import
+//       [STDOUT_OWNED]               -- the program constructs a UART; the driver
+//                                       leaves stdout to it
 //     All warnings/errors go to stderr (never pollute the token stream).
 //
 //   Interactive mode (stdout is a real TTY)
@@ -154,6 +156,19 @@ public static class Logger
     {
         if (_isDriverMode)
             Console.WriteLine("[NEEDS_ROUND2]");
+    }
+
+    // RFC 0014 family 7 (phase 1): the remaining facts the driver used to scan source
+    // text for, reported from the resolved binding instead. None of them fail the
+    // compile -- they change what the driver stages around the program and then asks
+    // for one more pass, the same way [ARENA_USED] does.
+    //
+    //   StdoutOwned -- the program constructs a UART itself, so the driver must not
+    //     initialize a second one over stdout.
+    public static void StdoutOwned()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[STDOUT_OWNED]");
     }
 
     // ── General logging ──────────────────────────────────────────────────────
