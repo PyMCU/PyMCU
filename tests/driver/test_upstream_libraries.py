@@ -364,6 +364,31 @@ class TestResolveUpstreamForTarget:
 
 
 class TestFallbackStaging:
+    def test_installed_version_mismatch_is_staged_as_unverified(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="sensor-dist", version="2.0", modules=("sensor",),
+        )
+        main = tmp_path / "main.py"
+        main.write_text("import sensor\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index=_index(
+                distribution="sensor-dist", version="1.0",
+                provides=("sensor",), layer="native",
+            ),
+            entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+
+        assert skipped == errors == []
+        assert warned == [
+            "sensor-dist is not in the PyMCU library index: compiling it unverified"
+        ]
+        assert len(includes) == 1
+        assert (Path(includes[0]) / "sensor.py").is_file()
+
     def test_exposes_an_imported_module_and_warns_once_for_its_distribution(
             self, tmp_path):
         site = tmp_path / "site-packages"

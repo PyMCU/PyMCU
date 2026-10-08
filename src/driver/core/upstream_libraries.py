@@ -239,6 +239,20 @@ def discover_installed_upstream(entries: list[UpstreamEntry],
     return installed
 
 
+def _verified_upstream_entries(entries: list[UpstreamEntry],
+                               search_path: list[str] | None) -> list[UpstreamEntry]:
+    """Index entries whose measured version is exactly what is installed."""
+    installed = {
+        _normalize((dist.metadata["Name"] if dist.metadata else "") or ""): dist
+        for dist in _installed_distributions(search_path)
+    }
+    return [
+        entry for entry in entries
+        if (dist := installed.get(_normalize(entry.distribution))) is not None
+        and (dist.version or "unknown") == entry.version
+    ]
+
+
 def _recorded_module_files(dist: Distribution, module: str) -> list[tuple[Path, Path]]:
     """
     Files of one top-level module that RECORD attributes to *dist*.
@@ -586,13 +600,14 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
     """
     index = _current_index() if index is None else index
     entries = upstream_entries(index)
+    verified_entries = _verified_upstream_entries(entries, search_path)
 
     includes: list[str] = []
     skipped: list[str] = []
     errors: list[str] = []
     warned: list[str] = []
     protected = protected_modules or set()
-    for entry in discover_installed_upstream(entries, search_path):
+    for entry in discover_installed_upstream(verified_entries, search_path):
         if enforce and entry.layer != "native" and entry.layer not in flavors:
             declared = ", ".join(flavors) if flavors else "none"
             skipped.append(
@@ -632,7 +647,7 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
 
     if entry_point is not None:
         fallback = discover_fallback_distributions(
-            entries, search_path, ignored_distributions
+            verified_entries, search_path, ignored_distributions
         )
         fallback_includes, fallback_warned, fallback_errors = stage_imported_fallback(
             entry_point=entry_point,
