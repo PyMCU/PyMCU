@@ -398,4 +398,32 @@ public class InferredSlotWidthTests
         violations.Should().BeEmpty();
         ShouldHold(lastIr, "c", 0, uint.MaxValue);
     }
+
+    [Fact]
+    public void ARebindToAWiderValueThanAnEarlierBinding_SeedsAConsistentWidth()
+    {
+        // `x = buf[0]` (a byte) then `for x in (buf,): pass` (rebinds `x` to the
+        // buffer's own address, 16 bits on AVR) -- PyMCU-review round 5. The for-loop-
+        // variable rebind needed more width than the earlier binding of the same bare
+        // name assumed, the same shape every other unannotated-slot width case is: a
+        // seed, a rerun, and the settled run holds 'f.x' at one consistent width
+        // throughout -- not split across a UINT8 write and a UINT16 one, which the
+        // backend's single physical slot per name cannot both satisfy.
+        var (ir, _) = GenSeeded(
+            "from pymcu.types import uint8\n" +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def f(buf: bytearray) -> uint8:\n" +
+            "    x = buf[0]\n" +
+            "    for x in (buf,):\n" +
+            "        pass\n" +
+            "    return head(x)\n" +
+            "def main():\n" +
+            "    a: uint8 = f(bytearray([10, 20, 30]))\n");
+
+        var violations = Verifier.Verify(ir)
+            .Where(v => v.Check == "storage-width" && v.Detail.Contains("'f.x'"))
+            .ToList();
+        violations.Should().BeEmpty();
+    }
 }
