@@ -52,6 +52,17 @@ def test_poetry_environment_is_queried_without_running_project_code(
     assert "run" not in calls[0][0]
 
 
+def test_verification_environment_override_supplies_project_search_path(
+        tmp_path, monkeypatch):
+    environment = tmp_path / "poetry-cache" / "demo-123"
+    site = environment / "lib" / "python3.14" / "site-packages"
+    site.mkdir(parents=True)
+    monkeypatch.setenv(core.PROJECT_ENVIRONMENT_OVERRIDE, str(environment))
+
+    assert core.project_environment(tmp_path) == environment
+    assert core.search_path_for_project(tmp_path) == [str(site)]
+
+
 def _make_package(tmp_path: Path, manifest: str = MANIFEST, *, name: str = "pymcu_lib_dht11") -> Path:
     """
     A library laid out the way one is published.

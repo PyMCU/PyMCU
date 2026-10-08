@@ -56,6 +56,7 @@ from ..core.boards import extension_board_chips, resolve_chip_for_board
 from ..core.libraries import (
     LANGUAGE_LEVEL,
     Library,
+    PROJECT_ENVIRONMENT_OVERRIDE,
     check_compatibility,
     chip_arch,
     discover_libraries,
@@ -677,6 +678,9 @@ def _verify_module_imports(modules: list[str], project: Project) -> tuple[bool, 
     pymcu = _verification_pymcu(project)
     if pymcu is None:
         return True, "pymcu executable not found -- skipped"
+    environment = project_environment(project.root)
+    if environment is not None and not site_packages_of(environment):
+        return True, "project environment site-packages not found -- verification skipped"
 
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "verify"
@@ -712,8 +716,12 @@ def _verify_module_imports(modules: list[str], project: Project) -> tuple[bool, 
             encoding="utf-8",
         )
 
+        process_environment = os.environ.copy()
+        if environment is not None:
+            process_environment[PROJECT_ENVIRONMENT_OVERRIDE] = str(environment)
         result = subprocess.run(
-            [str(pymcu), "build"], cwd=work, capture_output=True, text=True
+            [str(pymcu), "build"], cwd=work, capture_output=True, text=True,
+            env=process_environment,
         )
         if result.returncode == 0:
             listed = ", ".join(modules)

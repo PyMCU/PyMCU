@@ -97,6 +97,7 @@ DEFAULT_SOURCES = "mcu"
 # A library declaring a higher level than this driver understands is refused
 # during resolution instead of failing halfway through a build.
 LANGUAGE_LEVEL = 1
+PROJECT_ENVIRONMENT_OVERRIDE = "PYMCU_PROJECT_ENVIRONMENT"
 
 # Layers a library can be written against.  "native" means pymcu.hal.* and is
 # the only one that works regardless of the flavors the project declares.
@@ -413,6 +414,11 @@ def _poetry_environment(root: Path) -> Path | None:
 
 def project_environment(root: Path) -> Path | None:
     """The environment owned by this project, including Poetry's cache."""
+    override = os.environ.get(PROJECT_ENVIRONMENT_OVERRIDE)
+    if override:
+        environment = Path(override)
+        return environment if environment.is_dir() else None
+
     in_project = root / ".venv"
     if in_project.is_dir():
         return in_project
@@ -706,6 +712,9 @@ def search_path_for_project(root: Path) -> list[str] | None:
     venv = project_environment(root)
     if venv is None:
         return None
+    if os.environ.get(PROJECT_ENVIRONMENT_OVERRIDE):
+        paths = site_packages_of(venv)
+        return paths or None
     try:
         if Path(sys.prefix).resolve() == venv.resolve():
             return None

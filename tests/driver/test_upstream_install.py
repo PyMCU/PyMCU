@@ -305,6 +305,7 @@ class TestVerifyUpstreamImports:
         executable = environment / "bin" / "pymcu"
         executable.parent.mkdir(parents=True)
         executable.touch()
+        (environment / "lib" / "python3.14" / "site-packages").mkdir(parents=True)
         monkeypatch.setattr(cmd, "project_environment", lambda root: environment)
         monkeypatch.setattr(
             cmd, "_pymcu_executable",
@@ -328,6 +329,36 @@ class TestVerifyUpstreamImports:
 
         assert ok, detail
         assert commands == [[str(executable), "build"]]
+
+    def test_global_pymcu_verifies_against_poetry_site_packages(
+            self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        (tmp_path / "poetry.lock").touch()
+        environment = tmp_path / "poetry-cache" / "demo-123"
+        site = environment / "lib" / "python3.14" / "site-packages"
+        site.mkdir(parents=True)
+        global_pymcu = tmp_path / "global" / "pymcu"
+        global_pymcu.parent.mkdir()
+        global_pymcu.touch()
+        monkeypatch.setattr(cmd, "project_environment", lambda root: environment)
+        monkeypatch.setattr(cmd, "_pymcu_executable", lambda: global_pymcu)
+        calls = []
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        monkeypatch.setattr(
+            cmd.subprocess, "run",
+            lambda args, **kwargs: calls.append((args, kwargs)) or _Result(),
+        )
+
+        ok, detail = cmd.verify_upstream_imports(UPSTREAM_ENTRY, project)
+
+        assert ok, detail
+        assert calls[0][0] == [str(global_pymcu), "build"]
+        assert calls[0][1]["env"][cmd.PROJECT_ENVIRONMENT_OVERRIDE] == str(environment)
 
 
 class TestLibrariesListingIncludesUpstream:
