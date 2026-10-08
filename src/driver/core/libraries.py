@@ -383,11 +383,48 @@ def read_example(lib: Library, name: str = "", directory: Path | None = None) ->
     }
 
 
+def venv_bin_dir(venv: Path) -> Path:
+    """
+    The directory holding a virtualenv's executables.
+
+    Checks both layouts a venv can use -- Windows' ``Scripts/`` and every
+    other platform's ``bin/`` -- instead of assuming the layout matches
+    ``sys.platform``. That assumption broke for a venv a test builds by
+    hand (always POSIX-shaped, whatever host happens to run the suite);
+    probing what is actually on disk is also strictly more correct for a
+    real venv, which is simply whichever layout its own `python -m venv`
+    produced. ``sys.platform`` only breaks the tie when *venv* does not
+    exist yet.
+    """
+    windows = venv / "Scripts"
+    posix = venv / "bin"
+    if windows.is_dir():
+        return windows
+    if posix.is_dir():
+        return posix
+    return windows if sys.platform == "win32" else posix
+
+
+def venv_python(venv: Path) -> Path:
+    """The venv's own Python interpreter, Windows or POSIX layout."""
+    bin_dir = venv_bin_dir(venv)
+    name = "python.exe" if bin_dir.name == "Scripts" else "python"
+    return bin_dir / name
+
+
 def site_packages_of(venv: Path) -> list[str]:
-    """Return the site-packages directories of a virtualenv, newest layout first."""
-    if sys.platform == "win32":
-        candidate = venv / "Lib" / "site-packages"
-        return [str(candidate)] if candidate.is_dir() else []
+    """
+    Return the site-packages directories of a virtualenv, newest layout first.
+
+    Probes the Windows layout (``Lib/site-packages``, no interpreter-version
+    directory) and the POSIX one (``lib/pythonX.Y/site-packages``) in that
+    order, rather than picking one from ``sys.platform`` -- see
+    venv_bin_dir() for why that assumption does not hold for every venv this
+    is asked about.
+    """
+    windows = venv / "Lib" / "site-packages"
+    if windows.is_dir():
+        return [str(windows)]
     return [str(p) for p in sorted((venv / "lib").glob("python*/site-packages")) if p.is_dir()]
 
 
