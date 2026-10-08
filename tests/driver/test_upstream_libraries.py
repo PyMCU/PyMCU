@@ -402,6 +402,34 @@ class TestResolveUpstreamForTarget:
         assert warned == []
         assert len(includes) == 1
 
+    def test_duplicate_metadata_stages_the_same_exact_version_it_verified(
+            self, tmp_path):
+        version_two = tmp_path / "version-two"
+        version_one = tmp_path / "version-one"
+        _write_dist(
+            version_two, distribution="sensor-dist", version="2.0",
+            module="sensor", is_package=False,
+        )
+        _write_dist(
+            version_one, distribution="sensor-dist", version="1.0",
+            module="sensor", is_package=False,
+        )
+        (version_two / "sensor.py").write_text("VALUE = 2\n")
+        (version_one / "sensor.py").write_text("VALUE = 1\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(version_two), str(version_one)], flavors=[],
+            stage_root=tmp_path / "_upstream",
+            index=_index(
+                distribution="sensor-dist", version="1.0",
+                provides=("sensor",), layer="native",
+            ),
+        )
+
+        assert skipped == errors == warned == []
+        assert len(includes) == 1
+        assert (Path(includes[0]) / "sensor.py").read_text() == "VALUE = 1\n"
+
 
 class TestFallbackStaging:
     def test_structurally_corrupt_index_warns_and_uses_fallback(self, tmp_path):

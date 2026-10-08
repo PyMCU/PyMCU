@@ -88,6 +88,14 @@ class FallbackDistribution:
     metadata: Distribution
 
 
+@dataclass(frozen=True)
+class VerifiedUpstream:
+    """An index entry paired with the exact installed metadata it verified."""
+
+    entry: UpstreamEntry
+    metadata: Distribution
+
+
 class StagingError(Exception):
     """An installed distribution was found but its sources cannot be staged."""
 
@@ -241,18 +249,22 @@ def discover_fallback_distributions(
     )
 
 
-def find_distribution(distribution: str, search_path: list[str] | None) -> Distribution | None:
+def _distribution_sort_key(dist: Distribution) -> str:
+    """Stable ordering for duplicate metadata directories."""
+    return str(getattr(dist, "_path", ""))
+
+
+def find_distribution(distribution: str, search_path: list[str] | None, *,
+                      version: str | None = None) -> Distribution | None:
     """The installed `Distribution` matching *distribution*, or None."""
     wanted = _normalize(distribution)
-    try:
-        found = _installed_distributions(search_path)
-    except Exception:
-        return None
-    for dist in found:
+    matches = []
+    for dist in _installed_distributions(search_path):
         name = (dist.metadata["Name"] if dist.metadata else "") or ""
-        if _normalize(name) == wanted:
-            return dist
-    return None
+        if (_normalize(name) == wanted
+                and (version is None or (dist.version or "unknown") == version)):
+            matches.append(dist)
+    return min(matches, key=_distribution_sort_key) if matches else None
 
 
 def installed_distribution_version(distribution: str, search_path: list[str] | None) -> str | None:
@@ -272,7 +284,9 @@ def discover_installed_upstream(entries: list[UpstreamEntry],
     """
     installed: list[UpstreamEntry] = []
     for entry in entries:
-        dist = find_distribution(entry.distribution, search_path)
+        dist = find_distribution(
+            entry.distribution, search_path, version=entry.version
+        ) or find_distribution(entry.distribution, search_path)
         if dist is None:
             continue
         version = dist.version or "unknown"
@@ -283,17 +297,22 @@ def discover_installed_upstream(entries: list[UpstreamEntry],
 
 
 def _verified_upstream_entries(entries: list[UpstreamEntry],
-                               search_path: list[str] | None) -> list[UpstreamEntry]:
+                               search_path: list[str] | None) -> list[VerifiedUpstream]:
     """Index entries whose measured version is exactly what is installed."""
-    installed = {
-        _normalize((dist.metadata["Name"] if dist.metadata else "") or ""): dist
-        for dist in _installed_distributions(search_path)
-    }
-    return [
-        entry for entry in entries
-        if (dist := installed.get(_normalize(entry.distribution))) is not None
-        and (dist.version or "unknown") == entry.version
-    ]
+    found = _installed_distributions(search_path)
+    verified: list[VerifiedUpstream] = []
+    for entry in entries:
+        matches = [
+            dist for dist in found
+            if _normalize((dist.metadata["Name"] if dist.metadata else "") or "")
+            == _normalize(entry.distribution)
+            and (dist.version or "unknown") == entry.version
+        ]
+        if matches:
+            verified.append(VerifiedUpstream(
+                entry, min(matches, key=_distribution_sort_key)
+            ))
+    return verified
 
 
 def _recorded_module_files(dist: Distribution, module: str) -> list[tuple[Path, Path]]:
@@ -431,7 +450,7 @@ def _stage_modules(dist: Distribution, distribution: str, modules: tuple[str, ..
 
 
 def stage_modules(entry: UpstreamEntry, search_path: list[str] | None,
-                  stage_root: Path) -> Path | None:
+                  stage_root: Path, *, metadata: Distribution | None = None) -> Path | None:
     """
     Copy *entry*'s declared modules into ``stage_root/<distribution>/`` and
     return that directory, or None if none of them could be found installed.
@@ -450,7 +469,7 @@ def stage_modules(entry: UpstreamEntry, search_path: list[str] | None,
     directory of its own to point at without exposing its site-packages
     siblings too.
     """
-    dist = find_distribution(entry.distribution, search_path)
+    dist = metadata or find_distribution(entry.distribution, search_path)
     if dist is None:
         return None
     return _stage_modules(dist, entry.distribution, entry.provides, stage_root)
@@ -653,7 +672,8 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         or ("libraries" in index and not isinstance(index["libraries"], list))
     )
     entries = upstream_entries(index)
-    verified_entries = _verified_upstream_entries(entries, search_path)
+    verified = _verified_upstream_entries(entries, search_path)
+    verified_entries = [item.entry for item in verified]
 
     includes: list[str] = []
     skipped: list[str] = []
@@ -666,7 +686,8 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         )
     protected = protected_modules or set()
     prior_roots = [Path(root) for root in earlier_roots or ()]
-    for entry in discover_installed_upstream(verified_entries, search_path):
+    for installed in verified:
+        entry = installed.entry
         if enforce and entry.layer != "native" and entry.layer not in flavors:
             declared = ", ".join(flavors) if flavors else "none"
             skipped.append(
@@ -702,7 +723,9 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         if not stage_entry.provides:
             continue
         try:
-            staged = stage_modules(stage_entry, search_path, stage_root)
+            staged = stage_modules(
+                stage_entry, search_path, stage_root, metadata=installed.metadata
+            )
         except StagingError as exc:
             errors.append(str(exc))
             continue
