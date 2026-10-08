@@ -370,7 +370,7 @@ class TestDependencyRecording:
             "--extra-index-url https://example.test/simple\n"
         )
 
-    def test_requirements_parser_handles_comments_markers_hashes_and_options(
+    def test_requirements_parser_handles_comments_markers_and_options(
             self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "pyproject.toml").write_text(
@@ -380,7 +380,7 @@ class TestDependencyRecording:
         requirements = tmp_path / "requirements.txt"
         requirements.write_text(
             "--index-url https://example.test/simple\n"
-            "sensor-dist>=1; python_version >= '3.11' --hash=sha256:abc  "
+            "sensor-dist>=1; python_version >= '3.11'  "
             "# hardware dependency\n"
             "sensor-dist-extra>=1  # a different project\n"
         )
@@ -402,7 +402,33 @@ class TestDependencyRecording:
             "sensor-dist-extra>=1  # a different project\n"
         )
 
-    def test_continued_hashed_requirement_is_replaced_and_removed_as_one_block(
+    def test_a_block_level_hash_without_require_hashes_is_still_protected(
+            self, tmp_path, monkeypatch):
+        """
+        `--hash` on just this one requirement is enough to protect it, even
+        when the file as a whole never turns on `--require-hashes`.
+        """
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\ndependencies = []\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\n'
+        )
+        requirements = tmp_path / "requirements.txt"
+        requirements.write_text(
+            "--index-url https://example.test/simple\n"
+            "sensor-dist>=1; python_version >= '3.11' --hash=sha256:abc  "
+            "# hardware dependency\n"
+            "sensor-dist-extra>=1  # a different project\n"
+        )
+        project = cmd._load_project()
+        original = requirements.read_text()
+
+        with pytest.raises(cmd.HashLockedRequirementError, match="sensor-dist"):
+            cmd._add_dependency(project, "sensor-dist==2.0")
+
+        assert requirements.read_text() == original
+
+    def test_continued_hashed_requirement_with_matching_version_is_untouched(
             self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "pyproject.toml").write_text(
@@ -418,15 +444,41 @@ class TestDependencyRecording:
             "sensor-dist-extra>=1\n"
         )
         project = cmd._load_project()
+        original = requirements.read_text()
 
-        cmd._add_dependency(project, "sensor-dist==2.0")
+        # Reinstalling the exact version already pinned needs no rewrite --
+        # the recorded hashes still describe it.
+        cmd._add_dependency(project, "sensor-dist==1.0")
 
-        assert requirements.read_text() == (
+        assert requirements.read_text() == original
+
+    def test_continued_hashed_requirement_refuses_an_unmatched_version(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\ndependencies = []\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\n'
+        )
+        requirements = tmp_path / "requirements.txt"
+        requirements.write_text(
             "--require-hashes\n"
-            "sensor-dist==2.0  # hardware dependency\n"
+            "sensor-dist==1.0 \\\n"
+            "    --hash=sha256:abc \\\n"
+            "    --hash=sha256:def  # hardware dependency\n"
             "sensor-dist-extra>=1\n"
         )
+        project = cmd._load_project()
+        original = requirements.read_text()
 
+        # A different version has no matching hash to keep, and fabricating
+        # an unhashed line would make the next `--require-hashes` install
+        # fail instead -- so this refuses rather than silently corrupting it.
+        with pytest.raises(cmd.HashLockedRequirementError, match="sensor-dist"):
+            cmd._add_dependency(project, "sensor-dist==2.0")
+
+        assert requirements.read_text() == original
+
+        # Removing it outright is unaffected: there is no hash left to keep.
         cmd._remove_dependency(project, "sensor-dist")
 
         assert requirements.read_text() == (
