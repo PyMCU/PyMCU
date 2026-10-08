@@ -560,6 +560,14 @@ class TestFallbackStaging:
     @pytest.mark.parametrize(
         ("distribution", "module"),
         [
+            ("pip", "pip"),
+            ("setuptools", "pkg_resources"),
+            ("wheel", "wheel"),
+            ("packaging", "packaging"),
+            ("virtualenv", "virtualenv"),
+            ("pipx", "pipx"),
+            ("poetry", "poetry"),
+            ("uv", "uv"),
             ("pyserial", "serial"),
             ("pyusb", "usb"),
             ("hidapi", "hid"),
@@ -576,6 +584,70 @@ class TestFallbackStaging:
         )
 
         assert up.discover_fallback_distributions([], [str(site)]) == []
+
+    def test_python_stdlib_names_are_never_fallback_modules(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="host-json", version="1.0", modules=("json",),
+        )
+
+        assert up.discover_fallback_distributions([], [str(site)]) == []
+
+    def test_compiler_dependencies_are_host_only(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        compiler = _write_modules_dist(
+            site, distribution="pymcu-compiler", version="1.0",
+            modules=("driver",),
+        )
+        metadata = compiler / "METADATA"
+        metadata.write_text(metadata.read_text() + "Requires-Dist: host-helper\n")
+        _write_modules_dist(
+            site, distribution="host-helper", version="1.0",
+            modules=("host_helper",),
+        )
+
+        found = up.discover_fallback_distributions(
+            [], [str(site)], ignored_distributions={"pymcu-compiler"},
+        )
+
+        assert found == []
+
+    def test_console_script_only_distribution_is_host_only(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        dist_info = _write_modules_dist(
+            site, distribution="host-command", version="1.0",
+            modules=("host_command",),
+        )
+        (dist_info / "entry_points.txt").write_text(
+            "[console_scripts]\nhost-command = host_command:main\n"
+        )
+        with (dist_info / "RECORD").open("a") as record:
+            record.write(f"{dist_info.name}/entry_points.txt,,\n")
+
+        assert up.discover_fallback_distributions([], [str(site)]) == []
+
+    def test_index_cannot_expose_packaging_tooling(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="pip", version="1.0", modules=("pip",),
+        )
+        main = tmp_path / "main.py"
+        main.write_text("import pip\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index=_index(
+                distribution="pip", version="1.0",
+                provides=("pip",), layer="native",
+            ),
+            entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+
+        assert includes == skipped == errors == warned == []
 
     def test_a_distribution_requiring_blinka_is_host_only(self, tmp_path):
         site = tmp_path / "site-packages"
@@ -793,10 +865,7 @@ class TestFallbackStaging:
         )
 
         assert includes == []
-        assert warned == [
-            f"host-{module}: not staging {module} because the PyMCU stdlib "
-            "or active compatibility layer provides that name"
-        ]
+        assert warned == []
 
     def test_indexed_distribution_cannot_stage_a_stdlib_name(self, tmp_path):
         site = tmp_path / "site-packages"

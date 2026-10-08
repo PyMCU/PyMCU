@@ -38,6 +38,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tomllib
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
@@ -50,6 +51,18 @@ from .libraries import LAYERS, read_cached_library_index
 
 
 EXCLUDED_DISTRIBUTIONS = frozenset({
+    # Python environment and packaging tools are host programs, not firmware
+    # libraries. Several of these expose tempting import names (notably
+    # setuptools' pkg_resources and distutils) despite existing only to manage
+    # the environment in which the compiler driver runs.
+    "pip",
+    "setuptools",
+    "wheel",
+    "packaging",
+    "virtualenv",
+    "pipx",
+    "poetry",
+    "uv",
     "adafruit-blinka",
     "adafruit-platformdetect",
     "adafruit-pureio",
@@ -168,9 +181,37 @@ def _declares_mcu_compatibility(dist: Distribution) -> bool:
     )
 
 
-def _is_host_only_distribution(dist: Distribution) -> bool:
+def _console_scripts_only(dist: Distribution) -> bool:
+    """Whether a distribution advertises commands but no plugin API."""
+    entry_points = list(dist.entry_points)
+    return bool(entry_points) and all(
+        entry.group == "console_scripts" for entry in entry_points
+    )
+
+
+def _pymcu_host_dependencies(found: list[Distribution]) -> set[str]:
+    """Direct host dependencies of the compiler driver installed here."""
+    dependencies: set[str] = set()
+    for dist in found:
+        name = (dist.metadata["Name"] if dist.metadata else "") or ""
+        if _normalize(name) != "pymcu-compiler":
+            continue
+        for raw in dist.requires or ():
+            try:
+                dependencies.add(_normalize(Requirement(raw).name))
+            except InvalidRequirement:
+                continue
+    return dependencies
+
+
+def _is_host_only_distribution(
+    dist: Distribution, pymcu_dependencies: set[str] | None = None,
+) -> bool:
     name = (dist.metadata["Name"] if dist.metadata else "") or ""
     return (_is_excluded_distribution(name)
+            or _normalize(name) in (pymcu_dependencies or set())
+            or (_console_scripts_only(dist)
+                and not _declares_mcu_compatibility(dist))
             or (_requires_blinka(dist)
                 and not _declares_mcu_compatibility(dist)))
 
@@ -214,6 +255,7 @@ def _installed_distributions(search_path: list[str] | None) -> list[Distribution
 
 def excluded_module_names(found: list[Distribution]) -> set[str]:
     """Modules installed by excluded host-only distributions."""
+    pymcu_dependencies = _pymcu_host_dependencies(found)
     embedded = {
         module
         for dist in found if _declares_mcu_compatibility(dist)
@@ -221,7 +263,7 @@ def excluded_module_names(found: list[Distribution]) -> set[str]:
     }
     excluded: set[str] = set()
     for dist in found:
-        if _is_host_only_distribution(dist):
+        if _is_host_only_distribution(dist, pymcu_dependencies):
             excluded.update(top_level_modules(dist))
     return excluded - embedded
 
@@ -232,6 +274,7 @@ def discover_fallback_distributions(
 ) -> list[FallbackDistribution]:
     """Installed distributions absent from the index and safe to expose."""
     found = _installed_distributions(search_path)
+    pymcu_dependencies = _pymcu_host_dependencies(found)
     excluded_modules = excluded_module_names(found)
     ignored = {_normalize(name) for name in (ignored_distributions or set())}
     ignored.update(_normalize(entry.distribution) for entry in entries)
@@ -240,11 +283,13 @@ def discover_fallback_distributions(
     for dist in found:
         name = (dist.metadata["Name"] if dist.metadata else "") or ""
         normalized = _normalize(name)
-        if not name or normalized in ignored or _is_host_only_distribution(dist):
+        if (not name or normalized in ignored
+                or _is_host_only_distribution(dist, pymcu_dependencies)):
             continue
         modules = tuple(
             module for module in top_level_modules(dist)
             if module not in excluded_modules
+            and module not in sys.stdlib_module_names
         )
         if modules:
             fallback.append(FallbackDistribution(
@@ -313,6 +358,7 @@ def _verified_upstream_entries(entries: list[UpstreamEntry],
                                search_path: list[str] | None) -> list[VerifiedUpstream]:
     """Index entries whose measured version is exactly what is installed."""
     found = _installed_distributions(search_path)
+    pymcu_dependencies = _pymcu_host_dependencies(found)
     verified: list[VerifiedUpstream] = []
     for entry in entries:
         matches = [
@@ -320,6 +366,7 @@ def _verified_upstream_entries(entries: list[UpstreamEntry],
             if _normalize((dist.metadata["Name"] if dist.metadata else "") or "")
             == _normalize(entry.distribution)
             and (dist.version or "unknown") == entry.version
+            and not _is_host_only_distribution(dist, pymcu_dependencies)
         ]
         if matches:
             verified.append(VerifiedUpstream(
@@ -644,7 +691,7 @@ def stage_imported_fallback(
     staged: dict[str, Path] = {}
     warned: set[str] = set()
     errors: set[str] = set()
-    protected = protected_modules or set()
+    protected = set(protected_modules or ()) | set(sys.stdlib_module_names)
 
     while queue:
         source, module, is_package = queue.pop(0)
