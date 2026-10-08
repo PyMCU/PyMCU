@@ -111,18 +111,26 @@ def upstream_entries(index: dict) -> list[UpstreamEntry]:
     for raw in libraries:
         if not isinstance(raw, dict) or raw.get("kind") != "upstream":
             continue
-        distribution = str(raw.get("distribution", "")).strip()
-        provides = tuple(str(m) for m in raw.get("provides", []) if str(m))
-        if not distribution or not provides:
+        distribution = raw.get("distribution", "")
+        provides = raw.get("provides", [])
+        string_fields = (
+            raw.get("name", ""), raw.get("version", ""),
+            raw.get("layer", "native"), raw.get("repository", ""),
+        )
+        if (not isinstance(distribution, str) or not distribution.strip()
+                or not isinstance(provides, list) or not provides
+                or not all(isinstance(module, str) and module for module in provides)
+                or not all(isinstance(value, str) for value in string_fields)):
             continue
-        layer = str(raw.get("layer", "native"))
+        distribution = distribution.strip()
+        layer = raw.get("layer", "native")
         entries.append(UpstreamEntry(
-            name=str(raw.get("name", "")) or distribution,
+            name=raw.get("name", "") or distribution,
             distribution=distribution,
-            version=str(raw.get("version", "")),
-            provides=provides,
+            version=raw.get("version", ""),
+            provides=tuple(provides),
             layer=layer if layer in LAYERS else "native",
-            repository=str(raw.get("repository", "")),
+            repository=raw.get("repository", ""),
         ))
     return entries
 
@@ -701,6 +709,15 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         not isinstance(index, dict)
         or ("libraries" in index and not isinstance(index["libraries"], list))
     )
+    malformed_rows = (
+        isinstance(index, dict)
+        and isinstance(index.get("libraries", []), list)
+        and any(
+            isinstance(raw, dict) and raw.get("kind") == "upstream"
+            and not upstream_entries({"libraries": [raw]})
+            for raw in index.get("libraries", [])
+        )
+    )
     entries = upstream_entries(index)
     verified = _verified_upstream_entries(entries, search_path)
     verified_entries = [item.entry for item in verified]
@@ -713,6 +730,11 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         warned.append(
             "library index is malformed: ignoring it and discovering imported "
             "distributions unverified"
+        )
+    elif malformed_rows:
+        warned.append(
+            "library index contains malformed upstream data: ignoring it and "
+            "discovering imported distributions unverified"
         )
     protected = protected_modules or set()
     prior_roots = [Path(root) for root in earlier_roots or ()]
