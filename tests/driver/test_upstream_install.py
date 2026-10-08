@@ -299,6 +299,117 @@ class TestInstallUpstreamLibrary:
         assert "boom" in result.message
 
 
+class TestRollbackPreservesAPreexistingDependency:
+    """
+    `uv add` / `poetry add` rewrite pyproject.toml and the lock file as part
+    of installing, before verification ever runs. A failed post-install
+    verification used to roll back with an unconditional `uv remove` /
+    `poetry remove`, which deletes the dependency entirely -- correct for a
+    brand-new one, wrong when it was already declared before this command
+    ran for some other reason. The fix snapshots the dependency files before
+    the install command runs and, for a pre-existing dependency, restores
+    that snapshot instead of removing anything.
+    """
+
+    def _pyproject(self, pin: str) -> str:
+        return (
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            f'dependencies = ["adafruit-circuitpython-hcsr04{pin}"]\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\nstdlib = ["circuitpython"]\n'
+        )
+
+    def test_uv_rollback_restores_rather_than_removes(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        original_pyproject = self._pyproject(">=0.4.20")
+        (tmp_path / "pyproject.toml").write_text(original_pyproject)
+        original_lock = "version = 1\n# pre-existing lock, before this command\n"
+        (tmp_path / "uv.lock").write_text(original_lock)
+
+        monkeypatch.setattr(cmd, "_uv_bin", lambda: "/usr/bin/uv")
+        monkeypatch.setattr(
+            cmd, "resolve_from_index",
+            lambda project, name, refresh=False: (
+                UPSTREAM_ENTRY, UPSTREAM_ENTRY["distribution"], ""),
+        )
+        monkeypatch.setattr(cmd, "last_index_source", lambda: "bundled")
+        monkeypatch.setattr(cmd, "_needs_environment", lambda project: False)
+
+        def fake_uv_add(args, cwd):
+            # What `uv add` actually does: bump the pin and re-lock.
+            assert args[:2] == ["/usr/bin/uv", "add"]
+            (tmp_path / "pyproject.toml").write_text(self._pyproject("==0.4.25"))
+            (tmp_path / "uv.lock").write_text("version = 1\n# re-locked by uv add\n")
+            return True
+
+        monkeypatch.setattr(cmd, "_run", fake_uv_add)
+        monkeypatch.setattr(cmd, "installed_distribution_version",
+                            lambda dist, search: "0.4.25")
+        monkeypatch.setattr(cmd, "verify_upstream_imports",
+                            lambda entry, proj: (False, "boom"))
+
+        remove_calls = []
+        monkeypatch.setattr(
+            cmd.subprocess, "run",
+            lambda *a, **k: remove_calls.append(a) or pytest.fail(
+                "must not shell out to roll back a pre-existing dependency"),
+        )
+
+        project = cmd._load_project()
+        result = cmd.install_library(project, "adafruit_hcsr04", verify=True)
+
+        assert not result.ok
+        assert "boom" in result.message
+        assert "already a dependency before this command" in result.message
+        assert remove_calls == []
+        assert (tmp_path / "pyproject.toml").read_text() == original_pyproject
+        assert (tmp_path / "uv.lock").read_text() == original_lock
+
+    def test_poetry_rollback_restores_rather_than_removes(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        original_pyproject = self._pyproject(">=0.4.20")
+        (tmp_path / "pyproject.toml").write_text(original_pyproject)
+        original_lock = "# pre-existing poetry lock, before this command\n"
+        (tmp_path / "poetry.lock").write_text(original_lock)
+
+        monkeypatch.setattr(cmd, "_poetry_bin", lambda: "/usr/bin/poetry")
+        monkeypatch.setattr(
+            cmd, "resolve_from_index",
+            lambda project, name, refresh=False: (
+                UPSTREAM_ENTRY, UPSTREAM_ENTRY["distribution"], ""),
+        )
+        monkeypatch.setattr(cmd, "last_index_source", lambda: "bundled")
+        monkeypatch.setattr(cmd, "_needs_environment", lambda project: False)
+
+        def fake_poetry_add(args, cwd):
+            assert args[:2] == ["/usr/bin/poetry", "add"]
+            (tmp_path / "pyproject.toml").write_text(self._pyproject("==0.4.25"))
+            (tmp_path / "poetry.lock").write_text("# re-locked by poetry add\n")
+            return True
+
+        monkeypatch.setattr(cmd, "_run", fake_poetry_add)
+        monkeypatch.setattr(cmd, "installed_distribution_version",
+                            lambda dist, search: "0.4.25")
+        monkeypatch.setattr(cmd, "verify_upstream_imports",
+                            lambda entry, proj: (False, "boom"))
+
+        remove_calls = []
+        monkeypatch.setattr(
+            cmd.subprocess, "run",
+            lambda *a, **k: remove_calls.append(a) or pytest.fail(
+                "must not shell out to roll back a pre-existing dependency"),
+        )
+
+        project = cmd._load_project()
+        result = cmd.install_library(project, "adafruit_hcsr04", verify=True)
+
+        assert not result.ok
+        assert "boom" in result.message
+        assert "already a dependency before this command" in result.message
+        assert remove_calls == []
+        assert (tmp_path / "pyproject.toml").read_text() == original_pyproject
+        assert (tmp_path / "poetry.lock").read_text() == original_lock
+
+
 class TestVerifyUpstreamImports:
     def test_builds_a_program_importing_the_declared_modules(self, tmp_path, monkeypatch):
         written = {}
