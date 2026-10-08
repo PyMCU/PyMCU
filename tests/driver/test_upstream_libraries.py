@@ -382,7 +382,10 @@ class TestFallbackStaging:
         )
 
         assert skipped == errors == []
-        assert warned == ["example-drivers"]
+        assert warned == [
+            "example-drivers is not in the PyMCU library index: "
+            "compiling it unverified"
+        ]
         assert len(includes) == 1
         staged = Path(includes[0])
         assert (staged / "sensor_a.py").is_file()
@@ -424,10 +427,62 @@ class TestFallbackStaging:
             search_path=[str(site)], flavors=["circuitpython"],
             stage_root=tmp_path / "_upstream", index={}, entry_point=main,
             earlier_roots=[str(tmp_path), str(compat)],
+            protected_modules={"digitalio"},
         )
 
         assert includes == []
-        assert warned == []
+        assert warned == [
+            "host-digitalio: not staging digitalio because the PyMCU stdlib "
+            "or active compatibility layer provides that name"
+        ]
+
+    @pytest.mark.parametrize("module", ["time", "math", "random", "asyncio"])
+    def test_stdlib_alias_wins_over_an_unindexed_distribution(self, tmp_path, module):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution=f"host-{module}", version="1.0", modules=(module,),
+        )
+        stdlib_root = tmp_path / "stdlib-root"
+        (stdlib_root / "pymcu").mkdir(parents=True)
+        (stdlib_root / "pymcu" / f"{module}.py").write_text("VALUE = 1\n")
+        main = tmp_path / "main.py"
+        main.write_text(f"import {module}\n")
+
+        includes, _, _, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index={}, entry_point=main,
+            earlier_roots=[str(tmp_path), str(stdlib_root)],
+            protected_modules={module},
+        )
+
+        assert includes == []
+        assert warned == [
+            f"host-{module}: not staging {module} because the PyMCU stdlib "
+            "or active compatibility layer provides that name"
+        ]
+
+    def test_indexed_distribution_cannot_stage_a_stdlib_name(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="indexed-time", version="1.0", modules=("time",),
+        )
+
+        includes, _, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index=_index(
+                distribution="indexed-time", version="1.0",
+                provides=("time",), layer="native",
+            ),
+            protected_modules={"time"},
+        )
+
+        assert includes == errors == []
+        assert warned == [
+            "indexed-time: not staging time because the PyMCU stdlib or active "
+            "compatibility layer provides that name"
+        ]
 
     def test_indexed_distribution_uses_only_index_modules_without_warning(
             self, tmp_path):

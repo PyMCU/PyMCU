@@ -54,6 +54,7 @@ from ..core.update_check import get_available_updates, get_installed_pymcu_versi
 from ..core import upstream_libraries
 
 console = Console()
+warning_console = Console(stderr=True)
 
 
 def _show_update_hint() -> None:
@@ -1516,10 +1517,21 @@ def build(
         resolution_roots = [str(sources_dir), *extra_includes]
         compiler = PyMCUCompiler(console)
         stdlib_package = compiler.get_stdlib_path()
+        protected_modules: set[str] = set()
         if stdlib_package:
+            protected_modules.add("pymcu")
+            protected_modules.update(
+                upstream_libraries.provided_module_names(Path(stdlib_package))
+            )
             resolution_roots.append(str(compiler.isolate_stdlib(
                 stdlib_package, output_dir
             )))
+        for flavor_dir in flavor_dirs.values():
+            protected_modules.update(
+                upstream_libraries.provided_module_names(flavor_dir)
+            )
+        if board_key:
+            protected_modules.add("board")
         upstream_includes, upstream_skipped, upstream_errors, upstream_warned = (
             upstream_libraries.resolve_upstream_for_target(
                 search_path=upstream_search_path,
@@ -1530,17 +1542,19 @@ def build(
                 entry_point=entry_point,
                 earlier_roots=resolution_roots,
                 ignored_distributions={lib.distribution for lib in libs},
+                protected_modules=protected_modules,
             )
         )
         for note in upstream_skipped:
-            console.print(f"[bold yellow]Skipping upstream library[/bold yellow] {note}")
-        for problem in upstream_errors:
-            console.print(f"[bold yellow]Warning:[/bold yellow] upstream library {problem}")
-        for distribution in upstream_warned:
-            console.print(
-                f"[bold yellow]Warning:[/bold yellow] {distribution} is not in the "
-                "PyMCU library index: compiling it unverified"
+            warning_console.print(
+                f"[bold yellow]Skipping upstream library[/bold yellow] {note}"
             )
+        for problem in upstream_errors:
+            warning_console.print(
+                f"[bold yellow]Warning:[/bold yellow] upstream library {problem}"
+            )
+        for warning in upstream_warned:
+            warning_console.print(f"[bold yellow]Warning:[/bold yellow] {warning}")
         extra_includes.extend(upstream_includes)
 
         # Shared generated-files directory (board shim + print preamble).

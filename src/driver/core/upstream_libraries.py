@@ -418,6 +418,38 @@ def _module_sources(module: str, roots: list[Path]) -> list[tuple[Path, str, boo
     return []
 
 
+def provided_module_names(package: Path) -> set[str]:
+    """Top-level import names supplied by a stdlib or compatibility package."""
+    names: set[str] = set()
+    try:
+        children = list(package.iterdir())
+    except OSError:
+        return names
+    for child in children:
+        if child.is_file() and child.suffix == ".py" and child.stem != "__init__":
+            if child.stem.isidentifier():
+                names.add(child.stem)
+        elif child.is_dir() and child.name.isidentifier():
+            try:
+                if any(path.suffix == ".py" for path in child.rglob("*.py")):
+                    names.add(child.name)
+            except OSError:
+                continue
+    return names
+
+
+def _stdlib_alias_sources(module: str, roots: list[Path]) -> list[tuple[Path, str, bool]]:
+    """Resolve a protected bare name through the compiler's pymcu alias rule."""
+    if "." in module:
+        return []
+    for root in roots:
+        sources = _module_sources(f"pymcu.{module}", [root])
+        if sources:
+            path, _, is_package = sources[-1]
+            return [(path, module, is_package)]
+    return []
+
+
 def _imports(path: Path, module: str, is_package: bool) -> set[str]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -452,7 +484,7 @@ def _imports(path: Path, module: str, is_package: bool) -> set[str]:
 
 def stage_imported_fallback(
     *, entry_point: Path, roots: list[str], fallback: list[FallbackDistribution],
-    stage_root: Path,
+    stage_root: Path, protected_modules: set[str] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     """Stage reachable fallback modules and return includes, warnings, errors."""
     resolution_roots = [Path(root) for root in roots]
@@ -466,6 +498,7 @@ def stage_imported_fallback(
     staged: dict[str, Path] = {}
     warned: set[str] = set()
     errors: set[str] = set()
+    protected = protected_modules or set()
 
     while queue:
         source, module, is_package = queue.pop(0)
@@ -478,7 +511,19 @@ def stage_imported_fallback(
         seen_sources.add(source_key)
 
         for imported in sorted(_imports(source, module, is_package)):
+            top = imported.split(".", 1)[0]
+            owner = by_module.get(top)
             sources = _module_sources(imported, resolution_roots)
+            if top in protected:
+                if owner is not None:
+                    warned.add(
+                        f"{owner.name}: not staging {top} because the PyMCU stdlib "
+                        "or active compatibility layer provides that name"
+                    )
+                if not sources:
+                    sources = _stdlib_alias_sources(imported, resolution_roots)
+                queue.extend(sources)
+                continue
             if not sources and "." in imported:
                 parent = imported.rpartition(".")[0]
                 if _module_sources(parent, resolution_roots):
@@ -488,8 +533,6 @@ def stage_imported_fallback(
                     # must not pull in another distribution that happens to
                     # own the same top-level package.
                     continue
-            top = imported.split(".", 1)[0]
-            owner = by_module.get(top)
             if not sources and owner is not None:
                 key = _normalize(owner.name)
                 target = staged.get(key)
@@ -505,7 +548,10 @@ def stage_imported_fallback(
                         continue
                     staged[key] = target
                     resolution_roots.append(target)
-                warned.add(owner.name)
+                warned.add(
+                    f"{owner.name} is not in the PyMCU library index: "
+                    "compiling it unverified"
+                )
                 sources = _module_sources(imported, resolution_roots)
             queue.extend(sources)
 
@@ -521,6 +567,7 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
                                 entry_point: Path | None = None,
                                 earlier_roots: list[str] | None = None,
                                 ignored_distributions: set[str] | None = None,
+                                protected_modules: set[str] | None = None,
                                 ) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Include paths, skip notes and errors for the upstream libraries in play.
@@ -543,6 +590,8 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
     includes: list[str] = []
     skipped: list[str] = []
     errors: list[str] = []
+    warned: list[str] = []
+    protected = protected_modules or set()
     for entry in discover_installed_upstream(entries, search_path):
         if enforce and entry.layer != "native" and entry.layer not in flavors:
             declared = ", ".join(flavors) if flavors else "none"
@@ -551,8 +600,25 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
                 f"but this project declares stdlib = [{declared}]"
             )
             continue
+        collisions = sorted({
+            module.split(".", 1)[0] for module in entry.provides
+            if module.split(".", 1)[0] in protected
+        })
+        for module in collisions:
+            warned.append(
+                f"{entry.distribution}: not staging {module} because the PyMCU "
+                "stdlib or active compatibility layer provides that name"
+            )
+        stage_entry = UpstreamEntry(
+            entry.name, entry.distribution, entry.version,
+            tuple(module for module in entry.provides
+                  if module.split(".", 1)[0] not in protected),
+            entry.layer, entry.repository,
+        )
+        if not stage_entry.provides:
+            continue
         try:
-            staged = stage_modules(entry, search_path, stage_root)
+            staged = stage_modules(stage_entry, search_path, stage_root)
         except StagingError as exc:
             errors.append(str(exc))
             continue
@@ -564,20 +630,21 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
             continue
         includes.append(str(staged))
 
-    warned: list[str] = []
     if entry_point is not None:
         fallback = discover_fallback_distributions(
             entries, search_path, ignored_distributions
         )
-        fallback_includes, warned, fallback_errors = stage_imported_fallback(
+        fallback_includes, fallback_warned, fallback_errors = stage_imported_fallback(
             entry_point=entry_point,
             roots=[*(earlier_roots or []), *includes],
             fallback=fallback,
             stage_root=stage_root,
+            protected_modules=protected,
         )
         includes.extend(fallback_includes)
         errors.extend(fallback_errors)
-    return includes, skipped, errors, warned
+        warned.extend(fallback_warned)
+    return includes, skipped, errors, sorted(set(warned), key=_normalize)
 
 
 def _current_index() -> dict:
