@@ -1128,9 +1128,13 @@ public partial class IRGenerator
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + elemVe.Name : elemVe.Name);
             if (bytearrayParams.Contains(elemSrcKey) || bytearrayParams.Contains(elemVe.Name))
                 bytearrayParams.Add(key);
-            else if (provenScalarElements.Contains(elemSrcKey) || provenScalarElements.Contains(elemVe.Name))
-                provenScalarElements.Add(key);
         }
+        // Any shape ExpressionIsProvenScalarElement proves -- most commonly, here, a
+        // storage read the unroller synthesizes itself (`buf[i]` for each unrolled
+        // index i): `for one in buf:` over a small-enough-to-unroll bytearray is this
+        // function once per iteration, with `elem` an IndexExpr, not a bare name.
+        if (ExpressionIsProvenScalarElement(elem))
+            provenScalarElements.Add(key);
         return true;
     }
 
@@ -1362,6 +1366,13 @@ public partial class IRGenerator
                 Temporary tmp = MakeTemp(elemDt2);
                 Emit(new ArrayLoad(forBase, new Constant(fk), tmp, elemDt2, forSize));
                 Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
+                // Positive proof for NameIsScalarAtThisSite (Call.cs): every element an
+                // indexed load reads off an SRAM-resident array IS one scalar, the same
+                // fact the enumerate/counter-loop paths already record for their own
+                // loop variable. Finding #3 (review round 6): `for one in buf:` over a
+                // real bytearray took THIS branch, not BindUnrolledRuntimeElement, and
+                // left `one` unrecognised as anything -- `head(one)` was never refused.
+                provenScalarElements.Add(forVarKey);
             }
             else if (isZca)
             {
