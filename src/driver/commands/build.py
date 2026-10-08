@@ -35,6 +35,7 @@ from ..core.compiler import (
     ArenaRequiredError,
     StrfmtRequiredError,
     Round2RequiredError,
+    EmbedRequiredError,
     map_line,
 )
 from ..core.project_config import experimental_enabled
@@ -241,10 +242,7 @@ def _warn_environment_input_versions(
 
 
 _PRINT_RE    = re.compile(r'\bprint\s*\(')
-_UART_RE     = re.compile(r'\bUART\s*\(')
-_TICKS_MS_RE = re.compile(r'\b(?:ticks_ms|monotonic|monotonic_ns|ticks_us|micros)\s*\(')
 _INPUT_RE    = re.compile(r'\binput\s*\(')
-_ASYNC_DEF_RE = re.compile(r'^\s*async\s+def\s', re.MULTILINE)
 
 
 def _ast_module_or_none(py_file: Path) -> Optional[ast.Module]:
@@ -274,67 +272,33 @@ def _call_target_names(node: ast.Call) -> tuple:
     return None, None
 
 
-def _source_has_named_call(sources_dir: Path, names: set) -> bool:
-    """True if any .py file contains an actual call to one of *names*, as a bare
-    name (`millis_init()`) or through an attribute (`timer.millis_init()`).
-    Ignores the same spelling sitting in a comment, a string or a docstring --
-    those never run, unlike a substring match over the raw text.
-    """
-    for py_file in sources_dir.rglob("*.py"):
-        tree = _ast_module_or_none(py_file)
-        if tree is None:
-            try:
-                text = py_file.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if any(re.search(r'\b' + re.escape(n) + r'\s*\(', text) for n in names):
-                return True
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                bare, attr = _call_target_names(node)
-                if bare in names or attr in names:
-                    return True
-    return False
-# `raise Name(<anything>)` -- an exception raised with a message. The unhandled
-# report prints it through the console string writers, which nothing links in
-# unless print() (or this) pulled them in.
-_RAISE_MSG_RE = re.compile(r'\braise\s+[A-Za-z_]\w*\s*\(\s*[^)\s]')
 # `board` is a CircuitPython concept (board.LED, board.GP25). MicroPython code
 # addresses pins through machine.Pin and never imports it.
 _IMPORT_BOARD_RE = re.compile(r'^\s*(?:import\s+board\b|from\s+board\s+import\b)',
                               re.MULTILINE)
 
 
-def _detect_raise_with_message(sources_dir: Path) -> bool:
-    """Return True if any .py file raises an exception with an argument.
-
-    Same over-inclusive-on-purpose shape as the print() scan: matching `raise X(...)`
-    in dead code only links console writers DCE would remove anyway; missing a real
-    one just means the unhandled report is `E:<Type>` without the message, the way it
-    was before.
-    """
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-            if _RAISE_MSG_RE.search(code):
-                return True
-        except OSError:
-            pass
-    return False
-
-
 def _imports_board(sources_dir: Path) -> bool:
     """True if any source actually imports `board`."""
     for py_file in sources_dir.rglob("*.py"):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-        except OSError:
+        tree = _ast_module_or_none(py_file)
+        if tree is None:
+            # Unparseable: same text-scan fallback as _detect_print_usage.
+            try:
+                lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+                code = "\n".join(line.split("#")[0] for line in lines)
+            except OSError:
+                continue
+            if _IMPORT_BOARD_RE.search(code):
+                return True
             continue
-        if _IMPORT_BOARD_RE.search(code):
-            return True
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                if any(a.name == "board" or a.name.startswith("board.") for a in node.names):
+                    return True
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "board" or (node.module or "").startswith("board."):
+                    return True
     return False
 
 
@@ -360,20 +324,23 @@ def _module_level_shadows(tree: ast.Module, name: str) -> bool:
     return False
 
 
-def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
+def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool]:
     """Scan .py files in sources_dir.
 
-    Returns (has_print, has_uart, has_input):
+    Returns (has_print, has_input):
       has_print -- True if any file calls the builtin print(): a bare-name call
                    (`print(...)`, not `lcd.print(...)`) not shadowed by a
                    module-level `print` of the user's own.
-      has_uart  -- True if any file explicitly constructs a UART() instance: by
-                   its bare name, by an import alias (`from ... import UART as
-                   Serial`), or fully qualified (`pymcu.hal...uart.UART(...)`).
       has_input -- same rule as has_print, for input().
+
+    This is the one question the driver still asks of the source text itself
+    (RFC 0014 family 7): whether the program calls a bare `print`/`input`
+    builtin decides between the imports-only and the full stdout preamble,
+    and the compiler has no token for "a builtin was spelled". Whether a UART
+    is already owned arrives instead as [STDOUT_OWNED] on the compile's token
+    stream, reported when a stdlib UART construction resolves.
     """
     has_print = False
-    has_uart  = False
     has_input = False
     for py_file in sources_dir.rglob("*.py"):
         tree = _ast_module_or_none(py_file)
@@ -387,22 +354,14 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
                 continue
             if not has_print and _PRINT_RE.search(code):
                 has_print = True
-            if not has_uart and _UART_RE.search(code):
-                has_uart = True
             if not has_input and _INPUT_RE.search(code):
                 has_input = True
-            if has_print and has_uart and has_input:
+            if has_print and has_input:
                 break
             continue
 
         print_shadowed = _module_level_shadows(tree, "print")
         input_shadowed = _module_level_shadows(tree, "input")
-        uart_aliases = {"UART"}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    if alias.name == "UART":
-                        uart_aliases.add(alias.asname or alias.name)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 bare, attr = _call_target_names(node)
@@ -410,42 +369,9 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
                     has_print = True
                 if not has_input and bare == "input" and not input_shadowed:
                     has_input = True
-                if not has_uart and (bare in uart_aliases or attr == "UART"):
-                    has_uart = True
-        if has_print and has_uart and has_input:
+        if has_print and has_input:
             break
-    return has_print, has_uart, has_input
-
-
-_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']|\.join\s*\(|str\s*\(|repr\s*\(''')
-
-
-def _detect_fstring_value_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file assigns an f-string to a name (`s = f"..."`)
-    or calls str.join (a join over a generator/comprehension materializes
-    through the same pymcu.strfmt helpers).
-
-    Over-inclusive on purpose (a fully-constant f-string assignment also matches):
-    the injected pymcu.strfmt helpers are plain module functions, so anything
-    unused is dropped by DCE. hex()/bin()/oct() of a run-time value ALSO needs
-    pymcu.strfmt but is not scanned for here (P2 AVR gaps bundle, item 1 / RFC
-    0014 decision 5): this regex over the source text cannot tell a real call
-    from the same spelling in a comment or a user's own `def hex`, so it used
-    to either miss the real usage or inject the helper unasked. The compiler
-    itself decides now -- it reports [NEEDS_STRFMT] on its stdout token stream
-    once it resolves a call that actually needs the helper and finds the import
-    missing; build() answers that below the same way it already answers
-    [NEEDS_ARENA] (see _compile_frontend's retry loop).
-    """
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-            if _FSTRING_VALUE_RE.search(code):
-                return True
-        except OSError:
-            pass
-    return False
+    return has_print, has_input
 
 
 # docs/rfcs/0004-arena-allocator.md: the arena's default reservation when a program uses
@@ -549,50 +475,6 @@ def _inject_round2_preamble(entry_point: Path, generated_dir: Path) -> tuple[Pat
     )
 
 
-def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
-    """Return True if any source file actually calls into the Timer0 time base.
-
-    Covers MicroPython ticks_ms()/ticks_us()/micros() and CircuitPython
-    time.monotonic()/monotonic_ns()/supervisor.ticks_ms(): all of them read
-    the millis/micros counter, which stays frozen at 0 until millis_init()
-    arms the overflow ISR -- a monotonic()-scheduled loop then never fires.
-    A call is required (ast-checked): the same spelling in a comment does not
-    reserve Timer0.
-    """
-    return _source_has_named_call(
-        sources_dir, {"ticks_ms", "ticks_us", "micros", "monotonic", "monotonic_ns"}
-    )
-
-
-def _detect_async_def_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file in sources_dir defines an `async def`.
-
-    On AVR the await machinery reads asyncio.ticks(), which is the Timer0
-    millis/micros counter -- it only advances once millis_init() has armed the
-    overflow ISR, so an async program needs the same preamble as ticks_ms().
-    """
-    for py_file in sources_dir.rglob("*.py"):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-            if _ASYNC_DEF_RE.search(code):
-                return True
-        except OSError:
-            pass
-    return False
-
-
-def _sources_call(sources_dir: Path, name: str) -> bool:
-    """Return True if any .py file under sources_dir actually calls *name*.
-
-    Used to skip auto-injecting an init preamble (millis_init(), clock_init())
-    the sources already call themselves -- a substring match used to trip on
-    the same spelling sitting in a comment, disabling the injection while the
-    real init call never ran.
-    """
-    return _source_has_named_call(sources_dir, {name})
-
-
 # ---------------------------------------------------------------------------
 # RFC 0008 -- embedded files (romfs).
 #
@@ -602,35 +484,6 @@ def _sources_call(sources_dir: Path, name: str) -> bool:
 # `--embed name=path`, and report them on the build line. The compiler keys its
 # table by the name open() is given and refuses anything it cannot resolve.
 # ---------------------------------------------------------------------------
-
-# A literal first argument to open(): open("font5x8.bin"), open('data/x.bin', "rb").
-# The string may use any Python prefix combination a compiler could accept later
-# (b, r, u, and combinations), so the literal is captured with the prefix group.
-_OPEN_LITERAL_RE = re.compile(
-    r"""\bopen\s*\(\s*(?:[bBrRuU]{0,3})["']([^"'\n]+)["']""")
-
-
-def _detect_open_literals(sources_dir: Path) -> list[str]:
-    """Return every literal filename an open() call in the sources names.
-
-    Pure discovery for the auto-embedding rule: a name found here that exists
-    under the source tree gets embedded without the project listing it in
-    [tool.pymcu] files. Non-literal arguments (open(self.font_name, ...)) match
-    nothing, which is correct -- the compiler still resolves those at compile
-    time through constant folding, and the project lists such files explicitly.
-    """
-    names: list[str] = []
-    for py_file in sorted(sources_dir.rglob("*.py")):
-        try:
-            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            code = "\n".join(line.split("#")[0] for line in lines)
-        except OSError:
-            continue
-        for m in _OPEN_LITERAL_RE.finditer(code):
-            if m.group(1) not in names:
-                names.append(m.group(1))
-    return names
-
 
 def _resolve_embed_files(
     project_root: Path,
@@ -645,8 +498,8 @@ def _resolve_embed_files(
         the project root first and the sources dir second, so `files =
         ["font5x8.bin"]` finds `src/font5x8.bin` as well as a top-level file.
         The embedded name is the path relative to the base it matched under.
-      * Auto-embed: every literal `open("name")` in the sources whose file
-        exists under sources_dir, the project root, or next to the entry file.
+      * Auto-embed: every name an [EMBED] token reports (added by
+        _resolve_embed_names below as the compile asks for it).
 
     Returns sorted by name for a stable build line.
     """
@@ -677,15 +530,6 @@ def _resolve_embed_files(
                 f"[yellow]warning:[/yellow] \\[tool.pymcu] files pattern "
                 f"'{pattern}' matched no file -- nothing embedded for it")
 
-    for name in _detect_open_literals(sources_dir):
-        if name in embedded:
-            continue
-        for base in (sources_dir, project_root, entry_point.parent):
-            candidate = base / name
-            if candidate.is_file():
-                embedded[name] = candidate.resolve()
-                break
-
     out: list[tuple[str, Path, int]] = []
     for name, path in sorted(embedded.items()):
         try:
@@ -695,7 +539,68 @@ def _resolve_embed_files(
     return out
 
 
-_MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
+def _resolve_embed_names(
+    names: list[str],
+    project_root: Path,
+    sources_dir: Path,
+    entry_point: Path,
+    already: dict[str, Path],
+) -> list[tuple[str, Path, int]]:
+    """Find each [EMBED]-reported name on the filesystem (RFC 0014 family 7).
+
+    The compiler knows the literal open() resolved to; the driver still owns
+    the lookup. Same search order the regex-discovered names got: sources
+    dir, project root, then the directory the entry file lives in. *already*
+    maps names the build embeds already, so a name found there is not
+    resolved (or reported) twice.
+    """
+    out: list[tuple[str, Path, int]] = []
+    for name in names:
+        if name in already:
+            continue
+        for base in (sources_dir, project_root, entry_point.parent):
+            candidate = base / name
+            if candidate.is_file():
+                already[name] = candidate.resolve()
+                try:
+                    out.append((name, candidate.resolve(), candidate.stat().st_size))
+                except OSError:
+                    pass
+                break
+    return out
+
+
+def _main_def_offset(source: str) -> int | None:
+    """Offset just past the colon of a top-level `def main():` line, or None.
+
+    An explicit ``def main():`` is where a preamble's call line lands (see
+    _inject_preamble). Asked of the AST rather than a text scan (RFC 0014):
+    a string or comment that happens to contain the words never fooled the
+    parser, but the scan could not tell a `def main():` inside a docstring
+    from the real one either. The file parses under CPython's ast here or
+    the earlier _detect_print_usage pass already recorded it as unusable;
+    a file ast cannot read simply answers None, the same answer a missing
+    `def main():` gives.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if (isinstance(node, ast.FunctionDef) and node.name == "main"
+                and not node.args.args and not node.args.kwonlyargs
+                and not node.args.posonlyargs and not node.args.vararg
+                and not node.args.kwarg and node.returns is None):
+            lines = source.split("\n")
+            # Only a bare `def main():` line counts -- the same acceptance set
+            # the text scan had (a `def main() -> None:` never matched then and
+            # does not match now).
+            m = re.match(r"def main\s*\(\s*\)\s*:", lines[node.lineno - 1])
+            if m is None:
+                continue
+            return sum(len(line) + 1 for line in lines[:node.lineno - 1]) + m.end()
+    return None
+
 
 # Every line `pymcu build` inserts into the entry file carries this. It is what lets a
 # diagnostic be mapped back per LINE instead of by one accumulated offset, which is what
@@ -725,11 +630,11 @@ def _inject_preamble(
     generated_dir.mkdir(parents=True, exist_ok=True)
     synthetic = generated_dir / entry_point.name
     existing = entry_point.read_text(encoding="utf-8")
-    m = _MAIN_DEF_RE.search(existing)
-    if m:
+    m = _main_def_offset(existing)
+    if m is not None:
         header = _mark_injected(comment + import_line + "\n")
-        modified = (existing[:m.end()] + "\n    " + call_line + INJECTED_MARK
-                    + existing[m.end():])
+        modified = (existing[:m] + "\n    " + call_line + INJECTED_MARK
+                    + existing[m:])
         synthetic.write_text(header + modified, encoding="utf-8")
         # Two insertion points, and therefore two different shifts: a line above
         # `def main():` moves by the header alone, a line at or below the inserted call by
@@ -1699,139 +1604,51 @@ def build(
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
 
-        # Auto-inject stdout preamble when print() or input() is used without an
-        # explicit UART() constructor in user sources.  This mirrors MicroPython's
-        # REPL behaviour where the output device is pre-initialized before user
-        # code runs, so print()/input() work out of the box with no extra imports.
-        # The output device is configurable via [tool.pymcu] stdout / stdout_baud.
+        # RFC 0014 family 7: every decision this section used to make by scanning
+        # the source text -- whether a UART() construction owns stdout, whether a
+        # ticks_ms()/monotonic()/async-def program needs the Timer0 preamble,
+        # whether an RP2350 build needs clock_init(), whether a raise with a
+        # message needs the console writers linked, which literal filenames
+        # open() can name -- now arrives on the compiler's own token stream:
+        # [STDOUT_OWNED], [NEEDS_TIMEBASE], [TIMEBASE_INIT], [NEEDS_CLOCKS],
+        # [NEEDS_EXNMSG] and [EMBED] <name>, consumed by the fixpoint in
+        # _compile_frontend below.
+        #
+        # What remains source-side is the one question the tokens cannot answer:
+        # whether the program calls a BARE print()/input(). A builtin spelled by
+        # name resolves no binding the compiler could report -- what it reports
+        # is the missing console writer, as a hard error, so a program that will
+        # need console support pre-stages the imports-only preamble for its
+        # first compile; the token stream then says whether the full preamble
+        # (no user UART) or the imports-only one (user owns stdout) applies.
         _linemap_preamble_offset = 0
         _original_entry_point = entry_point
+        _preamble_map = None
+        _diagnostic_source = None
 
-        _has_print, _has_uart, _has_input = _detect_print_usage(sources_dir)
-        if (_has_print or _has_input) and not _has_uart:
-            _stdout_device, _stdout_baud = _get_stdout_config(pymcu_config)
-            entry_point, _n = _inject_print_preamble(
-                entry_point, generated_dir, _stdout_device, _stdout_baud
-            )
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _trigger = "print()" if _has_print else "input()"
-            if _has_print and _has_input:
-                _trigger = "print() and input()"
-            _diag_log(
-                f"{_trigger} detected without UART() — injecting stdout preamble "
-                f"({_stdout_device} at {_stdout_baud} baud)",
-                verbose=is_verbose,
-            )
-            if is_verbose:
-                console.print(
-                    f"\\[debug] {_trigger} without UART — stdout preamble injected "
-                    f"({_stdout_device} at {_stdout_baud} baud)",
-                    style="dim",
-                )
-        elif _has_print and _has_uart:
-            # User drives their own UART but also calls print(): load the console
-            # streaming functions (no init -- the user's UART() owns the hardware).
-            entry_point, _n = _inject_print_imports_only(entry_point, generated_dir)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log("print() + user UART() — injecting console functions (no init)",
-                      verbose=is_verbose)
-        elif _detect_raise_with_message(sources_dir):
-            # No print()/input() anywhere, but some raise carries a message: the
-            # unhandled report prints `E:<Type>: <msg>` through the same console
-            # string writers, so they must be linked even though nothing calls
-            # print. No UART init -- the exception runtime programs the
-            # transmitter itself when the program does not own it (uart_owned
-            # stays false), and must not reprogram a live one when it does.
-            entry_point, _n = _inject_print_imports_only(entry_point, generated_dir)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log("raise with message detected — injecting console functions "
-                      "(no init)", verbose=is_verbose)
+        _has_print, _has_input = _detect_print_usage(sources_dir)
+        _stdout_device, _stdout_baud = _get_stdout_config(pymcu_config)
 
-        # Auto-inject the strfmt helpers when an f-string is assigned to a variable
-        # (f-string-as-value lowering resolves pymcu.strfmt by import alias).
-        if _detect_fstring_value_usage(sources_dir):
-            entry_point, _n = _inject_strfmt_preamble(entry_point, generated_dir)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
-                      verbose=is_verbose)
+        # The runtime state the fixpoint drives toward. _console_variant is the
+        # staged preamble ("none" | "imports_only" | "full"); _applied_preambles
+        # the injected init imports it has already asked for; the token flags
+        # accumulate what the compiler has reported across passes.
+        _console_variant = "imports_only" if (_has_print or _has_input) else "none"
+        _applied_preambles: set[str] = set()
+        _user_stdout_owned = False
+        _needs_exnmsg = False
+        _needs_timebase = False
+        _timebase_init = False
+        _needs_clocks = False
+        _timebase = False
 
-        # round(x, n) on a run-time float: NOT detected here (see the comment on
-        # _inject_round2_preamble above) -- the compiler's own [NEEDS_ROUND2] token
-        # drives the injection, in _compile_frontend's retry loop below.
-
-        # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
-        # ATmega program uses async/await (asyncio.ticks() is the same Timer0
-        # micros counter and reads a frozen 0 until the overflow ISR is armed).
-        # millis_init() must run before the first read; injecting it here mirrors
-        # how UART is set up for print().  Skipped when the sources already call
-        # millis_init() themselves -- registering the OVF vector twice is an error.
-        _millis_reason = ""
-        if _detect_ticks_ms_usage(sources_dir):
-            _millis_reason = "ticks_ms()"
-        elif target.lower().startswith("atmega") and _detect_async_def_usage(sources_dir):
-            _millis_reason = "async def (asyncio.ticks)"
-        # Either way the time base runs, and the compiler is told so (see
-        # PymcuCompiler.compile(timebase=...)).
-        _timebase = bool(_millis_reason) or _sources_call(sources_dir, "millis_init")
-        if _millis_reason and not _sources_call(sources_dir, "millis_init"):
-            entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir, _millis_reason)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log(
-                f"{_millis_reason} detected — injecting millis_init() preamble "
-                "(Timer0 OVF @ prescaler 64)",
-                verbose=is_verbose,
-            )
-            if is_verbose:
-                console.print(
-                    f"\\[debug] {_millis_reason} detected — millis_init() preamble injected",
-                    style="dim",
-                )
-
-        # Auto-inject clock_init() for the RP2350 so clk_sys is 150 MHz and the system
-        # timer ticks at an exact 1 MHz -- mirrors the pico-sdk runtime (runtime_init_clocks)
-        # which does the same before main(). Injected LAST so clock_init() runs first, ahead
-        # of any stdout/ticks preamble that depends on the final clk_sys / clk_peri. Skipped
-        # if the user already calls clock_init() (idempotent, but avoids a redundant pass).
-        if target == "rp2350" and not _sources_call(sources_dir, "clock_init"):
-            entry_point, _n = _inject_clock_init_preamble(entry_point, generated_dir)
-            _linemap_preamble_offset += _n
-            if str(generated_dir) not in extra_includes:
-                extra_includes.insert(0, str(generated_dir))
-            _diag_log("rp2350 target — injecting clock_init() (150 MHz + 1 MHz timer tick)",
-                      verbose=is_verbose)
-
-        # What the compiler will see versus what the user wrote. Every preamble injection
-        # above replaced entry_point with a synthetic file under dist/_generated and shifted
-        # the line numbers; without this map a diagnostic sends the reader into their own
-        # build output, at a line that says something else.
-        # Read back off the generated file, which is the only place that knows where every
-        # one of the four possible preambles actually landed.
-        _preamble_map = (
-            _preamble_line_map(entry_point)
-            if _linemap_preamble_offset > 0 and str(entry_point) != str(_original_entry_point)
-            else None
-        )
-        _diagnostic_source = (
-            (str(entry_point), str(_original_entry_point), _preamble_map)
-            if _preamble_map is not None
-            else None
-        )
-
-        # RFC 0008 -- resolve which files open() can name at compile time. Runs
-        # against the ORIGINAL entry point: discovery scans the user's sources,
-        # not any synthetic preamble staged into dist/_generated.
+        # RFC 0008 -- resolve which files open() can name at compile time. The
+        # [tool.pymcu] files entries resolve up front; names an [EMBED] token
+        # reports join them from the retry loop below, resolved through the
+        # same lookup. _embedded_by_name dedupes on the name open() is given.
         _embedded_files = _resolve_embed_files(
             project_root, sources_dir, _original_entry_point, pymcu_config)
+        _embedded_by_name = {_name: _path for _name, _path, _size in _embedded_files}
         for _name, _path, _size in _embedded_files:
             console.print(f"Embedded: {_name}, {_size} bytes")
             _diag_log(f"romfs: {_name} <- {_path} ({_size} B)", verbose=is_verbose)
@@ -1882,33 +1699,69 @@ def build(
             backend_plugin = get_backend_for_chip(target)
             blockmap_path: Path | None = None
 
-            # docs/rfcs/0004-arena-allocator.md: whether the program allocates from the
-            # arena is the COMPILER's call, not a source-text scan's -- only the IR
-            # generator knows whether the bytearray() size argument actually folded (a
-            # foldable `bytearray(((h // 8) * w) + 1)` is a fixed SRAM array and reserves
-            # nothing). pymcuc reports on its stdout token stream:
-            #   [NEEDS_ARENA] -- a runtime-sized allocation met a missing pymcu.arena
-            #                    import; the compile fails (ArenaRequiredError)
-            #   [ARENA_USED]  -- a runtime-sized allocation lowered against an import the
-            #                    program wrote itself; the compile succeeds but ran with
-            #                    the shipped module's ARENA_SIZE of 0
-            # Either way the answer is the same: stage the shim + import and run the
-            # frontend once more. The retry re-reads entry_point / extra_includes /
-            # _diagnostic_source, which the injection updates in place.
+            # docs/rfcs/0004-arena-allocator.md / RFC 0014 family 7: whether the
+            # program allocates from the arena, needs the strfmt/round2 helpers,
+            # reads the software time base, already arms it, still lacks the
+            # RP2350 clock_init(), prints exception messages, embeds a file, or
+            # owns a UART of its own -- every one of those is the COMPILER's
+            # call, reported on its stdout token stream; a source-text scan
+            # cannot tell a resolved call from the same spelling in a comment.
+            #
+            # The compile therefore runs as a fixpoint: each pass asks for
+            # whatever the previous pass's tokens reported, regenerated from the
+            # original entry in one canonical order (console preamble, then
+            # strfmt, ticks, clock and the retry injectors arena/round2), and
+            # stops when a pass reports nothing new. Rebuilding instead of
+            # stacking keeps the synthetic file -- and the diagnostics map it
+            # implies -- identical whichever pass produced which token.
             _arena_size_override = pymcu_config.get("arena_size", None)
 
-            def _inject_arena() -> None:
+            def _restage_entry() -> None:
                 nonlocal entry_point, _linemap_preamble_offset
                 nonlocal _preamble_map, _diagnostic_source
+                ep = _original_entry_point
+                _linemap_preamble_offset = 0
+                if _console_variant == "full":
+                    ep, _n = _inject_print_preamble(
+                        ep, generated_dir, _stdout_device, _stdout_baud)
+                    _linemap_preamble_offset += _n
+                elif _console_variant == "imports_only":
+                    ep, _n = _inject_print_imports_only(ep, generated_dir)
+                    _linemap_preamble_offset += _n
+                if "strfmt" in _applied_preambles:
+                    ep, _n = _inject_strfmt_preamble(ep, generated_dir)
+                    _linemap_preamble_offset += _n
+                if "ticks" in _applied_preambles:
+                    ep, _n = _inject_ticks_ms_preamble(
+                        ep, generated_dir, "a counter read the compiler resolved")
+                    _linemap_preamble_offset += _n
+                if "clocks" in _applied_preambles:
+                    ep, _n = _inject_clock_init_preamble(ep, generated_dir)
+                    _linemap_preamble_offset += _n
+                if "arena" in _applied_preambles:
+                    ep, _n = _inject_arena_preamble(ep, generated_dir)
+                    _linemap_preamble_offset += _n
+                if "round2" in _applied_preambles:
+                    ep, _n = _inject_round2_preamble(ep, generated_dir)
+                    _linemap_preamble_offset += _n
+                if _linemap_preamble_offset > 0 \
+                        and str(generated_dir) not in extra_includes:
+                    extra_includes.insert(0, str(generated_dir))
+                entry_point = ep
+                _preamble_map = (
+                    _preamble_line_map(ep)
+                    if _linemap_preamble_offset > 0
+                    and str(ep) != str(_original_entry_point)
+                    else None
+                )
+                _diagnostic_source = (
+                    (str(ep), str(_original_entry_point), _preamble_map)
+                    if _preamble_map is not None else None
+                )
+
+            def _note_arena() -> None:
                 _reserved = _arena_size_override or _ARENA_BOARD_DEFAULT_BYTES
                 _inject_arena_shim(generated_dir, _reserved, stdlib_package)
-                entry_point, _n = _inject_arena_preamble(entry_point, generated_dir)
-                _linemap_preamble_offset += _n
-                if str(generated_dir) not in extra_includes:
-                    extra_includes.insert(0, str(generated_dir))
-                _preamble_map = _preamble_line_map(entry_point)
-                _diagnostic_source = (
-                    str(entry_point), str(_original_entry_point), _preamble_map)
                 _diag_log(
                     "compiler reported an arena allocation — injecting pymcu.arena "
                     f"import (reserving {_reserved} B)", verbose=is_verbose)
@@ -1922,55 +1775,10 @@ def build(
                         "allocation is runtime-sized and could not be sized exactly -- "
                         "set arena_size in \\[tool.pymcu] to reserve a precise amount)")
 
-            # RFC 0014 decision 5: pymcu.strfmt (a run-time string build -- an f-string
-            # value, str()/repr()/hex()/bin()/oct() of a run-time value) and pymcu.round2
-            # (round(x, n) on a run-time float) are the same story as the arena above --
-            # only the IR generator knows a given call actually needs the helper, so it
-            # reports [NEEDS_STRFMT] / [NEEDS_ROUND2] on the token stream and the driver
-            # injects the import and compiles again. Neither needs a generated shim (no
-            # per-build parameter the way ARENA_SIZE is), so there is no "_USED" token
-            # to answer on an already-successful compile -- unlike the arena.
-
-            def _inject_strfmt() -> None:
-                nonlocal entry_point, _linemap_preamble_offset
-                nonlocal _preamble_map, _diagnostic_source
-                entry_point, _n = _inject_strfmt_preamble(entry_point, generated_dir)
-                _linemap_preamble_offset += _n
-                if str(generated_dir) not in extra_includes:
-                    extra_includes.insert(0, str(generated_dir))
-                _preamble_map = _preamble_line_map(entry_point)
-                _diagnostic_source = (
-                    str(entry_point), str(_original_entry_point), _preamble_map)
-                _diag_log(
-                    "compiler reported a run-time string build -- injecting "
-                    "pymcu.strfmt import", verbose=is_verbose)
-
-            def _inject_round2() -> None:
-                nonlocal entry_point, _linemap_preamble_offset
-                nonlocal _preamble_map, _diagnostic_source
-                entry_point, _n = _inject_round2_preamble(entry_point, generated_dir)
-                _linemap_preamble_offset += _n
-                if str(generated_dir) not in extra_includes:
-                    extra_includes.insert(0, str(generated_dir))
-                _preamble_map = _preamble_line_map(entry_point)
-                _diagnostic_source = (
-                    str(entry_point), str(_original_entry_point), _preamble_map)
-                _diag_log(
-                    "compiler reported round(x, n) on a float -- injecting "
-                    "pymcu.round2 import", verbose=is_verbose)
-
-            # One injector per requirement the compiler can ask for. Each fires at most
-            # once per build (the retry re-resolves the same call against the now-present
-            # import, which does not ask again), so the loop below is bounded by the
-            # injector count plus the final successful attempt -- a program that somehow
-            # needed the arena, then strfmt, then round2 still converges in four tries.
-            _injectors = {
-                ArenaRequiredError: _inject_arena,
-                StrfmtRequiredError: _inject_strfmt,
-                Round2RequiredError: _inject_round2,
-            }
-
             def _compile_frontend(with_ir: bool, ir_file: Path | None = None) -> None:
+                nonlocal _console_variant, _user_stdout_owned, _needs_exnmsg
+                nonlocal _needs_timebase, _timebase_init, _needs_clocks, _timebase
+
                 def _run() -> None:
                     compiler.compile(
                         input_file=entry_point,
@@ -1991,20 +1799,122 @@ def build(
                         **({"emit_ir_path": str(ir_file),
                             "diagnostic_source": _diagnostic_source} if with_ir else {}),
                     )
-                for _attempt in range(len(_injectors) + 1):
+
+                # Every iteration either compiles or applies exactly one thing a
+                # token asked for, and each of those fires at most once -- the
+                # bounds below could only be reached by a compiler that keeps
+                # changing its mind, which is a compiler bug, not a program to
+                # diagnose here.
+                for _attempt in range(32):
+                    _restage_entry()
+                    _retry = False
                     try:
                         _run()
-                    except tuple(_injectors) as exc:
-                        _injectors[type(exc)]()
+                    except ArenaRequiredError:
+                        _applied_preambles.add("arena")
+                        _note_arena()
+                        _retry = True
+                    except StrfmtRequiredError:
+                        _applied_preambles.add("strfmt")
+                        _diag_log(
+                            "compiler reported a run-time string build -- "
+                            "injecting pymcu.strfmt import", verbose=is_verbose)
+                        _retry = True
+                    except Round2RequiredError:
+                        _applied_preambles.add("round2")
+                        _diag_log(
+                            "compiler reported round(x, n) on a float -- "
+                            "injecting pymcu.round2 import", verbose=is_verbose)
+                        _retry = True
+                    except EmbedRequiredError as exc:
+                        resolved = _resolve_embed_names(
+                            exc.embed_names, project_root, sources_dir,
+                            _original_entry_point, _embedded_by_name)
+                        missing = [n for n in exc.embed_names
+                                   if n not in _embedded_by_name]
+                        if missing or not resolved:
+                            # Terminal, not a retry: either the literal open()
+                            # names a file that is not there, or every name was
+                            # already embedded and this pass failed for another
+                            # reason (suppressing that diagnostic and looping
+                            # would hide the real error forever). Show the
+                            # diagnostics the failed pass suppressed on the
+                            # assumption of a retry.
+                            if exc.diagnostics:
+                                sys.stderr.write(exc.diagnostics)
+                                sys.stderr.flush()
+                            raise RuntimeError(
+                                "Compilation failed (see diagnostics above)")
+                        _embedded_files.extend(resolved)
+                        for _ename, _epath, _esize in resolved:
+                            console.print(f"Embedded: {_ename}, {_esize} bytes")
+                            _diag_log(f"romfs: {_ename} <- {_epath} ({_esize} B)",
+                                      verbose=is_verbose)
+                        _retry = True
+
+                    # Tokens a failed pass still emitted count the same as a
+                    # clean pass's: each names something the compiler actually
+                    # resolved, and absorbing them here is what keeps a program
+                    # needing e.g. embed + counter reads at two passes total.
+                    tokens = compiler.last_compile_tokens
+                    # [STDOUT_OWNED] from a pass that was already staged "full"
+                    # is the injected _pymcu_stdout() reporting itself -- only a
+                    # pass without it can say the program owns a UART.
+                    if "[STDOUT_OWNED]" in tokens and _console_variant != "full":
+                        _user_stdout_owned = True
+                    _needs_exnmsg  = _needs_exnmsg  or "[NEEDS_EXNMSG]"  in tokens
+                    _needs_timebase = _needs_timebase or "[NEEDS_TIMEBASE]" in tokens
+                    _timebase_init = _timebase_init or "[TIMEBASE_INIT]" in tokens
+                    _needs_clocks  = _needs_clocks  or "[NEEDS_CLOCKS]"  in tokens
+
+                    changed = _retry
+                    if compiler.last_compile_used_arena \
+                            and "arena" not in _applied_preambles:
+                        _applied_preambles.add("arena")
+                        _note_arena()
+                        changed = True
+                    if (_has_print or _has_input) and not _user_stdout_owned:
+                        want_console = "full"
+                    elif _has_print or _needs_exnmsg:
+                        want_console = "imports_only"
+                    else:
+                        want_console = "none"
+                    if want_console != _console_variant:
+                        _console_variant = want_console
+                        if want_console == "full":
+                            _trigger = "print()" if _has_print else "input()"
+                            if _has_print and _has_input:
+                                _trigger = "print() and input()"
+                            _diag_log(
+                                f"{_trigger} without a resolved UART() -- "
+                                "injecting stdout preamble "
+                                f"({_stdout_device} at {_stdout_baud} baud)",
+                                verbose=is_verbose)
+                        changed = True
+                    if _needs_timebase and not _timebase_init \
+                            and "ticks" not in _applied_preambles:
+                        _applied_preambles.add("ticks")
+                        _diag_log(
+                            "compiler reported a millis/micros counter read -- "
+                            "injecting millis_init() preamble "
+                            "(Timer0 OVF @ prescaler 64)", verbose=is_verbose)
+                        changed = True
+                    if _needs_clocks and "clocks" not in _applied_preambles:
+                        _applied_preambles.add("clocks")
+                        _diag_log(
+                            "compiler reported no clock_init() on rp2350 -- "
+                            "injecting clock preamble (150 MHz + 1 MHz tick)",
+                            verbose=is_verbose)
+                        changed = True
+                    if (_needs_timebase or _timebase_init) != _timebase:
+                        _timebase = _needs_timebase or _timebase_init
+                        changed = True
+                    if changed:
                         continue
-                    if compiler.last_compile_used_arena:
-                        _inject_arena()
-                        _run()
                     return
-                # Unreachable unless two injectors keep undoing each other's fix, which
-                # is a compiler bug, not a program to diagnose here -- run once more and
-                # let the real exception surface rather than swallowing it silently.
-                _run()
+                raise RuntimeError(
+                    "the compiler kept reporting new requirements past 32 "
+                    "passes -- that is a compiler bug, not a program error")
 
             try:
                 if backend_plugin is not None:
@@ -2038,7 +1948,7 @@ def build(
                         emit_blockmap_path=blockmap_path,
                         profile_path=Path(profile_path) if profile_path else None,
                         stdout_baud=_get_stdout_config(pymcu_config)[1],
-                        uart_owned=_has_uart or _has_print or _has_input,
+                        uart_owned=_user_stdout_owned or _console_variant == "full",
                     )
                     # Correct linemap line numbers when preamble was injected.
                     # The compiler saw the synthetic file (with prepended lines),
