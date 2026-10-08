@@ -442,4 +442,194 @@ public class BufferParamTests
 
         Assert.Contains(Body(ir, "f"), i => i is Call { FunctionName: "head" });
     }
+
+    // Review round 6: four more shapes that let a scalar reach a buffer parameter,
+    // each one a positive-proof gap in a different producer or consumer of
+    // provenScalarElements (ExpressionIsProvenScalarElement, Call.cs, is the one place
+    // every shape below is taught, so a later form it still misses is one more switch
+    // arm there, not a new scattered check).
+
+    // Finding 3: a PLAIN `for` loop variable over a real buffer was never recorded as a
+    // scalar element -- only the enumerate path did that. This is the small-enough-to-
+    // unroll path (EmitSequenceUnroll's own `forSram` branch, not BindUnrolledRuntimeElement,
+    // which only handles the compile-time-sequence fallback).
+    [Fact]
+    public void APlainForLoopElement_OverARealBuffer_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    for one in buf:\n" +
+            "        a: uint8 = head(one)\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    // Finding 4: a tuple-unpack target bound directly from a subscript
+    // (`one, ignored = (buf[0], 0)`) copied the scalar without propagating the proof --
+    // only a target bound from a NAME already proven did.
+    [Fact]
+    public void ATupleUnpackTarget_BoundFromASubscript_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    one, ignored = (buf[0], 0)\n" +
+            "    a: uint8 = head(one)\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    // Finding 5: a function's return value carries no name of its own to check
+    // provenScalarElements against, so a call result was never recognised as a scalar
+    // element -- neither passed directly as the argument, nor read back from a name it
+    // was first assigned to, and whether the callee is @inline or not makes no
+    // difference (functionsReturnProvenScalar is a structural, pre-lowering fact about
+    // the callee, computed the same way for either).
+    [Fact]
+    public void AnInlineCalls_ProvenScalarReturn_PassedDirectly_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "from pymcu.types import inline\n\n" +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "@inline\n" +
+            "def element(buf: bytearray) -> uint8:\n" +
+            "    return buf[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    a: uint8 = head(element(buf))\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    [Fact]
+    public void ANonInlineCalls_ProvenScalarReturn_PassedDirectly_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def element(buf: bytearray) -> uint8:\n" +
+            "    return buf[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    a: uint8 = head(element(buf))\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    [Fact]
+    public void AProvenScalarReturn_AssignedToANameFirst_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def element(buf: bytearray) -> uint8:\n" +
+            "    return buf[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    e: uint8 = element(buf)\n" +
+            "    a: uint8 = head(e)\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("'e'", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    // Finding 6: a field, a nested slice, a walrus and a ternary each hid the scalar
+    // element from the two-shape matcher ArgumentIsScalarElement used to be.
+    [Fact]
+    public void AFieldSubscript_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "class Box:\n" +
+            "    def __init__(self, buf):\n" +
+            "        self.buf = buf\n" +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    obj = Box(bytearray([10, 20]))\n" +
+            "    a: uint8 = head(obj.buf[0])\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    [Fact]
+    public void AnElementOfASlice_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    a: uint8 = head(buf[0:1][0])\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    [Fact]
+    public void AWalrusOfASubscript_PassedDirectly_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    one: uint8 = 0\n" +
+            "    a: uint8 = head(one := buf[0])\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    [Fact]
+    public void ATernaryOfTwoSubscripts_IsRefusedByName()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(() => Gen(
+            Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    flag: uint8 = 1\n" +
+            "    a: uint8 = head(buf[0] if flag else buf[1])\n"));
+
+        Assert.Contains("head", ex.Message);
+        Assert.Contains("bytearray", ex.Message);
+    }
+
+    // Control for the ternary case: when only ONE arm proves scalar (the other is the
+    // buffer itself), the whole expression is left UNPROVEN rather than refused on a
+    // guess -- the positive-proof-only stance applies to the whole shape.
+    [Fact]
+    public void ATernaryWithOnlyOneArmAScalar_IsNotRefused()
+    {
+        var ir = Gen(Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def main():\n" +
+            "    buf = bytearray([10, 20])\n" +
+            "    flag: uint8 = 1\n" +
+            "    a: uint8 = head(buf[0] if flag else buf)\n");
+
+        Assert.Contains(Body(ir, "main"), i => i is Call { FunctionName: "head" });
+    }
 }
