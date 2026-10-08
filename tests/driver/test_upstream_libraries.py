@@ -669,3 +669,31 @@ class TestFallbackStaging:
         staged = Path(includes[0])
         assert (staged / "indexed_driver.py").is_file()
         assert not (staged / "undeclared_sibling.py").exists()
+
+    def test_indexed_distribution_cannot_graft_into_project_package(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_dist(
+            site, distribution="acme-device", version="1.0",
+            module="acme", is_package=True,
+        )
+        project = tmp_path / "src"
+        (project / "acme").mkdir(parents=True)
+        (project / "acme" / "__init__.py").write_text("PROJECT = 1\n")
+        main = project / "main.py"
+        main.write_text("import acme.device\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index=_index(
+                distribution="acme-device", version="1.0",
+                provides=("acme",), layer="native",
+            ),
+            entry_point=main, earlier_roots=[str(project)],
+        )
+
+        assert includes == skipped == errors == []
+        assert warned == [
+            "acme-device: not staging acme because an earlier include root "
+            "provides it as a regular package"
+        ]

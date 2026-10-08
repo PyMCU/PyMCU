@@ -475,6 +475,12 @@ def _module_sources(module: str, roots: list[Path]) -> list[tuple[Path, str, boo
     return []
 
 
+def _regular_package_in_roots(module: str, roots: list[Path]) -> bool:
+    """Whether an earlier root owns *module* as a non-namespace package."""
+    parts = module.split(".")
+    return any(root.joinpath(*parts, "__init__.py").is_file() for root in roots)
+
+
 def provided_module_names(package: Path) -> set[str]:
     """Top-level import names supplied by a stdlib or compatibility package."""
     names: set[str] = set()
@@ -659,6 +665,7 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
             "distributions unverified"
         )
     protected = protected_modules or set()
+    prior_roots = [Path(root) for root in earlier_roots or ()]
     for entry in discover_installed_upstream(verified_entries, search_path):
         if enforce and entry.layer != "native" and entry.layer not in flavors:
             declared = ", ".join(flavors) if flavors else "none"
@@ -667,6 +674,15 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
                 f"but this project declares stdlib = [{declared}]"
             )
             continue
+        regular_package_collisions = sorted({
+            module.split(".", 1)[0] for module in entry.provides
+            if _regular_package_in_roots(module.split(".", 1)[0], prior_roots)
+        })
+        for module in regular_package_collisions:
+            warned.append(
+                f"{entry.distribution}: not staging {module} because an earlier "
+                "include root provides it as a regular package"
+            )
         collisions = sorted({
             module.split(".", 1)[0] for module in entry.provides
             if module.split(".", 1)[0] in protected
@@ -679,7 +695,8 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         stage_entry = UpstreamEntry(
             entry.name, entry.distribution, entry.version,
             tuple(module for module in entry.provides
-                  if module.split(".", 1)[0] not in protected),
+                  if module.split(".", 1)[0] not in protected
+                  and module.split(".", 1)[0] not in regular_package_collisions),
             entry.layer, entry.repository,
         )
         if not stage_entry.provides:
