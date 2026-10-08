@@ -22,6 +22,7 @@ import os
 import sys
 import shutil
 import importlib.util
+from importlib.machinery import PathFinder
 from typing import List, Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
@@ -177,9 +178,66 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
 # ---------------------------------------------------------------------------
 
 
-def _load_extension_board_chips(flavor: str) -> dict[str, str]:
+def _load_extension_board_chips(
+    flavor: str, package_dir: Path | None = None,
+) -> dict[str, str]:
     """Try to import pymcu_<flavor>.board_chips and return its BOARD_CHIPS dict."""
+    if package_dir is not None:
+        path = package_dir / "board_chips.py"
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in tree.body:
+                if (isinstance(node, (ast.Assign, ast.AnnAssign))
+                        and isinstance(node.value, ast.Dict)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if any(isinstance(target, ast.Name) and target.id == "BOARD_CHIPS"
+                           for target in targets):
+                        value = ast.literal_eval(node.value)
+                        return {
+                            str(board): str(chip) for board, chip in value.items()
+                        } if isinstance(value, dict) else {}
+        except (OSError, SyntaxError, ValueError):
+            return {}
+        return {}
     return load_extension_board_chips(flavor)
+
+
+def _package_directory(name: str, search_path: list[str] | None) -> Path | None:
+    """Locate a package in the selected environment without importing it."""
+    spec = (
+        PathFinder.find_spec(name, search_path)
+        if search_path is not None else importlib.util.find_spec(name)
+    )
+    if spec and spec.submodule_search_locations:
+        return Path(next(iter(spec.submodule_search_locations)))
+    return None
+
+
+def _warn_environment_input_versions(
+    search_path: list[str] | None, flavors: list[str],
+) -> None:
+    """Warn once when project and CLI environments carry different inputs."""
+    if search_path is None:
+        return
+    packages = ["pymcu-stdlib", *(f"pymcu-{flavor}" for flavor in flavors)]
+    mismatches: list[tuple[str, str, str]] = []
+    for package in packages:
+        project_version = upstream_libraries.installed_distribution_version(
+            package, search_path
+        )
+        cli_version = upstream_libraries.installed_distribution_version(package, None)
+        if (project_version is not None and cli_version is not None
+                and project_version != cli_version):
+            mismatches.append((package, project_version, cli_version))
+    if mismatches:
+        detail = ", ".join(
+            f"{package} {project} in the project, {cli} in the CLI"
+            for package, project, cli in mismatches
+        )
+        warning_console.print(
+            "[bold yellow]Warning:[/bold yellow] project and CLI environments have "
+            f"different compiler inputs ({detail}); using the project environment."
+        )
 
 
 _PRINT_RE    = re.compile(r'\bprint\s*\(')
@@ -400,7 +458,9 @@ def _detect_fstring_value_usage(sources_dir: Path) -> bool:
 _ARENA_BOARD_DEFAULT_BYTES = 256
 
 
-def _inject_arena_shim(generated_dir: Path, arena_size: int) -> None:
+def _inject_arena_shim(
+    generated_dir: Path, arena_size: int, stdlib_package: str | None = None,
+) -> None:
     """Write dist/_generated/pymcu/arena.py with ARENA_SIZE set to the real reservation.
 
     A whole-file replacement of the shipped module (like board.py's board_shim above), not
@@ -409,12 +469,15 @@ def _inject_arena_shim(generated_dir: Path, arena_size: int) -> None:
     "The allocator is Python") even though the same name folds fine in an ordinary
     expression in the same file -- a same-file literal sidesteps that gap entirely.
     """
-    spec = importlib.util.find_spec("pymcu.arena")
-    if spec is None or spec.origin is None:
+    source = Path(stdlib_package) / "arena.py" if stdlib_package else None
+    if source is None:
+        spec = importlib.util.find_spec("pymcu.arena")
+        source = Path(spec.origin) if spec and spec.origin else None
+    if source is None or not source.is_file():
         raise FileNotFoundError(
             "pymcu.arena (the shipped arena allocator module) was not found on the search "
             "path -- this should be unreachable, please report this as a PyMCU bug.")
-    src = Path(spec.origin).read_text(encoding="utf-8")
+    src = source.read_text(encoding="utf-8")
     replaced, n = re.subn(
         r"^ARENA_SIZE: uint16 = \d+$", f"ARENA_SIZE: uint16 = {arena_size}",
         src, count=1, flags=re.MULTILINE)
@@ -1354,6 +1417,10 @@ def build(
         extra_includes: list[str] = []
         extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
         flavor_dirs: dict[str, Path] = {}           # flavor -> package dir
+        project_search_path = library_search_path(
+            pyproject_path.parent.absolute()
+        )
+        _warn_environment_input_versions(project_search_path, stdlib_flavors)
 
         # stdlib_path: inject a local stdlib directory before any installed package
         stdlib_path_override: str | None = pymcu_config.get("stdlib_path", None)
@@ -1369,9 +1436,8 @@ def build(
                 )
 
         for flavor in stdlib_flavors:
-            spec = importlib.util.find_spec(f"pymcu_{flavor}")
-            if spec and spec.submodule_search_locations:
-                pkg_dir = Path(list(spec.submodule_search_locations)[0])
+            pkg_dir = _package_directory(f"pymcu_{flavor}", project_search_path)
+            if pkg_dir is not None:
                 # Only the layer package itself belongs on the compiler path.
                 # Its site-packages parent would expose every neighboring
                 # distribution, including Blinka's host-only board and busio
@@ -1379,7 +1445,9 @@ def build(
                 extra_includes.append(str(pkg_dir))
                 flavor_dirs[flavor] = pkg_dir
                 # Collect board_chips supplements
-                extension_board_chips.update(_load_extension_board_chips(flavor))
+                extension_board_chips.update(
+                    _load_extension_board_chips(flavor, pkg_dir)
+                )
                 # Record boards/ dir for shim generation
                 boards_dir = pkg_dir / "boards"
                 if boards_dir.is_dir():
@@ -1453,7 +1521,7 @@ def build(
         # the compiler, not the manifest, decides what builds where.
         libs, skipped_libs, lib_errors = resolve_for_target(
             target, stdlib_flavors,
-            search_path=library_search_path(pyproject_path.parent.absolute()),
+            search_path=project_search_path,
             enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
         )
         if lib_errors:
@@ -1513,9 +1581,11 @@ def build(
         # metadata fallback and are staged only if the program reaches one of
         # their modules. Both follow the compat and manifest libraries on the
         # include path, so those curated sources always win a name clash.
-        upstream_search_path = library_search_path(pyproject_path.parent.absolute())
+        upstream_search_path = project_search_path
         resolution_roots = [str(sources_dir), *extra_includes]
-        compiler = PyMCUCompiler(console)
+        compiler = PyMCUCompiler(
+            console, package_search_path=project_search_path
+        )
         stdlib_package = compiler.get_stdlib_path()
         protected_modules: set[str] = set()
         if stdlib_package:
@@ -1582,17 +1652,18 @@ def build(
                     + src_board_file.read_text()
                 )
             else:
-                # Vanilla fallback: copy the stdlib board file directly. Located
-                # via find_spec because `pymcu` is a namespace package whose
-                # __file__ is None (several distributions contribute pymcu.*).
+                # Vanilla fallback: copy the board file from the already
+                # selected stdlib, never from the CLI interpreter's namespace.
                 try:
-                    from importlib.util import find_spec
-                    spec = find_spec(f"pymcu.boards.{board_key}")
-                    if spec is None or spec.origin is None:
+                    source = (
+                        Path(stdlib_package) / "boards" / f"{board_key}.py"
+                        if stdlib_package else None
+                    )
+                    if source is None or not source.is_file():
                         raise FileNotFoundError(board_key)
                     board_shim_content = (
                         "# Auto-generated by pymcu build -- do not edit\n"
-                        + Path(spec.origin).read_text()
+                        + source.read_text()
                     )
                 except Exception:
                     # Only worth saying when the program actually imports
@@ -1817,7 +1888,7 @@ def build(
                 nonlocal entry_point, _linemap_preamble_offset
                 nonlocal _preamble_map, _diagnostic_source
                 _reserved = _arena_size_override or _ARENA_BOARD_DEFAULT_BYTES
-                _inject_arena_shim(generated_dir, _reserved)
+                _inject_arena_shim(generated_dir, _reserved, stdlib_package)
                 entry_point, _n = _inject_arena_preamble(entry_point, generated_dir)
                 _linemap_preamble_offset += _n
                 if str(generated_dir) not in extra_includes:
@@ -1974,10 +2045,11 @@ def build(
             with open(output_file, "r") as asm_f:
                 asm_content = asm_f.read()
             
-            spec = importlib.util.find_spec("pymcu.math")
+            math_lib_path = (
+                Path(stdlib_package) / "math" if stdlib_package else None
+            )
             
-            if spec and spec.origin:
-                math_lib_path = Path(spec.origin).parent
+            if math_lib_path is not None and math_lib_path.is_dir():
                 
                 # PIC Float Support
                 if '#include "float.inc"' in asm_content:

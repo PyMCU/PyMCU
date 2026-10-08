@@ -158,8 +158,9 @@ class PyMCUCompiler:
     Handles path resolution, stdlib detection, and binary invocation.
     """
 
-    def __init__(self, console: Console):
+    def __init__(self, console: Console, package_search_path: list[str] | None = None):
         self.console = console
+        self.package_search_path = package_search_path
         self.compiler_candidates: list[str] = []
         self._stdlib_distribution: Distribution | None = None
         # Set by the most recent compile(): True when pymcuc emitted [ARENA_USED],
@@ -240,7 +241,12 @@ class PyMCUCompiler:
                 self.console.print(f"\\[debug] VIRTUAL_ENV env var: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
                 self.console.print(f"\\[debug] PATH env var: {os.environ.get('PATH', 'NOT SET')}", style="dim")
 
-            for dist in distributions():
+            found = (
+                distributions(path=self.package_search_path)
+                if self.package_search_path is not None
+                else distributions()
+            )
+            for dist in found:
                 name = str(dist.metadata.get("Name", "")).lower().replace("_", "-")
                 if name != "pymcu-stdlib":
                     continue
@@ -266,7 +272,11 @@ class PyMCUCompiler:
                                 self._stdlib_distribution = dist
                                 return str(package)
 
-            spec = PathFinder.find_spec("pymcu", sys.path)
+            spec = PathFinder.find_spec(
+                "pymcu",
+                self.package_search_path
+                if self.package_search_path is not None else sys.path,
+            )
             if spec and spec.submodule_search_locations:
                 for location in spec.submodule_search_locations:
                     package = Path(location)

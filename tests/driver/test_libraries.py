@@ -152,6 +152,36 @@ class TestCompatibility:
         lib = _library(_make_package(tmp_path))
         assert core.check_compatibility(lib, chip="atmega328p", flavors=[]) == []
 
+    def test_project_environment_supplies_chip_and_requirement_versions(
+            self, tmp_path, monkeypatch):
+        pkg = _make_package(tmp_path / "library")
+        manifest = MANIFEST.replace(
+            'language-level = 1',
+            'language-level = 1\nstdlib = ">=2"',
+        )
+        (pkg / "pymcu.toml").write_text(manifest)
+        lib = _library(pkg, manifest)
+        site = tmp_path / "site-packages"
+        info = site / "pymcu_stdlib-2.0.dist-info"
+        chip = site / "pymcu" / "chips" / "atmega328p.py"
+        chip.parent.mkdir(parents=True)
+        chip.write_text('device_info(arch="avr")\n')
+        info.mkdir()
+        (info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pymcu-stdlib\nVersion: 2.0\n"
+        )
+        (info / "RECORD").write_text("pymcu/chips/atmega328p.py,,\n")
+        monkeypatch.setattr(
+            core, "dist_version",
+            lambda package: (_ for _ in ()).throw(
+                AssertionError("must not read CLI environment versions")
+            ),
+        )
+
+        assert core.check_compatibility(
+            lib, chip="atmega328p", flavors=[], search_path=[str(site)]
+        ) == []
+
     def test_wrong_arch_names_the_chip(self, tmp_path, monkeypatch):
         monkeypatch.setattr(core, "chip_arch", lambda chip: "arm")
         lib = _library(_make_package(tmp_path))

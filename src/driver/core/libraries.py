@@ -536,10 +536,10 @@ def discover_libraries(search_path: list[str] | None = None) -> tuple[list[Libra
 # ---------------------------------------------------------------------------
 
 _DEVICE_INFO_ARCH = re.compile(r"""device_info\((?=[^)]*\barch\s*=\s*["']([a-z0-9_]+)["'])""")
-_ARCH_CACHE: dict[str, str] = {}
+_ARCH_CACHE: dict[tuple[str, tuple[str, ...]], str] = {}
 
 
-def chip_arch(chip: str) -> str:
+def chip_arch(chip: str, search_path: list[str] | None = None) -> str:
     """
     Return the architecture of *chip* as the compiler sees it, or "".
 
@@ -548,15 +548,31 @@ def chip_arch(chip: str) -> str:
     and the compiler can never disagree about what an architecture is.  The file
     is parsed, never imported: it is MCU source, not host Python.
     """
-    key = chip.lower()
+    key = (chip.lower(), tuple(search_path or ()))
     if key in _ARCH_CACHE:
         return _ARCH_CACHE[key]
 
     arch = ""
-    spec = importlib.util.find_spec(f"pymcu.chips.{key}")
-    if spec is not None and spec.origin:
+    source: Path | None = None
+    if search_path is not None:
+        for dist in distributions(path=search_path):
+            name = str(dist.metadata.get("Name", "")).lower().replace("_", "-")
+            if name != "pymcu-stdlib":
+                continue
+            wanted = ("pymcu", "chips", f"{key[0]}.py")
+            for entry in dist.files or ():
+                if entry.parts == wanted:
+                    source = Path(dist.locate_file(entry))
+                    break
+            if source is not None:
+                break
+    else:
+        spec = importlib.util.find_spec(f"pymcu.chips.{key[0]}")
+        if spec is not None and spec.origin:
+            source = Path(spec.origin)
+    if source is not None:
         try:
-            match = _DEVICE_INFO_ARCH.search(Path(spec.origin).read_text(encoding="utf-8"))
+            match = _DEVICE_INFO_ARCH.search(source.read_text(encoding="utf-8"))
             arch = match.group(1) if match else ""
         except OSError:
             arch = ""
@@ -569,14 +585,28 @@ def chip_arch(chip: str) -> str:
 # Compatibility
 # ---------------------------------------------------------------------------
 
-def _version_ok(spec: str, package: str) -> tuple[bool, str]:
+def _version_ok(
+    spec: str, package: str, search_path: list[str] | None = None,
+) -> tuple[bool, str]:
     """Check an installed package against a PEP 440 specifier."""
     if not spec:
         return True, ""
-    try:
-        installed = dist_version(package)
-    except PackageNotFoundError:
-        return False, f"{package} is not installed (requires {spec})"
+    if search_path is None:
+        try:
+            installed = dist_version(package)
+        except PackageNotFoundError:
+            return False, f"{package} is not installed (requires {spec})"
+    else:
+        wanted = re.sub(r"[-_.]+", "-", package.lower())
+        installed = next((
+            dist.version for dist in distributions(path=search_path)
+            if re.sub(
+                r"[-_.]+", "-",
+                str(dist.metadata.get("Name", "")).lower(),
+            ) == wanted
+        ), None)
+        if installed is None:
+            return False, f"{package} is not installed (requires {spec})"
 
     try:
         from packaging.specifiers import SpecifierSet
@@ -591,7 +621,10 @@ def _version_ok(spec: str, package: str) -> tuple[bool, str]:
     return True, ""
 
 
-def check_compatibility(lib: Library, *, chip: str, flavors: list[str]) -> list[str]:
+def check_compatibility(
+    lib: Library, *, chip: str, flavors: list[str],
+    search_path: list[str] | None = None,
+) -> list[str]:
     """
     Return the reasons *lib* cannot be used for this target. Empty means usable.
 
@@ -599,7 +632,7 @@ def check_compatibility(lib: Library, *, chip: str, flavors: list[str]) -> list[
     halfway through a build, or -- worse -- on the bench.
     """
     reasons: list[str] = []
-    arch = chip_arch(chip)
+    arch = chip_arch(chip, search_path) if search_path is not None else chip_arch(chip)
 
     if lib.chips:
         if chip.lower() not in lib.chips:
@@ -632,7 +665,7 @@ def check_compatibility(lib: Library, *, chip: str, flavors: list[str]) -> list[
 
     for spec, package in ((lib.requires_stdlib, "pymcu-stdlib"),
                           (lib.requires_compiler, "pymcu-compiler")):
-        ok, message = _version_ok(spec, package)
+        ok, message = _version_ok(spec, package, search_path)
         if not ok:
             reasons.append(message)
 
@@ -745,7 +778,9 @@ def resolve_for_target(chip: str, flavors: list[str],
     usable: list[Library] = []
     skipped: list[str] = []
     for lib in libraries:
-        reasons = check_compatibility(lib, chip=chip, flavors=flavors) if enforce else []
+        reasons = check_compatibility(
+            lib, chip=chip, flavors=flavors, search_path=search_path
+        ) if enforce else []
         if reasons:
             skipped.append(f"{lib.name}: {'; '.join(reasons)}")
         else:

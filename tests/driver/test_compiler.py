@@ -128,6 +128,35 @@ class TestGetStdlibPath:
         assert result == str(package)
         assert not marker.exists()
 
+    def test_explicit_project_environment_wins_over_cli_environment(
+            self, tmp_path, monkeypatch):
+        cli_site = tmp_path / "cli-site"
+        project_site = tmp_path / "project-site"
+        for site, version in ((cli_site, "1.0"), (project_site, "2.0")):
+            package = site / "pymcu"
+            (package / "chips").mkdir(parents=True)
+            info = site / f"pymcu_stdlib-{version}.dist-info"
+            info.mkdir()
+            (info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: pymcu-stdlib\nVersion: {version}\n"
+            )
+            (info / "RECORD").write_text("pymcu/chips/__init__.py,,\n")
+            (package / "chips" / "__init__.py").write_text("")
+        monkeypatch.setattr(
+            "src.driver.core.compiler.distributions",
+            lambda **kwargs: (
+                [Distribution.at(project_site / "pymcu_stdlib-2.0.dist-info")]
+                if kwargs.get("path") == [str(project_site)]
+                else [Distribution.at(cli_site / "pymcu_stdlib-1.0.dist-info")]
+            ),
+        )
+
+        compiler = PyMCUCompiler(
+            Console(quiet=True), package_search_path=[str(project_site)]
+        )
+
+        assert compiler.get_stdlib_path() == str(project_site / "pymcu")
+
 
 class TestIsolateStdlib:
     def test_exposes_pymcu_without_site_packages_siblings(self, tmp_path):

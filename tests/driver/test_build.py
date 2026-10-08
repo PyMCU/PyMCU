@@ -7,8 +7,84 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 from src.driver.main import app
+from src.driver.commands import build as build_cmd
 
 runner = CliRunner()
+
+
+class TestProjectEnvironmentInputs:
+    def test_compat_package_is_found_only_in_project_environment(
+            self, tmp_path, monkeypatch):
+        site = tmp_path / "site-packages"
+        package = site / "pymcu_circuitpython"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        monkeypatch.setattr(
+            build_cmd.importlib.util, "find_spec",
+            lambda name: (_ for _ in ()).throw(
+                AssertionError("must not inspect the CLI environment")
+            ),
+        )
+
+        found = build_cmd._package_directory(
+            "pymcu_circuitpython", [str(site)]
+        )
+
+        assert found == package
+
+    def test_board_table_is_read_from_selected_compat_package(self, tmp_path):
+        package = tmp_path / "pymcu_circuitpython"
+        package.mkdir()
+        (package / "board_chips.py").write_text(
+            "BOARD_CHIPS = {'project_board': 'project_chip'}\n"
+        )
+
+        assert build_cmd._load_extension_board_chips(
+            "circuitpython", package
+        ) == {"project_board": "project_chip"}
+
+    def test_version_skew_warns_once_with_both_versions(
+            self, monkeypatch):
+        versions = {
+            ("pymcu-stdlib", True): "2.0",
+            ("pymcu-stdlib", False): "1.0",
+            ("pymcu-circuitpython", True): "3.0",
+            ("pymcu-circuitpython", False): "2.5",
+        }
+        monkeypatch.setattr(
+            build_cmd.upstream_libraries, "installed_distribution_version",
+            lambda package, search: versions[(package, search is not None)],
+        )
+        messages = []
+        monkeypatch.setattr(
+            build_cmd.warning_console, "print", lambda message: messages.append(message)
+        )
+
+        build_cmd._warn_environment_input_versions(
+            ["project-site"], ["circuitpython"]
+        )
+
+        assert len(messages) == 1
+        assert "pymcu-stdlib 2.0 in the project, 1.0 in the CLI" in messages[0]
+        assert "pymcu-circuitpython 3.0 in the project, 2.5 in the CLI" in messages[0]
+
+    def test_arena_shim_reads_selected_stdlib(self, tmp_path, monkeypatch):
+        stdlib = tmp_path / "project" / "pymcu"
+        stdlib.mkdir(parents=True)
+        (stdlib / "arena.py").write_text("ARENA_SIZE: uint16 = 0\n")
+        monkeypatch.setattr(
+            build_cmd.importlib.util, "find_spec",
+            lambda name: (_ for _ in ()).throw(
+                AssertionError("must not inspect the CLI environment")
+            ),
+        )
+
+        generated = tmp_path / "generated"
+        build_cmd._inject_arena_shim(generated, 512, str(stdlib))
+
+        assert "ARENA_SIZE: uint16 = 512" in (
+            generated / "pymcu" / "arena.py"
+        ).read_text()
 
 
 def _invoke_build(*args: str):
