@@ -299,6 +299,40 @@ class TestVenvDiscovery:
         target.mkdir(parents=True)
         assert core.site_packages_of(tmp_path) == [str(target)]
 
+    def test_site_packages_of_a_windows_layout_on_any_host(self, tmp_path):
+        """
+        A Windows venv (Lib/site-packages, no interpreter-version directory)
+        has to be found whatever host this suite happens to run on: a test
+        elsewhere builds one by hand without checking sys.platform first, and
+        a venv's own layout -- not the host running pytest -- is what this
+        has to read.
+        """
+        target = tmp_path / "Lib" / "site-packages"
+        target.mkdir(parents=True)
+        assert core.site_packages_of(tmp_path) == [str(target)]
+
+    def test_site_packages_of_a_posix_layout_on_any_host(self, tmp_path):
+        target = tmp_path / "lib" / "python3.14" / "site-packages"
+        target.mkdir(parents=True)
+        assert core.site_packages_of(tmp_path) == [str(target)]
+
+    def test_venv_python_finds_either_layout_on_any_host(self, tmp_path):
+        windows_venv = tmp_path / "windows"
+        (windows_venv / "Scripts").mkdir(parents=True)
+        (windows_venv / "Scripts" / "python.exe").touch()
+        assert core.venv_python(windows_venv) == windows_venv / "Scripts" / "python.exe"
+
+        posix_venv = tmp_path / "posix"
+        (posix_venv / "bin").mkdir(parents=True)
+        (posix_venv / "bin" / "python").touch()
+        assert core.venv_python(posix_venv) == posix_venv / "bin" / "python"
+
+    def test_venv_bin_dir_falls_back_to_the_host_platform_when_the_venv_is_missing(
+            self, tmp_path):
+        missing = tmp_path / "does-not-exist"
+        expected = "Scripts" if sys.platform == "win32" else "bin"
+        assert core.venv_bin_dir(missing).name == expected
+
     def test_build_looks_into_the_project_venv_when_running_elsewhere(self, tmp_path):
         site = self._venv_site(tmp_path / ".venv")
         site.mkdir(parents=True)
