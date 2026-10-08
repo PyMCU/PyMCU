@@ -691,7 +691,8 @@ public partial class IRGenerator
             return;
         }
 
-        if (stmt.Target is VariableExpr varExprCtor) { EmitConstructorTargetSetup(stmt, varExprCtor); }
+        string? ctorTaggedKey = null;
+        if (stmt.Target is VariableExpr varExprCtor) { ctorTaggedKey = EmitConstructorTargetSetup(stmt, varExprCtor); }
 
         if (!string.IsNullOrEmpty(pendingConstructorTarget))
         {
@@ -1512,7 +1513,7 @@ public partial class IRGenerator
             }
         }
 
-        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
+        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value, ctorTaggedKey); }
         else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
         {
@@ -2055,7 +2056,8 @@ public partial class IRGenerator
         return null;
     }
 
-    private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
+    private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value,
+        string? ctorTaggedKey = null)
     {
         // The constant tables keep an int and no Unsigned mark; the name keeps it instead.
         if (value is Constant { Unsigned: true }) unsignedConstNames.Add(varExpr.Name);
@@ -2132,7 +2134,7 @@ public partial class IRGenerator
         // Without this, `free = i` inside an @inline loop left free -> i standing while i
         // kept changing, and the sibling expansion's `free = 255` even WROTE into i (the
         // FixedDict.__setitem__ corruption). Nonlocal write-through aliases are exempt.
-        InvalidateAliasesForWrite(varExpr.Name);
+        InvalidateAliasesForWrite(varExpr.Name, ctorTaggedKey);
 
         // `buffer = self._post_brightness_buffer` / `b2 = buf` / the ternary pick
         // between two fields that adafruit_pixelbuf's `_getitem` opens with: a local
@@ -2797,7 +2799,10 @@ public partial class IRGenerator
 
     // `x = ClassName(args)` constructor target: set up the (virtual) constructor
     // expansion state. Falls through to the inline-expansion path that follows.
-    private void EmitConstructorTargetSetup(AssignStmt stmt, VariableExpr varExprCtor)
+    // Returns the instanceClasses key this setup tagged, or null when the call
+    // builds no instance -- the generic write sweep needs the exemption: it runs
+    // AFTER this mark and must not take it back down with the stale ones.
+    private string? EmitConstructorTargetSetup(AssignStmt stmt, VariableExpr varExprCtor)
     {
         if (stmt.Value is CallExpr call)
         {
@@ -2821,7 +2826,7 @@ public partial class IRGenerator
                 instanceClasses[openName] = RomfsClassMark;
                 pendingConstructorTarget = openName;
                 virtualInstances.Add(openName);
-                return;
+                return openName;
             }
 
             string resolvedClass = ResolveAssignedCallClass(call);
@@ -2846,6 +2851,7 @@ public partial class IRGenerator
                 instanceClasses[qualifiedName] = resolvedClass;
                 pendingConstructorTarget = qualifiedName;
                 virtualInstances.Add(qualifiedName);
+                return qualifiedName;
             }
             else if (call.Callee is VariableExpr facVar
                      && functionReturnTypes.TryGetValue(ResolveCallee(facVar.Name), out var facRt)
@@ -2871,8 +2877,10 @@ public partial class IRGenerator
                 string qn = SlotInstanceKey(varExprCtor.Name);
                 instanceClasses[qn] = facRt;
                 factoryHandleInstances.Add(qn);
+                return qn;
             }
         }
+        return null;
     }
 
     // The class a base-class method call returns, for the two spellings of one construct:
@@ -6565,6 +6573,14 @@ public partial class IRGenerator
             floatConstantVariables.Remove(k);
             constSequenceBindings.Remove(k);
         }
+        // The class record is the same stale fact and a `for` target is a
+        // write: `x = Pair()` then `for x in [5]` leaves the name bound to a
+        // byte on every iteration that runs, while the old class made its
+        // reads answer -- or refuse -- as the dead object (silentfix5). An
+        // iteration that binds an instance element re-establishes the mark.
+        // Scoped like InvalidateAliasesForWrite: the bare spelling is another
+        // binding whenever this loop is not the name's own scope.
+        foreach (var k in WriteBindingSpellings(bareName)) ForgetInstanceFacts(k);
     }
 
     /// <summary>
@@ -6583,7 +6599,7 @@ public partial class IRGenerator
         bytearrayParams.Remove(key);
     }
 
-    private void InvalidateAliasesForWrite(string name)
+    private void InvalidateAliasesForWrite(string name, string? keepInstanceKey = null)
     {
         foreach (var k in new[]
         {
@@ -6596,12 +6612,40 @@ public partial class IRGenerator
             // Every write to the name, whatever spelling reaches here, clears what it was
             // known to hold. The two assignment sites put it back when the value is constant.
             localConstantValues.Remove(k);
+            if (!writeThroughAliases.Contains(k))
+                variableAliases.Remove(k);
+        }
+
+        // The instance facts get a narrower sweep: they describe the BINDING, so they
+        // die only under the spellings this write can actually file under. The bare
+        // name is the ENTRY module's global spelling, and a local write in another
+        // scope cannot touch it -- `uart_write_str`'s local `b` used to unmark the
+        // module-level `b = Pin(...)`, and the next `b.high()` resolved to a callee
+        // nobody emits. Value facts above keep the wide sweep: losing a fold is safe,
+        // losing the class is not.
+        foreach (var k in WriteBindingSpellings(name))
+        {
+            if (k == keepInstanceKey) continue;
             // What the name carried (an instance a call produced, a scalar view mask)
             // describes the OLD value; a rebind (`x = make()` then `x = 5`) keeps neither.
             producedInstanceClasses.Remove(k);
             scalarMaskedNames.Remove(k);
-            if (!writeThroughAliases.Contains(k))
-                variableAliases.Remove(k);
+            // And a merge's "is an instance on some path" record ends with the
+            // write for the same reason: the name is now definitely the new value.
+            maybeInstanceClasses.Remove(k);
+            // The whole instance identity is the same record: `x = Pair()` then
+            // `x = 5` rebinds the name to a byte, and keeping Pair (or the anchor
+            // marks that make a name resolve as the object) made the scalar read
+            // answer -- or refuse -- as the dead object. The exemption is the key
+            // THIS statement's constructor/open/factory setup already tagged:
+            // `x = Pair()` writes instanceClasses and registers the handle marks
+            // before the ctor's value reaches here through the same sweep, and
+            // clearing them would erase the mark the statement itself just made.
+            instanceClasses.Remove(k);
+            virtualInstances.Remove(k);
+            factoryHandleInstances.Remove(k);
+            slotInstances.Remove(k);
+            romfsHandles.Remove(k);
         }
 
         string written = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name

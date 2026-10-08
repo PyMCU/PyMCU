@@ -1058,6 +1058,11 @@ public partial class IRGenerator
         // 5) -- none of the shapes this function binds (a constant, an instance alias, a
         // nested sequence) is either one, so nothing below re-establishes it.
         ForgetBufferVsScalarMarks(key);
+        // The instance facts of the earlier binding go the same way: `for x in [5]`
+        // after `x = Pair()` binds a byte, and a stale class on the name either
+        // refused the read or answered it as the dead object. The instance-element
+        // branch below re-establishes the mark for an element that IS one.
+        ForgetInstanceFacts(key);
 
         // A string element -- a literal, or a name/member bound to one text -- must be
         // asked about BEFORE the general fold: the fold reduces a string to its interned
@@ -1120,6 +1125,10 @@ public partial class IRGenerator
             string instKey = ResolveNameKey(instVe.Name);
             if (instanceClasses.TryGetValue(instKey, out var instCls) && instCls != null)
             {
+                // `for x in (5, p)` -- a scalar held the name an iteration ago; its
+                // value-facts die with the rebind or the body's reads fold the old
+                // constant while x IS the object.
+                ForgetValueFacts(key);
                 variableAliases[key] = instKey;
                 instanceClasses[key] = instCls;
                 return true;
@@ -1192,6 +1201,15 @@ public partial class IRGenerator
         floatConstantVariables.Remove(key);
         constSequenceBindings.Remove(key);
         variableAliases.Remove(key);
+        // The class record is the same stale binding fact this block already drops
+        // (`x = Pair()` then `for x in <run-time element>`); a produced carrier on
+        // THIS element re-stamps it.
+        instanceClasses.Remove(key);
+        maybeInstanceClasses.Remove(key);
+        producedInstanceClasses.Remove(key);
+        scalarMaskedNames.Remove(key);
+        if (ProducedInstanceClassOf(v) is { } elemCarried)
+            producedInstanceClasses[key] = elemCarried;
 
         // A rebind through this loop variable drops whichever of "proven scalar" /
         // "is a buffer" an EARLIER binding of the same bare name left behind (PyMCU-
@@ -1270,6 +1288,9 @@ public partial class IRGenerator
     /// </summary>
     private void BindUnrolledString(string key, string text)
     {
+        ForgetInstanceFacts(key);
+        floatConstantVariables.Remove(key);
+        constSequenceBindings.Remove(key);
         strConstantVariables[key] = text;
         if (VisitExpression(new StringLiteral(text)) is Constant sc)
             constantVariables[key] = sc.Value;
@@ -1291,6 +1312,9 @@ public partial class IRGenerator
         constSequenceBindings.Remove(key);
         variableAliases.Remove(key);
         instanceClasses.Remove(key);
+        maybeInstanceClasses.Remove(key);
+        producedInstanceClasses.Remove(key);
+        scalarMaskedNames.Remove(key);
     }
 
     /// <summary>
@@ -1453,6 +1477,12 @@ public partial class IRGenerator
                 loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel, FinallyDepth = finallyStack.Count });
 
             string elemKey2 = forBase + "__" + fk;
+            // Whatever the name was before THIS iteration dies here: a scalar
+            // element overwrite must not keep a previous iteration's (or the
+            // pre-loop binding's) class record, and an instance element
+            // re-establishes it through the binders below.
+            ForgetInstanceFacts(forVarKey);
+            ForgetValueFacts(forVarKey);
             bool isZca = instanceClasses.ContainsKey(elemKey2) ||
                          instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
             if (forSram)
@@ -2337,6 +2367,10 @@ public partial class IRGenerator
                     floatConstantVariables.Remove(varKey);
                     variableAliases.Remove(varKey);
                     constSequenceBindings.Remove(varKey);
+                    instanceClasses.Remove(varKey);
+                    maybeInstanceClasses.Remove(varKey);
+                    producedInstanceClasses.Remove(varKey);
+                    scalarMaskedNames.Remove(varKey);
                 }
 
                 // The loop variable's type after the loop must be the WIDEST of every
@@ -2528,10 +2562,16 @@ public partial class IRGenerator
                 // not 7).
                 variableAliases.Remove(varKey);
                 instanceClasses.Remove(varKey);
+                maybeInstanceClasses.Remove(varKey);
+                producedInstanceClasses.Remove(varKey);
+                scalarMaskedNames.Remove(varKey);
                 if (varKey2 != null)
                 {
                     variableAliases.Remove(varKey2);
                     instanceClasses.Remove(varKey2);
+                    maybeInstanceClasses.Remove(varKey2);
+                    producedInstanceClasses.Remove(varKey2);
+                    scalarMaskedNames.Remove(varKey2);
                 }
                 return;
             }

@@ -288,6 +288,11 @@ public partial class IRGenerator
     /// </summary>
     private void BindLoopVarToInstance(string src, string dst)
     {
+        // Both directions of the rebind: `for x in (p,)` after `x = 5` must not keep
+        // the constant fold while x IS the object, and `for x in (p,)` after
+        // `x = Pair()` must not keep the old object's facts either.
+        ForgetInstanceFacts(dst);
+        ForgetValueFacts(dst);
         string origin = src;
         var seen = new HashSet<string> { origin };
         while (variableAliases.TryGetValue(origin, out var next)
@@ -309,6 +314,11 @@ public partial class IRGenerator
     /// </summary>
     private void BindInstanceForIteration(string src, string dst)
     {
+        // The stale marks of the binding dst replaces die first (same rebind rule as
+        // BindLoopVarToInstance): an earlier scalar fold or an earlier class on the
+        // name must not describe this iteration's instance.
+        ForgetInstanceFacts(dst);
+        ForgetValueFacts(dst);
         PropagateCtState(src, dst);
 
         if (!instanceClasses.TryGetValue(src, out var cls) || cls == null) return;
@@ -327,9 +337,78 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// A name about to be bound (or unbound) forgets the facts that made it answer
+    /// as -- or maybe as -- an instance: the definite class, the merge's "an arm
+    /// left it one" class, a produced-carrier stamp, the scalar-view mask, and the
+    /// alias that carried them. Every rebind runs this so the old binding's object
+    /// cannot leak into the new value's reads; the instance binders re-establish
+    /// what the new value earns.
+    /// </summary>
+    private void ForgetInstanceFacts(string key)
+    {
+        instanceClasses.Remove(key);
+        maybeInstanceClasses.Remove(key);
+        producedInstanceClasses.Remove(key);
+        scalarMaskedNames.Remove(key);
+        // The anchor marks too: NamesInstanceAnchor answers "is an instance" from
+        // virtualInstances/slotInstances/factory handles/romfs alone, so a stale
+        // entry here kept a rebound name resolving to the object's storage even
+        // after its class was gone.
+        virtualInstances.Remove(key);
+        factoryHandleInstances.Remove(key);
+        slotInstances.Remove(key);
+        romfsHandles.Remove(key);
+        if (!writeThroughAliases.Contains(key))
+            variableAliases.Remove(key);
+    }
+
+    /// <summary>
+    /// The spellings under which a write to <paramref name="name"/> files its state:
+    /// the expansion-local key inside an inline frame, the function-local key in a
+    /// plain function, and the module-global key (<c>currentModulePrefix + name</c>,
+    /// the bare name in the entry module) only when the write can actually land on
+    /// the module binding -- module-init/`main` scope, or a `global name`
+    /// declaration. A bare name inside any other scope is a DIFFERENT binding (a
+    /// local or param shadows it; non-main functions cannot write a global without
+    /// `global`), so instance identity must not be cleared there: a stdlib local
+    /// `b` otherwise unmarked the entry module's own `b = Pin(...)`.
+    /// </summary>
+    private IEnumerable<string> WriteBindingSpellings(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+            yield return currentInlinePrefix + name;
+        else if (!string.IsNullOrEmpty(currentFunction))
+            yield return currentFunction + "." + name;
+
+        string moduleKey = currentModulePrefix + name;
+        if ((string.IsNullOrEmpty(currentInlinePrefix)
+             && (string.IsNullOrEmpty(currentFunction) || currentFunction == "main"))
+            || functionWrittenGlobals.Contains(moduleKey))
+            yield return moduleKey;
+    }
+
+    /// <summary>
+    /// The mirror of <see cref="ForgetInstanceFacts"/>: a name being bound to an
+    /// INSTANCE drops the scalar value-facts of the binding it replaces, or a read
+    /// of the object folds to whatever an earlier `x = 5` left.
+    /// </summary>
+    private void ForgetValueFacts(string key)
+    {
+        constantVariables.Remove(key);
+        localConstantValues.Remove(key);
+        strConstantVariables.Remove(key);
+        floatConstantVariables.Remove(key);
+        constSequenceBindings.Remove(key);
+        noneValuedNames.Remove(key);
+    }
+
     private void CleanCtState(string dst)
     {
         instanceClasses.Remove(dst);
+        maybeInstanceClasses.Remove(dst);
+        producedInstanceClasses.Remove(dst);
+        scalarMaskedNames.Remove(dst);
 
         void RemoveDescendants<T>(Dictionary<string, T> map, string sep)
         {
@@ -389,6 +468,7 @@ public partial class IRGenerator
             // `ptr(<run-time>)` in one expansion left the mark behind for the next.
             RemoveDescendants(runtimePtrVars, sep);
             RemoveDescendants(instanceClasses, sep);
+            RemoveDescendants(maybeInstanceClasses, sep);
             RemoveDescendants(producedInstanceClasses, sep);
             RemoveDescendantsSet(scalarMaskedNames, sep);
             // Heap-list element types are callee-local state too: a `pulses =

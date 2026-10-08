@@ -102,6 +102,22 @@ public partial class IRGenerator
             var vr = new Variable(key, dt);
             if (globalDt == null) variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
+            // The walrus rebinds the name, so the instance facts an earlier binding
+            // left belong to the OLD value: `x = Pair(); y = (x := 5)` is a byte,
+            // and keeping Pair made a scalar slot read answer -- or refuse -- as
+            // the dead object. The RHS's own produced class is re-stamped below;
+            // the scalar-view mask the same. Same sweep a plain `x = 5` runs in
+            // InvalidateAliasesForWrite, keyed by the resolved name the walrus
+            // just stored into.
+            ForgetInstanceFacts(key);
+            constantVariables.Remove(key);
+            strConstantVariables.Remove(key);
+            floatConstantVariables.Remove(key);
+            constSequenceBindings.Remove(key);
+            InvalidateAliasesPointingAt(key);
+            if (walrus.Value is NoneLiteral || IsNoneValued(walrus.Value))
+                noneValuedNames.Add(key);
+            else if (rhs is not NoneVal) noneValuedNames.Remove(key);
             // A walrus rebinds its own name, so whichever of "proven scalar" / "is a
             // buffer" an EARLIER binding left behind must go first (PyMCU-review round
             // 5) -- re-established only when the walrus's own value is itself a direct
