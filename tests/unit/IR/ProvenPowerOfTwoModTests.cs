@@ -360,4 +360,144 @@ public class ProvenPowerOfTwoModTests
         Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
         Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.Mod or IrBinaryOp.FloorDiv });
     }
+
+    // Codex review of the round-3 fix itself: WalkFunctionLocals counted plain
+    // assignment, VarDecl/AnnAssign and aug-assign, but missed every OTHER binding
+    // form PyMCU's grammar has -- a divisor local written once by a plain assign and
+    // once by one of these still read as "one write" and kept its (wrong) proof. Each
+    // test below gives w a non-literal first write (`(k & 0) + 32`, or a write behind
+    // a runtime `if`) so the ordinary straight-line "last literal write, no read
+    // between, wins" fold -- a different, flow-safe optimization -- cannot collapse
+    // the whole expression to a constant before this rewrite's own gate ever runs;
+    // what is being pinned is that the GATE refuses w, not that nothing else does.
+
+    [Fact]
+    public void ATupleUnpackTarget_CountsAsAWrite()
+    {
+        const string src =
+            "def f(k: uint16) -> uint16:\n" +
+            "    w: uint16 = (k & 0) + 32\n" +
+            "    if k == 0:\n" +
+            "        w, dummy = (4, 0)\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f(0)\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void AStarredUnpackTarget_CountsAsAWrite()
+    {
+        const string src =
+            "def f(k: uint16) -> uint16:\n" +
+            "    w: uint16 = (k & 0) + 32\n" +
+            "    if k == 0:\n" +
+            "        w, *rest = (4, 1, 2)\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f(0)\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void AForLoopTarget_CountsAsAWrite()
+    {
+        const string src =
+            "def f() -> uint16:\n" +
+            "    w: uint16 = 32\n" +
+            "    for w in range(3):\n" +
+            "        pass\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f()\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void AWithAsTarget_CountsAsAWrite()
+    {
+        const string src =
+            "from pymcu.types import inline\n\n" +
+            "class Ctx:\n" +
+            "    @inline\n" +
+            "    def __enter__(self):\n" +
+            "        return 4\n" +
+            "    @inline\n" +
+            "    def __exit__(self, a=None, b=None, c=None):\n" +
+            "        pass\n" +
+            "def f() -> uint16:\n" +
+            "    w: uint16 = 32\n" +
+            "    with Ctx() as w:\n" +
+            "        pass\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f()\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void AnExceptAsTarget_CountsAsAWrite()
+    {
+        const string src =
+            "def f() -> uint16:\n" +
+            "    w: uint16 = 32\n" +
+            "    try:\n" +
+            "        raise ValueError(\"x\")\n" +
+            "    except ValueError as w:\n" +
+            "        pass\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f()\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void AFunctionLocalImportAsTarget_CountsAsAWrite()
+    {
+        const string src =
+            "def f(k: uint16) -> uint16:\n" +
+            "    w: uint16 = (k & 0) + 32\n" +
+            "    import pymcu.types as w\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f(0)\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void ANestedFunctionsNonlocalWrite_CountsTowardTheOuterLocal()
+    {
+        // A nested function (necessarily @inline) can rebind an enclosing local via
+        // `nonlocal`. Which enclosing scope exactly is real scope resolution the scan
+        // does not attempt -- crediting the write to every function it transitively
+        // encloses is conservative, matching the rest of the scan's "unrecognized
+        // shape disqualifies" stance rather than trying to get it exactly right.
+        const string src =
+            "from pymcu.types import inline\n\n" +
+            "def f() -> uint16:\n" +
+            "    w: uint16 = 32\n" +
+            "    @inline\n" +
+            "    def bump():\n" +
+            "        nonlocal w\n" +
+            "        w = 4\n" +
+            "    bump()\n" +
+            "    return 5 % w\n" +
+            "def main():\n" +
+            "    f()\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
 }
