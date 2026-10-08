@@ -38,6 +38,21 @@ namespace PyMCU.UnitTests;
 /// against CPython, including the three review-found cases (628-630 cover the alias/
 /// @outline, break-in-loop and try/except shapes the type selection and shared-parameter
 /// fixes did not already exercise).
+///
+/// A THIRD round found three more, this time in Expr.cs's own reading of
+/// localConstantValues (no bespoke table this time): an exception handler inheriting the
+/// pre-try value, a walrus on a short-circuited branch leaking into the fallthrough, and a
+/// loop-carried walrus answering for every iteration with the loop's entry value (w1/w2/w3
+/// below). All three read as "this name's value here" something that was only ever "the
+/// last fact recorded for this name" -- correct everywhere else the compiler reads it this
+/// way, wrong for a rewrite that treats the answer as true for the rest of the function.
+/// The fix drops flow reasoning entirely: DivisorNameIsWholeProgramInvariant
+/// (ProvenDivisors.cs) gates every lookup on a pre-scan that counts every TEXTUAL write to
+/// a name, anywhere in the program, before lowering starts. A name with two or more writes
+/// is refused outright -- which is why w1/w2/w3 (each writes its divisor twice) are refused
+/// now regardless of where the read sits relative to either write, and why self.width in
+/// the real Game of Life (written once, in __init__) still rewrites through the local
+/// alias `w = self.width`. See oracle probes 670+ for the AVR-executed values.
 /// </summary>
 public class ProvenPowerOfTwoModTests
 {
@@ -230,10 +245,13 @@ public class ProvenPowerOfTwoModTests
     }
 
     [Fact]
-    public void AnAssignmentInAnIfBreakInsideAFor_StillProvesTheDivisorAfterTheLoop()
+    public void AnAssignmentInAnIfBreakInsideAFor_NeverProvesTheDivisorAtAll()
     {
         // Codex review (second round), case 5: x is reassigned on a conditional path
-        // that breaks out of a for loop. CPython: x ends at 4, `5 % x` is 1.
+        // that breaks out of a for loop. CPython: x ends at 4, `5 % x` is 1. Under the
+        // whole-program write-count criterion (third round) x is written TWICE in its
+        // own source -- `(n & 0) + 32` and `x = 4` -- which refuses the rewrite on sight,
+        // with no need to reason about which arm of the `if`/`break` actually ran.
         const string src =
             "def f(n: uint16) -> uint16:\n" +
             "    x: uint16 = (n & 0) + 32\n" +
@@ -246,14 +264,19 @@ public class ProvenPowerOfTwoModTests
             "    f(1)\n" +
             "    f(2)\n";
         var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
         Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
     }
 
     [Fact]
-    public void AnAssignmentBeforeARaise_StillProvesTheDivisorInTheExceptHandler()
+    public void AnAssignmentBeforeARaise_NeverProvesTheDivisorInTheExceptHandler()
     {
         // Codex review (second round), case 6: x is set right before a raise, and read
         // back in the except handler that catches it. CPython: x is 4, `5 % x` is 1.
+        // Two textual writes to x (the declaration and the pre-raise reassignment)
+        // refuse the rewrite outright -- this is the shape w1.py (third round) pins at
+        // the IR-generation boundary; see w1/w1b in oracle probes 670+ for the
+        // AVR-executed value this stays correct for.
         const string src =
             "def f(n: uint16) -> uint16:\n" +
             "    x: uint16 = (n & 0) + 32\n" +
@@ -267,6 +290,74 @@ public class ProvenPowerOfTwoModTests
             "    f(1)\n" +
             "    f(2)\n";
         var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
         Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+    }
+
+    [Fact]
+    public void AWalrusOnAShortCircuitedBranch_NeverProvesTheDivisor()
+    {
+        // Codex review (third round), case w2: `flag and (n := 4)` only runs the walrus
+        // when flag is truthy. CPython: f(0) is 5, f(1) is 1 -- two different answers
+        // from one compiled body, which no single proven constant could ever produce.
+        // n has two textual writes (the declaration and the walrus), so the whole-
+        // program pre-scan refuses it before lowering ever reaches either path.
+        const string src =
+            "def f(flag: uint8) -> uint16:\n" +
+            "    n: uint16 = 32\n" +
+            "    flag and (n := 4)\n" +
+            "    return 5 % n\n" +
+            "def main():\n" +
+            "    f(0)\n" +
+            "    f(1)\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd });
+    }
+
+    [Fact]
+    public void AWalrusInsideAWhileLoop_NeverProvesTheDivisorForAnyIteration()
+    {
+        // Codex review (third round), case w3: a loop-carried walrus rewrites n on the
+        // first iteration and holds for the rest. CPython: 51 (5 % 32, then 5 % 4 twice
+        // more folded in); a rewrite that answered from the loop's ENTRY value for
+        // every iteration gave 55 instead. n has two textual writes, so this is refused
+        // regardless of which iteration is being lowered.
+        const string src =
+            "def f() -> uint16:\n" +
+            "    n: uint16 = 32\n" +
+            "    i: uint8 = 0\n" +
+            "    total: uint16 = 0\n" +
+            "    while i < 2:\n" +
+            "        total = total * 10 + 5 % n\n" +
+            "        (n := 4)\n" +
+            "        i = i + 1\n" +
+            "    return total\n" +
+            "def main():\n" +
+            "    f()\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.Mod });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.BitAnd });
+    }
+
+    [Fact]
+    public void ALocalWrittenOnceFromALiteral_StillRewrites()
+    {
+        // A local whose one write is a bare literal is its own proof -- no module name
+        // or field to chain through, but exactly as immutable as a literal divisor
+        // written in place would be. Without this, the golperf measurement's own
+        // `w: uint8 = 32` shape (before self.width even enters it) would stop
+        // optimizing under the strict criterion, since "local" is not itself one of
+        // the two named cases (module name, instance field) -- only a chain TO one of
+        // those two, or to a literal, is.
+        const string src =
+            "def f(x: uint8) -> int16:\n" +
+            "    w: uint8 = 32\n" +
+            "    return (x - 1) % w\n" +
+            "def main():\n" +
+            "    f(0)\n";
+        var body = F(Gen(src), "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 31 } });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.Mod or IrBinaryOp.FloorDiv });
     }
 }
