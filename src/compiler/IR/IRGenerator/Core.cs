@@ -992,6 +992,9 @@ public partial class IRGenerator
 
         ScanGlobals(mainAst);
         ScanFunctions(mainAst);
+        // Whole-program write-count pre-scan for the proven power-of-two modulo rewrite
+        // (Expr.cs). Purely structural, over the AST only -- see ProvenDivisors.cs.
+        ScanWholeProgramConstantDivisors(mainAst);
         RefuseCodegenDecoratorsOnExpandedFunctions(mainAst);
 
         // The embedded runtime helpers are registered like scanned functions, so
