@@ -64,6 +64,8 @@ from ..core.libraries import (
     project_environment,
     site_packages_of,
     ssl_context,
+    venv_bin_dir,
+    venv_python,
 )
 from ..core.upstream_libraries import find_distribution, installed_distribution_version
 
@@ -450,7 +452,7 @@ def _poetry_bin() -> str | None:
 
 
 def _venv_python(project: Project) -> Path:
-    return project.venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    return venv_python(project.venv)
 
 
 def _project_package_manager(project: Project) -> str:
@@ -774,8 +776,9 @@ def _verification_pymcu(project: Project) -> Path | None:
     """The PyMCU command running inside the project's own environment."""
     environment = project_environment(project.root)
     if environment is not None:
-        relative = Path("Scripts/pymcu.exe" if sys.platform == "win32" else "bin/pymcu")
-        candidate = environment / relative
+        bin_dir = venv_bin_dir(environment)
+        name = "pymcu.exe" if bin_dir.name == "Scripts" else "pymcu"
+        candidate = bin_dir / name
         if candidate.is_file():
             return candidate
     return _pymcu_executable()
