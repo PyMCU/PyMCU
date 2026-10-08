@@ -212,6 +212,45 @@ class TestStageModules:
         assert (staged / "shared" / "a.py").is_file()
         assert not (staged / "shared" / "b.py").exists()
 
+    def test_shared_import_warns_for_the_distribution_that_owns_the_leaf(self, tmp_path):
+        site = tmp_path / "site-packages"
+        shared = site / "shared"
+        shared.mkdir(parents=True)
+        for distribution, leaf in (("verified-a", "a.py"), ("unverified-b", "b.py")):
+            (shared / leaf).write_text(f"NAME = {distribution!r}\n")
+            dist_info = site / f"{distribution.replace('-', '_')}-1.0.dist-info"
+            dist_info.mkdir()
+            (dist_info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {distribution}\nVersion: 1.0\n"
+            )
+            (dist_info / "top_level.txt").write_text("shared\n")
+            (dist_info / "RECORD").write_text(
+                f"{dist_info.name}/METADATA,,\n"
+                f"{dist_info.name}/top_level.txt,,\nshared/{leaf},,\n"
+            )
+        main = tmp_path / "main.py"
+        main.write_text("import shared.b\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index=_index(
+                distribution="verified-a", version="1.0",
+                provides=("shared",), layer="native",
+            ),
+            entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+
+        assert skipped == errors == []
+        assert warned == [
+            "unverified-b is not in the PyMCU library index: compiling it unverified"
+        ]
+        assert len(includes) == 2
+        verified, unverified = map(Path, includes)
+        assert (verified / "shared" / "a.py").is_file()
+        assert not (verified / "shared" / "b.py").exists()
+        assert (unverified / "shared" / "b.py").is_file()
+        assert not (unverified / "shared" / "a.py").exists()
+
     def test_pep660_editable_is_located_from_direct_url_without_running_pth(
             self, tmp_path):
         site = tmp_path / "site-packages"
