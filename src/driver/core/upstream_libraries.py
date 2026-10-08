@@ -147,13 +147,16 @@ def _declares_mcu_compatibility(dist: Distribution) -> bool:
     return any(
         "micropython" in classifier.lower()
         or "circuitpython" in classifier.lower()
+        or classifier.lower() == "topic :: software development :: embedded systems"
         for classifier in classifiers or ()
     )
 
 
 def _is_host_only_distribution(dist: Distribution) -> bool:
     name = (dist.metadata["Name"] if dist.metadata else "") or ""
-    return _is_excluded_distribution(name) or _requires_blinka(dist)
+    return (_is_excluded_distribution(name)
+            or (_requires_blinka(dist)
+                and not _declares_mcu_compatibility(dist)))
 
 
 def top_level_modules(dist: Distribution) -> tuple[str, ...]:

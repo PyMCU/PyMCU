@@ -423,6 +423,24 @@ class TestFallbackStaging:
 
         assert up.discover_fallback_distributions([], [str(site)]) == []
 
+    def test_embedded_classifier_keeps_a_blinka_compatible_driver(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        dist_info = _write_modules_dist(
+            site, distribution="device-driver", version="1.0",
+            modules=("device_driver",),
+        )
+        metadata = dist_info / "METADATA"
+        metadata.write_text(
+            metadata.read_text()
+            + "Requires-Dist: Adafruit-Blinka\n"
+            + "Classifier: Topic :: Software Development :: Embedded Systems\n"
+        )
+
+        found = up.discover_fallback_distributions([], [str(site)])
+
+        assert [item.name for item in found] == ["device-driver"]
+
     def test_mcu_classifier_wins_when_two_distributions_claim_one_name(self, tmp_path):
         site = tmp_path / "site-packages"
         site.mkdir()
