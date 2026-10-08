@@ -102,6 +102,32 @@ public partial class IRGenerator
             var vr = new Variable(key, dt);
             if (globalDt == null) variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
+            // A walrus rebinds its own name, so whichever of "proven scalar" / "is a
+            // buffer" an EARLIER binding left behind must go first (PyMCU-review round
+            // 5) -- re-established only when the walrus's own value is itself a direct
+            // element subscript or a name already carrying one of the two, the same
+            // shapes VisitAssign checks for a plain `x = y` copy.
+            if (walrus.Value is IndexExpr walrusIx && walrusIx.Index is not SliceExpr
+                && IndexTargetHoldsScalarElements(walrusIx.Target))
+            {
+                bytearrayParams.Remove(key);
+                provenScalarElements.Add(key);
+            }
+            else if (walrus.Value is VariableExpr walrusSrcVe)
+            {
+                string walrusSrcKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + walrusSrcVe.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + walrusSrcVe.Name
+                        : walrusSrcVe.Name);
+                ForgetBufferVsScalarMarks(key);
+                if (bytearrayParams.Contains(walrusSrcKey) || bytearrayParams.Contains(walrusSrcVe.Name))
+                    bytearrayParams.Add(key);
+                else if (provenScalarElements.Contains(walrusSrcKey)
+                         || provenScalarElements.Contains(walrusSrcVe.Name))
+                    provenScalarElements.Add(key);
+            }
+            else ForgetBufferVsScalarMarks(key);
             // A walrus writes the name like any assignment; it carries a constant only when
             // the value it stores is one. A FUNCTION-WRITTEN module-global target is not
             // remembered: the map answers for every function lowered afterwards, and one

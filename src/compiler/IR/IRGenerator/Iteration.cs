@@ -937,6 +937,12 @@ public partial class IRGenerator
     /// </summary>
     private bool BindUnrolledElement(string key, Expression elem, bool materialize = false)
     {
+        // A rebind through this loop variable drops whichever of "proven scalar" / "is a
+        // buffer" an EARLIER binding of the same bare name left behind (PyMCU-review round
+        // 5) -- none of the shapes this function binds (a constant, an instance alias, a
+        // nested sequence) is either one, so nothing below re-establishes it.
+        ForgetBufferVsScalarMarks(key);
+
         // A string element -- a literal, or a name/member bound to one text -- must be
         // asked about BEFORE the general fold: the fold reduces a string to its interned
         // id, an integer, and `for name in ["PD2", "PD3"]: print(name)` printed the ids
@@ -1046,6 +1052,26 @@ public partial class IRGenerator
         floatConstantVariables.Remove(key);
         constSequenceBindings.Remove(key);
         variableAliases.Remove(key);
+
+        // A rebind through this loop variable drops whichever of "proven scalar" /
+        // "is a buffer" an EARLIER binding of the same bare name left behind (PyMCU-
+        // review round 5): `x = buf[0]` followed by `for x in (buf,): pass` left `x`
+        // marked a proven scalar from the FIRST binding while this one rebinds it to
+        // the buffer itself, and a later `head(x)` was refused as a scalar reaching a
+        // bytearray parameter. Re-established only when THIS element is itself a name
+        // already carrying one of the two facts, the same propagation a plain `x = y`
+        // copy does in Assign.cs.
+        ForgetBufferVsScalarMarks(key);
+        if (elem is VariableExpr elemVe)
+        {
+            string elemSrcKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + elemVe.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + elemVe.Name : elemVe.Name);
+            if (bytearrayParams.Contains(elemSrcKey) || bytearrayParams.Contains(elemVe.Name))
+                bytearrayParams.Add(key);
+            else if (provenScalarElements.Contains(elemSrcKey) || provenScalarElements.Contains(elemVe.Name))
+                provenScalarElements.Add(key);
+        }
         return true;
     }
 

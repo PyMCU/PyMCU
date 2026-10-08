@@ -6570,6 +6570,22 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Drops the two buffer-vs-scalar facts a reassignment can make stale, for the bare
+    /// name's qualified key: <c>provenScalarElements</c> (NameIsScalarAtThisSite's positive
+    /// proof the name is ONE element) and, in the opposite direction, <c>bytearrayParams</c>
+    /// (the mark that the name IS a buffer). Called before a rebind decides which of the two
+    /// -- if either -- the NEW value earns. Without this, `x = buf[0]` followed by `for x in
+    /// (buf,): pass` left `x` marked a proven scalar from the FIRST binding while it held the
+    /// buffer itself from the second, and a later `head(x)` was refused as a scalar reaching
+    /// a bytearray parameter -- CPython returns the element the buffer's own first byte holds.
+    /// </summary>
+    private void ForgetBufferVsScalarMarks(string key)
+    {
+        provenScalarElements.Remove(key);
+        bytearrayParams.Remove(key);
+    }
+
     private void InvalidateAliasesForWrite(string name)
     {
         foreach (var k in new[]
@@ -10723,6 +10739,25 @@ public partial class IRGenerator
                         : InferredSlot(qualified, GetValType(snapshots[k]));
                     variableTypes[qualified] = dt;
                     Emit(new Copy(snapshots[k], new Variable(qualified, dt)));
+                    // A tuple-unpack target rebinds its own name, so whichever of
+                    // "proven scalar" / "is a buffer" an EARLIER binding left behind
+                    // must go first (PyMCU-review round 5) -- re-established only when
+                    // THIS element is itself a name already carrying one of the two,
+                    // the same propagation a plain `x = y` copy does.
+                    ForgetBufferVsScalarMarks(qualified);
+                    if (tup.Elements[k] is VariableExpr unpackSrcVe)
+                    {
+                        string unpackSrcKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? currentInlinePrefix + unpackSrcVe.Name
+                            : (!string.IsNullOrEmpty(currentFunction)
+                                ? currentFunction + "." + unpackSrcVe.Name
+                                : unpackSrcVe.Name);
+                        if (bytearrayParams.Contains(unpackSrcKey) || bytearrayParams.Contains(unpackSrcVe.Name))
+                            bytearrayParams.Add(qualified);
+                        else if (provenScalarElements.Contains(unpackSrcKey)
+                                 || provenScalarElements.Contains(unpackSrcVe.Name))
+                            provenScalarElements.Add(qualified);
+                    }
                     if (snapshots[k] is Constant c)
                     {
                         constantVariables[qualified] = c.Value;
