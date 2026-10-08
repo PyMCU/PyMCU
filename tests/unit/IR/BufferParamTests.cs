@@ -419,4 +419,27 @@ public class BufferParamTests
 
         Assert.Contains(Body(ir, "forward"), i => i is Call { FunctionName: "head" });
     }
+
+    [Fact]
+    public void ARebindThroughAnUnrolledForLoop_DropsAStaleProvenScalarMark()
+    {
+        // `x = buf[0]` proves `x` a scalar element (correctly, at that point); `for x in
+        // (buf,): pass` then REBINDS `x` to the buffer itself. Without clearing the
+        // stale mark first, `head(x)` read back the FIRST binding's proof instead of
+        // what `x` actually holds now, and was refused as a scalar reaching a bytearray
+        // parameter -- CPython returns the element the buffer's own first byte holds
+        // (PyMCU-review round 5).
+        var ir = Gen(Preamble +
+            "def head(v: bytearray) -> uint8:\n" +
+            "    return v[0]\n" +
+            "def f(buf: bytearray) -> uint8:\n" +
+            "    x = buf[0]\n" +
+            "    for x in (buf,):\n" +
+            "        pass\n" +
+            "    return head(x)\n" +
+            "def main():\n" +
+            "    a: uint8 = f(bytearray([10, 20, 30]))\n");
+
+        Assert.Contains(Body(ir, "f"), i => i is Call { FunctionName: "head" });
+    }
 }
