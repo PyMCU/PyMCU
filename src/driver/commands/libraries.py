@@ -695,6 +695,69 @@ def _remove_dependency(project: Project, distribution: str) -> None:
     project.path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
+# Every file a package manager's add/remove command, or our own
+# _add_dependency/_remove_dependency, might touch while recording a
+# dependency. Rollback needs all of them: uv and Poetry rewrite the lock
+# alongside pyproject.toml in the same `add`.
+_DEPENDENCY_STATE_FILES = ("pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt")
+
+
+def _snapshot_dependency_state(project: Project) -> dict[str, bytes | None]:
+    """Byte-for-byte contents of every dependency file that exists, taken
+    before an install command is run so a failed install can be undone."""
+    return {
+        name: (project.root / name).read_bytes()
+        if (project.root / name).is_file() else None
+        for name in _DEPENDENCY_STATE_FILES
+    }
+
+
+def _restore_dependency_state(project: Project, snapshot: dict[str, bytes | None]) -> None:
+    """Put every dependency file back exactly as *snapshot* found it."""
+    for name, content in snapshot.items():
+        path = project.root / name
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(content)
+
+
+def _dependency_already_declared(project: Project, distribution: str) -> bool:
+    """
+    Whether *distribution* was already a recorded dependency on disk.
+
+    Read fresh from the files themselves, not from `project.doc` (which may
+    already be stale by the time a rollback runs): a caller checks this
+    before the install command -- `uv add`, `poetry add`, or our own
+    _add_dependency -- ever touches them, so a later rollback knows whether
+    removing the dependency would delete something this command introduced
+    or something that predates it.
+    """
+    name = str(canonicalize_name(distribution))
+
+    req_file = project.root / "requirements.txt"
+    if req_file.is_file():
+        lines = req_file.read_text(encoding="utf-8").splitlines()
+        return any(
+            _requirement_name(_requirement_block_value(block)) == name
+            for block in _requirement_blocks(lines)
+        )
+
+    try:
+        doc = tomlkit.loads(project.path.read_text(encoding="utf-8"))
+    except (OSError, tomlkit.exceptions.ParseError):
+        return False
+
+    deps = doc.get("project", {}).get("dependencies") or []
+    if any(_requirement_name(str(existing)) == name for existing in deps):
+        return True
+
+    poetry_deps = doc.get("tool", {}).get("poetry", {}).get("dependencies", {})
+    if isinstance(poetry_deps, dict):
+        return any(str(canonicalize_name(str(key))) == name for key in poetry_deps)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Verification build
 # ---------------------------------------------------------------------------
@@ -873,7 +936,9 @@ def resolve_from_index(project: Project, name: str, *, refresh: bool = False
 
 
 def _finish_upstream_install(project: Project, entry: dict, distribution: str, *,
-                             verify: bool, result: ChangeResult) -> ChangeResult:
+                             verify: bool, result: ChangeResult,
+                             snapshot: dict[str, bytes | None] | None = None,
+                             pre_existing: bool = False) -> ChangeResult:
     """
     Finish installing an upstream distribution.
 
@@ -881,6 +946,10 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
     so the preflight a manifest library goes through below does not apply:
     this only confirms a distribution by this name actually landed in the
     project's environment, then verifies its declared modules the same way.
+
+    *snapshot* and *pre_existing* describe the dependency state from before
+    the install command ran (see install_library) and are only ever passed
+    through to rollback().
     """
     environment = project_environment(project.root)
     search = site_packages_of(environment) if environment is not None else None
@@ -894,13 +963,15 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
     if version is None:
         return result.failed(rollback(
             project, distribution,
-            "it did not install (nothing by that name is in the project's environment)"
+            "it did not install (nothing by that name is in the project's environment)",
+            snapshot=snapshot, pre_existing=pre_existing,
         ))
     if version != expected_version:
         return result.failed(rollback(
             project, distribution,
             f"installed version {version}, but the library index measured "
-            f"{expected_version}"
+            f"{expected_version}",
+            snapshot=snapshot, pre_existing=pre_existing,
         ))
 
     if verify:
@@ -908,7 +979,9 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
         if not ok:
             return result.failed(rollback(
                 project, distribution,
-                f"it does not compile for {project.chip}: {detail}"))
+                f"it does not compile for {project.chip}: {detail}",
+                snapshot=snapshot, pre_existing=pre_existing,
+            ))
         result.log.append(f"Verified: {detail}")
 
     # uv and Poetry record it as part of their add command. Pip does not.
@@ -916,7 +989,10 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
         try:
             _add_dependency(project, f"{distribution}=={version}")
         except HashLockedRequirementError as exc:
-            return result.failed(rollback(project, distribution, str(exc)))
+            return result.failed(rollback(
+                project, distribution, str(exc),
+                snapshot=snapshot, pre_existing=pre_existing,
+            ))
 
     result.entry = entry
     result.message = f"{entry.get('name') or distribution} {version} installed"
@@ -975,6 +1051,13 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         )
 
     known = {lib.name for lib in _installed_libraries(project)[0]}
+    # Taken before the install command runs: `uv add` / `poetry add` rewrite
+    # pyproject.toml and the lock file as part of installing, before this
+    # code ever learns whether the package actually works. A rollback needs
+    # both what to restore and whether *distribution* predates this command,
+    # so it never deletes a dependency this command did not introduce.
+    dependency_snapshot = _snapshot_dependency_state(project)
+    dependency_pre_existing = _dependency_already_declared(project, distribution)
     result.log.append(f"Installing {install_requirement} ...")
     if not _run(cmd, project.root):
         return result.failed(f"Installation of {distribution} failed.")
@@ -984,7 +1067,10 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         # to find on disk the way a manifest library's preflight below does,
         # so the check is simpler -- did a distribution by this name actually
         # land in the project's environment.
-        return _finish_upstream_install(project, entry, distribution, verify=verify, result=result)
+        return _finish_upstream_install(
+            project, entry, distribution, verify=verify, result=result,
+            snapshot=dependency_snapshot, pre_existing=dependency_pre_existing,
+        )
 
     # Preflight against what actually landed on disk. The index can lag behind a
     # release; the manifest in the wheel cannot. The package is found through the
@@ -999,7 +1085,10 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         detail = "; ".join(problems_found) if problems_found else (
             "it registers no pymcu.libraries entry point, so the compiler would never see it"
         )
-        return result.failed(rollback(project, distribution, detail))
+        return result.failed(rollback(
+            project, distribution, detail,
+            snapshot=dependency_snapshot, pre_existing=dependency_pre_existing,
+        ))
 
     problems = check_compatibility(lib, chip=project.chip, flavors=project.flavors)
     problems.extend(
@@ -1007,14 +1096,19 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         if lib.distribution in collision
     )
     if problems:
-        return result.failed(rollback(project, lib.distribution, "; ".join(problems)))
+        return result.failed(rollback(
+            project, lib.distribution, "; ".join(problems),
+            snapshot=dependency_snapshot, pre_existing=dependency_pre_existing,
+        ))
 
     if verify:
         ok, detail = verify_imports(lib, project)
         if not ok:
             return result.failed(rollback(
                 project, lib.distribution,
-                f"it does not compile for {project.chip}: {detail}"))
+                f"it does not compile for {project.chip}: {detail}",
+                snapshot=dependency_snapshot, pre_existing=dependency_pre_existing,
+            ))
         result.log.append(f"Verified: {detail}")
 
     # uv and Poetry record it as part of their add command. Pip does not.
@@ -1022,7 +1116,10 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         try:
             _add_dependency(project, f"{distribution}>={lib.version}")
         except HashLockedRequirementError as exc:
-            return result.failed(rollback(project, lib.distribution, str(exc)))
+            return result.failed(rollback(
+                project, lib.distribution, str(exc),
+                snapshot=dependency_snapshot, pre_existing=dependency_pre_existing,
+            ))
 
     result.library = lib
     result.entry = entry
@@ -1060,23 +1157,48 @@ def uninstall_library(project: Project, name: str) -> ChangeResult:
     return result
 
 
-def rollback(project: Project, distribution: str, reason: str) -> str:
+def rollback(project: Project, distribution: str, reason: str, *,
+            snapshot: dict[str, bytes | None] | None = None,
+            pre_existing: bool = False) -> str:
     """
     Undo an install that turned out not to fit, and describe the outcome.
 
-    `uv add` records the dependency before this code ever sees the package, so
-    the rollback has to remove it from pyproject.toml too -- and say so, rather
-    than claiming the file was left alone when it was not.
+    `uv add` / `poetry add` record the dependency -- and re-lock -- before
+    this code ever sees whether the package actually works, so the rollback
+    has to undo that too. When *distribution* was already a declared
+    dependency before this command ran (*pre_existing*), `uv remove` /
+    `poetry remove` / `pip uninstall` would delete something this command
+    never added; restoring *snapshot* (the dependency files exactly as they
+    were before the install command ran) is the only safe undo then. A
+    brand-new dependency has nothing to preserve, so the manager's own
+    remove command still applies.
     """
     message = f"{distribution} cannot be used here: {reason}"
 
+    if pre_existing:
+        if snapshot is not None:
+            _restore_dependency_state(project, snapshot)
+            return (
+                f"{message}. {distribution} was already a dependency before this "
+                "command; restored its prior version and lock state instead of "
+                "removing it."
+            )
+        return (
+            f"{message}. {distribution} was already a dependency before this "
+            "command; left in place rather than removed."
+        )
+
     cmd = uninstall_command(project, distribution)
     if cmd is None:
+        if snapshot is not None:
+            _restore_dependency_state(project, snapshot)
         return f"{message}. Could not roll back automatically; remove it with: pip uninstall {distribution}"
 
     outcome = subprocess.run(cmd, cwd=project.root, capture_output=True, text=True)
     if outcome.returncode == 0:
         return f"{message}. Rolled back: it is not installed and not recorded."
+    if snapshot is not None:
+        _restore_dependency_state(project, snapshot)
     return f"{message}. Rollback failed; undo it with: {' '.join(cmd)}"
 
 
