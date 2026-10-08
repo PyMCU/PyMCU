@@ -297,6 +297,38 @@ class TestVerifyUpstreamImports:
         assert "import adafruit_hcsr04" in written["main"]
         assert "circuitpython" in written["config"]
 
+    def test_poetry_cached_environment_runs_the_verification_build(
+            self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        (tmp_path / "poetry.lock").touch()
+        environment = tmp_path / "poetry-cache" / "demo-123"
+        executable = environment / "bin" / "pymcu"
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        monkeypatch.setattr(cmd, "project_environment", lambda root: environment)
+        monkeypatch.setattr(
+            cmd, "_pymcu_executable",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("must not use the CLI environment")
+            ),
+        )
+        commands = []
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        monkeypatch.setattr(
+            cmd.subprocess, "run",
+            lambda args, **kwargs: commands.append(args) or _Result(),
+        )
+
+        ok, detail = cmd.verify_upstream_imports(UPSTREAM_ENTRY, project)
+
+        assert ok, detail
+        assert commands == [[str(executable), "build"]]
+
 
 class TestLibrariesListingIncludesUpstream:
     def test_installed_upstream_reads_the_cached_index(self, tmp_path, monkeypatch):

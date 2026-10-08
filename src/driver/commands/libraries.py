@@ -604,6 +604,17 @@ def _pymcu_executable() -> Path | None:
     return Path(found) if found else None
 
 
+def _verification_pymcu(project: Project) -> Path | None:
+    """The PyMCU command running inside the project's own environment."""
+    environment = project_environment(project.root)
+    if environment is not None:
+        relative = Path("Scripts/pymcu.exe" if sys.platform == "win32" else "bin/pymcu")
+        candidate = environment / relative
+        if candidate.is_file():
+            return candidate
+    return _pymcu_executable()
+
+
 def verify_imports(lib: Library, project: Project) -> tuple[bool, str]:
     """
     Compile a program that imports what the library says it provides.
@@ -636,7 +647,7 @@ def _verify_module_imports(modules: list[str], project: Project) -> tuple[bool, 
     if not modules:
         return True, "nothing public to verify"
 
-    pymcu = _pymcu_executable()
+    pymcu = _verification_pymcu(project)
     if pymcu is None:
         return True, "pymcu executable not found -- skipped"
 
