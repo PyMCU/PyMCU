@@ -518,9 +518,35 @@ def _editable_module_files(dist: Distribution, module: str) -> list[tuple[Path, 
     return []
 
 
+def _stage_target(distribution: str, stage_root: Path) -> Path:
+    """The staging directory for *distribution*, guaranteed under *stage_root*.
+
+    A distribution's name comes from dist-info metadata, which is untrusted:
+    nothing stops a malformed or malicious entry from spelling it as an
+    absolute path (``/etc/passwd``) or a ``../`` escape. Rather than try to
+    sanitize such a name into something safe, this refuses it outright -- it
+    is the gate every destructive staging call (rmtree, copy2) passes through
+    before touching the filesystem, so nothing downstream has to re-derive
+    the same safety check.
+    """
+    normalized = _normalize(distribution)
+    if "/" in normalized or "\\" in normalized:
+        raise StagingError(
+            f"{distribution}: not a safe distribution name for staging"
+        )
+    root = stage_root.resolve()
+    target = (root / normalized).resolve()
+    if target != root and root not in target.parents:
+        raise StagingError(
+            f"{distribution}: distribution name does not resolve inside the "
+            "staging root"
+        )
+    return target
+
+
 def _stage_modules(dist: Distribution, distribution: str, modules: tuple[str, ...],
                    stage_root: Path) -> Path | None:
-    target = stage_root / _normalize(distribution)
+    target = _stage_target(distribution, stage_root)
     if target.exists():
         shutil.rmtree(target)
 
