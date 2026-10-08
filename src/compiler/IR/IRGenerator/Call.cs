@@ -11487,6 +11487,13 @@ public partial class IRGenerator
         return projectModules.Contains(pfx[..^1].Replace('_', '.'));
     }
 
+    // The calls a counter read resolves to, by the name it was declared under: the
+    // public names of the compat time/supervisor modules and pymcu.time.micros
+    // (ticks_ms, ticks_us, monotonic, monotonic_ns). `millis` is deliberately not
+    // among them -- the driver's own detection never counted it either.
+    private static readonly string[] TimebaseReaderSuffixes =
+        { "_micros", "_ticks_ms", "_ticks_us", "_monotonic", "_monotonic_ns" };
+
     private void ReportDriverNeeds(string callee)
     {
         // A UART construction reports regardless of callsite: the micropython
@@ -11509,6 +11516,14 @@ public partial class IRGenerator
             Logger.TimebaseInit();
             return;
         }
+
+        foreach (var suffix in TimebaseReaderSuffixes)
+            if (callee.EndsWith(suffix, StringComparison.Ordinal)
+                && !CalleeDefinedInProgram(callee))
+            {
+                Logger.NeedsTimebase();
+                return;
+            }
     }
 
     // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes

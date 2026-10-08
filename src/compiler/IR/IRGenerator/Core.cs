@@ -792,6 +792,16 @@ public partial class IRGenerator
         var genUse = new PyMCU.Frontend.AsyncTransform.GenUse(
             new HashSet<string>(), new Dictionary<string, string>(),
             new HashSet<string>(), new HashSet<string>());
+        // RFC 0014 family 7: an `async def` in the program's own files is the coroutine
+        // machinery the ATmega software time base serves (asyncio.ticks() reads the same
+        // counter). Report it before the transform below erases the syntax -- the driver
+        // used to learn this by scanning source text.
+        if (deviceConfig.TargetChip.StartsWith("atmega", StringComparison.OrdinalIgnoreCase)
+            && (mainAst.Functions.Any(f => f.IsAsync)
+                || importedModules.Any(m => projectModules.Contains(m.Key)
+                                            && m.Value.Functions.Any(f => f.IsAsync))))
+            Logger.NeedsTimebase();
+
         foreach (var m in importedModules)
         {
             string modPrefix = m.Key.Replace('.', '_') + "_";
