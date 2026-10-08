@@ -287,6 +287,42 @@ class TestStageModules:
 
         assert (staged / "sensor" / "__init__.py").read_text() == "VALUE = 1\n"
 
+    def test_pep660_honors_explicit_setuptools_package_dir_mapping(self, tmp_path):
+        site = tmp_path / "site-packages"
+        project = tmp_path / "editable-project"
+        implementation = project / "python" / "sensor_impl"
+        implementation.mkdir(parents=True)
+        (implementation / "__init__.py").write_text("VALUE = 'mapped'\n")
+        (implementation / "device.py").write_text("DEVICE = 1\n")
+        (project / "sensor.py").write_text("VALUE = 'stray'\n")
+        (project / "pyproject.toml").write_text(
+            "[build-system]\nbuild-backend = 'setuptools.build_meta'\n"
+            "[tool.setuptools.package-dir]\n"
+            "sensor = 'python/sensor_impl'\n"
+        )
+        dist_info = site / "editable_sensor-1.0.dist-info"
+        dist_info.mkdir(parents=True)
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: editable-sensor\nVersion: 1.0\n"
+        )
+        (dist_info / "direct_url.json").write_text(json.dumps({
+            "url": project.as_uri(), "dir_info": {"editable": True},
+        }))
+        (dist_info / "RECORD").write_text(
+            f"{dist_info.name}/METADATA,,\n"
+            f"{dist_info.name}/direct_url.json,,\n"
+        )
+        entry = up.UpstreamEntry(
+            name="editable-sensor", distribution="editable-sensor", version="1.0",
+            provides=("sensor",), layer="native",
+        )
+
+        staged = up.stage_modules(entry, [str(site)], tmp_path / "_upstream")
+
+        assert (staged / "sensor" / "__init__.py").read_text() == "VALUE = 'mapped'\n"
+        assert (staged / "sensor" / "device.py").is_file()
+        assert not (staged / "sensor.py").exists()
+
     def test_unlocatable_editable_names_the_distribution_in_the_error(self, tmp_path):
         site = tmp_path / "site-packages"
         project = tmp_path / "editable-project"

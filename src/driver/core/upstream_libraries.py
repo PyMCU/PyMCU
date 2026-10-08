@@ -406,10 +406,35 @@ def _editable_source_roots(project_root: Path) -> list[Path]:
     return unique
 
 
+def _setuptools_package_dir(project_root: Path, module: str) -> Path | None:
+    """Resolve an explicit setuptools package-dir mapping for *module*."""
+    try:
+        doc = tomllib.loads(
+            (project_root / "pyproject.toml").read_text(encoding="utf-8")
+        )
+    except (OSError, tomllib.TOMLDecodeError, UnicodeError):
+        return None
+    tool = doc.get("tool", {}) if isinstance(doc, dict) else {}
+    setuptools = tool.get("setuptools", {}) if isinstance(tool, dict) else {}
+    package_dir = setuptools.get("package-dir", {}) if isinstance(setuptools, dict) else {}
+    if not isinstance(package_dir, dict) or module not in package_dir:
+        return None
+    return project_root / str(package_dir[module])
+
+
 def _editable_module_files(dist: Distribution, module: str) -> list[tuple[Path, Path]]:
     project_root = _editable_project_root(dist)
     if project_root is None:
         return []
+    mapped_package = _setuptools_package_dir(project_root, module)
+    if mapped_package is not None:
+        if not mapped_package.is_dir() or not (mapped_package / "__init__.py").is_file():
+            return []
+        destination = Path(*module.split("."))
+        return [
+            (source, destination / source.relative_to(mapped_package))
+            for source in mapped_package.rglob("*") if source.is_file()
+        ]
     for root in _editable_source_roots(project_root):
         single = root / f"{module}.py"
         if single.is_file():
