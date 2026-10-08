@@ -80,6 +80,7 @@ public class WalkStatementsGuardTests
         // but does not hand back -- the two foreach(body.Statements) here never look
         // past a FunctionDef/ClassDef member, same as ScanNestedClassMembers above.
         ("ProvenDivisors.cs", "ScanWholeProgramConstantDivisors"),
+        ("ProvenScalarReturn.cs", "ComputeFunctionsReturnProvenScalar"),
 
         // LoopVarLiveness walks AST NODES (statements AND expressions, with a skip
         // boundary for nested scopes) -- a different granularity than a statement list.
