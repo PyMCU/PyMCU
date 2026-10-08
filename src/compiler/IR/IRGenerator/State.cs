@@ -817,6 +817,12 @@ public partial class IRGenerator
     /// the report machinery out of images whose reachable code never raises one.
     private bool sawRaiseMessageStore;
 
+    /// Set when a call bound to the stdlib's clock_init() lowered in the program's
+    /// own code (RFC 0014 family 7): an RP2350 program that ends without one gets
+    /// <c>[NEEDS_CLOCKS]</c> on the token stream, so the driver injects the preamble
+    /// the SDK runtime would have run.
+    private bool sawClockInitCall;
+
     /// The module-level word holding the flash address of the live exception's message.
     /// One word, because one exception is live at a time.
     internal const string ExceptionMessageVar = "__exn_msg";

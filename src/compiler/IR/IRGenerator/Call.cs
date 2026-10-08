@@ -11498,6 +11498,10 @@ public partial class IRGenerator
             Logger.StdoutOwned();
 
         if (!CallsiteIsProgramCode()) return;
+
+        if (callee.EndsWith("_clock_init", StringComparison.Ordinal)
+            && !CalleeDefinedInProgram(callee))
+            sawClockInitCall = true;
     }
 
     // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes

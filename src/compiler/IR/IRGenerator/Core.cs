@@ -1881,6 +1881,14 @@ public partial class IRGenerator
         // nowhere, so say it once, now that construction is known.
         WarnAboutUnrunnableDestructors();
 
+        // RFC 0014 family 7: generation is done -- every call the program will ever
+        // resolve has resolved. On RP2350 the SDK runtime would have run clock_init()
+        // for a program that does not; report it so the driver injects the preamble
+        // instead of discovering the omission by scanning the source.
+        if (deviceConfig.TargetChip.Equals("rp2350", StringComparison.OrdinalIgnoreCase)
+            && !sawClockInitCall)
+            Logger.NeedsClocks();
+
         // Between-passes verifier (PYMCU_VERIFY_IR): the raw generator output is the
         // stage every later pass trusts, so it is the first thing worth checking. Not on
         // a run that already found a slot needing a wider seed (WidthSeeds.Grew): its IR

@@ -41,6 +41,8 @@ namespace PyMCU.Common;
 //                                       value...) met a missing pymcu.strfmt import
 //       [NEEDS_ROUND2]               -- round(x, n) on a run-time float met a missing
 //                                       pymcu.round2 import
+//       [NEEDS_CLOCKS]               -- an RP2350 program lowered no clock_init()
+//                                       call; the driver injects it
 //       [STDOUT_OWNED]               -- the program constructs a UART; the driver
 //                                       leaves stdout to it
 //     All warnings/errors go to stderr (never pollute the token stream).
@@ -163,8 +165,16 @@ public static class Logger
     // compile -- they change what the driver stages around the program and then asks
     // for one more pass, the same way [ARENA_USED] does.
     //
+    //   NeedsClocks -- an RP2350 program ended without a resolved clock_init() call;
+    //     the driver injects the preamble the SDK runtime would have run.
     //   StdoutOwned -- the program constructs a UART itself, so the driver must not
     //     initialize a second one over stdout.
+    public static void NeedsClocks()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[NEEDS_CLOCKS]");
+    }
+
     public static void StdoutOwned()
     {
         if (_isDriverMode)
