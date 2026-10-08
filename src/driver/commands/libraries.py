@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -535,10 +536,25 @@ def _run(cmd: list[str], cwd: Path) -> bool:
 # pyproject.toml editing
 # ---------------------------------------------------------------------------
 
+_INLINE_REQUIREMENT_COMMENT = re.compile(r"(?P<body>.*?)(?P<comment>\s+#.*)$")
+_REQUIREMENT_HASHES = re.compile(r"\s+--hash(?:=|\s+).*$")
+
+
+def _requirement_parts(value: str) -> tuple[str, str]:
+    """The PEP 508 portion and inline comment of a requirements.txt line."""
+    match = _INLINE_REQUIREMENT_COMMENT.match(value)
+    body = match.group("body") if match else value
+    comment = match.group("comment") if match else ""
+    return _REQUIREMENT_HASHES.sub("", body).strip(), comment
+
+
 def _requirement_name(value: str) -> str | None:
     """Return the normalized project name from one PEP 508 requirement."""
+    requirement, _ = _requirement_parts(value)
+    if not requirement or requirement.startswith(("-", "#")):
+        return None
     try:
-        return str(canonicalize_name(Requirement(value).name))
+        return str(canonicalize_name(Requirement(requirement).name))
     except InvalidRequirement:
         return None
 
@@ -550,8 +566,19 @@ def _add_dependency(project: Project, requirement: str) -> None:
     if req_file.exists():
         lines = req_file.read_text(encoding="utf-8").splitlines()
         name = _requirement_name(requirement)
-        lines = [ln for ln in lines if _requirement_name(ln) != name]
-        lines.append(requirement)
+        updated: list[str] = []
+        replaced = False
+        for line in lines:
+            if _requirement_name(line) != name:
+                updated.append(line)
+                continue
+            if not replaced:
+                _, comment = _requirement_parts(line)
+                updated.append(requirement + comment)
+                replaced = True
+        lines = updated
+        if not replaced:
+            lines.append(requirement)
         req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return
     if "project" not in doc:

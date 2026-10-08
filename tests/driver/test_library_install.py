@@ -359,8 +359,8 @@ class TestDependencyRecording:
 
         assert requirements.read_text() == (
             "sensor-dist-extra>=1\n"
-            "--extra-index-url https://example.test/simple\n"
             "sensor-dist>=1.0\n"
+            "--extra-index-url https://example.test/simple\n"
         )
 
         cmd._remove_dependency(project, "SENSOR_DIST")
@@ -368,6 +368,38 @@ class TestDependencyRecording:
         assert requirements.read_text() == (
             "sensor-dist-extra>=1\n"
             "--extra-index-url https://example.test/simple\n"
+        )
+
+    def test_requirements_parser_handles_comments_markers_hashes_and_options(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\ndependencies = []\n\n'
+            '[tool.pymcu]\nboard = "arduino_uno"\n'
+        )
+        requirements = tmp_path / "requirements.txt"
+        requirements.write_text(
+            "--index-url https://example.test/simple\n"
+            "sensor-dist>=1; python_version >= '3.11' --hash=sha256:abc  "
+            "# hardware dependency\n"
+            "sensor-dist-extra>=1  # a different project\n"
+        )
+        project = cmd._load_project()
+
+        cmd._add_dependency(project, "sensor-dist==2.0")
+
+        assert requirements.read_text() == (
+            "--index-url https://example.test/simple\n"
+            "sensor-dist==2.0  # hardware dependency\n"
+            "sensor-dist-extra>=1  # a different project\n"
+        )
+        assert requirements.read_text().count("sensor-dist==2.0") == 1
+
+        cmd._remove_dependency(project, "sensor-dist")
+
+        assert requirements.read_text() == (
+            "--index-url https://example.test/simple\n"
+            "sensor-dist-extra>=1  # a different project\n"
         )
 
 
