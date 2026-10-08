@@ -184,6 +184,100 @@ class TestStageModules:
         assert not (staged / "leftover.py").exists()
         assert (staged / "adafruit_hcsr04.py").exists()
 
+    def test_shared_package_stages_only_files_owned_by_the_distribution(self, tmp_path):
+        site = tmp_path / "site-packages"
+        shared = site / "shared"
+        shared.mkdir(parents=True)
+        (shared / "a.py").write_text("A = 1\n")
+        (shared / "b.py").write_text("B = 1\n")
+        for distribution, owned in (("verified-a", "a.py"), ("unverified-b", "b.py")):
+            dist_info = site / f"{distribution.replace('-', '_')}-1.0.dist-info"
+            dist_info.mkdir()
+            (dist_info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {distribution}\nVersion: 1.0\n"
+            )
+            (dist_info / "top_level.txt").write_text("shared\n")
+            (dist_info / "RECORD").write_text(
+                f"{dist_info.name}/METADATA,,\n"
+                f"{dist_info.name}/top_level.txt,,\nshared/{owned},,\n"
+            )
+
+        entry = up.UpstreamEntry(
+            name="verified-a", distribution="verified-a", version="1.0",
+            provides=("shared",), layer="native",
+        )
+        staged = up.stage_modules(entry, [str(site)], tmp_path / "_upstream")
+
+        assert (staged / "shared" / "a.py").is_file()
+        assert not (staged / "shared" / "b.py").exists()
+
+    def test_pep660_editable_is_located_from_direct_url_without_running_pth(
+            self, tmp_path):
+        site = tmp_path / "site-packages"
+        project = tmp_path / "editable-project"
+        (project / "src" / "sensor").mkdir(parents=True)
+        (project / "src" / "sensor" / "__init__.py").write_text("VALUE = 1\n")
+        (project / "pyproject.toml").write_text(
+            "[build-system]\nbuild-backend = 'setuptools.build_meta'\n"
+            "[tool.setuptools.package-dir]\n'' = 'src'\n"
+        )
+        dist_info = site / "editable_sensor-1.0.dist-info"
+        dist_info.mkdir(parents=True)
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: editable-sensor\nVersion: 1.0\n"
+        )
+        (dist_info / "top_level.txt").write_text("sensor\n")
+        (dist_info / "direct_url.json").write_text(json.dumps({
+            "url": project.as_uri(), "dir_info": {"editable": True},
+        }))
+        (site / "editable_sensor.pth").write_text(
+            "raise AssertionError('the driver must never execute this')\n"
+        )
+        (dist_info / "RECORD").write_text(
+            f"{dist_info.name}/METADATA,,\n"
+            f"{dist_info.name}/top_level.txt,,\n"
+            f"{dist_info.name}/direct_url.json,,\neditable_sensor.pth,,\n"
+        )
+        entry = up.UpstreamEntry(
+            name="editable-sensor", distribution="editable-sensor", version="1.0",
+            provides=("sensor",), layer="native",
+        )
+
+        staged = up.stage_modules(entry, [str(site)], tmp_path / "_upstream")
+
+        assert (staged / "sensor" / "__init__.py").read_text() == "VALUE = 1\n"
+
+    def test_unlocatable_editable_names_the_distribution_in_the_error(self, tmp_path):
+        site = tmp_path / "site-packages"
+        project = tmp_path / "editable-project"
+        project.mkdir()
+        dist_info = site / "lost_sensor-1.0.dist-info"
+        dist_info.mkdir(parents=True)
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: lost-sensor\nVersion: 1.0\n"
+        )
+        (dist_info / "top_level.txt").write_text("sensor\n")
+        (dist_info / "direct_url.json").write_text(json.dumps({
+            "url": project.as_uri(), "dir_info": {"editable": True},
+        }))
+        (dist_info / "RECORD").write_text(
+            f"{dist_info.name}/METADATA,,\n"
+            f"{dist_info.name}/top_level.txt,,\n"
+            f"{dist_info.name}/direct_url.json,,\n"
+        )
+        main = tmp_path / "main.py"
+        main.write_text("import sensor\n")
+
+        _, _, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index={}, entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+
+        assert warned == []
+        assert errors == [
+            "lost-sensor: editable install source could not be located for sensor"
+        ]
+
 
 class TestResolveUpstreamForTarget:
     def _installed(self, tmp_path, *, layer="circuitpython"):
