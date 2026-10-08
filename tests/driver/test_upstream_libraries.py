@@ -364,6 +364,59 @@ class TestResolveUpstreamForTarget:
 
 
 class TestFallbackStaging:
+    @pytest.mark.parametrize(
+        ("distribution", "module"),
+        [
+            ("pyserial", "serial"),
+            ("pyusb", "usb"),
+            ("hidapi", "hid"),
+            ("django-stubs", "django"),
+            ("types-requests", "requests"),
+        ],
+    )
+    def test_host_and_stub_distributions_are_not_fallback_candidates(
+            self, tmp_path, distribution, module):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution=distribution, version="1.0", modules=(module,),
+        )
+
+        assert up.discover_fallback_distributions([], [str(site)]) == []
+
+    def test_a_distribution_requiring_blinka_is_host_only(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        dist_info = _write_modules_dist(
+            site, distribution="host-gpio-helper", version="1.0",
+            modules=("gpio_helper",),
+        )
+        metadata = dist_info / "METADATA"
+        metadata.write_text(
+            metadata.read_text() + "Requires-Dist: Adafruit-Blinka (>=8)\n"
+        )
+
+        assert up.discover_fallback_distributions([], [str(site)]) == []
+
+    def test_mcu_classifier_wins_when_two_distributions_claim_one_name(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="a-generic", version="1.0", modules=("sensor",),
+        )
+        device = _write_modules_dist(
+            site, distribution="z-device", version="1.0", modules=("sensor",),
+        )
+        metadata = device / "METADATA"
+        metadata.write_text(
+            metadata.read_text()
+            + "Classifier: Programming Language :: Python :: Implementation :: MicroPython\n"
+        )
+
+        found = up.discover_fallback_distributions([], [str(site)])
+
+        assert [item.name for item in found] == ["z-device", "a-generic"]
+
     def test_installed_version_mismatch_is_staged_as_unverified(self, tmp_path):
         site = tmp_path / "site-packages"
         site.mkdir()

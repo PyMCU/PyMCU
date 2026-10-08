@@ -42,6 +42,7 @@ import tomllib
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
+from packaging.requirements import InvalidRequirement, Requirement
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
@@ -59,6 +60,9 @@ EXCLUDED_DISTRIBUTIONS = frozenset({
     "rpi-ws281x",
     "typing-extensions",
     "circuitpython-stubs",
+    "pyserial",
+    "pyusb",
+    "hidapi",
 })
 
 
@@ -119,8 +123,34 @@ def _normalize(name: str) -> str:
 def _is_excluded_distribution(name: str) -> bool:
     normalized = _normalize(name)
     return (normalized in EXCLUDED_DISTRIBUTIONS
-            or (normalized.startswith("micropython-")
-                and normalized.endswith("-stubs")))
+            or normalized.startswith("types-")
+            or normalized.endswith("-stubs"))
+
+
+def _requires_blinka(dist: Distribution) -> bool:
+    """Whether this distribution targets a host through Adafruit-Blinka."""
+    for raw in dist.requires or ():
+        try:
+            if _normalize(Requirement(raw).name) == "adafruit-blinka":
+                return True
+        except InvalidRequirement:
+            continue
+    return False
+
+
+def _declares_mcu_compatibility(dist: Distribution) -> bool:
+    """Whether package metadata explicitly names an MCU Python runtime."""
+    classifiers = dist.metadata.get_all("Classifier") if dist.metadata else []
+    return any(
+        "micropython" in classifier.lower()
+        or "circuitpython" in classifier.lower()
+        for classifier in classifiers or ()
+    )
+
+
+def _is_host_only_distribution(dist: Distribution) -> bool:
+    name = (dist.metadata["Name"] if dist.metadata else "") or ""
+    return _is_excluded_distribution(name) or _requires_blinka(dist)
 
 
 def top_level_modules(dist: Distribution) -> tuple[str, ...]:
@@ -164,8 +194,7 @@ def excluded_module_names(found: list[Distribution]) -> set[str]:
     """Modules installed by excluded host-only distributions."""
     excluded: set[str] = set()
     for dist in found:
-        name = (dist.metadata["Name"] if dist.metadata else "") or ""
-        if _is_excluded_distribution(name):
+        if _is_host_only_distribution(dist):
             excluded.update(top_level_modules(dist))
     return excluded
 
@@ -184,7 +213,7 @@ def discover_fallback_distributions(
     for dist in found:
         name = (dist.metadata["Name"] if dist.metadata else "") or ""
         normalized = _normalize(name)
-        if not name or normalized in ignored or _is_excluded_distribution(name):
+        if not name or normalized in ignored or _is_host_only_distribution(dist):
             continue
         modules = tuple(
             module for module in top_level_modules(dist)
@@ -195,7 +224,15 @@ def discover_fallback_distributions(
                 name=name, version=dist.version or "unknown",
                 modules=modules, metadata=dist,
             ))
-    return sorted(fallback, key=lambda item: _normalize(item.name))
+    # Reachability decides what is actually staged. When two distributions
+    # claim one import name, explicit MCU-runtime metadata wins ownership.
+    return sorted(
+        fallback,
+        key=lambda item: (
+            not _declares_mcu_compatibility(item.metadata),
+            _normalize(item.name),
+        ),
+    )
 
 
 def find_distribution(distribution: str, search_path: list[str] | None) -> Distribution | None:
