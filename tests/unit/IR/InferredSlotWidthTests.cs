@@ -500,4 +500,50 @@ public class InferredSlotWidthTests
             .ToList();
         violations.Should().BeEmpty();
     }
+
+    private static ProgramIR Gen(string src) =>
+        new IRGenerator().Generate(
+            new Parser(new Lexer(src).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" });
+
+    [Fact]
+    public void Int32AndUint32InATuple_IsRefusedByName()
+    {
+        // int32 and uint32 together would need 33 bits to hold both exactly -- PyMCU-
+        // review round 8. Picking the nearest-fit int32 (WidthSeeds.Join's own 32-bit
+        // cap) would silently lose uint32's top half, so this is refused instead of
+        // joined.
+        Action act = () => Gen(
+            "from pymcu.types import int32, uint32\n" +
+            "def f(a: uint32, b: int32):\n" +
+            "    for x in (a, b):\n" +
+            "        print(x)\n" +
+            "        break\n" +
+            "def main():\n" +
+            "    f(0xFFFFFFFF, -1)\n");
+
+        act.Should().Throw<PyMCU.Common.CompilerError>()
+            .WithMessage("*would have to hold both*uint32*int32*");
+    }
+
+    [Fact]
+    public void AFloatAndAnIntegerInATuple_IsRefusedByName()
+    {
+        // A float and an integer are different value representations, not just
+        // different widths of the same one -- PyMCU-review round 8. CPython answers by
+        // letting the name hold a different type each iteration, which one static,
+        // single-typed slot cannot; refused instead of truncating the float.
+        Action act = () => Gen(
+            "from pymcu.types import uint8\n" +
+            "def f(a: float, b: uint8):\n" +
+            "    for x in (b, a):\n" +
+            "        print(x)\n" +
+            "        continue\n" +
+            "    print(x)\n" +
+            "def main():\n" +
+            "    f(1.5, 2)\n");
+
+        act.Should().Throw<PyMCU.Common.CompilerError>()
+            .WithMessage("*would have to hold both*uint8*float*");
+    }
 }
