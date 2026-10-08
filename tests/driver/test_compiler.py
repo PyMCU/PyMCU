@@ -5,6 +5,8 @@
 
 import sys
 import shutil
+import json
+from importlib.metadata import Distribution
 from pathlib import Path
 import pytest
 
@@ -78,33 +80,53 @@ class TestGetStdlibPath:
     def _compiler():
         return PyMCUCompiler(Console(quiet=True))
 
-    def test_returns_empty_string_on_import_error(self, tmp_path, monkeypatch):
-        import builtins
-        real_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "pymcu":
-                raise ImportError("not installed")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
+    def test_returns_empty_string_when_metadata_and_path_have_no_stdlib(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.driver.core.compiler.distributions", lambda: [])
+        monkeypatch.setattr(
+            "src.driver.core.compiler.PathFinder.find_spec", lambda name, path: None
+        )
         result = self._compiler().get_stdlib_path(verbose=False)
         assert result == ""
 
     def test_does_not_print_errors_when_not_verbose(self, tmp_path, monkeypatch, capsys):
-        import builtins
-        real_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "pymcu":
-                raise ImportError("not installed")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setattr("src.driver.core.compiler.distributions", lambda: [])
+        monkeypatch.setattr(
+            "src.driver.core.compiler.PathFinder.find_spec", lambda name, path: None
+        )
         self._compiler().get_stdlib_path(verbose=False)
         captured = capsys.readouterr()
-        assert "Failed to import" not in captured.out
-        assert "Failed to import" not in captured.err
+        assert captured.out == captured.err == ""
+
+    def test_editable_metadata_locates_stdlib_without_importing_pymcu(
+            self, tmp_path, monkeypatch):
+        project = tmp_path / "stdlib-project"
+        package = project / "src" / "pymcu"
+        (package / "chips").mkdir(parents=True)
+        marker = tmp_path / "initializer-ran"
+        (package / "__init__.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
+        )
+        dist_info = tmp_path / "site" / "pymcu_stdlib-1.0.dist-info"
+        dist_info.mkdir(parents=True)
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pymcu-stdlib\nVersion: 1.0\n"
+        )
+        (dist_info / "direct_url.json").write_text(json.dumps({
+            "url": project.as_uri(), "dir_info": {"editable": True},
+        }))
+        (dist_info / "RECORD").write_text(
+            f"{dist_info.name}/METADATA,,\n{dist_info.name}/direct_url.json,,\n"
+        )
+        monkeypatch.setattr(
+            "src.driver.core.compiler.distributions",
+            lambda: [Distribution.at(dist_info)],
+        )
+
+        result = self._compiler().get_stdlib_path(verbose=False)
+
+        assert result == str(package)
+        assert not marker.exists()
 
 
 class TestIsolateStdlib:

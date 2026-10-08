@@ -12,6 +12,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import json
 import sys
 import os
 import shutil
@@ -19,7 +20,11 @@ import re
 import subprocess
 import threading
 import time
+from importlib.machinery import PathFinder
+from importlib.metadata import distributions
 from pathlib import Path
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 from rich.console import Console
 
 _DIAG_HEADER_RE = re.compile(r"^(\S+?):(\d+)(:.*)$")
@@ -216,7 +221,11 @@ class PyMCUCompiler:
 
     def get_stdlib_path(self, verbose: bool = False) -> str:
         """
-        Resolves the PyMCU Standard Library path.
+        Resolve the PyMCU standard library without importing ``pymcu``.
+
+        Importing the namespace is unsafe here: another installed distribution
+        can contribute a regular ``pymcu/__init__.py`` and run it while a build
+        is only trying to locate compiler input files.
         """
         is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
         try:
@@ -229,19 +238,38 @@ class PyMCUCompiler:
                 self.console.print(f"\\[debug] VIRTUAL_ENV env var: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
                 self.console.print(f"\\[debug] PATH env var: {os.environ.get('PATH', 'NOT SET')}", style="dim")
 
-            import pymcu
+            for dist in distributions():
+                name = str(dist.metadata.get("Name", "")).lower().replace("_", "-")
+                if name != "pymcu-stdlib":
+                    continue
+                for entry in dist.files or ():
+                    if entry.parts[:2] == ("pymcu", "chips"):
+                        package = Path(dist.locate_file("pymcu"))
+                        if (package / "chips").is_dir():
+                            return str(package)
+
+                raw = dist.read_text("direct_url.json")
+                if raw:
+                    direct = json.loads(raw)
+                    parsed = urlparse(str(direct.get("url", "")))
+                    if (direct.get("dir_info", {}).get("editable")
+                            and parsed.scheme == "file"):
+                        path = url2pathname(unquote(parsed.path))
+                        if parsed.netloc:
+                            path = f"//{parsed.netloc}{path}"
+                        root = Path(path)
+                        for package in (root / "pymcu", root / "src" / "pymcu"):
+                            if (package / "chips").is_dir():
+                                return str(package)
+
+            spec = PathFinder.find_spec("pymcu", sys.path)
+            if spec and spec.submodule_search_locations:
+                for location in spec.submodule_search_locations:
+                    package = Path(location)
+                    if (package / "chips").is_dir():
+                        return str(package)
             if is_verbose:
-                self.console.print(f"\\[debug] pymcu namespace __path__: {list(pymcu.__path__)}", style="dim green")
-            for _p in pymcu.__path__:
-                chips_dir = Path(_p) / "chips"
-                if chips_dir.is_dir():
-                    return str(Path(_p))
-            if is_verbose:
-                self.console.print(f"\\[debug] chips/ not found in any pymcu.__path__ entry", style="yellow")
-        except ImportError as e:
-            if is_verbose:
-                self.console.print(f"\\[debug] Failed to import pymcu: {e}", style="dim")
-                self.console.print(f"\\[debug] sys.path was: {sys.path}", style="dim")
+                self.console.print("\\[debug] pymcu stdlib metadata has no chips/", style="yellow")
         except Exception as e:
             if is_verbose:
                 self.console.print(f"\\[debug] Error in get_stdlib_path: {e}", style="dim")
