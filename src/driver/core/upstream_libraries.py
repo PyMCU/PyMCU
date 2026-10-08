@@ -533,9 +533,13 @@ def _module_sources(module: str, roots: list[Path]) -> list[tuple[Path, str, boo
 
 
 def _regular_package_in_roots(module: str, roots: list[Path]) -> bool:
-    """Whether an earlier root owns *module* as a non-namespace package."""
+    """Whether an earlier root owns *module* as a module or regular package."""
     parts = module.split(".")
-    return any(root.joinpath(*parts, "__init__.py").is_file() for root in roots)
+    return any(
+        root.joinpath(*parts).with_suffix(".py").is_file()
+        or root.joinpath(*parts, "__init__.py").is_file()
+        for root in roots
+    )
 
 
 def provided_module_names(package: Path) -> set[str]:
@@ -754,7 +758,7 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
         for module in regular_package_collisions:
             warned.append(
                 f"{entry.distribution}: not staging {module} because an earlier "
-                "include root provides it as a regular package"
+                "include root provides it as a module or regular package"
             )
         collisions = sorted({
             module.split(".", 1)[0] for module in entry.provides
