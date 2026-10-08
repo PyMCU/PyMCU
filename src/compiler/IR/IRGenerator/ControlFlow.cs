@@ -3066,6 +3066,13 @@ public partial class IRGenerator
         // being handled, which is the one being re-raised. `raise e` on the bound name is
         // the same re-raise, so it writes nothing either.
         bool writesMessage = !string.IsNullOrEmpty(stmt.ErrorType) && !reraisesBound;
+        // RFC 0014 family 7: a `raise E(...)` in the program's own code is the fact the
+        // driver used to regex the source for. Reported here -- after the re-raise
+        // cases are excluded, whether or not the message machinery is on -- so a
+        // program whose raises carry messages but never print()s still gets the
+        // console writers the unhandled report needs.
+        if (writesMessage && stmt.HasArgument && CallsiteIsProgramCode())
+            Logger.NeedsExnmsg();
         bool dynamicStored = false;
         if (intArg && programRecordsRaiseMessages && writesMessage)
         {

@@ -50,6 +50,8 @@ namespace PyMCU.Common;
 //                                       nothing
 //       [NEEDS_CLOCKS]               -- an RP2350 program lowered no clock_init()
 //                                       call; the driver injects it
+//       [NEEDS_EXNMSG]               -- a raise-with-message lowered; the driver
+//                                       links the console string writers
 //       [STDOUT_OWNED]               -- the program constructs a UART; the driver
 //                                       leaves stdout to it
 //     All warnings/errors go to stderr (never pollute the token stream).
@@ -180,6 +182,9 @@ public static class Logger
     //     split exists to avoid) and only binds --timebase.
     //   NeedsClocks -- an RP2350 program ended without a resolved clock_init() call;
     //     the driver injects the preamble the SDK runtime would have run.
+    //   NeedsExnmsg -- a raise carried a lowered message; the unhandled report prints
+    //     it through the console string writers, which must be linked even when
+    //     nothing calls print().
     //   StdoutOwned -- the program constructs a UART itself, so the driver must not
     //     initialize a second one over stdout.
     public static void NeedsTimebase()
@@ -198,6 +203,12 @@ public static class Logger
     {
         if (_isDriverMode)
             Console.WriteLine("[NEEDS_CLOCKS]");
+    }
+
+    public static void NeedsExnmsg()
+    {
+        if (_isDriverMode)
+            Console.WriteLine("[NEEDS_EXNMSG]");
     }
 
     public static void StdoutOwned()
