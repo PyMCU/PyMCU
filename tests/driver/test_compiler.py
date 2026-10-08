@@ -137,7 +137,46 @@ class TestIsolateStdlib:
         (package / "types.py").write_text("VALUE = 1\n")
         (site / "host_only.py").write_text("VALUE = 2\n")
 
-        root = PyMCUCompiler.isolate_stdlib(str(package), tmp_path / "dist")
+        root = PyMCUCompiler(Console(quiet=True)).isolate_stdlib(
+            str(package), tmp_path / "dist"
+        )
 
         assert (root / "pymcu" / "types.py").is_file()
         assert not (root / "host_only.py").exists()
+
+    def test_exposes_only_files_owned_by_the_stdlib_distribution(
+            self, tmp_path, monkeypatch):
+        site = tmp_path / "site-packages"
+        package = site / "pymcu"
+        (package / "chips").mkdir(parents=True)
+        (package / "chips" / "__init__.py").write_text("")
+        (package / "types.py").write_text("VALUE = 1\n")
+        (package / "toolchain").mkdir()
+        (package / "toolchain" / "sdk.py").write_text("HOST_ONLY = 1\n")
+
+        stdlib_info = site / "pymcu_stdlib-1.0.dist-info"
+        stdlib_info.mkdir()
+        (stdlib_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pymcu-stdlib\nVersion: 1.0\n"
+        )
+        (stdlib_info / "RECORD").write_text(
+            "pymcu/chips/__init__.py,,\npymcu/types.py,,\n"
+        )
+        sdk_info = site / "pymcu_sdk-1.0.dist-info"
+        sdk_info.mkdir()
+        (sdk_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pymcu-sdk\nVersion: 1.0\n"
+        )
+        (sdk_info / "RECORD").write_text("pymcu/toolchain/sdk.py,,\n")
+        monkeypatch.setattr(
+            "src.driver.core.compiler.distributions",
+            lambda: [Distribution.at(stdlib_info), Distribution.at(sdk_info)],
+        )
+
+        compiler = PyMCUCompiler(Console(quiet=True))
+        stdlib = compiler.get_stdlib_path()
+        root = compiler.isolate_stdlib(stdlib, tmp_path / "dist")
+
+        assert (root / "pymcu" / "chips" / "__init__.py").is_file()
+        assert (root / "pymcu" / "types.py").is_file()
+        assert not (root / "pymcu" / "toolchain").exists()

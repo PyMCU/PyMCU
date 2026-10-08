@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 from importlib.machinery import PathFinder
-from importlib.metadata import distributions
+from importlib.metadata import Distribution, distributions
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
@@ -161,6 +161,7 @@ class PyMCUCompiler:
     def __init__(self, console: Console):
         self.console = console
         self.compiler_candidates: list[str] = []
+        self._stdlib_distribution: Distribution | None = None
         # Set by the most recent compile(): True when pymcuc emitted [ARENA_USED],
         # i.e. a runtime-sized bytearray(n) was lowered against a pymcu.arena import
         # that resolved. The compile SUCCEEDED, but if the driver had not staged its
@@ -228,6 +229,7 @@ class PyMCUCompiler:
         is only trying to locate compiler input files.
         """
         is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
+        self._stdlib_distribution = None
         try:
             if is_verbose:
                 self.console.print(f"\\[debug] sys.executable: {sys.executable}", style="dim")
@@ -246,6 +248,7 @@ class PyMCUCompiler:
                     if entry.parts[:2] == ("pymcu", "chips"):
                         package = Path(dist.locate_file("pymcu"))
                         if (package / "chips").is_dir():
+                            self._stdlib_distribution = dist
                             return str(package)
 
                 raw = dist.read_text("direct_url.json")
@@ -260,6 +263,7 @@ class PyMCUCompiler:
                         root = Path(path)
                         for package in (root / "pymcu", root / "src" / "pymcu"):
                             if (package / "chips").is_dir():
+                                self._stdlib_distribution = dist
                                 return str(package)
 
             spec = PathFinder.find_spec("pymcu", sys.path)
@@ -275,8 +279,7 @@ class PyMCUCompiler:
                 self.console.print(f"\\[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
-    @staticmethod
-    def isolate_stdlib(stdlib: str, output_dir: Path) -> Path:
+    def isolate_stdlib(self, stdlib: str, output_dir: Path) -> Path:
         """Expose the pymcu package without exposing its site-packages peers."""
         source = Path(stdlib).resolve()
         root = output_dir / "_stdlib"
@@ -292,6 +295,29 @@ class PyMCUCompiler:
             shutil.rmtree(package)
 
         root.mkdir(parents=True, exist_ok=True)
+        owned = []
+        if self._stdlib_distribution is not None:
+            owned = [
+                entry for entry in self._stdlib_distribution.files or ()
+                if entry.parts and entry.parts[0] == "pymcu"
+            ]
+        if owned:
+            package.mkdir()
+            for entry in owned:
+                source_file = Path(self._stdlib_distribution.locate_file(entry))
+                if not source_file.is_file():
+                    continue
+                target = root.joinpath(*entry.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    target.symlink_to(source_file)
+                except OSError:
+                    shutil.copy2(source_file, target)
+            return root
+
+        # Editable installs normally record only their finder and metadata,
+        # not every source file. Their located source package is already a
+        # distribution-specific tree, so isolating that directory is safe.
         try:
             package.symlink_to(source, target_is_directory=True)
         except OSError:
