@@ -2562,7 +2562,12 @@ public partial class IRGenerator
             // `alarm.pin`, `alarm.time`, `microcontroller.cpu`, `microcontroller.watchdog`.
             //
             // A write to either name still clears it, through InvalidateAliasesForWrite.
-            if (instAnchor == null && ReceiverClassThroughAliases(vv2.Name) is null)
+            // A produced carrier counts the same as an anchored instance: `x = Pair()
+            // if flag else Pair()` lands as `x = tN` where tN only CARRIES the class,
+            // and dropping the alias at the next label makes x answer as a scalar
+            // slot the construction never wrote (silentfix5).
+            if (instAnchor == null && ReceiverClassThroughAliases(vv2.Name) is null
+                && ProducedInstanceClassOf(value) is null)
                 valueTrackingAliases.Add(tv2.Name);
         }
         else if (value is Temporary tSrc && target is Variable tDst)
@@ -2597,8 +2602,11 @@ public partial class IRGenerator
                 // on which path ran, so it must survive a label. `r = decode_bits(p)`
                 // binds r to the handle the inlined call returned; filed as
                 // value-tracking, the first label a later statement emitted dropped
-                // it, and `r.code[i]` resolved to a phantom `r_code` slot.
-                if (instAnchor == null && ReceiverClassThroughAliases(tSrc.Name) is null)
+                // it, and `r.code[i]` resolved to a phantom `r_code` slot. A produced
+                // carrier is structural for the same reason (`x = Pair() if flag
+                // else Pair()` arrives as `x = tN`, tN stamped but no anchor).
+                if (instAnchor == null && ReceiverClassThroughAliases(tSrc.Name) is null
+                    && ProducedInstanceClassOf(value) is null)
                     valueTrackingAliases.Add(tDst.Name);
             }
         }
