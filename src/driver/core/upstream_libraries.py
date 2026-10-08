@@ -612,10 +612,32 @@ def stage_imported_fallback(
 ) -> tuple[list[str], list[str], list[str]]:
     """Stage reachable fallback modules and return includes, warnings, errors."""
     resolution_roots = [Path(root) for root in roots]
-    by_module: dict[str, FallbackDistribution] = {}
+    by_module: dict[str, list[FallbackDistribution]] = {}
     for item in fallback:
         for module in item.modules:
-            by_module.setdefault(module, item)
+            by_module.setdefault(module, []).append(item)
+
+    def owner_of(imported: str) -> FallbackDistribution | None:
+        candidates = by_module.get(imported.split(".", 1)[0], [])
+        if len(candidates) < 2 or "." not in imported:
+            return candidates[0] if candidates else None
+        leaf_file = Path(*imported.split(".")).with_suffix(".py")
+        leaf_init = Path(*imported.split("."), "__init__.py")
+        for candidate in candidates:
+            owned = {
+                relative for _, relative in _recorded_module_files(
+                    candidate.metadata, imported.split(".", 1)[0]
+                )
+            }
+            if not owned:
+                owned = {
+                    relative for _, relative in _editable_module_files(
+                        candidate.metadata, imported.split(".", 1)[0]
+                    )
+                }
+            if leaf_file in owned or leaf_init in owned:
+                return candidate
+        return candidates[0]
 
     queue: list[tuple[Path, str, bool]] = [(entry_point, "__main__", False)]
     seen_sources: set[Path] = set()
@@ -636,7 +658,7 @@ def stage_imported_fallback(
 
         for imported in sorted(_imports(source, module, is_package)):
             top = imported.split(".", 1)[0]
-            owner = by_module.get(top)
+            owner = owner_of(imported)
             sources = _module_sources(imported, resolution_roots)
             if top in protected:
                 if owner is not None:

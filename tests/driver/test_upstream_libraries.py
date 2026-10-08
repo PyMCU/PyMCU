@@ -524,6 +524,39 @@ class TestFallbackStaging:
         assert len(includes) == 1
         assert (Path(includes[0]) / "sensor.py").is_file()
 
+    def test_shared_namespace_uses_the_distribution_that_owns_the_leaf(self, tmp_path):
+        site = tmp_path / "site-packages"
+        shared = site / "shared"
+        shared.mkdir(parents=True)
+        for distribution, leaf in (("a-core", "core.py"), ("z-device", "device.py")):
+            (shared / leaf).write_text(f"NAME = {distribution!r}\n")
+            dist_info = site / f"{distribution.replace('-', '_')}-1.0.dist-info"
+            dist_info.mkdir()
+            (dist_info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {distribution}\nVersion: 1.0\n"
+            )
+            (dist_info / "top_level.txt").write_text("shared\n")
+            (dist_info / "RECORD").write_text(
+                f"{dist_info.name}/METADATA,,\n"
+                f"{dist_info.name}/top_level.txt,,\nshared/{leaf},,\n"
+            )
+        main = tmp_path / "main.py"
+        main.write_text("import shared.device\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index={}, entry_point=main, earlier_roots=[str(tmp_path)],
+        )
+
+        assert skipped == errors == []
+        assert warned == [
+            "z-device is not in the PyMCU library index: compiling it unverified"
+        ]
+        assert len(includes) == 1
+        staged = Path(includes[0])
+        assert (staged / "shared" / "device.py").is_file()
+        assert not (staged / "shared" / "core.py").exists()
+
     @pytest.mark.parametrize(
         ("distribution", "module"),
         [
