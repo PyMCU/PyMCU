@@ -677,27 +677,38 @@ public partial class IRGenerator
 
     // The exact value v holds when it is a Constant, or a Variable the EXISTING
     // constant-folding tables already prove constant -- never a guess from a declared
-    // type, and never from a bespoke range analysis of its own. Three rounds of silent
-    // regressions (a shared non-inline function's parameter proven from one call site, a
-    // loop-carried name surviving the loop's own invalidation, a field write through a
-    // method not voiding an earlier proof) came from giving the mod rewrite its own
-    // flow-sensitive tracking; these two tables are what the rest of the compiler
-    // already reads the same way, guarded the same way, for the same "is this name
-    // provably one value here" question (Call.cs, ControlFlow.cs, Scan.cs,
-    // Statements.cs): constantVariables for a module-level name (the only kind it ever
-    // holds -- EmitScalarVarAssign routes anything inside a function to
-    // localConstantValues instead), and localConstantValues -- guarded by
-    // ForeignFlowRead, which excludes a read from a DIFFERENT function than the one
-    // that wrote it -- for everything else, including a field written once in __init__
-    // and read through a local inside another method (self.width in Life.step()).
-    // Neither table ever receives a parameter's argument, so a shared non-inline
-    // function's parameter is never "proven" from any one call site in the first place.
+    // type, and never from a bespoke range analysis of its own.
+    //
+    // A FOURTH round of silent regressions (an exception handler inheriting the pre-try
+    // constant, a walrus on a short-circuited branch leaking into the fallthrough, a loop
+    // walrus answering for every iteration with the entry value) showed that even reading
+    // these two EXISTING tables is not enough on its own: localConstantValues answers
+    // "what is the most recent fact recorded for this name", which silently stops being
+    // "what is this name's value HERE" at exactly those three flow points. Fixing each one
+    // as it was found was not sustainable, so DivisorNameIsWholeProgramInvariant (see
+    // ProvenDivisors.cs) gates every Variable lookup below on a whole-program, non-flow-
+    // sensitive pre-scan: a module name or instance field is trusted only when the ENTIRE
+    // PROGRAM contains exactly one textual write to it, and a local/parameter only when
+    // its OWN function writes it exactly once, directly copying an already-eligible name.
+    // A name with two or more textual writes anywhere is refused even where, at this one
+    // point in the control flow, only one of them could actually have run -- which is
+    // exactly what makes the three flow points above harmless instead of needing their own
+    // guard: w1/w2/w3's x/n are written twice in their own source and never reach this
+    // table at all, regardless of where the read sits relative to either write.
+    //
+    // constantVariables holds a module-level name (the only kind it ever holds --
+    // EmitScalarVarAssign routes anything inside a function to localConstantValues
+    // instead); localConstantValues holds everything else, guarded by ForeignFlowRead,
+    // which excludes a read from a DIFFERENT function than the one that wrote it. Neither
+    // table ever receives a parameter's argument, so a shared non-inline function's
+    // parameter is never "proven" from any one call site in the first place.
     // ConstantVariableAsLong undoes constantVariables' raw-32-bit-pattern storage for a
     // name unsignedConstNames marks (divmod()'s own quotient, oracle probe 632).
-    private long? ProvenConstantDivisor(Val v)
+    private long? ProvenConstantDivisor(Val v, Expression divisorExpr, string frameMethod)
     {
         if (v is Constant c) return c.AsLong;
         if (v is not Variable vv) return null;
+        if (!DivisorNameIsWholeProgramInvariant(divisorExpr, frameMethod)) return null;
         if (constantVariables.TryGetValue(vv.Name, out int cv))
             return ConstantVariableAsLong(vv.Name, cv);
         if (!ForeignFlowRead(vv.Name) && localConstantValues.TryGetValue(vv.Name, out int lv))
@@ -2156,7 +2167,8 @@ public partial class IRGenerator
         // of answering 255. The rewrite itself still runs on the mask (v2 below).
         Val divisorForType = v2;
         AstBinOp emitOp = expr.Op;
-        if (emitOp == AstBinOp.Mod && ProvenConstantDivisor(v2) is long modP
+        if (emitOp == AstBinOp.Mod
+            && ProvenConstantDivisor(v2, expr.Right, CurrentFrameMethod()) is long modP
             && modP >= 2 && (modP & (modP - 1)) == 0 && modP <= int.MaxValue + 1L)
         {
             emitOp = AstBinOp.BitAnd;
