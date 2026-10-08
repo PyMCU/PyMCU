@@ -95,6 +95,7 @@ class TestUpstreamEntries:
     def test_malformed_index_yields_nothing(self):
         assert up.upstream_entries({}) == []
         assert up.upstream_entries([]) == []  # type: ignore[arg-type]
+        assert up.upstream_entries({"libraries": None}) == []
 
 
 class TestDiscoverInstalled:
@@ -364,6 +365,30 @@ class TestResolveUpstreamForTarget:
 
 
 class TestFallbackStaging:
+    def test_structurally_corrupt_index_warns_and_uses_fallback(self, tmp_path):
+        site = tmp_path / "site-packages"
+        site.mkdir()
+        _write_modules_dist(
+            site, distribution="sensor-dist", version="1.0", modules=("sensor",),
+        )
+        main = tmp_path / "main.py"
+        main.write_text("import sensor\n")
+
+        includes, skipped, errors, warned = up.resolve_upstream_for_target(
+            search_path=[str(site)], flavors=[], stage_root=tmp_path / "_upstream",
+            index={"libraries": None}, entry_point=main,
+            earlier_roots=[str(tmp_path)],
+        )
+
+        assert skipped == errors == []
+        assert warned == [
+            "library index is malformed: ignoring it and discovering imported "
+            "distributions unverified",
+            "sensor-dist is not in the PyMCU library index: compiling it unverified",
+        ]
+        assert len(includes) == 1
+        assert (Path(includes[0]) / "sensor.py").is_file()
+
     @pytest.mark.parametrize(
         ("distribution", "module"),
         [

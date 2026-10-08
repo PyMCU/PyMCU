@@ -97,7 +97,10 @@ def upstream_entries(index: dict) -> list[UpstreamEntry]:
     entries: list[UpstreamEntry] = []
     if not isinstance(index, dict):
         return entries
-    for raw in index.get("libraries", []):
+    libraries = index.get("libraries", [])
+    if not isinstance(libraries, list):
+        return entries
+    for raw in libraries:
         if not isinstance(raw, dict) or raw.get("kind") != "upstream":
             continue
         distribution = str(raw.get("distribution", "")).strip()
@@ -636,6 +639,10 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
     by compiling, not by trusting the declaration.
     """
     index = _current_index() if index is None else index
+    malformed_index = (
+        not isinstance(index, dict)
+        or ("libraries" in index and not isinstance(index["libraries"], list))
+    )
     entries = upstream_entries(index)
     verified_entries = _verified_upstream_entries(entries, search_path)
 
@@ -643,6 +650,11 @@ def resolve_upstream_for_target(*, search_path: list[str] | None, flavors: list[
     skipped: list[str] = []
     errors: list[str] = []
     warned: list[str] = []
+    if malformed_index:
+        warned.append(
+            "library index is malformed: ignoring it and discovering imported "
+            "distributions unverified"
+        )
     protected = protected_modules or set()
     for entry in discover_installed_upstream(verified_entries, search_path):
         if enforce and entry.layer != "native" and entry.layer not in flavors:
