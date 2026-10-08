@@ -38,6 +38,8 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tomllib
 from urllib.parse import urlparse
@@ -388,6 +390,45 @@ def site_packages_of(venv: Path) -> list[str]:
     return [str(p) for p in sorted((venv / "lib").glob("python*/site-packages")) if p.is_dir()]
 
 
+def _poetry_environment(root: Path) -> Path | None:
+    """Ask Poetry for its project environment without running project code."""
+    poetry = shutil.which("poetry")
+    if poetry is None:
+        return None
+    try:
+        result = subprocess.run(
+            [poetry, "env", "info", "--path"],
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    environment = Path(result.stdout.strip())
+    return environment if environment.is_dir() else None
+
+
+def project_environment(root: Path) -> Path | None:
+    """The environment owned by this project, including Poetry's cache."""
+    in_project = root / ".venv"
+    if in_project.is_dir():
+        return in_project
+
+    is_poetry = (root / "poetry.lock").is_file()
+    if not is_poetry:
+        try:
+            document = tomllib.loads(
+                (root / "pyproject.toml").read_text(encoding="utf-8")
+            )
+            is_poetry = "poetry" in document.get("tool", {})
+        except (OSError, tomllib.TOMLDecodeError, UnicodeError):
+            pass
+    return _poetry_environment(root) if is_poetry else None
+
+
 def _editable_project_dir(dist) -> Path | None:
     """
     Where an editable install actually keeps its sources, or None.
@@ -662,8 +703,8 @@ def search_path_for_project(root: Path) -> list[str] | None:
     .venv is a case the build already warns about, and it must not silently
     lose the project's libraries on top of that.
     """
-    venv = root / ".venv"
-    if not venv.is_dir():
+    venv = project_environment(root)
+    if venv is None:
         return None
     try:
         if Path(sys.prefix).resolve() == venv.resolve():

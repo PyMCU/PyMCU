@@ -4,6 +4,7 @@
 # collisions and where the driver looks for a project's libraries.
 
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,27 @@ adapters = ["micropython"]
 [library.requires]
 language-level = 1
 """
+
+
+def test_poetry_environment_is_queried_without_running_project_code(
+        tmp_path, monkeypatch):
+    (tmp_path / "poetry.lock").touch()
+    environment = tmp_path / "poetry-cache" / "demo-123"
+    environment.mkdir(parents=True)
+    calls = []
+
+    monkeypatch.setattr(core.shutil, "which", lambda command: "/usr/bin/poetry")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=f"{environment}\n")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+
+    assert core.project_environment(tmp_path) == environment
+    assert calls[0][0] == ["/usr/bin/poetry", "env", "info", "--path"]
+    assert calls[0][1]["cwd"] == tmp_path
+    assert "run" not in calls[0][0]
 
 
 def _make_package(tmp_path: Path, manifest: str = MANIFEST, *, name: str = "pymcu_lib_dht11") -> Path:

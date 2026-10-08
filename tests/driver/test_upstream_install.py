@@ -88,6 +88,36 @@ class TestResolveFromIndexAcceptsUpstream:
 
 
 class TestInstallUpstreamLibrary:
+    def test_poetry_cached_environment_is_used_for_post_install_discovery(
+            self, tmp_path, monkeypatch):
+        project = _project(tmp_path)
+        (tmp_path / "poetry.lock").touch()
+        environment = tmp_path / "poetry-cache" / "demo-123"
+        site = environment / "lib" / "python3.12" / "site-packages"
+        site.mkdir(parents=True)
+        monkeypatch.setattr(cmd, "project_environment", lambda root: environment)
+        monkeypatch.setattr(
+            cmd, "resolve_from_index",
+            lambda project, name, refresh=False: (
+                UPSTREAM_ENTRY, UPSTREAM_ENTRY["distribution"], ""),
+        )
+        monkeypatch.setattr(cmd, "last_index_source", lambda: "bundled")
+        monkeypatch.setattr(cmd, "_needs_environment", lambda project: False)
+        monkeypatch.setattr(cmd, "install_command", lambda *args, **kwargs: ["true"])
+        monkeypatch.setattr(cmd, "_run", lambda *args, **kwargs: True)
+        searches = []
+
+        def installed_version(distribution, search):
+            searches.append(search)
+            return "0.4.25"
+
+        monkeypatch.setattr(cmd, "installed_distribution_version", installed_version)
+
+        result = cmd.install_library(project, "adafruit_hcsr04", verify=False)
+
+        assert result.ok, result.message
+        assert searches == [[str(site)]]
+
     @pytest.mark.parametrize(
         ("manager", "executable", "verb"),
         (("pip", "pip", "install"), ("uv", "/usr/bin/uv", "add"),

@@ -57,6 +57,7 @@ from ..core.libraries import (
     chip_arch,
     discover_libraries,
     find_module_collisions,
+    project_environment,
     site_packages_of,
     ssl_context,
 )
@@ -402,8 +403,9 @@ def _installed_libraries(project: Project) -> tuple[list[Library], list[str]]:
     import importlib
 
     importlib.invalidate_caches()
-    if project.venv.exists():
-        search = site_packages_of(project.venv)
+    environment = project_environment(project.root)
+    if environment is not None:
+        search = site_packages_of(environment)
         if search:
             return discover_libraries(search_path=search)
     return discover_libraries()
@@ -748,7 +750,8 @@ def _finish_upstream_install(project: Project, entry: dict, distribution: str, *
     this only confirms a distribution by this name actually landed in the
     project's environment, then verifies its declared modules the same way.
     """
-    search = site_packages_of(project.venv) if project.venv.exists() else None
+    environment = project_environment(project.root)
+    search = site_packages_of(environment) if environment is not None else None
     version = installed_distribution_version(distribution, search)
     if version is None:
         return result.failed(rollback(
@@ -1012,7 +1015,8 @@ def _installed_upstream(project: Project) -> list:
     entries = upstream_entries(index)
     if not entries:
         return []
-    search = site_packages_of(project.venv) if project.venv.exists() else None
+    environment = project_environment(project.root)
+    search = site_packages_of(environment) if environment is not None else None
     return discover_installed_upstream(entries, search)
 
 
