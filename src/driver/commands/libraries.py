@@ -560,6 +560,32 @@ def _requirement_name(value: str) -> str | None:
         return None
 
 
+def _requirement_blocks(lines: list[str]) -> list[list[str]]:
+    """Group physical requirements.txt lines joined by trailing backslashes."""
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        current.append(line)
+        if line.rstrip().endswith("\\"):
+            continue
+        blocks.append(current)
+        current = []
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def _requirement_block_value(block: list[str]) -> str:
+    """One logical requirement suitable for PEP 508 name parsing."""
+    parts: list[str] = []
+    for line in block:
+        part = line.strip()
+        if part.endswith("\\"):
+            part = part[:-1].rstrip()
+        parts.append(part)
+    return " ".join(parts)
+
+
 def _add_dependency(project: Project, requirement: str) -> None:
     """Record the dependency, preserving the file's existing formatting."""
     doc = project.doc
@@ -569,12 +595,13 @@ def _add_dependency(project: Project, requirement: str) -> None:
         name = _requirement_name(requirement)
         updated: list[str] = []
         replaced = False
-        for line in lines:
-            if _requirement_name(line) != name:
-                updated.append(line)
+        for block in _requirement_blocks(lines):
+            value = _requirement_block_value(block)
+            if _requirement_name(value) != name:
+                updated.extend(block)
                 continue
             if not replaced:
-                _, comment = _requirement_parts(line)
+                _, comment = _requirement_parts(value)
                 updated.append(requirement + comment)
                 replaced = True
         lines = updated
@@ -607,7 +634,12 @@ def _remove_dependency(project: Project, distribution: str) -> None:
     req_file = project.root / "requirements.txt"
     if req_file.exists():
         lines = req_file.read_text(encoding="utf-8").splitlines()
-        lines = [ln for ln in lines if _requirement_name(ln) != name]
+        lines = [
+            line
+            for block in _requirement_blocks(lines)
+            if _requirement_name(_requirement_block_value(block)) != name
+            for line in block
+        ]
         req_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return
     doc = project.doc
