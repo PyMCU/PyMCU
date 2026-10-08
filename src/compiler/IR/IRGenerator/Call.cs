@@ -4720,20 +4720,17 @@ public partial class IRGenerator
             arg);
     }
 
-    /// A call argument guaranteed to carry a single number at this call site: a plain
-    /// (non-slice) subscript of a buffer or of a list whose elements are themselves numbers
-    /// (never a list of lists, where the element is a buffer in its own right), or a name
-    /// bound to a local scalar -- which is exactly what an `enumerate()`/`for` loop variable
-    /// is. Narrower than it could be on purpose: a literal or arithmetic expression passed to
-    /// a buffer-typed parameter the callee never actually indexes is not a divergence from
-    /// CPython (TypingOnlyNameTests' `d.take(0)` with an unused `buf` param never raises),
-    /// so only the two shapes the enumerate/subscript bug actually produces are caught here.
-    private bool ArgumentIsScalarElement(Expression? arg) => arg switch
-    {
-        IndexExpr { Index: not SliceExpr } ix => IndexTargetHoldsScalarElements(ix.Target),
-        VariableExpr ve => NameIsScalarAtThisSite(ve.Name),
-        _ => false,
-    };
+    /// A call argument guaranteed to carry a single number at this call site: any shape
+    /// <see cref="ExpressionIsProvenScalarElement"/> proves -- a subscript, a name already
+    /// proven, a walrus, a ternary whose arms both prove it, or a call to a function proven
+    /// to always return one element. Narrower than it could be on purpose: a literal or
+    /// arithmetic expression passed to a buffer-typed parameter the callee never actually
+    /// indexes is not a divergence from CPython (TypingOnlyNameTests' `d.take(0)` with an
+    /// unused `buf` param never raises), so only shapes a REAL bug of this kind has
+    /// produced are caught here -- see ExpressionIsProvenScalarElement's own doc for why
+    /// each one stays a POSITIVE proof rather than a guess.
+    private bool ArgumentIsScalarElement(Expression? arg) =>
+        arg != null && ExpressionIsProvenScalarElement(arg);
 
     /// <see cref="NameIsLocalScalar"/> skips the `main.` qualification and the bare name,
     /// because it only has to answer whether a module-level buffer is SHADOWED, and a
@@ -4820,6 +4817,20 @@ public partial class IRGenerator
     /// as itself a nested list).
     private bool IndexTargetHoldsScalarElements(Expression target)
     {
+        // `buf[0:1][0]`: the outer subscript's target is itself a slice of a buffer, not a
+        // bare name. A slice of a buffer is another buffer of the SAME element type (never
+        // a buffer of buffers), so whether IT holds scalar elements is the same question
+        // asked of whatever it was sliced from.
+        if (target is IndexExpr { Index: SliceExpr, Target: var slicedFrom })
+            return IndexTargetHoldsScalarElements(slicedFrom);
+        // `obj.buf[0]`: the target is a field access, not a bare name. FlattenFieldChain
+        // resolves it to the same flat storage key a bare name would qualify to (self.buf
+        // in a method of `d` is "d_buf"), which IsBufferStorageName already knows how to read.
+        if (target is MemberAccessExpr field)
+        {
+            string? flat = FlattenFieldChain(field);
+            return flat != null && IsBufferStorageName(flat);
+        }
         if (target is not VariableExpr tv) return false;
         string prefixed = (!string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix
             : string.IsNullOrEmpty(currentFunction) || currentFunction == "main" ? ""
@@ -4829,6 +4840,41 @@ public partial class IRGenerator
         return key.Length > 0 && listVarElemTypes.ContainsKey(key)
                && !listInnerElemTypes.ContainsKey(key);
     }
+
+    // Every FUNCTION (not method -- see ComputeFunctionsReturnProvenScalar) whose return
+    // value is structurally PROVEN, from its own declared buffer parameters alone, to always
+    // be a single scalar element -- computed once, before any lowering, from the AST (see
+    // ProvenScalar.cs). A call through one of these carries no name of its own to check
+    // provenScalarElements against, so this is the only way its result is ever recognized as
+    // a proven scalar element rather than silently left uncompiled-against.
+    private HashSet<string> functionsReturnProvenScalar = new();
+
+    private bool CalleeReturnsProvenScalar(CallExpr ce) =>
+        ce.Callee is VariableExpr cv && functionsReturnProvenScalar.Contains(cv.Name);
+
+    /// <summary>
+    /// The single source of truth for "does THIS expression, evaluated right here, produce
+    /// exactly one scalar element of a buffer" -- every shape that can carry the proof
+    /// (a direct subscript, a name already proven, a walrus, a ternary whose arms both
+    /// prove it, a call to a function proven to always return one) in one place, so a new
+    /// shape taught here is taught to every consumer at once: the call-argument matcher
+    /// (<see cref="ArgumentIsScalarElement"/>) and every write site that propagates
+    /// <c>provenScalarElements</c> onto the name it binds.
+    ///
+    /// A ternary requires BOTH arms to prove scalar -- if either arm is a buffer, or either
+    /// arm this cannot trace, the whole expression is left unproven rather than guessed at;
+    /// the positive-proof-only stance applies to the whole shape, not just its first arm.
+    /// </summary>
+    private bool ExpressionIsProvenScalarElement(Expression expr) => expr switch
+    {
+        IndexExpr { Index: not SliceExpr } ix => IndexTargetHoldsScalarElements(ix.Target),
+        VariableExpr ve => NameIsScalarAtThisSite(ve.Name),
+        WalrusExpr we => ExpressionIsProvenScalarElement(we.Value),
+        TernaryExpr te => ExpressionIsProvenScalarElement(te.TrueVal)
+                          && ExpressionIsProvenScalarElement(te.FalseVal),
+        CallExpr ce => CalleeReturnsProvenScalar(ce),
+        _ => false,
+    };
 
     /// A name bound to a bytes or list literal of constants (`z = b"QR"`), which lives as a
     /// compile-time sequence rather than as storage. A tuple or a range bound the same way is
