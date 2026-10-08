@@ -152,6 +152,32 @@ class Round2RequiredError(RuntimeError):
     import and running the frontend once more (RFC 0014 decision 5)."""
 
 
+class EmbedRequiredError(RuntimeError):
+    """pymcuc reported [EMBED] <name>: open() resolved a compile-time file name
+    that is not in this build's embed table (RFC 0014 family 7). `pymcu build`
+    owns the filesystem side: it looks the name up under the sources dir, the
+    project root and the entry file's directory, and runs the frontend once
+    more with --embed. Carries the names reported and the suppressed stderr of
+    the failed pass, so a name that resolves nowhere can still be diagnosed."""
+
+    def __init__(self, embed_names, diagnostics):
+        super().__init__("Compilation failed (see diagnostics above)")
+        self.embed_names = embed_names
+        self.diagnostics = diagnostics
+
+
+# Tokens pymcuc prints as whole lines on its stdout stream, collected verbatim
+# after every pass (RFC 0014 family 7). [EMBED] carries a payload and is read
+# with startswith() instead; [INFO]/[Warning] style lines are not tokens.
+_DRIVER_TOKENS = frozenset({
+    "[NEEDS_ARENA]", "[ARENA_USED]",
+    "[NEEDS_STRFMT]", "[NEEDS_ROUND2]",
+    "[NEEDS_TIMEBASE]", "[TIMEBASE_INIT]",
+    "[NEEDS_CLOCKS]", "[NEEDS_EXNMSG]", "[STDOUT_OWNED]",
+})
+_EMBED_PREFIX = "[EMBED] "
+
+
 class PyMCUCompiler:
     """
     Wrapper for the core C++ build tool (pymcuc).
@@ -169,6 +195,15 @@ class PyMCUCompiler:
         # generated shim the arena ran with the shipped module's ARENA_SIZE of 0 --
         # the flag is how build.py knows to inject and compile once more anyway.
         self.last_compile_used_arena = False
+        # RFC 0014 family 7: every token line the most recent compile() emitted,
+        # verbatim -- the caller reads [NEEDS_TIMEBASE], [STDOUT_OWNED] and
+        # friends straight out of this set instead of re-deriving them from
+        # the source. [EMBED] payloads land in last_compile_embed_names, and
+        # the pass's raw stderr in last_compile_stderr for whoever has to
+        # surface the diagnostics a suppressed retry hid.
+        self.last_compile_tokens: set = set()
+        self.last_compile_embed_names: list = []
+        self.last_compile_stderr: str = ""
 
     def _get_start_path(self) -> Path:
         """Helper to allow easier mocking or inheritance if needed"""
@@ -511,7 +546,15 @@ class PyMCUCompiler:
                 needs_arena = "[NEEDS_ARENA]" in buffered
                 needs_strfmt = "[NEEDS_STRFMT]" in buffered
                 needs_round2 = "[NEEDS_ROUND2]" in buffered
-                if err_text and not (needs_arena or needs_strfmt or needs_round2):
+                embed_names = [line[len(_EMBED_PREFIX):].strip()
+                               for line in buffered
+                               if line.startswith(_EMBED_PREFIX)]
+                # stderr stays hidden while the pass reported something the
+                # driver stages and retries for -- showing the missing-import
+                # diagnostic would report an error that is about to be fixed.
+                self.last_compile_stderr = err_text
+                if err_text and not (needs_arena or needs_strfmt or needs_round2
+                                     or embed_names):
                     sys.stderr.write(
                         _remap_diagnostics(err_text, diagnostic_source)
                         if diagnostic_source else err_text)
@@ -527,6 +570,9 @@ class PyMCUCompiler:
                     on_output(line)
 
             self.last_compile_used_arena = "[ARENA_USED]" in buffered
+            self.last_compile_tokens = {line for line in buffered
+                                        if line in _DRIVER_TOKENS}
+            self.last_compile_embed_names = embed_names
 
             if proc.returncode < 0:
                 # Still dead on a signal after every retry. Say what happened: the compiler
@@ -553,6 +599,8 @@ class PyMCUCompiler:
                 if needs_round2:
                     raise Round2RequiredError(
                         "Compilation failed (see diagnostics above)")
+                if embed_names:
+                    raise EmbedRequiredError(embed_names, err_text)
                 raise RuntimeError("Compilation failed (see diagnostics above)")
         except FileNotFoundError:
             raise RuntimeError(f"Compiler '{compiler}' not found.")
