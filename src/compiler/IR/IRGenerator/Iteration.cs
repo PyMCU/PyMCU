@@ -935,7 +935,8 @@ public partial class IRGenerator
     /// compile-time integer constants" for elements that are compile-time constants, and every
     /// guide with more than one pin had to be written out one call per pin (#308).
     /// </summary>
-    private bool BindUnrolledElement(string key, Expression elem, bool materialize = false)
+    private bool BindUnrolledElement(string key, Expression elem, bool materialize = false,
+        DataType? forcedWidth = null)
     {
         // A rebind through this loop variable drops whichever of "proven scalar" / "is a
         // buffer" an EARLIER binding of the same bare name left behind (PyMCU-review round
@@ -980,7 +981,15 @@ public partial class IRGenerator
             // always had one; the all-constant path never did.
             if (materialize)
             {
-                DataType mdt = LoopVarStorageType(key, InferExprType(elem));
+                // forcedWidth, when given, is the WIDEST type across every element of
+                // this tuple/list AND whatever the name held before the loop (PyMCU-
+                // review round 7) -- not just this one constant's own natural width.
+                // `for x in (b, a): break` with b: uint16, a: uint8 must leave x able to
+                // hold b's full width even on the iteration that binds a, because a
+                // break on the FIRST iteration is what a read after the loop actually
+                // sees, and the backend homes one slot per name at one width for all of
+                // them.
+                DataType mdt = forcedWidth ?? LoopVarStorageType(key, InferExprType(elem));
                 Emit(new Copy(new Constant(iv), new Variable(key, mdt)));
                 variableTypes[key] = mdt;
             }
@@ -1029,7 +1038,8 @@ public partial class IRGenerator
     /// string/instance/nested-sequence shape, and left no instructions behind on the way to
     /// answering that, so emitting the expression here is the first and only time it runs.
     /// </summary>
-    private bool BindUnrolledRuntimeElement(string key, Expression elem, Val? preEvaluated = null)
+    private bool BindUnrolledRuntimeElement(string key, Expression elem, Val? preEvaluated = null,
+        DataType? forcedWidth = null)
     {
         // A bare literal that `BindUnrolledElement` could not fold (today, only a float --
         // `for a in [1, 2.5]`) is a separate, pre-existing gap in the constant evaluator
@@ -1038,7 +1048,11 @@ public partial class IRGenerator
         // diagnostic (and its column) intact instead of papering over it here.
         if (elem is TupleExpr or ListExpr or IntegerLiteral or FloatLiteral
             or StringLiteral or BooleanLiteral) return false;
-        DataType dt = LoopVarStorageType(key, InferExprType(elem));
+        // forcedWidth, when given, is the WIDEST type across every element of this
+        // tuple/list AND whatever the name held before the loop (PyMCU-review round 7)
+        // -- see BindUnrolledElement's materialize branch for why this one element's own
+        // natural width is not enough on its own.
+        DataType dt = forcedWidth ?? LoopVarStorageType(key, InferExprType(elem));
         // An EARLIER statement in this same function may already have chosen a NARROWER
         // width for this bare name (`x = buf[0]` before `for x in (buf,): pass` rebinds it
         // to the buffer's own address) -- the backend homes one slot per name, so the two
@@ -2152,6 +2166,43 @@ public partial class IRGenerator
                     constSequenceBindings.Remove(varKey);
                 }
 
+                // The loop variable's type after the loop must be the WIDEST of every
+                // element's own type AND whatever the name already held before the loop
+                // (PyMCU-review round 7), not whichever element happened to unroll LAST.
+                // `for x in (b, a): break` with b: uint16, a: uint8 left x at uint8 (a's
+                // width, bound by the final unrolled copy) even though a break on the
+                // FIRST iteration is what a read after the loop actually sees, with x
+                // still holding b's full 16 bits -- the backend homes one slot per name
+                // at one width for every iteration, not the last one's alone.
+                DataType? widestDt = null;
+                DataType? priorLoopVarDt = null;
+                if (varKey2 == null)
+                {
+                    if (variableTypes.TryGetValue(varKey, out var priorVarDt)
+                        && PyMCU.Common.WidthSeeds.IsInt(priorVarDt))
+                    {
+                        priorLoopVarDt = priorVarDt;
+                        widestDt = priorVarDt;
+                    }
+                    foreach (var we in elems)
+                    {
+                        if (we is ListExpr or TupleExpr) continue; // nested/pair shape, not a scalar width
+                        DataType weDt = LoopVarStorageType(varKey, InferExprType(we));
+                        if (!PyMCU.Common.WidthSeeds.IsInt(weDt)) continue;
+                        widestDt = widestDt is { } wd ? PyMCU.Common.WidthSeeds.Join(wd, weDt) : weDt;
+                    }
+                    // The name's EARLIER binding (`x = a` before this loop) already emitted
+                    // its own Copy at ITS OWN width, which nothing here can rewrite after the
+                    // fact -- same reasoning as BindUnrolledRuntimeElement's own RequireSlot
+                    // call (PyMCU-review round 5/6). When the loop's widest element needs more
+                    // than that earlier Copy assumed, ask for the seed a rerun starts the name
+                    // at, so the earlier binding is ALSO wide from the beginning on the run
+                    // that settles.
+                    if (WidthSeeds != null && priorLoopVarDt is { } pld && widestDt is { } wd2
+                        && pld != wd2)
+                        RequireSlot(varKey, pld, wd2);
+                }
+
                 for (int ei = 0; ei < elems.Count; ei++)
                 {
                     var elem = elems[ei];
@@ -2190,7 +2241,7 @@ public partial class IRGenerator
                         continue;
                     }
 
-                    if (BindUnrolledElement(varKey, elem, materialize: hasBreak))
+                    if (BindUnrolledElement(varKey, elem, materialize: hasBreak, forcedWidth: widestDt))
                     {
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     }
@@ -2202,7 +2253,7 @@ public partial class IRGenerator
                             $"each element here is a pair, and '{stmt.VarName}' is one name, so there is " +
                             $"nowhere to put the second value. Write 'for {stmt.VarName}, second in ...' to " +
                             "unpack both.", elem);
-                    else if (BindUnrolledRuntimeElement(varKey, elem, preEvaluated[ei]))
+                    else if (BindUnrolledRuntimeElement(varKey, elem, preEvaluated[ei], forcedWidth: widestDt))
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     else throw UserError(
                         "for-in list/tuple iterable elements must be compile-time constants -- a number, "
