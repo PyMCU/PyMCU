@@ -426,4 +426,78 @@ public class InferredSlotWidthTests
             .ToList();
         violations.Should().BeEmpty();
     }
+
+    [Fact]
+    public void ABreakInATupleOfMixedWidths_KeepsTheWiderType()
+    {
+        // `for x in (b, a): break` with b: uint16, a: uint8 -- PyMCU-review round 7.
+        // Unconditionally setting variableTypes to each element's OWN width in turn left
+        // 'f.x' at uint8 (a's width, the LAST unrolled element) even though break fires
+        // on the FIRST iteration, when x holds b's full 16 bits. The type after the loop
+        // has to be the widest of every element AND whatever the name held before the
+        // loop, not whichever element happened to unroll last -- and the EARLIER `x = a`
+        // binding needs the same seeded rerun round 5/6 already use, since nothing can
+        // rewrite its own Copy after the fact.
+        var (ir, _) = GenSeeded(
+            "from pymcu.types import uint8, uint16\n" +
+            "def f(a: uint8, b: uint16) -> uint16:\n" +
+            "    x = a\n" +
+            "    for x in (b, a):\n" +
+            "        break\n" +
+            "    return x\n" +
+            "def main():\n" +
+            "    r: uint16 = f(1, 300)\n");
+
+        var violations = Verifier.Verify(ir)
+            .Where(v => v.Check == "storage-width" && v.Detail.Contains("'f.x'"))
+            .ToList();
+        violations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ATupleOfMixedWidthsWithNoBreak_KeepsTheWiderType()
+    {
+        // The no-break sibling: the loop runs to completion and ends at the LAST element
+        // (a: uint8), but every iteration in between still has to use the SAME
+        // consistent width (uint16, b's own) -- the backend homes one slot per name at
+        // one width for every write into it, not a different width per iteration.
+        var (ir, _) = GenSeeded(
+            "from pymcu.types import uint8, uint16\n" +
+            "def f(a: uint8, b: uint16) -> uint16:\n" +
+            "    x = a\n" +
+            "    for x in (b, a):\n" +
+            "        pass\n" +
+            "    return x\n" +
+            "def main():\n" +
+            "    r: uint16 = f(1, 300)\n");
+
+        var violations = Verifier.Verify(ir)
+            .Where(v => v.Check == "storage-width" && v.Detail.Contains("'f.x'"))
+            .ToList();
+        violations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ASignedAndUnsignedMix_JoinsToASignedWiderType()
+    {
+        // The signed/unsigned sibling: a: int8, b: uint16. Joining a signed and an
+        // unsigned type for the widest-width decision needs a signed type one step above
+        // the unsigned one (int32), not just the larger of the two byte counts, or a
+        // negative `a` reads back wrong once it shares a slot with an unsigned, wider
+        // element.
+        var (ir, _) = GenSeeded(
+            "from pymcu.types import int8, uint16\n" +
+            "def f(a: int8, b: uint16) -> int32:\n" +
+            "    x = a\n" +
+            "    for x in (b, a):\n" +
+            "        break\n" +
+            "    return x\n" +
+            "def main():\n" +
+            "    r: int32 = f(-1, 300)\n");
+
+        var violations = Verifier.Verify(ir)
+            .Where(v => v.Check == "storage-width" && v.Detail.Contains("'f.x'"))
+            .ToList();
+        violations.Should().BeEmpty();
+    }
 }
