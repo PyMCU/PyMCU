@@ -6768,15 +6768,29 @@ public partial class IRGenerator
     }
 
     // The sweep half of a write's bookkeeping, for a target whose key is already resolved:
-    // every alias that pointed at `written` is stale the moment the name is stored into.
+    // every alias that pointed at `written` is stale the moment the name is stored into --
+    // but only value-tracking ones. `y = x` on two scalars records `y -> x` to fold y's
+    // reads from x's slot, and a rebind of x ends that record; y keeps the value it copied.
+    // Structural aliases are different in kind: `param -> arg`, `self -> obj` and bound-arg
+    // names like `display__colon__disp -> display` say the parameter IS the object the
+    // argument names -- an identity the callee still needs after the write, because
+    // `x = C(...)` builds the very object those aliases were bound to see. Sweeping them
+    // under the same rule ate the constructor's own arg bindings on the same statement
+    // (adafruit_ht16k33's Seg7x4.__init__ `self._colon = Colon(self)`, whose `disp`
+    // parameter a later `enumerate(self.i2c_device)` resolves through).
     private void InvalidateAliasesPointingAt(string written)
     {
         List<string>? stale = null;
         foreach (var kv in variableAliases)
-            if (kv.Value == written && !writeThroughAliases.Contains(kv.Key))
+            if (kv.Value == written && valueTrackingAliases.Contains(kv.Key)
+                && !writeThroughAliases.Contains(kv.Key))
                 (stale ??= new List<string>()).Add(kv.Key);
         if (stale != null)
-            foreach (var k in stale) variableAliases.Remove(k);
+            foreach (var k in stale)
+            {
+                variableAliases.Remove(k);
+                valueTrackingAliases.Remove(k);
+            }
     }
 
     // Register `name = {...}` (dict or set literal) with the standard qualification.
