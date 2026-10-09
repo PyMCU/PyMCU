@@ -2725,6 +2725,25 @@ public partial class IRGenerator
                     candidates.Add(bv);
             MarkMultiStr(key, candidates);
         }
+        // `buf if flag else other`: both arms are buffers, and GetPromotedType/Copy below
+        // treat every arm as a scalar -- there is no lowering here for "pick one of two
+        // array addresses at runtime" yet, so the ternary silently copied the first BYTE
+        // of whichever array won (CPython picks the bytearray object itself; this read 0
+        // instead of its first element, or whatever happened to be at the chosen address).
+        // Refused by name rather than left to produce that silently -- see docs for the
+        // fix this needs: a pointer-width result that copies each arm's ADDRESS, not its
+        // first byte, the same distinction ArgumentIsBuffer already draws for a call
+        // argument.
+        bool ternArmIsBuffer(Val v) => v is ArrayBase || (v is Variable bv && IsBufferStorageName(bv.Name));
+        if (ternArmIsBuffer(trueVal) || ternArmIsBuffer(falseVal))
+            throw UserError(
+                "a conditional expression cannot choose between two buffers -- "
+                + "'x if c else y' with x and y both bytearray/bytes/fixed arrays has no "
+                + "address to pick at compile time, and PyMCU does not yet lower a "
+                + "run-time choice between two array addresses. Write the two-armed form "
+                + "as an if/else statement that calls the buffer-taking function once per "
+                + "arm instead.", expr);
+
         Temporary result = MakeTemp(
             DataTypeExtensions.GetPromotedType(GetValType(trueVal), GetValType(falseVal)));
         // `make(1) if flag else make(2)`: an arm's val carried the class (a ctor root,
