@@ -677,3 +677,36 @@ def micros() -> uint32:
     else:
         raise CompileError("micros() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_us() to pace a loop instead.")
 
+
+@inline
+def monotonic() -> float:
+    """CPython's time.monotonic(): elapsed seconds since an arbitrary point.
+
+    Built on micros(), so it needs the same timebase (see millis() for which
+    targets have one and what the others raise) and shares its wrap: the
+    underlying uint32 microsecond counter wraps at 2**32 us (~71.58 minutes
+    on AVR's prescaler-64 Timer0), after which this silently restarts from a
+    small value -- CPython's monotonic() never wraps in a program's
+    lifetime. PyMCU's float is single precision (24-bit mantissa): two
+    readings farther apart than 2**24 us (~16.7 s) lose the sub-microsecond
+    ordering CPython's monotonic() (C double) keeps. Good for interval
+    timing well under either bound; use millis() (uint32 milliseconds,
+    ~49-day wrap) for anything longer-running.
+    """
+    return float(micros()) / 1000000.0
+
+
+@inline
+def monotonic_ns() -> uint32:
+    """CPython's time.monotonic_ns(): elapsed nanoseconds since an arbitrary point.
+
+    CPython's result is an unbounded int; PyMCU has no 64-bit integer type,
+    so this is micros() scaled to nanoseconds in a uint32, which wraps at
+    2**32 ns (~4.29 s) -- far sooner than micros() itself (~71.58 minutes)
+    or monotonic() (also ~71.58 minutes, limited by the same counter).
+    Subtracting two readings taken less than ~4.29 s apart is correct
+    (uint32 wraparound subtraction); a wider span wraps silently. Needs the
+    same timebase as micros()/millis().
+    """
+    return micros() * 1000
+
