@@ -10207,12 +10207,22 @@ public partial class IRGenerator
         // Two `for` clauses: the cross product, outer first, exactly as Python nests them.
         // Annotated, this form already compiled and held the right nine values; unannotated it
         // was reported as a comprehension with a filter it does not have.
+        //
+        // Each clause's own items are read by recursing into the single-clause case below
+        // with an "identity" element -- the clause's OWN loop variable, not a shared dummy
+        // name. The single-clause case substitutes the loop variable with each item inside
+        // the element expression, so asking for the variable itself back is what turns "the
+        // items x ranges over" into the literal values (#394): with a fixed placeholder name
+        // instead, the substitution had nothing of that name to find inside it, so outer/inner
+        // came back as two unbound copies of the placeholder -- never the real 1/2 or 3/4 --
+        // and the real element (`x * 10 + y`) substituted both loop variables with that same
+        // unbound placeholder on every one of the four pairs alike.
         if (lc.Iterable2 != null && !string.IsNullOrEmpty(lc.Var2Name))
         {
             var outer = ExpandCtListComp(new ListCompExpr(
-                new VariableExpr("__ctcomp_item"), lc.VarName, lc.Iterable));
+                new VariableExpr(lc.VarName), lc.VarName, lc.Iterable));
             var inner = ExpandCtListComp(new ListCompExpr(
-                new VariableExpr("__ctcomp_item"), lc.Var2Name, lc.Iterable2));
+                new VariableExpr(lc.Var2Name), lc.Var2Name, lc.Iterable2));
             if (outer == null || inner == null) return null;
 
             var pairs = new List<Expression>(outer.Count * inner.Count);
