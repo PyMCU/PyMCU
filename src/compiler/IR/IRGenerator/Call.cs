@@ -10292,7 +10292,13 @@ public partial class IRGenerator
                 ?? ResolveStrConstant(ve.Name);
         // A field holding a compile-time string IS statically a string; answering null for
         // one made `sep.join([...])` refuse a separator whose text the compiler was holding.
-        if (e is MemberAccessExpr ma) return IntrospectionTextOf(ma) ?? StaticStringOfField(ma);
+        // The chip descriptor's string members (`__CHIP__.name`, `.arch`, `.board`) fold
+        // in VisitMemberAccess; the text must ride along here too, or `v = __CHIP__.name`
+        // recorded no string and print(v) streamed the interned id as a decimal.
+        if (e is MemberAccessExpr ma)
+            return IntrospectionTextOf(ma)
+                ?? (IsChipDescriptorExpr(ma.Object) ? ChipFactString(ma.Member) : null)
+                ?? StaticStringOfField(ma);
         // `a + b` of two statically-known strings is itself statically known. This is the
         // same fold VisitBinary emits, answered without visiting: a name bound to the result
         // (`c = a + b`) records its text through the assign path, so print(c) writes
