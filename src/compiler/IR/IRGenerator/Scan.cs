@@ -100,6 +100,26 @@ public partial class IRGenerator
     // initializer merely happens to be constant -- NOT a constant alias. Folding it as a
     // constant silently deleted every later write and folded every read (a state machine
     // with named states, `state: uint8 = IDLE`, never left state 0).
+    /// <summary>
+    /// Whether the module's own top level writes <paramref name="sym"/> on a line BEFORE
+    /// <paramref name="importLine"/> -- a binding the import then replaced. The shared
+    /// walk stays at module level: a function's `X = 42` is its local, not this name.
+    /// </summary>
+    private static bool ModuleBindsBefore(ProgramNode ast, string sym, int importLine)
+    {
+        foreach (var s in TypeInference.WalkStatements(ast.GlobalStatements))
+        {
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr v } when v.Name == sym && s.Line < importLine:
+                case VarDecl vd when vd.Name == sym && s.Line < importLine:
+                case AnnAssign aa when aa.Target == sym && s.Line < importLine:
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private static HashSet<string> CollectModuleReassignedNames(ProgramNode ast)
     {
         var counts = new Dictionary<string, int>();

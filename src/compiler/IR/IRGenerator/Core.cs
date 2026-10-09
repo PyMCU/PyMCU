@@ -1383,6 +1383,17 @@ public partial class IRGenerator
                     // import) must NOT be re-imported as a data global — doing so shadows
                     // the constant with an undefined symbol and breaks `raise ValueError`.
                     if (constantVariables.ContainsKey(sym)) continue;
+                    // A pymcu.chips entry is a placeholder, never the value the build's
+                    // flags decide -- the ladder's chip-fact arm is its only answer, and
+                    // seeding one here would shadow it ahead of that arm. A write the
+                    // file itself makes to the name BEFORE the import is a binding the
+                    // import replaced (it must not answer either); a later write is the
+                    // user's own and stays, like `__FREQ__ = 42` reading back 42.
+                    if (imp.ModuleName == "pymcu.chips" && IsAmbientFactName(sym))
+                    {
+                        if (ModuleBindsBefore(mainAst, sym, imp.Line)) globals.Remove(sym);
+                        continue;
+                    }
                     if (srcScope.Globals.TryGetValue(sym, out var globalSym))
                     {
                         globals[sym] = globalSym;
