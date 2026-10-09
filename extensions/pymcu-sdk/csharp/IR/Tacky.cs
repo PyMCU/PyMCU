@@ -438,6 +438,22 @@ public class ProgramIR
     // so the overlay algorithm never aliases them with function-local arrays.
     public Dictionary<string, int> GlobalArrays { get; set; } = new();
 
+    // Byte size of EVERY fixed array this pass ever gave a name to -- module-level ones
+    // already in GlobalArrays above, AND every function-local one, which GlobalArrays
+    // deliberately excludes (AVR's stack allocator overlays those across sibling calls,
+    // and promoting them all to non-overlaid globals would cost AVR real, scarce RAM
+    // for no reason). A backend with no overlay scheme of its own (one target's fixed
+    // arrays are all plain globals either way) can use this as the one place to look up
+    // a local array's size when the instructions that normally carry it -- an
+    // ArrayStore/ArrayLoad with a surviving element access -- happened to all fold away.
+    // That happens for a local scratch buffer written only via its compile-time-zero
+    // initializer and read only by address (passed to a callee, never indexed again in
+    // the defining function): the store is a correct, ordinary dead-store elimination,
+    // but it was the only thing telling a backend this name needs space at all.
+    // AVR ignores this field; it never needed it, so absent/empty is exactly its old
+    // behaviour.
+    public Dictionary<string, int> ArrayByteSizes { get; set; } = new();
+
     public List<Function> Functions { get; set; } = new();
 
     // C symbols declared via @extern("name") in the source.

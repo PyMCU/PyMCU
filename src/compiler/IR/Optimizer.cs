@@ -38,6 +38,12 @@ public static class Optimizer
             Device = program.Device,
             Globals = [..program.Globals],
             GlobalArrays = new Dictionary<string, int>(program.GlobalArrays),
+            // Same "rebuild drops anything not named here" trap the AutomaticLocals
+            // comment below already documents -- this one bit a function-local fixed
+            // array whose only surviving reference was its address taken for a call
+            // argument (#511): the backend needs a size for it when ArrayStore/
+            // ArrayLoad gave it none, and with this absent it always had none.
+            ArrayByteSizes = new Dictionary<string, int>(program.ArrayByteSizes),
             Functions = program.Functions.Select(CloneFunction).ToList(),
             ExternSymbols = new List<string>(program.ExternSymbols),
             ExternSignatures = new List<ExternSignature>(program.ExternSignatures),

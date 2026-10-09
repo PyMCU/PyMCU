@@ -1810,6 +1810,14 @@ public partial class IRGenerator
             irProgram.GlobalArrays[name] = count * elemType.SizeOf();
         }
 
+        // Every array this pass ever named, module-level or function-local (see
+        // ArrayByteSizes' own doc comment for why function-locals need this at all).
+        foreach (var kvp in arraySizes)
+        {
+            DataType elemType = arrayElemTypes.TryGetValue(kvp.Key, out DataType dt) ? dt : DataType.UINT8;
+            irProgram.ArrayByteSizes[kvp.Key] = kvp.Value * elemType.SizeOf();
+        }
+
         var seenExtern = new HashSet<string>();
         foreach (var kvp in externFunctionMap)
         {
