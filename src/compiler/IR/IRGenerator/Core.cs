@@ -1394,6 +1394,35 @@ public partial class IRGenerator
                         if (ModuleBindsBefore(mainAst, sym, imp.Line)) globals.Remove(sym);
                         continue;
                     }
+
+                    // The entry file REBINDS the imported name itself: `from mod import X`
+                    // then `X = 42` -- bare at the top level, inside an `if`, or via `global X`
+                    // inside a function. CPython's X is 42 from that assignment on, not the
+                    // defining module's; seeding `globals[sym]` (or leaving it to resolve
+                    // through the defining module's own storage, the MutableGlobals branch
+                    // below) unconditionally answered with the DEFINING module's value
+                    // instead, on every program that rebinds an imported name. A write ONLY
+                    // reachable through a bare top-level statement is already caught by
+                    // ScanGlobals(mainAst) above (globals/mutableGlobals already carries
+                    // `sym`), but one inside a nested block or a function is not -- that scan
+                    // only walks direct top-level statements, so ProgramWritesName's own full
+                    // walk (nested blocks, every function and method body) is asked directly
+                    // instead of trusting those two tables to already know.
+                    //
+                    // NOT for a register (IsMemoryAddress): `from chip import PORTB` then
+                    // `PORTB = 0x84` is not a rebind to honour, it is the exact mistake
+                    // PtrGuardrailTests pins a refusal for ("PORTB.value", not a plain
+                    // PORTB). That refusal is decided from the register's own globals entry
+                    // once it is seeded; skipping the seed here because the program "writes"
+                    // PORTB made the refusal never fire at all -- the register info has to
+                    // reach generation for the write-side check to recognise it as one.
+                    bool srcIsRegister = srcScope.Globals.TryGetValue(sym, out var regProbe)
+                        && regProbe.IsMemoryAddress;
+                    if (!srcIsRegister
+                        && (globals.ContainsKey(sym) || mutableGlobals.ContainsKey(sym)
+                            || ProgramWritesName(mainAst, sym)))
+                        continue;
+
                     if (srcScope.Globals.TryGetValue(sym, out var globalSym))
                     {
                         globals[sym] = globalSym;

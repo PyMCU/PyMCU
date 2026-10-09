@@ -94,6 +94,34 @@ public partial class IRGenerator
     private int LogicalArrayLen(string key, int storageSize) =>
         bufferLogicalLen.TryGetValue(key, out int logical) ? logical : storageSize;
 
+    // Whether `name` is EVER an assignment target anywhere in `ast`: a bare top-level
+    // statement, one nested in a loop/branch/try/with, or inside any function or method
+    // body (a `global name` write included -- there is no DIFFERENT target spelling for
+    // one). Unlike CollectModuleReassignedNames, a single write already answers true: that
+    // function exists to tell a merely-constant initializer from a true mutable (and so
+    // exempts a name written only once, by design, #372); this one exists to tell an
+    // untouched import from one the importer rebinds at all, where even its ONE write is
+    // what CPython's later read must see instead of the defining module's own value
+    // (`from m import X` then `X = 42`, PyMCU#rebindstr).
+    private static bool ProgramWritesName(ProgramNode ast, string name)
+    {
+        bool found = false;
+        void Walk(Statement s)
+        {
+            switch (s)
+            {
+                case AssignStmt { Target: VariableExpr v } when v.Name == name: found = true; break;
+                case AnnAssign aa when aa.Target == name: found = true; break;
+                case VarDecl vd when vd.Name == name: found = true; break;
+                case AugAssignStmt { Target: VariableExpr av } when av.Name == name: found = true; break;
+            }
+        }
+        foreach (var s in TypeInference.WalkStatements(ast.GlobalStatements)) Walk(s);
+        foreach (var fn in ast.Functions.Concat(TypeInference.ClassMethods(ast)))
+            foreach (var s in TypeInference.WalkStatements(fn.Body)) Walk(s);
+        return found;
+    }
+
     // Module-level names that are WRITTEN beyond their initializer: a second top-level
     // assignment, any assignment nested in a loop/branch/try, an augmented assignment,
     // or a function that declares them `global`. Such a name is a mutable variable whose
