@@ -11475,11 +11475,16 @@ public partial class IRGenerator
     }
 
     // The calls a counter read resolves to, by the name it was declared under: the
-    // public names of the compat time/supervisor modules and pymcu.time.micros
-    // (ticks_ms, ticks_us, monotonic, monotonic_ns). `millis` is deliberately not
-    // among them -- the driver's own detection never counted it either.
+    // public names of the compat time/supervisor modules and pymcu.time (ticks_ms,
+    // ticks_us, monotonic, monotonic_ns, micros, millis). `millis` used to be left
+    // out on purpose, matching the driver's old text scan, which never counted it
+    // either -- but millis()'s own docstring raises on a target with no timebase
+    // specifically so the counter is never silently frozen at 0, and AVR/PIC18 had
+    // exactly that silent freeze whenever a program called millis() without calling
+    // millis_init() itself first. Counting it here closes the inconsistency: millis()
+    // now arms the timebase the same way its siblings always have.
     private static readonly string[] TimebaseReaderSuffixes =
-        { "_micros", "_ticks_ms", "_ticks_us", "_monotonic", "_monotonic_ns" };
+        { "_micros", "_millis", "_ticks_ms", "_ticks_us", "_monotonic", "_monotonic_ns" };
 
     // [NEEDS_TIMEBASE] only exists where the counter is software and something has
     // to arm it: ATmega/ATtiny Timer0 or the PIC18F45K50 one. On RP2040/RP2350 the
