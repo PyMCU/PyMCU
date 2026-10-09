@@ -199,8 +199,9 @@ class PyMCUCompiler:
         # verbatim -- the caller reads [NEEDS_TIMEBASE], [STDOUT_OWNED] and
         # friends straight out of this set instead of re-deriving them from
         # the source. [EMBED] payloads land in last_compile_embed_names, and
-        # the pass's raw stderr in last_compile_stderr for whoever has to
-        # surface the diagnostics a suppressed retry hid.
+        # the pass's stderr (remapped off a synthetic entry when one was staged)
+        # in last_compile_stderr for whoever surfaces the diagnostics a
+        # deferred or retried pass held back.
         self.last_compile_tokens: set = set()
         self.last_compile_embed_names: list = []
         self.last_compile_stderr: str = ""
@@ -369,7 +370,7 @@ class PyMCUCompiler:
             shutil.copytree(source, package)
         return root
 
-    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None, diagnostic_source: tuple = None, timebase: bool = False, library: bool = False, stdlib_flavor: str = "", embed_files: list = None, profile_path: str = None):
+    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None, diagnostic_source: tuple = None, timebase: bool = False, library: bool = False, stdlib_flavor: str = "", embed_files: list = None, profile_path: str = None, defer_stderr: bool = False):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--target", target, "--freq", str(freq)]
@@ -546,18 +547,28 @@ class PyMCUCompiler:
                 needs_arena = "[NEEDS_ARENA]" in buffered
                 needs_strfmt = "[NEEDS_STRFMT]" in buffered
                 needs_round2 = "[NEEDS_ROUND2]" in buffered
-                embed_names = [line[len(_EMBED_PREFIX):].strip()
+                # The payload is the literal name verbatim -- leading and trailing
+                # spaces are part of it, so the line is cut after the prefix and
+                # nothing more.
+                embed_names = [line[len(_EMBED_PREFIX):]
                                for line in buffered
                                if line.startswith(_EMBED_PREFIX)]
-                # stderr stays hidden while the pass reported something the
-                # driver stages and retries for -- showing the missing-import
-                # diagnostic would report an error that is about to be fixed.
-                self.last_compile_stderr = err_text
-                if err_text and not (needs_arena or needs_strfmt or needs_round2
-                                     or embed_names):
-                    sys.stderr.write(
-                        _remap_diagnostics(err_text, diagnostic_source)
-                        if diagnostic_source else err_text)
+                # stderr is withheld only for a pass that is about to be retried:
+                # a failed pass carrying a stageable token shows its diagnostics
+                # through the retry machinery if they turn out terminal, and a
+                # pass that ran to the end is never suppressed at all -- a token
+                # like [EMBED] re-emitted on the final pass would otherwise eat
+                # every warning the compile produced. With defer_stderr the caller
+                # owns showing the kept pass's text exactly once, from
+                # self.last_compile_stderr.
+                self.last_compile_stderr = (
+                    _remap_diagnostics(err_text, diagnostic_source)
+                    if err_text and diagnostic_source else err_text)
+                if err_text and not defer_stderr and not (
+                        proc.returncode != 0
+                        and (needs_arena or needs_strfmt or needs_round2
+                             or embed_names)):
+                    sys.stderr.write(self.last_compile_stderr)
                     sys.stderr.flush()
 
                 if proc.returncode < 0 and attempt < max_signal_retries:
@@ -600,7 +611,8 @@ class PyMCUCompiler:
                     raise Round2RequiredError(
                         "Compilation failed (see diagnostics above)")
                 if embed_names:
-                    raise EmbedRequiredError(embed_names, err_text)
+                    raise EmbedRequiredError(
+                        embed_names, self.last_compile_stderr)
                 raise RuntimeError("Compilation failed (see diagnostics above)")
         except FileNotFoundError:
             raise RuntimeError(f"Compiler '{compiler}' not found.")

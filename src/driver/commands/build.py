@@ -1796,9 +1796,18 @@ def build(
                         stdlib_flavor=stdlib_flavors[0] if stdlib_flavors else "",
                         embed_files=_embedded_files,
                         profile_path=profile_path,
+                        # The fixpoint owns stderr: every pass's diagnostics are
+                        # buffered on compiler.last_compile_stderr and only the
+                        # pass the loop ends on is ever shown, exactly once.
+                        defer_stderr=True,
                         **({"emit_ir_path": str(ir_file),
                             "diagnostic_source": _diagnostic_source} if with_ir else {}),
                     )
+
+                def _flush_compile_stderr() -> None:
+                    if compiler.last_compile_stderr:
+                        sys.stderr.write(compiler.last_compile_stderr)
+                        sys.stderr.flush()
 
                 # Every iteration either compiles or applies exactly one thing a
                 # token asked for, and each of those fires at most once -- the
@@ -1807,9 +1816,12 @@ def build(
                 # diagnose here.
                 for _attempt in range(32):
                     _restage_entry()
+                    _staged_ticks = "ticks" in _applied_preambles
+                    _pass_ok = False
                     _retry = False
                     try:
                         _run()
+                        _pass_ok = True
                     except ArenaRequiredError:
                         _applied_preambles.add("arena")
                         _note_arena()
@@ -1837,12 +1849,9 @@ def build(
                             # names a file that is not there, or every name was
                             # already embedded and this pass failed for another
                             # reason (suppressing that diagnostic and looping
-                            # would hide the real error forever). Show the
-                            # diagnostics the failed pass suppressed on the
-                            # assumption of a retry.
-                            if exc.diagnostics:
-                                sys.stderr.write(exc.diagnostics)
-                                sys.stderr.flush()
+                            # would hide the real error forever). The kept
+                            # pass's diagnostics come out through the outer
+                            # RuntimeError handler like every other failure.
                             raise RuntimeError(
                                 "Compilation failed (see diagnostics above)")
                         _embedded_files.extend(resolved)
@@ -1856,15 +1865,18 @@ def build(
                     # clean pass's: each names something the compiler actually
                     # resolved, and absorbing them here is what keeps a program
                     # needing e.g. embed + counter reads at two passes total.
+                    # The ownership tokens report under a guard instead: when
+                    # the injection they announce was already staged this pass,
+                    # the token is the preamble's own _pymcu_stdout() /
+                    # _pymcu_millis_init() call reporting itself, and only a
+                    # pass run without it can prove the program owns one.
                     tokens = compiler.last_compile_tokens
-                    # [STDOUT_OWNED] from a pass that was already staged "full"
-                    # is the injected _pymcu_stdout() reporting itself -- only a
-                    # pass without it can say the program owns a UART.
                     if "[STDOUT_OWNED]" in tokens and _console_variant != "full":
                         _user_stdout_owned = True
+                    if "[TIMEBASE_INIT]" in tokens and not _staged_ticks:
+                        _timebase_init = True
                     _needs_exnmsg  = _needs_exnmsg  or "[NEEDS_EXNMSG]"  in tokens
                     _needs_timebase = _needs_timebase or "[NEEDS_TIMEBASE]" in tokens
-                    _timebase_init = _timebase_init or "[TIMEBASE_INIT]" in tokens
                     _needs_clocks  = _needs_clocks  or "[NEEDS_CLOCKS]"  in tokens
 
                     changed = _retry
@@ -1873,32 +1885,40 @@ def build(
                         _applied_preambles.add("arena")
                         _note_arena()
                         changed = True
-                    if (_has_print or _has_input) and not _user_stdout_owned:
-                        want_console = "full"
-                    elif _has_print or _needs_exnmsg:
-                        want_console = "imports_only"
-                    else:
-                        want_console = "none"
-                    if want_console != _console_variant:
-                        _console_variant = want_console
-                        if want_console == "full":
-                            _trigger = "print()" if _has_print else "input()"
-                            if _has_print and _has_input:
-                                _trigger = "print() and input()"
+                    # A token's absence is evidence only from a pass that ran to
+                    # the end: one that failed may simply not have reached the
+                    # user's UART() or millis_init() yet, so it must neither
+                    # stage the fallback preamble nor retract one. Decided on a
+                    # complete pass the staging is final -- the pass resolved
+                    # every call it ever will, so nothing later can contradict
+                    # the absence it observed.
+                    if _pass_ok:
+                        if (_has_print or _has_input) and not _user_stdout_owned:
+                            want_console = "full"
+                        elif _has_print or _needs_exnmsg:
+                            want_console = "imports_only"
+                        else:
+                            want_console = "none"
+                        if want_console != _console_variant:
+                            _console_variant = want_console
+                            if want_console == "full":
+                                _trigger = "print()" if _has_print else "input()"
+                                if _has_print and _has_input:
+                                    _trigger = "print() and input()"
+                                _diag_log(
+                                    f"{_trigger} without a resolved UART() -- "
+                                    "injecting stdout preamble "
+                                    f"({_stdout_device} at {_stdout_baud} baud)",
+                                    verbose=is_verbose)
+                            changed = True
+                        if _needs_timebase and not _timebase_init \
+                                and "ticks" not in _applied_preambles:
+                            _applied_preambles.add("ticks")
                             _diag_log(
-                                f"{_trigger} without a resolved UART() -- "
-                                "injecting stdout preamble "
-                                f"({_stdout_device} at {_stdout_baud} baud)",
-                                verbose=is_verbose)
-                        changed = True
-                    if _needs_timebase and not _timebase_init \
-                            and "ticks" not in _applied_preambles:
-                        _applied_preambles.add("ticks")
-                        _diag_log(
-                            "compiler reported a millis/micros counter read -- "
-                            "injecting millis_init() preamble "
-                            "(Timer0 OVF @ prescaler 64)", verbose=is_verbose)
-                        changed = True
+                                "compiler reported a millis/micros counter "
+                                "read -- injecting millis_init() preamble "
+                                "(Timer0 OVF @ prescaler 64)", verbose=is_verbose)
+                            changed = True
                     if _needs_clocks and "clocks" not in _applied_preambles:
                         _applied_preambles.add("clocks")
                         _diag_log(
@@ -1911,7 +1931,9 @@ def build(
                         changed = True
                     if changed:
                         continue
+                    _flush_compile_stderr()
                     return
+                _flush_compile_stderr()
                 raise RuntimeError(
                     "the compiler kept reporting new requirements past 32 "
                     "passes -- that is a compiler bug, not a program error")
@@ -1958,6 +1980,11 @@ def build(
                 else:
                     _compile_frontend(with_ir=False)
             except RuntimeError as e:
+                # The fixpoint deferred every pass's stderr; the pass the loop
+                # ended on is the diagnostic that matters, so show it once.
+                if compiler.last_compile_stderr:
+                    sys.stderr.write(compiler.last_compile_stderr)
+                    sys.stderr.flush()
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")
                 raise typer.Exit(code=1)
