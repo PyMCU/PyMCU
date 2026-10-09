@@ -35,7 +35,7 @@ public class IntrospectionFoldTests
     [Fact]
     public void UsysPlatform_InACondition_FoldsToTheChipFallback()
     {
-        var ir = Gen("buf = bytearray(1)\nbuf[0] = 1 if usys.platform == \"atmega328p\" else 0\n");
+        var ir = Gen("import usys\nbuf = bytearray(1)\nbuf[0] = 1 if usys.platform == \"atmega328p\" else 0\n");
         Assert.True(EmitsInt(ir, 1));
     }
 

@@ -769,13 +769,10 @@ public partial class IRGenerator
         intrinsicNames.Add("bitcast");
         intrinsicNames.Add("gc_alloc");
 
-        if (config.Frequency > 0)
-        {
-            constantVariables["__FREQ__"] = (int)config.Frequency;
-            constantVariables["__FREQUENCY__"] = (int)config.Frequency;
-        }
-        // Always bound, so a HAL can read it without the time base in the program.
-        constantVariables["__TIMEBASE__"] = config.Timebase ? 1 : 0;
+        // RFC 0014 family 6: `__CHIP__`, `__FREQ__`/`F_CPU`, `__TIMEBASE__` are NOT
+        // ambient constants. They answer through `from pymcu.chips import ...` in
+        // ResolveBindingLadder, where the module that asks is the module whose own
+        // import table is consulted.
 
         // Does ANY handler in the program bind a name with `as`? A raise records the address
         // of its message only when one does, so a program without the form compiles to the
@@ -860,7 +857,8 @@ public partial class IRGenerator
                 // Map the used name (alias or real) to the real module so member/method
                 // resolution mangles `t.sleep_ms` (import time as t) to time_sleep_ms.
                 importedAliases[modKey] = imp.ModuleName;
-                RegisterModuleAlias("", modKey, imp.ModuleName, null);
+                RegisterModuleAlias("", modKey, imp.ModuleName, null,
+                                    moduleLevel: !imp.InFunctionScope);
 
                 // `import alarm.time` binds `alarm`, not `alarm.time` -- CPython binds the
                 // top-level package name in the importing namespace, so `alarm.time.X`
@@ -874,7 +872,7 @@ public partial class IRGenerator
                         modules[top] = new ModuleScope();
                     if (!importedAliases.ContainsKey(top))
                         importedAliases[top] = top;
-                    RegisterModuleAlias("", top, top, null);
+                    RegisterModuleAlias("", top, top, null, moduleLevel: !imp.InFunctionScope);
                 }
             }
 
@@ -887,8 +885,11 @@ public partial class IRGenerator
                 // module -- mangling against the facade produced an undefined
                 // pymcu_hal_Pin. A module that defines the symbol itself ends the chase.
                 importedAliases[key] = ResolveReExport(importedModules, imp.ModuleName, sym);
-                RegisterModuleAlias("", key, importedAliases[key],
-                                    imp.Aliases.ContainsKey(sym) ? sym : null);
+                // The original symbol is recorded for every `from` binding, not only the
+                // `as` ones: a name absent from perModuleAliasToOriginal is a MODULE alias,
+                // which is how `import pymcu.chips as c` stays distinct from
+                // `from pymcu.chips import c` (RFC 0014 family 6).
+                RegisterModuleAlias("", key, importedAliases[key], sym, moduleLevel: !imp.InFunctionScope);
                 if (imp.Aliases.ContainsKey(sym))
                     aliasToOriginal[key] = sym;
             }
@@ -928,8 +929,9 @@ public partial class IRGenerator
                     // `pymcu.hal.pulse` and mangles to a function that was never compiled.
                     string resolvedMod = ResolveReExport(importedModules, imp.ModuleName, sym);
                     // This module's OWN binding, which no other module can take from it.
-                    RegisterModuleAlias(ownPrefix, key, resolvedMod,
-                                        imp.Aliases.ContainsKey(sym) ? sym : null);
+                    // The symbol is always passed: presence in perModuleAliasToOriginal is
+                    // what marks the name as a `from` binding rather than a module alias.
+                    RegisterModuleAlias(ownPrefix, key, resolvedMod, sym, moduleLevel: !imp.InFunctionScope);
                     // Don't overwrite aliases established by the main file — sub-module
                     // imports use the same flat dictionary and would otherwise shadow the
                     // user's own `from machine import Pin` with a stdlib-internal
@@ -949,7 +951,7 @@ public partial class IRGenerator
                 if (imp.Symbols.Count == 0)
                 {
                     string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
-                    RegisterModuleAlias(ownPrefix, modKey, imp.ModuleName, null);
+                    RegisterModuleAlias(ownPrefix, modKey, imp.ModuleName, null, moduleLevel: !imp.InFunctionScope);
                     if (!importedAliases.ContainsKey(modKey))
                         importedAliases[modKey] = imp.ModuleName;
                     if (!modules.ContainsKey(modKey))
@@ -962,7 +964,7 @@ public partial class IRGenerator
                     if (topDot > 0 && string.IsNullOrEmpty(imp.ModuleAlias))
                     {
                         string top = imp.ModuleName.Substring(0, topDot);
-                        RegisterModuleAlias(ownPrefix, top, top, null);
+                        RegisterModuleAlias(ownPrefix, top, top, null, moduleLevel: !imp.InFunctionScope);
                         if (!importedAliases.ContainsKey(top))
                             importedAliases[top] = top;
                         if (!modules.ContainsKey(top))
@@ -972,6 +974,14 @@ public partial class IRGenerator
                 }
             }
         }
+
+        // The modules whose code the program emits -- used to answer "which module's import
+        // table owns this name" without mistaking a module that imported nothing for the
+        // nearest one that did (RFC 0014 family 6).
+        allModulePrefixes.Clear();
+        allModulePrefixes.Add("");
+        foreach (var mn in importedModules.Keys)
+            allModulePrefixes.Add(mn.Replace('.', '_') + "_");
 
         // Which `Cls.ATTR` the program writes, gathered across EVERY module before any of them
         // is scanned. ScanGlobals decides there and then whether an ALL-CAPS class attribute
@@ -2897,6 +2907,18 @@ public partial class IRGenerator
                 at);
         }
 
+        // RFC 0014 family 6: `__CHIP__`, `__FREQ__`/`F_CPU`, `__TIMEBASE__` are chip facts,
+        // not ambient constants -- a module reads one only through the `from pymcu.chips
+        // import` binding it wrote. A bound name answers the fact its symbol names; a bare
+        // spelling never imported refuses with the import the program needs. A user binding
+        // of the same spelling wins earlier in this ladder, as it should.
+        if (ChipFactBinding(name) is { } factSymbol)
+            return ChipFactValue(factSymbol, at);
+        if (IsAmbientFactName(name))
+            throw UserError(
+                $"name '{name}' is a chip fact -- it binds only through " +
+                $"`from pymcu.chips import {(name == "__FREQUENCY__" ? "__FREQ__" : name)}`", at);
+
         if (!IsNameKnownSomewhere(finalLocalName, name))
         {
             // The name may be missing because its defining module REFUSED this target: a
@@ -3316,6 +3338,65 @@ public partial class IRGenerator
         return aliasToOriginal.ContainsKey(name);
     }
 
+    // --- RFC 0014 family 6: chip facts bind through `pymcu.chips` ----------------------
+
+    /// <summary>
+    /// The mangled prefix of the module whose code is being lowered, for the chip-fact
+    /// check. A module that imported nothing is still its own owner, so the walk goes
+    /// over every loaded module's prefix rather than only those with import tables --
+    /// otherwise a bare `__FREQ__` in a no-import module could borrow the entry file's
+    /// binding.
+    /// </summary>
+    private string ChipFactOwnerPrefix()
+    {
+        var best = "";
+        foreach (var p in allModulePrefixes)
+            if (p.Length > best.Length
+                && currentModulePrefix.StartsWith(p, StringComparison.Ordinal))
+                best = p;
+        return best;
+    }
+
+    /// <summary>
+    /// The symbol <paramref name="name"/> binds when the owning module wrote
+    /// `from pymcu.chips import &lt;symbol&gt; [as name]`; null when it did not. A module
+    /// alias (`import pymcu.chips as c`) has no perModuleAliasToOriginal entry, which is
+    /// exactly what keeps it out of this path -- `c` names the module, not a fact.
+    /// </summary>
+    private string? ChipFactBinding(string name)
+    {
+        string owner = ChipFactOwnerPrefix();
+        if (!perModuleScopeBindings.TryGetValue(owner, out var bound) || !bound.Contains(name))
+            return null;
+        if (!perModuleImportedAliases.TryGetValue(owner, out var own)
+            || !own.TryGetValue(name, out var mod) || mod != "pymcu.chips")
+            return null;
+        if (!perModuleAliasToOriginal.TryGetValue(owner, out var orig)
+            || !orig.TryGetValue(name, out var sym) || sym == null)
+            return null;
+        return sym;
+    }
+
+    /// <summary>`name` spells a chip fact -- bound or unbound, the error names the import.</summary>
+    private static bool IsAmbientFactName(string name) => name is
+        "__CHIP__" or "__FREQ__" or "F_CPU" or "__TIMEBASE__" or "__FREQUENCY__";
+
+    /// <summary>
+    /// The bound chip fact as a value. `__CHIP__` answers the chip name, the same string
+    /// CompileTimeEvaluator resolves it to for `__CHIP__ == "x"`. A `pymcu.chips` symbol
+    /// that names no fact is refused -- the module defines four and that is the whole list.
+    /// </summary>
+    private Val ChipFactValue(string symbol, PyMCU.Frontend.ASTNode? at) => symbol switch
+    {
+        "__FREQ__" or "F_CPU" => new Constant((int)deviceConfig.Frequency),
+        "__TIMEBASE__" => new Constant(deviceConfig.Timebase ? 1 : 0),
+        "__CHIP__" => InternedStringConstant(string.IsNullOrEmpty(deviceConfig.Chip)
+            ? deviceConfig.TargetChip : deviceConfig.Chip),
+        _ => throw UserError(
+            $"'{symbol}' is not a name pymcu.chips defines -- the module's facts are " +
+            "__CHIP__, __FREQ__, F_CPU and __TIMEBASE__", at),
+    };
+
     /// <summary>
     /// `from sys import platform` (and the star form that brings it in) can only bind the
     /// compat shim's module global -- the placeholder every chip shares ("rp2" on a chip
@@ -3345,18 +3426,36 @@ public partial class IRGenerator
             $"{imp.ModuleName}.platform -- the compiler substitutes the real value there.", imp);
     }
 
-    /// <summary>Record `name -> module` (and its original spelling) in one module's own table.</summary>
-    private void RegisterModuleAlias(string modulePrefix, string name, string? module, string? original)
+    /// <summary>
+    /// Record `name -> module` (and its original spelling) in one module's own table.
+    /// <paramref name="moduleLevel"/> is whether the import statement was written at
+    /// module scope -- the name goes on the module's scope list only then, which is what
+    /// keeps a function-local `from pymcu.chips import __CHIP__` from licensing a
+    /// module-level read of the fact.
+    /// </summary>
+    private void RegisterModuleAlias(string modulePrefix, string name, string? module, string? original,
+                                     bool moduleLevel = false)
     {
         if (!perModuleImportedAliases.TryGetValue(modulePrefix, out var tbl))
             perModuleImportedAliases[modulePrefix] = tbl = new Dictionary<string, string?>();
         tbl[name] = module;
         _owningPrefixCacheKey = "";
+        if (moduleLevel)
+        {
+            if (!perModuleScopeBindings.TryGetValue(modulePrefix, out var bound))
+                perModuleScopeBindings[modulePrefix] = bound = new HashSet<string>();
+            bound.Add(name);
+        }
         if (original == null) return;
         if (!perModuleAliasToOriginal.TryGetValue(modulePrefix, out var otbl))
             perModuleAliasToOriginal[modulePrefix] = otbl = new Dictionary<string, string?>();
         otbl[name] = original;
     }
+
+    /// <summary>Whether the owning file bound `name` with an import at module scope.</summary>
+    private bool BoundAtModuleScope(string name) =>
+        perModuleScopeBindings.TryGetValue(ChipFactOwnerPrefix(), out var bound)
+        && bound.Contains(name);
 
     /// <summary>
     /// The mangled name `&lt;module&gt;.&lt;member&gt;` resolves to when the module merely RE-EXPORTS

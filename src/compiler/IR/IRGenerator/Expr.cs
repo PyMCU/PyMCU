@@ -6502,21 +6502,112 @@ public partial class IRGenerator
         return i < 0 ? clsKey : clsKey[(i + 1)..];
     }
 
+    // --- RFC 0014 family 6: introspection follows the binding, not the spelling ---------
+
     /// <summary>
-    /// Whether <paramref name="e"/> is a bare name denoting one of <paramref name="mods"/> --
-    /// the literal module name or an alias bound to it by `import &lt;mod&gt; as &lt;name&gt;`
-    /// (importedAliases maps the used name to the real module). `import usys as s` then
-    /// `s.platform` must fold to the same table `usys.platform` does.
+    /// The module the owning file bound <paramref name="name"/> to, consulting ONLY the
+    /// owning module's import table -- the chip-fact and introspection checks are
+    /// per-module questions: a bare `uname` inside a module that imported nothing must
+    /// not borrow the entry file's binding.
+    /// </summary>
+    private bool TryOwningModuleAlias(string name, out string? mod)
+    {
+        mod = null;
+        return perModuleImportedAliases.TryGetValue(ChipFactOwnerPrefix(), out var own)
+            && own.TryGetValue(name, out mod) && mod != null;
+    }
+
+    /// <summary>
+    /// The symbol a `from` import bound under <paramref name="name"/> in the owning
+    /// module, or null when the name is a module alias or not bound at all.
+    /// </summary>
+    private string? OwningImportSymbol(string name) =>
+        perModuleAliasToOriginal.TryGetValue(ChipFactOwnerPrefix(), out var orig)
+        && orig.TryGetValue(name, out var sym) ? sym : null;
+
+    /// <summary>
+    /// The file <paramref name="mod"/> resolves to is the compat layer's own module for
+    /// the declared stdlib flavor. That is what separates `import os` (the layer's os.py,
+    /// whose uname() the table stands in for) from a project os.py the program wrote, and
+    /// from pymcu.os, the native module pymcu code can name directly.
+    /// </summary>
+    private bool ModuleIsCompatLayerFile(string mod)
+    {
+        // modulePaths is empty only when the modules were handed to the generator without
+        // a filesystem (the unit-test harness). A real build records every module's path,
+        // so an empty path table is trusted -- a project file named sys.py still carries
+        // its own path and is not the layer.
+        if (modulePaths.Count == 0) return true;
+        var path = PathOfModule(mod);
+        if (path.Length == 0) return false;
+        return deviceConfig.Stdlib switch
+        {
+            IntrospectionTable.CircuitPython => path.Contains("/pymcu_circuitpython/"),
+            IntrospectionTable.MicroPython => path.Contains("/pymcu_micropython/"),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Whether <paramref name="e"/> is a bare name bound to one of <paramref name="mods"/>
+    /// AS A MODULE in the file being lowered -- `import sys`, `import usys as s`, never a
+    /// `from sys import x` symbol and never a name the file defines itself. The layer's
+    /// own file behind the binding is required too: a project sys.py under a compat
+    /// flavor keeps its own members.
     /// </summary>
     private bool IsModuleAlias(Expression? e, params string[] mods) =>
         e is VariableExpr { Name: var n }
-        && (mods.Contains(n) || (importedAliases.TryGetValue(n, out var real) && mods.Contains(real)));
+        && OwningImportSymbol(n) == null
+        && BoundAtModuleScope(n)
+        && TryOwningModuleAlias(n, out var real)
+        && mods.Contains(real)
+        && ModuleIsCompatLayerFile(real!);
 
-    /// <summary>The callee shapes `uname()` / `os.uname()` / `uos.uname()` take.</summary>
+    /// <summary>
+    /// The callee shapes `uname()` / `os.uname()` / `uos.uname()` take -- each one checked
+    /// against the binding: a bare `uname` the file never imported is the program's own
+    /// function, and `from os import helper` does not turn `helper()` into uname.
+    /// `from pymcu.os import uname` is the layer's own re-export spelling, kept.
+    /// </summary>
     private bool IsUnameCallee(Expression callee) => callee switch
     {
-        VariableExpr { Name: "uname" } => true,
+        VariableExpr { Name: var unameName } => OwningImportSymbol(unameName) == "uname"
+            && BoundAtModuleScope(unameName)
+            && TryOwningModuleAlias(unameName, out var um)
+            && (um == "pymcu.os" || (um is "os" or "uos" && ModuleIsCompatLayerFile(um))),
         MemberAccessExpr { Member: "uname" } mem => IsModuleAlias(mem.Object, "os", "uos"),
+        _ => false,
+    };
+
+    /// <summary>
+    /// `e` is the `__CHIP__` descriptor bound through pymcu.chips: a name
+    /// `from pymcu.chips import __CHIP__` bound (under any alias), or the `__CHIP__`
+    /// member of the chips module itself (`chips.__CHIP__`, `pymcu.chips.__CHIP__`).
+    /// </summary>
+    private bool IsChipDescriptorExpr(Expression? e) => e switch
+    {
+        VariableExpr v => ChipFactBinding(v.Name) == "__CHIP__",
+        MemberAccessExpr { Member: "__CHIP__", Object: var m } => IsPymcuChipsModuleExpr(m),
+        _ => false,
+    };
+
+    /// <summary>
+    /// `e` names the pymcu.chips MODULE: `import pymcu.chips as c` binds `c` (and
+    /// `from pymcu import chips` is rewritten to that shape), `import pymcu.chips`
+    /// licenses the `pymcu.chips` member spelling. A `from pymcu.chips import x` name
+    /// is a fact binding, not the module.
+    /// </summary>
+    private bool IsPymcuChipsModuleExpr(Expression? e) => e switch
+    {
+        VariableExpr v => OwningImportSymbol(v.Name) == null
+            && BoundAtModuleScope(v.Name)
+            && TryOwningModuleAlias(v.Name, out var m) && m == "pymcu.chips",
+        MemberAccessExpr { Object: VariableExpr pv, Member: "chips" }
+            => BoundAtModuleScope("pymcu.chips")
+               && TryOwningModuleAlias("pymcu.chips", out var cm) && cm == "pymcu.chips"
+               && OwningImportSymbol(pv.Name) == null
+               && BoundAtModuleScope(pv.Name)
+               && TryOwningModuleAlias(pv.Name, out var pm) && pm == "pymcu",
         _ => false,
     };
 
@@ -6575,13 +6666,28 @@ public partial class IRGenerator
                 { Line = expr.Line, Column = expr.Column, Length = expr.Length };
 
         // `__CHIP__.name` / `.arch` / `.board` are compile-time strings (DeviceConfig),
-        // the same facts CompileTimeEvaluator already folds in `if` / `match`. Using
-        // them as a VALUE (`uname_result(..., __CHIP__.name)`, #466) used to be
-        // refused as "object has no attribute 'name'" because the IR path treated
-        // `__CHIP__` as an ordinary instance.
-        if (expr.Object is VariableExpr { Name: "__CHIP__" }
+        // the same facts CompileTimeEvaluator already folds in `if` / `match`. RFC 0014
+        // family 6: the descriptor answers only through the `from pymcu.chips import
+        // __CHIP__` binding -- under any alias, or as `chips.__CHIP__.x` when the module
+        // itself is imported. An unbound `__CHIP__` falls through to the binding ladder,
+        // which refuses it naming the import.
+        if (expr.Object is { } chipDesc && IsChipDescriptorExpr(chipDesc)
             && ChipFactString(expr.Member) is { } chipFact)
             return InternedStringConstant(chipFact);
+
+        // The same descriptor's numeric facts -- `__CHIP__.ram_size`,
+        // `.flash_size`, `.eeprom_size` are the DeviceConfig sizes
+        // CompileTimeEvaluator already folds in conditions.
+        if (expr.Object is { } chipNumDesc && IsChipDescriptorExpr(chipNumDesc)
+            && ChipFactNumber(expr.Member) is { } chipNum)
+            return new Constant(chipNum);
+
+        // `chips.__FREQ__` / `c.__TIMEBASE__` / `pymcu.chips.F_CPU` -- the same bound
+        // facts read off the module object (`import pymcu.chips [as c]`, or `from pymcu
+        // import chips`, which the graph builder rewrites to `import pymcu.chips as chips`).
+        if (expr.Object is { } chipsModule && IsPymcuChipsModuleExpr(chipsModule)
+            && expr.Member is "__FREQ__" or "F_CPU" or "__TIMEBASE__" or "__CHIP__")
+            return ChipFactValue(expr.Member, expr);
 
         // RFC 0007: `sys.platform`, `sys.implementation.name` and `uname().<field>`
         // (in their `usys`/`uos` spellings too) are compile-time facts the compat
@@ -7412,6 +7518,14 @@ public partial class IRGenerator
             : deviceConfig.Chip,
         "arch" => deviceConfig.Arch,
         "board" => deviceConfig.Board ?? "",
+        _ => null
+    };
+
+    private int? ChipFactNumber(string member) => member switch
+    {
+        "ram_size" => deviceConfig.RamSize,
+        "flash_size" => deviceConfig.FlashSize,
+        "eeprom_size" => deviceConfig.EepromSize,
         _ => null
     };
 

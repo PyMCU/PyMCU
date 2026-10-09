@@ -961,7 +961,8 @@ public partial class IRGenerator
                     // own table has to carry it too or the module-scoped lookup (#320) would
                     // keep answering with that module's top-level binding of the same name.
                     RegisterModuleAlias(OwningModulePrefix(), key, resolvedMod,
-                                        imp.Aliases.ContainsKey(sym) ? sym : null);
+                                        imp.Aliases.ContainsKey(sym) ? sym : null,
+                                        moduleLevel: false);
                     if (imp.Aliases.ContainsKey(sym))
                         aliasToOriginal[key] = sym;
                 }

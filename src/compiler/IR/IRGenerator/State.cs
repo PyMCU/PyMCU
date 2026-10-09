@@ -357,6 +357,19 @@ public partial class IRGenerator
     private Dictionary<string, Dictionary<string, string?>> perModuleImportedAliases = new();
     private Dictionary<string, Dictionary<string, string?>> perModuleAliasToOriginal = new();
 
+    // Every loaded module's mangled prefix plus "" for the entry file. The chip-fact
+    // check (RFC 0014 family 6) asks which module OWNS the code being lowered, and the
+    // owner of a module that imported nothing is still that module -- not the nearest
+    // prefix that happens to have an import table.
+    private readonly HashSet<string> allModulePrefixes = new(StringComparer.Ordinal);
+
+    // The names each module bound with an import written at MODULE level, keyed by the
+    // same mangled prefix. A function-local import is promoted into ProgramNode.Imports
+    // (InFunctionScope) so the loader sees it, but the name it binds lives in that
+    // function's namespace -- the chip-fact and introspection gates must not read it as
+    // a module-wide binding (RFC 0014 family 6).
+    private readonly Dictionary<string, HashSet<string>> perModuleScopeBindings = new();
+
     // Star imports in scope, module name -> the names the star actually brought in. A star
     // binds what its module defines at top level, so a name it only re-exports is missing;
     // without this the reader was told the name was "never imported" with the import that
