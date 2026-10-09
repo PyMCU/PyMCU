@@ -7442,6 +7442,24 @@ public partial class IRGenerator
         return magnitude <= 0xFF ? DataType.UINT8 : magnitude <= 0xFFFF ? DataType.UINT16 : DataType.UINT32;
     }
 
+    // The storage width a pure compile-time constant sequence's elements need -- the same
+    // question WidestElemType answers for an array literal's own elements, asked of a
+    // sequence that has no array slot at all (a match/case sequence pattern's subject that
+    // ResolveConstSequence, not arraySizes, answers for). Falls back to uint8 the moment any
+    // element is not a plain compile-time integer; a match arm's own element comparisons
+    // still work against a wider VisitExpression result, so this width is only the capture
+    // variables' storage, not a correctness requirement.
+    private DataType InferConstSeqElemType(List<Expression> elements)
+    {
+        var values = new List<int>(elements.Count);
+        foreach (var e in elements)
+        {
+            if (!TryEvalElemConst(e, out int v)) return DataType.UINT8;
+            values.Add(v);
+        }
+        return WidestElemType(values);
+    }
+
     // The flattened storage name a `<obj>.<member>` field is filed under, resolved the same
     // way EmitMemberAssign resolves it: the object's binding, alias-followed, plus "_member".
     // Null when the object does not resolve to a name. Visiting a bare object name only

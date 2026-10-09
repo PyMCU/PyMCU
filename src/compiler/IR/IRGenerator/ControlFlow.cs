@@ -1404,23 +1404,40 @@ public partial class IRGenerator
                     if (targetVal is Variable v) arrName = v.Name;
                     else throw UserError("match/case sequence pattern: subject must be an array variable", stmt);
 
+                    // `pair = [4, 5]` with nothing elsewhere indexing or iterating it at a
+                    // run-time index never gets a real SRAM/register slot at all -- it is a pure
+                    // compile-time constant sequence (the same representation `pair[0]` already
+                    // resolves through, ResolveConstSequence). Reading `arrName + "__" + i` as a
+                    // Variable in that case names a slot nothing ever wrote: every comparison
+                    // read zero, so every `case [...]:` arm silently fell through to the next one
+                    // (#401). The elements come from the constant sequence itself here instead of
+                    // from array storage that was never materialized.
+                    List<Expression>? constSeq = arraySizes.ContainsKey(arrName) ? null : ResolveConstSequence(arrName);
+
                     int patSize = seq.Elements.Count;
-                    if (arraySizes.TryGetValue(arrName, out int size) && size != patSize)
+                    int? knownSize = constSeq?.Count ?? (arraySizes.TryGetValue(arrName, out int size) ? size : null);
+                    if (knownSize is { } ks && ks != patSize)
                     {
                         Emit(new Jump(nextCaseLabel));
                         Emit(new Label(nextCaseLabel));
                         continue;
                     }
 
-                    bool useSram = arraysWithVariableIndex.Contains(arrName) || moduleSramArrays.Contains(arrName);
-                    DataType elemDt = arrayElemTypes.TryGetValue(arrName, out var dt) ? dt : DataType.UINT8;
+                    bool useSram = constSeq == null
+                        && (arraysWithVariableIndex.Contains(arrName) || moduleSramArrays.Contains(arrName));
+                    DataType elemDt = arrayElemTypes.TryGetValue(arrName, out var dt) ? dt
+                        : constSeq != null ? InferConstSeqElemType(constSeq) : DataType.UINT8;
 
                     var captures = new List<(int Idx, string Name)>();
                     for (int i = 0; i < patSize; ++i)
                     {
                         Expression elem = seq.Elements[i];
                         Val elemVal;
-                        if (useSram)
+                        if (constSeq != null)
+                        {
+                            elemVal = VisitExpression(constSeq[i]);
+                        }
+                        else if (useSram)
                         {
                             Temporary tmp = MakeTemp(elemDt);
                             Emit(new ArrayLoad(arrName, new Constant(i), tmp, elemDt, patSize));
@@ -1453,8 +1470,9 @@ public partial class IRGenerator
 
                     foreach (var cap in captures)
                     {
-                        Val src = useSram ? (Val)MakeTemp(elemDt) : new Variable(arrName + "__" + cap.Idx, elemDt);
-                        if (useSram) Emit(new ArrayLoad(arrName, new Constant(cap.Idx), src, elemDt, patSize));
+                        Val src = constSeq != null ? VisitExpression(constSeq[cap.Idx])
+                            : useSram ? (Val)MakeTemp(elemDt) : new Variable(arrName + "__" + cap.Idx, elemDt);
+                        if (constSeq == null && useSram) Emit(new ArrayLoad(arrName, new Constant(cap.Idx), src, elemDt, patSize));
                         ForgetBeforePatternBind(cap.Name);
                         Emit(new Copy(src, new Variable(cap.Name, elemDt)));
                         variableTypes[cap.Name] = elemDt;
