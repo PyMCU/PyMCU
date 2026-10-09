@@ -9009,6 +9009,16 @@ public partial class IRGenerator
         DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
         int elemSize = elemDt.SizeOf();
 
+        // `rows: list[list[T]] = [[0]*W] * H`: the same aliased-row hazard the unannotated
+        // `g = [[0]*W] * H` path already refuses, with the same clear diagnostic -- caught
+        // here, before the Mul-repeat branch below would otherwise either hand it to
+        // TryExpandRepeatedList/TryEmitRuntimeListRepeat (which has no per-element copy to
+        // offer a GC_REF element and would have to decline or alias) or, worse, let a failed
+        // type inference on the inner literal slip past that decline and reach the generic
+        // "a bytes or list literal has no value in this position" refusal instead.
+        if (stmt.Value != null && IsAliasedRowRepeat(stmt.Value))
+            throw AliasedRowRepeatError(stmt);
+
         // A growable list is heap-allocated, needing a collector. Said at the declaration,
         // with the program's own words: the phase that used to catch this ran much later
         // and answered in terms of GC_REF and gc_alloc, which mean nothing from the
@@ -9079,6 +9089,52 @@ public partial class IRGenerator
             {
                 initElements = MaterializeListAnnElements(le.Elements, qualified, stmt.Target);
                 if (le.Elements.Count > capacity) capacity = le.Elements.Count;
+            }
+            else if (stmt.Value is BinaryExpr { Op: Frontend.BinaryOp.Mul } repMul)
+            {
+                // `[x] * n`: the same compile-time-first / runtime-fallback split the
+                // unannotated `xs = [x] * n` assignment already uses (TryExpandRepeatedList,
+                // then TryEmitRuntimeListRepeat). Before this, neither ran here at all: the
+                // switch above matched nothing, so the repeat was dropped in silence and the
+                // declaration kept its 8-element default regardless of what `n` asked for.
+                if (TryExpandRepeatedList(repMul, out var repElems))
+                {
+                    initElements = MaterializeListAnnElements(repElems, qualified, stmt.Target);
+                    if (repElems.Count > capacity) capacity = repElems.Count;
+                }
+                else if (TryEmitRuntimeListRepeat(repMul) is { } repRes)
+                {
+                    Emit(new Copy(repRes, new Variable(qualified, DataType.GC_REF)));
+                    return;
+                }
+                else
+                    throw UserError(
+                        $"'{stmt.Target}: {stmt.Annotation}' = <expr> * <count>: only a "
+                        + "single-element list repeated a count works ([x] * n); this shape "
+                        + "is not that.", stmt.Value);
+            }
+            else if (stmt.Value is ListCompExpr lcAnn)
+            {
+                // Same split as the repeat above: a compile-time-constant iterable unrolls
+                // into a literal (ExpandCtListComp); a runtime one fills a fresh heap list
+                // (TryEmitRuntimeListComp). Previously this case matched nothing either, so
+                // the comprehension's elements -- and any side effect they had -- never ran.
+                if (ExpandCtListComp(lcAnn) is { } compElemExprs)
+                {
+                    initElements = MaterializeListAnnElements(compElemExprs, qualified, stmt.Target);
+                    if (compElemExprs.Count > capacity) capacity = compElemExprs.Count;
+                }
+                else if (TryEmitRuntimeListComp(lcAnn) is { } compRes)
+                {
+                    Emit(new Copy(compRes, new Variable(qualified, DataType.GC_REF)));
+                    return;
+                }
+                else
+                    throw UserError(
+                        $"'{stmt.Target}: {stmt.Annotation}' comprehension needs either a "
+                        + "compile-time-constant iterable to unroll, or a plain `for x in "
+                        + "<runtime list>` shape with no filter to build at run time.",
+                        stmt.Value);
             }
 
             int allocSize = 2 + capacity * elemSize;
