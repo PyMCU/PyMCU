@@ -2677,6 +2677,22 @@ public partial class IRGenerator
                 return new Variable(modKey2, modType2);
         }
 
+        // RFC 0014 family 6: `__CHIP__`, `__FREQ__`/`F_CPU`, `__TIMEBASE__` are chip facts,
+        // not ambient constants -- a module reads one only through the `from pymcu.chips
+        // import` binding it wrote. A bound name answers the fact its symbol names; a bare
+        // spelling never imported refuses with the import the program needs. This runs ahead
+        // of the imported-member and module-scope chases below: `pymcu.chips` is a real
+        // module whose declared `__TIMEBASE__: int = 0` is a PLACEHOLDER for the value the
+        // flags decide, so answering it as a member would silently fold the stub. A binding
+        // the frame or the owning module itself wrote has already returned above, as it
+        // should.
+        if (ChipFactBinding(name) is { } factSymbol)
+            return ChipFactValue(factSymbol, at);
+        if (IsAmbientFactName(name))
+            throw UserError(
+                $"name '{name}' is a chip fact -- it binds only through " +
+                $"`from pymcu.chips import {(name == "__FREQUENCY__" ? "__FREQ__" : name)}`", at);
+
         // `from module import sym` where sym is a mutable global (e.g. `from machine import mem8`)
         if (TryImportedAlias(name, out var importedAliasMod) && importedAliasMod != null)
         {
@@ -2906,18 +2922,6 @@ public partial class IRGenerator
                   + $"time -- so it cannot be printed, stored or passed on. Call it: `{name}(...)`",
                 at);
         }
-
-        // RFC 0014 family 6: `__CHIP__`, `__FREQ__`/`F_CPU`, `__TIMEBASE__` are chip facts,
-        // not ambient constants -- a module reads one only through the `from pymcu.chips
-        // import` binding it wrote. A bound name answers the fact its symbol names; a bare
-        // spelling never imported refuses with the import the program needs. A user binding
-        // of the same spelling wins earlier in this ladder, as it should.
-        if (ChipFactBinding(name) is { } factSymbol)
-            return ChipFactValue(factSymbol, at);
-        if (IsAmbientFactName(name))
-            throw UserError(
-                $"name '{name}' is a chip fact -- it binds only through " +
-                $"`from pymcu.chips import {(name == "__FREQUENCY__" ? "__FREQ__" : name)}`", at);
 
         if (!IsNameKnownSomewhere(finalLocalName, name))
         {
