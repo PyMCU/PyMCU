@@ -9020,11 +9020,8 @@ public partial class IRGenerator
             // runs on it directly rather than re-guessing the prefixed spellings.
             if (fields.Count == 1)
             {
-                string member = fields[0];
                 string? cls = classNames.Contains(bse) ? bse : ReceiverClassThroughAliases(bse);
-                if (cls != null
-                    && TryFindClassAttributeFromClass(cls, member, out _, out var fullName)
-                    && strConstantVariables.TryGetValue(fullName, out var clsText))
+                if (cls != null && ClassLevelStrAttr(cls, fields[0]) is { } clsText)
                     return clsText;
             }
             return StaticStringOfField(ma);
@@ -10759,6 +10756,42 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The compile-time text of a str class attribute, walking <paramref name="cls"/>'s own
+    /// MRO the same way <see cref="TryFindClassAttributeFromClass"/> does and trying the same
+    /// two key spellings at each step -- but through <see cref="ResolveStrConstant"/> rather
+    /// than that function's own globals/mutableGlobals/instanceClasses existence test.
+    ///
+    /// The two disagree on a class attribute attached AFTER the class body closes
+    /// (<c>Fake.platform = "mine"</c>, no prior declaration): the scan never reserved a
+    /// mutableGlobals slot for it, so TryFindClassAttributeFromClass answers false and callers
+    /// built on it (ClassAttributeThroughReceiver, the general non-string read) never see the
+    /// attribute at all -- but the literal-string write (Assign.cs's `ClassName.attr = value`)
+    /// filed the text in strConstantVariables regardless, so ResolveStrConstant alone already
+    /// knows the attribute is real. The class body's OWN declaration is the mirror-image case:
+    /// it DOES reserve the slot, but the text itself is filed under the entry function's
+    /// qualified spelling (`main.Fake_platform`), not the bare class key -- a plain
+    /// strConstantVariables[key] read misses it, and only ResolveStrConstant's own
+    /// module-global shadow fallback finds it.
+    /// </summary>
+    private string? ClassLevelStrAttr(string cls, string member)
+    {
+        string? cur = cls;
+        for (int depth = 0; cur != null && depth < 20; depth++)
+        {
+            foreach (var key in new[]
+            {
+                classModuleMap.TryGetValue(cur, out var modPfx) ? modPfx + cur + "_" + member : null,
+                cur + "_" + member,
+            })
+            {
+                if (key != null && ResolveStrConstant(key) is { } text) return text;
+            }
+            cur = BaseClassOf(cur);
+        }
+        return null;
+    }
+
+    /// <summary>
     /// The dotted chain of a member access, split into the name it starts from and the fields
     /// read off it: `o.inner.sep` gives (`o`, ["inner", "sep"]). The name is null when the
     /// chain does not start from one (a call result, an index).
@@ -10810,7 +10843,6 @@ public partial class IRGenerator
         // ClassAttributeThroughReceiver already gives the general (non-string) read.
         if (fields.Count == 1)
         {
-            string member = fields[0];
             foreach (string prefix in new[]
                      {
                          currentInlinePrefix,
@@ -10822,9 +10854,7 @@ public partial class IRGenerator
                 string baseName = ResolveAlias(prefix + root.Name);
                 string? cls = classNames.Contains(baseName) ? baseName
                     : ReceiverClassThroughAliases(baseName);
-                if (cls != null
-                    && TryFindClassAttributeFromClass(cls, member, out _, out var fullName)
-                    && strConstantVariables.TryGetValue(fullName, out var clsText))
+                if (cls != null && ClassLevelStrAttr(cls, fields[0]) is { } clsText)
                     return clsText;
             }
         }
