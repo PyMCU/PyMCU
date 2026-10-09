@@ -5297,7 +5297,9 @@ public partial class IRGenerator
     }
 
     // True when every `return` of `func` hands back one local the body binds to a list
-    // (`v = [...]`, `v: list[T] = ...`).
+    // (`v = [...]`, `v: list[T] = ...`). The binding must be the one live at the return:
+    // `x = [1, 2]; x = 5; return x` hands back a scalar even though a list literal
+    // touches the name earlier -- the scalar rebind decides what `return x` emits.
     private static bool ReturnsALocalList(FunctionDef func)
     {
         string? name = null;
@@ -5308,13 +5310,29 @@ public partial class IRGenerator
             else if (name != v.Name) return false;
         }
         if (name == null) return false;
-        return TypeInference.WalkStatements(func.Body).Any(s => s switch
+        // Track the shape of the last binding in program order, the same view the
+        // generator's sequential visit takes. A return reached while the name is
+        // not list-shaped answers a scalar, not a list.
+        bool listShaped = false;
+        foreach (var s in TypeInference.WalkStatements(func.Body))
         {
-            AnnAssign a => a.Target == name && a.Annotation.StartsWith("list"),
-            VarDecl d => d.Name == name && d.VarType.StartsWith("list"),
-            AssignStmt { Target: VariableExpr t, Value: ListExpr } => t.Name == name,
-            _ => false,
-        });
+            switch (s)
+            {
+                case AnnAssign a when a.Target == name:
+                    listShaped = a.Annotation.StartsWith("list");
+                    break;
+                case VarDecl d when d.Name == name:
+                    listShaped = d.VarType.StartsWith("list");
+                    break;
+                case AssignStmt { Target: VariableExpr t } a when t.Name == name:
+                    listShaped = a.Value is ListExpr;
+                    break;
+                case ReturnStmt:
+                    if (!listShaped) return false;
+                    break;
+            }
+        }
+        return listShaped;
     }
 
     private static string? SeqNameReturnedBy(FunctionDef func)
