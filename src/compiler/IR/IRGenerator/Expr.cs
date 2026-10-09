@@ -2735,7 +2735,7 @@ public partial class IRGenerator
         // first byte, the same distinction ArgumentIsBuffer already draws for a call
         // argument.
         bool ternArmIsBuffer(Val v) => v is ArrayBase || (v is Variable bv && IsBufferStorageName(bv.Name));
-        if (ternArmIsBuffer(trueVal) || ternArmIsBuffer(falseVal))
+        if (ternArmIsBuffer(trueVal) && ternArmIsBuffer(falseVal))
             throw UserError(
                 "a conditional expression cannot choose between two buffers -- "
                 + "'x if c else y' with x and y both bytearray/bytes/fixed arrays has no "
