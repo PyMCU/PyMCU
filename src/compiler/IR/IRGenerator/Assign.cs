@@ -1632,8 +1632,17 @@ public partial class IRGenerator
                 _ => null,
             };
             if (retBufName != null) retBufName = FollowAliases(retBufName);
+            // A bare `alias = buf` (stmt.Value itself a plain name, no call/slice/view
+            // in between) is the plain-local-buffer-alias shape the block above this
+            // one already owns, with the flat (non-"main."-qualified) array-name
+            // convention a VIEW's own key does not need the same way: skip it here so
+            // this block's own "main."-qualified bufKey -- which len()/arrayViewBase
+            // for a memoryview slice or a twice-inlined buffer return DOES key off of
+            // -- is not overwritten by a plain copy reaching the same condition below
+            // through "value already is a Variable naming an array" rather than
+            // through an actual call or slice.
             if (retBufName != null && arraySizes.ContainsKey(retBufName)
-                && stmt.Target is VariableExpr bufTgt)
+                && stmt.Target is VariableExpr bufTgt && stmt.Value is not VariableExpr)
             {
                 ForgetBindingFacts(bufTgt.Name);
                 string bufKey = !string.IsNullOrEmpty(currentInlinePrefix)
@@ -2754,8 +2763,17 @@ public partial class IRGenerator
             // if flag else Pair()` lands as `x = tN` where tN only CARRIES the class,
             // and dropping the alias at the next label makes x answer as a scalar
             // slot the construction never wrote (silentfix5).
+            // An alias to a BUFFER is structural for the identical reason an instance
+            // alias is: WHICH ARRAY the name stands for does not depend on which path
+            // ran. Filed as value-tracking, the alias this statement's own preamble
+            // bound above (`alias = buf`, BindSequenceAlias) was dropped by the very
+            // next label the surrounding code emits -- UART's own TX/retry loop inside
+            // the next statement's print() did it here -- and `head(alias)` read
+            // alias's own unbacked scalar slot instead of buf's address (fieldbuf
+            // rebase onto silentfix5, probe 786).
             if (instAnchor == null && ReceiverClassThroughAliases(vv2.Name) is null
-                && ProducedInstanceClassOf(value) is null)
+                && ProducedInstanceClassOf(value) is null
+                && !IsBufferStorageName(vv2.Name))
                 valueTrackingAliases.Add(tv2.Name);
         }
         else if (value is Temporary tSrc && target is Variable tDst)
