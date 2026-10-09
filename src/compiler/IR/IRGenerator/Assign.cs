@@ -9077,23 +9077,7 @@ public partial class IRGenerator
             }
             else if (stmt.Value is ListExpr le)
             {
-                initElements = new List<Val>();
-                listInnerElemTypes.TryGetValue(qualified, out var declaredInner);
-                foreach (var e in le.Elements)
-                {
-                    // `bins: list[list[uint16]] = [[p, 0]]`: a literal element has no
-                    // value position of its own -- materialize it into its own heap
-                    // object so the outer payload stores a real pointer.
-                    Val ev = e is ListExpr innerLit
-                        ? MaterializeSequenceLiteral(innerLit.Elements,
-                            declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
-                        : e is TupleExpr innerTup
-                        ? MaterializeSequenceLiteral(innerTup.Elements,
-                            declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
-                        : VisitExpression(e);
-                    RefuseInstanceElementValue(e, $"an element of '{stmt.Target}'", ev);
-                    initElements.Add(ev);
-                }
+                initElements = MaterializeListAnnElements(le.Elements, qualified, stmt.Target);
                 if (le.Elements.Count > capacity) capacity = le.Elements.Count;
             }
 
@@ -9133,6 +9117,32 @@ public partial class IRGenerator
         }
 
         return;
+    }
+
+    /// <summary>
+    /// Evaluates a heap list declaration's element expressions into stored values, shared by
+    /// EmitListAnnAssign's literal, repeat and comprehension forms. A nested literal/tuple
+    /// element (`bins: list[list[uint16]] = [[p, 0]]`) has no value position of its own --
+    /// materialize it into its own heap object so the outer payload stores a real pointer.
+    /// </summary>
+    private List<Val> MaterializeListAnnElements(IReadOnlyList<Expression> elements, string qualified,
+        string targetName)
+    {
+        var result = new List<Val>(elements.Count);
+        listInnerElemTypes.TryGetValue(qualified, out var declaredInner);
+        foreach (var e in elements)
+        {
+            Val ev = e is ListExpr innerLit
+                ? MaterializeSequenceLiteral(innerLit.Elements,
+                    declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
+                : e is TupleExpr innerTup
+                ? MaterializeSequenceLiteral(innerTup.Elements,
+                    declaredInner == DataType.UNKNOWN ? null : declaredInner, e)
+                : VisitExpression(e);
+            RefuseInstanceElementValue(e, $"an element of '{targetName}'", ev);
+            result.Add(ev);
+        }
+        return result;
     }
 
     // Fixed-size array annotation `T[N]` (incl. Class[N] slot arrays and Callable[N]):
