@@ -36,6 +36,22 @@ public static class AnnotationText
         "WriteableBuffer", "ReadableBuffer", "bytes",
     };
 
+    /// `import pymcu.types as t; x: t.uint8 = ...` (#449). A dotted CLASS name
+    /// (`busio.I2C`) is already the same class the bare name reaches -- Parser.cs reads
+    /// it and the rest of the compiler resolves it with every other class name. A
+    /// primitive has no such resolution anywhere downstream: it is only ever recognised
+    /// by DataTypeExtensions.StringToDataType under its bare spelling ("uint8", never
+    /// "t.uint8" or "pymcu.types.uint8"), so the alias-qualified form fell through to
+    /// DataType.UNKNOWN there. UNKNOWN still got ONE byte of storage from the generic
+    /// scalar fallback elsewhere in codegen -- just not the two-operand arithmetic
+    /// promotion rule a recognised uint8 gets, so `x + y` (200 + 100, both t.uint8)
+    /// wrapped to 44 at 8 bits in silence instead of promoting to 300 the way the same
+    /// two numbers under a bare `uint8` annotation already do.
+    private static readonly HashSet<string> PrimitiveNames = new()
+    {
+        "uint8", "int8", "uint16", "int16", "uint32", "int32", "int", "float", "bool",
+    };
+
     /// <summary>The annotation as the rest of the compiler reads it.</summary>
     public static string Normalize(string? annotation)
     {
@@ -79,7 +95,9 @@ public static class AnnotationText
         }
 
         if (lb < 0 || !annotation.EndsWith("]", StringComparison.Ordinal))
-            return BufferNames.Contains(bare) ? "bytearray" : annotation;
+            return BufferNames.Contains(bare) ? "bytearray"
+                : PrimitiveNames.Contains(bare) ? bare
+                : annotation;
 
         // `Optional[X]` IS `X` here, and `Union[X, None]` is the same statement spelled out.
         //
