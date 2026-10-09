@@ -452,9 +452,12 @@ class TestEmbedToken:
     def test_tokens_from_a_failed_embed_pass_still_apply(
             self, tmp_path, monkeypatch, mock_toolchain, token_compiler, unwrapped):
         # A pass that dies on a missing embed still reports every token it
-        # emitted before the error. NEEDS_TIMEBASE here arrives alongside
-        # [EMBED], so the retry carries --embed AND the timebase preamble at
-        # once -- two passes total, not resolve-then-detect serially.
+        # emitted before the error: NEEDS_TIMEBASE here is latched on pass
+        # one and --timebase reaches the next compile already. The millis_init
+        # preamble itself waits for a pass that ran to the end, though --
+        # staging it on interrupted evidence would double-init Timer0 whenever
+        # the user's own millis_init() sits past the failure point. Three
+        # passes: fail(needs+embed), clean(-> inject), clean(stable).
         monkeypatch.chdir(tmp_path)
         token_compiler.tokens("EMBED", "NEEDS_TIMEBASE", embed="data.bin")
         (tmp_path / "src").mkdir(exist_ok=True)
@@ -466,6 +469,149 @@ class TestEmbedToken:
         generated = _generated(tmp_path)
         assert "_pymcu_millis_init()" in generated
         argv = token_compiler.argv()
-        assert argv.count("---") == 2
+        assert argv.count("---") == 3
         assert "--timebase" in argv
         assert any(a.startswith("data.bin=") for a in argv)
+
+
+# ---------------------------------------------------------------------------
+# The fixpoint's evidence rules. A pass that fails partway through is partial
+# evidence: its tokens are facts (they name resolved things), but a token's
+# ABSENCE is not -- the pass may have died before reaching the user's UART()
+# or millis_init(). Staging decisions that need an absence therefore wait for
+# a clean pass. Each script below keys on --embed: absent on pass one, present
+# once the name resolved, exactly like the real frontend's behaviour.
+# ---------------------------------------------------------------------------
+
+class TestIncompletePasses:
+
+    _EMBED_GATE_PREFIX = textwrap.dedent("""\
+        #!/bin/sh
+        echo "[PHASE_START] IRGen"
+        for arg in "$@"; do echo "$arg" >> "$PYMCU_FAKE_ARGV"; done
+        echo "---" >> "$PYMCU_FAKE_ARGV"
+        embedded=""
+        output=""
+        prev=""
+        for arg in "$@"; do
+            if [ "$prev" = "--embed" ]; then embedded=1; fi
+            if [ "$prev" = "-o" ]; then output="$arg"; fi
+            prev="$arg"
+        done
+        if [ -z "$embedded" ]; then
+    """)
+
+    _EMBED_GATE_SUFFIX = textwrap.dedent("""\
+            echo "[PHASE_END] IRGen 20"
+            echo "[PHASE_START] CodeGen"
+            echo "[PHASE_END] CodeGen 30"
+            mkdir -p "$(dirname "$output")"
+            echo "; fake asm" > "$output"
+            echo "[BUILD_OK] $output"
+        fi
+    """)
+
+    def _script(self, body_failing: str, body_ok: str) -> str:
+        return (self._EMBED_GATE_PREFIX
+                + textwrap.indent(body_failing, "    ")
+                + "        else\n"
+                + textwrap.indent(body_ok, "    ")
+                + self._EMBED_GATE_SUFFIX)
+
+    def test_failed_pass_never_stages_full_console(
+            self, tmp_path, monkeypatch, mock_toolchain, token_compiler, unwrapped):
+        # Codex #1: pass one fails at open() before reaching the program's own
+        # UART construction. If the driver staged the full preamble on that
+        # interrupted evidence, the UART the next pass reports as
+        # [STDOUT_OWNED] would arrive too late -- the injected _pymcu_stdout()
+        # would already be in the entry, and removing it needs the absence the
+        # failed pass could not prove. The build must end at imports_only.
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / "data.bin").write_bytes(b"blob")
+        _project(tmp_path, "def main():\n"
+                           "    f = open(\"data.bin\")\n"
+                           "    print(f)\n")
+        token_compiler.exe.write_text(self._script(
+            'echo "[EMBED] data.bin"\n'
+            'echo "open(data.bin): no file of that name is embedded in this build" >&2\n'
+            'echo "[BUILD_FAIL] IRGen"\n'
+            'exit 1\n',
+            'echo "[EMBED] data.bin"\n'
+            'echo "[STDOUT_OWNED]"\n',
+        ))
+        token_compiler.exe.chmod(0o755)
+        result = _invoke_build()
+        assert "Compilation Error" not in unwrapped(result.output)
+        generated = _generated(tmp_path)
+        assert "pymcu.hal.console" in generated
+        assert "_pymcu_stdout" not in generated
+
+    def test_failed_pass_never_stages_ticks_preamble(
+            self, tmp_path, monkeypatch, mock_toolchain, token_compiler, unwrapped):
+        # Codex #2: pass one reports NEEDS_TIMEBASE then fails at open() before
+        # reaching the program's own millis_init(). Staging the ticks preamble
+        # on that evidence would leave _pymcu_millis_init() next to the user's
+        # call -- Timer0 OVF registered twice. The next pass reports
+        # [TIMEBASE_INIT] and the injection must never have happened.
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / "data.bin").write_bytes(b"blob")
+        _project(tmp_path, "def main():\n"
+                           "    f = open(\"data.bin\")\n"
+                           "    print(f)\n")
+        token_compiler.exe.write_text(self._script(
+            'echo "[NEEDS_TIMEBASE]"\n'
+            'echo "[EMBED] data.bin"\n'
+            'echo "open(data.bin): no file of that name is embedded in this build" >&2\n'
+            'echo "[BUILD_FAIL] IRGen"\n'
+            'exit 1\n',
+            'echo "[NEEDS_TIMEBASE]"\n'
+            'echo "[TIMEBASE_INIT]"\n'
+            'echo "[EMBED] data.bin"\n',
+        ))
+        token_compiler.exe.chmod(0o755)
+        result = _invoke_build()
+        assert "Compilation Error" not in unwrapped(result.output)
+        generated = _generated(tmp_path)
+        assert "_pymcu_millis_init" not in generated
+        assert "--timebase" in token_compiler.argv()
+
+    def test_final_pass_stderr_is_not_suppressed_by_embed(
+            self, tmp_path, monkeypatch, mock_toolchain, token_compiler, unwrapped):
+        # Codex #5: [EMBED] names a file the retry resolves, the build
+        # succeeds -- and the compiler's own warning on that final pass still
+        # reaches the user. Deferral exists for passes the fixpoint will
+        # repeat, never for the one it ends on.
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / "data.bin").write_bytes(b"blob")
+        _project(tmp_path, "def main():\n    f = open(\"data.bin\")\n")
+        token_compiler.exe.write_text(self._script(
+            'echo "[EMBED] data.bin"\n'
+            'echo "open(data.bin): no file of that name is embedded in this build" >&2\n'
+            'echo "[BUILD_FAIL] IRGen"\n'
+            'exit 1\n',
+            'echo "[EMBED] data.bin"\n'
+            'echo "warning: destructor of unused value never runs" >&2\n',
+        ))
+        token_compiler.exe.chmod(0o755)
+        result = _invoke_build()
+        assert "Compilation Error" not in unwrapped(result.output)
+        assert "destructor of unused value" in unwrapped(result.output)
+
+    def test_embed_payload_preserves_edge_spaces(
+            self, tmp_path, monkeypatch, mock_toolchain, token_compiler, unwrapped):
+        # Codex #8: the name after "[EMBED] " is the payload verbatim. A file
+        # literally called " spaced.bin " resolves to itself -- trimming the
+        # token would rename the file the compiler asked for.
+        monkeypatch.chdir(tmp_path)
+        token_compiler.tokens("EMBED", embed=" spaced.bin ")
+        (tmp_path / "src").mkdir(exist_ok=True)
+        spaced = tmp_path / "src" / " spaced.bin "
+        spaced.write_bytes(b"blob")
+        _project(tmp_path, "def main():\n    f = open(\" spaced.bin \")\n")
+        result = _invoke_build()
+        assert "Compilation Error" not in unwrapped(result.output)
+        assert any(a == " spaced.bin =" + str(spaced.resolve())
+                   for a in token_compiler.argv())
