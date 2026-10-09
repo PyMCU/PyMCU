@@ -50,6 +50,7 @@ public partial class IRGenerator
         // whichever of the shapes below claims the statement. The undefined-name check reads
         // this: an unannotated `x = f()` files no type anywhere, and without the record a later
         // read of `x` would look exactly like a typo.
+        List<string>? bufferScalarStamped = null;
         if (stmt.Target is VariableExpr bindTgt)
         {
             string bindKey = !string.IsNullOrEmpty(currentInlinePrefix)
@@ -81,7 +82,10 @@ public partial class IRGenerator
                         ? currentFunction + "." + bufAliasSrc.Name
                         : bufAliasSrc.Name);
                 if (bytearrayParams.Contains(srcKey) || bytearrayParams.Contains(bufAliasSrc.Name))
+                {
                     bytearrayParams.Add(bindKey);
+                    (bufferScalarStamped ??= new List<string>()).Add(bindKey);
+                }
             }
 
             // Positive proof the name holds ONE scalar element of a buffer, for
@@ -90,8 +94,13 @@ public partial class IRGenerator
             // already proven that way (`two = one`, which also walks a longer alias chain
             // than a single hop), a walrus, a ternary whose arms both prove it, or a call
             // to a function proven to always return one element.
+            // The stamp describes the NEW binding, so it rides the rebind sweep's
+            // keep list the way the str and tuple marks do.
             if (ExpressionIsProvenScalarElement(stmt.Value))
+            {
                 provenScalarElements.Add(bindKey);
+                (bufferScalarStamped ??= new List<string>()).Add(bindKey);
+            }
             else provenScalarElements.Remove(bindKey);
         }
 
@@ -1554,7 +1563,7 @@ public partial class IRGenerator
             }
         }
 
-        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value, ctorTaggedKey, strStampedKeys); }
+        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value, ctorTaggedKey, strStampedKeys, bufferScalarStamped); }
         else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
         {
@@ -2108,7 +2117,8 @@ public partial class IRGenerator
     }
 
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value,
-        string? ctorTaggedKey = null, IReadOnlyCollection<string>? strStampedKeys = null)
+        string? ctorTaggedKey = null, IReadOnlyCollection<string>? strStampedKeys = null,
+        IReadOnlyCollection<string>? keepBufferScalarMarks = null)
     {
         // The constant tables keep an int and no Unsigned mark; the name keeps it instead.
         if (value is Constant { Unsigned: true }) unsignedConstNames.Add(varExpr.Name);
@@ -2190,7 +2200,12 @@ public partial class IRGenerator
         // the new binding really is a tuple. So does `x = tuple(y)` -- the
         // copy-ctor preamble above marked the name tuple-bound before the value
         // evaluated, and the mark describes the binding this write creates.
+        // bufferScalarStamped rides the same exemption: the bind preamble filed
+        // the bytearray-param forward / proven-scalar-element marks for THIS
+        // binding, and sweeping them back down left `one = buf[0]; head(one)`
+        // unprovable as a scalar at the buffer-parameter refusal (probe 615).
         ForgetBindingFacts(varExpr.Name, ctorTaggedKey, strStampedKeys,
+            keepBufferScalarMarks: keepBufferScalarMarks,
             keepTupleMark: stmt.Value is TupleExpr
                 || stmt.Value is CallExpr { Callee: VariableExpr { Name: "tuple" }, Args.Count: 1 });
 
@@ -6705,7 +6720,7 @@ public partial class IRGenerator
     /// </summary>
     private void ForgetBindingFacts(string name, string? keepInstanceKey = null,
         IReadOnlyCollection<string>? keepStrKeys = null, bool keepRuntimeStr = false,
-        bool keepTupleMark = false)
+        bool keepTupleMark = false, IReadOnlyCollection<string>? keepBufferScalarMarks = null)
     {
         foreach (var k in new[]
         {
@@ -6744,8 +6759,11 @@ public partial class IRGenerator
             ForgetValueFacts(k, keepStrKeys != null && keepStrKeys.Contains(k), keepRuntimeStr,
                 keepTupleMark);
             // The buffer-vs-scalar marks die with the binding they described; the
-            // walrus/unpack/loop binders re-derive them from the new value.
-            ForgetBufferVsScalarMarks(k);
+            // walrus/unpack/loop binders re-derive them from the new value. A mark
+            // the statement preamble just filed for the NEW binding is exempt -- it
+            // answers what the incoming value is, not what the old one was.
+            if (keepBufferScalarMarks == null || !keepBufferScalarMarks.Contains(k))
+                ForgetBufferVsScalarMarks(k);
         }
 
         // Aliases pointing AT the binding die too: `y = x` then `x = 5` leaves `y`
