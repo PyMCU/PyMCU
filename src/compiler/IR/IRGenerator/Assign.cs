@@ -2525,6 +2525,23 @@ public partial class IRGenerator
             && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name))
             && !(value is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
         {
+            // The value may still BE an instance on some path -- `y = x or 0`,
+            // `y = x if c else 0` -- and then this scalar Copy would read the
+            // object's missing scalar byte. The name target asks the question the
+            // tuple return asks. A source the definite record already answers
+            // (`c = a` where a is a constructed instance) is exempt: for it the
+            // Copy+alias below is the intended lowering -- the single-field
+            // collapse hands the field's own byte, and a multi-field carrier was
+            // diverted into the anchor-alias branch above before reaching here.
+            if (InstanceClassOfValueExpr(stmt.Value) is null
+                && MaybeInstanceClassOfExpr(stmt.Value) is { } assignMaybeCls)
+            {
+                throw UserError(
+                    $"the assignment source for '{varExpr.Name}' cannot be an instance of "
+                    + $"'{assignMaybeCls}': a PyMCU instance is flattened to compile-time "
+                    + "storage -- its fields live at their own slots and the name itself "
+                    + "has no bytes a scalar slot can hold", stmt.Value);
+            }
             storeReadsItsTarget = ReadsName(stmt.Value, varExpr.Name);
             try { Emit(new Copy(value, target)); }
             finally { storeReadsItsTarget = false; }
@@ -10227,6 +10244,16 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr ve)
         {
             Val target = ResolveBinding(ve.Name, ve);
+            // `x += v` reads `x` before it writes the sum, and the read is the same
+            // unsupportable shape as the return sites refuse: a merge that left the
+            // name an instance on only some paths gives the load the scalar path's
+            // stale byte. Refuse it naming the class rather than emitting an RMW on
+            // storage the object path never wrote.
+            if (MaybeInstanceClassOfExpr(ve) is { } augMaybeCls)
+                throw UserError(
+                    $"the augmented assignment target '{ve.Name}' cannot be an "
+                    + $"instance of '{ShortClassNameOf(augMaybeCls)}': "
+                    + InstanceIsFlattened, ve);
             // An augmented assignment is a WRITE, so whatever the name was known to hold stops
             // being true here. Only the Constant case cleared constantVariables, which is all
             // that was needed while locals were not tracked; `total = 0` followed by
