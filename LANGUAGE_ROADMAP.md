@@ -489,6 +489,14 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 |---------|-------|
 | Constant-argument call deduplication | The IR optimizer groups void calls to the same subroutine whose arguments are all compile-time constants (`Constant`, `ArrayBase`, `MemoryAddress`) into one synthesized zero-argument `__pymcu_callstub_N` function; each original site becomes a bare `RCALL`. The stub is `CanFail` when the callee is, so the T-flag error protocol propagates unchanged. A per-site marshal-cost estimate skips groups that would not shrink |
 
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| `time.monotonic()` / `time.monotonic_ns()` | `from time import monotonic` was an ImportError; both now exist, built on `micros()`. `monotonic()` is `float(micros()) / 1e6` (shares `micros()`'s ~71.58-minute wrap, and loses sub-microsecond ordering past ~16.7 s under single-precision `float`'s 24-bit mantissa); `monotonic_ns()` is `micros() * 1000` in a `uint32` (no 64-bit integer type exists, so it wraps at 2**32 ns, ~4.29 s — far sooner than `micros()`/`monotonic()`). Both documented in their own docstrings |
+| `millis()`/`micros()`/`monotonic*()` auto-arm the AVR/PIC18F45K50 timebase | A resolved call to any of them now reports `[NEEDS_TIMEBASE]` (`millis()` used to be left out, matching the driver's old text scan, which silently read 0 forever on AVR with no `millis_init()` — the one target where `millis()`'s own docstring-documented raise-on-no-timebase did not apply). The build driver stages the existing `millis_init()` preamble automatically; a program that calls `millis_init()` itself is unaffected (`[TIMEBASE_INIT]` still wins) |
+| `millis()` folds in the in-progress Timer0 overflow | Previously only counted *complete* overflows (~1.024 ms each on AVR), so one isolated reading could lag true elapsed time by almost a whole overflow period — up to 0.1% across a 1 s interval even after the ISR's long-run fractional correction. `millis()` (AVR and PIC18F45K50) now also reads the current overflow's progress (`TCNT0`/`TMR0L`) plus the ISR's not-yet-rounded fractional carry, the same way `micros()` already folds in the pending-overflow race |
+
 ---
 
 ## v0.12 — Implemented
