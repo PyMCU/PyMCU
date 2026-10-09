@@ -4209,6 +4209,35 @@ public partial class IRGenerator
                     stmt.Iterable);
             }
 
+            // `for p in [Pin(n) for n in (2, 3, 4)]:` (#394): a comprehension written
+            // DIRECTLY as a for-loop's own iterable is not one of the shapes the
+            // dispatch above recognizes at all (only `xs = [...]` then `for p in xs`
+            // is), so it fell all the way to the generic "iterable must be ..."
+            // refusal below -- a real sentence, but not the one that explains what
+            // is actually unsupported here. Give the same answer VisitExpression
+            // already gives a comprehension reaching a plain value position: a
+            // filter needs a run-time-decided length no fixed array can hold, and a
+            // comprehension of class instances has no array slot to live in either.
+            if (stmt.Iterable is ListCompExpr forLc)
+            {
+                if (forLc.Filter != null)
+                    throw UserError(
+                        "a list comprehension with a filter (if) is not supported -- the array "
+                        + "length must be a compile-time constant, and a filter decides it at run "
+                        + "time. Build the list with an explicit loop, or drop the filter (plain "
+                        + "[f(i) for i in range(N)] works)", forLc);
+                if (ComprehensionElementIsInstance(forLc))
+                    throw UserError(
+                        "a list comprehension of class instances is not supported: PyMCU lays an "
+                        + "instance out at compile time and it has no array slot to live in. Write "
+                        + "the list as a literal of constructions ([A(x), A(y)]), or build each one "
+                        + "by name.", forLc);
+                throw UserError(
+                    "a list comprehension is only supported where it fills a fixed array whose "
+                    + "length is a compile-time constant (`xs: uint8[4] = [f(i) for i in "
+                    + "range(4)]`). In this position there is no array for it to fill.", forLc);
+            }
+
             throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.",
                 stmt.Iterable);
