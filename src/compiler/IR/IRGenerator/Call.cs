@@ -8992,6 +8992,16 @@ public partial class IRGenerator
             // would throw the binding diagnostic before they get asked.
             if (TryGetExceptionBinding(recv.Name, out _)) return null;
 
+            // `Mode.ON` (#400): the receiver names an ENUM CLASS, not an instance or a
+            // field owner -- there is no object to visit, only a dotted lookup of the
+            // member's own folded value. Resolving `recv` here threw "name 'Mode' is not
+            // defined" before the normal value path -- which already resolves an enum
+            // member correctly as a NUMBER -- ever got a chance to run, so a bare
+            // `print(Mode.ON)` (or any other dunder/compile-time-text argument check)
+            // refused a name the program had defined, in a function whose own job is only
+            // to ask "is this text", never to decide what the expression means.
+            if (enumClassNames.Contains(recv.Name)) return null;
+
             Val objVal = VisitExpression(recv);
             string bse = objVal is Variable ov ? ov.Name : recv.Name;
             bse = ResolveAlias(bse);
