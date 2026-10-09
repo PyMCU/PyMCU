@@ -9012,7 +9012,22 @@ public partial class IRGenerator
                 foreach (string f in fields) flat = ResolveAlias(flat + joiner + f);
                 if (ResolveStrConstant(flat) is { } fieldText) return fieldText;
             }
-            return null;
+
+            // A CLASS-level string attribute the instance never overrode (see
+            // StaticStringOfField's own copy of this fallback, which an AST-only caller like
+            // StaticStringOf reaches instead of this VisitExpression-based one): `bse` here is
+            // the receiver's OWN resolved name, already evaluated above, so the class lookup
+            // runs on it directly rather than re-guessing the prefixed spellings.
+            if (fields.Count == 1)
+            {
+                string member = fields[0];
+                string? cls = classNames.Contains(bse) ? bse : ReceiverClassThroughAliases(bse);
+                if (cls != null
+                    && TryFindClassAttributeFromClass(cls, member, out _, out var fullName)
+                    && strConstantVariables.TryGetValue(fullName, out var clsText))
+                    return clsText;
+            }
+            return StaticStringOfField(ma);
         }
 
         if (arg is not VariableExpr ve) return null;
@@ -10780,6 +10795,38 @@ public partial class IRGenerator
             string key = ResolveAlias(prefix + root.Name);
             foreach (string f in fields) key = ResolveAlias(key + "_" + f);
             if (strConstantVariables.TryGetValue(key, out var text)) return text;
+        }
+
+        // A CLASS-level string attribute, reached through an instance that never overrode it,
+        // or through the class name itself: `platform = "mine"` in the class body, or
+        // `Fake.platform = "mine"` written after the body closes, files the text under the
+        // CLASS's own key (`Fake_platform`), never under an instance's flattened name --
+        // the loop above only ever tries the latter. `print(f.platform)` fell through to the
+        // generic numeric writer and streamed the interned string id (257 when the class body
+        // declared it, since that path DOES reserve a runtime slot; 0 when it was assigned
+        // only after the class closed, since nothing reserves one then). Tried only after the
+        // instance-storage loop above, so an instance that DOES hold its own copy keeps
+        // winning -- the same instance>class precedence VisitMemberAccess's own
+        // ClassAttributeThroughReceiver already gives the general (non-string) read.
+        if (fields.Count == 1)
+        {
+            string member = fields[0];
+            foreach (string prefix in new[]
+                     {
+                         currentInlinePrefix,
+                         !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." : null,
+                         "",
+                     })
+            {
+                if (prefix == null) continue;
+                string baseName = ResolveAlias(prefix + root.Name);
+                string? cls = classNames.Contains(baseName) ? baseName
+                    : ReceiverClassThroughAliases(baseName);
+                if (cls != null
+                    && TryFindClassAttributeFromClass(cls, member, out _, out var fullName)
+                    && strConstantVariables.TryGetValue(fullName, out var clsText))
+                    return clsText;
+            }
         }
 
         // `mod.attr` where mod names a MODULE: the member is a module-level global
