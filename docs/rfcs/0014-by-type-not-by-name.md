@@ -574,6 +574,21 @@ miscompile come once the machinery they need (binding tables, tokens) exists.
   node changes; ROM must be byte-identical because identical programs get identical
   preambles. Files: `Logger.cs`, `Core.cs` (emission sites), `Assign.cs` (strfmt),
   `ControlFlow.cs` (raise), `commands/build.py`, `core/libraries.py`.
+  - The emission site is the *resolved callee*, with no test on which file wrote
+    the call: a `micros()` or `ticks_ms()` inside an installed library or an
+    `@inline` helper it expands (e.g. the CircuitPython `keypad` queue reading
+    `ticks_ms()`) arms the counter exactly as the same call in the program would,
+    and a `raise X(msg)` in a library keeps its message runtime. The fixpoint
+    stages a preamble only when a pass that ran to the end reports the absence --
+    a pass interrupted by an embed failure cannot prove the user's `UART()` or
+    `millis_init()` is not further down the file.
+  - Deliberate behavior change (accepted): user code that *spells* the trigger
+    names without *binding* them no longer counts -- a program-defined
+    `ticks_ms`/`ticks_us`/`micros`/`monotonic`/`monotonic_ns`/`millis_init`/
+    `clock_init` (method or function) reserves nothing and satisfies nothing
+    (p16/p17 measured the same flip for `monotonic`/`UART`). Conversely
+    `open(name)` where `name` is a compile-time constant the compiler resolves
+    now auto-embeds, where the literal-only scan missed it.
 - **Phase 2 -- family 6, explicit chip/introspection bindings.** `__CHIP__`,
   `__FREQ__`/`F_CPU`, `__TIMEBASE__` resolve only through `pymcu.chips`; `sys`/`os`
   aliases bind through `importedAliases`. Stdlib modules that rely on the ambient
