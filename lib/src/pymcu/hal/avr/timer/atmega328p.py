@@ -292,27 +292,28 @@ def millis_init():
     compile_isr(_millis_ovf_isr, 0x0020)   # Timer0 OVF vector (byte address)
 
 
-@inline
-def millis() -> uint32:
-    # _millis_ms (read atomically above) only advances when an overflow
-    # completes, so by itself it can lag true elapsed time by almost one
-    # whole overflow period (~1.024 ms): harmless amortized over many
-    # overflows -- the ISR's fractional correction keeps the long-run rate
-    # exact -- but up to ~0.1% on a single isolated reading, which is what a
-    # caller timing one sleep() actually sees (a 10 ms sleep right after
-    # millis_init() read back as 9). Close the gap the same way micros()
-    # already does, by folding in how far the CURRENT, not-yet-complete
-    # overflow has gotten: TCNT0 (tc, 4 us/tick) plus the ms-fraction the
-    # ISR has already carried but not yet rounded into _millis_ms
-    # (_millis_fract, in eighths of a ms -- 125 units = 1 ms, so *8 is us).
-    # The two together cross 1000 us exactly when a whole extra millisecond
-    # has genuinely elapsed since the last ISR run.
-    asm("CLI")
-    ms: uint32 = _millis_ms
-    fract: uint8 = _millis_fract
-    tc: uint8 = TCNT0.value
-    pending: uint8 = TIFR0.value & 0x01
-    asm("SEI")
+def _millis_fold_in_progress_overflow(ms: uint32, fract: uint8, tc: uint8, pending: uint8) -> uint32:
+    # Non-inline on purpose, like _delay_1ms_avr_* below: this is the bulk of
+    # millis()'s own body (a branch, two arithmetic ops, a compare), and
+    # millis() is @inline -- every call site used to carry a full copy of it,
+    # which overflowed flash on firmware that calls millis() from several
+    # places (adafruit-bmp280-unmodified-loop's noopt build, PyMCU-rfc-time).
+    # Shared once as a real subroutine, millis() itself stays the four
+    # register reads under CLI/SEI plus one CALL.
+    #
+    # _millis_ms (read atomically by the caller) only advances when an
+    # overflow completes, so by itself it can lag true elapsed time by
+    # almost one whole overflow period (~1.024 ms): harmless amortized over
+    # many overflows -- the ISR's fractional correction keeps the long-run
+    # rate exact -- but up to ~0.1% on a single isolated reading, which is
+    # what a caller timing one sleep() actually sees (a 10 ms sleep right
+    # after millis_init() read back as 9). Close the gap the same way
+    # micros() already does, by folding in how far the CURRENT,
+    # not-yet-complete overflow has gotten: TCNT0 (tc, 4 us/tick) plus the
+    # ms-fraction the ISR has already carried but not yet rounded into
+    # _millis_ms (fract, in eighths of a ms -- 125 units = 1 ms, so *8 is
+    # us). The two together cross 1000 us exactly when a whole extra
+    # millisecond has genuinely elapsed since the last ISR run.
     if pending:
         # TOV0 is set but interrupts were off, so the ISR has not applied
         # this overflow yet: apply the same carry it would have, so tc
@@ -328,6 +329,17 @@ def millis() -> uint32:
     if extra_us >= 1000:
         ms = ms + 1
     return ms
+
+
+@inline
+def millis() -> uint32:
+    asm("CLI")
+    ms: uint32 = _millis_ms
+    fract: uint8 = _millis_fract
+    tc: uint8 = TCNT0.value
+    pending: uint8 = TIFR0.value & 0x01
+    asm("SEI")
+    return _millis_fold_in_progress_overflow(ms, fract, tc, pending)
 
 
 @inline
