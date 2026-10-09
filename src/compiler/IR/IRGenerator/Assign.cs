@@ -1005,6 +1005,25 @@ public partial class IRGenerator
             && stmt.Value is VariableExpr fnFieldSrc
             && FlattenedCallableFieldKey(fnFieldTgt) is { } fnFieldKey)
         {
+            // `Sensor.read = read` (#426): the receiver names the CLASS ITSELF, not an
+            // instance -- attaching a function to a class after its body has already
+            // closed. FlattenedCallableFieldKey makes no distinction between "self" (an
+            // instance, the shape this whole check exists for) and a bare class name, so
+            // this silently registered a loopFunctionAliases entry nothing downstream
+            // reads for an INSTANCE METHOD CALL (`s.read()` resolves through the
+            // compile-time-mangled Class_method dispatch, never through this field-alias
+            // table) and returned, leaving the later call to fail on the undefined
+            // `Sensor_read` with no explanation of why.
+            if (fnFieldTgt.Object is VariableExpr fnFieldClsVe && classNames.Contains(fnFieldClsVe.Name))
+                throw UserError(
+                    $"'{fnFieldClsVe.Name}.{fnFieldTgt.Member} = ...' attaches a function to the "
+                    + "class after its body has already closed. PyMCU resolves every method call "
+                    + "directly, at compile time, to the class body's own methods -- there is no "
+                    + $"dynamic dispatch through a function attached this way. Write "
+                    + $"'{fnFieldTgt.Member}' as a method inside 'class {fnFieldClsVe.Name}:' "
+                    + "instead.",
+                    stmt);
+
             // The source resolves under the same qualifications the read side
             // uses: inline prefix, enclosing function, bare -- and a Callable
             // param forwarded through super() is filed in loopFunctionAliases,
