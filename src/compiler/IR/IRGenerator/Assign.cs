@@ -1635,6 +1635,16 @@ public partial class IRGenerator
                 && classFieldLayout.TryGetValue(anchorCls, out var anchorLay)
                 && anchorLay.Count == 1);
 
+    // NamesInstanceAnchor plus a definite class: a merge that left the name an
+    // instance on only SOME path keeps it in virtualInstances but drops the
+    // instanceClasses record. Such a name has no fields a structural alias could
+    // point at, so it cannot be the source of an instance binding -- the maybe
+    // record is what a consumer must answer instead.
+    private bool ClassedInstanceAnchor(string name)
+        => NamesInstanceAnchor(name)
+           && instanceClasses.TryGetValue(name, out var classedCls)
+           && classedCls != null;
+
     // `obj.prop = v` where prop has a registered @property setter: expand the setter.
     // Returns true when a matching setter was applied; false to fall through to the
     // normal member/assignment handling.
@@ -2510,7 +2520,14 @@ public partial class IRGenerator
             Temporary itv => itv.Name,
             _ => null,
         };
-        string? instAnchor = instSrcName != null && NamesInstanceAnchor(FollowAliases(instSrcName))
+        // The anchor has to carry a class, not just live in virtualInstances: a merge
+        // like `x = 7 / x = Pair()` keeps the name virtual (the union records "may be
+        // an instance on some path") but drops its instanceClasses entry, so aliasing
+        // to it binds the target to an anchor whose fields were never written on the
+        // scalar arm. A classless "anchor" is exactly the ambiguous shape the maybe
+        // check below refuses -- it is not a structural source.
+        string? instAnchor = instSrcName != null
+            && ClassedInstanceAnchor(FollowAliases(instSrcName))
             ? FollowAliases(instSrcName) : null;
         if (target is Variable instTgt && instAnchor != null)
         {
@@ -2523,7 +2540,7 @@ public partial class IRGenerator
             CopyArrayIdentity(arrTgt.Name, abRet.ArrayName);
         else if (!(value is NoneVal)
             && !(value is Variable arrVal && arraySizes.ContainsKey(arrVal.Name))
-            && !(value is Variable anchorV && NamesInstanceAnchor(anchorV.Name)))
+            && !(value is Variable anchorV && ClassedInstanceAnchor(anchorV.Name)))
         {
             // The value may still BE an instance on some path -- `y = x or 0`,
             // `y = x if c else 0` -- and then this scalar Copy would read the
