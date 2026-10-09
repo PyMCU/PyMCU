@@ -112,6 +112,27 @@ public class RangeLoopVarAfterLoopTests
     }
 
     [Fact]
+    public void AnUncaughtRaise_StoresEveryIterationLikeABreak()
+    {
+        // try:
+        //     for v in range(2): raise ValueError()
+        // except ValueError: print(v)  -- CPython: 0, the in-progress iteration, not 2
+        // A raise is an early exit the same as a break, just without a literal `break`
+        // keyword for LoopBodyHasBreakOrContinue to find.
+        var body = Main(Prelude +
+            "def main():\n" +
+            "    v: uint8 = 9\n" +
+            "    try:\n" +
+            "        for v in range(2):\n" +
+            "            raise ValueError()\n" +
+            "    except ValueError:\n" +
+            "        y: uint8 = v\n\n" +
+            "main()\n");
+        for (int k = 0; k < 2; k++)
+            Assert.Contains(body, i => i is Copy { Src: Constant { Value: var val }, Dst: Variable { Name: "main.v" } } && val == k);
+    }
+
+    [Fact]
     public void ABreak_SkipsTheStepBack()
     {
         var body = Main(Prelude +
