@@ -9082,8 +9082,27 @@ public partial class IRGenerator
             if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
                 calleeV.Name == "list")
             {
-                if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
+                if (listCall.Args.Count == 0)
+                {
+                    // `list()`: an explicit empty list -- keeps the 8-element default
+                    // capacity below, same as PyMCU-listrepeat probe 084 already pins.
+                }
+                else if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
+                {
                     capacity = capLit.Value;
+                }
+                else
+                {
+                    // `list(other)` / `list(struct.unpack(...))` / `list(range(...))`:
+                    // none of these are the capacity constructor -- each already lowers
+                    // correctly through the generic expression path (EmitListCopyCtor and
+                    // friends). The branch above matched on the callee name alone, so
+                    // anything but a literal int argument (or no argument) reached here
+                    // with the real argument never evaluated, silently keeping the
+                    // 8-element default.
+                    Emit(new Copy(VisitExpression(stmt.Value), new Variable(qualified, DataType.GC_REF)));
+                    return;
+                }
             }
             else if (stmt.Value is ListExpr le)
             {
@@ -9135,6 +9154,19 @@ public partial class IRGenerator
                         + "compile-time-constant iterable to unroll, or a plain `for x in "
                         + "<runtime list>` shape with no filter to build at run time.",
                         stmt.Value);
+            }
+            else
+            {
+                // Anything else that can hold a heap list: a plain alias
+                // (`xs: list[T] = other`), a function call that returns one
+                // (`xs: list[T] = make()`), `a + b` (concat), `a[i:j]` (slice), a
+                // list[list[T]] element read (`row: list[T] = grid[i]`), a ternary
+                // between two lists -- each already lowers correctly through the
+                // generic expression path. None of these shapes matched anything
+                // above either, so the RHS was never evaluated at all and the
+                // declaration silently kept its 8-element empty default.
+                Emit(new Copy(VisitExpression(stmt.Value), new Variable(qualified, DataType.GC_REF)));
+                return;
             }
 
             int allocSize = 2 + capacity * elemSize;
