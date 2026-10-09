@@ -1631,6 +1631,20 @@ public partial class IRGenerator
     // The parameter name is stored as qualified_name (funcname_paramname).
     private HashSet<string> bytearrayParams = new();
 
+    // Every flat key BindSequenceAlias has EVER aliased to a real buffer/array's
+    // storage, keyed the same flat way (module-bare, or function-qualified inside a
+    // real function) -- sticky, never removed, including across a branch join that
+    // drops the specific variableAliases entry because the two arms disagree (`if
+    // flag: alias = other` leaves "alias" with no resolvable alias after the join,
+    // since BindSequenceAlias/BranchState.JoinDicts intersect on VALUE agreement,
+    // but the name was still, unambiguously, SOME buffer on every path that reaches
+    // it). Read at the call-argument/array-storage-resolution boundary: a name in
+    // this set that TryResolveArrayStorageKey cannot resolve is not "not a buffer" --
+    // it is "a buffer whose identity depends on which branch ran", which PyMCU
+    // cannot pick an address for at compile time (same unresolved-choice shape the
+    // ternary-of-two-buffers and list-of-one-buffer refusals already cover).
+    private readonly HashSet<string> everAliasedToBuffer = new();
+
     // const[str] parameters of NON-@inline functions: received as a runtime 16-bit flash
     // byte-pointer (the caller passes a FlashStrAddr). Subscripting one (s[i]) emits a
     // FlashLoadPtr so a single shared subroutine can walk any flash string instead of the

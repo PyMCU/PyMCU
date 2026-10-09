@@ -122,7 +122,10 @@ public partial class IRGenerator
                     // "buf". ResolveAliasedArraySize's own bare-name fallback (this
                     // commit) is what keeps a FIELD's for-loop/len() still finding the
                     // size without the mirror.
+                {
                     BindSequenceAlias(arrBindKey, resolvedSrc);
+                    everAliasedToBuffer.Add(arrBindKey);
+                }
             }
 
             // Positive proof the name holds ONE scalar element of a buffer, for
@@ -1656,7 +1659,10 @@ public partial class IRGenerator
                 if (lastCallReturnedBufferLocal)
                     EmitSequenceCopy(bufKey, retBufName);
                 else
+                {
                     BindSequenceAlias(bufKey, retBufName);
+                    everAliasedToBuffer.Add(bufKey);
+                }
                 return;
             }
         }

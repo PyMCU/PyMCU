@@ -1962,6 +1962,39 @@ public partial class IRGenerator
             {
                 argEvaluated = seqBuf;
             }
+            // The name was SOME buffer on every path that binds it (everAliasedToBuffer),
+            // but neither resolution attempt above landed on ONE: a branch join dropped the
+            // specific variableAliases entry because its two arms disagreed (`if flag: alias
+            // = other` leaves "alias" with buf's binding on one path and other's on the
+            // other -- BindSequenceAlias/BranchState.JoinDicts intersect on value agreement,
+            // so neither answer survives the join), or one arm never bound it at all (`if
+            // flag: alias = buf` with no else -- the same join drops a key a later arm lacks
+            // entirely). Checked AFTER both branches above (not chained into their if/else-if
+            // -- a standalone if here stole the sequence-materialization branch's turn,
+            // regressing AConstSequenceArgToARealSubroutineGetsStorage) and on the ARGUMENT'S
+            // OWN NAME, not argEvaluated's shape: a dropped alias still reaches here as an
+            // ordinary Variable, so testing argEvaluated's type alone would miss it. Falling
+            // through silently copied whatever scalar byte the name's own unbacked slot
+            // happened to hold -- CPython's 10 or 7 came back as 0, every time, regardless of
+            // the runtime flag. Refused instead, the same unresolved-choice shape the
+            // ternary-of-two-buffers and list-of-one-buffer refusals already cover.
+            // bytearrayParams-sourced names (a local aliasing a PARAMETER that is itself a
+            // buffer) are excluded: those are passed as the pointer VALUE directly, correctly,
+            // by the bytearrayParams exclusion on the first branch above -- "not ArrayBase"
+            // is their right shape, not a dropped alias.
+            if (argEvaluated is not ArrayBase && arg is VariableExpr argNameCheck
+                && !bytearrayParams.Contains(argNameCheck.Name))
+            {
+                string argFlatKey = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + argNameCheck.Name
+                    : (string.IsNullOrEmpty(currentFunction) || currentFunction == "main" ? argNameCheck.Name
+                        : currentFunction + "." + argNameCheck.Name);
+                if (everAliasedToBuffer.Contains(argFlatKey) && !bytearrayParams.Contains(argFlatKey))
+                    throw UserError(
+                        $"'{argNameCheck.Name}' names more than one buffer depending on which "
+                        + "branch ran before this call, and PyMCU has no address to pick between "
+                        + "them at compile time. Call the buffer-taking function once per branch "
+                        + "instead of reassigning the name across an if/else.", arg);
+            }
             // Read now when a later argument can have an effect: the call instruction reads
             // a name argument where it runs, after every argument has been evaluated.
             if (callArgs.Skip(ai + 1).Any(a => OperandCanHaveAnEffect(a is KeywordArgExpr ka ? ka.Value : a)))
