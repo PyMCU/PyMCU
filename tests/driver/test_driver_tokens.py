@@ -32,6 +32,13 @@ import pytest
 from typer.testing import CliRunner
 from src.driver.main import app
 
+# The fake pymcuc below is a POSIX shell script, and several tests rewrite its body
+# to script a failing pass; the token parsing it exercises is plain Python in
+# build.py, so Linux and macOS cover it.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the token-speaking fake compiler is a POSIX shell script")
+
 runner = CliRunner()
 
 
@@ -101,14 +108,6 @@ _FAKE_COMPILER_SCRIPT_POSIX = textwrap.dedent("""\
     fi
 """)
 
-_FAKE_COMPILER_SCRIPT_WIN = textwrap.dedent("""\
-    @echo off
-    echo [PHASE_START] Lexer
-    echo [PHASE_END] Lexer 10
-    echo [BUILD_OK] done
-""")
-
-
 @pytest.fixture
 def token_compiler(tmp_path, monkeypatch):
     """Install the token-speaking fake pymcuc where the driver finds it first.
@@ -122,13 +121,9 @@ def token_compiler(tmp_path, monkeypatch):
     bin_dir.mkdir(exist_ok=True)
     argv_log = tmp_path / "fake_argv.txt"
 
-    if sys.platform == "win32":
-        exe = bin_dir / "pymcuc.cmd"
-        exe.write_text(_FAKE_COMPILER_SCRIPT_WIN)
-    else:
-        exe = bin_dir / "pymcuc"
-        exe.write_text(_FAKE_COMPILER_SCRIPT_POSIX)
-        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    exe = bin_dir / "pymcuc"
+    exe.write_text(_FAKE_COMPILER_SCRIPT_POSIX)
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     monkeypatch.setenv("PYMCU_FAKE_ARGV", str(argv_log))
     from src.driver.core.compiler import PyMCUCompiler
