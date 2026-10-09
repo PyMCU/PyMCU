@@ -466,6 +466,14 @@ public class ConditionalCompilator(DeviceConfig config)
                     foreach (var branch in matchStmt.Branches.Where(branch =>
                                  _evaluator.MatchesPattern(branch.Pattern, targetVal)))
                     {
+                        // A capture arm binds its name to the subject before its body
+                        // runs (`case _ as x:` is `x = <target>` plus the arm): splicing
+                        // the body alone left the name holding whatever it bound before
+                        // the match, and `return x` inside it read the stale binding.
+                        if (!string.IsNullOrEmpty(branch.CaptureName))
+                            newStmts.Add(new AssignStmt(
+                                new VariableExpr(branch.CaptureName), matchStmt.Target)
+                                { Line = matchStmt.Line });
                         FlushBlock(branch.Body, prog, newStmts);
                         return true;
                     }

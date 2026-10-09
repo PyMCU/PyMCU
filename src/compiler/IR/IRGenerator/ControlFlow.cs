@@ -1315,11 +1315,10 @@ public partial class IRGenerator
     /// </summary>
     private void ForgetBeforePatternBind(string key)
     {
-        constantVariables.Remove(key);
-        strConstantVariables.Remove(key);
-        floatConstantVariables.Remove(key);
-        localConstantValues.Remove(key);
-        noneValuedNames.Remove(key);
+        // The same sweep every rebind runs: a capture is a write, so a name that
+        // carried a possible instance or a sequence binding into the match is the
+        // captured value from here on, not what it was.
+        ForgetBindingFactsForKey(key);
         narrowedOptionals.Remove(key);
         // Removing alone lets a later constant write re-fold the name, and the arm is one of
         // several: the key is runtime-mutable from here on, which is what killedConstants says.
@@ -1434,9 +1433,7 @@ public partial class IRGenerator
 
                         if (elem is VariableExpr ve)
                         {
-                            string qname = string.IsNullOrEmpty(currentFunction)
-                                ? ve.Name
-                                : currentFunction + "." + ve.Name;
+                            string qname = QualifyBoundName(ve.Name);
                             captures.Add((i, qname));
                         }
                         else
@@ -1458,15 +1455,15 @@ public partial class IRGenerator
                     {
                         Val src = useSram ? (Val)MakeTemp(elemDt) : new Variable(arrName + "__" + cap.Idx, elemDt);
                         if (useSram) Emit(new ArrayLoad(arrName, new Constant(cap.Idx), src, elemDt, patSize));
+                        ForgetBeforePatternBind(cap.Name);
                         Emit(new Copy(src, new Variable(cap.Name, elemDt)));
                         variableTypes[cap.Name] = elemDt;
                     }
 
                     if (!string.IsNullOrEmpty(branch.CaptureName))
                     {
-                        string qname = string.IsNullOrEmpty(currentFunction)
-                            ? branch.CaptureName
-                            : currentFunction + "." + branch.CaptureName;
+                        string qname = QualifyBoundName(branch.CaptureName);
+                        ForgetBeforePatternBind(qname);
                         Emit(new Copy(targetVal, new Variable(qname, elemDt)));
                         variableTypes[qname] = elemDt;
                     }
@@ -1628,9 +1625,8 @@ public partial class IRGenerator
                 {
                     if (!string.IsNullOrEmpty(branch.CaptureName))
                     {
-                        string qname = string.IsNullOrEmpty(currentFunction)
-                            ? branch.CaptureName
-                            : currentFunction + "." + branch.CaptureName;
+                        string qname = QualifyBoundName(branch.CaptureName);
+                        ForgetBeforePatternBind(qname);
                         DataType dt = targetVal is Variable v2
                             ? v2.Type
                             : (targetVal is Temporary t2 ? t2.Type : GetValType(targetVal));
@@ -1669,9 +1665,8 @@ public partial class IRGenerator
                 {
                     if (!string.IsNullOrEmpty(branch.CaptureName))
                     {
-                        string qname = string.IsNullOrEmpty(currentFunction)
-                            ? branch.CaptureName
-                            : currentFunction + "." + branch.CaptureName;
+                        string qname = QualifyBoundName(branch.CaptureName);
+                        ForgetBeforePatternBind(qname);
                         DataType dt = targetVal is Variable v2
                             ? v2.Type
                             : (targetVal is Temporary t2 ? t2.Type : GetValType(targetVal));
@@ -1925,11 +1920,11 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(branch.CaptureName)) capNames.Add(branch.CaptureName);
         foreach (var cn in capNames)
         {
-            string qname = string.IsNullOrEmpty(currentFunction)
-                ? cn : currentFunction + "." + cn;
+            string qname = QualifyBoundName(cn);
             var dt = singleIdx >= 0 && singleIdx < members.Count
                 ? MemberDataType(members[singleIdx]) : GetValType(payload);
             Val src = singleIdx >= 0 ? MemberRead(payload, singleIdx, members) : payload;
+            ForgetBindingFactsForKey(qname);
             Emit(new Copy(src, new Variable(qname, dt)));
             variableTypes[qname] = dt;
         }
