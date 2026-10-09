@@ -26,16 +26,111 @@ public class CompileTimeEvaluator(DeviceConfig config)
     // Current module name — "__main__" for the entry file, dotted name for libraries.
     public string ModuleName { get; set; } = "__main__";
 
-    // `import usys as s` / `import uos as o` -- the local name stands for the module.
-    // ConditionalCompilator and ConditionalImportExtractor record it as they walk each
-    // module's imports, so the folds below answer the table for any spelling of it.
+    // RFC 0014 family 6: the folds below answer only for names the module BOUND, not for
+    // spellings. RecordImportBinding fills the three tables as ConditionalCompilator and
+    // ConditionalImportExtractor walk each module's imports:
+    //
+    //   ModuleAliases        local name -> module it resolves to, every import shape
+    //                        (`import usys as s` gives s -> usys; `from os import uname`
+    //                        gives uname -> os), mirroring IRGenerator's importedAliases.
+    //   AliasToOriginal      local name -> the symbol a `from` import bound, recorded for
+    //                        every symbol whether or not `as` renamed it. A name absent
+    //                        here is a MODULE binding, which is how `from sys import x`
+    //                        keeps `x.platform` from folding: x is not the module.
+    //   ImportedModuleNames  every module name the file imported, any shape, so the
+    //                        `pymcu.chips.X` member spelling knows `import pymcu.chips`
+    //                        really was written.
     public Dictionary<string, string> ModuleAliases { get; } = new();
+    public Dictionary<string, string> AliasToOriginal { get; } = new();
+    public HashSet<string> ImportedModuleNames { get; } = new(StringComparer.Ordinal);
 
-    // Whether `e` is a bare name denoting one of `mods` -- the literal module name or an
-    // alias bound to it by `import <mod> as <name>` earlier in this module.
+    // The source line each name was bound at. prog.Imports is seeded ahead of the walk
+    // (the parser files top-level imports separately), so order information is the only
+    // way a rebind can tell `x = 3` BEFORE the import from the same statement after it.
+    private readonly Dictionary<string, int> _bindingLine = new();
+
+    public void RecordImportBinding(ImportStmt imp)
+    {
+        ImportedModuleNames.Add(imp.ModuleName);
+        if (imp.Symbols.Count == 0)
+        {
+            // `import a.b` binds the top package `a`; `import a.b as c` binds c to the
+            // submodule itself -- the same rule IRGenerator's import loops apply.
+            bool aliased = !string.IsNullOrEmpty(imp.ModuleAlias);
+            string local = aliased ? imp.ModuleAlias! : Head(imp.ModuleName);
+            ModuleAliases[local] = aliased ? imp.ModuleName : Head(imp.ModuleName);
+            _bindingLine[local] = imp.Line;
+            return;
+        }
+        foreach (var sym in imp.Symbols)
+        {
+            if (sym == StarImportExpander.Star) continue;
+            string local = imp.Aliases.TryGetValue(sym, out var alias) ? alias : sym;
+            ModuleAliases[local] = imp.ModuleName;
+            AliasToOriginal[local] = sym;
+            _bindingLine[local] = imp.Line;
+        }
+    }
+
+    // The local name stops answering as the import's binding once the module rebinds it:
+    // `from pymcu.chips import __FREQ__` followed by `__FREQ__ = 3` makes the name mean 3,
+    // which the IR ladder answers from constantVariables -- folding the fact here anyway
+    // would pick a different branch than the IR lowers. An assignment on an EARLIER line
+    // is the one the import overwrote, so it leaves the binding alone.
+    public void RecordRebinding(string name, int line = -1)
+    {
+        if (line >= 0 && _bindingLine.TryGetValue(name, out var boundAt) && line < boundAt)
+            return;
+        ModuleAliases.Remove(name);
+        AliasToOriginal.Remove(name);
+        _bindingLine.Remove(name);
+    }
+
+    private static string Head(string moduleName)
+    {
+        int dot = moduleName.IndexOf('.');
+        return dot < 0 ? moduleName : moduleName[..dot];
+    }
+
+    // Whether `e` is a bare name bound to one of `mods` as a MODULE (`import sys`,
+    // `import usys as s`). A `from sys import x` binding is not the module object --
+    // `x.platform` is an attribute read on whatever x is, never the sys fact.
     private bool IsModuleName(Expression? e, params string[] mods) =>
         e is VariableExpr { Name: var n }
-        && (mods.Contains(n) || (ModuleAliases.TryGetValue(n, out var real) && mods.Contains(real)));
+        && !AliasToOriginal.ContainsKey(n)
+        && ModuleAliases.TryGetValue(n, out var real) && mods.Contains(real);
+
+    // `name` bound by `from pymcu.chips import <symbol>` -- returns the symbol so the
+    // caller answers the fact it names. `import pymcu.chips as c` puts c in
+    // ModuleAliases without an AliasToOriginal entry, which is what keeps the module
+    // alias out of this path.
+    private string? BoundChipSymbol(string name) =>
+        AliasToOriginal.TryGetValue(name, out var sym)
+        && ModuleAliases.TryGetValue(name, out var mod) && mod == "pymcu.chips"
+            ? sym : null;
+
+    // `e` names the pymcu.chips MODULE itself: `import pymcu.chips as c` gives `c`, and
+    // `import pymcu.chips` gives the `pymcu.chips` member spelling (`from pymcu import
+    // chips` was already rewritten to the first shape by DependencyGraphBuilder).
+    private bool IsChipsModuleExpr(Expression? e) => e switch
+    {
+        VariableExpr v => !AliasToOriginal.ContainsKey(v.Name)
+            && ModuleAliases.TryGetValue(v.Name, out var m) && m == "pymcu.chips",
+        MemberAccessExpr { Object: VariableExpr pv, Member: "chips" }
+            => ImportedModuleNames.Contains("pymcu.chips")
+               && ModuleAliases.TryGetValue(pv.Name, out var pm) && pm == "pymcu"
+               && !AliasToOriginal.ContainsKey(pv.Name),
+        _ => false,
+    };
+
+    // `e` is the chip-descriptor object: a name bound to `__CHIP__` (any alias), or the
+    // `chips.__CHIP__` member of a bound chips module.
+    private bool IsChipDescriptorExpr(Expression? e) => e switch
+    {
+        VariableExpr v => BoundChipSymbol(v.Name) == "__CHIP__",
+        MemberAccessExpr { Member: "__CHIP__", Object: var m } => IsChipsModuleExpr(m),
+        _ => false,
+    };
 
     // Resolves a compile-time expression to its string representation.
     // Throws if the expression is not a known compile-time constant.
@@ -43,15 +138,34 @@ public class CompileTimeEvaluator(DeviceConfig config)
     {
         switch (e)
         {
-            case VariableExpr { Name: "__CHIP__" }:
-                return config.Chip;
-            case VariableExpr { Name: "__FREQ__" or "F_CPU" }:
-                return config.Frequency.ToString();
             case VariableExpr { Name: "__name__" }:
                 return ModuleName;
+            // RFC 0014 family 6: `__CHIP__`, `__FREQ__`/`F_CPU`, `__TIMEBASE__` are facts
+            // the module reads through `from pymcu.chips import ...` under whatever local
+            // spelling it chose. A bare spelling the file never imported is not bound and
+            // falls to the ordinary Unknown-var arm -- the IR reports the missing import.
+            case VariableExpr v when BoundChipSymbol(v.Name) is { } sym:
+                return sym switch
+                {
+                    "__CHIP__" => config.Chip,
+                    "__FREQ__" or "F_CPU" => config.Frequency.ToString(),
+                    "__TIMEBASE__" => config.Timebase ? "1" : "0",
+                    _ => throw new Exception($"pymcu.chips has no fact '{sym}'"),
+                };
             case VariableExpr varExpr:
                 throw new Exception("Unknown var");
-            case MemberAccessExpr { Object: VariableExpr { Name: "__CHIP__" } } memExpr:
+            // `chips.__FREQ__` / `pymcu.chips.__TIMEBASE__` / `c.__CHIP__` -- the module
+            // spelling of the same bound facts.
+            case MemberAccessExpr { Object: { } chipsMod, Member: var chipsMember }
+                when IsChipsModuleExpr(chipsMod) && chipsMember is
+                    "__CHIP__" or "__FREQ__" or "F_CPU" or "__TIMEBASE__":
+                return chipsMember switch
+                {
+                    "__CHIP__" => config.Chip,
+                    "__TIMEBASE__" => config.Timebase ? "1" : "0",
+                    _ => config.Frequency.ToString(),
+                };
+            case MemberAccessExpr { Object: { } chipObj } memExpr when IsChipDescriptorExpr(chipObj):
             {
                 return memExpr.Member switch
                 {
@@ -183,12 +297,20 @@ public class CompileTimeEvaluator(DeviceConfig config)
             case IntegerLiteral lit:
                 value = lit.Value;
                 return true;
-            case VariableExpr { Name: "__FREQ__" or "F_CPU" }:
-                value = (long)config.Frequency;
+            case VariableExpr v when BoundChipSymbol(v.Name) is { } numSym
+                && numSym is "__FREQ__" or "F_CPU" or "__TIMEBASE__":
+                value = numSym == "__TIMEBASE__" ? (config.Timebase ? 1 : 0) : (long)config.Frequency;
                 return true;
-            case MemberAccessExpr { Object: VariableExpr { Name: "__CHIP__" } } m
-                when m.Member is "ram_size" or "flash_size" or "eeprom_size":
-                value = m.Member switch
+            case MemberAccessExpr { Object: { } numChipsMod, Member: var numChipsMember }
+                when IsChipsModuleExpr(numChipsMod) && numChipsMember is
+                    "__FREQ__" or "F_CPU" or "__TIMEBASE__":
+                value = numChipsMember == "__TIMEBASE__"
+                    ? (config.Timebase ? 1 : 0) : (long)config.Frequency;
+                return true;
+            case MemberAccessExpr { Object: { } numChipObj, Member: var sizeMember }
+                when IsChipDescriptorExpr(numChipObj)
+                     && sizeMember is "ram_size" or "flash_size" or "eeprom_size":
+                value = sizeMember switch
                 {
                     "ram_size" => config.RamSize,
                     "flash_size" => config.FlashSize,
@@ -242,12 +364,17 @@ public class CompileTimeEvaluator(DeviceConfig config)
     // Whether `e` is exactly `uname()` (bare, after `from os import uname`) or `os.uname()`
     // / `uos.uname()` (dotted) -- the shapes the survey found (docs/rfcs/0007 section 1)
     // plus MicroPython's own u-spelling of the same module. No arguments, matching the
-    // real signature.
+    // real signature. RFC 0014: binding, not spelling -- a bare `uname` the file never
+    // imported is the program's own function, and a `uos` the file defined is its object.
     private bool IsUnameCall(Expression e) => e is CallExpr { Args.Count: 0 } call
         && call.Callee switch
         {
-            VariableExpr { Name: "uname" } => true,
-            MemberAccessExpr { Member: "uname" } mem => IsModuleName(mem.Object, "os", "uos"),
+            VariableExpr { Name: var unameName } =>
+                AliasToOriginal.TryGetValue(unameName, out var unameSym) && unameSym == "uname"
+                && ModuleAliases.TryGetValue(unameName, out var unameMod)
+                && unameMod is "os" or "uos" or "pymcu.os",
+            MemberAccessExpr { Member: "uname", Object: var unameObj } =>
+                IsModuleName(unameObj, "os", "uos"),
             _ => false,
         };
 

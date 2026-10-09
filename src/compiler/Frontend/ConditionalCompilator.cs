@@ -36,13 +36,29 @@ public class ConditionalCompilator(DeviceConfig config)
     // marked as what it is. See ImportStmt.InFunctionScope.
     private bool _inFunctionBody;
 
+    // True while ProcessBlock walks the branches of a module-level if/match/while/for
+    // that did NOT fold. An import there binds only when the branch runs, which a
+    // compile-time fold cannot assume -- the name must stay unbound for the evaluator
+    // even though the import still reaches prog.Imports for the loader.
+    private bool _inRuntimeBranch;
+
     public void Process(ProgramNode program)
     {
         var newGlobals = new List<Statement>();
         _inFunctionBody = false;
+        _inRuntimeBranch = false;
         // `import x as y` binds in the importing file's namespace only: one compilator
-        // instance walks every module, so the alias map starts empty per file.
+        // instance walks every module, so the binding tables start empty per file.
         _evaluator.ModuleAliases.Clear();
+        _evaluator.AliasToOriginal.Clear();
+        _evaluator.ImportedModuleNames.Clear();
+
+        // Top-level imports land in program.Imports at parse time rather than in
+        // GlobalStatements, so the walk below never visits them -- bind them all
+        // before the first fold. A snapshot, because RecordImport appends the
+        // branch imports it promotes while the walk runs.
+        foreach (var imp in program.Imports.ToList())
+            _evaluator.RecordImportBinding(imp);
 
         foreach (var stmt in program.GlobalStatements)
         {
@@ -84,14 +100,14 @@ public class ConditionalCompilator(DeviceConfig config)
     }
 
     // Registers an import the walk has reached -- prog.Imports for the loader, and the
-    // evaluator's alias map for `import usys as s` so a later `if s.platform == ...`
-    // answers the table for the alias too. Aliases bound inside a function body do not
-    // record: the map is module-scoped and a function-local name must not fold elsewhere.
+    // evaluator's binding tables so a later `if s.platform == ...` / `if __CHIP__.name
+    // == ...` answers the binding rather than the spelling (RFC 0014 family 6). Imports
+    // bound inside a function body do not record: the tables are module-scoped and a
+    // function-local name must not fold elsewhere.
     private void RecordImport(ImportStmt imp, ProgramNode prog)
     {
         prog.Imports.Add(CloneImport(imp));
-        if (!_inFunctionBody && !string.IsNullOrEmpty(imp.ModuleAlias))
-            _evaluator.ModuleAliases[imp.ModuleAlias!] = imp.ModuleName;
+        if (!_inFunctionBody && !_inRuntimeBranch) _evaluator.RecordImportBinding(imp);
     }
 
     private void ProcessBlock(Statement? stmt, ProgramNode prog)
@@ -126,26 +142,41 @@ public class ConditionalCompilator(DeviceConfig config)
                     stmt = cls.Body;
                     continue;
                 case WhileStmt loop:
+                {
+                    var savedBranch = _inRuntimeBranch;
+                    _inRuntimeBranch = true;
                     stmt = loop.Body;
-                    continue;
+                    // The flag stays set only for the descent; this statement's own
+                    // siblings keep whatever context they were reached in.
+                    ProcessBlock(stmt, prog);
+                    _inRuntimeBranch = savedBranch;
+                    return;
+                }
                 case ForStmt forLoop:
-                    stmt = forLoop.Body;
-                    continue;
+                {
+                    var savedBranch = _inRuntimeBranch;
+                    _inRuntimeBranch = true;
+                    ProcessBlock(forLoop.Body, prog);
+                    _inRuntimeBranch = savedBranch;
+                    return;
+                }
                 case IfStmt ifStmt:
                 {
+                    var savedBranch = _inRuntimeBranch;
+                    _inRuntimeBranch = true;
                     ProcessBlock(ifStmt.ThenBranch, prog);
                     foreach (var branch in ifStmt.ElifBranches) ProcessBlock(branch.Body, prog);
                     if (ifStmt.ElseBranch != null)
-                    {
-                        stmt = ifStmt.ElseBranch;
-                        continue;
-                    }
-
+                        ProcessBlock(ifStmt.ElseBranch, prog);
+                    _inRuntimeBranch = savedBranch;
                     break;
                 }
                 case MatchStmt matchStmt:
                 {
+                    var savedBranch = _inRuntimeBranch;
+                    _inRuntimeBranch = true;
                     foreach (var branch in matchStmt.Branches) ProcessBlock(branch.Body, prog);
+                    _inRuntimeBranch = savedBranch;
                     break;
                 }
             }
@@ -499,6 +530,20 @@ public class ConditionalCompilator(DeviceConfig config)
                 prog.TypeAliases[annAlias.Target] =
                     PyMCU.Common.AnnotationText.Normalize(RenderTypeAnnotation(annAliasValue));
                 return true;
+            // A module-level assignment to a name an import bound REBINDS it --
+            // `from pymcu.chips import __FREQ__` followed by `__FREQ__ = 3` makes the
+            // name mean 3, which the IR ladder answers from the module's own tables.
+            // Folding the fact past the rebind would take a branch the IR does not.
+            case AssignStmt { Target: VariableExpr rebindVar } assignRebind
+                    when !_inFunctionBody && !_inRuntimeBranch:
+                _evaluator.RecordRebinding(rebindVar.Name, assignRebind.Line);
+                return false;
+            case AnnAssign annRebind when !_inFunctionBody && !_inRuntimeBranch:
+                _evaluator.RecordRebinding(annRebind.Target, annRebind.Line);
+                return false;
+            case VarDecl varRebind when !_inFunctionBody && !_inRuntimeBranch:
+                _evaluator.RecordRebinding(varRebind.Name, varRebind.Line);
+                return false;
             default:
                 return false;
         }

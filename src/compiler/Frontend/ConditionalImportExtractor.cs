@@ -41,6 +41,12 @@ internal static class ConditionalImportExtractor
     public static IEnumerable<ImportStmt> Extract(ProgramNode program, DeviceConfig config)
     {
         var eval = new CompileTimeEvaluator(config);
+        // The conditions being evaluated read names the module's top-level imports
+        // bound -- `from pymcu.chips import __CHIP__` above `if __CHIP__.name == ...:`.
+        // The parser files those under program.Imports rather than GlobalStatements,
+        // so bind them all before the walk (RFC 0014 family 6).
+        foreach (var bound in program.Imports)
+            eval.RecordImportBinding(bound);
         foreach (var stmt in program.GlobalStatements)
         foreach (var imp in ExtractFromStatement(stmt, eval))
             yield return imp;
@@ -51,10 +57,10 @@ internal static class ConditionalImportExtractor
         switch (stmt)
         {
             case ImportStmt imp:
-                // `import usys as s` before an `if s.platform == ...:` -- the evaluator folds
-                // the alias to the same table once the binding is recorded.
-                if (!string.IsNullOrEmpty(imp.ModuleAlias))
-                    eval.ModuleAliases[imp.ModuleAlias!] = imp.ModuleName;
+                // `import usys as s` before an `if s.platform == ...:`, `from pymcu.chips
+                // import __CHIP__` before `if __CHIP__.name == ...:` -- the evaluator folds
+                // the binding to the same table/fact once the binding is recorded (RFC 0014).
+                eval.RecordImportBinding(imp);
                 yield return imp;
                 break;
 

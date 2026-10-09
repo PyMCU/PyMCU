@@ -7,11 +7,17 @@ namespace PyMCU.UnitTests;
 public class CompileTimeSizeTests
 {
     private static CompileTimeEvaluator Eval(int flash = 4096, int ram = 224, ulong freq = 4_000_000)
-        => new(new DeviceConfig
+    {
+        var ev = new CompileTimeEvaluator(new DeviceConfig
         {
             Chip = "pic16f628a", Arch = "pic14",
             FlashSize = flash, RamSize = ram, Frequency = freq,
         });
+        // RFC 0014 family 6: the facts fold only through the import that owns them.
+        ev.RecordImportBinding(new ImportStmt("pymcu.chips",
+            new List<string> { "__CHIP__", "__FREQ__" }));
+        return ev;
+    }
 
     private static Expression Chip(string member)
         => new MemberAccessExpr(new VariableExpr("__CHIP__"), member);

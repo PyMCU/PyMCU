@@ -19,6 +19,15 @@ public class ConditionalCompilatorTests
     private static ImportStmt MakeImport(string module, params string[] symbols) =>
         new(module, new List<string>(symbols), 0);
 
+    // RFC 0014 family 6: chip facts answer only through the `pymcu.chips` binding and
+    // sys/os introspection only through the module import. These tests build the AST by
+    // hand, so each one seeds prog.Imports the way the parser would for real source.
+    private static void BindChips(ProgramNode prog, params string[] symbols) =>
+        prog.Imports.Add(new ImportStmt("pymcu.chips", new List<string>(symbols)));
+
+    private static void BindModule(ProgramNode prog, string module) =>
+        prog.Imports.Add(new ImportStmt(module, new List<string>()));
+
     private static Block MakeBlock(params Statement[] stmts)
     {
         var b = new Block();
@@ -54,6 +63,7 @@ public class ConditionalCompilatorTests
     public void If_TrueBranch_IsKept_WhenConditionMatches()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("avr")),
             MakeBlock(new ReturnStmt(new IntegerLiteral(1)))));
@@ -68,6 +78,7 @@ public class ConditionalCompilatorTests
     public void If_FalseBranch_IsEliminated_WhenConditionDoesNotMatch()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("pic")),
             MakeBlock(new ReturnStmt(new IntegerLiteral(99)))));
@@ -81,6 +92,7 @@ public class ConditionalCompilatorTests
     public void If_ElseBranch_IsUsed_WhenConditionIsFalse()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("pic")),
             MakeBlock(new ReturnStmt(new IntegerLiteral(1))),
@@ -98,6 +110,7 @@ public class ConditionalCompilatorTests
     public void If_ElifBranch_IsUsed_WhenFirstConditionFalseAndElifTrue()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         var elifBranches = new List<(Expression, Statement)>
         {
             (new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("avr")),
@@ -120,6 +133,7 @@ public class ConditionalCompilatorTests
     public void If_ImportsInsideBranch_AreMovedToImportsList()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("avr")),
             MakeBlock(MakeImport("pymcu.avr", "PORTB"))));
@@ -127,8 +141,7 @@ public class ConditionalCompilatorTests
         new ConditionalCompilator(AvrConfig()).Process(prog);
 
         prog.GlobalStatements.Should().BeEmpty();
-        prog.Imports.Should().ContainSingle()
-            .Which.ModuleName.Should().Be("pymcu.avr");
+        prog.Imports.Should().ContainSingle(i => i.ModuleName == "pymcu.avr");
     }
 
     [Fact]
@@ -153,6 +166,7 @@ public class ConditionalCompilatorTests
     public void If_ChipName_MatchesDirectly()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new VariableExpr("__CHIP__"), BinaryOp.Equal, new StringLiteral("atmega328p")),
             MakeBlock(new ReturnStmt(new IntegerLiteral(7)))));
@@ -167,6 +181,7 @@ public class ConditionalCompilatorTests
     public void If_FrequencyCondition_MatchesCorrectly()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__FREQ__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new VariableExpr("__FREQ__"), BinaryOp.Equal, new IntegerLiteral(16000000)),
             MakeBlock(new ReturnStmt(new IntegerLiteral(5)))));
@@ -185,6 +200,7 @@ public class ConditionalCompilatorTests
     public void Match_StringLiteral_MatchingArm_IsKept()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new MatchStmt(
             new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
             new List<CaseBranch> { MakeCaseBranch(new StringLiteral("avr"), new ReturnStmt(new IntegerLiteral(10))) }));
@@ -199,6 +215,7 @@ public class ConditionalCompilatorTests
     public void Match_StringLiteral_NonMatchingArm_IsEliminated()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new MatchStmt(
             new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
             new List<CaseBranch> { MakeCaseBranch(new StringLiteral("pic"), new ReturnStmt(new IntegerLiteral(10))) }));
@@ -212,6 +229,7 @@ public class ConditionalCompilatorTests
     public void Match_IntegerLiteral_MatchesFrequency()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__FREQ__");
         prog.GlobalStatements.Add(new MatchStmt(
             new VariableExpr("__FREQ__"),
             new List<CaseBranch> { MakeCaseBranch(new IntegerLiteral(16000000), new ReturnStmt(new IntegerLiteral(20))) }));
@@ -226,6 +244,7 @@ public class ConditionalCompilatorTests
     public void Match_WildcardBranch_IsAlwaysSelected()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new MatchStmt(
             new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
             new List<CaseBranch>
@@ -246,6 +265,7 @@ public class ConditionalCompilatorTests
     public void Match_OrPattern_MatchesAnyAlternative()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         var orPattern = new BinaryExpr(new StringLiteral("avr"), BinaryOp.BitOr, new StringLiteral("avr8"));
         prog.GlobalStatements.Add(new MatchStmt(
             new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
@@ -265,6 +285,7 @@ public class ConditionalCompilatorTests
     public void Condition_StartsWith_ReturnsTrueWhenPrefixMatches()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         var callExpr = new CallExpr(
             new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "chip"), "startswith"),
             new List<Expression> { new StringLiteral("atmega") });
@@ -284,6 +305,7 @@ public class ConditionalCompilatorTests
     public void Condition_And_BothTrue_ReturnsTrue()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         var cond = new BinaryExpr(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("avr")),
             BinaryOp.And,
@@ -300,6 +322,7 @@ public class ConditionalCompilatorTests
     public void Condition_Or_OneTrue_ReturnsTrue()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         var cond = new BinaryExpr(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("pic")),
             BinaryOp.Or,
@@ -320,6 +343,7 @@ public class ConditionalCompilatorTests
     public void Condition_NotEqual_ReturnsTrueWhenDifferent()
     {
         var prog = EmptyProgram();
+        BindChips(prog, "__CHIP__");
         prog.GlobalStatements.Add(new IfStmt(
             new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.NotEqual, new StringLiteral("pic")),
             MakeBlock(new ReturnStmt(new IntegerLiteral(1)))));
@@ -464,6 +488,7 @@ public class ConditionalCompilatorTests
         //       from typing import Optional
         // On the CircuitPython layer this branch is dead; `typing` must never be resolved.
         var prog = EmptyProgram();
+        BindModule(prog, "sys");
         var deadImport = MakeImport("typing", "Optional");
         var cond = new UnaryExpr(UnaryOp.Not,
             new BinaryExpr(SysImplementationNameExpr(), BinaryOp.Equal, new StringLiteral("circuitpython")));
@@ -471,20 +496,55 @@ public class ConditionalCompilatorTests
 
         new ConditionalCompilator(CircuitPythonConfig()).Process(prog);
 
-        prog.Imports.Should().BeEmpty();
+        prog.Imports.Should().ContainSingle(i => i.ModuleName == "sys");
     }
 
     [Fact]
     public void If_SysImplementationName_LiveBranchImport_IsKept()
     {
         var prog = EmptyProgram();
+        BindModule(prog, "sys");
         var liveImport = MakeImport("pymcu.avr", "DDRB");
         var cond = new BinaryExpr(SysImplementationNameExpr(), BinaryOp.Equal, new StringLiteral("circuitpython"));
         prog.GlobalStatements.Add(new IfStmt(cond, MakeBlock(liveImport)));
 
         new ConditionalCompilator(CircuitPythonConfig()).Process(prog);
 
-        prog.Imports.Should().ContainSingle().Which.ModuleName.Should().Be("pymcu.avr");
+        prog.Imports.Should().ContainSingle(i => i.ModuleName == "pymcu.avr");
+    }
+
+    // -------------------------------------------------------------------------
+    // RFC 0014 family 6: the spellings alone never bound anything
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void If_ChipCondition_WithoutTheImport_IsLeftAlone()
+    {
+        // `__CHIP__` the file never imported is an ordinary unbound name: the
+        // condition cannot be folded and the statement keeps its own lowering
+        // (the IR then reports the missing import).
+        var prog = EmptyProgram();
+        prog.GlobalStatements.Add(new IfStmt(
+            new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("avr")),
+            MakeBlock(new ReturnStmt(new IntegerLiteral(1)))));
+
+        new ConditionalCompilator(AvrConfig()).Process(prog);
+
+        prog.GlobalStatements.Should().ContainSingle()
+            .Which.Should().BeOfType<IfStmt>();
+    }
+
+    [Fact]
+    public void If_SysCondition_WithoutTheImport_IsLeftAlone()
+    {
+        var prog = EmptyProgram();
+        var cond = new BinaryExpr(SysImplementationNameExpr(), BinaryOp.Equal, new StringLiteral("circuitpython"));
+        prog.GlobalStatements.Add(new IfStmt(cond, MakeBlock(new ReturnStmt(new IntegerLiteral(1)))));
+
+        new ConditionalCompilator(CircuitPythonConfig()).Process(prog);
+
+        prog.GlobalStatements.Should().ContainSingle()
+            .Which.Should().BeOfType<IfStmt>();
     }
 }
 
@@ -493,7 +553,26 @@ public class CompileTimeEvaluatorTests
     private static DeviceConfig AvrConfig() =>
         new() { Chip = "atmega328p", Arch = "avr", Frequency = 16000000 };
 
-    private static CompileTimeEvaluator Evaluator() => new(AvrConfig());
+    // RFC 0014 family 6: a fact folds only for a name bound through the import that
+    // owns it. The fixture evaluators below record exactly the binding the source
+    // under test would have written.
+    private static ImportStmt ChipsFacts =>
+        new("pymcu.chips", new List<string> { "__CHIP__", "__FREQ__", "F_CPU", "__TIMEBASE__" });
+
+    private static ImportStmt ModuleImport(string module) =>
+        new(module, new List<string>());
+
+    private static ImportStmt FromImport(string module, params string[] symbols) =>
+        new(module, new List<string>(symbols));
+
+    private static CompileTimeEvaluator WithImports(DeviceConfig config, params ImportStmt[] imports)
+    {
+        var ev = new CompileTimeEvaluator(config);
+        foreach (var imp in imports) ev.RecordImportBinding(imp);
+        return ev;
+    }
+
+    private static CompileTimeEvaluator Evaluator() => WithImports(AvrConfig(), ChipsFacts);
 
     // -------------------------------------------------------------------------
     // Resolve
@@ -535,6 +614,35 @@ public class CompileTimeEvaluatorTests
     public void Resolve_UnknownVar_Throws()
     {
         var act = () => Evaluator().Resolve(new VariableExpr("runtime_var"));
+        act.Should().Throw<Exception>();
+    }
+
+    [Fact]
+    public void Resolve_Chip_WithoutTheImport_Throws()
+    {
+        // RFC 0014 family 6: the spelling binds nothing on its own -- only
+        // `from pymcu.chips import __CHIP__` does.
+        var act = () => new CompileTimeEvaluator(AvrConfig()).Resolve(new VariableExpr("__CHIP__"));
+        act.Should().Throw<Exception>();
+    }
+
+    [Fact]
+    public void Resolve_ChipAlias_FoldsThroughTheAlias()
+        => WithImports(AvrConfig(),
+                new ImportStmt("pymcu.chips", new List<string> { "__CHIP__" })
+                {
+                    Aliases = { ["__CHIP__"] = "C" },
+                })
+            .Resolve(new VariableExpr("C")).Should().Be("atmega328p");
+
+    [Fact]
+    public void Resolve_Chip_AfterRebinding_Throws()
+    {
+        // `from pymcu.chips import __CHIP__` then `__CHIP__ = "mine"` -- the
+        // assignment rebinds the name, so the fact stops answering.
+        var ev = Evaluator();
+        ev.RecordRebinding("__CHIP__");
+        var act = () => ev.Resolve(new VariableExpr("__CHIP__"));
         act.Should().Throw<Exception>();
     }
 
@@ -669,11 +777,11 @@ public class CompileTimeEvaluatorTests
 
     [Fact]
     public void Resolve_SysImplementationName_CircuitPython()
-        => new CompileTimeEvaluator(CircuitPythonAvrConfig()).Resolve(SysImplementationName()).Should().Be("circuitpython");
+        => WithImports(CircuitPythonAvrConfig(), ModuleImport("sys")).Resolve(SysImplementationName()).Should().Be("circuitpython");
 
     [Fact]
     public void Resolve_SysImplementationName_MicroPython()
-        => new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(SysImplementationName()).Should().Be("micropython");
+        => WithImports(MicroPythonPicoConfig(), ModuleImport("sys")).Resolve(SysImplementationName()).Should().Be("micropython");
 
     [Fact]
     public void Resolve_SysImplementationName_NoStdlib_Throws()
@@ -684,53 +792,54 @@ public class CompileTimeEvaluatorTests
 
     [Fact]
     public void Resolve_SysPlatform_CircuitPythonRp2040_IsUppercaseMcuName()
-        => new CompileTimeEvaluator(CircuitPythonPicoConfig()).Resolve(SysPlatform()).Should().Be("RP2040");
+        => WithImports(CircuitPythonPicoConfig(), ModuleImport("sys")).Resolve(SysPlatform()).Should().Be("RP2040");
 
     [Fact]
     public void Resolve_SysPlatform_CircuitPythonRp2350_IsUppercaseMcuName()
-        => new CompileTimeEvaluator(CircuitPythonPico2Config()).Resolve(SysPlatform()).Should().Be("RP2350");
+        => WithImports(CircuitPythonPico2Config(), ModuleImport("sys")).Resolve(SysPlatform()).Should().Be("RP2350");
 
     [Fact]
     public void Resolve_SysPlatform_MicroPythonRp2040AndRp2350_BothAnswerRp2()
     {
-        new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(SysPlatform()).Should().Be("rp2");
-        new CompileTimeEvaluator(MicroPythonPico2Config()).Resolve(SysPlatform()).Should().Be("rp2");
+        WithImports(MicroPythonPicoConfig(), ModuleImport("sys")).Resolve(SysPlatform()).Should().Be("rp2");
+        WithImports(MicroPythonPico2Config(), ModuleImport("sys")).Resolve(SysPlatform()).Should().Be("rp2");
     }
 
     [Fact]
     public void Resolve_SysPlatform_NoUpstreamPort_FallsBackToChipName()
-        => new CompileTimeEvaluator(CircuitPythonAvrConfig()).Resolve(SysPlatform()).Should().Be("atmega328p");
+        => WithImports(CircuitPythonAvrConfig(), ModuleImport("sys")).Resolve(SysPlatform()).Should().Be("atmega328p");
 
     [Fact]
     public void Resolve_UnameSysname_CircuitPythonRp2040_IsLowercaseMcuName()
-        => new CompileTimeEvaluator(CircuitPythonPicoConfig())
+        => WithImports(CircuitPythonPicoConfig(), FromImport("os", "uname"))
             .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("rp2040");
 
     [Fact]
     public void Resolve_UnameSysname_CircuitPythonRp2350_IsExactSiliconVariant_NotPyMcuChipId()
         // rp2350a, not PyMCU's own simplified "rp2350" chip id -- docs/rfcs/0007 section 0.3.
-        => new CompileTimeEvaluator(CircuitPythonPico2Config())
+        => WithImports(CircuitPythonPico2Config(), ModuleImport("os"))
             .Resolve(new MemberAccessExpr(DottedUnameCall(), "sysname")).Should().Be("rp2350a");
 
     [Fact]
     public void Resolve_UnameSysname_MicroPythonRp2040_IsPortName_NotMcuName()
         // "rp2", the MicroPython port short name -- NOT "RP2040", a different upstream concept
         // than CircuitPython's os.uname().sysname (docs/rfcs/0007 section 2.1).
-        => new CompileTimeEvaluator(MicroPythonPicoConfig())
+        => WithImports(MicroPythonPicoConfig(), FromImport("os", "uname"))
             .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("rp2");
 
     [Fact]
     public void Resolve_UnameSysname_NoUpstreamPort_FallsBackToChipName_BothLayers()
     {
-        new CompileTimeEvaluator(CircuitPythonAvrConfig())
+        WithImports(CircuitPythonAvrConfig(), FromImport("os", "uname"))
             .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("atmega328p");
         var mpAvr = new DeviceConfig { Chip = "atmega328p", Arch = "avr", Stdlib = "micropython" };
-        new CompileTimeEvaluator(mpAvr).Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("atmega328p");
+        WithImports(mpAvr, FromImport("os", "uname"))
+            .Resolve(new MemberAccessExpr(BareUnameCall(), "sysname")).Should().Be("atmega328p");
     }
 
     [Fact]
     public void Resolve_UnameMachine_CircuitPythonPico_MatchesUpstreamConstruction()
-        => new CompileTimeEvaluator(CircuitPythonPicoConfig())
+        => WithImports(CircuitPythonPicoConfig(), FromImport("os", "uname"))
             .Resolve(new MemberAccessExpr(BareUnameCall(), "machine")).Should().Be("Raspberry Pi Pico with rp2040");
 
     [Fact]
@@ -738,7 +847,7 @@ public class CompileTimeEvaluatorTests
         // MicroPython's RPI_PICO2 board reports "Raspberry Pi Pico2" (no space), CircuitPython's
         // raspberry_pi_pico2 reports "Raspberry Pi Pico 2" (with space) -- both are upstream's
         // own strings, not reconciled (docs/rfcs/0007 section 4.3).
-        => new CompileTimeEvaluator(MicroPythonPico2Config())
+        => WithImports(MicroPythonPico2Config(), FromImport("os", "uname"))
             .Resolve(new MemberAccessExpr(BareUnameCall(), "machine")).Should().Be("Raspberry Pi Pico2 with RP2350");
 
     [Fact]
@@ -747,7 +856,7 @@ public class CompileTimeEvaluatorTests
         // neopixel.py: `sys.implementation.version[0] >= 7` -- must read TRUE on this layer's
         // claimed CircuitPython 10.3.1 API surface (docs/rfcs/0007 section 3).
         var cond = new BinaryExpr(SysImplementationVersionIndex(0), BinaryOp.GreaterEq, new IntegerLiteral(7));
-        new CompileTimeEvaluator(CircuitPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(CircuitPythonPicoConfig(), ModuleImport("sys")).EvaluateCondition(cond).Should().BeTrue();
     }
 
     [Fact]
@@ -755,17 +864,17 @@ public class CompileTimeEvaluatorTests
     {
         // adafruit_dht.py:77 exactly: `"Linux" not in uname()`. No PyMCU board is ever Linux.
         var cond = new BinaryExpr(new StringLiteral("Linux"), BinaryOp.NotIn, BareUnameCall());
-        new CompileTimeEvaluator(CircuitPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
-        new CompileTimeEvaluator(CircuitPythonAvrConfig()).EvaluateCondition(cond).Should().BeTrue();
-        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(CircuitPythonPicoConfig(), FromImport("os", "uname")).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(CircuitPythonAvrConfig(), FromImport("os", "uname")).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(MicroPythonPicoConfig(), FromImport("os", "uname")).EvaluateCondition(cond).Should().BeTrue();
     }
 
     [Fact]
     public void EvaluateCondition_SysImplementationNameEqualsCircuitPython_TrueOnCircuitPythonLayer()
     {
         var cond = new BinaryExpr(SysImplementationName(), BinaryOp.Equal, new StringLiteral("circuitpython"));
-        new CompileTimeEvaluator(CircuitPythonAvrConfig()).EvaluateCondition(cond).Should().BeTrue();
-        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeFalse();
+        WithImports(CircuitPythonAvrConfig(), ModuleImport("sys")).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(MicroPythonPicoConfig(), ModuleImport("sys")).EvaluateCondition(cond).Should().BeFalse();
     }
 
     // -------------------------------------------------------------------------
@@ -782,15 +891,15 @@ public class CompileTimeEvaluatorTests
 
     [Fact]
     public void Resolve_UsysPlatform_MicroPythonRp2040_AnswersRp2LikeSys()
-        => new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(UsysPlatform()).Should().Be("rp2");
+        => WithImports(MicroPythonPicoConfig(), ModuleImport("usys")).Resolve(UsysPlatform()).Should().Be("rp2");
 
     [Fact]
     public void Resolve_UsysImplementationName_MicroPython_AnswersMicropython()
-        => new CompileTimeEvaluator(MicroPythonPicoConfig()).Resolve(UsysImplementationName()).Should().Be("micropython");
+        => WithImports(MicroPythonPicoConfig(), ModuleImport("usys")).Resolve(UsysImplementationName()).Should().Be("micropython");
 
     [Fact]
     public void Resolve_UosUnameSysname_MicroPythonRp2040_AnswersThePortName()
-        => new CompileTimeEvaluator(MicroPythonPicoConfig())
+        => WithImports(MicroPythonPicoConfig(), ModuleImport("uos"))
             .Resolve(new MemberAccessExpr(UosDottedUnameCall(), "sysname")).Should().Be("rp2");
 
     [Fact]
@@ -800,14 +909,14 @@ public class CompileTimeEvaluatorTests
             new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("usys"), "implementation"), "version"),
             new IntegerLiteral(1));
         var cond = new BinaryExpr(versionIndex, BinaryOp.Equal, new IntegerLiteral(29));
-        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(MicroPythonPicoConfig(), ModuleImport("usys")).EvaluateCondition(cond).Should().BeTrue();
     }
 
     [Fact]
     public void EvaluateCondition_LinuxNotInUosUname_AlwaysTrue()
     {
         var cond = new BinaryExpr(new StringLiteral("Linux"), BinaryOp.NotIn, UosDottedUnameCall());
-        new CompileTimeEvaluator(MicroPythonPicoConfig()).EvaluateCondition(cond).Should().BeTrue();
+        WithImports(MicroPythonPicoConfig(), ModuleImport("uos")).EvaluateCondition(cond).Should().BeTrue();
     }
 
     // -------------------------------------------------------------------------
@@ -818,16 +927,16 @@ public class CompileTimeEvaluatorTests
     [Fact]
     public void Resolve_UsysAliasedAsS_Platform_AnswersTheTable()
     {
-        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
-        ev.ModuleAliases["s"] = "usys";
+        var ev = WithImports(MicroPythonPicoConfig(),
+            new ImportStmt("usys", new List<string>()) { ModuleAlias = "s" });
         ev.Resolve(new MemberAccessExpr(new VariableExpr("s"), "platform")).Should().Be("rp2");
     }
 
     [Fact]
     public void Resolve_UosAliasedAsO_UnameMachine_AnswersTheTable()
     {
-        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
-        ev.ModuleAliases["o"] = "uos";
+        var ev = WithImports(MicroPythonPicoConfig(),
+            new ImportStmt("uos", new List<string>()) { ModuleAlias = "o" });
         var call = new CallExpr(new MemberAccessExpr(new VariableExpr("o"), "uname"), new List<Expression>());
         ev.Resolve(new MemberAccessExpr(call, "machine")).Should().Be("raspberry_pi_pico with RP2040");
     }
@@ -835,8 +944,8 @@ public class CompileTimeEvaluatorTests
     [Fact]
     public void Resolve_UsysAliasedAsS_VersionIndex_Answers129()
     {
-        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
-        ev.ModuleAliases["s"] = "usys";
+        var ev = WithImports(MicroPythonPicoConfig(),
+            new ImportStmt("usys", new List<string>()) { ModuleAlias = "s" });
         var versionIndex = new IndexExpr(
             new MemberAccessExpr(new MemberAccessExpr(new VariableExpr("s"), "implementation"), "version"),
             new IntegerLiteral(2));
@@ -848,8 +957,8 @@ public class CompileTimeEvaluatorTests
     public void Resolve_AnUnrelatedAlias_DoesNotFold()
     {
         // `import time as s` must not turn s.platform into the sys table.
-        var ev = new CompileTimeEvaluator(MicroPythonPicoConfig());
-        ev.ModuleAliases["s"] = "time";
+        var ev = WithImports(MicroPythonPicoConfig(),
+            new ImportStmt("time", new List<string>()) { ModuleAlias = "s" });
         var act = () => ev.Resolve(new MemberAccessExpr(new VariableExpr("s"), "platform"));
         act.Should().Throw<Exception>();
     }
