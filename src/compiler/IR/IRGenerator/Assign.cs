@@ -9067,11 +9067,16 @@ public partial class IRGenerator
         if (sizeSource == null || sizeSource is ListExpr) return false;
         if (TryEvalElemConst(sizeSource, out _)) return false;
 
-        if (!string.IsNullOrEmpty(deviceConfig.Arch) && deviceConfig.Arch != "avr")
+        // The arena itself is an ordinary module-level byte array plus a bump pointer
+        // (lib/src/pymcu/arena.py) -- nothing about its lowering is AVR-specific, only
+        // this gate was. ARM (rp2040/rp2350, via pymcu-arm-oraclesweep) implements it the
+        // same way AVR does: a plain static array needs no backend-specific runtime.
+        if (!string.IsNullOrEmpty(deviceConfig.Arch)
+            && deviceConfig.Arch != "avr" && deviceConfig.Arch != "arm")
             throw UserError(
                 $"a runtime-sized bytearray(n) allocates from PyMCU's arena, which is " +
-                $"AVR-only (target arch: '{deviceConfig.Arch}'). Give it a compile-time " +
-                "size (bytearray(N)) instead.", sizeSource);
+                $"not implemented on this target (target arch: '{deviceConfig.Arch}'). " +
+                "Give it a compile-time size (bytearray(N)) instead.", sizeSource);
 
         // The once rule (RFC 0004 section 2): loopDepth is nonzero inside ANY loop, unrolled
         // or not, and currentFunction is "main" (or ends "___module_init" for a library

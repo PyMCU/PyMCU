@@ -461,4 +461,42 @@ public class ArenaAllocatorTests
         var main = Assert.Single(program.Functions, f => f.Name == "main");
         Assert.Contains(main.Body, i => i is ArrayStore st && st.ArrayName == "_arena");
     }
+
+    // ------------------------------------------------------------------
+    // Target architecture gate: the arena itself is an ordinary module-level array plus
+    // a bump pointer (lib/src/pymcu/arena.py) -- nothing about ITS lowering is
+    // AVR-specific, only the gate naming the architecture was. ARM (rp2040/rp2350)
+    // declares arch="arm" (lib/src/pymcu/chips/rp2040.py); any other target (e.g.
+    // riscv) still refuses.
+    // ------------------------------------------------------------------
+
+    private static ProgramIR GenerateFor(string arch, string body) =>
+        new IRGenerator().Generate(
+            new Parser(new Lexer(Prelude + body).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode> { ["pymcu.arena"] = ArenaModuleAst },
+            new DeviceConfig { Arch = arch });
+
+    [Fact]
+    public void RuntimeSizedBytearrayAllocatesFromTheArenaOnArm()
+    {
+        var program = GenerateFor("arm",
+            "n: uint16 = 5\n" +
+            "buf: bytearray = bytearray(n)\n" +
+            "buf[0] = 42\n" +
+            "x: uint8 = buf[0]\n");
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        Assert.DoesNotContain(main.Body, i => i is ArrayStore st && st.ArrayName == "buf");
+        Assert.Contains(main.Body, i => i is ArrayStore ws && ws.ArrayName == "_arena");
+    }
+
+    [Fact]
+    public void RuntimeSizedBytearrayStillRefusedOnAnUnsupportedTarget()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() => GenerateFor("riscv",
+            "n: uint16 = 5\n" +
+            "buf: bytearray = bytearray(n)\n"));
+        Assert.Contains("not implemented on this target", ex.Message);
+        Assert.Contains("riscv", ex.Message);
+    }
 }
