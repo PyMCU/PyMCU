@@ -838,13 +838,28 @@ public partial class IRGenerator
         {
             if (stmt.Value is BinaryExpr binExpr)
             {
-                VariableExpr? lhsVar = binExpr.Left as VariableExpr;
-                if (lhsVar != null)
+                // The left operand's class, found either under a bound name (`a + b`) or,
+                // for `Num(2) + Num(5)` (#395), by asking what the construction itself
+                // builds -- there is no bound name to look an instance class up under
+                // before a freshly constructed operand even exists. Without this second
+                // form, the dunder dispatch in VisitBinary ran and constructed a correct
+                // Num(7) under its own anonymous anchor, but nothing here told it to build
+                // directly into `c`'s own storage instead, so `c.v` read a name (`c_v`)
+                // nothing had ever written.
+                string? cls = null;
+                if (binExpr.Left is VariableExpr lhsVar)
                 {
                     string lhsQ = !string.IsNullOrEmpty(currentInlinePrefix)
                         ? currentInlinePrefix + lhsVar.Name
                         : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + lhsVar.Name : lhsVar.Name);
-                    if (instanceClasses.TryGetValue(lhsQ, out var cls))
+                    instanceClasses.TryGetValue(lhsQ, out cls);
+                }
+                else if (binExpr.Left is CallExpr lhsCtorCall)
+                {
+                    cls = ConstructedClassKey(lhsCtorCall);
+                }
+                {
+                    if (!string.IsNullOrEmpty(cls))
                     {
                         string dunder = binExpr.Op switch
                         {
