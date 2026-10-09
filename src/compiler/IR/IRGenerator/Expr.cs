@@ -1619,6 +1619,49 @@ public partial class IRGenerator
             }
         }
 
+        // `Num(2) + Num(5)`: the left operand CONSTRUCTS a fresh instance rather than naming
+        // one already bound, so the VariableExpr check above has no name to look an instance
+        // class up under before the value even exists. ConstructedClassKey answers the class
+        // without evaluating the call -- the same way the checks above commit to dispatch
+        // before visiting anything -- so the construction still runs exactly once, right here,
+        // once dispatch is already decided. Without this, the operator fell to the plain
+        // numeric path over both constructed instances' own anchor handles, printing whatever
+        // those happened to be instead of running __add__ at all (#395).
+        else if (dunder != null && expr.Left is CallExpr leftCtor
+                 && ConstructedClassKey(leftCtor) is { Length: > 0 } ctorCls
+                 && ClassDefinesMethod(ResolveMROMethod(ctorCls, dunder), dunder))
+        {
+            string ctorFuncKey = ctorCls + "_" + dunder;
+            if (!inlineFunctions.ContainsKey(ctorFuncKey))
+                throw UserError(
+                    $"the left side here constructs a {ShortClassNameOf(ctorCls)} and '{dunder}' is "
+                    + "defined but not inlined -- there is no bound name yet to dispatch an outlined "
+                    + $"method call through. Bind it to a name first (`a = {ShortClassNameOf(ctorCls)}"
+                    + "(...)`), then use that name in the expression.",
+                    expr);
+            // `c = Num(2) + Num(5)`: VisitAssign may already have set pendingConstructorTarget =
+            // "c" for the DUNDER CALL's own internal `return Num(...)` (so __add__'s result
+            // builds directly into c's storage). Constructing EITHER operand here is a
+            // different, unrelated construction -- evaluating one while that target is still
+            // pending hijacked it instead, building the operand itself into c's storage and
+            // leaving nothing a Variable/Temporary names for the dunder call below to dispatch
+            // through. Cleared for both operands, restored only for the dunder call itself.
+            string savedPendingTarget = pendingConstructorTarget;
+            pendingConstructorTarget = "";
+            Val ctorLhs = VisitExpression(expr.Left);
+            string ctorQname = ctorLhs switch { Variable cv => cv.Name, Temporary ct => ct.Name, _ => "" };
+            if (string.IsNullOrEmpty(ctorQname))
+            {
+                pendingConstructorTarget = savedPendingTarget;
+                throw UserError(
+                    $"'{dunder}' needs the constructed {ShortClassNameOf(ctorCls)} to have a storage "
+                    + "name to dispatch through, and this one has none", expr);
+            }
+            Val ctorRhs = VisitExpression(expr.Right);
+            pendingConstructorTarget = savedPendingTarget;
+            return EmitDunderCall(ctorQname, ctorCls, ctorFuncKey, new List<Val> { ctorRhs });
+        }
+
         // Reflected dispatch: `2 + a`, where the INSTANCE is on the right. CPython tries the
         // reflected dunder when the left operand's type does not implement the operator, which
         // is exactly the state reached here. Without it the operator lowered numerically over
