@@ -1982,13 +1982,27 @@ public partial class IRGenerator
             // buffer) are excluded: those are passed as the pointer VALUE directly, correctly,
             // by the bytearrayParams exclusion on the first branch above -- "not ArrayBase"
             // is their right shape, not a dropped alias.
+            //
+            // everAliasedToBuffer alone is not enough: it is sticky and never cleared, so it
+            // stays true long after a STRAIGHT-LINE alias (no branch at all) simply failed to
+            // promote to ArrayBase for an unrelated reason (probe 729: `alias` inside an
+            // explicit `def main():` reads back as the function-qualified "main.alias", which
+            // the storage-key chase resolves down to the bare mirror arraySizes entry rather
+            // than the real buffer's own key, so the arraysWithVariableIndex/moduleSramArrays
+            // membership test on the first branch above misses it -- a resolution gap, not an
+            // ambiguity). The join is what actually erases the specific binding
+            // (BranchState.JoinDicts drops a key an arm disagrees on or lacks), so it alone
+            // tells "ambiguous" apart from "merely unresolved": variableAliases still holding
+            // argFlatKey's entry means this exact binding survived untouched, which a genuine
+            // branch-dropped alias never does.
             if (argEvaluated is not ArrayBase && arg is VariableExpr argNameCheck
                 && !bytearrayParams.Contains(argNameCheck.Name))
             {
                 string argFlatKey = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + argNameCheck.Name
                     : (string.IsNullOrEmpty(currentFunction) || currentFunction == "main" ? argNameCheck.Name
                         : currentFunction + "." + argNameCheck.Name);
-                if (everAliasedToBuffer.Contains(argFlatKey) && !bytearrayParams.Contains(argFlatKey))
+                if (everAliasedToBuffer.Contains(argFlatKey) && !bytearrayParams.Contains(argFlatKey)
+                    && !variableAliases.ContainsKey(argFlatKey))
                     throw UserError(
                         $"'{argNameCheck.Name}' names more than one buffer depending on which "
                         + "branch ran before this call, and PyMCU has no address to pick between "

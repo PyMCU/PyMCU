@@ -107,6 +107,22 @@ public partial class IRGenerator
                 && !owner.EndsWith("___module_init", StringComparison.Ordinal)
                 && FrameKeyBinds(key);
             if (!frameBound && arraySizes.ContainsKey(bareSuffix)) { storageKey = bareSuffix; return true; }
+            // The bare suffix may not be the array itself but an ALIAS of one, minted
+            // under its bare spelling: a plain local buffer alias inside an explicit
+            // `def main():` (not the synthesized module entry -- ScanGlobals never
+            // pre-registers a real function's locals, only true module-level names,
+            // so the exact-match check above, meant for a replayed module global,
+            // never fires here) is bound flat ("alias", never "main.alias") because
+            // array/buffer names are flat by the same convention the exact-match
+            // case above already leans on -- but a read of "alias" inside that
+            // function still arrives qualified ("main.alias"), same as any scalar.
+            // Chase the bare spelling's own alias chain instead of giving up:
+            // probe 729 read back argEvaluated=Variable("main.alias"), unresolved,
+            // and the call site fell back to copying the name's own unbacked
+            // scalar slot (a silent 0 for CPython's 10) before this chase existed.
+            if (!frameBound && !arraySizes.ContainsKey(bareSuffix)
+                && variableAliases.ContainsKey(bareSuffix))
+                return TryResolveArrayStorageKey(bareSuffix, out storageKey);
         }
         storageKey = key;
         return false;

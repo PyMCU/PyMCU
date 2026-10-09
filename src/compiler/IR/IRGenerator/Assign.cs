@@ -125,6 +125,23 @@ public partial class IRGenerator
                 {
                     BindSequenceAlias(arrBindKey, resolvedSrc);
                     everAliasedToBuffer.Add(arrBindKey);
+                    // Module-level only (arrBindKey bare, no dot): this statement is now
+                    // fully handled -- "alias" is a pure compile-time name for buf's flat
+                    // storage, with no scalar value of its own to copy. Falling through let
+                    // the generic "x = y" scalar-copy bookkeeping below ALSO process the
+                    // same statement, which resolves "buf" under the dot-qualified key
+                    // ("main.buf") the ordinary SCALAR convention uses, and records that
+                    // spelling as an alias target too -- verify_ir's one-storage-key check
+                    // catches it ("buf" reachable under two keys in the raw generated IR,
+                    // even though the optimizer deletes the redundant instruction before it
+                    // reaches the backend and the runtime value is correct either way).
+                    // Returning here keeps a MODULE buffer reachable under exactly one key
+                    // from generation on. NOT done for the in-function/parameter-forwarding
+                    // case (arrBindKey dot-qualified, e.g. "forward.alias"): there the
+                    // generic code's own write-tracking is what the verifier's
+                    // read-never-written check expects to see (probe 660).
+                    if (!arrBindKey.Contains('.'))
+                        return;
                 }
             }
 
