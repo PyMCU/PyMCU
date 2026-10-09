@@ -3117,7 +3117,7 @@ public partial class IRGenerator
         {
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(resolvedMessage!)),
-                          new Variable(ExceptionMessageVar, DataType.UINT16)));
+                          new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
             sawRaiseMessageStore = true;
         }
         else if (programRecordsRaiseMessages && programReportsRaiseMessage
@@ -3128,7 +3128,7 @@ public partial class IRGenerator
             // behind: the unhandled report would print `E:<Type>: <stale>` for an
             // exception that said nothing.
             DeclareExceptionMessageVar();
-            Emit(new Copy(new Constant(0), new Variable(ExceptionMessageVar, DataType.UINT16)));
+            Emit(new Copy(new Constant(0), new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
         }
 
         // A re-raise (bare `raise`, or `raise e` on the bound name) writes no record of
@@ -3831,7 +3831,7 @@ public partial class IRGenerator
         // this try was delivered, which a nested handled raise has since overwritten.
         pointer = new Variable(
             snapPrefix != null ? ExnSnapVar(snapPrefix, ExceptionMessageVar) : ExceptionMessageVar,
-            DataType.UINT16);
+            DataTypeExtensions.PointerType());
         return true;
     }
 
@@ -3867,7 +3867,7 @@ public partial class IRGenerator
         DeclareExceptionMessageVar();
         string msgVar = snapPrefix != null
             ? ExnSnapVar(snapPrefix, ExceptionMessageVar) : ExceptionMessageVar;
-        Emit(new JumpIfNotZero(new Variable(msgVar, DataType.UINT16), hasArg));
+        Emit(new JumpIfNotZero(new Variable(msgVar, DataTypeExtensions.PointerType()), hasArg));
         if (programHasDynamicRaiseMessage)
         {
             DeclareExceptionSiteVar();
@@ -3887,7 +3887,7 @@ public partial class IRGenerator
         }
         else
             Emit(new Call(ResolveRuntimeWriteStrFn(),
-                new List<Val> { new Variable(msgVar, DataType.UINT16) },
+                new List<Val> { new Variable(msgVar, DataTypeExtensions.PointerType()) },
                 new NoneVal()));
         EmitStreamStr(writeStrFn, ",");
         Emit(new Label(after));
@@ -3921,8 +3921,8 @@ public partial class IRGenerator
     /// like: correct apart from the one instruction that mattered.
     private void DeclareExceptionMessageVar()
     {
-        variableTypes[ExceptionMessageVar] = DataType.UINT16;
-        mutableGlobals[ExceptionMessageVar] = DataType.UINT16;
+        variableTypes[ExceptionMessageVar] = DataTypeExtensions.PointerType();
+        mutableGlobals[ExceptionMessageVar] = DataTypeExtensions.PointerType();
     }
 
     private void DeclareExceptionSiteVar()
@@ -4510,7 +4510,7 @@ public partial class IRGenerator
         string litPath = MakeLabel();
 
         DeclareExceptionMessageVar();
-        var msgVar = new Variable(ExceptionMessageVar, DataType.UINT16);
+        var msgVar = new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType());
 
         // The site dispatch exists only while some raise stores one -- a program whose
         // raises are all literals never declares __exn_site, so reading it would
@@ -4596,7 +4596,7 @@ public partial class IRGenerator
         string done = MakeLabel();
 
         DeclareExceptionMessageVar();
-        var msgVar = new Variable(ExceptionMessageVar, DataType.UINT16);
+        var msgVar = new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType());
 
         // A deferred-print raise marks the site id; a literal one marks the word.
         // Either means "there is a message" and earns the ": " ahead of it.
@@ -4861,7 +4861,7 @@ public partial class IRGenerator
     {
         var fields = new List<(string Name, DataType T)>();
         if (mutableGlobals.ContainsKey(ExceptionMessageVar))
-            fields.Add((ExceptionMessageVar, DataType.UINT16));
+            fields.Add((ExceptionMessageVar, DataTypeExtensions.PointerType()));
         if (mutableGlobals.ContainsKey(ExceptionSiteVar))
             fields.Add((ExceptionSiteVar, DataType.UINT8));
         for (int k = 0; mutableGlobals.ContainsKey(ExceptionArgVar(k)); k++)

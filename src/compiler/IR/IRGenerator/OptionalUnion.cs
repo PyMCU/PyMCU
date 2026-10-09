@@ -3942,7 +3942,7 @@ public partial class IRGenerator
             programReportsRaiseMessage = true;
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(message)),
-                          new Variable(ExceptionMessageVar, DataType.UINT16)));
+                          new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
             sawRaiseMessageStore = true;
             if (programHasDynamicRaiseMessage)
             {

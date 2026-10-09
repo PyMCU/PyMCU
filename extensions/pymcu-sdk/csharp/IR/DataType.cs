@@ -45,7 +45,7 @@ public static class DataTypeExtensions
     public static int PointerWidth => _ptrWidth;
 
     // Returns the pointer-sized concrete DataType for the current target.
-    private static DataType PointerType() => _ptrWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
+    public static DataType PointerType() => _ptrWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
 
     /// Returns the byte count for a given DataType.
     public static int SizeOf(this DataType type)

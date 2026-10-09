@@ -6882,7 +6882,7 @@ public partial class IRGenerator
             Emit(new Binary(BinaryOp.NotEqual,
                 new Variable(lenSnap != null ? ExnSnapVar(lenSnap, ExceptionMessageVar)
                                             : ExceptionMessageVar,
-                             DataType.UINT16), new Constant(0), hasArg));
+                             DataTypeExtensions.PointerType()), new Constant(0), hasArg));
             if (programHasDynamicRaiseMessage)
             {
                 DeclareExceptionSiteVar();
