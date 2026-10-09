@@ -173,6 +173,7 @@ public partial class IRGenerator
                             + " For a dispatch table, declare the parameter or array as Callable "
                             + "and pass the function, or take its address with funcref().", fnTgt);
 
+                    ForgetBindingFacts(fnTgt.Name);
                     loopFunctionAliases[tgtKey] = resolvedFn;
                     boundNames.Add(tgtKey);
                     return;
@@ -225,6 +226,7 @@ public partial class IRGenerator
         // (`msg: str = "hello"`) recorded it, so print(msg) could not tell this was a string
         // and streamed the flash id as a decimal number: the program printed 256 for "hello",
         // clean build, no diagnostic. Re-binding the name to anything else clears it.
+        List<string>? strStampedKeys = null;
         if (stmt.Target is VariableExpr strTgt)
         {
             string strKey = !string.IsNullOrEmpty(currentInlinePrefix)
@@ -238,6 +240,15 @@ public partial class IRGenerator
             if (boundText != null)
             {
                 strConstantVariables[strKey] = boundText;
+                (strStampedKeys ??= new List<string>()).Add(strKey);
+                // `state = "running"` on a multi-str global from inside a function:
+                // the resolved binding keeps its dispatch marks -- the write is
+                // string-typed, so they describe THIS binding's shape. The binding
+                // key itself records no const text (one would hide the dispatch);
+                // it only rides the sweep exemption so ForgetValueFacts spares it.
+                string boundKey = StrBindingKey(strTgt.Name);
+                if (boundKey != strKey && multiStrVariables.ContainsKey(boundKey))
+                    strStampedKeys.Add(boundKey);
                 // A module level runs inside the synthesized `__module_init`, so strKey
                 // is function-scoped while the name is a module global -- file the
                 // module-global spelling too, or `mod.attr` resolves to the never-written
@@ -249,7 +260,10 @@ public partial class IRGenerator
                     string modStrKey = currentModulePrefix + strTgt.Name;
                     if (modStrKey != strKey && mutableGlobals.ContainsKey(modStrKey)
                         && !multiStrVariables.ContainsKey(modStrKey))
+                    {
                         strConstantVariables[modStrKey] = boundText;
+                        strStampedKeys.Add(modStrKey);
+                    }
                 }
                 // A name that was None-marked and now holds a string is not None: the
                 // mark clears on the Variable-target path below, but a compile-time
@@ -314,7 +328,9 @@ public partial class IRGenerator
                 && StaticStringOf(strTern.TrueVal) is { } ternArmA
                 && StaticStringOf(strTern.FalseVal) is { } ternArmB)
             {
-                MarkMultiStr(StrBindingKey(strTgt.Name), new[] { ternArmA, ternArmB });
+                string ternKey = StrBindingKey(strTgt.Name);
+                MarkMultiStr(ternKey, new[] { ternArmA, ternArmB });
+                (strStampedKeys ??= new List<string>()).Add(ternKey);
             }
 
             // `s = d[k]` with a run-time k over a dict of strings: one of the dict's texts,
@@ -325,6 +341,7 @@ public partial class IRGenerator
                 string dKey = StrBindingKey(strTgt.Name);
                 multiStrCandidates[dKey] = dictTexts;
                 MarkMultiStr(dKey, dictTexts);
+                (strStampedKeys ??= new List<string>()).Add(dKey);
             }
         }
 
@@ -345,6 +362,7 @@ public partial class IRGenerator
                     ? currentFunction + "." + instSeqTgt.Name
                     : instSeqTgt.Name);
 
+            ForgetBindingFacts(instSeqTgt.Name);
             for (int k = 0; k < instSeqList.Elements.Count; k++)
                 VisitStatement(new AssignStmt(
                     new VariableExpr(instSeqTgt.Name + "__" + k), instSeqList.Elements[k]));
@@ -365,6 +383,11 @@ public partial class IRGenerator
             string seqKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + seqTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + seqTgt.Name : seqTgt.Name);
+
+            // A rebinding sweeps the name's stale binding facts once the elements have
+            // folded (`x = [x, 1]` folded against the OLD binding above), before the
+            // fresh sequence marks land on the empty record.
+            ForgetBindingFacts(seqTgt.Name);
 
             // The one place the tuple-ness of the name exists (#299). Recorded for BOTH lengths,
             // before the unroll-limit test below splits them, because the two paths differ only
@@ -402,12 +425,15 @@ public partial class IRGenerator
             {
                 // Names bound to constants fold to their literal so every consumer of the
                 // sequence (membership, unrolled for, indexing) sees a number and not a
-                // spelling that only resolves in the module that wrote it.
-                constSequenceBindings[seqKey] = seqElements
+                // spelling that only resolves in the module that wrote it. The fold runs
+                // against the OLD binding (`x = [x, 1]` keeps the tuple's snapshot
+                // semantics), then the binding sweep runs before the new fact lands.
+                var foldedSeqElements = seqElements
                     .Select(e => TryFoldConstElement(e, out int v)
                         ? (Expression)new IntegerLiteral(v) { Line = e.Line }
                         : e)
                     .ToList();
+                constSequenceBindings[seqKey] = foldedSeqElements;
 
                 // A tuple has no run-time value on this target, so evaluating the right-hand
                 // side would reject the program ("tuples are not supported as runtime
@@ -501,6 +527,7 @@ public partial class IRGenerator
             string ctorKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + ctorTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ctorTgt.Name : ctorTgt.Name);
+            ForgetBindingFacts(ctorTgt.Name);
             NoteSequenceMutability(ctorKey, ctorTgt.Name,
                 isTuple: ((VariableExpr)ctorCall.Callee).Name == "tuple");
         }
@@ -520,6 +547,7 @@ public partial class IRGenerator
             // is the reason the limit exists. Such a name falls through and keeps the refusal.
             if (rngElems.Count > 0 && rngElems.Count <= ConstSequenceUnrollLimit)
             {
+                ForgetBindingFacts(rngTgt.Name);
                 NoteSequenceMutability(rngKey, rngTgt.Name, isTuple: false);
                 constSequenceBindings[rngKey] = rngElems;
                 rangeBoundSequences.Add(rngKey);
@@ -837,6 +865,7 @@ public partial class IRGenerator
                 VisitLambdaExpr(lamRhs);
                 if (!string.IsNullOrEmpty(pendingLambdaKey))
                 {
+                    if (stmt.Target is VariableExpr lamTgtVe) ForgetBindingFacts(lamTgtVe.Name);
                     lambdaVariableNames[lamTgtKey] = pendingLambdaKey;
                     RecordLambdaCaptures(pendingLambdaKey, lamRhs);
                 }
@@ -954,7 +983,9 @@ public partial class IRGenerator
             // and `xs = list(arr)`: a compile-time sequence of reads stored into element
             // slots, each keeping its field width and sign (#361).
             if (TryStructUnpackSeq(stmt.Value, out var unpackElems, out var unpackTypes)
-                && TryVisitCtListAssign(listTarget, unpackElems, unpackTypes)) return;
+                && TryVisitCtListAssign(listTarget, unpackElems, unpackTypes,
+                    keepTupleMark: stmt.Value is not CallExpr
+                        { Callee: VariableExpr { Name: "list" } })) return;
 
             // `g = [[v]*W for _ in range(H)]` / `g = [bytearray(W) for _ in
             // range(H)]`: a compile-time 2-D grid, lowered to ONE flat array of
@@ -985,7 +1016,8 @@ public partial class IRGenerator
                 arraysWithVariableIndex.Add(repKey);
                 elemExprs = repeated;
             }
-            if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
+            if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs,
+                keepTupleMark: stmt.Value is TupleExpr)) return;
 
             // `[e for v in xs if c]` over a runtime heap list, or `[e] * n`
             // with a runtime count: no compile-time element list exists, but a
@@ -1030,6 +1062,7 @@ public partial class IRGenerator
                         : (!string.IsNullOrEmpty(currentFunction)
                             ? currentFunction + "." + listTarget.Name : listTarget.Name);
                 }
+                ForgetBindingFacts(listTarget.Name);
                 variableTypes[compKey] = DataType.GC_REF;
                 listVarElemTypes[compKey] = listVarElemTypes[compRes.Name];
                 if (listInnerElemTypes.TryGetValue(compRes.Name, out var compInner))
@@ -1053,6 +1086,7 @@ public partial class IRGenerator
                              : (rowIdx.Target is VariableExpr rv ? rv.Name : rowTgt.Name);
             string rowCache = SequenceKeyOf(rowIdx.Target) ?? rowSource;
             Val rowKeyVal = VisitExpression(rowIdx.Index);
+            ForgetBindingFacts(rowTgt.Name);
             rowViews.Remove(rowKey);
             constSequenceBindings.Remove(rowKey);
 
@@ -1431,6 +1465,7 @@ public partial class IRGenerator
         {
             if (SequenceKeyOf(stmt.Target) is { } romViewKey)
             {
+                if (stmt.Target is VariableExpr romVTgt) ForgetBindingFacts(romVTgt.Name);
                 romfsViews[romViewKey] = romfsViews[EmitRomfsReadView(romReadH, romReadAssign)];
                 return;
             }
@@ -1447,6 +1482,7 @@ public partial class IRGenerator
         {
             Val seqMark = IsOsFsCall(romSeqAssign, "stat")
                 ? EmitOsStat(romSeqAssign) : EmitOsListdir(romSeqAssign);
+            if (stmt.Target is VariableExpr romSeqTgt) ForgetBindingFacts(romSeqTgt.Name);
             string markName = ((Variable)seqMark).Name;
             constSequenceBindings[romSeqKey] = constSequenceBindings[markName];
             constSequenceBindings.Remove(markName);
@@ -1469,6 +1505,7 @@ public partial class IRGenerator
             pendingTupleCount = 0;
             if (lastTupleResults.Count > 0)
             {
+                ForgetBindingFacts(tupBindTgt.Name);
                 BindNamedTuple(tupBindTgt.Name);
                 return;
             }
@@ -1497,6 +1534,7 @@ public partial class IRGenerator
             if (retBufName != null && arraySizes.ContainsKey(retBufName)
                 && stmt.Target is VariableExpr bufTgt)
             {
+                ForgetBindingFacts(bufTgt.Name);
                 string bufKey = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + bufTgt.Name
                     : (!string.IsNullOrEmpty(currentFunction)
@@ -1513,7 +1551,7 @@ public partial class IRGenerator
             }
         }
 
-        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value, ctorTaggedKey); }
+        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value, ctorTaggedKey, strStampedKeys); }
         else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
         {
@@ -2057,7 +2095,7 @@ public partial class IRGenerator
     }
 
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value,
-        string? ctorTaggedKey = null)
+        string? ctorTaggedKey = null, IReadOnlyCollection<string>? strStampedKeys = null)
     {
         // The constant tables keep an int and no Unsigned mark; the name keeps it instead.
         if (value is Constant { Unsigned: true }) unsignedConstNames.Add(varExpr.Name);
@@ -2121,6 +2159,7 @@ public partial class IRGenerator
                 ? currentInlinePrefix + varExpr.Name
                 : (!string.IsNullOrEmpty(currentFunction)
                     ? currentFunction + "." + varExpr.Name : varExpr.Name);
+            ForgetBindingFacts(varExpr.Name, ctorTaggedKey);
             if (romKey != romH.Name) variableAliases[romKey] = romH.Name;
             instanceClasses[romKey] = RomfsClassMark;
             constantVariables.Remove(romKey);
@@ -2134,7 +2173,10 @@ public partial class IRGenerator
         // Without this, `free = i` inside an @inline loop left free -> i standing while i
         // kept changing, and the sibling expansion's `free = 255` even WROTE into i (the
         // FixedDict.__setitem__ corruption). Nonlocal write-through aliases are exempt.
-        InvalidateAliasesForWrite(varExpr.Name, ctorTaggedKey);
+        // A tuple literal RHS keeps the tuple mark the sequence preamble recorded:
+        // the new binding really is a tuple.
+        ForgetBindingFacts(varExpr.Name, ctorTaggedKey, strStampedKeys,
+            keepTupleMark: stmt.Value is TupleExpr);
 
         // `buffer = self._post_brightness_buffer` / `b2 = buf` / the ternary pick
         // between two fields that adafruit_pixelbuf's `_getitem` opens with: a local
@@ -2563,7 +2605,7 @@ public partial class IRGenerator
             // compiled (#259). That binding is how every compat-layer namespace is spelled:
             // `alarm.pin`, `alarm.time`, `microcontroller.cpu`, `microcontroller.watchdog`.
             //
-            // A write to either name still clears it, through InvalidateAliasesForWrite.
+            // A write to either name still clears it, through ForgetBindingFacts.
             // A produced carrier counts the same as an anchored instance: `x = Pair()
             // if flag else Pair()` lands as `x = tN` where tN only CARRIES the class,
             // and dropping the alias at the next label makes x answer as a scalar
@@ -3338,7 +3380,7 @@ public partial class IRGenerator
             var flattenedName = baseName + "_" + memExpr2.Member;
 
             // A field write kills the aliases that pointed AT it, exactly as a scalar
-            // write does through InvalidateAliasesForWrite: `x = self._f` files
+            // write does through ForgetBindingFacts: `x = self._f` files
             // variableAliases[x] = <obj>_f for tracking, and this store must end it --
             // otherwise a later `self._f = x` resolves x back to the field itself and
             // folds to a self-copy that emits nothing (an outlined S_m's
@@ -4137,6 +4179,7 @@ public partial class IRGenerator
         if (srcFrame != null && srcFrame != srcQ) return false;
         if (srcFrame == null && !arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(src.Name)) srcQ = src.Name;
         if (!arraySizes.TryGetValue(srcQ, out int srcSize)) return false;
+        ForgetBindingFacts(target.Name);
 
         string qualified = string.IsNullOrEmpty(currentFunction) ? target.Name : currentFunction + "." + target.Name;
 
@@ -4206,6 +4249,7 @@ public partial class IRGenerator
             string cq = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + target
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+            ForgetBindingFacts(target);
             strConstantVariables[cq] = joined;
             constantVariables.Remove(cq);
             variableAliases.Remove(cq);
@@ -4224,6 +4268,7 @@ public partial class IRGenerator
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + target
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+            ForgetBindingFacts(target);
             ClearStaleConstantText(qualified, target);
             string lenVar = "__jnlen_" + target;
 
@@ -5684,6 +5729,10 @@ public partial class IRGenerator
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+        // Rebind: the old binding's facts die -- except the runtime-string record
+        // itself, which the self-reference check below still has to read before this
+        // statement's own write replaces it.
+        ForgetBindingFacts(target, keepRuntimeStr: true);
         ClearStaleConstantText(qualified, target);
         string lenVar = "__fslen_" + target;
 
@@ -6162,6 +6211,7 @@ public partial class IRGenerator
             _ => (8, "0o"),
         };
         Val bv = RequireIntBaseArg(VisitExpression(baseCall.Args[0]), baseCallee.Name, baseCall.Args[0]);
+        ForgetBindingFacts(target);
         EmitIntBaseRuntimeStr(target, bv, baseCall.Args[0], radix, prefix, value);
         return true;
     }
@@ -6185,6 +6235,7 @@ public partial class IRGenerator
                 && functionReturnTypes.TryGetValue(ResolveCallee(frc.Name), out var frt)
                 && frt == "float"))
         {
+            ForgetBindingFacts(target);
             EmitFloatReprRuntimeStr(target, VisitExpression(strArg), value);
             return true;
         }
@@ -6209,6 +6260,7 @@ public partial class IRGenerator
             seqKey = svv.Name;
             seqIsTuple = tupleBoundNames.Contains(svv.Name) || IsTupleBound(svv.Name);
         }
+        ForgetBindingFacts(target);
         EmitSeqReprRuntimeStr(target, seqKey, seqIsTuple, value);
         return true;
     }
@@ -6554,34 +6606,14 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// Drops every spelling of a name from the compile-time-constant tracking maps a `for`
-    /// loop variable can land in: it is about to be rebound by a fresh loop, so whatever an
-    /// EARLIER loop over a reused bare name left behind must not leak into this one.
+    /// A `for` target is a write like any other: it is about to be rebound by a fresh
+    /// loop, so whatever an EARLIER binding of the bare name left behind must not
+    /// leak into this one -- `x = Pair()` then `for x in [5]` ends each iteration
+    /// bound to a byte while the old class made reads answer as the dead object
+    /// (silentfix5). An iteration that binds an instance element re-establishes
+    /// the mark. The one rebind sweep covers it.
     /// </summary>
-    private void ForgetLoopVariableConstantState(string bareName)
-    {
-        foreach (var k in new[]
-        {
-            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + bareName,
-            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + bareName,
-            bareName,
-        })
-        {
-            if (k == null) continue;
-            constantVariables.Remove(k);
-            strConstantVariables.Remove(k);
-            floatConstantVariables.Remove(k);
-            constSequenceBindings.Remove(k);
-        }
-        // The class record is the same stale fact and a `for` target is a
-        // write: `x = Pair()` then `for x in [5]` leaves the name bound to a
-        // byte on every iteration that runs, while the old class made its
-        // reads answer -- or refuse -- as the dead object (silentfix5). An
-        // iteration that binds an instance element re-establishes the mark.
-        // Scoped like InvalidateAliasesForWrite: the bare spelling is another
-        // binding whenever this loop is not the name's own scope.
-        foreach (var k in WriteBindingSpellings(bareName)) ForgetInstanceFacts(k);
-    }
+    private void ForgetLoopVariableConstantState(string bareName) => ForgetBindingFacts(bareName);
 
     /// <summary>
     /// Drops the two buffer-vs-scalar facts a reassignment can make stale, for the bare
@@ -6599,7 +6631,25 @@ public partial class IRGenerator
         bytearrayParams.Remove(key);
     }
 
-    private void InvalidateAliasesForWrite(string name, string? keepInstanceKey = null)
+    /// <summary>
+    /// The one sweep every rebind of a bare name runs -- `x = v`, `x, y = (..)`,
+    /// `for x in ..`, `(x := v)`, `with m as x`, `except E as x`: the write retires
+    /// the old binding's aliases and the aliases pointing at it (wide, as writes
+    /// always did), its folded value facts, and the whole instance identity, the
+    /// last two scoped by <see cref="WriteBindingSpellings"/> so a foreign scope's
+    /// like-named binding survives. <paramref name="keepInstanceKey"/> exempts the
+    /// key this statement's own constructor/open/factory setup just tagged;
+    /// <paramref name="keepStrKeys"/> exempts the strConstantVariables entries the
+    /// assignment preamble just filed for this same binding (it is the authority
+    /// on "what text does this name hold" -- see EmitScalarVarAssign's own note).
+    /// Callers re-stamp what the NEW value earns; nothing the old binding was
+    /// survives. <paramref name="keepRuntimeStr"/> spares the runtime-string
+    /// buffer record: the f-string expansion reads it mid-statement for its
+    /// self-reference snapshot before rewriting the binding.
+    /// </summary>
+    private void ForgetBindingFacts(string name, string? keepInstanceKey = null,
+        IReadOnlyCollection<string>? keepStrKeys = null, bool keepRuntimeStr = false,
+        bool keepTupleMark = false)
     {
         foreach (var k in new[]
         {
@@ -6621,37 +6671,44 @@ public partial class IRGenerator
         // name is the ENTRY module's global spelling, and a local write in another
         // scope cannot touch it -- `uart_write_str`'s local `b` used to unmark the
         // module-level `b = Pin(...)`, and the next `b.high()` resolved to a callee
-        // nobody emits. Value facts above keep the wide sweep: losing a fold is safe,
-        // losing the class is not.
+        // nobody emits. The value fold facts ride the same scoped list: they describe
+        // the old binding's VALUE, and a foreign `b`'s constant is not this write's to
+        // lose either.
         foreach (var k in WriteBindingSpellings(name))
         {
-            if (k == keepInstanceKey) continue;
-            // What the name carried (an instance a call produced, a scalar view mask)
-            // describes the OLD value; a rebind (`x = make()` then `x = 5`) keeps neither.
-            producedInstanceClasses.Remove(k);
-            scalarMaskedNames.Remove(k);
-            // And a merge's "is an instance on some path" record ends with the
-            // write for the same reason: the name is now definitely the new value.
-            maybeInstanceClasses.Remove(k);
-            // The whole instance identity is the same record: `x = Pair()` then
-            // `x = 5` rebinds the name to a byte, and keeping Pair (or the anchor
-            // marks that make a name resolve as the object) made the scalar read
-            // answer -- or refuse -- as the dead object. The exemption is the key
-            // THIS statement's constructor/open/factory setup already tagged:
-            // `x = Pair()` writes instanceClasses and registers the handle marks
-            // before the ctor's value reaches here through the same sweep, and
-            // clearing them would erase the mark the statement itself just made.
-            instanceClasses.Remove(k);
-            virtualInstances.Remove(k);
-            factoryHandleInstances.Remove(k);
-            slotInstances.Remove(k);
-            romfsHandles.Remove(k);
+            // A fresh construction tagged `k` already, through the setup half of this
+            // very statement (`x = Pair()` writes instanceClasses and registers the
+            // handle marks before the ctor's value reaches here); the instance sweep
+            // exempts it so the mark the statement just made is not taken back down.
+            if (k != keepInstanceKey) ForgetInstanceFacts(k);
+            // The folded-value record always dies: `x = Pair()` after `x = 5` must not
+            // leave the 5 folding reads of the object, and no constructor stamps a
+            // scalar constant onto its target. The str entries the preamble filed
+            // for THIS binding ride the exemption: they describe the new value.
+            ForgetValueFacts(k, keepStrKeys != null && keepStrKeys.Contains(k), keepRuntimeStr,
+                keepTupleMark);
+            // The buffer-vs-scalar marks die with the binding they described; the
+            // walrus/unpack/loop binders re-derive them from the new value.
+            ForgetBufferVsScalarMarks(k);
         }
 
-        string written = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
-                       : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
-                       : name;
-        InvalidateAliasesPointingAt(written);
+        // Aliases pointing AT the binding die too: `y = x` then `x = 5` leaves `y`
+        // following a name that no longer means what it did. Every spelling the
+        // write can land on is a poisoned target -- the write `main` files under
+        // the module key `x` still has to kill `y -> x`, which the single
+        // function-spelled key used to miss.
+        foreach (var written in WriteBindingSpellings(name))
+            InvalidateAliasesPointingAt(written);
+    }
+
+    // The same sweep for a caller that already holds the binding's resolved key --
+    // a match capture qualified through QualifyBoundName -- where there is no bare
+    // name for the spelling walk to rebuild.
+    private void ForgetBindingFactsForKey(string key)
+    {
+        ForgetInstanceFacts(key);
+        ForgetValueFacts(key);
+        InvalidateAliasesPointingAt(key);
     }
 
     // The sweep half of a write's bookkeeping, for a target whose key is already resolved:
@@ -6669,6 +6726,7 @@ public partial class IRGenerator
     // Register `name = {...}` (dict or set literal) with the standard qualification.
     private void RegisterDictSetBinding(string name, Expression literal)
     {
+        ForgetBindingFacts(name);
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
@@ -7086,11 +7144,6 @@ public partial class IRGenerator
             unionNameDeclared.Add(q2);
         }
 
-        if (stmt.VarType == "str" && stmt.Init is StringLiteral sl)
-        {
-            strConstantVariables[q2] = sl.Value;
-        }
-
         if (stmt.Init != null)
         {
             // Callable-typed variable: auto-wrap bare function name as FunctionRef
@@ -7174,8 +7227,18 @@ public partial class IRGenerator
                     stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
 
             // Declarations bind the name itself -- never a stale value-tracking alias
-            // (same invalidation-before-resolve as EmitScalarVarAssign).
-            InvalidateAliasesForWrite(stmt.Name);
+            // (same invalidation-before-resolve as EmitScalarVarAssign). A str
+            // declaration keeps the string records under every spelling it writes:
+            // the new binding is string-typed, and the multi-str marks the scan
+            // seeded for it are facts of THIS binding's shape, not of the old one.
+            ForgetBindingFacts(stmt.Name,
+                keepStrKeys: stmt.VarType == "str" ? WriteBindingSpellings(stmt.Name).ToList() : null);
+            // The declared string's text is a fact of the NEW binding, so it is
+            // stamped past the sweep, and past the initializer's own evaluation:
+            // up front it died to ForgetValueFacts below, and `x: str = x + "a"`
+            // would have folded the fresh text into the RHS that produced it.
+            if (stmt.VarType == "str" && stmt.Init is StringLiteral sl2)
+                strConstantVariables[q2] = sl2.Value;
             // A name bound to several string literals keeps its id in a 16-bit slot: resolving
             // it would answer with THIS binding's id, and the copy would have no destination
             // (`copy const 256 -> const 256` is what the declaration used to emit).
@@ -7381,6 +7444,7 @@ public partial class IRGenerator
     // its @outline (self-ptr) methods receive the slot base address as `self`.
     private void EmitSlotConstruction(VariableExpr targetVar, string cls, List<Expression> args)
     {
+        ForgetBindingFacts(targetVar.Name);
         string qn = SlotInstanceKey(targetVar.Name);
         string slot = qn + "__slot";
 
@@ -7433,6 +7497,7 @@ public partial class IRGenerator
     private void EmitSlotFactoryCall(VariableExpr targetVar, string facFn, string cls,
         List<Expression> args)
     {
+        ForgetBindingFacts(targetVar.Name);
         string qn = SlotInstanceKey(targetVar.Name);
         string slot = qn + "__slot";
 
@@ -9698,7 +9763,7 @@ public partial class IRGenerator
     /// subscript stores into the same slots the initialisers wrote.
     /// </summary>
     private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs,
-                                      List<DataType>? elemTypes = null)
+                                      List<DataType>? elemTypes = null, bool keepTupleMark = false)
     {
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + target.Name
@@ -9744,6 +9809,11 @@ public partial class IRGenerator
         }
         if (!allConst && elemTypes == null && count > 0 && visited[0] is { } firstVal)
             elemDt = firstVal switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
+
+        // Every element is visited now, so the rebind sweep can run without an
+        // element read losing the old binding's facts mid-statement (`xs = [xs, 1]`
+        // evaluates `xs` against the binding this statement replaces).
+        ForgetBindingFacts(target.Name, keepTupleMark: keepTupleMark);
 
         bool useSram = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
 
@@ -10161,8 +10231,8 @@ public partial class IRGenerator
             // being true here. Only the Constant case cleared constantVariables, which is all
             // that was needed while locals were not tracked; `total = 0` followed by
             // `total += v` left the locals map saying 0, and a call after the loop was handed
-            // that (PyMCU#327).
-            ForgetLocalConstant(ve.Name);
+            // that (PyMCU#327). The same one sweep every rebind runs covers the rest.
+            ForgetBindingFacts(ve.Name);
             if (target is Constant c)
             {
                 // A compile-time parameter (descriptor `__set__(..., value)` with a literal

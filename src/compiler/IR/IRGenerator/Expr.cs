@@ -102,19 +102,13 @@ public partial class IRGenerator
             var vr = new Variable(key, dt);
             if (globalDt == null) variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
-            // The walrus rebinds the name, so the instance facts an earlier binding
-            // left belong to the OLD value: `x = Pair(); y = (x := 5)` is a byte,
-            // and keeping Pair made a scalar slot read answer -- or refuse -- as
-            // the dead object. The RHS's own produced class is re-stamped below;
-            // the scalar-view mask the same. Same sweep a plain `x = 5` runs in
-            // InvalidateAliasesForWrite, keyed by the resolved name the walrus
-            // just stored into.
-            ForgetInstanceFacts(key);
-            constantVariables.Remove(key);
-            strConstantVariables.Remove(key);
-            floatConstantVariables.Remove(key);
-            constSequenceBindings.Remove(key);
-            InvalidateAliasesPointingAt(key);
+            // The walrus rebinds the name, so the facts an earlier binding left
+            // belong to the OLD value: `x = Pair(); y = (x := 5)` is a byte, and
+            // keeping Pair (or the 5's own folds when the new value is the object)
+            // made a scalar slot read answer -- or refuse -- as the dead binding.
+            // The same one sweep every rebind runs; the RHS's own produced class
+            // is re-stamped below, and the scalar-view mask the same.
+            ForgetBindingFacts(walrus.VarName);
             if (walrus.Value is NoneLiteral || IsNoneValued(walrus.Value))
                 noneValuedNames.Add(key);
             else if (rhs is not NoneVal) noneValuedNames.Remove(key);
@@ -4929,7 +4923,10 @@ public partial class IRGenerator
 
         // The loop variable: a named slot under the name the element and filter
         // read -- qualified the same way a `for` target is, so `b[1]` resolves
-        // the inner type through it.
+        // the inner type through it. Binding it is a write like a `for` target's:
+        // whatever an earlier same-named binding knew dies before the slot is
+        // filed, or a stale class/value fact would read into the new elements.
+        ForgetBindingFacts(lc.VarName);
         string varKey = QualifyHelperName(lc.VarName);
         variableTypes[varKey] = srcElem;
         var lcVar = new Variable(varKey, srcElem);

@@ -7566,6 +7566,7 @@ public partial class IRGenerator
     /// </summary>
     private void EmitStructPackToName(string name, CallExpr expr, int line, int column)
     {
+        ForgetBindingFacts(name);
         const string who = "struct.pack()";
         string fmt = StructFormatArg(expr, who);
         var fields = ParseStructFormat(fmt, who, expr.Callee);

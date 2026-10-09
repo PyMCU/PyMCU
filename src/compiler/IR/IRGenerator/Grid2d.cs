@@ -432,6 +432,7 @@ public partial class IRGenerator
         DataType elemDt = arrayElemTypes[gridKey];
         Val rowV = EvalGridIndex(rowExpr, h, "row");
 
+        ForgetBindingFacts(target.Name);
         arraySizes[qualified] = count;
         bufferLogicalLen[qualified] = count;
         arrayElemTypes[qualified] = elemDt;
@@ -489,12 +490,16 @@ public partial class IRGenerator
         // A module-level grid is filed under its BARE name by ScanGlobals; the
         // replay of the declaration inside the synthesized init aliases the
         // qualified spelling onto it -- the same rule `name = bytearray(N)`
-        // follows.
+        // follows. The detection asks the array tables under the OLD binding, so
+        // it is captured before the rebind sweep retires them.
+        bool hadQualifiedArray = arraySizes.ContainsKey(qualified);
+        bool hadBareArray = arraySizes.ContainsKey(name);
+        ForgetBindingFacts(name);
         bool replayingModuleLevel = string.IsNullOrEmpty(currentInlinePrefix)
             && (currentFunction == "main"
                 || currentFunction.EndsWith("___module_init", StringComparison.Ordinal));
         bool moduleLevel = false;
-        if (replayingModuleLevel && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(name))
+        if (replayingModuleLevel && !hadQualifiedArray && hadBareArray)
         {
             variableAliases[qualified] = name;
             qualified = name;

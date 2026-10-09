@@ -1971,18 +1971,18 @@ public partial class IRGenerator
         // statement's mere PRESENCE, not to anything it actually did.
         if (!IsCompileTimeEmptyPlainRange(stmt))
         {
-            ForgetLocalConstant(stmt.VarName);
-            if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLocalConstant(stmt.Var2Name);
-            // ForgetLocalConstant above only drops localConstantValues. A tuple/list-literal
-            // for-loop over a bare name now LEAVES that name's constantVariables/
-            // strConstantVariables/floatConstantVariables/constSequenceBindings entry behind on
-            // purpose once ITS loop ends -- CPython keeps the last element bound after the loop.
-            // A LATER, unrelated loop that reuses the same bare name (e.g. a run-time
-            // enumerate() over a fixed array, which never writes those maps for a name it treats
-            // as non-constant) must not inherit that leftover: `for x in b"...": ...` followed by
-            // `for i, x in enumerate(data): ...` read the first loop's last byte instead of the
-            // array's values. Dropped here, unconditionally, before any iterable-kind dispatch,
-            // so every branch starts this loop's variable from a clean slate.
+            // A tuple/list-literal for-loop over a bare name now LEAVES that name's
+            // constantVariables/strConstantVariables/floatConstantVariables/
+            // constSequenceBindings entry behind on purpose once ITS loop ends --
+            // CPython keeps the last element bound after the loop. A LATER,
+            // unrelated loop that reuses the same bare name (e.g. a run-time
+            // enumerate() over a fixed array, which never writes those maps for a
+            // name it treats as non-constant) must not inherit that leftover:
+            // `for x in b"...": ...` followed by `for i, x in enumerate(data): ...`
+            // read the first loop's last byte instead of the array's values. The
+            // one rebind sweep runs here, unconditionally, before any
+            // iterable-kind dispatch, so every branch starts this loop's variable
+            // from a clean slate.
             ForgetLoopVariableConstantState(stmt.VarName);
             if (!string.IsNullOrEmpty(stmt.Var2Name)) ForgetLoopVariableConstantState(stmt.Var2Name);
         }

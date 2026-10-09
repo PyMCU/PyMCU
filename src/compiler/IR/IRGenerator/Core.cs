@@ -383,24 +383,86 @@ public partial class IRGenerator
 
         string moduleKey = currentModulePrefix + name;
         if ((string.IsNullOrEmpty(currentInlinePrefix)
-             && (string.IsNullOrEmpty(currentFunction) || currentFunction == "main"))
-            || functionWrittenGlobals.Contains(moduleKey))
+             && (string.IsNullOrEmpty(currentFunction) || currentFunction == "main"
+                 || currentFunction.EndsWith("___module_init", StringComparison.Ordinal)))
+            || currentFunctionGlobals.Contains(name))
             yield return moduleKey;
     }
 
     /// <summary>
     /// The mirror of <see cref="ForgetInstanceFacts"/>: a name being bound to an
     /// INSTANCE drops the scalar value-facts of the binding it replaces, or a read
-    /// of the object folds to whatever an earlier `x = 5` left.
+    /// of the object folds to whatever an earlier `x = 5` left. <paramref name="keepStr"/>
+    /// spares the string records (const text and the runtime-decided alternatives)
+    /// when the same statement's preamble already filed the NEW binding's text under
+    /// this key. <paramref name="keepRuntimeStr"/> spares the runtime-string buffer
+    /// record, which the f-string path reads back mid-statement for its self-reference
+    /// snapshot before overwriting it.
     /// </summary>
-    private void ForgetValueFacts(string key)
+    private void ForgetValueFacts(string key, bool keepStr = false, bool keepRuntimeStr = false,
+        bool keepTupleMark = false)
     {
         constantVariables.Remove(key);
         localConstantValues.Remove(key);
-        strConstantVariables.Remove(key);
+        if (!keepStr)
+        {
+            strConstantVariables.Remove(key);
+            multiStrVariables.Remove(key);
+            // multiStrCandidates stays: the pre-scan decides once that the name can
+            // hold several texts and therefore needs a materialized slot. A rebind
+            // can end the multi-str VALUE (multiStrVariables) but not the slot the
+            // scan committed to -- nothing re-stamps it after the scan.
+        }
+        if (!keepRuntimeStr)
+        {
+            runtimeStrVars.Remove(key);
+            arraySizes.Remove(key);
+            bufferLogicalLen.Remove(key);
+            arrayElemTypes.Remove(key);
+        }
         floatConstantVariables.Remove(key);
         constSequenceBindings.Remove(key);
         noneValuedNames.Remove(key);
+        dictLiteralBindings.Remove(key);
+        setLiteralBindings.Remove(key);
+        namedTupleElements.Remove(key);
+        arrayLiteralElements.Remove(key);
+        moduleConstLists.Remove(key);
+        literalSeqElemKinds.Remove(key);
+        literalSequenceArrays.Remove(key);
+        inferredLiteralLists.Remove(key);
+        promotedEmptyLists.Remove(key);
+        listLiteralParams.Remove(key);
+        listLiteralParamScopes.Remove(key);
+        rangeBoundSequences.Remove(key);
+        // tupleBoundNames survives a RHS that is itself a tuple literal: the mark is a
+        // fact of the NEW binding's shape, already recorded by the sequence preamble
+        // (NoteSequenceMutability) before this sweep ran.
+        if (!keepTupleMark) tupleBoundNames.Remove(key);
+        rowViews.Remove(key);
+        romfsViews.Remove(key);
+        gridDims.Remove(key);
+        gridRowAliases.Remove(key);
+        ctArrayConstElements.Remove(key);
+        // A REAL element type dies with the binding (`x = [1,2]` then `x = 5`
+        // makes `return x` look list-typed to the caller). A pending UNKNOWN
+        // stays: the scan seeds it for names it saw bound to `[]` and later
+        // appended, and a non-list rebind on the way to that `x = []`
+        // (`received = None` ahead of the loop) must not empty the slot the
+        // join restores from its snapshot.
+        if (listVarElemTypes.TryGetValue(key, out var elemDt) && elemDt != DataType.UNKNOWN)
+            listVarElemTypes.Remove(key);
+        listInnerElemTypes.Remove(key);
+        arrayViewBase.Remove(key);
+        arrayViewOffset.Remove(key);
+        instanceArrayClass.Remove(key);
+        instanceArrayStride.Remove(key);
+        loopFunctionAliases.Remove(key);
+        lambdaVariableNames.Remove(key);
+        // The pointer and flash-string records (constantAddressVariables,
+        // runtimePtrVars, flashStrPtrVars) stay: they describe the NAME's declared
+        // shape, not the old binding's value. A `p: ptr[u8]` name rebinding its
+        // address (`p = ptr(0x620)`) is still the same pointer.
     }
 
     private void CleanCtState(string dst)
