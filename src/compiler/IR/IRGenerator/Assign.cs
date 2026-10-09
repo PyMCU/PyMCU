@@ -520,6 +520,10 @@ public partial class IRGenerator
         // heap object for the value; what remains here is the NAME's mutability
         // -- the same bookkeeping a tuple literal gets, so `y[i] = v` on a
         // tuple-bound name meets the refusal IsTupleBound exists for.
+        // No ForgetBindingFacts here: the argument still has to evaluate against
+        // the OLD binding (`x = list(unpack(bytes(x)))`), and the binding path
+        // below sweeps the name after that evaluation. The tuple mark this
+        // records survives that sweep through keepTupleMark.
         if (stmt.Target is VariableExpr ctorTgt
             && stmt.Value is CallExpr { Callee: VariableExpr { Name: "tuple" or "list" } } ctorCall
             && ctorCall.Args.Count == 1)
@@ -527,7 +531,6 @@ public partial class IRGenerator
             string ctorKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + ctorTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ctorTgt.Name : ctorTgt.Name);
-            ForgetBindingFacts(ctorTgt.Name);
             NoteSequenceMutability(ctorKey, ctorTgt.Name,
                 isTuple: ((VariableExpr)ctorCall.Callee).Name == "tuple");
         }
@@ -2184,9 +2187,12 @@ public partial class IRGenerator
         // kept changing, and the sibling expansion's `free = 255` even WROTE into i (the
         // FixedDict.__setitem__ corruption). Nonlocal write-through aliases are exempt.
         // A tuple literal RHS keeps the tuple mark the sequence preamble recorded:
-        // the new binding really is a tuple.
+        // the new binding really is a tuple. So does `x = tuple(y)` -- the
+        // copy-ctor preamble above marked the name tuple-bound before the value
+        // evaluated, and the mark describes the binding this write creates.
         ForgetBindingFacts(varExpr.Name, ctorTaggedKey, strStampedKeys,
-            keepTupleMark: stmt.Value is TupleExpr);
+            keepTupleMark: stmt.Value is TupleExpr
+                || stmt.Value is CallExpr { Callee: VariableExpr { Name: "tuple" }, Args.Count: 1 });
 
         // `buffer = self._post_brightness_buffer` / `b2 = buf` / the ternary pick
         // between two fields that adafruit_pixelbuf's `_getitem` opens with: a local
@@ -4213,10 +4219,13 @@ public partial class IRGenerator
         if (srcFrame != null && srcFrame != srcQ) return false;
         if (srcFrame == null && !arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(src.Name)) srcQ = src.Name;
         if (!arraySizes.TryGetValue(srcQ, out int srcSize)) return false;
-        ForgetBindingFacts(target.Name);
 
         string qualified = string.IsNullOrEmpty(currentFunction) ? target.Name : currentFunction + "." + target.Name;
 
+        // Everything below reads the OLD bindings' facts -- the target's own
+        // variable-index marks when `a = a[1:]` re-slices a name onto itself, the
+        // source's element type, and any constants the bounds fold from -- so it
+        // all has to be resolved before the rebind sweep erases them.
         if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
             throw UserError($"'{target.Name}' is indexed by a runtime value, so a slice assigned to "
                 + $"it needs an explicit fixed-size annotation: '{target.Name}: <type>[N] = ...'", target);
@@ -4226,6 +4235,8 @@ public partial class IRGenerator
         int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
         int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
         if (step == 0) throw UserError("Slice step cannot be zero", sl);
+        ForgetBindingFacts(target.Name);
+
         if (start < 0) start += srcSize;
         if (stop < 0) stop += srcSize;
         start = Math.Max(0, Math.Min(start, srcSize));
@@ -4302,17 +4313,21 @@ public partial class IRGenerator
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + target
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+            // The reusable buffer record belongs to the OLD binding -- read it
+            // before the rebind sweep erases it.
+            bool hasExisting = runtimeStrVars.TryGetValue(qualified, out var existing);
             ForgetBindingFacts(target);
             ClearStaleConstantText(qualified, target);
             string lenVar = "__jnlen_" + target;
 
-            if (runtimeStrVars.TryGetValue(qualified, out var existing))
+            if (hasExisting)
             {
                 if (bound > existing.Capacity)
                     throw UserError(
                         $"'{target}' is re-assigned a join result needing {bound} bytes but its " +
                         $"buffer was sized {existing.Capacity} by an earlier assignment", value);
                 lenVar = existing.LenVar;
+                runtimeStrVars[qualified] = existing;
             }
             else
             {
@@ -6269,8 +6284,10 @@ public partial class IRGenerator
                 && functionReturnTypes.TryGetValue(ResolveCallee(frc.Name), out var frt)
                 && frt == "float"))
         {
+            // `s = str(f)` evaluates the argument against the OLD binding first.
+            Val reprArg = VisitExpression(strArg);
             ForgetBindingFacts(target);
-            EmitFloatReprRuntimeStr(target, VisitExpression(strArg), value);
+            EmitFloatReprRuntimeStr(target, reprArg, value);
             return true;
         }
         if (isRepr) return false;   // non-float repr keeps the builtin refusal
@@ -6385,13 +6402,18 @@ public partial class IRGenerator
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + bufName : bufName);
         string lenVar = "__jnlen_" + bufName;
 
-        if (runtimeStrVars.TryGetValue(qualified, out var existing))
+        // The reusable buffer record belongs to the OLD binding -- read it before
+        // the rebind sweep erases it, then put it back for the reuse branch.
+        bool hasExisting = runtimeStrVars.TryGetValue(qualified, out var existing);
+        ForgetBindingFacts(bufName);
+        if (hasExisting)
         {
             if (bound > existing.Capacity)
                 throw UserError(
                     $"'{bufName}' is re-assigned a join result needing {bound} bytes but its " +
                     $"buffer was sized {existing.Capacity} by an earlier assignment", blame);
             lenVar = existing.LenVar;
+            runtimeStrVars[qualified] = existing;
             VisitStatement(new AssignStmt(new VariableExpr(lenVar), new IntegerLiteral(0)));
         }
         else
@@ -7478,20 +7500,17 @@ public partial class IRGenerator
     // its @outline (self-ptr) methods receive the slot base address as `self`.
     private void EmitSlotConstruction(VariableExpr targetVar, string cls, List<Expression> args)
     {
-        ForgetBindingFacts(targetVar.Name);
         string qn = SlotInstanceKey(targetVar.Name);
         string slot = qn + "__slot";
 
         var layout = classFieldLayout[cls];
         int total = layout.Sum(f => SlotFieldFootprint(cls, f.Field, f.Type));
 
-        arraySizes[slot] = total;
-        bufferLogicalLen[slot] = total;
-        arrayElemTypes[slot] = DataType.UINT8;
-        moduleSramArrays.Add(slot);
-
+        // The field values evaluate against the OLD binding (`p = Pair(p.x)`
+        // reads the instance this statement rebinds), so they are all resolved
+        // before the rebind sweep below.
         functionParams.TryGetValue(cls + "___init__", out var initParams);
-        int off = 0;
+        var fieldVals = new List<(Expression? argExpr, Val v)>();
         foreach (var (field, type, srcParam) in layout)
         {
             int argIdx = 0;
@@ -7510,7 +7529,19 @@ public partial class IRGenerator
                 && fieldNoneWrites.TryGetValue(cls, out var scNoneSet)
                 && scNoneSet.Contains(field))
                 argExpr = new NoneLiteral();
-            Val v = argExpr != null ? VisitExpression(argExpr) : new Constant(0);
+            fieldVals.Add((argExpr, argExpr != null ? VisitExpression(argExpr) : new Constant(0)));
+        }
+
+        ForgetBindingFacts(targetVar.Name);
+        arraySizes[slot] = total;
+        bufferLogicalLen[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        int off = 0, fi = 0;
+        foreach (var (field, type, _) in layout)
+        {
+            var (argExpr, v) = fieldVals[fi++];
             var payTy = SlotFieldPayloadType(cls, field, type);
             if (IsUnionField(cls, field, out _))
                 EmitSlotUnionFieldStore(slot, false, off, payTy, off + payTy.SizeOf(),
@@ -7531,22 +7562,25 @@ public partial class IRGenerator
     private void EmitSlotFactoryCall(VariableExpr targetVar, string facFn, string cls,
         List<Expression> args)
     {
-        ForgetBindingFacts(targetVar.Name);
         string qn = SlotInstanceKey(targetVar.Name);
         string slot = qn + "__slot";
 
         var layout = classFieldLayout[cls];
         int total = layout.Sum(f => SlotFieldFootprint(cls, f.Field, f.Type));
-        arraySizes[slot] = total;
-        bufferLogicalLen[slot] = total;
-        arrayElemTypes[slot] = DataType.UINT8;
-        moduleSramArrays.Add(slot);
 
+        // The arguments evaluate against the OLD binding before the rebind sweep.
         var callArgs = new List<Val> { new ArrayBase(slot) };
         foreach (var a in args) callArgs.Add(VisitExpression(a));
         // RFC 0009: __self is the hidden sret pointer, not a declared parameter --
         // the union-parameter scan lines callArgs[1..] up with functionParams[0..].
         callArgs = WithParamTags(facFn, callArgs, args, argOffset: 1);
+
+        ForgetBindingFacts(targetVar.Name);
+        arraySizes[slot] = total;
+        bufferLogicalLen[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
         Emit(new Call(facFn, callArgs, new NoneVal()));
 
         instanceClasses[qn] = cls;
