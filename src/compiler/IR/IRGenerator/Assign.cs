@@ -10803,9 +10803,6 @@ public partial class IRGenerator
 
         if (TryUnpackIntoAttributes(stmt)) return;
 
-        // Every target is written here, so none of them still holds what it held.
-        foreach (var unpacked in stmt.Targets) ForgetLocalConstant(unpacked);
-
         string QualifyTarget(string name)
         {
             // A target a module global claims must take the global's key: `main` IS the
@@ -10848,9 +10845,11 @@ public partial class IRGenerator
                 // the CFG-aware pass, whose dataflow correctly kills the alias when the source
                 // is redefined. The name is globally unique (tempCounter), so it never collides.
                 var snapshots = new List<Val>(nTup);
+                var eltVals = new List<Val>(nTup);
                 foreach (var el in tup.Elements)
                 {
                     Val v = VisitExpression(el);
+                    eltVals.Add(v);
                     if (v is Variable or Temporary)
                     {
                         DataType st = GetValType(v);
@@ -10861,9 +10860,53 @@ public partial class IRGenerator
                     }
                     else snapshots.Add(v);
                 }
+                // The elements are read, the targets not yet written -- CPython's
+                // order. The rebind sweep lives here and not at the top: run before
+                // the snapshot it would have made `a, b = b, a` read the binding
+                // `a` had already lost, not the one it still held.
+                foreach (var unpacked in stmt.Targets) ForgetBindingFacts(unpacked);
                 for (int k = 0; k < nTgt; ++k)
                 {
                     string qualified = QualifyTarget(stmt.Targets[k]);
+                    // An element that IS an instance -- `x, y = (p, 6)` -- has no
+                    // byte a scalar slot can copy. The target becomes another NAME
+                    // for the object, the same binding `x = p` writes one
+                    // statement away, so `x.a` resolves instead of the byte the
+                    // object never wrote landing in the slot (silentfix5).
+                    string? eltSrc = eltVals[k] switch
+                    {
+                        Variable evv => evv.Name,
+                        Temporary etv => etv.Name,
+                        _ => null,
+                    };
+                    string? eltAnchor = eltSrc != null
+                        && ClassedInstanceAnchor(FollowAliases(eltSrc))
+                            ? FollowAliases(eltSrc) : null;
+                    if (eltAnchor != null)
+                    {
+                        variableAliases[qualified] = eltAnchor;
+                        if (instanceClasses.TryGetValue(eltAnchor, out var eltCls) && eltCls != null)
+                            instanceClasses[qualified] = eltCls;
+                        virtualInstances.Add(qualified);
+                        continue;
+                    }
+                    if (eltSrc != null && ProducedInstanceClassOf(eltVals[k]) != null)
+                    {
+                        // A produced carrier (`x, y = (Pair(1, 2), 6)`): the temp
+                        // holds the class and the alias resolves through it.
+                        variableAliases[qualified] = eltSrc;
+                        virtualInstances.Add(qualified);
+                        continue;
+                    }
+                    // An element an instance may reach on only SOME paths -- the
+                    // `x` a merge left half-scalar -- cannot alias (the scalar arm
+                    // needs the copy) nor copy (the object arm wrote no byte).
+                    // Refuse it like the return sites do.
+                    if (MaybeInstanceClassOfExpr(tup.Elements[k]) is { } upMaybeCls)
+                        throw UserError(
+                            $"tuple unpack target '{stmt.Targets[k]}' cannot be an "
+                            + $"instance of '{ShortClassNameOf(upMaybeCls)}': "
+                            + InstanceIsFlattened, tup.Elements[k]);
                     DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t
                         : InferredSlot(qualified, GetValType(snapshots[k]));
                     variableTypes[qualified] = dt;
@@ -10923,6 +10966,9 @@ public partial class IRGenerator
                 for (int k = 0; k < starIdx; ++k)
                 {
                     Val v = VisitExpression(tup.Elements[k]);
+                    // Each target is swept right before its own write, the same
+                    // invalidation the unstarred path runs after the snapshot.
+                    ForgetBindingFacts(stmt.Targets[k]);
                     string qualified = QualifyTarget(stmt.Targets[k]);
                     DataType fixedT = variableTypes.TryGetValue(qualified, out var ft) ? ft
                         : InferredSlot(qualified, DataType.UINT8);
@@ -10931,6 +10977,7 @@ public partial class IRGenerator
                     if (v is Constant c) constantVariables[qualified] = c.Value;
                 }
 
+                ForgetBindingFacts(stmt.Targets[starIdx]);
                 string starName = QualifyTarget(stmt.Targets[starIdx]);
                 arraySizes[starName] = starCount;
                 bufferLogicalLen[starName] = starCount;
@@ -10950,6 +10997,7 @@ public partial class IRGenerator
                 {
                     int srcIdx = starIdx + starCount + k;
                     Val v = VisitExpression(tup.Elements[srcIdx]);
+                    ForgetBindingFacts(stmt.Targets[starIdx + 1 + k]);
                     string qualified = QualifyTarget(stmt.Targets[starIdx + 1 + k]);
                     DataType afterT = variableTypes.TryGetValue(qualified, out var at) ? at
                         : InferredSlot(qualified, DataType.UINT8);
@@ -10985,6 +11033,12 @@ public partial class IRGenerator
             lastTupleResultLocalBuffers = null;
             if (unpackSlots.Count != stmt.Targets.Count)
                 throw UserError($"Expected {stmt.Targets.Count} tuple results, got {unpackSlots.Count}");
+
+            // The call has delivered its tuple; the targets rebind now, so the
+            // rebind sweep every other write runs applies here too -- a name that
+            // carried a possible instance into this statement (`x, y = f()` after
+            // a merge) is a tuple-result binding from here on.
+            foreach (var unpacked in stmt.Targets) ForgetBindingFacts(unpacked);
 
             // `return buf, buf`: two slots answer the SAME object, so a second
             // target resolving to storage a previous slot already materialised
