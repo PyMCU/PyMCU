@@ -3315,6 +3315,20 @@ public partial class IRGenerator
             if (lit is StringLiteral slCls)
             {
                 strConstantVariables[cvName] = slCls.Value;
+                // The class body's own `attr = "text"` ALSO reserves a runtime slot
+                // (RecordClassAttrInit/Scan.cs always does, whatever case ends up filing the
+                // text) and stores the interned id into it, so a GENERIC read -- one that does
+                // not go through a compile-time text extractor -- still resolves. A write that
+                // happens only after the body closes skipped that half: strConstantVariables
+                // alone answers print(), but `x = Fake.attr` (or `x = inst.attr`) still visited
+                // this member generically, found no slot and no writer, and copied out of a
+                // fabricated, never-written variable (#verify_ir "read-never-written"). Mirror
+                // the class body's own shape so both write sites leave the same real storage.
+                if (!mutableGlobals.ContainsKey(cvName))
+                {
+                    mutableGlobals[cvName] = DataType.UINT8;
+                    Emit(new Copy(value, new Variable(cvName, DataType.UINT8)));
+                }
                 return;
             }
         }
