@@ -4463,11 +4463,24 @@ public partial class IRGenerator
                 // alias was written under "main.bus" while the call inside the SAME inlined
                 // body read "self"'s inline-qualified "bus", so nothing found the alias and
                 // the receiver fell to a plain, classless local (#390's method-call half).
+                // Binding it is a write like any other: whatever an earlier `v` was --
+                // a constant fold, a possible instance off a branch merge -- dies
+                // before the alias below re-stamps what the manager hands back.
+                ForgetBindingFacts(stmt.AsName);
                 string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + stmt.AsName
                     : (!string.IsNullOrEmpty(currentFunction)
                         ? currentFunction + "." + stmt.AsName
                         : stmt.AsName);
+                // The same remap EmitScalarVarAssign applies: when the as-name is a
+                // module global this write can reach (module-init/`main` scope or a
+                // `global` declaration), it binds the global's slot -- spelled the
+                // module way -- not the function-local slot `main.x` would mint as a
+                // second, unread storage cell for the same name.
+                string asGlobalKey = currentModulePrefix + stmt.AsName;
+                if (mutableGlobals.ContainsKey(asGlobalKey)
+                    && WriteBindingSpellings(stmt.AsName).Any(k => k == asGlobalKey))
+                    qualified = asGlobalKey;
                 // NOT `currentFunction + "." + objName`: a module-level `with g as h:` runs
                 // inside the synthesized/explicit main as module init, but every LATER
                 // reference to `g` resolves it as a module global under its bare name (the
@@ -4497,6 +4510,10 @@ public partial class IRGenerator
                     : (!string.IsNullOrEmpty(currentFunction)
                         ? currentFunction + "." + stmt.AsName
                         : stmt.AsName);
+                string asGlobalKey2 = currentModulePrefix + stmt.AsName;
+                if (mutableGlobals.ContainsKey(asGlobalKey2)
+                    && WriteBindingSpellings(stmt.AsName).Any(k => k == asGlobalKey2))
+                    qualified = asGlobalKey2;
                 string qualifiedObj = SlotInstanceKey(objName);
                 // A ZCA `__enter__` whose body is `return self` hands back the instance, but the
                 // instance has no single runtime value to hand back: the expansion yields a

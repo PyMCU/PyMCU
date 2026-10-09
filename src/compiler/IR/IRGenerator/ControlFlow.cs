@@ -3351,6 +3351,12 @@ public partial class IRGenerator
                 && exceptionCatchableSites.TryGetValue(boundKey, out outerSites);
             if (bound != null)
             {
+                // `except X as e` binds e -- a write like any other, so the facts an
+                // earlier `e` carried (a possible instance off a branch merge, a
+                // constant fold, an alias) die before the handler's own binding is
+                // filed; a read inside the body resolves through exceptionBindings
+                // either way.
+                ForgetBindingFacts(bound);
                 exceptionBindings[boundKey] = (exnCodeVar, exnType, snapPrefix);
                 // The raises this handler can actually see land in it: its own expected
                 // set, minus the codes an earlier sibling already catches. e.errno and
