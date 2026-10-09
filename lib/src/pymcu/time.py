@@ -13,7 +13,7 @@
 # Accuracy: <0.1% at 1, 8, 12, 16, 20 MHz; defaults to 16 MHz for other
 # AVR frequencies. For precise timing, use hardware timers directly.
 
-from pymcu.types import uint8, uint16, uint32, const, inline, asm, ptr
+from pymcu.types import uint8, uint16, uint32, const, inline, asm, ptr, warning
 from pymcu.chips import __CHIP__, __FREQ__
 from pymcu.exceptions import CompileError
 
@@ -697,6 +697,7 @@ def monotonic() -> float:
 
 
 @inline
+@warning("time.monotonic_ns() wraps at 2**32 ns (~4.29 s): for a timeout or interval longer than that, use monotonic() (float seconds) or millis() (uint32 ms, ~49-day wrap) instead.")
 def monotonic_ns() -> uint32:
     """CPython's time.monotonic_ns(): elapsed nanoseconds since an arbitrary point.
 
