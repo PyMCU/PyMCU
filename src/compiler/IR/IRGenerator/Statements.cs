@@ -453,6 +453,17 @@ public partial class IRGenerator
                         // contributes no widening, as before.
                         if (f.Iterable == null && RangeLiteralBounds(f) is { } rb)
                             localTypes[f.VarName] = NarrowestTypeFor(rb.Lo, rb.Hi);
+                        // The same evidence for `for x in [3, 1, 4, 1]:` -- a literal list/tuple
+                        // of compile-time integers unrolls exactly like a constant range, and an
+                        // accumulator reading its loop variable (`s = s * 10 + x`) needs x's width
+                        // the same way. Without this, x stayed UNKNOWN here (#364): WidthOf's
+                        // BinaryExpr case answers UNKNOWN the moment EITHER operand is, so the
+                        // whole `s * 10 + x` expression -- and so `s` itself -- recorded no
+                        // widening at all, leaving s at the one-byte slot its `s = 0` initializer
+                        // chose while the unrolled loop folded past it in silence.
+                        else if (f.Iterable is ListExpr or TupleExpr
+                                 && ListLiteralIntBounds(f.Iterable) is { } lb)
+                            localTypes[f.VarName] = NarrowestTypeFor(lb.Lo, lb.Hi);
                         return;
                 }
             }
@@ -531,6 +542,36 @@ public partial class IRGenerator
         if (trips <= 0) return (start, start);
         long last = start + (trips - 1) * step;
         return (Math.Min(start, last), Math.Max(start, last));
+    }
+
+    // The values a `for` over a literal list/tuple visits, read the same way a literal's
+    // elements are read everywhere else in this scan (an integer, a boolean, or a negated
+    // integer) -- or null when any element is not one of those, which leaves the loop
+    // variable untyped exactly as an unsupported range() bound already does.
+    private static (long Lo, long Hi)? ListLiteralIntBounds(Expression iterable)
+    {
+        static long? Lit(Expression e) => e switch
+        {
+            IntegerLiteral il => il.Value,
+            BooleanLiteral bl => bl.Value ? 1 : 0,
+            UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate, Operand: IntegerLiteral n } => -n.Value,
+            _ => null,
+        };
+        var elems = iterable switch
+        {
+            ListExpr le => le.Elements,
+            TupleExpr te => te.Elements,
+            _ => null,
+        };
+        if (elems == null || elems.Count == 0) return null;
+        long lo = long.MaxValue, hi = long.MinValue;
+        foreach (var e in elems)
+        {
+            if (Lit(e) is not { } v) return null;
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+        }
+        return (lo, hi);
     }
 
     /// <summary>The narrowest integer type that holds the whole closed range [min, max].</summary>
