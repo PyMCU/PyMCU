@@ -35,6 +35,13 @@ public partial class IRGenerator
         if (!variableAliases.ContainsKey(key) && !arraySizes.ContainsKey(key)
             && !string.IsNullOrEmpty(currentFunction))
             key = currentFunction + "." + name;
+        // Neither qualified spelling, when `name` ITSELF is already a flat array/field
+        // key (an instance's `<anchor>_<member>`, never qualified by currentFunction in
+        // the first place -- a field assigned a buffer aliases under exactly this bare
+        // spelling): fall back to it directly, the same bare-name candidate
+        // ResolveNameKey already tries last.
+        if (!variableAliases.ContainsKey(key) && !arraySizes.ContainsKey(key))
+            key = name;
         for (int d = 0; d < 20; d++)
         {
             if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
@@ -54,7 +61,14 @@ public partial class IRGenerator
     // needs no second home.
     private bool TryResolveArrayStorageKey(string key, out string storageKey)
     {
-        if (arraySizes.ContainsKey(key)) { storageKey = key; return true; }
+        // A key that ALSO has an alias is not real storage of its own, even when
+        // arraySizes mirrors the alias endpoint's size onto it for len()'s convenience
+        // (BindArrayAlias does this on purpose) -- the alias says what the bytes
+        // really are. Checked first: a field aliased to a buffer (`self.buf = buf`)
+        // must resolve to the BUFFER's storage when passed on whole, not stop at its
+        // own flattened name just because that name also answers a size query.
+        if (!variableAliases.ContainsKey(key) && arraySizes.ContainsKey(key))
+        { storageKey = key; return true; }
         // A name bound by ALIAS stands for what the chain lands on: an inline
         // parameter bound to a buffer argument aliases the buffer's name, and the
         // storage question must answer about that endpoint, not the alias.

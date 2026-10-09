@@ -86,6 +86,43 @@ public partial class IRGenerator
                     bytearrayParams.Add(bindKey);
                     (bufferScalarStamped ??= new List<string>()).Add(bindKey);
                 }
+                // The refusal-side fact above (bytearrayParams) is not the same as having
+                // real storage identity: `alias = buf; head(alias)` compiled and never
+                // refused, but passed `alias`'s own (never-aliased, scalar-copied) slot
+                // instead of buf's address -- CPython's 10 came back as 0. A plain name
+                // resolves to array storage the SAME way a field's does (ResolveNameKey
+                // follows whatever alias chain already exists), so alias it the same
+                // way, through BindArrayAlias.
+                //
+                // The TARGET key here is NOT bindKey: an array/buffer name is flat --
+                // "main" is the top-level script itself, not a qualifying prefix for one
+                // (IndexTargetHoldsScalarElements's own prefix computation treats "main"
+                // the same way) -- while bindKey follows the ordinary SCALAR convention
+                // ("main.alias"). Aliasing under bindKey left the array-side lookups
+                // (TryResolveArrayStorageKey, the call-argument marshaling, a later
+                // for-loop's size resolution) asking about the bare name and never
+                // finding it.
+                string arrBindKey = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + bindTgt.Name
+                    : (string.IsNullOrEmpty(currentFunction) || currentFunction == "main" ? bindTgt.Name
+                        : currentFunction + "." + bindTgt.Name);
+                string resolvedSrc = ResolveNameKey(bufAliasSrc.Name);
+                if (resolvedSrc != arrBindKey
+                    && (arraySizes.ContainsKey(resolvedSrc) || bytearrayParams.Contains(resolvedSrc))
+                    && !instanceClasses.ContainsKey(resolvedSrc + "__0"))
+                    // BindArrayAlias also mirrors the resolved size onto
+                    // arraySizes[arrBindKey] -- which a DIFFERENT, earlier
+                    // argument-marshaling branch (the plain-VariableExpr-argument
+                    // shape in EmitRegularFunctionCall/EmitInlineFunctionCall) reads
+                    // DIRECTLY, with no alias-chase of its own at all: `arraySizes.
+                    // ContainsKey(argQualified)` was true for "alias" and it built
+                    // ArrayBase("alias") right there, never asking variableAliases
+                    // whether "alias" stands for something else. BindSequenceAlias
+                    // only (no mirrored size) keeps that branch from matching, so it
+                    // falls through to the later, alias-aware one that resolves to
+                    // "buf". ResolveAliasedArraySize's own bare-name fallback (this
+                    // commit) is what keeps a FIELD's for-loop/len() still finding the
+                    // size without the mirror.
+                    BindSequenceAlias(arrBindKey, resolvedSrc);
             }
 
             // Positive proof the name holds ONE scalar element of a buffer, for
@@ -536,6 +573,31 @@ public partial class IRGenerator
                     variableTypes[listKey] = DataType.GC_REF;
                     Emit(new Copy(litVar, new Variable(listKey, DataType.GC_REF)));
                     return;
+                }
+
+                // `bufs = [buf]`: an element that is itself a buffer name falls
+                // through every case above (it is not constant-foldable, this literal
+                // is never appended to, and it is not a nested list/tuple) all the way
+                // to the generic scalar path below, which copies each element's FIRST
+                // BYTE into a `seqKey__0` slot instead of keeping the buffer's own
+                // address -- `for b in bufs: head(b)` then passed that stray byte
+                // where head() needed buf's address (CPython iterates the real
+                // bytearray object). Refused by name instead of left to produce that
+                // silently; aliasing each element the way a field or a plain copy
+                // does (BindSequenceAlias) is the fix for a later round.
+                foreach (var seqElem in seqElements)
+                {
+                    if (seqElem is not VariableExpr seqElemVe) continue;
+                    string seqElemKey = ResolveNameKey(seqElemVe.Name);
+                    if (arraySizes.ContainsKey(seqElemKey) || bytearrayParams.Contains(seqElemKey))
+                        throw UserError(
+                            $"'{seqTgt.Name}' holds '{seqElemVe.Name}', a buffer, as one of its "
+                            + "elements -- a list/tuple literal has no lowering yet for an "
+                            + "element that is itself a bytearray/bytes/fixed array (it would "
+                            + "need each slot to alias that element's own address, the way a "
+                            + "field or a plain copy already does, instead of copying its first "
+                            + "byte). Keep the buffers in separate names, or index them without "
+                            + "going through this list.", stmt.Value);
                 }
             }
         }
@@ -1240,7 +1302,19 @@ public partial class IRGenerator
                     && (arraySizes.ContainsKey(seqArrSrc) || bytearrayParams.Contains(seqArrSrc))
                     && !instanceClasses.ContainsKey(seqArrSrc + "__0"))
                 {
-                    BindArrayAlias(seqFieldKey, seqArrSrc);
+                    // BindArrayAlias: aliases the field to the buffer's real storage
+                    // AND mirrors its size onto arraySizes[seqFieldKey] for len()'s
+                    // sake. TryResolveArrayStorageKey now checks the alias before a
+                    // bare arraySizes hit (see its own comment), so the mirrored size
+                    // no longer shadows the alias the way it used to when passing the
+                    // field on WHOLE (`head(box.buf)`) -- that used to stop at the
+                    // field's own (arraySizes-mirrored but otherwise undeclared)
+                    // flattened name instead of following through to the real bytes.
+                    // BindSequenceAlias, not BindArrayAlias: see the comment on the
+                    // plain-local-alias case above (around arrBindKey) for the exact
+                    // reason -- a mirrored arraySizes[seqFieldKey] is read DIRECTLY by
+                    // an earlier, alias-blind argument-marshaling branch.
+                    BindSequenceAlias(seqFieldKey, seqArrSrc);
                     return;
                 }
             }
