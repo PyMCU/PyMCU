@@ -103,23 +103,34 @@ public partial class IRGenerator
     // untouched import from one the importer rebinds at all, where even its ONE write is
     // what CPython's later read must see instead of the defining module's own value
     // (`from m import X` then `X = 42`, PyMCU#rebindstr).
-    private static bool ProgramWritesName(ProgramNode ast, string name)
+    //
+    // Returns the first write site found (for a diagnostic to point at), or null when
+    // there is none, and whether that write is reachable ONLY through a function/method
+    // body -- a MODULE-level write (even nested in an if/for/try/with) is looked for
+    // FIRST and takes precedence, because the generation-time machinery already resolves
+    // that shape correctly on its own; `OnlyInsideFunction` is true only when the sole
+    // write is a `global name` assignment with no module-level statement backing it,
+    // which is the shape that needs a diagnostic instead (see its call site, Core.cs).
+    private static (Statement? Site, bool OnlyInsideFunction) ProgramWritesName(
+        ProgramNode ast, string name)
     {
-        bool found = false;
+        Statement? found = null;
         void Walk(Statement s)
         {
+            if (found != null) return;
             switch (s)
             {
-                case AssignStmt { Target: VariableExpr v } when v.Name == name: found = true; break;
-                case AnnAssign aa when aa.Target == name: found = true; break;
-                case VarDecl vd when vd.Name == name: found = true; break;
-                case AugAssignStmt { Target: VariableExpr av } when av.Name == name: found = true; break;
+                case AssignStmt { Target: VariableExpr v } when v.Name == name: found = s; break;
+                case AnnAssign aa when aa.Target == name: found = s; break;
+                case VarDecl vd when vd.Name == name: found = s; break;
+                case AugAssignStmt { Target: VariableExpr av } when av.Name == name: found = s; break;
             }
         }
         foreach (var s in TypeInference.WalkStatements(ast.GlobalStatements)) Walk(s);
+        if (found != null) return (found, false);
         foreach (var fn in ast.Functions.Concat(TypeInference.ClassMethods(ast)))
             foreach (var s in TypeInference.WalkStatements(fn.Body)) Walk(s);
-        return found;
+        return (found, found != null);
     }
 
     // Module-level names that are WRITTEN beyond their initializer: a second top-level

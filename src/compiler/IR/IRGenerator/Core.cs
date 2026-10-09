@@ -1418,10 +1418,46 @@ public partial class IRGenerator
                     // reach generation for the write-side check to recognise it as one.
                     bool srcIsRegister = srcScope.Globals.TryGetValue(sym, out var regProbe)
                         && regProbe.IsMemoryAddress;
-                    if (!srcIsRegister
-                        && (globals.ContainsKey(sym) || mutableGlobals.ContainsKey(sym)
-                            || ProgramWritesName(mainAst, sym)))
+                    var (writeSite, onlyInsideFunction) = srcIsRegister
+                        ? (null, false) : ProgramWritesName(mainAst, sym);
+                    bool alreadySeeded = globals.ContainsKey(sym) || mutableGlobals.ContainsKey(sym);
+                    if (!srcIsRegister && (alreadySeeded || writeSite != null))
+                    {
+                        // The rebind is reachable ONLY through a write ScanGlobals(mainAst)'s
+                        // own top-level-only scan never saw (a `global` write inside a
+                        // function, nothing backing it at module level), and the defining
+                        // module folded this name as a pure compile-time constant -- no
+                        // runtime storage at all, the ALL-CAPS convention. There is no slot
+                        // either the module's own value or this rebind could live in without
+                        // a cross-module mutability pass this compiler does not run: the
+                        // module decides its own folding before this file's rebind is ever
+                        // visible to it. Refuse by name, naming both fixes, rather than
+                        // silently keep answering with the stale, folded value
+                        // (PyMCU#rebindstr). A module-LEVEL write (even nested in an
+                        // if/for/try/with) is NOT this shape -- onlyInsideFunction is false
+                        // for it, and the existing generation-time resolution already
+                        // answers it correctly without a slot seeded here at all.
+                        if (onlyInsideFunction
+                            && srcScope.Globals.ContainsKey(sym)
+                            && !srcScope.MutableGlobals.ContainsKey(sym))
+                        {
+                            string moduleRef = !string.IsNullOrEmpty(imp.ModuleAlias)
+                                ? imp.ModuleAlias : imp.ModuleName;
+                            throw UserError(
+                                $"'{sym}' is folded as a compile-time constant in the module "
+                                + $"that defines it ('{imp.ModuleName}'), because nothing "
+                                + $"there ever reassigns it. This file rebinds it only "
+                                + $"through `global {sym}` inside a function, which this "
+                                + "compiler cannot answer for: the defining module's folding "
+                                + "is decided before an importer's rebind is visible to it. "
+                                + $"Either give '{sym}' a real top-level assignment in this "
+                                + $"file (`{sym} = ...` directly, not only inside a "
+                                + $"function), or `import {imp.ModuleName}` and write/read "
+                                + $"`{moduleRef}.{sym}` instead of the bare name.",
+                                writeSite);
+                        }
                         continue;
+                    }
 
                     if (srcScope.Globals.TryGetValue(sym, out var globalSym))
                     {
