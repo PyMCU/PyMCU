@@ -49,6 +49,9 @@ public class WalkStatementsGuardTests
         ("Scan.cs", "AlwaysLeaves"),
         ("Scan.cs", "HasOwnBreak"),
         ("Iteration.cs", "LoopBodyHasBreakOrContinue"),
+        ("Iteration.cs", "LoopBodyCanReturnOrRaise"), // recurses INTO nested loops on purpose:
+                                                       // return/raise unwind through them, unlike
+                                                       // break/continue just above
         ("Core.cs", "ContainsReturn"),
 
         // Flow-sensitive scans whose per-arm state cannot come from a flat list.

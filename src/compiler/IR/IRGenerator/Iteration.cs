@@ -240,6 +240,39 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// True when the body can leave this loop at an earlier iteration than its last one
+    /// some way OTHER than break/continue (PyMCU-review: the loop-variable-after-loop
+    /// doctrine). A `return` and an uncaught `raise` both unwind through every ENCLOSING
+    /// loop on the way out -- unlike break/continue, which only ever end the loop they
+    /// are written in -- so this recurses INTO a nested for/while, where
+    /// <see cref="LoopBodyHasBreakOrContinue"/> deliberately does not. A nested `def`
+    /// is a different function and its own return/raise never reaches here.
+    /// </summary>
+    private static bool LoopBodyCanReturnOrRaise(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return false;
+            case ReturnStmt: return true;
+            case RaiseStmt: return true;
+            case ForStmt f: return LoopBodyCanReturnOrRaise(f.Body);
+            case WhileStmt w: return LoopBodyCanReturnOrRaise(w.Body);
+            case Block b: return b.Statements.Any(LoopBodyCanReturnOrRaise);
+            case IfStmt i:
+                return LoopBodyCanReturnOrRaise(i.ThenBranch)
+                       || i.ElifBranches.Any(e => LoopBodyCanReturnOrRaise(e.Body))
+                       || LoopBodyCanReturnOrRaise(i.ElseBranch);
+            case MatchStmt m: return m.Branches.Any(br => LoopBodyCanReturnOrRaise(br.Body));
+            case WithStmt w2: return LoopBodyCanReturnOrRaise(w2.Body);
+            case TryStmt t:
+                return t.Body.Any(LoopBodyCanReturnOrRaise)
+                       || t.Handlers.Any(h => h.Handler.Any(LoopBodyCanReturnOrRaise))
+                       || (t.Finally?.Any(LoopBodyCanReturnOrRaise) ?? false);
+            default: return false; // a nested def/class is a different scope
+        }
+    }
+
     // ------------------------------------------------------------------
     // The unroll policy.
     //
@@ -2149,6 +2182,14 @@ public partial class IRGenerator
                 // so the tail fold below stays sound; an actual `break` can end the loop at an
                 // EARLIER iteration than the last, breakOnly: true tells the two apart.
                 bool hasBreak = LoopBodyHasBreakOrContinue(stmt.Body, breakOnly: true);
+                // A `return` or an uncaught `raise` is ALSO an earlier-than-last exit, the
+                // same as break -- CPython leaves the loop variable at whatever the
+                // iteration in progress bound it to, not the tuple's textual last element.
+                bool hasEarlyExit = hasBreak || LoopBodyCanReturnOrRaise(stmt.Body);
+                // Nothing after this loop ever reads the name: no copy is worth emitting,
+                // constant-folded or real (the range-loop path already gates on the same
+                // flag for the same reason).
+                bool loopVarRead = loopVarReadAfter.Contains(stmt);
 
                 // `for pin in (reset_dio, enable_dio, ...)`: each element is an already-built
                 // ZCA instance (adafruit_character_lcd). The same hoist a list argument already
@@ -2310,8 +2351,17 @@ public partial class IRGenerator
                         // WHICH of the two is not a constant. Short-circuiting the || would
                         // leave the second unevaluated and the caret with nothing to choose
                         // between.
-                        bool pairOk0 = BindUnrolledElement(varKey, parts[0]);
-                        bool pairOk1 = BindUnrolledElement(varKey2, parts[1]);
+                        //
+                        // materialize, same as the single-name form: a break/return/raise can
+                        // end this loop at an earlier pair than the last, and CPython leaves
+                        // BOTH names at whatever that pair's own iteration bound them to --
+                        // `for a, b in ((1, 2), (3, 4)): break` then `print(a, b)` must answer
+                        // 1, 2, not whichever pair unrolled last with no backing store at all.
+                        bool pairMaterialize = hasEarlyExit && loopVarRead;
+                        DataType pairDt0 = variableTypes.TryGetValue(varKey, out var pd0) ? pd0 : DataType.UINT8;
+                        DataType pairDt1 = variableTypes.TryGetValue(varKey2, out var pd1) ? pd1 : DataType.UINT8;
+                        bool pairOk0 = BindUnrolledElement(varKey, parts[0], materialize: pairMaterialize, forcedWidth: pairDt0);
+                        bool pairOk1 = BindUnrolledElement(varKey2, parts[1], materialize: pairMaterialize, forcedWidth: pairDt1);
                         if (!pairOk0 || !pairOk1)
                             throw UserError(
                                 "for-in over a list of pairs unrolls at compile time, so both values in " +
@@ -2323,7 +2373,7 @@ public partial class IRGenerator
                         continue;
                     }
 
-                    if (BindUnrolledElement(varKey, elem, materialize: hasBreak, forcedWidth: widestDt))
+                    if (BindUnrolledElement(varKey, elem, materialize: hasEarlyExit && loopVarRead, forcedWidth: widestDt))
                     {
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     }
@@ -2343,20 +2393,51 @@ public partial class IRGenerator
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
-                if (hasBreak)
+                // Whatever the loop variable(s) hold now must become a REAL, physically
+                // written value when anything after the loop reads it and the loop is
+                // GUARANTEED to have run to completion (no break/return/raise anywhere) --
+                // a compile-time-only fold is not enough, because a LATER mechanism that
+                // writes the same bare name for real (another loop reusing it, most
+                // directly) can leave a read resolving to THAT write instead, stale fold or
+                // not. `for v in (1, 2): for v in (7, 8): pass` then `print(v)` answered 2
+                // (the OUTER loop's own last element) instead of 8 (the INNER's, which is
+                // what actually ran last): the inner loop's own "leave the fold alone"
+                // never committed a real write the way the range-loop path's equivalent
+                // tail copy already does, so the outer loop's unrelated real storage -- not
+                // read through this fold at all -- won by default.
+                if (!hasEarlyExit && loopVarRead)
                 {
-                    // A `break` can end the loop at an EARLIER iteration than the last --
-                    // CPython leaves the loop variable bound to whichever element the break's
-                    // OWN iteration was processing, a run-time fact, not the tuple's textual
-                    // last element. `for v in (1, 2): break` followed by `print(v)` answered 2
-                    // (the tuple's last element) instead of 1 (what was actually in scope when
-                    // the break fired): the per-iteration Copy already left the right value in
-                    // v's own storage, only this stale compile-time belief needed to go.
+                    void Settle(string key)
+                    {
+                        if (!constantVariables.TryGetValue(key, out var cv)) return;
+                        DataType dt = variableTypes.TryGetValue(key, out var existing) ? existing : DataType.UINT8;
+                        Emit(new Copy(new Constant(cv), new Variable(key, dt)));
+                        variableTypes[key] = dt;
+                    }
+                    Settle(varKey);
+                    if (varKey2 != null) Settle(varKey2);
+                }
+
+                if (hasEarlyExit)
+                {
+                    // A break, a return or an uncaught raise can end the loop at an EARLIER
+                    // iteration than the last -- CPython leaves the loop variable(s) bound to
+                    // whichever element that iteration's OWN unrolled copy was processing, a
+                    // run-time fact, not the tuple's textual last element. `for v in (1, 2):
+                    // break` followed by `print(v)` answered 2 (the tuple's last element)
+                    // instead of 1 (what was actually in scope when the break fired): the
+                    // per-iteration materialize above already left the right value in each
+                    // name's own storage, only this stale compile-time belief needed to go.
                     constantVariables.Remove(varKey);
                     strConstantVariables.Remove(varKey);
                     floatConstantVariables.Remove(varKey);
+                    if (varKey2 != null)
+                    {
+                        constantVariables.Remove(varKey2);
+                        strConstantVariables.Remove(varKey2);
+                    }
                 }
-                // When there is no break, leave constantVariables/strConstantVariables/
+                // When nothing can exit early, leave constantVariables/strConstantVariables/
                 // floatConstantVariables alone: CPython leaves the loop variable bound to the
                 // LAST element once the loop ends, and for a literal tuple/list that element is
                 // always known at compile time when nothing can exit early (fixed length, no
@@ -2369,8 +2450,6 @@ public partial class IRGenerator
                 instanceClasses.Remove(varKey);
                 if (varKey2 != null)
                 {
-                    constantVariables.Remove(varKey2);
-                    strConstantVariables.Remove(varKey2);
                     variableAliases.Remove(varKey2);
                     instanceClasses.Remove(varKey2);
                 }
@@ -3877,7 +3956,14 @@ public partial class IRGenerator
         {
             (int unrollStart, int unrollStop, int unrollStep) = unroll;
             string unrollKey = QualifyLoopVar(stmt.VarName);
-            bool unrollBreaks = LoopBodyHasBreakOrContinue(stmt.Body);
+            // A `return` or an uncaught `raise` is ALSO an earlier-than-last exit, the same
+            // as break -- CPython leaves the loop variable at whatever the iteration in
+            // progress bound it to. `for v in range(2): raise ValueError()` caught by an
+            // enclosing except that reads `v` needed the per-iteration store below the same
+            // way a break does; with neither break nor continue written, this stayed false
+            // and nothing ever wrote a real value before the loop's own unconditional raise
+            // made the tail's "loop ran to completion" copy dead code that never executes.
+            bool unrollBreaks = LoopBodyHasBreakOrContinue(stmt.Body) || LoopBodyCanReturnOrRaise(stmt.Body);
             string unrollBrk = unrollBreaks ? MakeLabel() : "";
 
             // Python leaves the loop variable at the last value visited. The body reads it as
