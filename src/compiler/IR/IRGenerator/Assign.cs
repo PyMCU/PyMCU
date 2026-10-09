@@ -472,6 +472,21 @@ public partial class IRGenerator
 
                     Temporary emptyPtr = MakeTemp(DataType.GC_REF);
                     Emit(new GcAlloc(new Constant(2), emptyPtr));
+
+                    // gc_alloc returns 0 on OOM; the header stores below write through the
+                    // pointer unchecked, so a null result would land count/capacity at
+                    // address 0x0000 -- the register file (R0/R1) on AVR, SPH included.
+                    // Every other GcAlloc call site in this generator checks this already
+                    // (list append/slice/concat/comprehension/[x]*n/literal); this one and
+                    // the annotated-literal one below (EmitListAnnAssign) did not.
+                    Val emptyPtrU16Chk = emptyPtr with { Type = DataType.UINT16 };
+                    Temporary emptyAllocOk = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(BinaryOp.NotEqual, emptyPtrU16Chk, new Constant(0), emptyAllocOk));
+                    string emptyAllocOkLabel = MakeLabel();
+                    Emit(new JumpIfNotZero(emptyAllocOk, emptyAllocOkLabel));
+                    EmitRuntimeRaise("MemoryError", "empty list out of memory");
+                    Emit(new Label(emptyAllocOkLabel));
+
                     EmitListStore(emptyPtr, 0, new Constant(0));
                     EmitListStore(emptyPtr, 1, new Constant(0));
                     Emit(new Copy(emptyPtr, new Variable(listKey, DataType.GC_REF)));
@@ -8920,6 +8935,21 @@ public partial class IRGenerator
             // object must carry the ref-bearing flag or the collector neither
             // marks the inner lists nor fixes the slots when they move.
             Emit(new GcAlloc(new Constant(allocSize), tmpPtr, elemDt == DataType.GC_REF));
+
+            // gc_alloc returns 0 on OOM; the header/element stores below write through the
+            // pointer unchecked, so a null result would land count/capacity (and, for a
+            // non-empty literal, the first elements) at address 0x0000 -- the register
+            // file (R0/R1) on AVR, SPH included. Every other GcAlloc call site in this
+            // generator already checks this; this one (an annotated `list[T] = [...]`
+            // declaration, including list[list[T]]) and the bare `x = []` one above
+            // (promotedEmptyLists) did not.
+            Val tmpPtrU16Chk = tmpPtr with { Type = DataType.UINT16 };
+            Temporary tmpAllocOk = MakeTemp(DataType.UINT8);
+            Emit(new Binary(BinaryOp.NotEqual, tmpPtrU16Chk, new Constant(0), tmpAllocOk));
+            string tmpAllocOkLabel = MakeLabel();
+            Emit(new JumpIfNotZero(tmpAllocOk, tmpAllocOkLabel));
+            EmitRuntimeRaise("MemoryError", "list literal out of memory");
+            Emit(new Label(tmpAllocOkLabel));
 
             int initCount = initElements?.Count ?? 0;
             EmitListStore(tmpPtr, 0, new Constant(initCount));

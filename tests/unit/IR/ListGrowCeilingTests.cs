@@ -118,4 +118,68 @@ public class ListGrowCeilingTests
             && shl.Op == PyMCU.IR.BinaryOp.LShift
             && shl.Src2 is Constant s && s.Value == 1);
     }
+
+    // ------------------------------------------------------------------
+    // The other two GcAlloc call sites that landed a header through a null pointer
+    // unchecked: `x = []` later appended (Assign.cs, promotedEmptyLists) and an
+    // annotated `x: list[T] = [...]` declaration with a literal initializer
+    // (Assign.cs, EmitListAnnAssign -- also list[list[T]]'s own materialization).
+    // Every OTHER GcAlloc call site already raises MemoryError on a null result;
+    // these two did not, so a doubly-failed allocation (OOM, then OOM again after
+    // the collection attempt gc_alloc makes internally) wrote the list header
+    // through SRAM[0] -- the register file on AVR, R0/R1 included.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void EmptyListPromotionChecksTheAllocationResult()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "x = []\n" +
+            "x.append(1)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        int allocIdx = main.Body.FindIndex(i => i is GcAlloc { Size: Constant { Value: 2 } });
+        Assert.True(allocIdx >= 0);
+        var tail = main.Body.Skip(allocIdx + 1).ToList();
+        Assert.Contains(tail, i => i is Binary b && b.Op == PyMCU.IR.BinaryOp.NotEqual);
+        Assert.Contains(tail, i => i is JumpIfNotZero);
+        Assert.Contains(tail, i => i is SignalError);
+    }
+
+    [Fact]
+    public void AnnotatedListLiteralChecksTheAllocationResult()
+    {
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "x: list[uint8] = [1, 2, 3]\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        int allocIdx = main.Body.FindIndex(i => i is GcAlloc);
+        Assert.True(allocIdx >= 0);
+        var tail = main.Body.Skip(allocIdx + 1).ToList();
+        Assert.Contains(tail, i => i is Binary b && b.Op == PyMCU.IR.BinaryOp.NotEqual);
+        Assert.Contains(tail, i => i is JumpIfNotZero);
+        Assert.Contains(tail, i => i is SignalError);
+        // The check must run BEFORE any element is stored through the pointer.
+        int signalIdx = tail.FindIndex(i => i is SignalError);
+        int firstElemStoreIdx = tail.FindIndex(i => i is ArrayStore);
+        Assert.True(firstElemStoreIdx < 0 || signalIdx < firstElemStoreIdx);
+    }
+
+    [Fact]
+    public void AnnotatedListOfListsLiteralChecksTheAllocationResult()
+    {
+        // list[list[T]]'s own materialization goes through the SAME EmitListAnnAssign
+        // path, with elemDt == DataType.GC_REF -- the ref-bearing flag set on the SAME
+        // GcAlloc call this fix checks.
+        var ir = Gen(
+            "from pymcu.types import uint8\n\n" +
+            "bins: list[list[uint8]] = [[1, 2]]\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+
+        int allocIdx = main.Body.FindIndex(i => i is GcAlloc { Refs: true });
+        Assert.True(allocIdx >= 0);
+        Assert.Contains(main.Body.Skip(allocIdx + 1), i => i is SignalError);
+    }
 }
