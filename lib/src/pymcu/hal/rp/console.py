@@ -72,3 +72,40 @@ def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
         uart_write(buf[n])
 
 
+def uart_write_byte_repr(b: uint8):
+    # One byte of a CPython bytes/bytearray repr: printable ASCII as itself,
+    # backslash and quote escaped, tab/newline/return as \\t \\n \\r, anything
+    # else as \\xNN lowercase. Shared subroutine: print(bytearray) unrolls one
+    # call per byte. Same body as the AVR console's own uart_write_byte_repr
+    # (lib/src/pymcu/hal/avr/uart/avr.py) -- this family never had it, so
+    # TryEmitByteArrayReprArg's ResolveByteReprFn found nothing, fell through
+    # to the scalar print path, and `print(bytearray(...))` answered 0.
+    if b == 92 or b == 39:
+        uart_write(92)
+        uart_write(b)
+    elif b == 9:
+        uart_write(92)
+        uart_write(116)
+    elif b == 10:
+        uart_write(92)
+        uart_write(110)
+    elif b == 13:
+        uart_write(92)
+        uart_write(114)
+    elif b >= 32 and b <= 126:
+        uart_write(b)
+    else:
+        uart_write(92)
+        uart_write(120)
+        hi: uint8 = b >> 4
+        lo: uint8 = b & 0x0F
+        if hi < 10:
+            uart_write(48 + hi)
+        else:
+            uart_write(87 + hi)
+        if lo < 10:
+            uart_write(48 + lo)
+        else:
+            uart_write(87 + lo)
+
+
