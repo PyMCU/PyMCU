@@ -1,3 +1,4 @@
+using PyMCU.Common;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
@@ -181,5 +182,38 @@ public class ListGrowCeilingTests
         int allocIdx = main.Body.FindIndex(i => i is GcAlloc { Refs: true });
         Assert.True(allocIdx >= 0);
         Assert.Contains(main.Body.Skip(allocIdx + 1), i => i is SignalError);
+    }
+
+    // ------------------------------------------------------------------
+    // Target architecture gate (EmitListAnnAssign, Assign.cs): a growable list[T] needs
+    // the GC heap's collector. ARM (rp2040/rp2350, arch="arm") implements it the same way
+    // AVR does; any other target still refuses, naming a fixed array as the portable
+    // alternative.
+    // ------------------------------------------------------------------
+
+    private static ProgramIR GenFor(string arch, string src) =>
+        new IRGenerator().Generate(
+            new Parser(new Lexer(src).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = arch });
+
+    [Fact]
+    public void AnnotatedGrowableListIsAcceptedOnArm()
+    {
+        var ir = GenFor("arm",
+            "from pymcu.types import uint8\n\n" +
+            "xs: list[uint8] = list()\n" +
+            "xs.append(1)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is GcAlloc);
+    }
+
+    [Fact]
+    public void AnnotatedGrowableListStillRefusedOnAnUnsupportedTarget()
+    {
+        var ex = Assert.ThrowsAny<CompilerError>(() => GenFor("riscv",
+            "from pymcu.types import uint8\n\n" +
+            "xs: list[uint8] = list()\n"));
+        Assert.Contains("only implemented on AVR and ARM", ex.Message);
+        Assert.Contains("riscv", ex.Message);
     }
 }

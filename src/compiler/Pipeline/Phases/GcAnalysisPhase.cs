@@ -91,11 +91,12 @@ public class GcAnalysisPhase : CompilerPhaseBase
         if (needsGc)
         {
             string arch = context.DeviceConfig.Arch ?? "";
-            if (arch != "avr" && arch != "")
+            if (arch != "avr" && arch != "arm" && arch != "")
             {
                 throw new CompilerError("GcAnalysis",
-                    $"GC_REF / gc_alloc is only supported on AVR targets (detected arch: '{arch}'). " +
-                    "Use @value classes or primitive types for other architectures.", 0, 0);
+                    $"GC_REF / gc_alloc is only supported on AVR and ARM targets " +
+                    $"(detected arch: '{arch}'). Use @value classes or primitive types " +
+                    "for other architectures.", 0, 0);
             }
 
             context.ProgramNeedsGc = true;
