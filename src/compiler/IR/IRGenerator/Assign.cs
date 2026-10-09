@@ -10729,6 +10729,26 @@ public partial class IRGenerator
         }
     }
 
+    // GC_REF values are absolute heap addresses, whose width depends on the target's
+    // address space -- 16 bits on AVR (the only width list[T]/array.array's pointer-
+    // offset arithmetic originally assumed) but 32 on ARM: RP2040/RP2350 RAM starts at
+    // 0x20000000, far outside 16 bits, so reinterpreting a GC_REF as UINT16 before an
+    // ADD silently truncates it to garbage and every subsequent read/write through it
+    // lands at a wrong, essentially random address. Every "basePtr + offset" computation
+    // for a list element/header access goes through this one switch, so a backend added
+    // later needs only extend it here, not re-audit each call site.
+    internal DataType GcPtrWidth() => deviceConfig?.Arch == "arm" ? DataType.UINT32 : DataType.UINT16;
+
+    // The GC object header's size in bytes, i.e. how far BEFORE user_ptr the mark byte
+    // sits: 2 on AVR (mark + a 1-byte size field, gc_runtime.S), 4 on ARM (mark + a
+    // reserved byte + a 2-byte size field -- Rp2040LlvmCodeGen's EmitGcRuntime -- wider
+    // because this target's far larger RAM makes AVR's 255-byte object ceiling the
+    // wrong tradeoff, and the extra reserved byte keeps every payload 4-byte aligned).
+    // Only EmitRefPayloadFlag reaches backward into the header from IRGenerator's side;
+    // every other list field (count, capacity, elements) is addressed FORWARD from
+    // user_ptr and is already header-size-agnostic.
+    internal int GcHeaderSize() => deviceConfig?.Arch == "arm" ? 4 : 2;
+
     // Stores `value` at `basePtr + offset`. For offset 0, stores directly via basePtr.
     // For offset > 0, emits a Binary ADD to compute the address then StoreIndirect.
     internal void EmitListStore(Val basePtr, int offset, Val value, DataType elemType = DataType.UINT8)
@@ -10739,11 +10759,12 @@ public partial class IRGenerator
             return;
         }
 
-        Val ptrUint16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
-                       : basePtr is Variable v ? v with { Type = DataType.UINT16 }
-                       : basePtr;
-        Temporary addrTmp = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
+        DataType ptrWidth = GcPtrWidth();
+        Val ptrTyped = basePtr is Temporary t ? t with { Type = ptrWidth }
+                     : basePtr is Variable v ? v with { Type = ptrWidth }
+                     : basePtr;
+        Temporary addrTmp = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, ptrTyped, new Constant(offset), addrTmp));
         Emit(new StoreIndirect(value, addrTmp, elemType));
     }
 
@@ -10757,11 +10778,12 @@ public partial class IRGenerator
             return dst;
         }
 
-        Val ptrUint16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
-                       : basePtr is Variable v ? v with { Type = DataType.UINT16 }
-                       : basePtr;
-        Temporary addrTmp = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
+        DataType ptrWidth = GcPtrWidth();
+        Val ptrTyped = basePtr is Temporary t ? t with { Type = ptrWidth }
+                     : basePtr is Variable v ? v with { Type = ptrWidth }
+                     : basePtr;
+        Temporary addrTmp = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, ptrTyped, new Constant(offset), addrTmp));
         Emit(new LoadIndirect(addrTmp, dst, elemType));
         return dst;
     }

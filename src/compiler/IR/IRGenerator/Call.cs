@@ -13642,37 +13642,40 @@ public partial class IRGenerator
         return "";
     }
 
-    // Computes basePtr + 2 + index * elemSize as a UINT16 address Temporary. A negative
-    // constant index counts from the list's run-time length (header byte 0): `xs[-1]` used
-    // as it was addressed the header and printed its bytes as an element.
+    // Computes basePtr + 2 + index * elemSize as a pointer-width address Temporary (see
+    // GcPtrWidth -- 16 bits on AVR, 32 on ARM, since this is absolute-heap-address
+    // arithmetic). A negative constant index counts from the list's run-time length
+    // (header byte 0): `xs[-1]` used as it was addressed the header and printed its
+    // bytes as an element.
     private Temporary EmitElemAddr(Val basePtr, Val index, int elemSize)
     {
+        DataType ptrWidth = GcPtrWidth();
         if (index is Constant { Value: < 0 } negIdx)
         {
             Temporary count = EmitListLoad(basePtr, 0, DataType.UINT8);
-            Temporary fromEnd = MakeTemp(DataType.UINT16);
+            Temporary fromEnd = MakeTemp(ptrWidth);
             Emit(new Binary(BinaryOp.Sub, count, new Constant(-negIdx.Value), fromEnd));
             index = fromEnd;
         }
 
-        Val ptrU16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
-                   : basePtr is Variable v ? v with { Type = DataType.UINT16 }
-                   : basePtr;
+        Val ptrTyped = basePtr is Temporary t ? t with { Type = ptrWidth }
+                      : basePtr is Variable v ? v with { Type = ptrWidth }
+                      : basePtr;
 
-        Temporary finalAddr = MakeTemp(DataType.UINT16);
+        Temporary finalAddr = MakeTemp(ptrWidth);
         if (elemSize == 1)
         {
-            Temporary idxPlusTwo = MakeTemp(DataType.UINT16);
+            Temporary idxPlusTwo = MakeTemp(ptrWidth);
             Emit(new Binary(BinaryOp.Add, index, new Constant(2), idxPlusTwo));
-            Emit(new Binary(BinaryOp.Add, ptrU16, idxPlusTwo, finalAddr));
+            Emit(new Binary(BinaryOp.Add, ptrTyped, idxPlusTwo, finalAddr));
         }
         else
         {
-            Temporary scaled = MakeTemp(DataType.UINT16);
+            Temporary scaled = MakeTemp(ptrWidth);
             Emit(new Binary(BinaryOp.Mul, index, new Constant(elemSize), scaled));
-            Temporary scaledPlusTwo = MakeTemp(DataType.UINT16);
+            Temporary scaledPlusTwo = MakeTemp(ptrWidth);
             Emit(new Binary(BinaryOp.Add, scaled, new Constant(2), scaledPlusTwo));
-            Emit(new Binary(BinaryOp.Add, ptrU16, scaledPlusTwo, finalAddr));
+            Emit(new Binary(BinaryOp.Add, ptrTyped, scaledPlusTwo, finalAddr));
         }
         return finalAddr;
     }
@@ -14055,10 +14058,15 @@ public partial class IRGenerator
 
         // gc_alloc returns 0 on OOM; the stores and copy loop below write through the
         // pointer unchecked, so a null result would land a list header and the element
-        // bytes at address 0x0000 -- which is IO space, SPH included.
-        Val newPtrU16Chk = newPtr with { Type = DataType.UINT16 };
+        // bytes at address 0x0000 -- which is IO space, SPH included (on ARM, the start
+        // of BOOTROM). Checked at pointer width (GcPtrWidth): on AVR this is UINT16 same
+        // as always, but a 32-bit GC_REF compared as only its low UINT16 half could read
+        // a real, successful allocation's address as "0" whenever that half happens to
+        // be zero (any address that is a multiple of 0x10000).
+        DataType ptrWidth = GcPtrWidth();
+        Val newPtrChk = newPtr with { Type = ptrWidth };
         Temporary allocOk = MakeTemp(DataType.UINT8);
-        Emit(new Binary(BinaryOp.NotEqual, newPtrU16Chk, new Constant(0), allocOk));
+        Emit(new Binary(BinaryOp.NotEqual, newPtrChk, new Constant(0), allocOk));
         string allocOkLabel = MakeLabel();
         Emit(new JumpIfNotZero(allocOk, allocOkLabel));
         EmitRuntimeRaise("MemoryError", "list append out of memory");
@@ -14070,16 +14078,16 @@ public partial class IRGenerator
 
         // Copy existing elements byte-by-byte from the (possibly relocated) old buffer at listVar.
         // Compute base pointers outside the loop
-        Val oldPtrU16 = listVar with { Type = DataType.UINT16 };
-        Val newPtrU16 = newPtr with { Type = DataType.UINT16 };
-        Temporary totalBytes = MakeTemp(DataType.UINT16);
+        Val oldPtrTyped = listVar with { Type = ptrWidth };
+        Val newPtrTyped = newPtr with { Type = ptrWidth };
+        Temporary totalBytes = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Mul, tmpLen, new Constant(elemSize), totalBytes));
-        Temporary oldBase = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, oldPtrU16, new Constant(2), oldBase));
-        Temporary newBase = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, newPtrU16, new Constant(2), newBase));
+        Temporary oldBase = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, oldPtrTyped, new Constant(2), oldBase));
+        Temporary newBase = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, newPtrTyped, new Constant(2), newBase));
 
-        Temporary byteOff = MakeTemp(DataType.UINT16);
+        Temporary byteOff = MakeTemp(ptrWidth);
         Emit(new Copy(new Constant(0), byteOff));
         string copyLoopLabel = MakeLabel();
         string copyLoopEnd = MakeLabel();
@@ -14087,9 +14095,9 @@ public partial class IRGenerator
         Temporary cmpDone = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterEqual, byteOff, totalBytes, cmpDone));
         Emit(new JumpIfNotZero(cmpDone, copyLoopEnd));
-        Temporary srcAddr = MakeTemp(DataType.UINT16);
+        Temporary srcAddr = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Add, oldBase, byteOff, srcAddr));
-        Temporary dstAddr = MakeTemp(DataType.UINT16);
+        Temporary dstAddr = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Add, newBase, byteOff, dstAddr));
         Temporary byteTmp = MakeTemp(DataType.UINT8);
         Emit(new LoadIndirect(srcAddr, byteTmp));
@@ -14190,8 +14198,9 @@ public partial class IRGenerator
 
         // A null return is real heap exhaustion; a header store through it is
         // SRAM[0] (the register file) -- refuse loudly instead.
+        DataType ptrWidth = GcPtrWidth();
         string okLabel = MakeLabel();
-        Emit(new JumpIfNotZero(dst with { Type = DataType.UINT16 }, okLabel));
+        Emit(new JumpIfNotZero(dst with { Type = ptrWidth }, okLabel));
         EnterRuntimeBranch($"copying '{srcExpr.Name}'");
         try
         {
@@ -14204,14 +14213,14 @@ public partial class IRGenerator
         EmitListStore(dst, 0, len);
         EmitListStore(dst, 1, len);
 
-        Val srcU16 = srcVar with { Type = DataType.UINT16 };
-        Val dstU16 = dst with { Type = DataType.UINT16 };
-        Temporary srcBase = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, srcU16, new Constant(2), srcBase));
-        Temporary dstBase = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, dstU16, new Constant(2), dstBase));
+        Val srcTyped = srcVar with { Type = ptrWidth };
+        Val dstTyped = dst with { Type = ptrWidth };
+        Temporary srcBase = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, srcTyped, new Constant(2), srcBase));
+        Temporary dstBase = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, dstTyped, new Constant(2), dstBase));
 
-        Temporary byteOff = MakeTemp(DataType.UINT16);
+        Temporary byteOff = MakeTemp(ptrWidth);
         Emit(new Copy(new Constant(0), byteOff));
         string copyLoopLabel = MakeLabel();
         string copyLoopEnd = MakeLabel();
@@ -14219,9 +14228,9 @@ public partial class IRGenerator
         Temporary cmpDone = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterEqual, byteOff, totalBytes, cmpDone));
         Emit(new JumpIfNotZero(cmpDone, copyLoopEnd));
-        Temporary srcAddr = MakeTemp(DataType.UINT16);
+        Temporary srcAddr = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Add, srcBase, byteOff, srcAddr));
-        Temporary dstAddr = MakeTemp(DataType.UINT16);
+        Temporary dstAddr = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Add, dstBase, byteOff, dstAddr));
         Temporary byteTmp = MakeTemp(DataType.UINT8);
         Emit(new LoadIndirect(srcAddr, byteTmp));
@@ -14262,9 +14271,10 @@ public partial class IRGenerator
     private void EmitRefPayloadFlag(Variable listVar)
     {
         usesRefPayloads = true;
-        Temporary hdrAddr = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Sub, listVar with { Type = DataType.UINT16 },
-            new Constant(2), hdrAddr));
+        DataType ptrWidth = GcPtrWidth();
+        Temporary hdrAddr = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Sub, listVar with { Type = ptrWidth },
+            new Constant(GcHeaderSize()), hdrAddr));
         Temporary hdrByte = MakeTemp(DataType.UINT8);
         Emit(new LoadIndirect(hdrAddr, hdrByte));
         Temporary hdrSet = MakeTemp(DataType.UINT8);

@@ -4705,10 +4705,11 @@ public partial class IRGenerator
         // re-derived from the (possibly updated) variable afterwards. A null
         // return is real heap exhaustion -- refuse rather than write the header
         // through SRAM[0] (the register file).
+        DataType ptrWidth = GcPtrWidth();
         Temporary dstPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(allocSize, dstPtr, elemDt == DataType.GC_REF));
         string okLabel = MakeLabel();
-        Emit(new JumpIfNotZero(dstPtr with { Type = DataType.UINT16 }, okLabel));
+        Emit(new JumpIfNotZero(dstPtr with { Type = ptrWidth }, okLabel));
         EnterRuntimeBranch($"slicing '{srcVe.Name}'");
         try
         {
@@ -4734,15 +4735,15 @@ public partial class IRGenerator
         Temporary sliceDone = MakeTemp(DataType.UINT8);
         Emit(new Binary(BinaryOp.GreaterEqual, dstIdx, count16, sliceDone));
         Emit(new JumpIfNotZero(sliceDone, sliceLoopEnd));
-        Temporary srcOff = MakeTemp(DataType.UINT16);
+        Temporary srcOff = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Mul, srcIdx, new Constant(elemSize), srcOff));
-        Temporary srcAddr = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, srcVar with { Type = DataType.UINT16 }, srcOff, srcAddr));
+        Temporary srcAddr = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, srcVar with { Type = ptrWidth }, srcOff, srcAddr));
         Emit(new AugAssign(BinaryOp.Add, srcAddr, new Constant(2)));
-        Temporary dstOff = MakeTemp(DataType.UINT16);
+        Temporary dstOff = MakeTemp(ptrWidth);
         Emit(new Binary(BinaryOp.Mul, dstIdx, new Constant(elemSize), dstOff));
-        Temporary dstAddr = MakeTemp(DataType.UINT16);
-        Emit(new Binary(BinaryOp.Add, dstPtr with { Type = DataType.UINT16 }, dstOff, dstAddr));
+        Temporary dstAddr = MakeTemp(ptrWidth);
+        Emit(new Binary(BinaryOp.Add, dstPtr with { Type = ptrWidth }, dstOff, dstAddr));
         Emit(new AugAssign(BinaryOp.Add, dstAddr, new Constant(2)));
         Temporary elemTmp = MakeTemp(elemDt);
         Emit(new LoadIndirect(srcAddr, elemTmp, elemDt));
@@ -4826,10 +4827,11 @@ public partial class IRGenerator
 
         string dstKey = QualifyHelperName("__cat_" + labelCounter++);
         var dstVar = new Variable(dstKey, DataType.GC_REF);
+        DataType ptrWidth = GcPtrWidth();
         Temporary dstPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(allocSize, dstPtr, elemDt == DataType.GC_REF));
         string catOk = MakeLabel();
-        Emit(new JumpIfNotZero(dstPtr with { Type = DataType.UINT16 }, catOk));
+        Emit(new JumpIfNotZero(dstPtr with { Type = ptrWidth }, catOk));
         EnterRuntimeBranch("concatenating two lists");
         try
         {
@@ -4859,17 +4861,17 @@ public partial class IRGenerator
             Temporary done = MakeTemp(DataType.UINT8);
             Emit(new Binary(BinaryOp.GreaterEqual, idx, srcLen, done));
             Emit(new JumpIfNotZero(done, loopEnd));
-            Temporary srcOff = MakeTemp(DataType.UINT16);
+            Temporary srcOff = MakeTemp(ptrWidth);
             Emit(new Binary(BinaryOp.Mul, idx, new Constant(elemSize), srcOff));
-            Temporary srcAddr = MakeTemp(DataType.UINT16);
-            Emit(new Binary(BinaryOp.Add, src with { Type = DataType.UINT16 }, srcOff, srcAddr));
+            Temporary srcAddr = MakeTemp(ptrWidth);
+            Emit(new Binary(BinaryOp.Add, src with { Type = ptrWidth }, srcOff, srcAddr));
             Emit(new AugAssign(BinaryOp.Add, srcAddr, new Constant(2)));
             Temporary dstIdx = MakeTemp(DataType.UINT16);
             Emit(new Binary(BinaryOp.Add, idx, baseIdx, dstIdx));
-            Temporary dstOff = MakeTemp(DataType.UINT16);
+            Temporary dstOff = MakeTemp(ptrWidth);
             Emit(new Binary(BinaryOp.Mul, dstIdx, new Constant(elemSize), dstOff));
-            Temporary dstAddr = MakeTemp(DataType.UINT16);
-            Emit(new Binary(BinaryOp.Add, dstVar with { Type = DataType.UINT16 }, dstOff, dstAddr));
+            Temporary dstAddr = MakeTemp(ptrWidth);
+            Emit(new Binary(BinaryOp.Add, dstVar with { Type = ptrWidth }, dstOff, dstAddr));
             Emit(new AugAssign(BinaryOp.Add, dstAddr, new Constant(2)));
             Temporary elemTmp = MakeTemp(elemDt);
             Emit(new LoadIndirect(srcAddr, elemTmp, elemDt));
@@ -4957,7 +4959,7 @@ public partial class IRGenerator
         Temporary resPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(allocSize, resPtr, resElem == DataType.GC_REF));
         string resOk = MakeLabel();
-        Emit(new JumpIfNotZero(resPtr with { Type = DataType.UINT16 }, resOk));
+        Emit(new JumpIfNotZero(resPtr with { Type = GcPtrWidth() }, resOk));
         EnterRuntimeBranch("materializing a list comprehension");
         try
         {
@@ -5055,7 +5057,7 @@ public partial class IRGenerator
         Temporary resPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(allocSize, resPtr, false));
         string repOk = MakeLabel();
-        Emit(new JumpIfNotZero(resPtr with { Type = DataType.UINT16 }, repOk));
+        Emit(new JumpIfNotZero(resPtr with { Type = GcPtrWidth() }, repOk));
         EnterRuntimeBranch("materializing a [x] * n list");
         try
         {
@@ -5172,7 +5174,7 @@ public partial class IRGenerator
         // The allocation answers 0 on exhaustion: a header store through it is
         // SRAM[0] -- raise the way list() and append do.
         string litOk = MakeLabel();
-        Emit(new JumpIfNotZero(tmpPtr with { Type = DataType.UINT16 }, litOk));
+        Emit(new JumpIfNotZero(tmpPtr with { Type = GcPtrWidth() }, litOk));
         EnterRuntimeBranch("materializing a list literal");
         try
         {
