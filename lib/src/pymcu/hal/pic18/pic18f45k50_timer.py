@@ -117,11 +117,35 @@ def millis_init():
 
 @inline
 def millis() -> uint32:
-    """Milliseconds since millis_init(), read atomically under GIE."""
+    """Milliseconds since millis_init(), read atomically under GIE.
+
+    _millis_ms only advances when an overflow completes, so by itself it can
+    lag true elapsed time by almost one whole overflow period (~1.024 ms):
+    harmless amortized over many overflows, but up to ~0.1% on one isolated
+    reading (the same gap the AVR HAL closes in its own millis() -- see its
+    comment for the derivation). Fold in the current, not-yet-complete
+    overflow's progress (TMR0L, 4 us/tick) plus the ms-fraction the ISR has
+    carried but not yet rounded into _millis_ms (_millis_fract, eighths of a
+    ms); together they cross 1000 us exactly when a whole extra millisecond
+    has genuinely elapsed since the last ISR run.
+    """
     INTCON[7] = 0
-    t: uint32 = _millis_ms
+    ms: uint32 = _millis_ms
+    fract: uint8 = _millis_fract
+    tc: uint8 = TMR0L.value
+    pending: uint8 = INTCON[2]
     INTCON[7] = 1
-    return t
+    if pending == 1:
+        if tc < 255:
+            ms = ms + 1
+            fract = fract + 3
+            if fract >= 125:
+                fract = fract - 125
+                ms = ms + 1
+    extra_us: uint16 = uint16(fract) * 8 + uint16(tc) * 4
+    if extra_us >= 1000:
+        ms = ms + 1
+    return ms
 
 
 @inline

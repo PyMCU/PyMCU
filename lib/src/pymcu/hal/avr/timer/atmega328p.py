@@ -294,11 +294,40 @@ def millis_init():
 
 @inline
 def millis() -> uint32:
-    # Read the 4-byte counter atomically by disabling interrupts briefly.
+    # _millis_ms (read atomically above) only advances when an overflow
+    # completes, so by itself it can lag true elapsed time by almost one
+    # whole overflow period (~1.024 ms): harmless amortized over many
+    # overflows -- the ISR's fractional correction keeps the long-run rate
+    # exact -- but up to ~0.1% on a single isolated reading, which is what a
+    # caller timing one sleep() actually sees (a 10 ms sleep right after
+    # millis_init() read back as 9). Close the gap the same way micros()
+    # already does, by folding in how far the CURRENT, not-yet-complete
+    # overflow has gotten: TCNT0 (tc, 4 us/tick) plus the ms-fraction the
+    # ISR has already carried but not yet rounded into _millis_ms
+    # (_millis_fract, in eighths of a ms -- 125 units = 1 ms, so *8 is us).
+    # The two together cross 1000 us exactly when a whole extra millisecond
+    # has genuinely elapsed since the last ISR run.
     asm("CLI")
-    t: uint32 = _millis_ms
+    ms: uint32 = _millis_ms
+    fract: uint8 = _millis_fract
+    tc: uint8 = TCNT0.value
+    pending: uint8 = TIFR0.value & 0x01
     asm("SEI")
-    return t
+    if pending:
+        # TOV0 is set but interrupts were off, so the ISR has not applied
+        # this overflow yet: apply the same carry it would have, so tc
+        # (already rolled over for the new period) is read against the
+        # right base -- the same race micros() guards against below.
+        if tc < 255:
+            ms = ms + 1
+            fract = fract + 3
+            if fract >= 125:
+                fract = fract - 125
+                ms = ms + 1
+    extra_us: uint16 = uint16(fract) * 8 + uint16(tc) * 4
+    if extra_us >= 1000:
+        ms = ms + 1
+    return ms
 
 
 @inline
