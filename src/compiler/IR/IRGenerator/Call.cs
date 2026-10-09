@@ -11456,25 +11456,12 @@ public partial class IRGenerator
     // the program and reports nothing (p17), and `import time as t; t.ticks_ms()`
     // resolves to the compat layer's ticks_ms whatever the alias was.
     //
-    // Emitted only for callsites in the program's own code -- a stdlib module expanded
-    // inline reaches the same leaf functions from its own callsites (asyncio.ticks
-    // reads the same micros), and deciding on those would reserve a timer the program
-    // never asked about. The two exceptions take all callsites: a UART construction is
-    // ownership wherever it is constructed (the micropython-compat machine.UART wraps
-    // the stdlib one inside its own module), and a raise-with-message inside imported
-    // code lowers to the same report machinery.
-
-    /// Whether the call being lowered sits in a file that is the program's own --
-    /// the entry module (empty source path) or a module the loader recorded under
-    /// the project root, the same test WarnLoopAccumulator makes.
-    private bool CallsiteIsProgramCode()
-    {
-        if (string.IsNullOrEmpty(currentSourcePath)) return true;
-        foreach (var m in projectModules)
-            if (modulePaths.TryGetValue(m, out var mp) && mp == currentSourcePath)
-                return true;
-        return false;
-    }
+    // The callsite is not part of the test at all: a resolved call to the timebase
+    // readers or to millis_init() arms the same counter whether it sits in the
+    // program's own code or in an installed library expanded inline (asyncio.ticks
+    // reads the same micros, and the CircuitPython keypad queue reads ticks_ms).
+    // What still must not report is the program's OWN same-named function, so every
+    // check keeps the CalleeDefinedInProgram guard.
 
     /// Whether the resolved callee was declared in a file of the program itself.
     /// functionModulePrefix keys the module the scan found the function in; a name
@@ -11494,6 +11481,16 @@ public partial class IRGenerator
     private static readonly string[] TimebaseReaderSuffixes =
         { "_micros", "_ticks_ms", "_ticks_us", "_monotonic", "_monotonic_ns" };
 
+    // [NEEDS_TIMEBASE] only exists where the counter is software and something has
+    // to arm it: ATmega/ATtiny Timer0 or the PIC18F45K50 one. On RP2040/RP2350 the
+    // same readers resolve to the hardware TIMER's own registers, so a read there
+    // needs no init -- and the millis_init the driver would inject does not exist
+    // for the target at all.
+    private bool TargetHasSoftwareCounter() =>
+        deviceConfig.TargetChip.StartsWith("atmega", StringComparison.OrdinalIgnoreCase)
+        || deviceConfig.TargetChip.StartsWith("attiny", StringComparison.OrdinalIgnoreCase)
+        || deviceConfig.TargetChip.Equals("pic18f45k50", StringComparison.OrdinalIgnoreCase);
+
     private void ReportDriverNeeds(string callee)
     {
         // A UART construction reports regardless of callsite: the micropython
@@ -11503,8 +11500,6 @@ public partial class IRGenerator
             ? callee[..^9] : callee;
         if (IsStdlibClass(ctorClass, "UART", "uart"))
             Logger.StdoutOwned();
-
-        if (!CallsiteIsProgramCode()) return;
 
         if (callee.EndsWith("_clock_init", StringComparison.Ordinal)
             && !CalleeDefinedInProgram(callee))
@@ -11517,6 +11512,14 @@ public partial class IRGenerator
             return;
         }
 
+        if (!TargetHasSoftwareCounter()) return;
+
+        // An installed library's own same-named function (module prefix `mylib_`,
+        // say) still reports here: the compat readers resolve through bare module
+        // names like `supervisor`/`utime`, so no prefix test can separate them
+        // from a vendored re-implementation. That direction errs toward arming a
+        // counter nobody reads -- wasteful but sound -- where the reverse would
+        // leave the counter frozen with no diagnostic.
         foreach (var suffix in TimebaseReaderSuffixes)
             if (callee.EndsWith(suffix, StringComparison.Ordinal)
                 && !CalleeDefinedInProgram(callee))

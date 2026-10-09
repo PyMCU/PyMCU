@@ -3066,13 +3066,24 @@ public partial class IRGenerator
         // being handled, which is the one being re-raised. `raise e` on the bound name is
         // the same re-raise, so it writes nothing either.
         bool writesMessage = !string.IsNullOrEmpty(stmt.ErrorType) && !reraisesBound;
-        // RFC 0014 family 7: a `raise E(...)` in the program's own code is the fact the
-        // driver used to regex the source for. Reported here -- after the re-raise
-        // cases are excluded, whether or not the message machinery is on -- so a
-        // program whose raises carry messages but never print()s still gets the
-        // console writers the unhandled report needs.
-        if (writesMessage && stmt.HasArgument && CallsiteIsProgramCode())
-            Logger.NeedsExnmsg();
+        // RFC 0014 family 7: a `raise E(...)` that lowers is the fact the driver used
+        // to regex the source for. Reported here -- after the re-raise cases are
+        // excluded, whether or not the message machinery is on, and from whatever
+        // file the raise lives in: a raise inside an installed library lowers to
+        // the same report machinery and must not lose its message.
+        //
+        // The report is deferred, not emitted now: every non-inline def in an
+        // imported module is queued for lowering, so a raise in a function nothing
+        // calls still passes this point, and the token would stage console writers
+        // for a message no reachable raise can deliver. The enclosing function's IR
+        // name is recorded instead; GenerateCore emits once reachability is known.
+        if (writesMessage && stmt.HasArgument)
+        {
+            if (string.IsNullOrEmpty(currentFunction))
+                Logger.NeedsExnmsg();
+            else
+                raiseMessageFunctions.Add(currentFunction);
+        }
         bool dynamicStored = false;
         if (intArg && programRecordsRaiseMessages && writesMessage)
         {

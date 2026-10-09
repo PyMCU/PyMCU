@@ -380,8 +380,10 @@ public static class Optimizer
 
     // Functions reachable from main, any ISR, or any @export_c entry point.
     // Edges come from Call and from FunctionRef uses, so a function captured as a
-    // Callable pointer counts as reached.
-    private static HashSet<string> ComputeReachableFunctions(ProgramIR program)
+    // Callable pointer counts as reached. Internal so the IRGenerator can ask the
+    // same question about its just-lowered program (the deferred NEEDS_EXNMSG
+    // report keys on it).
+    internal static HashSet<string> ComputeReachableFunctions(ProgramIR program)
     {
         var callGraph = new Dictionary<string, HashSet<string>>();
         foreach (var func in program.Functions)

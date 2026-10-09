@@ -817,6 +817,15 @@ public partial class IRGenerator
     /// the report machinery out of images whose reachable code never raises one.
     private bool sawRaiseMessageStore;
 
+    /// Qualified IR names of the functions inside which a raise carrying a message
+    /// lowered. Every non-inline def in a scanned module is queued for lowering, so a
+    /// raise in a function nothing calls (the pulse_in stubs on ATmega2560/32u4, the
+    /// I2C error helpers behind an unused `import board`) still reaches the lowering
+    /// point; [NEEDS_EXNMSG] is deferred to the end of generation and reported only
+    /// when one of these names survives reachability, matching the rule the report
+    /// machinery itself already follows for __pymcu_exn_tail.
+    private readonly HashSet<string> raiseMessageFunctions = new();
+
     /// Set when a call bound to the stdlib's clock_init() lowered in the program's
     /// own code (RFC 0014 family 7): an RP2350 program that ends without one gets
     /// <c>[NEEDS_CLOCKS]</c> on the token stream, so the driver injects the preamble

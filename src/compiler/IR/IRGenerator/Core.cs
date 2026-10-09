@@ -1891,6 +1891,18 @@ public partial class IRGenerator
         // nowhere, so say it once, now that construction is known.
         WarnAboutUnrunnableDestructors();
 
+        // RFC 0014 family 7: [NEEDS_EXNMSG] reports a raise that can actually deliver
+        // a message, not every raise that was lowered. Every non-inline def in a
+        // scanned module is queued for compilation, so an uncalled helper still
+        // reaches the lowering point and its name lands in raiseMessageFunctions;
+        // only a name that survives reachability gets the token. This is the same
+        // rule the Optimizer applies when it decides whether __pymcu_exn_tail earns
+        // a root (an unused `import board` must not pay for busio.I2C's raises).
+        if (raiseMessageFunctions.Count > 0
+            && raiseMessageFunctions.Overlaps(
+                PyMCU.IR.Optimizer.ComputeReachableFunctions(irProgram)))
+            Logger.NeedsExnmsg();
+
         // RFC 0014 family 7: generation is done -- every call the program will ever
         // resolve has resolved. On RP2350 the SDK runtime would have run clock_init()
         // for a program that does not; report it so the driver injects the preamble
