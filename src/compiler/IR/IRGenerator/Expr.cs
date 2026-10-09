@@ -5390,23 +5390,44 @@ public partial class IRGenerator
         switch (e)
         {
             case VariableExpr ve:
-                foreach (var cand in new[]
-                         {
-                             currentInlinePrefix + ve.Name,
-                             string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name,
-                             ve.Name,
-                         })
                 {
-                    string cur = cand;
-                    for (int d = 0; d < 20; d++)
+                    var cands = new List<string>();
+                    if (!string.IsNullOrEmpty(currentInlinePrefix))
+                        cands.Add(currentInlinePrefix + ve.Name);
+                    if (!string.IsNullOrEmpty(currentFunction))
+                        cands.Add(currentFunction + "." + ve.Name);
+                    // The module-level spelling answers the name only where the
+                    // module binding is the one a read here can reach: module
+                    // scope itself, the main/module-init write scope, a `global x`
+                    // declaration -- or a name the local scope never bound, whose
+                    // reads fall through to the global. A bound LOCAL shadows the
+                    // module mark: `c = Cell()` at top level then `c: uint8 = 0`
+                    // inside a function left `uart_write_decimal_u8`'s `c += 1`
+                    // refused on the object's account.
+                    if (string.IsNullOrEmpty(currentFunction)
+                        || currentFunction == "main"
+                        || currentFunction.EndsWith("___module_init", StringComparison.Ordinal)
+                        || currentFunctionGlobals.Contains(ve.Name)
+                        || !cands.Any(boundNames.Contains))
                     {
-                        if (maybeInstanceClasses.TryGetValue(cur, out var c)) return c;
-                        if (!variableAliases.TryGetValue(cur, out var nx)
-                            || nx == null || nx.StartsWith("tmp_", StringComparison.Ordinal)) break;
-                        cur = nx;
+                        cands.Add(currentModulePrefix + ve.Name);
+                        // ...and the entry module's own global, which a read inside a
+                        // stdlib function still resolves to (its module prefix differs).
+                        if (!string.IsNullOrEmpty(currentModulePrefix)) cands.Add(ve.Name);
                     }
+                    foreach (var cand in cands)
+                    {
+                        string cur = cand;
+                        for (int d = 0; d < 20; d++)
+                        {
+                            if (maybeInstanceClasses.TryGetValue(cur, out var c)) return c;
+                            if (!variableAliases.TryGetValue(cur, out var nx)
+                                || nx == null || nx.StartsWith("tmp_", StringComparison.Ordinal)) break;
+                            cur = nx;
+                        }
+                    }
+                    return null;
                 }
-                return null;
 
             case MemberAccessExpr ma:
                 // Same shape as AnchorNameOf's member case: resolve the receiver to
@@ -5425,6 +5446,19 @@ public partial class IRGenerator
                     }
                 }
                 return null;
+
+            // The wrappers that pass one operand through unchanged: the value of
+            // `x if flag else 0`, `x or 0`, `x and 0` IS whichever side ran, so a
+            // maybe-instance inside one still reaches the slot the result lands
+            // in. Skipping them let `return (x if flag else 0), 1` copy the byte
+            // the scalar path left where CPython hands back the object.
+            case TernaryExpr te:
+                return MaybeInstanceClassOfExpr(te.TrueVal)
+                       ?? MaybeInstanceClassOfExpr(te.FalseVal);
+
+            case BinaryExpr { Op: AstBinOp.And or AstBinOp.Or } boolOp:
+                return MaybeInstanceClassOfExpr(boolOp.Left)
+                       ?? MaybeInstanceClassOfExpr(boolOp.Right);
 
             default:
                 return null;
