@@ -133,6 +133,28 @@ public class RangeLoopVarAfterLoopTests
     }
 
     [Fact]
+    public void AContinueOnlyUnrolledRange_DoesNotRefuseToCompile()
+    {
+        // for q in range(5): if q == 1: continue -- no break, no return, no raise, so
+        // the loop is guaranteed to complete, but `continue` still needs a label to
+        // jump to. Narrowing the unroll's single "does this loop need a break/continue
+        // label" flag down to "can this loop exit early" (break/return/raise, not a
+        // bare continue) let label creation ride along with the narrower question by
+        // mistake: a continue-only loop got no label at all, and "continue" inside it
+        // refused with "Continue statement outside of loop".
+        var act = () => Main(Prelude +
+            "def main():\n" +
+            "    q: uint8 = 9\n" +
+            "    for q in range(5):\n" +
+            "        if q == 1:\n" +
+            "            continue\n" +
+            "    y: uint8 = q\n\n" +
+            "main()\n");
+        var body = act();
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 4 }, Dst: Variable { Name: "main.q" } });
+    }
+
+    [Fact]
     public void ABreak_SkipsTheStepBack()
     {
         var body = Main(Prelude +

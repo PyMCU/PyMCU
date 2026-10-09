@@ -273,6 +273,54 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// The one question every compile-time-unrolled iteration form asks about its own
+    /// exit, regardless of what it is walking (a tuple/list literal, range, string,
+    /// a name or field bound to a constant sequence, os.listdir, split(), a dict/set,
+    /// zip, reversed, a slice, or enumerate() over any of those): can this loop end at
+    /// an EARLIER iteration than its last one? A literal break does; so does a `return`
+    /// or an uncaught `raise` anywhere in the body, which unwind through every
+    /// enclosing loop on their way out. `continue` does not -- it still runs every
+    /// iteration's own bind before the loop ends, so the LAST one's fold stays sound.
+    /// </summary>
+    private bool LoopHasEarlyExit(Statement? body) =>
+        LoopBodyHasBreakOrContinue(body, breakOnly: true) || LoopBodyCanReturnOrRaise(body);
+
+    /// <summary>
+    /// Commits whatever THIS iteration's compile-time fold currently holds for `key` as
+    /// a REAL, physically written value -- called either per iteration (when the loop
+    /// can exit early and something after it reads the name, so each iteration's own
+    /// value must survive a break/return/raise landing right there) or once, after a
+    /// loop GUARANTEED to run to completion, to settle the last iteration's value for
+    /// real. A compile-time-only fold has no backing store: a LATER, unrelated write to
+    /// the same bare name (another loop reusing it, most directly) can leave a read
+    /// resolving to THAT write instead, stale fold or not (PyMCU-review: the loop-
+    /// variable-after-loop doctrine, round 2). A no-op when `key` never folded to a
+    /// number -- a pure multi-character string binding has no numeric storage slot to
+    /// copy into here.
+    /// </summary>
+    private void CommitFoldedLoopVar(string key) => CommitFoldedLoopVar(key, key);
+
+    /// <summary>
+    /// Same as <see cref="CommitFoldedLoopVar(string)"/>, but the fold is read from
+    /// `foldKey` while the real write lands on `writeKey` -- needed where the two
+    /// already differ. `enumerate()`'s index is bound in <c>constantVariables</c>
+    /// under its bare, currentInlinePrefix-only key throughout this whole construct
+    /// (every in-loop read of it resolves the SAME way, so that is self-consistent),
+    /// while a read written textually AFTER the loop goes through the ordinary
+    /// QualifyLoopVar/QualifyBoundName ladder instead, a DIFFERENT key whenever the
+    /// loop runs inside a named function and no inline prefix is active -- so the
+    /// real write has to land there, or the read after the loop finds nothing ever
+    /// written and returns whatever garbage was already in that slot.
+    /// </summary>
+    private void CommitFoldedLoopVar(string foldKey, string writeKey)
+    {
+        if (!constantVariables.TryGetValue(foldKey, out var cv)) return;
+        DataType dt = variableTypes.TryGetValue(writeKey, out var existing) ? existing : DataType.UINT8;
+        Emit(new Copy(new Constant(cv), new Variable(writeKey, dt)));
+        variableTypes[writeKey] = dt;
+    }
+
     // ------------------------------------------------------------------
     // The unroll policy.
     //
@@ -1384,6 +1432,19 @@ public partial class IRGenerator
         // (else keep the plain unroll so constant folding is not split by labels).
         bool forBrk = LoopBodyHasBreakOrContinue(stmt.Body);
         string forBreakLabel = forBrk ? MakeLabel() : "";
+        // `for v in arr:` over an all-constant array only ever folded the loop variable
+        // at compile time, with no physical write backing it -- same bug as the tuple/
+        // list literal form, same fix: materialize per iteration when the loop can end
+        // early and something after it reads the name, else settle the last value for
+        // real once the loop is guaranteed to complete.
+        bool forEarlyExit = LoopHasEarlyExit(stmt.Body);
+        bool forReadAfter = loopVarReadAfter.Contains(stmt);
+        // Every iteration clears its own fold before the next one binds (so a later
+        // iteration that does NOT fold cannot read a stale constant left by an earlier
+        // one that did) -- so the tail settle below cannot read the LAST fold back out
+        // of constantVariables the way the tuple/list path's tail does; it has to be
+        // captured here instead, while it is still the current one.
+        int? forLastFold = null;
 
         for (int fk = 0; fk < forSize; fk++)
         {
@@ -1420,7 +1481,11 @@ public partial class IRGenerator
                     BindInstanceForIteration(elemKey2, forVarKey);
             }
             else if (constantVariables.TryGetValue(elemKey2, out int cv2))
+            {
                 constantVariables[forVarKey] = cv2;
+                forLastFold = cv2;
+                if (forEarlyExit && forReadAfter) CommitFoldedLoopVar(forVarKey);
+            }
             else
                 Emit(new Copy(new Variable(elemKey2, elemDt2), new Variable(forVarKey, elemDt2)));
 
@@ -1436,6 +1501,11 @@ public partial class IRGenerator
             constantVariables.Remove(forVarKey);
         }
         if (forBrk) Emit(new Label(forBreakLabel));
+        if (!forEarlyExit && forReadAfter && forLastFold is { } forFlv)
+        {
+            constantVariables[forVarKey] = forFlv;
+            CommitFoldedLoopVar(forVarKey);
+        }
     }
 
     /// <summary>
@@ -2029,6 +2099,8 @@ public partial class IRGenerator
                 }
 
                 string strBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                bool strEarlyExit = LoopHasEarlyExit(stmt.Body);
+                bool strReadAfter = loopVarReadAfter.Contains(stmt);
                 foreach (char c in strOpt)
                 {
                     constantVariables[varKey] = (int)c;
@@ -2037,9 +2109,14 @@ public partial class IRGenerator
                     // as the substring test it is, rather than an integer membership
                     // question a string literal cannot take.
                     strConstantVariables[varKey] = c.ToString();
+                    // Same fix as the tuple/list literal form: a compile-time-only fold
+                    // has no backing store, so a break/return/raise landing on THIS
+                    // iteration needs a real write right here, not just the fold.
+                    if (strEarlyExit && strReadAfter) CommitFoldedLoopVar(varKey);
                     EmitUnrolledIteration(stmt.Body, strBrk);
                 }
                 if (strBrk.Length > 0) Emit(new Label(strBrk));
+                if (!strEarlyExit && strReadAfter) CommitFoldedLoopVar(varKey);
 
                 constantVariables.Remove(varKey);
                 strConstantVariables.Remove(varKey);
@@ -2086,18 +2163,22 @@ public partial class IRGenerator
                 // were just read, so the materialised table holds what they are now.
                 if (TryConstSeqCounterLoop(stmt, boundList.Elements, "")) return;
                 string lpBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                bool lpEarlyExit = LoopHasEarlyExit(stmt.Body);
+                bool lpReadAfter = loopVarReadAfter.Contains(stmt);
                 foreach (var elem in boundList.Elements)
                 {
                     if (elem is IntegerLiteral il)
                     {
                         constantVariables[varKey] = il.Value;
+                        if (lpEarlyExit && lpReadAfter) CommitFoldedLoopVar(varKey);
                         EmitUnrolledIteration(stmt.Body, lpBrk);
                     }
                     // The element is the caller's text: a name or `self` in it resolves
                     // where the literal was passed, not in this body (the callee scope
                     // is installed while the loop unrolls). Same reason `param[i]`
                     // folds through UnderSeqArgScope in Expr.cs.
-                    else if (UnderSeqArgScope(lpScope, () => BindUnrolledElement(varKey, elem)))
+                    else if (UnderSeqArgScope(lpScope, () => BindUnrolledElement(varKey, elem,
+                        materialize: lpEarlyExit && lpReadAfter)))
                     {
                         EmitUnrolledIteration(stmt.Body, lpBrk);
                         constSequenceBindings.Remove(varKey);
@@ -2114,6 +2195,7 @@ public partial class IRGenerator
                     else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
                 if (lpBrk.Length > 0) Emit(new Label(lpBrk));
+                if (!lpEarlyExit && lpReadAfter) CommitFoldedLoopVar(varKey);
 
                 constantVariables.Remove(varKey);
                 return;
@@ -2127,17 +2209,20 @@ public partial class IRGenerator
             {
                 if (TryConstSeqCounterLoop(stmt, boundSeq, seqVar.Name)) return;
                 string sqBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                bool sqEarlyExit = LoopHasEarlyExit(stmt.Body);
+                bool sqReadAfter = loopVarReadAfter.Contains(stmt);
                 foreach (var elem in boundSeq)
                 {
                     if (TryEvalConstElement(elem, out int sv))
                     {
                         constantVariables[varKey] = sv;
+                        if (sqEarlyExit && sqReadAfter) CommitFoldedLoopVar(varKey);
                         EmitUnrolledIteration(stmt.Body, sqBrk);
                     }
                     // Strings, instances and nested sequences bind the same way the
                     // parameter-literal branch above binds them: `for a in alarms`
                     // over `*alarms` carries the call site's elements here.
-                    else if (BindUnrolledElement(varKey, elem))
+                    else if (BindUnrolledElement(varKey, elem, materialize: sqEarlyExit && sqReadAfter))
                     {
                         EmitUnrolledIteration(stmt.Body, sqBrk);
                         constSequenceBindings.Remove(varKey);
@@ -2148,6 +2233,7 @@ public partial class IRGenerator
                     else throw UserError("for-in over a named sequence needs compile-time integer elements.");
                 }
                 if (sqBrk.Length > 0) Emit(new Label(sqBrk));
+                if (!sqEarlyExit && sqReadAfter) CommitFoldedLoopVar(varKey);
 
                 constantVariables.Remove(varKey);
                 return;
@@ -2161,14 +2247,18 @@ public partial class IRGenerator
                 if (TryConstSeqCounterLoop(stmt, memConstSeq, ((MemberAccessExpr)iter).Member))
                     return;
                 string memBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                bool memEarlyExit = LoopHasEarlyExit(stmt.Body);
+                bool memReadAfter = loopVarReadAfter.Contains(stmt);
                 foreach (var elem in memConstSeq)
                 {
                     if (!TryEvalConstElement(elem, out int mv))
                         throw UserError("for-in over a sequence held in a field needs compile-time integer elements.");
                     constantVariables[varKey] = mv;
+                    if (memEarlyExit && memReadAfter) CommitFoldedLoopVar(varKey);
                     EmitUnrolledIteration(stmt.Body, memBrk);
                 }
                 if (memBrk.Length > 0) Emit(new Label(memBrk));
+                if (!memEarlyExit && memReadAfter) CommitFoldedLoopVar(varKey);
 
                 constantVariables.Remove(varKey);
                 return;
@@ -2178,14 +2268,11 @@ public partial class IRGenerator
             {
                 var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
                 string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
-                // A `continue` always still runs every iteration's bind before the loop ends,
-                // so the tail fold below stays sound; an actual `break` can end the loop at an
-                // EARLIER iteration than the last, breakOnly: true tells the two apart.
-                bool hasBreak = LoopBodyHasBreakOrContinue(stmt.Body, breakOnly: true);
                 // A `return` or an uncaught `raise` is ALSO an earlier-than-last exit, the
-                // same as break -- CPython leaves the loop variable at whatever the
-                // iteration in progress bound it to, not the tuple's textual last element.
-                bool hasEarlyExit = hasBreak || LoopBodyCanReturnOrRaise(stmt.Body);
+                // same as a literal break -- CPython leaves the loop variable at whatever
+                // the iteration in progress bound it to, not the tuple's textual last
+                // element.
+                bool hasEarlyExit = LoopHasEarlyExit(stmt.Body);
                 // Nothing after this loop ever reads the name: no copy is worth emitting,
                 // constant-folded or real (the range-loop path already gates on the same
                 // flag for the same reason).
@@ -2407,15 +2494,8 @@ public partial class IRGenerator
                 // read through this fold at all -- won by default.
                 if (!hasEarlyExit && loopVarRead)
                 {
-                    void Settle(string key)
-                    {
-                        if (!constantVariables.TryGetValue(key, out var cv)) return;
-                        DataType dt = variableTypes.TryGetValue(key, out var existing) ? existing : DataType.UINT8;
-                        Emit(new Copy(new Constant(cv), new Variable(key, dt)));
-                        variableTypes[key] = dt;
-                    }
-                    Settle(varKey);
-                    if (varKey2 != null) Settle(varKey2);
+                    CommitFoldedLoopVar(varKey);
+                    if (varKey2 != null) CommitFoldedLoopVar(varKey2);
                 }
 
                 if (hasEarlyExit)
@@ -2587,20 +2667,33 @@ public partial class IRGenerator
                                 : "Write one name."));
 
                     string dsBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                    bool dsEarlyExit = LoopHasEarlyExit(stmt.Body);
+                    bool dsReadAfter = loopVarReadAfter.Contains(stmt);
                     if (dsPairs != null)
                         foreach (var (kE, vE) in dsPairs)
                         {
                             BindOne(varKey, kE, "key");
                             BindOne(dsKey2!, vE, "value");
+                            if (dsEarlyExit && dsReadAfter)
+                            {
+                                CommitFoldedLoopVar(varKey);
+                                CommitFoldedLoopVar(dsKey2!);
+                            }
                             EmitUnrolledIteration(stmt.Body, dsBrk);
                         }
                     else
                         foreach (var elem in dsElems!)
                         {
                             BindOne(varKey, elem, dsWhat == "dict" ? "key" : "element");
+                            if (dsEarlyExit && dsReadAfter) CommitFoldedLoopVar(varKey);
                             EmitUnrolledIteration(stmt.Body, dsBrk);
                         }
                     if (dsBrk.Length > 0) Emit(new Label(dsBrk));
+                    if (!dsEarlyExit && dsReadAfter)
+                    {
+                        CommitFoldedLoopVar(varKey);
+                        if (dsKey2 != null) CommitFoldedLoopVar(dsKey2);
+                    }
 
                     Unbind(varKey);
                     if (dsKey2 != null) Unbind(dsKey2);
@@ -2617,12 +2710,19 @@ public partial class IRGenerator
             {
                 var chunks = CompileTimeSplit(forSplit, iter);
                 string spBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                bool spEarlyExit = LoopHasEarlyExit(stmt.Body);
+                bool spReadAfter = loopVarReadAfter.Contains(stmt);
                 foreach (var chunk in chunks)
                 {
                     BindUnrolledString(varKey, chunk);
+                    // A one-character chunk folds a numeric companion the same way a
+                    // string literal's own loop variable does (BindUnrolledString);
+                    // a no-op when the chunk is longer and has no such companion.
+                    if (spEarlyExit && spReadAfter) CommitFoldedLoopVar(varKey);
                     EmitUnrolledIteration(stmt.Body, spBrk);
                 }
                 if (spBrk.Length > 0) Emit(new Label(spBrk));
+                if (!spEarlyExit && spReadAfter) CommitFoldedLoopVar(varKey);
                 UnbindUnrolledVar(varKey);
                 return;
             }
@@ -2876,6 +2976,16 @@ public partial class IRGenerator
                         string enQVal = QualifyLoopVar(stmt.Var2Name);
                         bool enSeqBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                         string enSeqBreakLabel = enSeqBrk ? MakeLabel() : "";
+                        // The index is a compile-time-only fold (the value is already
+                        // bound to a real instance slot, which needs no fix). Same
+                        // materialize/settle as every other enumerate()/sequence form.
+                        // idxKey is the bare key the fold lives under throughout this
+                        // whole construct; a read written AFTER the loop resolves the
+                        // ordinary qualified way instead, so the real write has to
+                        // land there (CommitFoldedLoopVar's two-key overload).
+                        bool enSeqEarlyExit = LoopHasEarlyExit(stmt.Body);
+                        bool enSeqReadAfter = loopVarReadAfter.Contains(stmt);
+                        string enSeqQIdx = QualifyLoopVar(stmt.VarName);
                         for (int k = 0; k < enSeqN; ++k)
                         {
                             string enSeqCont = enSeqBrk ? MakeLabel() : "";
@@ -2883,6 +2993,7 @@ public partial class IRGenerator
                                 loopStack.Add(new LoopLabels { ContinueLabel = enSeqCont,
                                     BreakLabel = enSeqBreakLabel, FinallyDepth = finallyStack.Count });
                             constantVariables[idxKey] = k;
+                            if (enSeqEarlyExit && enSeqReadAfter) CommitFoldedLoopVar(idxKey, enSeqQIdx);
                             BindInstanceForIteration(enSeqBase + "__" + k, enQVal);
                             VisitStatement(stmt.Body);
                             _seqTerminated = false;
@@ -2891,6 +3002,7 @@ public partial class IRGenerator
                             constantVariables.Remove(enQVal);
                         }
                         if (enSeqBrk) Emit(new Label(enSeqBreakLabel));
+                        if (!enSeqEarlyExit && enSeqReadAfter) CommitFoldedLoopVar(idxKey, enSeqQIdx);
                         constantVariables.Remove(idxKey);
                         return;
                     }
@@ -3049,12 +3161,24 @@ public partial class IRGenerator
                             variableTypes[qualifiedVal] = LoopVarStorageType(qualifiedVal, elemDt);
                             bool enBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                             string enBreakLabel = enBrk ? MakeLabel() : "";
+                            // Same materialize/settle fix as every other compile-time
+                            // sequence form. The index (idxKey) keeps no per-iteration
+                            // fold clear below, so its tail settle reads the last one
+                            // straight out of constantVariables; the value sometimes
+                            // folds and sometimes already writes for real (useSram/
+                            // elemIsZca), and DOES clear its fold every iteration, so
+                            // its last fold is captured separately while still current.
+                            bool enEarlyExit = LoopHasEarlyExit(stmt.Body);
+                            bool enReadAfter = loopVarReadAfter.Contains(stmt);
+                            string enQIdx = QualifyLoopVar(stmt.VarName);
+                            int? enValLastFold = null;
                             for (int k = 0; k < arrSize; ++k)
                             {
                                 string enContLabel = enBrk ? MakeLabel() : "";
                                 if (enBrk)
                                     loopStack.Add(new LoopLabels { ContinueLabel = enContLabel, BreakLabel = enBreakLabel, FinallyDepth = finallyStack.Count });
                                 constantVariables[idxKey] = k;
+                                if (enEarlyExit && enReadAfter) CommitFoldedLoopVar(idxKey, enQIdx);
                                 if (useSram)
                                 {
                                     var synIndex = new IntegerLiteral(k);
@@ -3084,6 +3208,8 @@ public partial class IRGenerator
                                     else if (constantVariables.TryGetValue(elemKey, out int cv))
                                     {
                                         constantVariables[qualifiedVal] = cv;
+                                        enValLastFold = cv;
+                                        if (enEarlyExit && enReadAfter) CommitFoldedLoopVar(qualifiedVal);
                                         provenScalarElements.Add(qualifiedVal);
                                     }
                                     else
@@ -3102,6 +3228,15 @@ public partial class IRGenerator
                                 constantVariables.Remove(qualifiedVal);
                             }
                             if (enBrk) Emit(new Label(enBreakLabel));
+                            if (!enEarlyExit && enReadAfter)
+                            {
+                                CommitFoldedLoopVar(idxKey, enQIdx);
+                                if (enValLastFold is { } enValFlv)
+                                {
+                                    constantVariables[qualifiedVal] = enValFlv;
+                                    CommitFoldedLoopVar(qualifiedVal);
+                                }
+                            }
 
                             constantVariables.Remove(idxKey);
                             return;
@@ -3191,6 +3326,14 @@ public partial class IRGenerator
                         int zlen = Math.Min(side0.Len, side1.Len);
                         bool zbrk = LoopBodyHasBreakOrContinue(stmt.Body);
                         string zBreak = zbrk ? MakeLabel() : "";
+                        // Same materialize/settle fix as every other compile-time
+                        // sequence form. Both names clear their fold every iteration
+                        // (a side that binds a real element, not a fold, still has to
+                        // win over a PRIOR iteration's stale fold), so the tail settle
+                        // captures each one's last fold separately while still current.
+                        bool zEarlyExit = LoopHasEarlyExit(stmt.Body);
+                        bool zReadAfter = loopVarReadAfter.Contains(stmt);
+                        int? zLastFold1 = null, zLastFold2 = null;
 
                         for (int k = 0; k < zlen; ++k)
                         {
@@ -3198,6 +3341,13 @@ public partial class IRGenerator
                             if (zbrk) loopStack.Add(new LoopLabels { ContinueLabel = zCont, BreakLabel = zBreak, FinallyDepth = finallyStack.Count });
                             side0.Bind(qk1, k);
                             side1.Bind(qk2, k);
+                            if (constantVariables.TryGetValue(qk1, out int zcv1)) zLastFold1 = zcv1;
+                            if (constantVariables.TryGetValue(qk2, out int zcv2)) zLastFold2 = zcv2;
+                            if (zEarlyExit && zReadAfter)
+                            {
+                                CommitFoldedLoopVar(qk1);
+                                CommitFoldedLoopVar(qk2);
+                            }
                             VisitStatement(stmt.Body);
                             _seqTerminated = false;
                             if (zbrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(zCont)); }
@@ -3205,6 +3355,11 @@ public partial class IRGenerator
                             CleanCtState(qk2);
                             constantVariables.Remove(qk1);
                             constantVariables.Remove(qk2);
+                        }
+                        if (!zEarlyExit && zReadAfter)
+                        {
+                            if (zLastFold1 is { } zf1) { constantVariables[qk1] = zf1; CommitFoldedLoopVar(qk1); }
+                            if (zLastFold2 is { } zf2) { constantVariables[qk2] = zf2; CommitFoldedLoopVar(qk2); }
                         }
                         if (zbrk) Emit(new Label(zBreak));
                         return;
@@ -3360,16 +3515,41 @@ public partial class IRGenerator
                         // Reversed values materialised in walk order read the same
                         // elements the descending index would.
                         if (TryConstSeqCounterLoop(stmt, rseq, rve.Name, reverse: true)) return;
+                        // Neither a break/continue label nor a materialize/settle for the
+                        // loop-var-after-loop case existed here: `break` inside this form
+                        // reported "Break statement outside of loop" (nothing ever pushed
+                        // loopStack), and a read after the loop saw the value from BEFORE
+                        // it ran. Same fix, and same loopStack scaffolding every other
+                        // unrolled form already has.
+                        bool rseqBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                        string rseqBreakLabel = rseqBrk ? MakeLabel() : "";
+                        bool rseqEarlyExit = LoopHasEarlyExit(stmt.Body);
+                        bool rseqReadAfter = loopVarReadAfter.Contains(stmt);
+                        // valKey is bare (currentInlinePrefix + name, set at the top of
+                        // the whole reversed() handling) and every in-loop read of it
+                        // resolves the same way, so that stays self-consistent; a read
+                        // written AFTER the loop goes through the ordinary qualified
+                        // ladder instead, a DIFFERENT key whenever this runs inside a
+                        // named function with no inline prefix active -- so the real
+                        // write has to land there (CommitFoldedLoopVar's two-key form).
+                        string rseqQVal = QualifyLoopVar(stmt.VarName);
                         for (int k = rseq.Count - 1; k >= 0; --k)
                         {
+                            string rseqCont = rseqBrk ? MakeLabel() : "";
+                            if (rseqBrk)
+                                loopStack.Add(new LoopLabels { ContinueLabel = rseqCont, BreakLabel = rseqBreakLabel, FinallyDepth = finallyStack.Count });
                             if (!TryEvalConstElement(rseq[k], out int rv))
                                 throw UserError(
                                     $"reversed({rve.Name}): element {k} is not a compile-time constant.",
                                     rseq[k]);
                             constantVariables[valKey] = rv;
+                            if (rseqEarlyExit && rseqReadAfter) CommitFoldedLoopVar(valKey, rseqQVal);
                             VisitStatement(stmt.Body);
                             _seqTerminated = false;
+                            if (rseqBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(rseqCont)); }
                         }
+                        if (rseqBrk) Emit(new Label(rseqBreakLabel));
+                        if (!rseqEarlyExit && rseqReadAfter) CommitFoldedLoopVar(valKey, rseqQVal);
 
                         constantVariables.Remove(valKey);
                         return;
@@ -3378,16 +3558,33 @@ public partial class IRGenerator
                     if (inner is ListExpr le3)
                     {
                         if (TryConstSeqCounterLoop(stmt, le3.Elements, "", reverse: true)) return;
+                        // Same fix as the named-sequence form just above: a loopStack
+                        // entry (break used to escape to the wrong scope, or crash with
+                        // "Break statement outside of loop"), and materialize/settle
+                        // writing through the QUALIFIED key a read after the loop
+                        // actually resolves to, not the bare one the fold lives under.
+                        bool le3Brk = LoopBodyHasBreakOrContinue(stmt.Body);
+                        string le3BreakLabel = le3Brk ? MakeLabel() : "";
+                        bool le3EarlyExit = LoopHasEarlyExit(stmt.Body);
+                        bool le3ReadAfter = loopVarReadAfter.Contains(stmt);
+                        string le3QVal = QualifyLoopVar(stmt.VarName);
                         for (int k = le3.Elements.Count - 1; k >= 0; --k)
                         {
+                            string le3Cont = le3Brk ? MakeLabel() : "";
+                            if (le3Brk)
+                                loopStack.Add(new LoopLabels { ContinueLabel = le3Cont, BreakLabel = le3BreakLabel, FinallyDepth = finallyStack.Count });
                             if (le3.Elements[k] is IntegerLiteral il) constantVariables[valKey] = il.Value;
                             else
                                 throw UserError(
                                     "reversed() list elements must be compile-time integer constants.",
                                     le3.Elements[k]);
+                            if (le3EarlyExit && le3ReadAfter) CommitFoldedLoopVar(valKey, le3QVal);
                             VisitStatement(stmt.Body);
                             _seqTerminated = false;
+                            if (le3Brk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(le3Cont)); }
                         }
+                        if (le3Brk) Emit(new Label(le3BreakLabel));
+                        if (!le3EarlyExit && le3ReadAfter) CommitFoldedLoopVar(valKey, le3QVal);
 
                         constantVariables.Remove(valKey);
                         return;
@@ -3431,6 +3628,9 @@ public partial class IRGenerator
                             variableTypes[valKey] = rMemDt;
                             bool rmBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                             string rmBreakLabel = rmBrk ? MakeLabel() : "";
+                            bool rmEarlyExit = LoopHasEarlyExit(stmt.Body);
+                            bool rmReadAfter = loopVarReadAfter.Contains(stmt);
+                            int? rmLastFold = null;
                             for (int k = rMemSz - 1; k >= 0; --k)
                             {
                                 string rmContLabel = rmBrk ? MakeLabel() : "";
@@ -3443,7 +3643,11 @@ public partial class IRGenerator
                                     Emit(new Copy(rmElemVal, new Variable(valKey, rMemDt)));
                                 }
                                 else if (constantVariables.TryGetValue(rmElemKey, out int rmCv))
+                                {
                                     constantVariables[valKey] = rmCv;
+                                    rmLastFold = rmCv;
+                                    if (rmEarlyExit && rmReadAfter) CommitFoldedLoopVar(valKey);
+                                }
                                 else
                                     Emit(new Copy(new Variable(rmElemKey, rMemDt), new Variable(valKey, rMemDt)));
                                 VisitStatement(stmt.Body);
@@ -3452,6 +3656,11 @@ public partial class IRGenerator
                                 constantVariables.Remove(valKey);
                             }
                             if (rmBrk) Emit(new Label(rmBreakLabel));
+                            if (!rmEarlyExit && rmReadAfter && rmLastFold is { } rmFlv)
+                            {
+                                constantVariables[valKey] = rmFlv;
+                                CommitFoldedLoopVar(valKey);
+                            }
                             return;
                         }
                     }
@@ -3484,6 +3693,9 @@ public partial class IRGenerator
                             variableTypes[qValKey] = LoopVarStorageType(qValKey, elemDt);
                             bool rvBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                             string rvBreakLabel = rvBrk ? MakeLabel() : "";
+                            bool rvEarlyExit = LoopHasEarlyExit(stmt.Body);
+                            bool rvReadAfter = loopVarReadAfter.Contains(stmt);
+                            int? rvLastFold = null;
                             for (int k = arrSize - 1; k >= 0; --k)
                             {
                                 string rvContLabel = rvBrk ? MakeLabel() : "";
@@ -3501,7 +3713,17 @@ public partial class IRGenerator
                                     // already reads through ArrayLoad).
                                     Val rElem = VisitIndex(new IndexExpr(new VariableExpr(v.Name) { Line = v.Line },
                                         new IntegerLiteral(k)) { Line = v.Line });
-                                    if (rElem is Constant rc) constantVariables[valKey] = rc.Value;
+                                    if (rElem is Constant rc)
+                                    {
+                                        constantVariables[valKey] = rc.Value;
+                                        rvLastFold = rc.Value;
+                                        // The fold lives under the bare valKey; the real
+                                        // write has to land on qValKey, the SAME target
+                                        // the sibling real-Copy branch just below uses --
+                                        // a read written after the loop resolves there,
+                                        // not through the bare fold key.
+                                        if (rvEarlyExit && rvReadAfter) CommitFoldedLoopVar(valKey, qValKey);
+                                    }
                                     else Emit(new Copy(rElem, new Variable(qValKey, elemDt)));
                                 }
                                 VisitStatement(stmt.Body);
@@ -3511,6 +3733,11 @@ public partial class IRGenerator
                                 constantVariables.Remove(valKey);
                             }
                             if (rvBrk) Emit(new Label(rvBreakLabel));
+                            if (!rvEarlyExit && rvReadAfter && rvLastFold is { } rvFlv)
+                            {
+                                constantVariables[valKey] = rvFlv;
+                                CommitFoldedLoopVar(valKey, qValKey);
+                            }
                             return;
                         }
                     }
@@ -3709,6 +3936,12 @@ public partial class IRGenerator
 
                     bool slBrk = LoopBodyHasBreakOrContinue(stmt.Body);
                     string slBreakLabel = slBrk ? MakeLabel() : "";
+                    // Same materialize/settle fix as every other compile-time sequence
+                    // form. slKey clears its fold every iteration, so the tail settle
+                    // captures the last one separately while still current.
+                    bool slEarlyExit = LoopHasEarlyExit(stmt.Body);
+                    bool slReadAfter = loopVarReadAfter.Contains(stmt);
+                    int? slLastFold = null;
 
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step)
                     {
@@ -3724,7 +3957,11 @@ public partial class IRGenerator
                             Emit(new Copy(tmp, new Variable(slKey, slElem)));
                         }
                         else if (constantVariables.TryGetValue(elemKey, out int cv))
+                        {
                             constantVariables[slKey] = cv;
+                            slLastFold = cv;
+                            if (slEarlyExit && slReadAfter) CommitFoldedLoopVar(slKey);
+                        }
                         else
                             Emit(new Copy(new Variable(elemKey, slElem), new Variable(slKey, slElem)));
 
@@ -3739,6 +3976,11 @@ public partial class IRGenerator
                         constantVariables.Remove(slKey);
                     }
                     if (slBrk) Emit(new Label(slBreakLabel));
+                    if (!slEarlyExit && slReadAfter && slLastFold is { } slFlv)
+                    {
+                        constantVariables[slKey] = slFlv;
+                        CommitFoldedLoopVar(slKey);
+                    }
 
                     return;
                 }
@@ -3956,15 +4198,24 @@ public partial class IRGenerator
         {
             (int unrollStart, int unrollStop, int unrollStep) = unroll;
             string unrollKey = QualifyLoopVar(stmt.VarName);
-            // A `return` or an uncaught `raise` is ALSO an earlier-than-last exit, the same
-            // as break -- CPython leaves the loop variable at whatever the iteration in
-            // progress bound it to. `for v in range(2): raise ValueError()` caught by an
-            // enclosing except that reads `v` needed the per-iteration store below the same
-            // way a break does; with neither break nor continue written, this stayed false
-            // and nothing ever wrote a real value before the loop's own unconditional raise
-            // made the tail's "loop ran to completion" copy dead code that never executes.
-            bool unrollBreaks = LoopBodyHasBreakOrContinue(stmt.Body) || LoopBodyCanReturnOrRaise(stmt.Body);
-            string unrollBrk = unrollBreaks ? MakeLabel() : "";
+            // unrollBrk's label is needed for break OR continue (continue still needs
+            // somewhere to jump to, even though it is not itself an early exit) -- the
+            // BROAD check, same as LoopBodyHasBreakOrContinue's default. unrollBreaks
+            // below answers a DIFFERENT question for the materialize/settle choice: can
+            // this loop end at an earlier iteration than its last, which a `return` or
+            // an uncaught `raise` also does, the same as a literal break, but a bare
+            // `continue` does not (LoopHasEarlyExit's breakOnly check). Collapsing the
+            // two into the narrower one made `for q in range(5): if q == 1: continue`
+            // refuse "Continue statement outside of loop": no label was ever created for
+            // it, because that loop has no break, return or raise to trip the narrow one.
+            bool unrollNeedsLabel = LoopBodyHasBreakOrContinue(stmt.Body);
+            string unrollBrk = unrollNeedsLabel ? MakeLabel() : "";
+            // `for v in range(2): raise ValueError()` caught by an enclosing except that
+            // reads `v` needed the per-iteration store below the same way a break does;
+            // with neither break nor continue written, this stayed false and nothing
+            // ever wrote a real value before the loop's own unconditional raise made the
+            // tail's "loop ran to completion" copy dead code that never executes.
+            bool unrollBreaks = LoopHasEarlyExit(stmt.Body);
 
             // Python leaves the loop variable at the last value visited. The body reads it as
             // a constant per iteration, but anything after the loop reads a real variable, so
