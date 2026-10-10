@@ -262,4 +262,46 @@ public class BytesLiteralArgumentTests
             i => i is BytearrayLoad { PtrName: "send.buffer" } or ArrayLoad or LoadIndirect);
         Assert.DoesNotContain(send.Body, i => i is BitCheck);
     }
+
+    /// <summary>
+    /// The same shape, but `send` is written BEFORE `write_bytes` in the SAME module. The
+    /// transitive check above needs `write_bytes`'s own var-indexed parameters already on
+    /// record (via `inlineFunctions`) when `send`'s parameters are decided; `ScanFunctions`
+    /// walks one module top to bottom, so a real function defined ahead of the `@inline`
+    /// callee it forwards to still does not see that callee's shape -- `send.buffer` is left
+    /// a scalar, same as before this fix. The real HAL never has this order (`write_bytes`
+    /// lives in the imported `pymcu.hal.rp2040.i2c` module, scanned before `busio.py`'s
+    /// `send`/`_i2c_writeto`), so this gap is not closed -- this test pins that it still fails
+    /// the SAME clear way (`IsSubscriptedInBody`'s own documented policy: "a gap here costs a
+    /// diagnostic, never a wrong answer") rather than silently miscompiling.
+    /// </summary>
+    [Fact]
+    public void ABufferParamForwardedToAnInlineCalleeDefinedLaterInTheSameModuleStillRefusesClearly()
+    {
+        string src =
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import inline\n\n" +
+            "def send(buffer, n: int) -> int:\n" +
+            "    return write_bytes(buffer, 0, n)\n\n" +
+            "@inline\n" +
+            "def write_bytes(data, start: int, n: int) -> int:\n" +
+            "    total: int = 0\n" +
+            "    i: int = start\n" +
+            "    end: int = start + n\n" +
+            "    while i < end:\n" +
+            "        total = total + data[i]\n" +
+            "        i = i + 1\n" +
+            "    return total\n\n" +
+            "@inline\n" +
+            "def writeto(buffer) -> int:\n" +
+            "    return send(buffer, 1)\n\n" +
+            "def main() -> None:\n" +
+            "    register: int = GPIOR0.value\n" +
+            "    x: int = writeto(bytes([register & 0xFF]))\n" +
+            "    while True:\n        pass\n";
+
+        var ex = Record.Exception(() => Gen(src));
+        var err = Assert.IsType<PyMCU.Common.CompilerError>(ex);
+        Assert.Contains("Bit index must be constant for reading", err.Message);
+    }
 }
