@@ -188,7 +188,15 @@ I2C_STATUS_RFNE = 3   # rx FIFO not empty
 # OSError on a nonzero code, busio.I2C.writeto_then_readfrom) saw a bogus
 # abort on the FIRST transaction that completed normally.
 I2C_RAW_INTR_TX_ABRT    = 6   # IC_RAW_INTR_STAT bit: the last transfer aborted
-I2C_ABRT_7B_ADDR_NOACK  = 1   # IC_TX_ABRT_SOURCE bit: the target address went unanswered
+# Was 1. IC_TX_ABRT_SOURCE bit 0 is ABRT_7B_ADDR_NOACK; bit 1 is
+# ABRT_10ADDR1_NOACK (10-bit addressing, which this HAL never uses). Reading
+# bit 1 here meant a real address NACK (RP2040Sharp's SignalAddressNack sets
+# only bit 0 of the source register) never matched, so _abort_code()
+# classified every NACK as I2C_ABRT_OTHER instead of I2C_ABRT_NODEV --
+# busio.py's _i2c_check raises "[Errno 5] Input/output error" instead of
+# "[Errno 19] No such device", which adafruit_bus_device.I2CDevice matches on
+# by text for its "No I2C device at address" message.
+I2C_ABRT_7B_ADDR_NOACK  = 0   # IC_TX_ABRT_SOURCE bit: the target address went unanswered
 
 # ==========================================
 #  PWM -- 8 slices, 2 channels (A/B) each; slice stride 0x14

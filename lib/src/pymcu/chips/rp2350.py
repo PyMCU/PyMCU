@@ -176,8 +176,13 @@ I2C_CMD_RESTART = 0x400
 I2C_STATUS_TFNF = 1
 I2C_STATUS_TFE  = 2
 I2C_STATUS_RFNE = 3
-I2C_RAW_INTR_TX_ABRT    = 9
-I2C_ABRT_7B_ADDR_NOACK  = 1
+# Same two off-by-bit bugs as rp2040.py, same DW_apb_i2c register layout
+# ("bases moved; offsets unchanged" above -- that includes the bit fields).
+# TX_ABRT is bit 6 of IC_RAW_INTR_STAT, not bit 9 (STOP_DET, latches on every
+# completed transfer, aborted or not). ABRT_7B_ADDR_NOACK is bit 0 of
+# IC_TX_ABRT_SOURCE, not bit 1 (ABRT_10ADDR1_NOACK, never used by this HAL).
+I2C_RAW_INTR_TX_ABRT    = 6
+I2C_ABRT_7B_ADDR_NOACK  = 0
 
 # ==========================================
 #  PWM -- bases moved; per-slice layout unchanged (RP2350 has 12 slices)
