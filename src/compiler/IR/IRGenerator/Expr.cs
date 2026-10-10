@@ -4176,7 +4176,26 @@ public partial class IRGenerator
                                 "param:" + string.Join(",", litValues), "", litValues)
                             is { } litTable)
                     return EmitFlashArrayRead(litTable, litIdx!, litValues.Count);
-                else throw UserError(
+                // Not every element is a compile-time constant (`bytes([register & 0xFF])`
+                // forwarded by name through one or more further parameters, e.g.
+                // `writeto(buffer)` -> `write_bytes(data, ...)`), so there is no flash table
+                // to read: lay the elements out under a hidden SRAM buffer instead, evaluating
+                // each one HERE under the scope it was WRITTEN in (litScope) -- the same
+                // runtime materialization MaterializeSequenceArg already does for a parameter
+                // handed straight to a real subroutine. Before this, any run-time element
+                // reaching a run-time subscript through one of these hops answered null and
+                // fell to the refusal below, no matter how many OTHER elements (or calls to
+                // the same parameter) were fully constant.
+                else if (UnderSeqArgScope(litScope, () => MaterializeSequenceArg(litArg.Elements))
+                            is { } litBuf)
+                {
+                    Temporary litElemAddr = EmitElemAddr(litBuf, litIdx!, 1);
+                    Temporary litElemRes = MakeTemp(DataType.UINT8);
+                    Emit(new LoadIndirect(litElemAddr, litElemRes, DataType.UINT8));
+                    return litElemRes;
+                }
+                else
+                    throw UserError(
                     $"'{ve.Name}' holds {litArg.Elements.Count} compile-time values with no "
                     + "storage behind them, so it cannot be indexed at run time. Declare an "
                     + $"array and pass that (`table: uint8[{litArg.Elements.Count}] = [...]`), "

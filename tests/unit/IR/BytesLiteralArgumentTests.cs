@@ -117,4 +117,91 @@ public class BytesLiteralArgumentTests
         Assert.Contains(main.Body, i => i is ArrayStore s && s.ArrayName == "main.buf" && s.Src is Constant { Value: 7 });
         Assert.Contains(main.Body, i => i is ArrayLoad or BytearrayLoad or ArrayLoadFlash);
     }
+
+    // ── a single run-time element, forwarded through a non-@inline hop ───────────────────
+
+    /// <summary>
+    /// `pymcu/hal/rp2040/i2c.py`'s own shape (adafruit_bmp280's `i2c.write(bytes([register &
+    /// 0xFF]))`, one hop in): `writeto` (@inline) binds its `buffer` parameter to the literal
+    /// `bytes([register & 0xFF])` -- ONE element, not a compile-time constant (`register` is a
+    /// real parameter) -- and forwards it BY NAME into `send` (a REAL subroutine, not @inline).
+    /// At `send`'s own call site the parameter-bound literal has no storage of its own, so
+    /// `MaterializeSequenceArg` lays the element out under a hidden buffer -- but it used to do
+    /// that only when EVERY element was a compile-time constant (`TryEvalElemConst`), answering
+    /// null otherwise and leaving `send` holding the bare, unbacked name. `send`'s own
+    /// `while i < n: ... buffer[i] ...` then indexed that name at run time and found nothing
+    /// behind it: "'buffer' holds 1 compile-time values with no storage behind them, so it
+    /// cannot be indexed at run time." Two or more elements, or one CONSTANT element, never
+    /// took this path (every element folded, so `MaterializeSequenceArg`'s old code already
+    /// succeeded) -- only a single run-time element did.
+    ///
+    /// The real HAL forwards the buffer through ONE MORE @inline hop past `send`
+    /// (`write_bytes`) before indexing it; that additional hop still fails after this fix
+    /// (`send`'s own parameter, having no annotation and never indexed INSIDE `send`'s own
+    /// body, is typed a scalar instead of a buffer) and is tracked separately -- this test
+    /// pins the storage fix in isolation, with the real subroutine doing its own indexing.
+    /// </summary>
+    [Fact]
+    public void ASingleRunTimeElementForwardedThroughARealSubroutineIsMaterialized()
+    {
+        var ir = Gen(
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import inline\n\n" +
+            "@inline\n" +
+            "def writeto(buffer) -> None:\n" +
+            "    send(buffer, 1)\n\n" +
+            "def send(buffer, n: int) -> int:\n" +
+            "    total: int = 0\n" +
+            "    i: int = 0\n" +
+            "    while i < n:\n" +
+            "        total = total + buffer[i]\n" +
+            "        i = i + 1\n" +
+            "    return total\n\n" +
+            "def main() -> None:\n" +
+            "    register: int = GPIOR0.value\n" +
+            "    writeto(bytes([register & 0xFF]))\n" +
+            "    while True:\n        pass\n");
+
+        // `writeto` is @inline, so it expands straight into `main`; `buffer`'s hidden
+        // backing buffer is materialized there, at the point `main` calls `send` (a real
+        // subroutine) with the parameter-bound literal.
+        var main = ir.Functions.Single(f => f.Name == "main");
+        // The hidden buffer's one element is computed at run time (an AND, not a bare
+        // Constant) -- not silently defaulted to 0, the other half of the bug the same
+        // doc comment on MaterializeSequenceArg already names (adafruit_bmp280 sending
+        // 0x00 as the register pointer).
+        Assert.Contains(main.Body, i => i is ArrayStore { Src: not Constant });
+        Assert.DoesNotContain(main.Body, i => i is ArrayStore { Src: Constant { Value: 0 } });
+    }
+
+    /// <summary>
+    /// The SAME single-element literal, indexed directly inside the @inline function it was
+    /// handed straight to (no further forwarding): `writeto`'s own parameter-bound literal,
+    /// read by `writeto[i]` with a run-time `i`. Pins the OTHER call site this fix touched
+    /// (Expr.cs's `TryResolveListLiteralParam` branch materializing on demand, rather than
+    /// `EmitRegularFunctionCall`'s `MaterializeSequenceArg` doing it ahead of a real call).
+    /// </summary>
+    [Fact]
+    public void ASingleRunTimeElementIndexedDirectlyInsideItsOwnInlineCalleeIsMaterialized()
+    {
+        var ir = Gen(
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import inline\n\n" +
+            "@inline\n" +
+            "def writeto(buffer, n: int) -> int:\n" +
+            "    total: int = 0\n" +
+            "    i: int = 0\n" +
+            "    while i < n:\n" +
+            "        total = total + buffer[i]\n" +
+            "        i = i + 1\n" +
+            "    return total\n\n" +
+            "def main() -> None:\n" +
+            "    register: int = GPIOR0.value\n" +
+            "    x: int = writeto(bytes([register & 0xFF]), 1)\n" +
+            "    while True:\n        pass\n");
+
+        var main = ir.Functions.Single(f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is ArrayStore { Src: not Constant });
+        Assert.DoesNotContain(main.Body, i => i is ArrayStore { Src: Constant { Value: 0 } });
+    }
 }

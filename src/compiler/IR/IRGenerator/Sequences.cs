@@ -283,6 +283,23 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Same resolution as <see cref="ResolveConstSequenceExpr"/>, plus the caller scope a
+    /// parameter binding was recorded under (<see cref="TryResolveListLiteralParam"/>'s
+    /// third output) -- callers that are about to VISIT the returned elements (not just
+    /// fold a constant subscript, which does not care whose names an already-evaluated
+    /// value came from) need it: the elements are AST written in the scope the literal
+    /// argument travelled from, not the scope indexing it. Null when the answer came from
+    /// anywhere else (a named sequence, a field, ...), which carries no such foreign text.
+    /// </summary>
+    private List<Expression>? ResolveConstSequenceExprScoped(Expression e, out SeqArgScope? scope)
+    {
+        if (e is VariableExpr nameVe && TryResolveListLiteralParam(nameVe.Name, out var asParam, out scope))
+            return asParam.Elements;
+        scope = null;
+        return ResolveConstSequenceExpr(e);
+    }
+
+    /// <summary>
     /// The elements of a constant list/tuple reachable from <paramref name="e"/> -- through a
     /// name, through a parameter binding, or through a `self` field that was assigned one.
     /// </summary>
@@ -663,15 +680,23 @@ public partial class IRGenerator
     /// sent 0x00 as the register pointer because `register` had folded to a constant and the
     /// sequence bound without a buffer behind it. Lay the elements out under a hidden name
     /// and answer its base.
+    ///
+    /// An element need not be a compile-time constant: it is evaluated HERE, at the call that
+    /// materializes the buffer, exactly once -- the same point CPython builds the `bytes`
+    /// object -- and the computed value is stored, mirroring the named-local lowering
+    /// (`x: bytes = bytes([reg & 0xFF])`, VisitVarDecl) that already evaluates a non-constant
+    /// element instead of defaulting it to 0. Before this, a single run-time element (never
+    /// reaching the all-constant fast path any OTHER element count could also miss) left this
+    /// whole function answering null, so the caller kept handing a real subroutine the bare,
+    /// unbacked parameter name -- not a silently wrong value this time, but a hole deep enough
+    /// that an @inline callee two hops further in (`write_bytes`/`read_bytes` on RP2040) found
+    /// no storage at all behind a run-time subscript and refused to compile.
     /// </summary>
     private ArrayBase? MaterializeSequenceArg(List<Expression> elements)
     {
-        var values = new List<int>(elements.Count);
+        var values = new List<Val>(elements.Count);
         foreach (var e in elements)
-        {
-            if (!TryEvalElemConst(e, out int v)) return null;
-            values.Add(v);
-        }
+            values.Add(TryEvalElemConst(e, out int v) ? new Constant(v) : VisitExpression(e));
 
         string name = "__seqarg" + (++ctSequenceCounter);
         string key = !string.IsNullOrEmpty(currentInlinePrefix)
@@ -687,7 +712,7 @@ public partial class IRGenerator
         variableTypes[key] = DataType.UINT8;
         arraysWithVariableIndex.Add(key);
         for (int k = 0; k < size; ++k)
-            Emit(new ArrayStore(key, new Constant(k), new Constant(k < values.Count ? values[k] : 0),
+            Emit(new ArrayStore(key, new Constant(k), k < values.Count ? values[k] : new Constant(0),
                 DataType.UINT8, size));
         return new ArrayBase(key);
     }

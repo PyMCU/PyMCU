@@ -1890,8 +1890,9 @@ public partial class IRGenerator
                     // `undefined reference to main_z`. Lay the elements out under a hidden
                     // name and pass that base, as the parameter-bound sequence below does.
                     if (!IsBufferStorageName(argQualified)
-                        && ResolveConstSequenceExpr(argVe) is { } namedSeq
-                        && MaterializeSequenceArg(namedSeq) is { } namedSeqBuf)
+                        && ResolveConstSequenceExprScoped(argVe, out var namedSeqScope) is { } namedSeq
+                        && UnderSeqArgScope(namedSeqScope, () => MaterializeSequenceArg(namedSeq))
+                            is { } namedSeqBuf)
                     {
                         argValuesL.Add(namedSeqBuf);
                         continue;
@@ -1957,8 +1958,9 @@ public partial class IRGenerator
             else if (argEvaluated is Variable
                      && arg is VariableExpr seqArgV
                      && !NameIsLocalScalar(seqArgV.Name)
-                     && ResolveConstSequenceExpr(seqArgV) is { } seqElems
-                     && MaterializeSequenceArg(seqElems) is { } seqBuf)
+                     && ResolveConstSequenceExprScoped(seqArgV, out var seqElemsScope) is { } seqElems
+                     && UnderSeqArgScope(seqElemsScope, () => MaterializeSequenceArg(seqElems))
+                        is { } seqBuf)
             {
                 argEvaluated = seqBuf;
             }
