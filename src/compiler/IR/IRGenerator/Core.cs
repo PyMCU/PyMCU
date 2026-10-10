@@ -2770,6 +2770,17 @@ public partial class IRGenerator
                 $"`from pymcu.chips import {(name == "__FREQUENCY__" ? "__FREQ__" : name)}`", at);
 
         // `from module import sym` where sym is a mutable global (e.g. `from machine import mem8`)
+        // or a compile-time constant (`from pymcu.hal.i2c import I2C_OK as _I2C_OK`). The
+        // alias ladder above this point always looked the ALIAS up by its own spelling
+        // ("_I2C_OK"), never by AliasOriginal's answer ("I2C_OK") -- fine for a mutable
+        // global, which this rung already re-keys through the defining module's prefix, but
+        // a plain `X = 0` at module level never gets that prefix (Assign.cs stores it under
+        // its own bare name), so a RENAMED import of one found neither key and fell through
+        // to "unresolved name inside this function", which is the one shape this whole
+        // ladder treats as "a real local nobody initialized" (PyMCU#.i2c_check_rc_ignored):
+        // an `alloca` with no store, read as `undef`, which let the optimizer treat the
+        // whole comparison as dead and drop the branch -- not a register bit, not an ARM
+        // backend bug, a name that resolved to nothing because it was renamed.
         if (TryImportedAlias(name, out var importedAliasMod) && importedAliasMod != null)
         {
             var origName = AliasOriginal(name);
@@ -2777,6 +2788,18 @@ public partial class IRGenerator
             string importedKey = importedPrefix + origName;
             if (mutableGlobals.TryGetValue(importedKey, out var importedAliasType))
                 return new Variable(importedKey, importedAliasType);
+            if (globals.TryGetValue(importedKey, out var importedSym))
+                return importedSym.IsMemoryAddress
+                    ? new MemoryAddress(importedSym.Value, importedSym.Type)
+                    : new Constant(importedSym.Value);
+            if (globals.TryGetValue(origName, out var importedBareSym))
+                return importedBareSym.IsMemoryAddress
+                    ? new MemoryAddress(importedBareSym.Value, importedBareSym.Type)
+                    : new Constant(importedBareSym.Value);
+            if (constantVariables.TryGetValue(importedKey, out int importedConst))
+                return new Constant(importedConst, ResolveStrConstant(importedKey));
+            if (constantVariables.TryGetValue(origName, out int importedBareConst))
+                return new Constant(importedBareConst, ResolveStrConstant(origName));
         }
 
         // A name the frame binds is its local, never another module's global: `lim = x + 300`
