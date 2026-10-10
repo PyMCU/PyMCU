@@ -37,11 +37,7 @@ class SPI:
         while (RESETS_RESET_DONE.value & reset_mask) != reset_mask:
             pass
 
-        cpsdvsr: uint32 = 2
-        scr: uint32 = (_CLK_PERI // (cpsdvsr * baud)) - 1
-        SPI0_SSPCPSR.value = cpsdvsr
-        SPI0_SSPCR0.value = 0x07 | (polarity << 6) | (phase << 7) | ((scr & 0xFF) << 8)
-        SPI0_SSPCR1.value = 1 << 1
+        self.configure(baud, polarity, phase)
 
         # De-isolate and route SCK / MOSI / MISO to the SPI function.
         sck_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * sck)
@@ -60,6 +56,28 @@ class SPI:
         if cs != -1:
             SIO_GPIO_OE_SET.value = 1 << cs
             SIO_GPIO_OUT_SET.value = 1 << cs
+
+    @inline
+    def configure(self, baud: uint32, polarity: uint8, phase: uint8):
+        # See the RP2040 HAL's own configure() for the full rationale -- same
+        # structure, this chip's own _CLK_PERI.
+        SPI0_SSPCR1.value = 0
+        cpsdvsr: uint32 = 2
+        divisor: uint32 = cpsdvsr * baud
+        scr: uint32 = 0
+        if divisor > 0 and divisor <= _CLK_PERI:
+            scr = (_CLK_PERI // divisor) - 1
+            if scr > 255:
+                scr = 255
+        SPI0_SSPCPSR.value = cpsdvsr
+        SPI0_SSPCR0.value = 0x07 | (polarity << 6) | (phase << 7) | ((scr & 0xFF) << 8)
+        SPI0_SSPCR1.value = 1 << 1
+
+    @inline
+    def frequency(self) -> uint32:
+        cpsdvsr: uint32 = SPI0_SSPCPSR.value
+        scr: uint32 = (SPI0_SSPCR0.value >> 8) & 0xFF
+        return _CLK_PERI // (cpsdvsr * (scr + 1))
 
     @inline
     def transfer(self, data: uint8) -> uint8:
