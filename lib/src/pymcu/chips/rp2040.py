@@ -170,6 +170,9 @@ I2C0_IC_ENABLE        : ptr[uint32] = ptr(I2C0_BASE + 0x6C)   # ENABLE[0]
 I2C0_IC_STATUS        : ptr[uint32] = ptr(I2C0_BASE + 0x70)   # TFNF[1], TFE[2], RFNE[3]
 I2C0_IC_CLR_TX_ABRT   : ptr[uint32] = ptr(I2C0_BASE + 0x54)
 I2C0_IC_TXFLR         : ptr[uint32] = ptr(I2C0_BASE + 0x74)
+I2C0_IC_RXFLR         : ptr[uint32] = ptr(I2C0_BASE + 0x78)   # rx FIFO level
+I2C0_IC_TX_ABRT_SOURCE: ptr[uint32] = ptr(I2C0_BASE + 0x80)   # why the last transfer aborted
+I2C0_IC_RAW_INTR_STAT : ptr[uint32] = ptr(I2C0_BASE + 0x34)   # TX_ABRT[9] set on any abort
 # IC_DATA_CMD command bits.
 I2C_CMD_READ    = 0x100
 I2C_CMD_STOP    = 0x200
@@ -177,6 +180,8 @@ I2C_CMD_RESTART = 0x400
 I2C_STATUS_TFNF = 1   # tx FIFO not full
 I2C_STATUS_TFE  = 2   # tx FIFO empty
 I2C_STATUS_RFNE = 3   # rx FIFO not empty
+I2C_RAW_INTR_TX_ABRT    = 9   # IC_RAW_INTR_STAT bit: the last transfer aborted
+I2C_ABRT_7B_ADDR_NOACK  = 1   # IC_TX_ABRT_SOURCE bit: the target address went unanswered
 
 # ==========================================
 #  PWM -- 8 slices, 2 channels (A/B) each; slice stride 0x14
