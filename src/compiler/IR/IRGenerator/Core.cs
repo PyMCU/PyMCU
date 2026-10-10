@@ -2788,18 +2788,37 @@ public partial class IRGenerator
             string importedKey = importedPrefix + origName;
             if (mutableGlobals.TryGetValue(importedKey, out var importedAliasType))
                 return new Variable(importedKey, importedAliasType);
-            if (globals.TryGetValue(importedKey, out var importedSym))
-                return importedSym.IsMemoryAddress
-                    ? new MemoryAddress(importedSym.Value, importedSym.Type)
-                    : new Constant(importedSym.Value);
-            if (globals.TryGetValue(origName, out var importedBareSym))
-                return importedBareSym.IsMemoryAddress
-                    ? new MemoryAddress(importedBareSym.Value, importedBareSym.Type)
-                    : new Constant(importedBareSym.Value);
-            if (constantVariables.TryGetValue(importedKey, out int importedConst))
-                return new Constant(importedConst, ResolveStrConstant(importedKey));
-            if (constantVariables.TryGetValue(origName, out int importedBareConst))
-                return new Constant(importedBareConst, ResolveStrConstant(origName));
+
+            // The four rungs below answer from the DEFINING module's own storage under
+            // ITS bare/prefixed spelling of the name -- correct ONLY for a genuine `as`
+            // rename (`from pymcu.hal.i2c import I2C_OK as _I2C_OK`). Without an alias,
+            // AliasOriginal(name) answers `name` itself, and the existing ladder (and the
+            // generation-time machinery above it) already resolves that case correctly --
+            // `from errno import EPERM` then `EPERM = 42` inside an `if` (probe 875,
+            // PyMCU#rebindstr) must take that untouched path, not this one, or these
+            // rungs read errno's OWN 1 straight past the rebind.
+            //
+            // A rebound ALIAS (`from errno import EPERM as _E` then `_E = 42`) needs the
+            // same deference, checked the same way rebindstr (e1f8216a/d09d6cf7) checks
+            // the unaliased case: ProgramWritesName over the WHOLE program, not just a
+            // table lookup -- the rebind can be reachable only through a nested block or
+            // a function's `global` declaration, which no single table reliably reflects
+            // at the point this rung runs.
+            if (origName != name && ProgramWritesName(mainProgramAst, name).Site == null)
+            {
+                if (globals.TryGetValue(importedKey, out var importedSym))
+                    return importedSym.IsMemoryAddress
+                        ? new MemoryAddress(importedSym.Value, importedSym.Type)
+                        : new Constant(importedSym.Value);
+                if (globals.TryGetValue(origName, out var importedBareSym))
+                    return importedBareSym.IsMemoryAddress
+                        ? new MemoryAddress(importedBareSym.Value, importedBareSym.Type)
+                        : new Constant(importedBareSym.Value);
+                if (constantVariables.TryGetValue(importedKey, out int importedConst))
+                    return new Constant(importedConst, ResolveStrConstant(importedKey));
+                if (constantVariables.TryGetValue(origName, out int importedBareConst))
+                    return new Constant(importedBareConst, ResolveStrConstant(origName));
+            }
         }
 
         // A name the frame binds is its local, never another module's global: `lim = x + 300`

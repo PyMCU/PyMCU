@@ -104,6 +104,52 @@ public class AliasedImportedConstantTests
         Assert.Equal(0, Assert.IsType<Constant>(jeq.Src2).Value);
     }
 
+    // --- The importer's own rebind must still win (PyMCU#rebindstr, e1f8216a/
+    // d09d6cf7) -- with and without an alias. The new "imported alias" rungs
+    // answer from the DEFINING module's storage under ITS own spelling of the
+    // name; they must yield whenever the IMPORTER has already decided what the
+    // exact spelling it reads under means, or a bare `from errno import EPERM`
+    // then `EPERM = 42` reads errno's own 1 straight past the rebind -- the
+    // regression this repo's gate caught (probe 875). ---
+
+    [Theory]
+    [InlineData("avr")]
+    [InlineData("arm")]
+    public void Constant_UnaliasedRebind_ImportersRebindWins(string arch)
+    {
+        // `from consts import OTHER_VAL` then `OTHER_VAL = 99` -- no `as` at all,
+        // the exact shape of oracle probe 875_from_import_rebind_inside_if.
+        var ir = Generate(
+            "from consts import OK_VAL, OTHER_VAL\n" +
+            "OTHER_VAL = 99\n" +
+            CheckFn("OTHER_VAL", "OK_VAL"),
+            arch, ConstModule);
+        var (jne, jeq) = JumpsIn(ir);
+
+        Assert.Equal(99, Assert.IsType<Constant>(jne.Src2).Value);
+        Assert.Equal(0, Assert.IsType<Constant>(jeq.Src2).Value);
+    }
+
+    [Theory]
+    [InlineData("avr")]
+    [InlineData("arm")]
+    public void Constant_AliasedRebind_ImportersRebindWins(string arch)
+    {
+        // Same rebind, but through the ALIAS: `from consts import OTHER_VAL as
+        // _OTHER` then `_OTHER = 99`. consts.OTHER_VAL (1) must not leak through
+        // AliasOriginal's answer once the importer has its own binding for the
+        // alias spelling itself.
+        var ir = Generate(
+            "from consts import OK_VAL as _OK, OTHER_VAL as _OTHER\n" +
+            "_OTHER = 99\n" +
+            CheckFn("_OTHER", "_OK"),
+            arch, ConstModule);
+        var (jne, jeq) = JumpsIn(ir);
+
+        Assert.Equal(99, Assert.IsType<Constant>(jne.Src2).Value);
+        Assert.Equal(0, Assert.IsType<Constant>(jeq.Src2).Value);
+    }
+
     // --- Shape 2: a MUTABLE global (machine.mem8-style; always worked, because
     // this rung's mutableGlobals check predates the fix). Pinned here so one
     // regression suite covers both shapes the ladder has to tell apart. ---
