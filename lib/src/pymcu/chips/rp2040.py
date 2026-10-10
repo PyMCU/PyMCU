@@ -172,7 +172,7 @@ I2C0_IC_CLR_TX_ABRT   : ptr[uint32] = ptr(I2C0_BASE + 0x54)
 I2C0_IC_TXFLR         : ptr[uint32] = ptr(I2C0_BASE + 0x74)
 I2C0_IC_RXFLR         : ptr[uint32] = ptr(I2C0_BASE + 0x78)   # rx FIFO level
 I2C0_IC_TX_ABRT_SOURCE: ptr[uint32] = ptr(I2C0_BASE + 0x80)   # why the last transfer aborted
-I2C0_IC_RAW_INTR_STAT : ptr[uint32] = ptr(I2C0_BASE + 0x34)   # TX_ABRT[9] set on any abort
+I2C0_IC_RAW_INTR_STAT : ptr[uint32] = ptr(I2C0_BASE + 0x34)   # TX_ABRT[6] set on any abort
 # IC_DATA_CMD command bits.
 I2C_CMD_READ    = 0x100
 I2C_CMD_STOP    = 0x200
@@ -180,7 +180,14 @@ I2C_CMD_RESTART = 0x400
 I2C_STATUS_TFNF = 1   # tx FIFO not full
 I2C_STATUS_TFE  = 2   # tx FIFO empty
 I2C_STATUS_RFNE = 3   # rx FIFO not empty
-I2C_RAW_INTR_TX_ABRT    = 9   # IC_RAW_INTR_STAT bit: the last transfer aborted
+# Bit 9 of IC_RAW_INTR_STAT is STOP_DET, not TX_ABRT -- it latches on every
+# transaction that ends in a STOP condition, aborted or not, since nearly
+# every write_bytes/read_bytes/write_then_read call asserts STOP on its last
+# byte. Reading it here made _aborted() true after any ordinary, successful
+# transfer, so every caller downstream (write_then_read's caller raising
+# OSError on a nonzero code, busio.I2C.writeto_then_readfrom) saw a bogus
+# abort on the FIRST transaction that completed normally.
+I2C_RAW_INTR_TX_ABRT    = 6   # IC_RAW_INTR_STAT bit: the last transfer aborted
 I2C_ABRT_7B_ADDR_NOACK  = 1   # IC_TX_ABRT_SOURCE bit: the target address went unanswered
 
 # ==========================================
