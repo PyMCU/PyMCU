@@ -137,12 +137,12 @@ status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
-symbol = "i2c.I2C.ping"
+symbol = "i2c.I2C.read"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
-symbol = "i2c.I2C.read"
+symbol = "i2c.I2C.read_bytes"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
@@ -198,6 +198,11 @@ reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
 symbol = "i2c.I2C.write_bytes"
+status = "tracked:#387"
+reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
+
+[[deviation]]
+symbol = "i2c.I2C.write_then_read"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
@@ -258,11 +263,6 @@ reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
 symbol = "spi.SPI.configure"
-status = "tracked:#387"
-reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
-
-[[deviation]]
-symbol = "spi.SPI.frequency"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
