@@ -1938,6 +1938,22 @@ public partial class IRGenerator
                 funcReturnLocalLists.Add(fullName);
             var @params = new List<string>();
             var paramTypes = new List<DataType>();
+            // A parameter this body never indexes itself, only forwards unchanged to an
+            // @inline callee whose OWN corresponding parameter is indexed with a run-time
+            // variable (directly, or through a further forward of its own): the same
+            // transitive walk GetInlineVarIndexedParams already does for an @inline caller's
+            // own parameters, which does not look at func.IsInline anywhere, so it answers the
+            // same question for a real subroutine's unannotated parameter unchanged. Computed
+            // once per function, not per parameter -- the walk is the whole body each time.
+            // `pymcu/hal/rp2040/i2c.py` (feat/rp-i2c-spi): `send(buffer, n)` only calls
+            // `write_bytes(buffer, 0, n)` (@inline); IsSubscriptedInBody alone never sees a
+            // `buffer[...]` in `send`'s OWN body, so `send.buffer` was left a scalar (UINT8)
+            // and `write_bytes`'s inlined `data[i]` read it as a register-bit index instead
+            // of an array element: "Bit index must be constant for reading", naming neither a
+            // buffer nor the parameter whose storage was already correct (fix 2a3760f7) -- only
+            // its TYPE was wrong.
+            HashSet<string>? transitiveBufferParams = func.IsInline
+                ? null : GetInlineVarIndexedParams(func, new HashSet<FunctionDef>());
             foreach (var p in func.Params)
             {
                 // A fixed-array parameter type (`uint8[4]`) is not a real subroutine ABI: it has
@@ -1961,7 +1977,9 @@ public partial class IRGenerator
                 //
                 // Decided here rather than when the body is compiled so that a call site sees
                 // the same answer whichever of the two the compiler reaches first.
-                if (!func.IsInline && p.Type.Length == 0 && IsSubscriptedInBody(func.Body, p.Name))
+                if (!func.IsInline && p.Type.Length == 0
+                    && (IsSubscriptedInBody(func.Body, p.Name)
+                        || (transitiveBufferParams?.Contains(p.Name) ?? false)))
                     bytearrayParams.Add(fullName + "." + p.Name);
 
                 @params.Add(p.Name);

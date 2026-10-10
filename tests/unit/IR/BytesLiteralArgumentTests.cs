@@ -204,4 +204,62 @@ public class BytesLiteralArgumentTests
         Assert.Contains(main.Body, i => i is ArrayStore { Src: not Constant });
         Assert.DoesNotContain(main.Body, i => i is ArrayStore { Src: Constant { Value: 0 } });
     }
+
+    // ── a buffer parameter forwarded ONE MORE hop, never indexed by the real subroutine
+    //    itself, only by the further @inline callee it hands the buffer to ────────────────
+
+    /// <summary>
+    /// `pymcu/hal/rp2040/i2c.py` (feat/rp-i2c-spi): `send` is a REAL subroutine with an
+    /// UNANNOTATED `buffer` parameter that never indexes it directly -- it only forwards it
+    /// on to `write_bytes` (@inline), whose own `while i < n: ... data[i] ...` indexes it with
+    /// a run-time variable. `ScanFunctions` (Scan.cs) decided an unannotated real parameter is
+    /// a buffer from `IsSubscriptedInBody(func.Body, p.Name)` alone -- true only for a DIRECT
+    /// `buffer[...]` inside `send`'s own body, which this shape never has. `send.buffer` was
+    /// therefore left a plain scalar (UINT8). The forwarded Variable still carries the real
+    /// storage address `MaterializeSequenceArg` built (fix 2a3760f7) -- so this is a TYPE bug,
+    /// not a storage one -- but `data[i]` inside `write_bytes`'s inline expansion read `data`
+    /// as a scalar and fell to the register BIT-index path: "Bit index must be constant for
+    /// reading", naming no buffer, no parameter, an operation the program does not contain.
+    /// </summary>
+    [Fact]
+    public void ABufferParamNeverIndexedDirectlyButForwardedToAVarIndexedInlineCalleeIsABuffer()
+    {
+        // write_bytes defined BEFORE send: ScanFunctions walks one module top to bottom, and
+        // the transitive check below needs write_bytes's OWN var-indexed parameter already on
+        // record when send's parameters are decided -- exactly the order the real HAL has
+        // (write_bytes lives in the imported pymcu.hal.rp2040.i2c module, scanned before the
+        // busio.py that defines _i2c_writeto/send).
+        string src =
+            "from pymcu.chips.atmega328p import GPIOR0\n" +
+            "from pymcu.types import inline\n\n" +
+            "@inline\n" +
+            "def write_bytes(data, start: int, n: int) -> int:\n" +
+            "    total: int = 0\n" +
+            "    i: int = start\n" +
+            "    end: int = start + n\n" +
+            "    while i < end:\n" +
+            "        total = total + data[i]\n" +
+            "        i = i + 1\n" +
+            "    return total\n\n" +
+            "def send(buffer, n: int) -> int:\n" +
+            "    return write_bytes(buffer, 0, n)\n\n" +
+            "@inline\n" +
+            "def writeto(buffer) -> int:\n" +
+            "    return send(buffer, 1)\n\n" +
+            "def main() -> None:\n" +
+            "    register: int = GPIOR0.value\n" +
+            "    x: int = writeto(bytes([register & 0xFF]))\n" +
+            "    while True:\n        pass\n";
+
+        var ex = Record.Exception(() => Gen(src));
+        Assert.Null(ex);
+
+        var ir = Gen(src);
+        var send = ir.Functions.Single(f => f.Name == "send");
+        // A real buffer read through send's own parameter (its base address, built by
+        // MaterializeSequenceArg) -- not a register bit test.
+        Assert.Contains(send.Body,
+            i => i is BytearrayLoad { PtrName: "send.buffer" } or ArrayLoad or LoadIndirect);
+        Assert.DoesNotContain(send.Body, i => i is BitCheck);
+    }
 }
