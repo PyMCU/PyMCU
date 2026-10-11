@@ -4831,6 +4831,31 @@ public partial class IRGenerator
     // to name the type, which is what the label form of SignalError does: it loads R22 and
     // jumps. The jump lands on the next instruction, which is the call the exception runtime
     // keys off.
+    // Whether the text of an exception of this type is read by anything: a handler that binds
+    // it (`except ZeroDivisionError as e` or a catch-all one). Only then is the text interned and
+    // stored, so a program that never prints the exception carries neither the string nor the
+    // store. In a library the generated adapter of a native module is the reader. The unhandled
+    // report is deliberately not one: it is on in nearly every program that prints (a library
+    // somewhere raises with a message), and the standard library divides in many places, so
+    // counting it would put the string and a store at every guard.
+    private bool RuntimeExceptionTextIsRead(string exceptionType)
+        => LibraryMode   // the generated adapter of a native module reads the word after every call
+           || (programBindsExceptionObject
+               && (boundHandlersCatchAll || boundHandlerTypes.Contains(exceptionType)));
+
+    // A run-time failure the compiler raises on its own -- a zero divisor, a missing dict key --
+    // is a raise with no message statement, so the message word was never written and print(e)
+    // answered an empty line where CPython has text. This writes CPython's text for it, in the
+    // same word a literal raise writes, ahead of the signal.
+    private void RecordRuntimeExceptionText(string exceptionType, string text)
+    {
+        if (!programRecordsRaiseMessages || !RuntimeExceptionTextIsRead(exceptionType)) return;
+        DeclareExceptionMessageVar();
+        Emit(new Copy(new FlashStrAddr(InternStringAsFlash(text)),
+                      new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
+        sawRaiseMessageStore = true;
+    }
+
     private void EmitRaiseUnwind(Val code, bool unhandledInMain, string? restorePrefix = null)
     {
         string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;

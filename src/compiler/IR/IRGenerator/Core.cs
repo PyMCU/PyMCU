@@ -779,6 +779,8 @@ public partial class IRGenerator
         // bytes it always did. The answer is whole-program and has to be settled before the
         // first raise is lowered, which is why it is taken here and not at each raise (#369).
         programBindsExceptionObject = ProgramBindsExceptionObject(mainAst, importedModules.Values);
+        (boundHandlersCatchAll, boundHandlerTypes) =
+            BoundHandlerTypes(mainAst, importedModules.Values);
 
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes. Imported modules
@@ -3758,6 +3760,48 @@ public partial class IRGenerator
     /// import alike. A handler in a library the program never calls still counts: the decision
     /// is taken before dead code is eliminated, so it errs towards emitting the store rather
     /// than towards a read of a word nothing ever wrote.
+    private static (bool CatchAll, HashSet<string> Types) BoundHandlerTypes(
+        PyMCU.Frontend.ProgramNode main,
+        IEnumerable<PyMCU.Frontend.ProgramNode> imported)
+    {
+        bool all = false;
+        var types = new HashSet<string>();
+
+        void Walk(PyMCU.Frontend.Statement? s)
+        {
+            foreach (var st in TypeInference.WalkStatements(s))
+            {
+                switch (st)
+                {
+                    case PyMCU.Frontend.TryStmt t:
+                        for (int i = 0; i < t.Handlers.Count; i++)
+                        {
+                            if (t.BoundName(i) == null) continue;
+                            var alts = t.Handlers[i].ExnType
+                                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                            if (alts.Length == 0 || alts.Any(a => a is "Exception" or "BaseException"))
+                                all = true;
+                            else
+                                foreach (var a in alts) types.Add(a);
+                        }
+                        break;
+                    case PyMCU.Frontend.FunctionDef fd: Walk(fd.Body); break;
+                    case PyMCU.Frontend.ClassDef cd: Walk(cd.Body); break;
+                }
+            }
+        }
+
+        void WalkProgram(PyMCU.Frontend.ProgramNode p)
+        {
+            foreach (var st in p.GlobalStatements) Walk(st);
+            foreach (var fn in p.Functions) Walk(fn.Body);
+        }
+
+        WalkProgram(main);
+        foreach (var m in imported) WalkProgram(m);
+        return (all, types);
+    }
+
     private static bool ProgramBindsExceptionObject(
         PyMCU.Frontend.ProgramNode main,
         IEnumerable<PyMCU.Frontend.ProgramNode> imported)

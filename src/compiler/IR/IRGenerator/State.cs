@@ -811,6 +811,13 @@ public partial class IRGenerator
     /// <see cref="programRecordsRaiseMessages"/> -- the store itself is gated on that.
     private bool programBindsExceptionObject;
 
+    // The exception types a handler that binds `as e` can catch, and whether one of them catches
+    // everything (a bare `except`, `Exception`, `BaseException`). A runtime-raised exception
+    // records the text CPython gives it only when something can read it: this set, or the
+    // unhandled-exception report.
+    private bool boundHandlersCatchAll;
+    private HashSet<string> boundHandlerTypes = new();
+
     /// Whether raises record their message for a later read: a handler that binds
     /// `except X as e` (#369), or an unhandled-exception report that can carry it to
     /// UART. The second form needs the string writer in the image, so the answer is

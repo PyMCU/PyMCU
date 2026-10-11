@@ -2516,24 +2516,11 @@ public partial class IRGenerator
     // the compiler cannot fold. `isFloatOp` selects the float equality test -- comparing the
     // VALUE against 0.0 catches -0.0 too, unlike a bit test -- versus the plain integer
     // JumpIfNotZero.
-    // The text CPython gives a ZeroDivisionError from `/`, `//` and `%`, as of CPython 3.14 (which
-    // is what the test oracle runs). Older releases word it per operation -- "integer division or
-    // modulo by zero" for int `//` and `%`, "float division by zero", "float modulo" -- so this is
-    // the one place to change if the reference version moves.
-    private static string ZeroDivisionMessage(bool isFloatOp) => "division by zero";
-
-    // In a library the exception word that the generated adapter reads is set alongside the
-    // code, so the host raises ZeroDivisionError with CPython's text instead of with none. The
-    // string is interned only when a guard is emitted, so a kernel that never divides by a
-    // run-time value carries nothing.
-    private void RecordZeroDivisionMessage(bool isFloatOp)
-    {
-        if (!LibraryMode) return;
-        DeclareExceptionMessageVar();
-        Emit(new Copy(new FlashStrAddr(InternStringAsFlash(ZeroDivisionMessage(isFloatOp))),
-                      new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
-        sawRaiseMessageStore = true;
-    }
+    // The text CPython 3.14 gives each ZeroDivisionError. Every division operator says "division
+    // by zero" there (releases up to 3.13 word int and float differently); a zero base raised to
+    // a negative power says the second.
+    private const string ZeroDivisionMessage = "division by zero";
+    private const string ZeroToNegativePowerMessage = "zero to a negative power";
 
     private void EmitDivModZeroCheck(Val divisor, bool isFloatOp)
     {
@@ -2543,7 +2530,7 @@ public partial class IRGenerator
             Emit(new Binary(BinaryOp.Equal, divisor, new FloatConstant(0.0), isZero));
             string divOk = MakeLabel();
             Emit(new JumpIfZero(isZero, divOk));
-            RecordZeroDivisionMessage(isFloatOp);
+            RecordRuntimeExceptionText("ZeroDivisionError", ZeroDivisionMessage);
             EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
             Emit(new Label(divOk));
         }
@@ -2551,7 +2538,7 @@ public partial class IRGenerator
         {
             string divOk = MakeLabel();
             Emit(new JumpIfNotZero(divisor, divOk));
-            RecordZeroDivisionMessage(isFloatOp);
+            RecordRuntimeExceptionText("ZeroDivisionError", ZeroDivisionMessage);
             EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
             Emit(new Label(divOk));
         }
@@ -2948,6 +2935,7 @@ public partial class IRGenerator
             // __pymcu_powf (RuntimeHelpers.cs).
             if (fb.Value == 0.0 && fe.Value < 0.0)
             {
+                RecordRuntimeExceptionText("ZeroDivisionError", ZeroToNegativePowerMessage);
                 EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
                 // A literal placeholder, not MakeTemp: the raise never returns, so nothing
                 // downstream can observe this value, but a Temporary nobody ever writes
@@ -3011,6 +2999,7 @@ public partial class IRGenerator
         Emit(new Binary(BinaryOp.BitAnd, isZero, isNeg, bothBad));
         string ok = MakeLabel();
         Emit(new JumpIfZero(bothBad, ok));
+        RecordRuntimeExceptionText("ZeroDivisionError", ZeroToNegativePowerMessage);
         EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
         Emit(new Label(ok));
     }
@@ -3283,6 +3272,9 @@ public partial class IRGenerator
             // which is the same instruction the run-time key path emits for the same miss.
             if (tryCatchStack.Count > 0)
             {
+                // KeyError's text is the repr of the key, which this site knows.
+                if (keyC.Length == 1)
+                    RecordRuntimeExceptionText("KeyError", PyReprOfKey(keyExpr, keyC[0]));
                 EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: true);
                 return MakeTemp(DataType.UINT8);
             }
@@ -3347,7 +3339,18 @@ public partial class IRGenerator
         }
         else
         {
-            // No key matched: raise KeyError (caught by an enclosing try, else propagates).
+            // No key matched: raise KeyError (caught by an enclosing try, else propagates). The
+            // text is the repr of the key; it is known here when the key expression names a
+            // constant (`k = 'zz'` propagated into the lookup), and a key that only exists at run
+            // time has no text to offer.
+            if (StaticStringOf(keyExpr) is { } staticKey)
+                RecordRuntimeExceptionText("KeyError", PyReprOfText(staticKey));
+            else if (TryFoldInt(keyExpr, out int staticIntKey)
+                     || (keyExpr is VariableExpr keyVar
+                         && (TryArgumentConstant(keyVar.Name, out staticIntKey)
+                             || TryArgumentConstant((string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction)
+                                                    + "." + keyVar.Name, out staticIntKey))))
+                RecordRuntimeExceptionText("KeyError", staticIntKey.ToString());
             EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: true);
         }
         Emit(new Label(endL));
@@ -3357,6 +3360,23 @@ public partial class IRGenerator
     // Name the key the way the program wrote it. A name bound to a string reaches here as a
     // VariableExpr, so the old fall-through printed the folded number and the message read
     // "KeyError: 256", which is not anything the source says.
+    // repr() of a dict key, as CPython's KeyError prints it: a string in single quotes, a number
+    // as it is. A one-character string key is held as its character code, so the folded constant
+    // alone cannot tell 'a' from 97; the expression or the recorded text can.
+    private static string PyReprOfKey(Expression keyExpr, Constant folded)
+    {
+        string? text = keyExpr is StringLiteral sl ? sl.Value : folded.Text;
+        return text == null ? folded.Value.ToString() : PyReprOfText(text);
+    }
+
+    private static string PyReprOfText(string text)
+    {
+        string quote = text.Contains('\'') && !text.Contains('"') ? "\"" : "'";
+        string body = text.Replace("\\", "\\\\").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
+        if (quote == "'") body = body.Replace("'", "\\'");
+        return quote + body + quote;
+    }
+
     private string DescribeDictKey(Expression keyExpr, Constant folded) => keyExpr switch
     {
         StringLiteral s => $"\"{s.Value}\"",

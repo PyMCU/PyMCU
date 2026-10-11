@@ -8546,6 +8546,7 @@ public partial class IRGenerator
                 // promotion this compiler does not implement for integer pow().
                 if (@base == 0)
                 {
+                    RecordRuntimeExceptionText("ZeroDivisionError", ZeroToNegativePowerMessage);
                     EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
                     // A literal placeholder, not MakeTemp: see the identical note in
                     // LowerPow (Expr.cs) -- the raise never returns, so nothing downstream
@@ -10648,6 +10649,13 @@ public partial class IRGenerator
     /// </summary>
     private Val EmitConstSeqIndex(CallExpr expr, MemberAccessExpr memC, List<Expression> elems)
     {
+        // CPython words the miss by the receiver: "list.index(x): x not in list" and
+        // "tuple.index(x): x not in tuple". A list literal or a name not bound to a tuple is a
+        // list; the tuple wording stays for a tuple literal or a tuple-bound name.
+        bool receiverIsList = memC.Object is ListExpr
+            || (memC.Object is VariableExpr rv && !IsTupleBound(rv.Name));
+        string missText = receiverIsList ? "list.index(x): x not in list"
+                                         : "tuple.index(x): x not in tuple";
         if (expr.Args.Count != 1)
             throw UserError(
                 "'.index()' on a compile-time sequence takes the value to find -- " +
@@ -10672,7 +10680,7 @@ public partial class IRGenerator
             if (allFolded)
             {
                 // Every element folded and none matched: a miss the compiler can see.
-                VisitRaise(new RaiseStmt("ValueError", "tuple.index(x): x not in tuple"));
+                VisitRaise(new RaiseStmt("ValueError", missText));
                 return new Constant(0);
             }
         }
@@ -10695,7 +10703,7 @@ public partial class IRGenerator
         EnterRuntimeBranch(DescribeOperand(expr.Args[0]));
         try
         {
-            VisitRaise(new RaiseStmt("ValueError", "tuple.index(x): x not in tuple"));
+            VisitRaise(new RaiseStmt("ValueError", missText));
         }
         finally { LeaveRuntimeBranch(); }
         Emit(new Label(endLabel));
