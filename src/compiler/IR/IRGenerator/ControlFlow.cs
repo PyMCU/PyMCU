@@ -3103,6 +3103,16 @@ public partial class IRGenerator
                 raiseMessageFunctions.Add(currentFunction);
         }
         bool dynamicStored = false;
+        // The adapter of a native module reads one NUL-terminated string out of the kernel and
+        // builds the host-side exception from it. A message assembled at run time (an f-string,
+        // a concatenation, a call) or an integer argument (`raise OSError(5)`) has no such
+        // string, so it cannot cross; refuse it where it is written instead of dropping it.
+        if (LibraryMode && writesMessage && (intArg || dynamicMessage != null))
+            throw UserError(
+                "a raise in a native module carries its message to CircuitPython as one fixed "
+                + "string: use a string literal here (`raise ValueError(\"bad length\")`), not "
+                + (intArg ? "an integer or errno argument." : "a value computed at run time."),
+                stmt);
         if (intArg && programRecordsRaiseMessages && writesMessage)
         {
             // `raise E(n)` with an integer argument: the int lands in the exception arg

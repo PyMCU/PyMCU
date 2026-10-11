@@ -184,4 +184,39 @@ public class LibraryModeTests
         Assert.Single(mainFn.Body);
         Assert.IsType<Return>(mainFn.Body[0]);
     }
+
+    // ---- exceptions across the native-module boundary ----
+
+    [Fact]
+    public void LibraryMode_ARaiseMessageIsRecordedAndItsStringIsKeptWithoutAMain()
+    {
+        var ir = Gen(
+            "def check(x: int) -> int:\n    if x < 0:\n        raise ValueError(\"negative\")\n    return x\n",
+            library: true);
+
+        // The message pointer word is written, and the interned string it points at is
+        // carried by some function even though the unit has no main to host it.
+        var all = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.Contains(all, i => i is Copy { Dst: Variable { Name: "__exn_msg" } });
+        Assert.Contains(all, i => i is FlashData { Name: var n } && n.StartsWith("__cstr_"));
+    }
+
+    [Fact]
+    public void LibraryMode_ARaiseMessageComputedAtRunTimeIsRefused()
+    {
+        var src =
+            "def check(x: int) -> int:\n    if x < 0:\n        raise ValueError(f\"bad {x}\")\n    return x\n";
+        var e = Assert.ThrowsAny<CompilerError>(() => Gen(src, library: true));
+        Assert.Contains("string literal", e.Message);
+    }
+
+    [Fact]
+    public void WithoutLibraryMode_ARunTimeMessageIsStillAccepted()
+    {
+        var src =
+            "def check(x: int) -> int:\n    if x < 0:\n        raise ValueError(f\"bad {x}\")\n    return x\n\n" +
+            "def main() -> None:\n    y: int = check(1)\n";
+        var ex = Record.Exception(() => Gen(src, library: false));
+        Assert.Null(ex);
+    }
 }

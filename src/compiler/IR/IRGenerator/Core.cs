@@ -1638,7 +1638,10 @@ public partial class IRGenerator
         bool programRaisesWithMessage = ProgramRaisesWithMessage(mainAst, importedModules.Values);
         programReportsRaiseMessage = programRaisesWithMessage
             && ResolveRuntimeWriteStrFn() != "uart_write_str";
-        programRecordsRaiseMessages = programBindsExceptionObject || programReportsRaiseMessage;
+        // A library's exports hand the message to the generated adapter through the same word a
+        // handler's `except X as e` reads, so a raise that carries one records it.
+        programRecordsRaiseMessages = programBindsExceptionObject || programReportsRaiseMessage
+            || (LibraryMode && programRaisesWithMessage);
         programHasDynamicRaiseMessage = programRecordsRaiseMessages
             && ProgramHasDynamicRaiseMessage(mainAst, importedModules.Values);
 
@@ -1775,7 +1778,7 @@ public partial class IRGenerator
         // main function body so the backend emits .byte tables in flash.
         if (pendingFlashData.Count > 0)
         {
-            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            var mainFunc = FlashDataHost(irProgram);
             if (mainFunc != null)
             {
                 mainFunc.Body.InsertRange(0, pendingFlashData);
@@ -1943,7 +1946,7 @@ public partial class IRGenerator
 
         if (_pendingFlashData.Count > 0)
         {
-            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            var mainFunc = FlashDataHost(irProgram);
             if (mainFunc != null) mainFunc.Body.InsertRange(0, _pendingFlashData);
             _pendingFlashData.Clear();
         }
@@ -3955,6 +3958,14 @@ public partial class IRGenerator
     private int _flashStrCounter;
     private readonly Dictionary<string, string> _flashStrCache = new();
     private readonly List<FlashData> _pendingFlashData = new();
+
+    // The function whose body carries the FlashData records (the backend collects them from
+    // every body, so any function that is emitted will do). `main` is the usual host; a
+    // library has none, and its tables -- a raise's message string among them -- were
+    // dropped, leaving the code referring to a symbol nothing defined.
+    private Function? FlashDataHost(ProgramIR program)
+        => program.Functions.FirstOrDefault(f => f.Name == "main")
+           ?? (LibraryMode ? program.Functions.FirstOrDefault(f => !f.IsExtern) : null);
 
     private string InternStringAsFlash(string value)
     {
