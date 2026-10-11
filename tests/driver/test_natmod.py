@@ -88,13 +88,11 @@ def test_inline_is_not_exported(tmp_path):
 @pytest.mark.parametrize(
     "source, expected",
     [
-        ("def f(x: float) -> int:\n    return 1\n", "floating point"),
         ("def f(s: str) -> int:\n    return 1\n", "take a bytes or bytearray instead"),
         ("def f(t: tuple) -> int:\n    return 1\n", "a tuple is an interpreter object"),
         ("def f(d: dict) -> int:\n    return 1\n", "a dict is an interpreter object"),
         ("def f(a) -> int:\n    return 1\n", "has no type annotation"),
         ("def f(a: int):\n    return 1\n", "has no return annotation"),
-        ("def f(a: int) -> float:\n    return 1.0\n", "floating point"),
         ("def f(n: int) -> bytearray:\n    return bytearray(n)\n",
          "cannot hand back a buffer it allocated"),
         ("def f(*a: int) -> int:\n    return 1\n", "fixed argument count"),
@@ -118,7 +116,7 @@ def test_a_refusal_is_located_at_the_def(tmp_path):
         "    return a\n"
         "\n"
         "\n"
-        "def bad(x: float) -> int:\n"
+        "def bad(x: str) -> int:\n"
         "    return 1\n"
     ))
     with pytest.raises(NatmodError) as e:
@@ -444,3 +442,39 @@ def test_round_with_digits_names_its_line(tmp_path):
     src = write(tmp_path, "def F(a: int) -> int:\n    x: float = a\n    return int(round(x, 2))\n")
 
     assert f"{src}:3:" in str(explain_compiler_request(src, "round2"))
+
+
+# ── floats cross as single precision ─────────────────────────────────────────
+
+
+def test_float_parameter_and_return_convert(tmp_path):
+    src = write(tmp_path, "def mix(x: float, n: int) -> float:\n    return x * n\n")
+    (mix,) = collect_exports(src)
+
+    assert [p.ctype for p in mix.params] == ["float", "int16_t"]
+    assert mix.params[0].kind == "float"
+    assert mix.ret_ctype == "float"
+
+
+def test_float_adapter_unboxes_with_get_float_and_boxes_with_new_float(tmp_path):
+    src = write(tmp_path, "def mix(x: float, n: int) -> float:\n    return x * n\n")
+    c = generate_adapter("m", collect_exports(src), src)
+
+    assert "extern float mix(float, int16_t);" in c
+    assert "float p0 = (float)mp_obj_get_float(a0);" in c
+    assert "return mp_obj_new_float(mix(p0, p1));" in c
+
+
+def test_float_is_not_range_checked(tmp_path):
+    """A float has no width to overflow: inf and nan are values, as in CPython."""
+    src = write(tmp_path, "def f(x: float) -> float:\n    return x\n")
+    c = generate_adapter("m", collect_exports(src), src)
+
+    assert "nm_range" not in c
+
+
+def test_a_double_is_refused_by_name(tmp_path):
+    src = write(tmp_path, "def f(x: double) -> int:\n    return 1\n")
+    with pytest.raises(NatmodError) as e:
+        collect_exports(src)
+    assert "annotated 'double'" in str(e.value) and "float" in str(e.value)
