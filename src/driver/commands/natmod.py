@@ -170,6 +170,16 @@ class Exported:
     ret_bool: bool
     line: int
     ret_ann: str = ""
+    # A tuple return: the annotation of each element, in order. The kernel cannot return
+    # several values, so it exports `<name>__nm`, which has one more parameter (a bytearray the
+    # adapter owns) and writes the elements there, little-endian; the adapter reads them back
+    # and builds the tuple. None for every other export.
+    ret_tuple: Optional[list[str]] = None
+
+    @property
+    def symbol(self) -> str:
+        """The name the kernel's object defines for this export."""
+        return f"{self.name}__nm" if self.ret_tuple is not None else self.name
 
 
 def _convert_param(path: Path, fn: ast.FunctionDef, arg: ast.arg) -> Param:
@@ -203,6 +213,78 @@ def _convert_param(path: Path, fn: ast.FunctionDef, arg: ast.arg) -> Param:
     )
 
 
+# Bytes each element of a returned tuple occupies in the out buffer, and whether it is read
+# back signed. Same widths the scalars have everywhere else in this module.
+_TUPLE_ELEMENTS: dict[str, tuple[int, bool]] = {
+    "int": (2, True), "int8": (1, True), "int16": (2, True), "int32": (4, True),
+    "uint8": (1, False), "uint16": (2, False), "uint32": (4, False),
+    "bool": (1, False), "float": (4, False),
+}
+_MAX_TUPLE = 16
+
+
+def _tuple_annotation(path: Path, fn: ast.FunctionDef) -> Optional[list[str]]:
+    """The element annotations of `-> tuple[int, int]`, None if the return is not a tuple.
+
+    Only `tuple[...]` of scalars is accepted: a tuple is built by the adapter out of numbers
+    the kernel wrote, so an element that is itself a buffer, a tuple or a str has nothing to
+    be written as.
+    """
+    node = fn.returns
+    if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+            and node.value.id == "tuple"):
+        return None
+    elts = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    names = []
+    for el in elts:
+        text = _annotation_text(el)
+        if isinstance(el, ast.Constant) and el.value is Ellipsis:
+            raise _located(path, fn, f"'{fn.name}' returns 'tuple[..., ...]' of unknown length. "
+                                     f"A native module builds a tuple of a fixed size: write "
+                                     f"each element's type, as in tuple[int, int].")
+        if text not in _TUPLE_ELEMENTS:
+            raise _located(
+                path, fn,
+                f"'{fn.name}' returns a tuple with an element annotated '{text}'. A returned "
+                f"tuple carries numbers ({', '.join(sorted(_TUPLE_ELEMENTS))}); a buffer, a "
+                f"str or another tuple has nothing to be written as.",
+            )
+        names.append(text)
+    if not names or len(names) > _MAX_TUPLE:
+        raise _located(path, fn, f"'{fn.name}' returns a tuple of {len(names)} elements; a "
+                                 f"native module returns from 1 to {_MAX_TUPLE}.")
+    return names
+
+
+def tuple_kernel_source(e: "Exported") -> str:
+    """The kernel-side wrapper of a tuple export, appended to the module's source.
+
+    It calls the user's function (which the compiler expands in place, since it has no
+    subroutine ABI for several results) and stores each element into the caller's buffer.
+    """
+    params = ", ".join(f"{p.name}: {p.ann}" for p in e.params)
+    args = ", ".join(p.name for p in e.params)
+    lines = [f"def {e.symbol}({params}{', ' if params else ''}nm_out: bytearray) -> None:"]
+    names = [f"nm_r{i}" for i in range(len(e.ret_tuple))]
+    if len(names) == 1:
+        # `x, = f()` is not a form both front ends parse; indexing the call is.
+        lines.append(f"    {names[0]} = {e.name}({args})[0]")
+    else:
+        lines.append(f"    {', '.join(names)} = {e.name}({args})")
+    off = 0
+    for i, ann in enumerate(e.ret_tuple):
+        width, _ = _TUPLE_ELEMENTS[ann]
+        v = names[i]
+        if ann == "float":
+            lines.append(f"    nm_bits{i}: uint32 = bitcast(uint32, {v})")
+            v = f"nm_bits{i}"
+        for b in range(width):
+            shift = f" >> {8 * b}" if b else ""
+            lines.append(f"    nm_out[{off + b}] = (({v}{shift}) & 255)")
+        off += width
+    return "\n".join(lines) + "\n"
+
+
 def _convert_function(path: Path, fn: ast.FunctionDef) -> Exported:
     a = fn.args
     if a.vararg or a.kwarg or a.kwonlyargs or a.posonlyargs or a.defaults or a.kw_defaults:
@@ -214,6 +296,11 @@ def _convert_function(path: Path, fn: ast.FunctionDef) -> Exported:
         )
 
     params = [_convert_param(path, fn, arg) for arg in a.args]
+
+    tup = _tuple_annotation(path, fn)
+    if tup is not None:
+        return Exported(fn.name, params, None, False, False, fn.lineno,
+                        ast.unparse(fn.returns), ret_tuple=tup)
 
     ret = _annotation_text(fn.returns)
     if ret is None:
@@ -481,8 +568,11 @@ def generate_adapter(module: str, exports: list[Exported], source: Path,
     L.append("/* PyMCU kernels, compiled from Python and linked in beside this file. */")
     for e in exports:
         decl = [p.ctype for p in e.params]
-        decl += ["uint32_t"] * sum(1 for p in e.params if p.kind == "buffer")
-        L.append(f"extern {e.ret_ctype or 'void'} {e.name}({', '.join(decl) or 'void'});")
+        if e.ret_tuple is not None:
+            decl.append("uint8_t *")
+        decl += ["uint32_t"] * (sum(1 for p in e.params if p.kind == "buffer")
+                                + (1 if e.ret_tuple is not None else 0))
+        L.append(f"extern {e.ret_ctype or 'void'} {e.symbol}({', '.join(decl) or 'void'});")
     if can_raise:
         L.append("extern uint32_t pymcu_exn_take(uint32_t *msg);")
     L.append("")
@@ -538,9 +628,35 @@ def generate_adapter(module: str, exports: list[Exported], source: Path,
                 L.append(f"    {prm.ctype} p{i} = ({prm.ctype})r{i};")
                 actual.append(f"p{i}")
 
-        call = f"{e.name}({', '.join(actual + lengths)})"
+        if e.ret_tuple is not None:
+            size = sum(_TUPLE_ELEMENTS[a][0] for a in e.ret_tuple)
+            L.append(f"    uint8_t nm_out[{size}];")
+            actual.append("nm_out")
+            lengths.append(f"(uint32_t){size}")
+        call = f"{e.symbol}({', '.join(actual + lengths)})"
         check = ["    nmx_check();"] if can_raise else []
-        if e.ret_ctype is None:
+        if e.ret_tuple is not None:
+            L.append(f"    {call};")
+            L.extend(check)
+            L.append(f"    mp_obj_t items[{len(e.ret_tuple)}];")
+            off = 0
+            for i, ann in enumerate(e.ret_tuple):
+                width, signed = _TUPLE_ELEMENTS[ann]
+                raw = " | ".join(f"((uint32_t)nm_out[{off + b}] << {8 * b})" if b
+                                 else f"(uint32_t)nm_out[{off}]" for b in range(width))
+                if ann == "float":
+                    L.append(f"    {{ union {{ uint32_t u; float f; }} cv; cv.u = {raw}; "
+                             f"items[{i}] = mp_obj_new_float(cv.f); }}")
+                elif ann == "bool":
+                    L.append(f"    items[{i}] = mp_obj_new_bool(({raw}) != 0);")
+                elif signed:
+                    ctype = {1: "int8_t", 2: "int16_t", 4: "int32_t"}[width]
+                    L.append(f"    items[{i}] = mp_obj_new_int((mp_int_t)({ctype})({raw}));")
+                else:
+                    L.append(f"    items[{i}] = mp_obj_new_int_from_uint((mp_uint_t)({raw}));")
+                off += width
+            L.append(f"    return mp_obj_new_tuple({len(e.ret_tuple)}, items);")
+        elif e.ret_ctype is None:
             L.append(f"    {call};")
             L.extend(check)
             L.append("    return mp_const_none;")
@@ -884,10 +1000,20 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     mir = build_dir / f"{name}.mir"
     ll = build_dir / f"{name}.ll"
 
+    # A tuple export is compiled through a wrapper appended to a COPY of the source, so the
+    # user's own lines keep their numbers in every diagnostic.
+    kernel_entry = entry
+    tuple_exports = [e for e in exports if e.ret_tuple is not None]
+    if tuple_exports:
+        kernel_entry = build_dir / entry.name
+        kernel_entry.write_text(
+            entry.read_text().rstrip("\n") + "\n\n\n"
+            + "\n\n".join(tuple_kernel_source(e) for e in tuple_exports))
+
     compiler = PyMCUCompiler(console)
     try:
         compiler.compile(
-            input_file=entry,
+            input_file=kernel_entry,
             output_file=str(build_dir / f"{name}.asm"),
             target=target,
             freq=pymcu_config.get("frequency", 125_000_000),
@@ -927,7 +1053,7 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
         for line in ll.read_text().splitlines()
         if line.startswith("define") and "@" in line
     }
-    missing = [e.name for e in exports if e.name not in defined]
+    missing = [e.symbol for e in exports if e.symbol not in defined]
     if missing:
         raise NatmodError(
             f"{entry}: the compiler produced no code for "
