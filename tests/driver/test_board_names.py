@@ -90,7 +90,10 @@ class TestBoardSuggestions:
         assert suggest_boards("") == []
 
     def test_an_extension_board_is_offered_like_any_other(self):
-        assert suggest_boards("feather", {"adafruit_feather": "rp2040"}) == ["adafruit_feather"]
+        # adafruit_feather_rp2040 is built in and also contains "feather", so the shorter
+        # extension name and the built-in Feather are both offered, shortest first.
+        assert suggest_boards("feather", {"adafruit_feather": "rp2040"}) == [
+            "adafruit_feather", "adafruit_feather_rp2040"]
 
     def test_the_list_is_capped(self):
         assert len(suggest_boards("attiny")) <= 3
