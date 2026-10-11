@@ -285,6 +285,29 @@ def tuple_kernel_source(e: "Exported") -> str:
     return "\n".join(lines) + "\n"
 
 
+
+def kernel_source_with_tuple_wrappers(source: str, exports: list["Exported"]) -> str:
+    """The text the compiler is given when some export returns a tuple.
+
+    The user's function becomes an `@inline` template (a library export must be a symbol, and
+    a function that returns several values cannot be one, so the compiler refuses it unless it
+    is marked as the template it is) and the wrapper that IS the symbol is appended. The
+    decorator takes the blank line above the `def` when there is one, so that no line of the
+    user's file moves and a diagnostic still cites the line they wrote.
+    """
+    lines = source.rstrip("\n").split("\n")
+    extra = 0
+    for e in sorted((e for e in exports if e.ret_tuple is not None), key=lambda e: e.line):
+        at = e.line - 1 + extra          # 0-based index of the `def` line
+        if at > 0 and lines[at - 1].strip() == "":
+            lines[at - 1] = "@inline"
+        else:
+            lines.insert(at, "@inline")
+            extra += 1
+    wrappers = [tuple_kernel_source(e) for e in exports if e.ret_tuple is not None]
+    return "\n".join(lines) + "\n\n\n" + "\n\n".join(wrappers)
+
+
 def _convert_function(path: Path, fn: ast.FunctionDef) -> Exported:
     a = fn.args
     if a.vararg or a.kwarg or a.kwonlyargs or a.posonlyargs or a.defaults or a.kw_defaults:
@@ -1006,9 +1029,7 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     tuple_exports = [e for e in exports if e.ret_tuple is not None]
     if tuple_exports:
         kernel_entry = build_dir / entry.name
-        kernel_entry.write_text(
-            entry.read_text().rstrip("\n") + "\n\n\n"
-            + "\n\n".join(tuple_kernel_source(e) for e in tuple_exports))
+        kernel_entry.write_text(kernel_source_with_tuple_wrappers(entry.read_text(), exports))
 
     compiler = PyMCUCompiler(console)
     try:
