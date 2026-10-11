@@ -115,14 +115,14 @@ def test_only_the_called_helper_is_lowered(tmp_path):
     assert "__pymcu_expf" not in names
 
 
-@pytest.mark.parametrize("name", ["log10", "degrees", "sin", "cos", "atan2"])
-def test_a_name_with_no_demandant_is_absent(tmp_path, name):
-    """A shim exists because something needs it, not because the module has it upstream.
-    A sweep of 66 upstream CircuitPython and MicroPython libraries found none of these
-    names in any of them, so none of them is here. They go in the day a library asks."""
+@pytest.mark.parametrize("name", ["gamma", "erf", "comb", "fma", "ldexp"])
+def test_a_name_that_is_not_provided_is_refused(tmp_path, name):
+    """Names this target deliberately does not carry are defined to say why when called
+    (see test_math_covers_cpythons_float_surface). The names the first sweep left out for lack
+    of a demandant (log10, degrees, sin, cos, atan2) are provided now, on request."""
     out, ir = build(tmp_path, f"    r: int32 = int32(math.{name}(float(seed) + 1.0))\n"
                               "    GPIOR1.value = uint8(r & 0xFF)\n")
-    assert ir is None, f"math.{name} has no demandant in the measured corpus"
+    assert ir is None, f"math.{name} is refused, not silently built"
 
 
 def test_a_name_math_really_does_not_have_still_fails(tmp_path):
@@ -132,10 +132,9 @@ def test_a_name_math_really_does_not_have_still_fails(tmp_path):
     assert ir is None, "math.arctan does not exist and must not build"
 
 
-def test_pi_is_not_defined_rather_than_reading_back_zero(tmp_path):
-    """A module-level FLOAT constant in an imported module becomes storage nothing
-    initialises, so `math.pi` would read 0.0 instead of refusing. Until that gap is
-    closed the name is deliberately absent, and this test says so out loud."""
+def test_pi_is_a_constant_not_storage_that_reads_back_zero(tmp_path):
+    """`pi` is `const[float]`: folded into the reading expression, with no storage that
+    nothing initialises (which is what made `math.pi` read 0.0 before)."""
     out, ir = build(tmp_path, "    r: int32 = int32(math.pi * 100.0)\n"
                               "    GPIOR1.value = uint8(r & 0xFF)\n")
-    assert ir is None, "math.pi must refuse, not silently read back zero"
+    assert ir is not None, out
