@@ -393,3 +393,54 @@ def test_a_raise_without_a_message_builds_the_exception_with_no_arguments(tmp_pa
     c = _raising_adapter(tmp_path)
     assert "if (msg == NULL)" in c
     assert "mp_call_function_n_kw(type, 0, 0, NULL)" in c
+
+# ── what the compiler asks of `pymcu build` and a native module cannot grant ──
+
+
+def test_runtime_string_names_the_line_that_builds_it(tmp_path):
+    from src.driver.commands.natmod import explain_compiler_request
+
+    src = write(tmp_path, (
+        "def F(a: int) -> int:\n"
+        "    x: int = a + 1\n"
+        "    s: str = f'{a}'\n"
+        "    return len(s)\n"
+    ))
+    err = explain_compiler_request(src, "strfmt")
+
+    assert f"{src}:3:" in str(err)
+    assert "f-string" in str(err) and "string builder" in str(err)
+
+
+def test_an_fstring_without_a_value_is_not_the_culprit(tmp_path):
+    from src.driver.commands.natmod import explain_compiler_request
+
+    src = write(tmp_path, (
+        "def F(a: int) -> int:\n"
+        "    s = f'plain'\n"
+        "    t = hex(a)\n"
+        "    return 0\n"
+    ))
+    assert f"{src}:3:" in str(explain_compiler_request(src, "strfmt"))
+
+
+def test_runtime_sized_bytearray_names_its_line(tmp_path):
+    from src.driver.commands.natmod import explain_compiler_request
+
+    src = write(tmp_path, (
+        "def F(n: int) -> int:\n"
+        "    ok = bytearray(4)\n"
+        "    b = bytearray(n)\n"
+        "    return 0\n"
+    ))
+    err = str(explain_compiler_request(src, "arena"))
+
+    assert f"{src}:3:" in err and "allocator" in err
+
+
+def test_round_with_digits_names_its_line(tmp_path):
+    from src.driver.commands.natmod import explain_compiler_request
+
+    src = write(tmp_path, "def F(a: int) -> int:\n    x: float = a\n    return int(round(x, 2))\n")
+
+    assert f"{src}:3:" in str(explain_compiler_request(src, "round2"))
