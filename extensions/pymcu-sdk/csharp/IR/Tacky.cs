@@ -465,6 +465,12 @@ public class ProgramIR
     // True when the program uses GC_REF values; the backend injects the GC runtime.
     public bool NeedsGc { get; set; } = false;
 
+    // The unit was compiled with --library: no entry point, every top-level function is an
+    // export called from outside PyMCU. A backend that has to hand an error to that caller
+    // (the exception flag, code and message are read by the generated adapter) needs the
+    // channel's symbols visible outside the object, which a program with a `main` does not.
+    public bool IsLibrary { get; set; } = false;
+
     // True when a heap object's payload can hold GC_REFs (a list[list[T]] --
     // GcAlloc with Refs, or a promoted empty list flagged at a GC_REF append).
     // The backend keeps the ref-tracing GC routines only when this is set.

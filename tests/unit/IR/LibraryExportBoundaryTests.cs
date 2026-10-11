@@ -5,16 +5,11 @@ using Xunit;
 namespace PyMCU.UnitTests;
 
 /// <summary>
-/// The export boundary refuses a function that can raise, because the caller is outside PyMCU
-/// and there is no T-flag protocol to hand it the error. The RULE is the same for a decorated
-/// @export_c function and for a top-level function of a --library unit; the SENTENCE is not,
-/// and that is what these pin down.
-///
-/// A reader who wrote no decorator must not be told to remove one, and must not be handed a
-/// remedy that does not compile. Both remedies below were measured against the compiler before
-/// they were written into the message: `if b == 0: return 0` still refuses (the check is not
-/// path-sensitive), `try/except ZeroDivisionError` still refuses (a typed handler is treated
-/// as re-raising), and a constant divisor, a shift or `%` all build.
+/// The export boundary. A decorated @export_c function is called by hand-written C, which has
+/// no T-flag protocol, so a path that can raise is refused. An export of a --library unit is
+/// called through an adapter generated in the same build, which reads the flag, code and message
+/// the export returns with and raises the host-side exception; so a library export MAY raise,
+/// and the uncaught-error guard makes it return with the flag set instead of halting.
 /// </summary>
 public class LibraryExportBoundaryTests
 {
@@ -27,28 +22,9 @@ public class LibraryExportBoundaryTests
     }
 
     [Fact]
-    public void LibraryMode_NamesTheLibrary_AndNotADecoratorTheUserNeverWrote()
+    public void LibraryMode_AcceptsAnExportThatCanRaise()
     {
-        var e = Assert.Throws<ArchitectureError>(
-            () => CanFailAnalyzer.Analyze(OneRaisingExport(), libraryMode: true));
-
-        Assert.Contains("export of this library", e.Message);
-        Assert.DoesNotContain("@export_c", e.Message);
-        Assert.Contains("div", e.Message);
-    }
-
-    [Fact]
-    public void LibraryMode_OffersARemedyThatCompiles_AndRulesOutTheTwoThatDoNot()
-    {
-        var e = Assert.Throws<ArchitectureError>(
-            () => CanFailAnalyzer.Analyze(OneRaisingExport(), libraryMode: true));
-
-        // What does work.
-        Assert.Contains("a // 2", e.Message);
-        Assert.Contains("shift", e.Message);
-        // What a reader would try first and what it costs them not to be told.
-        Assert.Contains("if b == 0", e.Message);
-        Assert.Contains("try/except", e.Message);
+        CanFailAnalyzer.Analyze(OneRaisingExport(), libraryMode: true);   // does not throw
     }
 
     [Fact]
@@ -68,5 +44,40 @@ public class LibraryExportBoundaryTests
         ir.Functions.Add(f);
 
         CanFailAnalyzer.Analyze(ir, libraryMode: true);   // does not throw
+    }
+
+    private static ProgramIR ExportCallingARaiser()
+    {
+        var raiser = new Function { Name = "inner", CanFail = true };
+        raiser.Body.Add(new SignalError(new Constant(1), null));
+        var export = new Function { Name = "outer", IsExportC = true, CanFail = true };
+        export.Body.Add(new Call("inner", new List<Val>(), new NoneVal()));
+        var ir = new ProgramIR();
+        ir.Functions.Add(raiser);
+        ir.Functions.Add(export);
+        return ir;
+    }
+
+    [Fact]
+    public void LibraryExport_ReRaisesToItsCaller_InsteadOfHalting()
+    {
+        var ir = ExportCallingARaiser();
+        CanFailAnalyzer.InsertUncaughtPropagation(ir, libraryMode: true);
+
+        var body = ir.Functions.Single(f => f.Name == "outer").Body;
+        var guard = Assert.Single(body.OfType<BranchOnError>());
+        Assert.Equal("__exn_prop_outer", guard.ErrorLabel);
+        Assert.Contains(body, i => i is Label { Name: "__exn_prop_outer" });
+    }
+
+    [Fact]
+    public void PlainExportC_StillHaltsAtTheBoundary()
+    {
+        var ir = ExportCallingARaiser();
+        CanFailAnalyzer.InsertUncaughtPropagation(ir, libraryMode: false);
+
+        var guard = Assert.Single(
+            ir.Functions.Single(f => f.Name == "outer").Body.OfType<BranchOnError>());
+        Assert.Equal("__pymcu_unhandled_exn", guard.ErrorLabel);
     }
 }

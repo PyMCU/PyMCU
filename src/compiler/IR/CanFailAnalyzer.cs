@@ -31,10 +31,11 @@ namespace PyMCU.IR;
 public static class CanFailAnalyzer
 {
     /// <param name="libraryMode">
-    /// The unit was compiled with --library, so every top-level function is an export and none
-    /// of them was decorated. The boundary rule is the same either way, but the SENTENCE is not:
-    /// telling a reader who wrote no decorator to "remove @export_c" sends them looking for
-    /// something that is not in their file.
+    /// The unit was compiled with --library, so every top-level function is an export, called
+    /// through an adapter generated in the same build. That adapter reads the exception flag,
+    /// code and message the export returns with and raises the host-side exception, so a
+    /// library export MAY raise; the C-caller refusal below is for a plain @export_c, whose
+    /// caller is hand-written C that has no such protocol.
     /// </param>
     public static void Analyze(ProgramIR program, bool libraryMode = false)
     {
@@ -76,20 +77,16 @@ public static class CanFailAnalyzer
         {
             if (!func.CanFail) continue;
 
-            // @export_c boundary: C callers have no T-flag protocol.
-            if (func.IsExportC)
+            // @export_c boundary: C callers have no T-flag protocol. A library is the
+            // exception: its exports are called through an adapter generated in the same
+            // build, which reads the exception flag, code and message after the call and
+            // raises the matching Python exception on the host side. So an export of a
+            // library may raise.
+            if (func.IsExportC && !libraryMode)
                 throw new ArchitectureError(
-                    libraryMode
-                        ? $"Function '{func.Name}' is an export of this library but can raise, " +
-                          "and its caller is outside PyMCU, with no way to receive the error. " +
-                          "The raising path has to go. In a library the usual source is '//' " +
-                          "with a computed divisor: a constant divisor (a // 2), a shift for a " +
-                          "power of two, or '%' all compile. An 'if b == 0' guard does NOT " +
-                          "close it, and neither does try/except: the check is not " +
-                          "path-sensitive, and a typed handler is treated as re-raising."
-                        : $"Function '{func.Name}' is exported to C (@export_c) but can propagate " +
-                          "an error to its caller. Catch all errors inside the function or remove " +
-                          "the error-raising path before exporting.",
+                    $"Function '{func.Name}' is exported to C (@export_c) but can propagate " +
+                    "an error to its caller. Catch all errors inside the function or remove " +
+                    "the error-raising path before exporting.",
                     line: 0, column: 0);
 
             // ISR boundary: no caller exists to receive the T-flag signal.
@@ -113,7 +110,7 @@ public static class CanFailAnalyzer
     /// Without this, an error raised outside any try set T but no one checked it: the next CanFail
     /// callee's happy-path CLT cleared T and execution continued with a garbage value.
     /// </summary>
-    public static void InsertUncaughtPropagation(ProgramIR program)
+    public static void InsertUncaughtPropagation(ProgramIR program, bool libraryMode = false)
     {
         var canFail = program.Functions.Where(f => !f.IsExtern).Select(f => f.Name).ToHashSet();
 
@@ -123,8 +120,10 @@ public static class CanFailAnalyzer
 
             // A function that can propagate (not a top-level/boundary frame) re-raises via an
             // epilogue; main/ISR/@export_c cannot propagate, so an uncaught error halts there.
+            // A library export is the one boundary frame that DOES propagate: its caller is the
+            // generated adapter, which reads the flag the function returns with.
             bool propagates = func.CanFail && func.Name != "main"
-                              && !func.IsInterrupt && !func.IsExportC;
+                              && !func.IsInterrupt && (!func.IsExportC || libraryMode);
             string propLabel = $"__exn_prop_{func.Name}";
             string target = propagates ? propLabel : "__pymcu_unhandled_exn";
 

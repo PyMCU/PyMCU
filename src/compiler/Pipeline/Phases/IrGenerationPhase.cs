@@ -101,7 +101,8 @@ public class IrGenerationPhase : CompilerPhaseBase
 
         // Guard every unguarded CanFail call so an uncaught error halts (top-level) or re-raises
         // to the caller, instead of being silently swallowed by the next happy-path CLT.
-        CanFailAnalyzer.InsertUncaughtPropagation(optimized);
+        CanFailAnalyzer.InsertUncaughtPropagation(optimized, libraryMode: context.Options.Library);
+        optimized.IsLibrary = context.Options.Library;
         Verifier.Check(optimized, "canfail");
 
         context.IntermediateRepresentation = optimized;
