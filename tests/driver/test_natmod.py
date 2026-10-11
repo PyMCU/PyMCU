@@ -344,3 +344,52 @@ def test_a_missing_arm_backend_is_refused_with_what_to_install(monkeypatch):
     monkeypatch.setitem(sys.modules, "pymcu.toolchain.rp2040.llvm", None)
     with pytest.raises(NatmodError, match="pip install pymcu-arm"):
         natmod_cmd._arm_toolchain()
+
+
+# ── errors raised by the kernel ──────────────────────────────────────────────
+
+
+def _raising_adapter(tmp_path, can_raise=True):
+    src = write(tmp_path, (
+        "def div(a: int, b: int) -> int:\n"
+        "    return a // b\n"
+        "\n"
+        "def poke(buf: bytearray) -> None:\n"
+        "    buf[0] = 1\n"
+    ))
+    return generate_adapter("m", collect_exports(src), src, can_raise=can_raise)
+
+
+def test_a_kernel_that_cannot_raise_gets_no_exception_machinery(tmp_path):
+    c = _raising_adapter(tmp_path, can_raise=False)
+    assert "pymcu_exn_take" not in c
+    assert "nmx_" not in c
+
+
+def test_the_adapter_asks_the_kernel_after_the_call_and_before_boxing(tmp_path):
+    c = _raising_adapter(tmp_path)
+    assert "extern uint32_t pymcu_exn_take(uint32_t *msg);" in c
+    body = c.split("static mp_obj_t nm_div(")[1].split("}")[0]
+    # the result is held, the kernel is asked, and only then is it turned into a Python int
+    assert body.index("res = div(") < body.index("nmx_check();") < body.index("mp_obj_new_int(")
+
+
+def test_a_void_export_is_checked_too(tmp_path):
+    c = _raising_adapter(tmp_path)
+    body = c.split("static mp_obj_t nm_poke(")[1].split("}")[0]
+    assert body.index("poke(") < body.index("nmx_check();") < body.index("return mp_const_none;")
+
+
+def test_every_code_the_compiler_raises_has_a_python_type(tmp_path):
+    c = _raising_adapter(tmp_path)
+    for code, name in {1: "ValueError", 6: "ZeroDivisionError", 8: "RuntimeError",
+                       13: "OverflowError", 3: "IndexError", 4: "KeyError"}.items():
+        assert f"case {code}: type = mp_load_global(MP_QSTR_{name});" in c
+    # a class the program defined has no host name: it arrives as a RuntimeError
+    assert "default: type = mp_load_global(MP_QSTR_RuntimeError);" in c
+
+
+def test_a_raise_without_a_message_builds_the_exception_with_no_arguments(tmp_path):
+    c = _raising_adapter(tmp_path)
+    assert "if (msg == NULL)" in c
+    assert "mp_call_function_n_kw(type, 0, 0, NULL)" in c
