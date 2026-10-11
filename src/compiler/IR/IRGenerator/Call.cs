@@ -4118,11 +4118,35 @@ public partial class IRGenerator
                             if (kwText == null && !string.IsNullOrEmpty(ckw2.Text)) kwText = ckw2.Text;
                             if (kwText == null && stringIdToStr.TryGetValue(ckw2.Value, out var internedKw))
                                 kwText = internedKw;
+                            // A name that holds a string folded from an expression (`ORDER =
+                            // neopixel.GRB`, `"GR" + "B"`) arrives as the interned id with no
+                            // text of its own and no entry in the id table. The positional
+                            // binder asks the variable for its text; so does this one, or the
+                            // parameter stays an integer id and `len()` of it is refused.
+                            if (kwText == null && rawKwArgExprs.TryGetValue(kvp.Key, out var kwTextExpr)
+                                && kwTextExpr is VariableExpr kwTextVar)
+                                kwText = ResolveStrConstant(kwTextVar.Name);
                             if (kwText != null) strConstantVariables[paramName] = kwText;
                             else strConstantVariables.Remove(paramName);
                         }
                         else
                             strConstantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                    }
+                    // A variable that holds a known string binds the parameter as that string,
+                    // as the positional binder does (`ORDER = neopixel.GRB`, then
+                    // `pixel_order=ORDER`). Otherwise, when the callee writes the parameter, the
+                    // alias is dropped and the Copy below hands over the string's interned id:
+                    // an integer, and `len()` of it is refused.
+                    else if (kvp.Value is Variable kwStrVar
+                             && KeywordStringArgumentText(func.Params[pi].Type, kwStrVar) is { } kwStrText)
+                    {
+                        strConstantVariables[paramName] = kwStrText;
+                        if (func.Params[pi].Type == "const[str]")
+                            constantVariables.Remove(paramName);
+                        else if (TryArgumentConstant(kwStrVar.Name, out int kwStrId))
+                            constantVariables[paramName] = kwStrId;
                         floatConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
                     }
@@ -5768,6 +5792,26 @@ public partial class IRGenerator
                                 $"keyword arguments: '{string.Join(", ", misplaced.Select(k => k.Key))}'",
                     misplaced[0]);
         }
+    }
+
+    /// <summary>
+    /// The compile-time text of a variable passed to a parameter declared `str` (or an
+    /// annotation that can hold one), or null. The same resolution the positional binder
+    /// runs: the variable's own text, then the string its interned id stands for.
+    /// </summary>
+    private string? KeywordStringArgumentText(string? declared, Variable arg)
+    {
+        string decl = declared ?? "";
+        bool capable = decl is "const[str]" or "str"
+            || decl.StartsWith("Union[") || decl.StartsWith("Optional[")
+            || IsAnyAnnotation(decl) || IsTypingOnlyName(decl);
+        if (!capable) return null;
+        string? text = ResolveStrConstant(arg.Name);
+        if (text == null && decl is "const[str]" or "str"
+            && TryArgumentConstant(arg.Name, out int id)
+            && stringIdToStr.TryGetValue(id, out var interned))
+            text = interned;
+        return text;
     }
 
     /// <summary>
