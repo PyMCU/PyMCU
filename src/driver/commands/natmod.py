@@ -57,6 +57,7 @@ from typing import Optional
 import tomlkit
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 console = Console()
 
@@ -625,10 +626,11 @@ def _run_capture(cmd: list[str], what: str) -> str:
         ) from None
 
 
-def _run_capture_cwd(cmd: list[str], what: str, cwd: Path) -> str:
+def _run_capture_cwd(cmd: list[str], what: str, cwd: Path,
+                     env: Optional[dict] = None) -> str:
     try:
         r = subprocess.run(cmd, check=True, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", cwd=str(cwd))
+                           encoding="utf-8", errors="replace", cwd=str(cwd), env=env)
         return r.stdout
     except subprocess.CalledProcessError as e:
         raise NatmodError(
@@ -657,26 +659,22 @@ def _resolve_cp_tree(explicit: Optional[str], pymcu_config: dict,
         if (p / "py" / "dynruntime.h").exists() and (p / "tools" / "mpy_ld.py").exists():
             return p
         raise NatmodError(
-            f"'{p}' is not a CircuitPython source tree: it has no py/dynruntime.h "
-            f"and tools/mpy_ld.py."
+            f"'{p}' is not a CircuitPython source tree (it has no py/dynruntime.h and "
+            f"tools/mpy_ld.py)."
         )
     raise NatmodError(
-        "No CircuitPython source tree given. A native module is linked by "
-        "CircuitPython's own tools/mpy_ld.py against its py/dynruntime.h, at the "
-        "same tag as the firmware on the board.\n"
-        "  Pass --circuitpython <dir>, set PYMCU_CIRCUITPYTHON, or add\n"
-        "      [tool.pymcu.natmod]\n"
-        '      circuitpython = "../circuitpython"\n'
-        "  to pyproject.toml."
+        "a CircuitPython source tree at the tag the board runs (it supplies mpy_ld.py and "
+        "py/dynruntime.h): pass --circuitpython <dir>, set PYMCU_CIRCUITPYTHON, or set "
+        "circuitpython = \"<dir>\" under [tool.pymcu.natmod]."
     )
 
 
 def _python_for_cp_tools() -> str:
     """An interpreter that can run tools/mpy_ld.py, which needs pyelftools.
 
-    The driver's own interpreter is tried first, but PyMCU does not depend on
-    pyelftools and a venv usually lacks it, so a system python3 that has it is
-    accepted rather than making the user install into the wrong environment.
+    The driver's own interpreter is tried first, but a venv usually lacks pyelftools
+    (it is the `natmod` extra), so a system python3 that has it is accepted rather
+    than making the user install into the wrong environment.
     """
     # -P, and it is not decoration. `python -c` puts the CURRENT DIRECTORY on sys.path,
     # and a CircuitPython project has a `code.py` in it by definition -- which shadows the
@@ -692,9 +690,9 @@ def _python_for_cp_tools() -> str:
         if subprocess.run([py, "-P", "-c", probe], capture_output=True).returncode == 0:
             return py
     raise NatmodError(
-        "CircuitPython's tools/mpy_ld.py needs pyelftools and no interpreter on this "
-        "machine has it.\n"
-        f"  Install it where the driver runs: {sys.executable} -m pip install pyelftools"
+        "pyelftools, which CircuitPython's mpy_ld.py reads object files with: "
+        "pip install 'pymcu-compiler[natmod]' (or pip install pyelftools into "
+        f"{sys.executable})."
     )
 
 
@@ -702,15 +700,68 @@ def _adapter_compiler() -> str:
     cc = os.environ.get("PYMCU_NATMOD_CC") or shutil.which("arm-none-eabi-gcc")
     if cc:
         return cc
+    # Only the adapter needs it: the Python kernels are compiled by PyMCU's own LLVM. The
+    # adapter goes through a C compiler because py/dynruntime.h is the only statement of the
+    # runtime fun-table's layout, which changes between CircuitPython versions; reading it
+    # from the header turns a layout change into a compile error instead of a module that
+    # loads and misbehaves.
     raise NatmodError(
-        "arm-none-eabi-gcc was not found, and the generated adapter needs it.\n"
-        "  Only the adapter: the Python kernels are compiled by PyMCU's own LLVM.\n"
-        "  The adapter goes through a C compiler because py/dynruntime.h is the only\n"
-        "  statement of the runtime fun-table's layout, and that layout changes between\n"
-        "  CircuitPython versions; reading it from the header turns a layout change into\n"
-        "  a compile error instead of a module that loads and misbehaves.\n"
-        "  Install it (brew install arm-none-eabi-gcc) or set PYMCU_NATMOD_CC."
+        "arm-none-eabi-gcc, which compiles the generated adapter against dynruntime.h: "
+        "brew install arm-none-eabi-gcc (or your distribution's gcc-arm-none-eabi), or set "
+        "PYMCU_NATMOD_CC."
     )
+
+
+_AR_SHIM_DIR = Path(__file__).parent / "natmod_support"
+
+
+def _ar_environment(py: str) -> dict:
+    """The environment to run mpy_ld.py in.
+
+    Linking libgcc goes through ar_util.py, which wants the PyPI `ar` package to read the
+    archive. Rather than make every user install a package for a fixed-width header format,
+    a small reader ships beside this command (natmod_support/ar.py) and is put on PYTHONPATH
+    -- but only when the interpreter does not already have the real package, so a machine that
+    does keeps using it.
+    """
+    env = dict(os.environ)
+    has_ar = subprocess.run([py, "-P", "-c", "from ar import Archive"],
+                            capture_output=True).returncode == 0
+    if not has_ar:
+        env["PYTHONPATH"] = os.pathsep.join(
+            p for p in (str(_AR_SHIM_DIR), env.get("PYTHONPATH", "")) if p)
+    return env
+
+
+def natmod_requirements(circuitpython: Optional[str], pymcu_config: dict,
+                        project_root: Path) -> tuple[Path, str, str]:
+    """Everything `pymcu natmod` needs from the machine, checked together and up front.
+
+    Each requirement that is missing becomes one line saying what it is and how to get it, and
+    they are reported all at once: finding them one build at a time, each after the compiler
+    had already run, is how a missing pyelftools used to surface as a failure in the middle
+    of a link. Returns the CircuitPython tree, the adapter compiler and the interpreter that
+    runs the CircuitPython tools.
+    """
+    problems: list[str] = []
+    results: list = []
+    for check in (
+        lambda: _resolve_cp_tree(circuitpython, pymcu_config, project_root),
+        _adapter_compiler,
+        _python_for_cp_tools,
+        _arm_toolchain,
+    ):
+        try:
+            results.append(check())
+        except NatmodError as e:
+            problems.append(str(e).replace("\n", " ").strip())
+    if problems:
+        plural = "s" if len(problems) > 1 else ""
+        raise NatmodError(
+            f"cannot build, {len(problems)} requirement{plural} missing:\n"
+            + "\n".join(f"  - {p}" for p in problems)
+        )
+    return results[0], results[1], results[2]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -733,13 +784,29 @@ def natmod(
         None, "--output", "-o", help="Directory for the .mpy (default: dist/)",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print every step"),
+    check: bool = typer.Option(
+        False, "--check",
+        help="Only check that the machine has what a build needs, and say what is missing.",
+    ),
 ):
     """Compile this project into a CircuitPython/MicroPython native module (.mpy)."""
     try:
+        if check:
+            _check_only(circuitpython)
+            return
         _natmod(circuitpython, module, output, verbose)
     except NatmodError as e:
-        console.print(f"[bold red]natmod:[/bold red] {e}")
+        console.print(f"[bold red]natmod:[/bold red] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(code=1)
+
+
+def _check_only(circuitpython: Optional[str]) -> None:
+    pyproject = Path("pyproject.toml")
+    pymcu_config: dict = {}
+    if pyproject.exists():
+        pymcu_config = tomlkit.load(pyproject.open()).get("tool", {}).get("pymcu", {})
+    natmod_requirements(circuitpython, pymcu_config, Path.cwd())
+    console.print("natmod: every requirement is present")
 
 
 def _arm_toolchain():
@@ -753,17 +820,15 @@ def _arm_toolchain():
         from pymcu.toolchain.rp2040.llvm import Rp2040LlvmToolchain  # noqa: PLC0415
     except ImportError:
         raise NatmodError(
-            "`pymcu natmod` builds the native module with the ARM backend, which is not "
-            "installed. Install it (pip install pymcu-arm)."
+            "the ARM backend, which compiles the kernel: pip install pymcu-arm."
         ) from None
 
     # An older ARM backend installed beside a newer driver would fail as a bare
     # AttributeError deep in the build.
     if not hasattr(Rp2040LlvmToolchain, "assemble_natmod"):
         raise NatmodError(
-            "the installed ARM toolchain has no native-module mode. `pymcu natmod` needs "
-            "a pymcu-arm that can emit a relocatable object; upgrade it (pip install -U "
-            "pymcu-arm)."
+            "a pymcu-arm new enough to emit a relocatable object (the installed one has no "
+            "native-module mode): pip install -U pymcu-arm."
         )
     return Rp2040LlvmToolchain
 
@@ -796,9 +861,7 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
         or config.get("project", {}).get("name") or entry.stem
     name = str(name).replace("-", "_")
 
-    cp = _resolve_cp_tree(circuitpython, pymcu_config, project_root)
-    cc = _adapter_compiler()
-    py = _python_for_cp_tools()
+    cp, cc, py = natmod_requirements(circuitpython, pymcu_config, project_root)
 
     out_dir = Path(output).resolve() if output else (project_root / "dist")
     build_dir = out_dir / "natmod"
@@ -920,25 +983,12 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     if libgcc and Path(libgcc).exists():
         libs = ["-l", str(Path(libgcc).resolve())]
 
-    try:
-        link_log = _run_capture_cwd(
-            [py, str(cp / "tools" / "mpy_ld.py"), "--arch", arch,
-             "--qstrs", str(config_h), *libs, "-o", native_mpy.name,
-             str(adapter_o), str(kernel_o)],
-            "mpy_ld link", build_dir,
-        )
-    except NatmodError as e:
-        # ar_util raises this as a bare RuntimeError inside a traceback, and the advice
-        # it gives names no interpreter -- which is the whole difficulty, since the tools
-        # run under whichever python has pyelftools and not under the driver's own.
-        if "pip install ar" in str(e):
-            raise NatmodError(
-                f"linking against libgcc needs the 'ar' module, which reads .a archives.\n"
-                f"  Install it where the CircuitPython tools run: {py} -m pip install ar\n"
-                f"  libgcc is needed because this target has no divide instruction, so even a "
-                f"constant divisor becomes a call into it."
-            ) from None
-        raise
+    link_log = _run_capture_cwd(
+        [py, str(cp / "tools" / "mpy_ld.py"), "--arch", arch,
+         "--qstrs", str(config_h), *libs, "-o", native_mpy.name,
+         str(adapter_o), str(kernel_o)],
+        "mpy_ld link", build_dir, env=_ar_environment(py),
+    )
     # mpy_ld.py reports a LinkError on stdout and exits 1, which _run_capture
     # already turns into a refusal; this is the success report.
     for line in link_log.strip().splitlines():

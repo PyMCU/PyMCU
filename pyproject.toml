@@ -32,6 +32,11 @@ dependencies = [
 avr = ["pymcu-avr>=0.1.0b1"]
 arm = ["pymcu-arm>=0.1.0a4"]
 pic = ["pymcu-pic>=0.1.0a3"]
+# `pymcu natmod`: CircuitPython's tools/mpy_ld.py reads the object files with pyelftools.
+# Kept out of the base dependencies so a venv that never builds a native module does not
+# carry it. (The `ar` package that mpy_ld.py also wants is not needed: the command ships a
+# small reader for it.)
+natmod = ["pyelftools>=0.31"]
 # workload.yaml -> JSON translation for `pymcu profile --pgo` (experimental,
 # RFC 0010). Kept out of the base dependencies so a venv without it still runs
 # every other command; the driver imports yaml only when it reads a workload.

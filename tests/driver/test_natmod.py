@@ -478,3 +478,105 @@ def test_a_double_is_refused_by_name(tmp_path):
     with pytest.raises(NatmodError) as e:
         collect_exports(src)
     assert "annotated 'double'" in str(e.value) and "float" in str(e.value)
+
+
+# ── what the command needs from the machine ──────────────────────────────────
+
+
+def _install_ar_shim():
+    import importlib.util
+
+    from src.driver.commands import natmod as m
+    spec = importlib.util.spec_from_file_location("natmod_ar_shim", m._AR_SHIM_DIR / "ar.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _ar_member(name: str, data: bytes) -> bytes:
+    header = (name.ljust(16) + "0".ljust(12) + "0".ljust(6) + "0".ljust(6)
+              + "644".ljust(8) + str(len(data)).ljust(10) + "`\n").encode()
+    return header + data + (b"\n" if len(data) % 2 else b"")
+
+
+def test_the_bundled_ar_reader_reads_gnu_long_names_and_skips_the_symbol_table():
+    import io
+    shim = _install_ar_shim()
+    long_name = "a_member_name_longer_than_sixteen_bytes.o"
+    table = (long_name + "/\n").encode()
+    blob = (b"!<arch>\n"
+            + _ar_member("/", b"\0\0\0\0")                 # symbol table: skipped
+            + _ar_member("//", table)                      # long-name table
+            + _ar_member("short.o/", b"abc")               # odd size, padded
+            + _ar_member("/0", b"hello world!"))           # long name, by offset
+    archive = shim.Archive(io.BytesIO(blob))
+    assert [e.name for e in archive] == ["short.o", long_name]
+    assert archive.open("short.o", "rb").read() == b"abc"
+    assert archive.open(long_name, "rb").read() == b"hello world!"
+
+
+def test_the_bundled_ar_reader_refuses_something_that_is_not_an_archive():
+    import io
+    shim = _install_ar_shim()
+    with pytest.raises(ValueError):
+        shim.Archive(io.BytesIO(b"not an archive at all"))
+
+
+def test_the_bundled_ar_reader_agrees_with_the_real_package_on_libgcc():
+    import shutil
+    import subprocess
+
+    ar_pkg = pytest.importorskip("ar")
+    gcc = shutil.which("arm-none-eabi-gcc")
+    if not gcc:
+        pytest.skip("no arm-none-eabi-gcc to ask for libgcc")
+    libgcc = subprocess.run([gcc, "-mthumb", "-mcpu=cortex-m0", "--print-libgcc-file-name"],
+                            capture_output=True, text=True).stdout.strip()
+    shim = _install_ar_shim()
+    mine = shim.Archive(open(libgcc, "rb"))
+    real = ar_pkg.Archive(open(libgcc, "rb"))
+    assert [e.name for e in mine] == [e.name for e in real]
+    assert all(mine.open(e.name, "rb").read() == real.open(e.name, "rb").read() for e in mine)
+
+
+def test_the_reader_is_only_put_on_the_path_when_the_interpreter_has_no_ar(monkeypatch):
+    import subprocess
+
+    from src.driver.commands import natmod as m
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+
+    class R:
+        def __init__(self, rc):
+            self.returncode = rc
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R(1))
+    assert str(m._AR_SHIM_DIR) in m._ar_environment("python").get("PYTHONPATH", "")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R(0))
+    assert "PYTHONPATH" not in m._ar_environment("python")
+
+
+def test_missing_requirements_are_reported_together_one_line_each(monkeypatch, tmp_path):
+    from src.driver.commands import natmod as m
+    monkeypatch.delenv("PYMCU_CIRCUITPYTHON", raising=False)
+    monkeypatch.delenv("PYMCU_NATMOD_CC", raising=False)
+    monkeypatch.setattr(m.shutil, "which", lambda name: None)
+    monkeypatch.setattr(m.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 1})())
+
+    with pytest.raises(NatmodError) as e:
+        m.natmod_requirements(None, {}, tmp_path)
+
+    lines = str(e.value).splitlines()
+    assert lines[0].startswith("cannot build, ")
+    items = [ln for ln in lines[1:] if ln.startswith("  - ")]
+    assert len(items) == len(lines) - 1          # nothing wraps onto a second line
+    text = "\n".join(items)
+    assert "--circuitpython" in text             # the tree
+    assert "arm-none-eabi-gcc" in text and "brew install" in text
+    assert "pymcu-compiler[natmod]" in text      # pyelftools, with the extra that declares it
+
+
+def test_a_directory_without_the_runtime_header_is_not_a_circuitpython_tree(tmp_path):
+    from src.driver.commands import natmod as m
+    with pytest.raises(NatmodError, match="not a CircuitPython source tree"):
+        m._resolve_cp_tree(str(tmp_path), {}, tmp_path)
