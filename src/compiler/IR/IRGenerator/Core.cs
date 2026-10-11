@@ -1639,9 +1639,11 @@ public partial class IRGenerator
         programReportsRaiseMessage = programRaisesWithMessage
             && ResolveRuntimeWriteStrFn() != "uart_write_str";
         // A library's exports hand the message to the generated adapter through the same word a
-        // handler's `except X as e` reads, so a raise that carries one records it.
+        // handler's `except X as e` reads, so every raise in a library records its message (or
+        // clears the word when it has none), and so does the divide-by-zero guard. A library that
+        // raises nothing and divides nothing emits none of it: the stores sit at the raise sites.
         programRecordsRaiseMessages = programBindsExceptionObject || programReportsRaiseMessage
-            || (LibraryMode && programRaisesWithMessage);
+            || LibraryMode;
         programHasDynamicRaiseMessage = programRecordsRaiseMessages
             && ProgramHasDynamicRaiseMessage(mainAst, importedModules.Values);
 

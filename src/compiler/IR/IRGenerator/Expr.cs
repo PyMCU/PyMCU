@@ -2516,6 +2516,25 @@ public partial class IRGenerator
     // the compiler cannot fold. `isFloatOp` selects the float equality test -- comparing the
     // VALUE against 0.0 catches -0.0 too, unlike a bit test -- versus the plain integer
     // JumpIfNotZero.
+    // The text CPython gives a ZeroDivisionError from `/`, `//` and `%`, as of CPython 3.14 (which
+    // is what the test oracle runs). Older releases word it per operation -- "integer division or
+    // modulo by zero" for int `//` and `%`, "float division by zero", "float modulo" -- so this is
+    // the one place to change if the reference version moves.
+    private static string ZeroDivisionMessage(bool isFloatOp) => "division by zero";
+
+    // In a library the exception word that the generated adapter reads is set alongside the
+    // code, so the host raises ZeroDivisionError with CPython's text instead of with none. The
+    // string is interned only when a guard is emitted, so a kernel that never divides by a
+    // run-time value carries nothing.
+    private void RecordZeroDivisionMessage(bool isFloatOp)
+    {
+        if (!LibraryMode) return;
+        DeclareExceptionMessageVar();
+        Emit(new Copy(new FlashStrAddr(InternStringAsFlash(ZeroDivisionMessage(isFloatOp))),
+                      new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
+        sawRaiseMessageStore = true;
+    }
+
     private void EmitDivModZeroCheck(Val divisor, bool isFloatOp)
     {
         if (isFloatOp)
@@ -2524,6 +2543,7 @@ public partial class IRGenerator
             Emit(new Binary(BinaryOp.Equal, divisor, new FloatConstant(0.0), isZero));
             string divOk = MakeLabel();
             Emit(new JumpIfZero(isZero, divOk));
+            RecordZeroDivisionMessage(isFloatOp);
             EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
             Emit(new Label(divOk));
         }
@@ -2531,6 +2551,7 @@ public partial class IRGenerator
         {
             string divOk = MakeLabel();
             Emit(new JumpIfNotZero(divisor, divOk));
+            RecordZeroDivisionMessage(isFloatOp);
             EmitRaiseUnwind(new Constant(6 /* ZeroDivisionError */), unhandledInMain: true);
             Emit(new Label(divOk));
         }

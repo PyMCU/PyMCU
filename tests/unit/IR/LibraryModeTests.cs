@@ -219,4 +219,39 @@ public class LibraryModeTests
         var ex = Record.Exception(() => Gen(src, library: false));
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void LibraryMode_ADivisionByARunTimeValueRecordsCPythonsText()
+    {
+        var ir = Gen(
+            "def div(a: int, b: int) -> int:\n    return a // b\n", library: true);
+
+        var all = ir.Functions.SelectMany(f => f.Body).ToList();
+        var msg = Assert.Single(all.OfType<FlashData>());
+        Assert.Equal("division by zero",
+                     System.Text.Encoding.ASCII.GetString(msg.Bytes.Where(b => b != 0).Select(b => (byte)b).ToArray()));
+        Assert.Contains(all, i => i is Copy { Dst: Variable { Name: "__exn_msg" } });
+    }
+
+    [Fact]
+    public void LibraryMode_AKernelThatNeverDividesOrRaisesCarriesNoMessage()
+    {
+        var ir = Gen(
+            "def add(a: int, b: int) -> int:\n    return a // 2 + b\n", library: true);
+
+        var all = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.DoesNotContain(all, i => i is FlashData);
+        Assert.DoesNotContain(all, i => i is Copy { Dst: Variable { Name: "__exn_msg" } });
+    }
+
+    [Fact]
+    public void WithoutLibraryMode_ADivisionRecordsNoMessage()
+    {
+        var ir = Gen(
+            "def div(a: int, b: int) -> int:\n    return a // b\n\n" +
+            "def main() -> None:\n    x: int = div(4, 2)\n", library: false);
+
+        var all = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.DoesNotContain(all, i => i is Copy { Dst: Variable { Name: "__exn_msg" } });
+    }
 }
