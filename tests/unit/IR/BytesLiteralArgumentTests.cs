@@ -304,4 +304,38 @@ public class BytesLiteralArgumentTests
         var err = Assert.IsType<PyMCU.Common.CompilerError>(ex);
         Assert.Contains("Bit index must be constant for reading", err.Message);
     }
+
+    /// <summary>
+    /// A constant bytes literal handed to an @inline method that only FORWARDS it, with a
+    /// call (`len(buffer)`) as a later argument, to an expansion that indexes it at run time
+    /// (the CircuitPython busio `I2C.writeto(addr, b"\x00")` -> `_i2c_writeto(bus, addr,
+    /// buffer, len(buffer))` -> `buffer[k]` shape on AVR). The call is a later argument
+    /// that can have an effect, so the earlier argument was read into a temporary
+    /// (SnapshotRead) -- but a parameter bound to a compile-time sequence is not a scalar,
+    /// and the temporary was one: `buffer` became a UINT8 with no sequence behind it and
+    /// `buffer[k]` fell to the register bit path, "Bit index must be constant for reading".
+    /// </summary>
+    [Fact]
+    public void ALiteralForwardedBesideACallArgumentKeepsItsSequenceForARunTimeIndex()
+    {
+        string src =
+            InlineImport +
+            "@inline\n" +
+            "def inner(buf, n: uint16) -> int:\n" +
+            "    total: int = 0\n" +
+            "    k: uint16 = 0\n" +
+            "    while k < n:\n" +
+            "        total = total + buf[k]\n" +
+            "        k = k + 1\n" +
+            "    return total\n\n" +
+            "@inline\n" +
+            "def outer(buf) -> int:\n" +
+            "    return inner(buf, len(buf))\n\n" +
+            "def main() -> None:\n" +
+            "    x: int = outer(b\"\\x01\\x02\")\n" +
+            "    while True:\n        pass\n";
+
+        var ex = Record.Exception(() => Gen(src));
+        Assert.Null(ex);
+    }
 }

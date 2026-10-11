@@ -11209,7 +11209,23 @@ public partial class IRGenerator
         || constantAddressVariables.ContainsKey(n) || arenaBufferNames.Contains(n)
         || optionalTagSlots.ContainsKey(n)
         || TryResolveArrayStorageKey(n, out _) || TryResolveArrayStorageKey(FollowAliases(n), out _)
-        || ResolveConstSequence(n) != null;
+        || ResolveConstSequence(n) != null
+        // A parameter bound to a literal the caller wrote (`writeto(b"\x00")`) keeps its
+        // elements as AST in listLiteralParams, a table of its own that none of the
+        // storage tables above hold. Read into a temporary beside a later call argument
+        // (`f(bus, buffer, len(buffer))`) it became a plain scalar and lost the sequence.
+        || StandsForListLiteralParam(n);
+
+    private bool StandsForListLiteralParam(string key)
+    {
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (listLiteralParams.ContainsKey(key)) return true;
+            if (!variableAliases.TryGetValue(key, out var next)) return false;
+            key = next;
+        }
+        return false;
+    }
 
     // Whether anything in this print operand can have an effect, looking inside a tuple and
     // an f-string, which the print lowering takes apart.
