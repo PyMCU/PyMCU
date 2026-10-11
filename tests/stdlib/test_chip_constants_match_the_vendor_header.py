@@ -28,20 +28,19 @@ import pytest
 
 import chip_header_audit as audit
 
-# The vendor headers are not in any wheel: they are built from the avr-wasi sibling
-# checkout, so a CI runner has none and every one of the ~1 900 registers would be
-# reported as "absent from the vendor header" by a comparison that opened nothing.
+# The vendor headers ship in the pymcu-avr-toolchain-wasi package, so a host without
+# that package has none, and every one of the ~1 900 registers would be reported as
+# "absent from the vendor header" by a comparison that opened nothing.
 # This is a skip and not a pass. What it leaves uncovered is the whole comparison:
 # the register addresses and widths in lib/src/pymcu/chips/*.py and the per-chip
-# EEPROM sizes in the HAL facade go unchecked against the vendor here. Where it IS
-# covered is a checkout that has ~/Repos/avr-wasi beside it, which is where
-# `just test-stdlib` runs, and PYMCU_AVR_HEADERS points the audit anywhere else.
+# EEPROM sizes in the HAL facade go unchecked against the vendor here. PYMCU_AVR_HEADERS
+# points the audit at a directory of headers when the package is not installed.
 pytestmark = pytest.mark.skipif(
     audit.TOOLCHAIN_HEADERS is None,
     reason=(
         "no avr-libc headers on this host, so chip registers and EEPROM sizes are "
-        "NOT compared against the vendor here; that comparison runs in a checkout "
-        "with the avr-wasi sibling, or set PYMCU_AVR_HEADERS to a directory of them"
+        "NOT compared against the vendor here; install pymcu-avr-toolchain-wasi, "
+        "or set PYMCU_AVR_HEADERS to a directory of them"
     ),
 )
 

@@ -22,25 +22,25 @@ import os
 import re
 from pathlib import Path
 
-_SIBLING = "avr-wasi/native/pymcu_avr_toolchain/avr/include/avr"
-
-
 def _resolve_headers():
     """Where this host keeps the vendor headers, or None when it keeps none.
 
-    The headers are not in the pymcu-avr wheel: the driver downloads the toolchain
-    into ~/.pymcu on first build, and they are BUILT from the avr-wasi sibling
-    checkout. So a host either has that checkout or has nothing to read, and the
-    difference has to be visible. It used to be an absolute path into one
-    developer's home directory, which read nothing anywhere else and reported all
-    1 900 registers as absent from a header it never opened.
+    The headers ship inside the pymcu-avr-toolchain-wasi package, under
+    include/avr/avr, next to the cc1 front end that reads them. A host without
+    that package has nothing to read, and the difference has to be visible: a
+    comparison that opened nothing would report all 1 900 registers as absent
+    from a header it never found.
     """
     override = os.environ.get("PYMCU_AVR_HEADERS")
     if override:
         path = Path(override)
         return path if path.is_dir() else None
-    sibling = Path(__file__).resolve().parents[3] / _SIBLING
-    return sibling if sibling.is_dir() else None
+    try:
+        import pymcu_avr_toolchain_wasi as toolchain  # noqa: PLC0415
+    except ImportError:
+        return None
+    headers = Path(toolchain.INCLUDE_DIR) / "avr" / "avr"
+    return headers if headers.is_dir() else None
 
 
 TOOLCHAIN_HEADERS = _resolve_headers()
