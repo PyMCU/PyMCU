@@ -580,3 +580,93 @@ def test_a_directory_without_the_runtime_header_is_not_a_circuitpython_tree(tmp_
     from src.driver.commands import natmod as m
     with pytest.raises(NatmodError, match="not a CircuitPython source tree"):
         m._resolve_cp_tree(str(tmp_path), {}, tmp_path)
+
+
+# ── returning a tuple of numbers ─────────────────────────────────────────────
+
+MINMAX = (
+    "def minmax(b: bytes, n: int) -> tuple[int, int]:\n"
+    "    return (0, n)\n"
+)
+
+
+def test_a_tuple_return_converts_to_its_element_types(tmp_path):
+    (e,) = collect_exports(write(tmp_path, MINMAX))
+
+    assert e.ret_tuple == ["int", "int"]
+    assert e.ret_ctype is None
+    assert e.symbol == "minmax__nm"
+
+
+def test_a_tuple_export_gets_a_kernel_wrapper_that_stores_little_endian(tmp_path):
+    from src.driver.commands.natmod import tuple_kernel_source
+
+    (e,) = collect_exports(write(tmp_path, MINMAX))
+    src = tuple_kernel_source(e)
+
+    assert "def minmax__nm(b: bytes, n: int, nm_out: bytearray) -> None:" in src
+    assert "nm_r0, nm_r1 = minmax(b, n)" in src
+    assert "nm_out[0] = ((nm_r0) & 255)" in src
+    assert "nm_out[1] = ((nm_r0 >> 8) & 255)" in src
+    assert "nm_out[3] = ((nm_r1 >> 8) & 255)" in src
+
+
+def test_a_float_element_is_stored_as_its_bits(tmp_path):
+    from src.driver.commands.natmod import tuple_kernel_source
+
+    (e,) = collect_exports(write(tmp_path, "def f(x: float) -> tuple[float, int8]:\n    return (x, 1)\n"))
+    src = tuple_kernel_source(e)
+
+    assert "nm_bits0: uint32 = bitcast(uint32, nm_r0)" in src
+    assert "nm_out[4] = ((nm_r1) & 255)" in src
+
+
+def test_the_adapter_builds_the_tuple_from_the_buffer_the_kernel_filled(tmp_path):
+    src = write(tmp_path, MINMAX)
+    c = generate_adapter("m", collect_exports(src), src)
+
+    # The kernel's symbol takes the out buffer, then a length for the input buffer and one for it.
+    assert "extern void minmax__nm(const uint8_t *, int16_t, uint8_t *, uint32_t, uint32_t);" in c
+    assert "uint8_t nm_out[4];" in c
+    assert "minmax__nm((const uint8_t *)b0.buf, p1, nm_out, (uint32_t)b0.len, (uint32_t)4);" in c
+    assert "items[0] = mp_obj_new_int((mp_int_t)(int16_t)(" in c
+    assert "return mp_obj_new_tuple(2, items);" in c
+    assert "MP_QSTR_minmax," in c   # the Python name is the user's, not the kernel's
+
+
+def test_unsigned_bool_and_float_elements_are_boxed_by_their_type(tmp_path):
+    src = write(tmp_path, "def f() -> tuple[uint8, bool, float, uint32]:\n    return (1, True, 1.0, 2)\n")
+    c = generate_adapter("m", collect_exports(src), src)
+
+    assert "mp_obj_new_int_from_uint" in c
+    assert "mp_obj_new_bool(" in c
+    assert "mp_obj_new_float(cv.f)" in c
+    assert "uint8_t nm_out[10];" in c
+
+
+@pytest.mark.parametrize("ret, expected", [
+    ("tuple[int, ...]", "unknown length"),
+    ("tuple[bytearray]", "an element annotated 'bytearray'"),
+    ("tuple[int, tuple[int, int]]", "an element annotated 'tuple[int, int]'"),
+    ("tuple[str, int]", "an element annotated 'str'"),
+    ("tuple[" + ", ".join(["int"] * 17) + "]", "from 1 to 16"),
+])
+def test_a_tuple_return_that_cannot_be_written_is_refused_at_its_def(tmp_path, ret, expected):
+    src = write(tmp_path, f"def f() -> {ret}:\n    return 0\n")
+    with pytest.raises(NatmodError) as e:
+        collect_exports(src)
+    assert expected in str(e.value) and str(e.value).startswith(f"{src}:1:")
+
+
+def test_a_tuple_parameter_is_still_refused(tmp_path):
+    with pytest.raises(NatmodError) as e:
+        collect_exports(write(tmp_path, "def f(t: tuple[int, int]) -> int:\n    return 0\n"))
+    assert "annotated 'tuple[int, int]'" in str(e.value)
+
+
+def test_a_one_element_tuple_is_read_by_index_not_by_unpacking(tmp_path):
+    from src.driver.commands.natmod import tuple_kernel_source
+
+    (e,) = collect_exports(write(tmp_path, "def f(a: int) -> tuple[int]:\n    return (a,)\n"))
+
+    assert "nm_r0 = f(a)[0]" in tuple_kernel_source(e)
