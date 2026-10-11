@@ -7514,7 +7514,12 @@ public partial class IRGenerator
             if (strSlot == null && target is Variable v) target = v with { Type = dt };
             if (target is Variable uvTgt && stmt.UnionMembers != null)
                 target = UnionPayloadStoreTarget(uvTgt, val, stmt.Init);
-            Emit(new Copy(val, target));
+            // A module-level `K: int = 7` is a compile-time constant: the scan folded it, so the
+            // name resolves to its own value and has no storage. Writing the value to itself
+            // is not an instruction a backend can encode (ARM: "operand 'Constant' cannot be
+            // written yet"), and it is a no-op.
+            if (!(target is Constant tc && val is Constant vc && tc.Value == vc.Value))
+                Emit(new Copy(val, target));
 
             // Positive proof for NameIsScalarAtThisSite (Call.cs), same shape as the
             // unannotated and bare-type-annotated forms (VisitAssign) above: a typed
