@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
 from pathlib import Path
 
 try:
@@ -65,8 +67,18 @@ class CustomBuildHook(BuildHookInterface):
                 self.app.display_info(f"[hatch-hook] Target RID: {rid}")
 
             self.app.display_info(f"[hatch-hook] Running dotnet publish → {publish_dir}")
-            if subprocess.run(cmd).returncode != 0:
-                raise RuntimeError(f"dotnet publish failed. Command: {' '.join(cmd)}")
+            returncode, output = _run_echoed(cmd, os.environ)
+            if returncode != 0 and _is_sdk_link_failure(output) and "SDKROOT" not in os.environ:
+                sdk = _linkable_macos_sdk()
+                if sdk is not None:
+                    self.app.display_info(
+                        f"[hatch-hook] clang cannot link against the default macOS SDK; "
+                        f"retrying with SDKROOT={sdk}"
+                    )
+                    returncode, output = _run_echoed(cmd, {**os.environ, "SDKROOT": str(sdk)})
+            if returncode != 0:
+                hint = _SDK_HINT if _is_sdk_link_failure(output) else ""
+                raise RuntimeError(f"dotnet publish failed. Command: {' '.join(cmd)}{hint}")
 
             src = publish_dir / binary_name
             what = place_binary(src, dst)
@@ -173,6 +185,94 @@ def _check_rid_matches_wheel_tag(rid: str | None, plat_tag: str) -> None:
         f"Install a Python matching the machine, or, for a deliberate "
         f"cross-build, set DOTNET_RID and WHEEL_PLATFORM_TAG together."
     )
+
+
+# -- macOS SDK fallback for the native link ---------------------------------
+# NativeAOT links through clang against the default SDK. On a macOS whose default
+# SDK carries .tbd syntax the installed clang rejects, the link fails with
+# "tapi error" although the code is fine. The fallback below retries with SDKROOT
+# set to the newest sibling SDK that links, and only when that error appears.
+#
+# The same helpers live in pymcu-avr's hatch_build.py, a separate repository whose
+# hook also builds in an isolated environment, so it cannot import this file. Keep
+# the two copies in step; tests/driver/test_wheel_rid_guard.py does not check them.
+_SDK_LINK_ERROR = "tapi error"
+_SDK_HINT = (
+    "\nThe native linker could not read the default macOS SDK, and no other installed SDK"
+    " linked either. Install an SDK that clang can link (Xcode ships one), point SDKROOT at"
+    " it and rebuild."
+)
+# The frameworks NativeAOT links the AOT binary against; a probe must use the same set.
+_SDK_PROBE_FRAMEWORKS = ("CoreFoundation", "CryptoKit", "Foundation", "Network", "Security", "GSS")
+
+
+def _is_sdk_link_failure(output: str) -> bool:
+    return sys.platform == "darwin" and _SDK_LINK_ERROR in output
+
+
+def _run_echoed(cmd: list[str], env) -> tuple[int, str]:
+    """Run *cmd*, echoing its output as it arrives, and return (exit code, output)."""
+    proc = subprocess.Popen(
+        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+    )
+    lines = []
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        lines.append(line)
+    return proc.wait(), "".join(lines)
+
+
+def _sdk_version(sdk: Path) -> tuple[int, ...]:
+    """MacOSX27.0.sdk -> (27, 0); an unversioned name sorts last."""
+    return tuple(int(n) for n in re.findall(r"\d+", sdk.name))
+
+
+def _sdk_links(sdk: Path) -> bool:
+    """Whether clang can link a trivial program against *sdk* with NativeAOT's frameworks."""
+    with tempfile.TemporaryDirectory(prefix="pymcu-sdk-probe-") as tmp:
+        src = Path(tmp) / "probe.c"
+        src.write_text("int main(void) { return 0; }\n")
+        frameworks = [arg for name in _SDK_PROBE_FRAMEWORKS for arg in ("-framework", name)]
+        try:
+            result = subprocess.run(
+                ["clang", "-isysroot", str(sdk), *frameworks, str(src),
+                 "-o", str(Path(tmp) / "probe")],
+                capture_output=True,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
+
+
+def _linkable_macos_sdk() -> Path | None:
+    """The newest macOS SDK beside the default one that clang can link, or None.
+
+    The default SDK is found with xcrun and the others are its siblings, so no install
+    location is written into this file. The first candidate that links wins.
+    """
+    try:
+        default = subprocess.run(
+            ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    # Sorted by the name each entry carries, not by where its symlink points: a
+    # versioned name can be a link to an unversioned directory. Entries that are the
+    # same directory are tried once.
+    entries = sorted(
+        (p for p in Path(default).parent.glob("MacOSX*.sdk") if p.is_dir()),
+        key=_sdk_version, reverse=True,
+    )
+    tried = set()
+    for sdk in entries:
+        if sdk.resolve() in tried:
+            continue
+        tried.add(sdk.resolve())
+        if _sdk_links(sdk):
+            return sdk
+    return None
 
 
 def _get_rid() -> str | None:
