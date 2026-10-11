@@ -32,8 +32,26 @@ except ImportError:
 
 REPO = Path(__file__).resolve().parents[2]
 CHIPS = REPO / "lib" / "src" / "pymcu" / "chips"
-BACKEND_BINARY = (REPO.parent / "pymcu-avr" / "src" / "python" / "pymcu"
-                  / "backend" / "avr" / "pymcuc-avr")
+
+
+def _backend_binary():
+    """The AVR backend the driver would run here, or None when there is none.
+
+    Asked of the driver rather than located by path, so a sibling checkout's build is
+    never measured by accident: PYMCU_BACKEND_BINARY names the binary explicitly and is
+    honoured, and otherwise the installed backend plugin answers. A missing answer is
+    the skip reason below, not a fallback to some other path.
+    """
+    try:
+        from driver.backends import _binary_override, get_backend_binary
+    except ImportError:
+        return None
+    # The override is read before the plugin lookup: an explicit binary is honoured
+    # even where no backend plugin is installed to name the family.
+    return _binary_override("avr") or get_backend_binary("atmega328p")
+
+
+BACKEND_BINARY = _backend_binary()
 
 # The vendor's own cc1, run through the WASI toolchain: the same avr-libc headers
 # and the same chip flags the compiler uses. No host avr-gcc is involved, so a
@@ -102,7 +120,7 @@ def backend_table():
     through the same accessor the code generator calls, so what is checked here is
     what the compiler uses, not what its text appears to say.
     """
-    if not BACKEND_BINARY.exists():
+    if BACKEND_BINARY is None or not BACKEND_BINARY.exists():
         return None
     proc = subprocess.run([str(BACKEND_BINARY), "devices"],
                           capture_output=True, text=True)
@@ -120,7 +138,9 @@ def backend_table():
 BACKEND = backend_table()
 
 needs_gcc = pytest.mark.skipif(not WASI_READY, reason="WASI AVR toolchain not available")
-needs_backend = pytest.mark.skipif(BACKEND is None, reason="AVR backend binary not present")
+needs_backend = pytest.mark.skipif(
+    BACKEND is None,
+    reason="no AVR backend binary: install pymcu-avr or set PYMCU_BACKEND_BINARY=avr=/path")
 
 
 @needs_backend
