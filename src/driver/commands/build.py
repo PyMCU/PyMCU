@@ -54,6 +54,7 @@ from ..core.libraries import (
 )
 from ..core.update_check import get_available_updates, get_installed_pymcu_versions
 from ..core import upstream_libraries
+from ..core.elf import text_symbol_addrs
 
 console = Console()
 warning_console = Console(stderr=True)
@@ -925,59 +926,12 @@ def _avr_stub_bytes(artifacts_dir) -> int | None:
     return None
 
 
-def _elf_text_symbol_addrs(elf_file) -> dict | None:
-    """{name: byte address} for the .text symbols of a little-endian ELF32, or None.
-
-    Read straight from the section and symbol tables so the report does not depend
-    on an avr-nm the WASI toolchain does not ship. Anything that is not a 32-bit
-    little-endian ELF with a findable .text and symtab returns None and the caller
-    falls back to the assembly.
-    """
-    import struct
-    try:
-        data = Path(elf_file).read_bytes()
-        if len(data) < 52 or data[:6] != b"\x7fELF\x01\x01":
-            return None
-        hdr = struct.unpack_from("<HHIIIIIHHHHHH", data, 16)
-        e_shoff, e_shentsize, e_shnum, e_shstrndx = hdr[5], hdr[10], hdr[11], hdr[12]
-        if not e_shoff or e_shentsize < 40 or not 0 < e_shstrndx < e_shnum:
-            return None
-        sections = [struct.unpack_from("<10I", data, e_shoff + i * e_shentsize)
-                    for i in range(e_shnum)]
-
-        def cstring(offset: int, base: int) -> bytes:
-            start = base + offset
-            return data[start:data.index(b"\0", start)]
-
-        shstr_base = sections[e_shstrndx][4]
-        text_idx = next(
-            (i for i, sh in enumerate(sections)
-             if cstring(sh[0], shstr_base) == b".text"),
-            None,
-        )
-        if text_idx is None:
-            return None
-        addrs = {}
-        for sh in sections:
-            if sh[1] != 2 or sh[9] < 16:            # SHT_SYMTAB, Elf32_Sym
-                continue
-            str_base = sections[sh[6]][4]           # sh_link -> its string table
-            for off in range(sh[4], sh[4] + sh[5], sh[9]):
-                st_name, st_value, _sz, _info, _other, st_shndx = \
-                    struct.unpack_from("<IIIBBH", data, off)
-                if st_name and st_shndx == text_idx:
-                    addrs[cstring(st_name, str_base).decode("utf-8", "replace")] = st_value
-        return addrs
-    except (IndexError, TypeError, ValueError, struct.error, OSError):
-        return None
-
-
 def _resolve_blockmap(blockmap_path: Path, elf_syms: dict[str, int]) -> None:
     """Fill in WordAddr fields of a backend-emitted blockmap from the linked ELF.
 
     The backend emits labels with WordAddr=null: link-time relaxation changes
     instruction widths, so only the ELF symtab knows where a label landed.
-    *elf_syms* is {name: byte address} from _elf_text_symbol_addrs; a label the
+    *elf_syms* is {name: byte address} from text_symbol_addrs; a label the
     linker dropped (peephole-deleted, unreachable) stays null and the profiler
     merges its PCs into the preceding block.
     """
@@ -1097,7 +1051,7 @@ def _avr_preamble_bytes(artifacts_dir) -> int | None:
     """
     if artifacts_dir is None:
         return None
-    addrs = _elf_text_symbol_addrs(Path(artifacts_dir) / "debug" / "firmware.elf")
+    addrs = text_symbol_addrs(Path(artifacts_dir) / "debug" / "firmware.elf")
     if addrs is not None and "__bad_interrupt" in addrs:
         following = min((a for a in addrs.values() if a > addrs["__bad_interrupt"]),
                         default=None)
@@ -2090,7 +2044,7 @@ def build(
                     elf_file = gas_tc.link(firmware_obj, [], output_dir)
                     if blockmap_path is not None and blockmap_path.exists():
                         _resolve_blockmap(blockmap_path,
-                                          _elf_text_symbol_addrs(elf_file) or {})
+                                          text_symbol_addrs(elf_file) or {})
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = gas_tc.elf_to_hex(elf_file)
 
