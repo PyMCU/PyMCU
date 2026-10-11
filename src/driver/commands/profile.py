@@ -26,6 +26,7 @@ from rich.console import Console
 from ..backends import get_backend_for_chip, run_backend
 from ..core.boards import BOARD_CHIPS
 from ..core.compiler import PyMCUCompiler
+from ..core.elf import symbols as elf_symbols
 from ..core.project_config import experimental_enabled
 from ..core.workload import WorkloadError, load_workload
 
@@ -80,59 +81,36 @@ def _find_cur_task_addr(elf_path: Path) -> int | None:
     The address is used by the profiler to read the active task ID at each RETI,
     enabling correct N-task context-switch tracking.
     """
-    for nm in ["avr-nm", "/opt/homebrew/bin/avr-nm", "/usr/local/bin/avr-nm"]:
-        try:
-            result = subprocess.run(
-                [nm, "--format=bsd", str(elf_path)],
-                capture_output=True, text=True, check=True,
-            )
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) != 3:
-                    continue
-                sym_type, name = parts[1], parts[2]
-                if sym_type not in ("a", "A", "b", "B", "d", "D"):
-                    continue
-                if name.endswith("__cur_task") or name == "_cur_task":
-                    return int(parts[0], 16)
-            return None
-        except (FileNotFoundError, subprocess.CalledProcessError):
+    for sym in elf_symbols(elf_path) or []:
+        if sym.kind not in ("a", "A", "b", "B", "d", "D"):
             continue
+        if sym.name.endswith("__cur_task") or sym.name == "_cur_task":
+            return sym.value
     return None
 
 
 def _extract_elf_symbols(elf_path: Path) -> list[dict]:
-    """Extract text-section symbols from ELF via avr-nm with correct byte→word addresses.
+    """Extract text-section symbols from the ELF with correct byte→word addresses.
 
     The --emit-symbols backend counts IR-level instructions, not assembled words, so
-    the naked ISR's large asm block shifts all subsequent addresses.  avr-nm reads the
-    final linked ELF and always returns the correct byte addresses.
+    the naked ISR's large asm block shifts all subsequent addresses.  The linked ELF's
+    own symbol table always gives the correct byte addresses.
     """
     # Matches internal asm labels: _word_suffix (e.g. _dly_i16mhz, _systick_restore).
     # A real ISR function like _systick has NO second underscore in the name.
     _internal_label_re = re.compile(r'^_[^_]+_.+')
 
-    for nm in ["avr-nm", "/opt/homebrew/bin/avr-nm", "/usr/local/bin/avr-nm"]:
-        try:
-            result = subprocess.run(
-                [nm, "--format=bsd", str(elf_path)],
-                capture_output=True, text=True, check=True,
-            )
-            symbols = []
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) != 3 or parts[1] not in ("t", "T"):
-                    continue
-                name = parts[2]
-                if name.startswith("L_") or name.startswith("_L_"):
-                    continue
-                if _internal_label_re.match(name):
-                    continue
-                symbols.append({"Name": name, "WordAddr": int(parts[0], 16) // 2})
-            return symbols
-        except (FileNotFoundError, subprocess.CalledProcessError):
+    symbols = []
+    for sym in elf_symbols(elf_path) or []:
+        if sym.kind not in ("t", "T"):
             continue
-    return []
+        name = sym.name
+        if name.startswith("L_") or name.startswith("_L_"):
+            continue
+        if _internal_label_re.match(name):
+            continue
+        symbols.append({"Name": name, "WordAddr": sym.value // 2})
+    return symbols
 
 
 def _get_profiler_binary() -> Path:
@@ -403,7 +381,7 @@ def profile(
         result_hex = toolchain.elf_to_hex(elf)
         if result_hex.resolve() != hex_path.resolve():
             shutil.copy(result_hex, hex_path)
-        # Override --emit-symbols addresses with avr-nm ELF addresses (correct).
+        # Override --emit-symbols addresses with the ELF symbol table's addresses (correct).
         elf_syms = _extract_elf_symbols(elf)
         if elf_syms:
             # Enrich symbol names: convert user-module mangled names to dotted Python names

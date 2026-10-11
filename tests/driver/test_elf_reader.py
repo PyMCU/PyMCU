@@ -104,3 +104,15 @@ def test_a_file_that_is_not_an_elf_reads_as_none(tmp_path):
 
 def test_a_missing_file_reads_as_none(tmp_path):
     assert elf.read_elf(tmp_path / "absent.elf") is None
+
+
+def test_profiler_takes_its_text_symbols_from_the_elf(wasi_elf):
+    from src.driver.commands import profile
+
+    assert profile._extract_elf_symbols(wasi_elf) == [{"Name": "main", "WordAddr": 0}]
+
+
+def test_profiler_finds_the_current_task_variable(wasi_elf):
+    from src.driver.commands import profile
+
+    assert profile._find_cur_task_addr(wasi_elf) == 0x800103
