@@ -95,6 +95,11 @@ public class IrGenerationPhase : CompilerPhaseBase
             : Optimizer.Optimize(ir, pgoProfile);
         Verifier.Check(optimized, "optimize");
 
+        // A library's exports are its whole interface, so one that did not come out as a
+        // symbol is refused here, at its `def`, rather than left missing for a linker to find.
+        if (context.Options.Library)
+            RefuseExportsWithoutASymbol(context.RootAst!, optimized);
+
         // CanFail analysis runs after optimization so that dead-code-eliminated
         // functions and cloned bodies are the final IR seen by the backend.
         CanFailAnalyzer.Analyze(optimized, libraryMode: context.Options.Library);
@@ -106,5 +111,38 @@ public class IrGenerationPhase : CompilerPhaseBase
         Verifier.Check(optimized, "canfail");
 
         context.IntermediateRepresentation = optimized;
+    }
+
+    /// <summary>
+    /// `--library` roots every top-level function of the entry file, and a function with no
+    /// subroutine ABI (it returns a tuple, takes a class instance...) is registered for expansion
+    /// at its call sites instead. A library has none, so the function was expanded nowhere and
+    /// emitted nowhere, with BUILD_OK and a .mir that simply lacked it (PyMCU#365 was one
+    /// spelling, a `bytes` parameter; a tuple return another). Every function that was marked as
+    /// an export and is not a symbol of the program is an error at its definition.
+    /// </summary>
+    private static void RefuseExportsWithoutASymbol(Frontend.ProgramNode ast, ProgramIR program)
+    {
+        var emitted = program.Functions.Select(f => f.Name).ToHashSet();
+        foreach (var fn in ast.Functions)
+        {
+            if (!fn.IsExportC || fn.IsInline || fn.IsInterrupt) continue;
+            if (emitted.Contains(fn.Name)) continue;
+
+            string why = fn.ReturnType.StartsWith("tuple", StringComparison.Ordinal)
+                ? "it returns a tuple, which has no subroutine form (several values cannot come back through one return)"
+                : fn.Params.FirstOrDefault(p => p.Type.Length > 0
+                        && DataTypeExtensions.StringToDataType(p.Type) == DataType.UNKNOWN
+                        && p.Type is not ("bytearray" or "str" or "const[str]")
+                        && !p.Type.StartsWith("ptr", StringComparison.Ordinal)) is { } cp
+                    ? $"its parameter '{cp.Name}: {cp.Type}' is read as a class instance, whose fields live in the caller's frame"
+                    : "the compiler expanded it at its call sites or dropped it, and left no subroutine";
+            throw new ArchitectureError(
+                $"function '{fn.Name}' is an export of this library but cannot be emitted as a symbol: "
+                + $"{why}. A library has no call site to expand it at. Mark it @inline if it is a "
+                + "template for the other functions, or give it a form with a subroutine ABI "
+                + "(scalar, 'bytearray' or 'ptr' parameters and a scalar or no return).",
+                fn.Line, fn.Column);
+        }
     }
 }
