@@ -670,3 +670,31 @@ def test_a_one_element_tuple_is_read_by_index_not_by_unpacking(tmp_path):
     (e,) = collect_exports(write(tmp_path, "def f(a: int) -> tuple[int]:\n    return (a,)\n"))
 
     assert "nm_r0 = f(a)[0]" in tuple_kernel_source(e)
+
+
+def test_a_tuple_function_becomes_an_inline_template_without_moving_a_line(tmp_path):
+    from src.driver.commands.natmod import kernel_source_with_tuple_wrappers
+
+    text = (
+        "def ok(a: int) -> int:\n"
+        "    return a\n"
+        "\n"
+        "\n"
+        "def pair(a: int) -> tuple[int, int]:\n"
+        "    return (a, a)\n"
+    )
+    out = kernel_source_with_tuple_wrappers(text, collect_exports(write(tmp_path, text)))
+    lines = out.split("\n")
+
+    # The blank line above `def pair` carries the decorator, so `def pair` is still line 5.
+    assert lines[3] == "@inline" and lines[4].startswith("def pair(")
+    assert "def pair__nm(a: int, nm_out: bytearray) -> None:" in out
+
+
+def test_a_tuple_function_with_no_blank_line_above_gets_a_line_of_its_own(tmp_path):
+    from src.driver.commands.natmod import kernel_source_with_tuple_wrappers
+
+    text = "x = 1\ndef pair(a: int) -> tuple[int, int]:\n    return (a, a)\n"
+    out = kernel_source_with_tuple_wrappers(text, collect_exports(write(tmp_path, text)))
+
+    assert out.split("\n")[1:3] == ["@inline", "def pair(a: int) -> tuple[int, int]:"]
