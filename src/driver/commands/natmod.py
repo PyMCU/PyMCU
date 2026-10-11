@@ -89,6 +89,12 @@ _SCALARS: dict[str, Scalar] = {
     "bool":   Scalar("uint8_t", True),
 }
 
+# A float crosses as a C `float`: 32 bits, because that is the kernel's own width (PyMCU's
+# `float` is single precision) and what dynruntime.h's mp_obj_get_float / mp_obj_new_float
+# convert to and from when MICROPY_FLOAT_IMPL is FLOAT. The interpreter's float is a double
+# on some builds and the adapter rounds it to the kernel's width on the way in.
+_FLOAT = "float"
+
 # Buffer parameters: (C type, mp_get_buffer flag). The writable flag comes from
 # the type's own mutability, so a `bytes` parameter cannot be written through by
 # accident and a `bytearray` one does not need a second annotation to say so.
@@ -100,7 +106,6 @@ _BUFFERS: dict[str, tuple[str, str]] = {
 # Spellings that are refused with a sentence of their own, because the generic
 # "cannot convert" would leave the reader guessing whether it is a typo.
 _EXPLAINED_REFUSALS = {
-    "float": "floating point is not carried across the native-module boundary yet",
     "str": "a str would have to be copied or kept alive by the caller, which this "
            "boundary does not do; take a bytes or bytearray instead",
     "tuple": "a tuple is an interpreter object, and a native module receives only "
@@ -180,6 +185,8 @@ def _convert_param(path: Path, fn: ast.FunctionDef, arg: ast.arg) -> Param:
         return Param(arg.arg, ctype, "buffer", flag, ann)
     if ann in _SCALARS:
         return Param(arg.arg, _SCALARS[ann].ctype, "scalar", "", ann)
+    if ann == _FLOAT:
+        return Param(arg.arg, "float", "float", "", ann)
     why = _EXPLAINED_REFUSALS.get(ann)
     if why is not None:
         raise _located(
@@ -190,7 +197,7 @@ def _convert_param(path: Path, fn: ast.FunctionDef, arg: ast.arg) -> Param:
         path, fn,
         f"parameter '{arg.arg}' of '{fn.name}' is annotated '{ann}', which a native "
         f"module cannot receive. The boundary carries integers "
-        f"({', '.join(sorted(_SCALARS))}) and buffers "
+        f"({', '.join(sorted(_SCALARS))}), float and buffers "
         f"({', '.join(sorted(_BUFFERS))}).",
     )
 
@@ -219,6 +226,8 @@ def _convert_function(path: Path, fn: ast.FunctionDef) -> Exported:
     if ret in _SCALARS:
         s = _SCALARS[ret]
         return Exported(fn.name, params, s.ctype, s.unsigned, ret == "bool", fn.lineno, ret)
+    if ret == _FLOAT:
+        return Exported(fn.name, params, "float", False, False, fn.lineno, ret)
     if ret in _BUFFERS:
         raise _located(
             path, fn,
@@ -232,7 +241,7 @@ def _convert_function(path: Path, fn: ast.FunctionDef) -> Exported:
     raise _located(
         path, fn,
         f"'{fn.name}' is declared to return '{ret}', which a native module cannot "
-        f"box. The boundary returns None or an integer "
+        f"box. The boundary returns None, float or an integer "
         f"({', '.join(sorted(_SCALARS))}).",
     )
 
@@ -510,6 +519,9 @@ def generate_adapter(module: str, exports: list[Exported], source: Path,
                 L.append(f"    mp_get_buffer_raise(a{i}, &b{i}, {prm.buffer_flag});")
                 actual.append(f"({prm.ctype})b{i}.buf")
                 lengths.append(f"(uint32_t)b{i}.len")
+            elif prm.kind == "float":
+                L.append(f"    float p{i} = (float)mp_obj_get_float(a{i});")
+                actual.append(f"p{i}")
             elif prm.ann == "bool":
                 L.append(f"    {prm.ctype} p{i} = ({prm.ctype})(mp_obj_is_true(a{i}) ? 1 : 0);")
                 actual.append(f"p{i}")
@@ -538,7 +550,9 @@ def generate_adapter(module: str, exports: list[Exported], source: Path,
                 value = "res"
             else:
                 value = call
-            if e.ret_bool:
+            if e.ret_ctype == "float":
+                L.append(f"    return mp_obj_new_float({value});")
+            elif e.ret_bool:
                 L.append(f"    return mp_obj_new_bool({value});")
             elif e.ret_unsigned:
                 L.append(f"    return mp_obj_new_int_from_uint((mp_uint_t){value});")
@@ -962,6 +976,13 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
             "  [yellow]note:[/yellow] a uint32 argument accepts 0 to 2147483647; a negative "
             "raises ValueError and a larger value raises OverflowError in the interpreter, "
             "so the top half of the range is not reachable yet."
+        )
+    if any(p.kind == "float" for e in exports for p in e.params) \
+            or any(e.ret_ctype == "float" for e in exports):
+        console.print(
+            "  [dim]a float crosses as single precision: the interpreter's value is rounded to "
+            "32 bits on the way in, and the result is widened back on the way out. Firmware built "
+            "without float support raises RuntimeError('float unsupported') on the call.[/dim]"
         )
     if any(p.kind == "buffer" for e in exports for p in e.params):
         console.print(
