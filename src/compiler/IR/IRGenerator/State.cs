@@ -1588,6 +1588,11 @@ public partial class IRGenerator
     // Tracks compile-time float constant variables (legacy; new code uses FloatConstant nodes)
     private Dictionary<string, double> floatConstantVariables = new();
 
+    /// Module-level `NAME: const[float] = <literal>`, keyed by the defining module's prefix plus
+    /// the name (`math_pi`). Unlike floatConstantVariables, which tracks what a LOCAL is bound
+    /// to and is rewritten at every call, these are facts about the module and never change.
+    private readonly Dictionary<string, double> floatModuleConstants = new();
+
     // Maps class name → module prefix where the class is defined.
     private Dictionary<string, string?> classModuleMap = new();
 

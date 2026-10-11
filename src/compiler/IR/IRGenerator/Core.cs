@@ -2632,6 +2632,23 @@ public partial class IRGenerator
         // `global`; the module's own top level (its __module_init) has no frame, and a name
         // it binds IS the global.
         bool moduleLevel = currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+
+        // A module-level `const[float]` is the float wherever no frame binds the name: from
+        // the defining module's own code, and through `from mod import NAME [as ALIAS]`.
+        if (floatModuleConstants.Count > 0
+            && !(moduleLevel ? InlineScopeShadows(name) : LocalScopeBinds(name)))
+        {
+            if (!string.IsNullOrEmpty(currentModulePrefix)
+                && floatModuleConstants.TryGetValue(currentModulePrefix + name, out double ownFloat))
+                return new FloatConstant(ownFloat);
+            if (TryImportedAlias(name, out var floatAliasMod) && floatAliasMod != null
+                && floatModuleConstants.TryGetValue(
+                    floatAliasMod.Replace('.', '_') + "_" + AliasOriginal(name), out double aliasFloat))
+                return new FloatConstant(aliasFloat);
+            if (floatModuleConstants.TryGetValue(name, out double bareFloat))
+                return new FloatConstant(bareFloat);
+        }
+
         if (!string.IsNullOrEmpty(currentModulePrefix)
             && (currentFunctionGlobals.Contains(name)
                 || !(moduleLevel ? InlineScopeShadows(name) : LocalScopeBinds(name))))

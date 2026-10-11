@@ -316,6 +316,30 @@ public partial class IRGenerator
     }
 
     /// Whether a module-level binding holds a FLOAT: the annotation says so, or the
+    /// A float literal, an integer literal, either negated, or float("inf" / "-inf" / "nan"):
+    /// what `NAME: const[float] = ...` may be initialised with.
+    private static bool TryConstFloatInit(Expression? e, out double v)
+    {
+        v = 0;
+        switch (e)
+        {
+            case FloatLiteral f: v = f.Value; return true;
+            case IntegerLiteral i: v = i.Unsigned ? (uint)i.Value : i.Value; return true;
+            case UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate } u
+                when TryConstFloatInit(u.Operand, out double inner):
+                v = -inner; return true;
+            case CallExpr { Callee: VariableExpr { Name: "float" }, Args: [StringLiteral sl] }:
+                switch (sl.Value.Trim().ToLowerInvariant())
+                {
+                    case "inf": case "+inf": case "infinity": v = double.PositiveInfinity; return true;
+                    case "-inf": case "-infinity": v = double.NegativeInfinity; return true;
+                    case "nan": case "+nan": case "-nan": v = double.NaN; return true;
+                }
+                return false;
+        }
+        return false;
+    }
+
     /// initializer is a float literal (with or without a leading minus).
     private static bool IsFloatModuleBinding(string? annotation, Expression? initializer)
         => annotation == "float"
@@ -1057,6 +1081,15 @@ public partial class IRGenerator
                 // Both spellings go the same way, including the ALL-CAPS one: that convention
                 // gives a name no storage and folds every read from a SymbolInfo, which carries
                 // an int and has no float to carry.
+                // `PI: const[float] = 3.14159` is a constant, not a variable: no storage, no
+                // initialiser, every read folds. Registered under the defining module's prefix.
+                if (type == "const[float]" && TryConstFloatInit(initializer, out double constFloat))
+                {
+                    floatModuleConstants[currentModulePrefix + name] = constFloat;
+                    declaredConstants.Add(currentModulePrefix + name);
+                    continue;
+                }
+
                 if (IsFloatModuleBinding(type, initializer))
                 {
                     mutableGlobals[currentModulePrefix + name] = DataType.FLOAT;

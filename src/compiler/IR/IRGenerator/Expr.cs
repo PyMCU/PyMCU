@@ -7089,6 +7089,9 @@ public partial class IRGenerator
                 mangledName = reExportedName;
             }
 
+            if (floatModuleConstants.TryGetValue(mangledName, out double moduleFloat))
+                return new FloatConstant(moduleFloat);
+
             if (globals.TryGetValue(mangledName, out var sym))
             {
                 if (sym.IsMemoryAddress) return new MemoryAddress(sym.Value, sym.Type);
