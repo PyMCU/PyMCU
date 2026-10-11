@@ -492,12 +492,6 @@ status = "tracked:#37"
 reason = "CircuitPython adapters should not import pymcu.chips."
 
 [[deviation]]
-symbol = "compat.circuitpython.pymcu_circuitpython/pwmio.py:19"
-text = 'if __CHIP__.arch == "avr":'
-status = "tracked:#37"
-reason = "CircuitPython adapters should not branch on __CHIP__."
-
-[[deviation]]
 symbol = "compat.circuitpython.pymcu_circuitpython/socketpool.py:2"
 text = 'from pymcu.chips import __CHIP__'
 status = "tracked:#37"
