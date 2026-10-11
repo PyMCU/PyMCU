@@ -1,4 +1,4 @@
-"""The AVR memory geometry, checked end to end: avr-gcc -> chip file -> backend table.
+"""The AVR memory geometry, checked end to end: vendor -> chip file -> backend table.
 
 Three places record where each chip's SRAM lives, and a wrong value in any of
 them puts variables somewhere the chip does not have memory. They have already
@@ -16,6 +16,7 @@ the chain that belong to the stdlib: vendor against chip file, and chip file
 against the table the backend actually reads.
 """
 
+import functools
 import json
 import re
 import subprocess
@@ -23,14 +24,21 @@ from pathlib import Path
 
 import pytest
 
+try:
+    from pymcu.toolchain.avr.wasi import find_ffi_root, preprocess_for_chip
+except ImportError:
+    find_ffi_root = None
+    preprocess_for_chip = None
+
 REPO = Path(__file__).resolve().parents[2]
 CHIPS = REPO / "lib" / "src" / "pymcu" / "chips"
 BACKEND_BINARY = (REPO.parent / "pymcu-avr" / "src" / "python" / "pymcu"
                   / "backend" / "avr" / "pymcuc-avr")
 
-_avr_gcc = sorted(Path.home().glob(
-    ".cache/uv/archive-v0/*/pymcu_avr_toolchain/bin/avr-gcc"))
-AVR_GCC = _avr_gcc[-1] if _avr_gcc else None
+# The vendor's own cc1, run through the WASI toolchain: the same avr-libc headers
+# and the same chip flags the compiler uses. No host avr-gcc is involved, so a
+# Mac that cannot run one (or a machine with no toolchain at all) still checks.
+WASI_READY = find_ffi_root is not None and find_ffi_root() is not None
 
 
 def chip_constants(path: Path):
@@ -54,6 +62,7 @@ AVR_CHIPS = sorted(f.stem for f in CHIPS.glob("*.py")
 ARITHMETIC = re.compile(r"^[0-9a-fA-Fx+\-*/()\s]+$")
 
 
+@functools.lru_cache(maxsize=None)
 def vendor(chip: str):
     """RAMSTART, RAMEND and whether the core has the long jump and call.
 
@@ -64,12 +73,10 @@ def vendor(chip: str):
     """
     probe = ("#include <avr/io.h>\n"
              "__pymcu RAMSTART | RAMEND | FLASHEND\n")
-    proc = subprocess.run(
-        [str(AVR_GCC), f"-mmcu={chip}", "-E", "-P", "-x", "c", "-"],
-        input=probe, capture_output=True, text=True)
-    if proc.returncode != 0:
+    text = preprocess_for_chip(chip, probe, ["-P"])
+    if text is None:
         return None
-    line = next((l for l in proc.stdout.splitlines() if l.startswith("__pymcu")), None)
+    line = next((l for l in text.splitlines() if l.startswith("__pymcu")), None)
     if line is None:
         return None
     parts = [p.strip() for p in line[len("__pymcu"):].split("|")]
@@ -79,9 +86,7 @@ def vendor(chip: str):
             return None
         return eval(text, {"__builtins__": {}}, {})
 
-    macros = subprocess.run(
-        [str(AVR_GCC), f"-mmcu={chip}", "-dM", "-E", "-x", "c", "-"],
-        input="#include <avr/io.h>\n", capture_output=True, text=True).stdout
+    macros = preprocess_for_chip(chip, "#include <avr/io.h>\n", ["-dM"])
     return {"RAMSTART": number(parts[0]), "RAMEND": number(parts[1]),
             "FLASHEND": number(parts[2]),
             "HAS_JMP_CALL": "__AVR_HAVE_JMP_CALL__" in macros}
@@ -114,7 +119,7 @@ def backend_table():
 
 BACKEND = backend_table()
 
-needs_gcc = pytest.mark.skipif(AVR_GCC is None, reason="avr toolchain not installed")
+needs_gcc = pytest.mark.skipif(not WASI_READY, reason="WASI AVR toolchain not available")
 needs_backend = pytest.mark.skipif(BACKEND is None, reason="AVR backend binary not present")
 
 
@@ -136,9 +141,9 @@ def test_ram_start_matches_the_vendor(chip):
     ours = chip_constants(CHIPS / f"{chip}.py")
     theirs = vendor(chip)
     if theirs is None or theirs["RAMSTART"] is None:
-        pytest.skip(f"avr-gcc does not know {chip}")
+        pytest.skip(f"the vendor toolchain does not know {chip}")
     assert ours["RAM_START"] == theirs["RAMSTART"], \
-        f"{chip}: RAM_START 0x{ours['RAM_START']:04X} vs avr-gcc 0x{theirs['RAMSTART']:04X}"
+        f"{chip}: RAM_START 0x{ours['RAM_START']:04X} vs the vendor 0x{theirs['RAMSTART']:04X}"
 
 
 @needs_gcc
@@ -148,10 +153,10 @@ def test_ram_size_matches_the_vendor(chip):
     ours = chip_constants(CHIPS / f"{chip}.py")
     theirs = vendor(chip)
     if theirs is None or theirs["RAMEND"] is None:
-        pytest.skip(f"avr-gcc does not know {chip}")
+        pytest.skip(f"the vendor toolchain does not know {chip}")
     end = ours["RAM_START"] + ours["RAM_SIZE"] - 1
     assert end == theirs["RAMEND"], \
-        f"{chip}: our RAM ends at 0x{end:04X}, avr-gcc says 0x{theirs['RAMEND']:04X}"
+        f"{chip}: our RAM ends at 0x{end:04X}, the vendor says 0x{theirs['RAMEND']:04X}"
 
 
 @needs_backend
@@ -187,9 +192,9 @@ def test_the_backend_knows_whether_the_core_has_jmp_and_call(chip):
         pytest.skip(f"the backend table has no entry for {chip}")
     theirs = vendor(chip)
     if theirs is None:
-        pytest.skip(f"avr-gcc does not know {chip}")
+        pytest.skip(f"the vendor toolchain does not know {chip}")
     assert BACKEND[chip][1] == theirs["HAS_JMP_CALL"], \
-        f"{chip}: backend says HasJmpCall={BACKEND[chip][1]}, avr-gcc says {theirs['HAS_JMP_CALL']}"
+        f"{chip}: backend says HasJmpCall={BACKEND[chip][1]}, the vendor says {theirs['HAS_JMP_CALL']}"
 
 
 @needs_backend
@@ -221,7 +226,7 @@ def test_flash_size_matches_the_vendor(chip):
 
     It decides which parts can afford the full float writer, and on the AVR it
     decides LPM against ELPM: a chip file that understates it emits an LPM that
-    cannot reach the table it was pointed at. The authority is avr-gcc's FLASHEND,
+    cannot reach the table it was pointed at. The authority is the vendor's FLASHEND,
     not another table of ours -- comparing our flash size against the backend's
     copy of our flash size proved nothing about either.
     """
@@ -229,9 +234,9 @@ def test_flash_size_matches_the_vendor(chip):
     assert ours is not None, f"{chip}.py declares no FLASH_SIZE"
     theirs = vendor(chip)
     if theirs is None or theirs["FLASHEND"] is None:
-        pytest.skip(f"avr-gcc does not know {chip}")
+        pytest.skip(f"the vendor toolchain does not know {chip}")
     assert ours == theirs["FLASHEND"] + 1, \
-        f"{chip}: chip file says {ours} bytes, avr-gcc says {theirs['FLASHEND'] + 1}"
+        f"{chip}: chip file says {ours} bytes, the vendor says {theirs['FLASHEND'] + 1}"
 
 
 @needs_backend
