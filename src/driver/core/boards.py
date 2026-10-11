@@ -42,6 +42,7 @@ BOARD_CHIPS: dict[str, str] = {
     # RP2040 (ARM Cortex-M0+) boards
     "raspberry_pi_pico": "rp2040",
     "pico":              "rp2040",
+    "adafruit_feather_rp2040": "rp2040",
     # The W boards are the same MCU with a CYW43439 beside it, so they resolve to the
     # same chip. This table cannot tell them apart and does not have to any more: the
     # board name now survives into __CHIP__.board, and lib/src/pymcu/hal/wifi.py reads
