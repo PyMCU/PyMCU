@@ -44,10 +44,13 @@ class SPI:
         # Route SCK / MOSI / MISO to the SPI function.
         sck_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * sck + 4)
         sck_ctrl.value = GPIO_FUNC_SPI
-        mosi_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * mosi + 4)
-        mosi_ctrl.value = GPIO_FUNC_SPI
-        miso_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * miso + 4)
-        miso_ctrl.value = GPIO_FUNC_SPI
+        # A pin of -1 is not routed (a write-only or read-only bus).
+        if mosi != -1:
+            mosi_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * mosi + 4)
+            mosi_ctrl.value = GPIO_FUNC_SPI
+        if miso != -1:
+            miso_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * miso + 4)
+            miso_ctrl.value = GPIO_FUNC_SPI
 
         # Software CS as a GPIO output, idle high.
         if cs != -1:

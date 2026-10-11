@@ -42,16 +42,21 @@ class SPI:
         # De-isolate and route SCK / MOSI / MISO to the SPI function.
         sck_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * sck)
         sck_pad.value = 1 << 6
-        mosi_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * mosi)
-        mosi_pad.value = 1 << 6
-        miso_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * miso)
-        miso_pad.value = 1 << 6
+        # A pin of -1 is not routed (a write-only or read-only bus).
+        if mosi != -1:
+            mosi_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * mosi)
+            mosi_pad.value = 1 << 6
+        if miso != -1:
+            miso_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * miso)
+            miso_pad.value = 1 << 6
         sck_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * sck + 4)
         sck_ctrl.value = GPIO_FUNC_SPI
-        mosi_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * mosi + 4)
-        mosi_ctrl.value = GPIO_FUNC_SPI
-        miso_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * miso + 4)
-        miso_ctrl.value = GPIO_FUNC_SPI
+        if mosi != -1:
+            mosi_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * mosi + 4)
+            mosi_ctrl.value = GPIO_FUNC_SPI
+        if miso != -1:
+            miso_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * miso + 4)
+            miso_ctrl.value = GPIO_FUNC_SPI
 
         if cs != -1:
             SIO_GPIO_OE_SET.value = 1 << cs
