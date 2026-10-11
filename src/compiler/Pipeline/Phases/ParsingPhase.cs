@@ -71,6 +71,14 @@ public class ParsingPhase : CompilerPhaseBase
             // an interrupt handler is rooted by its vector. Neither can be a library export.
             if (fn.IsInline || fn.IsInterrupt) continue;
             fn.IsExportC = true;
+
+            // An export is a symbol with a fixed ABI, so a `bool` parameter is a byte. `bool`
+            // has no width of its own, which classes a parameter of that type with the ones
+            // that take a class instance and expands the function at each call site: right
+            // for a program, and for an export (which has no call site) a refusal that talks
+            // about class instances. 0 or 1 in; the adapter normalises with mp_obj_is_true.
+            foreach (var prm in fn.Params)
+                if (prm.Type == "bool") prm.Type = "uint8";
         }
     }
 }
