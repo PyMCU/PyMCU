@@ -319,6 +319,72 @@ def check_no_module_state(path: Path) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Compiler requests a native module cannot grant
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STR_BUILDERS = {"str", "repr", "hex", "bin", "oct", "format"}
+
+
+def _first_line(tree: ast.AST, match) -> int:
+    for node in ast.walk(tree):
+        if match(node):
+            return getattr(node, "lineno", 1)
+    return 1
+
+
+def explain_compiler_request(path: Path, kind: str) -> NatmodError:
+    """Turn a [NEEDS_*] token the compiler raised for `pymcu build` into a located refusal.
+
+    `build` answers these tokens by injecting a runtime shim (pymcu.strfmt, pymcu.arena,
+    pymcu.round2) and compiling again. A native module has no such shim to link: it is loaded
+    into someone else's interpreter and brings only its own code. The token used to escape as
+    a bare "Compilation failed (see diagnostics above)" with nothing above it, so the user had
+    no way to learn which line asked for it. The tree is CPython's own, so the line is found by
+    shape, the way `collect_exports` finds the exports.
+    """
+    try:
+        tree = ast.parse(path.read_text(), filename=str(path))
+    except SyntaxError:
+        tree = ast.Module(body=[], type_ignores=[])
+
+    if kind == "strfmt":
+        def is_fstring(n: ast.AST) -> bool:
+            return isinstance(n, ast.JoinedStr) and any(
+                isinstance(v, ast.FormattedValue) for v in n.values)
+
+        def is_builder(n: ast.AST) -> bool:
+            return (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id in _STR_BUILDERS and bool(n.args)
+                    and not isinstance(n.args[0], ast.Constant))
+
+        line = _first_line(tree, lambda n: is_fstring(n) or is_builder(n))
+        what = "an f-string with a value in it, or str()/repr()/hex()/bin()/oct() of a run-time value"
+        why = ("builds a string at run time. A native module has no string builder to link "
+               "(it is loaded into the interpreter and brings only its own code), and no "
+               "stdout to print one to; a str cannot be returned across the boundary either")
+        fix = ("Compute the numbers and return them, or write bytes into a bytearray the "
+               "caller passes in; let the Python side format them.")
+    elif kind == "arena":
+        line = _first_line(tree, lambda n: isinstance(n, ast.Call)
+                           and isinstance(n.func, ast.Name) and n.func.id == "bytearray"
+                           and bool(n.args) and not isinstance(n.args[0], ast.Constant))
+        what = "bytearray(n) with a size that is not a constant"
+        why = ("allocates a buffer whose size is only known at run time. A native module has "
+               "no allocator of its own")
+        fix = "Take the buffer as a bytearray parameter, or give the size as a constant."
+    else:  # round2
+        line = _first_line(tree, lambda n: isinstance(n, ast.Call)
+                           and isinstance(n.func, ast.Name) and n.func.id == "round"
+                           and len(n.args) == 2)
+        what = "round(x, n) on a float"
+        why = "needs a rounding routine that a native module does not carry"
+        fix = "Scale to an integer and round that."
+    return NatmodError(
+        f"{path}:{line}: {what} {why}. {fix}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Adapter generation
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -690,7 +756,9 @@ def _arm_toolchain():
 
 def _natmod(circuitpython: Optional[str], module: Optional[str],
             output: Optional[str], verbose: bool) -> None:
-    from ..core.compiler import PyMCUCompiler          # noqa: PLC0415
+    from ..core.compiler import (                      # noqa: PLC0415
+        ArenaRequiredError, PyMCUCompiler, Round2RequiredError, StrfmtRequiredError,
+    )
     from ..backends import get_backend_for_chip, binary_for_plugin, run_backend  # noqa: PLC0415
 
     pyproject = Path("pyproject.toml")
@@ -740,17 +808,24 @@ def _natmod(circuitpython: Optional[str], module: Optional[str],
     ll = build_dir / f"{name}.ll"
 
     compiler = PyMCUCompiler(console)
-    compiler.compile(
-        input_file=entry,
-        output_file=str(build_dir / f"{name}.asm"),
-        target=target,
-        freq=pymcu_config.get("frequency", 125_000_000),
-        configs={},
-        search_path=sources_dir,
-        verbose=verbose,
-        emit_ir_path=str(mir),
-        library=True,
-    )
+    try:
+        compiler.compile(
+            input_file=entry,
+            output_file=str(build_dir / f"{name}.asm"),
+            target=target,
+            freq=pymcu_config.get("frequency", 125_000_000),
+            configs={},
+            search_path=sources_dir,
+            verbose=verbose,
+            emit_ir_path=str(mir),
+            library=True,
+        )
+    except StrfmtRequiredError:
+        raise explain_compiler_request(entry, "strfmt") from None
+    except ArenaRequiredError:
+        raise explain_compiler_request(entry, "arena") from None
+    except Round2RequiredError:
+        raise explain_compiler_request(entry, "round2") from None
 
     plugin = get_backend_for_chip(target)
     if plugin is None:
