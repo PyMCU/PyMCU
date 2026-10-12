@@ -871,8 +871,12 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         if (arg.Op is PyMCU.IR.BinaryOp.Add or PyMCU.IR.BinaryOp.Sub
             && arg.Src2 is Constant off && ValName(arg.Dst) is { Length: > 0 } dstName)
         {
+            // A base nothing here computed (an instance pointer received as a parameter) is
+            // taken to sit on a word boundary, as every slot array does: whatever the offset
+            // then leaves misaligned really is.
             int baseAlign = AlignmentOf(arg.Src1);
-            if (baseAlign > 0) knownAlignment[dstName] = Math.Min(baseAlign, LowestSetBit(off.Value));
+            if (baseAlign == 0) baseAlign = 4;
+            knownAlignment[dstName] = Math.Min(baseAlign, LowestSetBit(off.Value));
         }
     }
 

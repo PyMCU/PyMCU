@@ -78,6 +78,9 @@ RUNNER_DLL = REPO_ROOT / "build" / "oracle-runner" / "PyMCU.OracleRunner.CH32.dl
 GPIOR_IMPORT_RE = re.compile(
     r"from pymcu\.chips\.atmega328p import ([A-Za-z0-9_, ]+)")
 
+CONSOLE_PRINT_IMPORT_RE = re.compile(
+    r"^from pymcu\.hal\.console import print[ \t]*$", re.MULTILINE)
+
 # A probe that imports the WHOLE chip module instead of one register (461), to call
 # getattr(chip, name, default) -- PyMCU's one compile-time getattr form, which only folds
 # for a real module import, not a class. group(1) is the import alias.
@@ -206,6 +209,15 @@ def adapt_source(src: str, chip: str) -> str:
             f"from pymcu.types import uint32; "
             f"BASE: const[uint32] = {hex(BASE277_PAGE[chip])}",
         )
+
+    # 11 probes spell `from pymcu.hal.console import print`. That import binds a module-level
+    # `print`, so the driver reads it as the program's own print and, correctly, injects no
+    # stdout setup: on the AVR emulator the characters still arrive, because it records every UDR
+    # write whether or not the transmitter was enabled, but on the CH32V003 nothing is clocked or
+    # configured and the first byte waits for TXE forever. pymcu.hal.console defines no `print`,
+    # so the line adds nothing to the program; it becomes a `pass` (one line in, one line out)
+    # and the builtin print gets the usual preamble.
+    src = CONSOLE_PRINT_IMPORT_RE.sub("pass", src)
 
     return src
 

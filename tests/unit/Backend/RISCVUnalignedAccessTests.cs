@@ -117,4 +117,25 @@ public class RISCVUnalignedAccessTests
 
         Assert.Contains("sw\tt1, 0(t0)", asm);
     }
+
+    [Fact]
+    public void AWordLoadAtAnOffsetOfSixFromAnInstancePointerReadsBytes()
+    {
+        var asm = Compile(
+            new Binary(BinaryOp.Add, new Variable("self", DataType.UINT32), new Constant(6), T("p", DataType.UINT32)),
+            new LoadIndirect(T("p", DataType.UINT32), T("v", DataType.UINT32), DataType.UINT32));
+
+        Assert.DoesNotContain("lw\tt1, 0(t0)", asm);
+        Assert.Contains("lbu\tt2, 3(t0)", asm);
+    }
+
+    [Fact]
+    public void AWordLoadAtAnOffsetOfEightFromAnInstancePointerIsOneLoad()
+    {
+        var asm = Compile(
+            new Binary(BinaryOp.Add, new Variable("self", DataType.UINT32), new Constant(8), T("p", DataType.UINT32)),
+            new LoadIndirect(T("p", DataType.UINT32), T("v", DataType.UINT32), DataType.UINT32));
+
+        Assert.Contains("lw\tt1, 0(t0)", asm);
+    }
 }
