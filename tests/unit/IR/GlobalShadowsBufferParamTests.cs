@@ -201,31 +201,35 @@ public class GlobalShadowsBufferParamTests
     [Fact]
     public void PlainFunctionBufferParam_Len_IsNotTheModuleArraysLength()
     {
-        // A buffer reached by pointer has no compile-time length here, which is refused;
-        // with a module array of the same name it compiled to that array's length.
-        var ex = Record.Exception(() => Gen(
+        // A function that takes len() of its buffer parameter is expanded at the call site, where
+        // the parameter is the buffer passed. With a module array of the same name it once
+        // compiled to THAT array's length.
+        var ir = Gen(
             "def size(buf: bytearray) -> uint8:\n" +
             "    return len(buf)\n" +
             "buf = bytearray(13)\n" +
             "rb = bytearray(17)\n" +
-            "GPIOR1.value = size(rb)\n"));
+            "GPIOR1.value = size(rb)\n");
 
-        Assert.NotNull(ex);
+        var text = string.Join("\n", All(ir).Select(i => i.ToString()));
+        Assert.Contains("Copy { Src = Constant { Value = 17,", text);
+        Assert.DoesNotContain("Copy { Src = Constant { Value = 13,", text);
     }
 
     [Fact]
     public void PlainFunctionBytesParam_Len_IsNotTheModuleConstantsLength()
     {
-        // Same refusal as without the global; with it, len() answered 3, the length of the
-        // module's `buf = b"..."` sequence.
-        var ex = Record.Exception(() => Gen(
+        // Same, for bytes: with the module's `buf = b"..."` in scope, len() answered 3.
+        var ir = Gen(
             "def size(buf: bytes) -> uint8:\n" +
             "    return len(buf)\n" +
             "buf = b\"\\x0b\\x0c\\x0d\"\n" +
             "rb = b\"\\x15\\x16\\x17\\x18\"\n" +
-            "GPIOR1.value = size(rb)\n"));
+            "GPIOR1.value = size(rb)\n");
 
-        Assert.NotNull(ex);
+        var text = string.Join("\n", All(ir).Select(i => i.ToString()));
+        Assert.Contains("Value = 4,", text);
+        Assert.DoesNotContain("Value = 3,", text);
     }
 
     [Fact]

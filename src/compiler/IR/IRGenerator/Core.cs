@@ -1616,6 +1616,7 @@ public partial class IRGenerator
         ForceInlineTupleReturningFunctions();
         ForceInlineBufferReturningFunctions();
         ForceInlineClassPlainFunctionsThatReadParamMembers();
+        ForceInlineFunctionsThatMeasureABufferParam();
 
         // RFC 0009 decision 2: decide which declared/inferred Optional returns can
         // actually produce a run-time None. Only those get `ReturnMembers` on the IR
@@ -5090,6 +5091,65 @@ public partial class IRGenerator
             moved.Add(entry);
         }
         foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// A function with a buffer parameter that takes its length (`len(data)`) or walks it
+    /// (`for b in data`). As a subroutine the parameter is an address with no length, so both
+    /// were refused ("len() argument must be a fixed-size array") even though every call site
+    /// knows the buffer it passes. Expanded at its call sites, the parameter is that buffer.
+    /// This is what adafruit_onewire's `crc8(data)` needs, as a static method and as a function.
+    /// Only functions that were refused before are affected.
+    /// </summary>
+    private void ForceInlineFunctionsThatMeasureABufferParam()
+    {
+        // A library export keeps its own subroutine: its buffer parameter carries a hidden length.
+        if (LibraryMode) return;
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            if (entry.Func.Name is "main" or "__module_init") continue;
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (inlineFunctions.ContainsKey(fullName)) continue;
+            if (!FunctionMeasuresABufferParam(entry.Func)) continue;
+            inlineFunctions[fullName] = entry.Func;
+            outlinedMethods.Remove(fullName);
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+
+        foreach (var name in outlinedMethods.ToList())
+        {
+            if (inlineFunctions.ContainsKey(name)) continue;
+            if (!methodAstByName.TryGetValue(name, out var func)) continue;
+            if (!FunctionMeasuresABufferParam(func)) continue;
+            inlineFunctions[name] = func;
+            outlinedMethods.Remove(name);
+        }
+    }
+
+    private static bool FunctionMeasuresABufferParam(FunctionDef func)
+    {
+        var names = new HashSet<string>(func.Params.Where(p => IsBufferTypeName(p.Type)).Select(p => p.Name));
+        if (names.Count == 0) return false;
+        bool LengthOfParam(Expression? root)
+        {
+            if (root == null) return false;
+            foreach (var e in TypeInference.WalkExpressionTree(root))
+                if (e is CallExpr { Callee: VariableExpr { Name: "len" }, Args: [VariableExpr arg] } && names.Contains(arg.Name))
+                    return true;
+            return false;
+        }
+        foreach (var s in TypeInference.WalkStatements(func.Body))
+        {
+            if (s is ForStmt { Iterable: VariableExpr it } && names.Contains(it.Name))
+                return true;
+            if (s is ForStmt fs && (LengthOfParam(fs.Iterable) || LengthOfParam(fs.RangeStart)
+                    || LengthOfParam(fs.RangeStop) || LengthOfParam(fs.RangeStep))) return true;
+        }
+        foreach (var e in TypeInference.WalkExpressions(new List<Statement> { func.Body }))
+            if (LengthOfParam(e)) return true;
+        return false;
     }
 
     private static bool FunctionReadsParamMember(FunctionDef func)

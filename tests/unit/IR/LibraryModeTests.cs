@@ -87,12 +87,22 @@ public class LibraryModeTests
     }
 
     [Fact]
-    public void WithoutLibraryMode_LenOfABufferParamHasNoAnswer()
+    public void WithoutLibraryMode_LenOfABufferParamIsTheLengthOfTheBufferEachCallPasses()
     {
-        var e = Assert.Throws<CompilerError>(() => Gen(
-            "def plasma(buf: bytearray) -> int:\n    return len(buf)\n",
-            library: false));
-        Assert.Contains("len()", e.Message);
+        // As a subroutine the parameter is an address with no length, so the function is expanded
+        // at its call sites (a library export keeps its subroutine and its hidden length).
+        var ir = Gen(
+            "def plasma(buf: bytearray) -> int:\n    return len(buf)\n" +
+            "b = bytearray(5)\nx: int = plasma(b)\n",
+            library: false);
+        Assert.DoesNotContain(ir.Functions, f => f.Name == "plasma");
+    }
+
+    [Fact]
+    public void WithoutLibraryMode_LenOfABufferParamOfAFunctionNobodyCallsIsNotAnError()
+    {
+        var ir = Gen("def plasma(buf: bytearray) -> int:\n    return len(buf)\n", library: false);
+        Assert.DoesNotContain(ir.Functions, f => f.Name == "plasma");
     }
 
     [Fact]
