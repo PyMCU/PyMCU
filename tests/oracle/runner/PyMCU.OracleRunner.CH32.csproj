@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- CH32VSharp is a local sibling repo (no remote yet): reference it by path, the same way
+         the ARM runner references RP2350Sharp. tests/oracle/runner -> ~/Repos is four levels up. -->
+    <ProjectReference Include="../../../../CH32VSharp/src/CH32VSharp.TestKit/CH32VSharp.TestKit.csproj" />
+  </ItemGroup>
+</Project>
