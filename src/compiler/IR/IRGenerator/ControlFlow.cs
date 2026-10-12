@@ -457,6 +457,25 @@ public partial class IRGenerator
                 or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
                 or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq;
 
+            // `if pull == 1:` where `pull` is bound to None. None equals nothing but None, so the
+            // test is decided here. Left to the run-time path, a None operand has no storage to
+            // compare and BOTH branches of an `if/elif` chain over it were emitted one after the
+            // other: `Pin(7, Pin.IN, pull=None)` wrote the pull-up and then the pull-down.
+            // Only a number or None on the other side is decided; anything else is left alone.
+            if (binExpr.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual)
+            {
+                bool leftNone = IsNoneValued(binExpr.Left);
+                bool rightNone = IsNoneValued(binExpr.Right);
+                bool otherIsNumber = leftNone ? v2 is Constant { Text: null } : v1 is Constant { Text: null };
+                if ((leftNone && rightNone) || ((leftNone || rightNone) && otherIsNumber))
+                {
+                    bool noneRes = (leftNone && rightNone) == (binExpr.Op == Frontend.BinaryOp.Equal);
+                    if (jumpIfTrue) { if (noneRes) Emit(new Jump(targetLabel)); }
+                    else            { if (!noneRes) Emit(new Jump(targetLabel)); }
+                    return noneRes ? 2 : -1;
+                }
+            }
+
             // The same two texts VisitBinary compares, asked on the path an `if` takes. A
             // condition never goes through VisitBinary: it becomes a conditional jump right
             // here, over the VALUES, and the value of a name bound to a multi-character string
