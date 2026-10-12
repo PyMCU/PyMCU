@@ -144,6 +144,11 @@ public partial class IRGenerator
         // algorithm bounds (xd[nd - 1 - i] with nd <= the buffer and i < nd); nothing the caller
         // passes reaches those indexes.
         "/pymcu/hal/uart_text.py",
+
+        // round(x, n) is a subroutine over a digit buffer of 16 bytes; EmitRoundBuiltin hands it an n
+        // that is a compile-time constant already limited to -15..15 (a larger n never reaches it),
+        // and its loops count from that n down to 0.
+        "/pymcu/round2.py",
     };
 
     // Functions of the HAL whose index is internal state, not something the program passes. Each

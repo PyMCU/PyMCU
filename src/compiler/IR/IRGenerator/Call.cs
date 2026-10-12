@@ -8110,9 +8110,14 @@ public partial class IRGenerator
             if (!TryFoldInt(expr.Args[1], out int n))
                 throw UserError("round()'s ndigits argument must be a compile-time constant "
                     + "integer", ArgAt(expr, 1));
-            if (n is < -15 or > 15)
-                throw UserError($"round()'s ndigits ({n}) is out of the supported range "
-                    + "-15..15", ArgAt(expr, 1));
+            // More digits than the float can hold is a request CPython answers with x itself
+            // (round(1.5, 20) == 1.5), so a large positive n is not an error: it is handled below,
+            // after the integer case (which already answers x for any n >= 0). A float32 carries
+            // under 9 significant digits, so past 15 decimals the answer is x unchanged except for
+            // magnitudes below about 8e6 * 10**-n, which are not worth a second code path.
+            if (n < -15)
+                throw UserError($"round()'s ndigits ({n}) is below the supported range "
+                    + "(-15 and above)", ArgAt(expr, 1));
 
             // An integer x: CPython keeps it an int (round(5, 2) == 5, round(1234, -2) ==
             // 1200), no float32 precision question involved, so this folds directly.
@@ -8135,6 +8140,8 @@ public partial class IRGenerator
             bool isFloatArg = xv is FloatConstant
                 || (xv is Variable fvv && fvv.Type == DataType.FLOAT)
                 || (xv is Temporary fvt && fvt.Type == DataType.FLOAT);
+            if (isFloatArg && n > 15)
+                return xv;
             if (isFloatArg)
             {
                 string round2Mod = RequireRound2Mod(expr);

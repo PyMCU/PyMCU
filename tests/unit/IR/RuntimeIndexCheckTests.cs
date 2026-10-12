@@ -163,4 +163,19 @@ public class RuntimeIndexCheckTests
                      "    return a + big[i + j]\n\nx: int = bump(1, 2)\n");
         Assert.Equal(2, b.OfType<JumpIfGreaterOrEqual>().Count(j => j.Src2 is Constant { Value: 64 }));
     }
+
+    [Fact]
+    public void ARoundWithMoreDigitsThanAFloatHoldsIsTheValueItself()
+    {
+        var b = Body("def f(x: float) -> float:\n    return round(x, 20)\n\nr: float = f(1.5)\n");
+        Assert.DoesNotContain(b, i => i is Call c && c.FunctionName.Contains("round2"));
+    }
+
+    [Fact]
+    public void ARoundBelowTheSupportedNegativeRangeIsStillRefused()
+    {
+        var ex = Assert.ThrowsAny<PyMCU.Common.CompilerError>(
+            () => Body("def f(x: float) -> float:\n    return round(x, -20)\n\nr: float = f(1.5)\n"));
+        Assert.Contains("below the supported range", ex.Message);
+    }
 }

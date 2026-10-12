@@ -119,11 +119,19 @@ public class Round2Tests
     }
 
     [Fact]
-    public void RoundWithNdigitsOutOfRange_Refuses()
+    public void RoundWithNdigitsBelowTheRange_Refuses()
     {
         var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => Gen(
-            "print(round(3.14, 99))\n"));
-        Assert.Contains("out of the supported range", ex.Message);
+            "print(round(3.14, -99))\n"));
+        Assert.Contains("below the supported range", ex.Message);
+    }
+
+    [Fact]
+    public void RoundWithMoreDigitsThanAFloatHolds_IsAcceptedAndAnswersTheValue()
+    {
+        // CPython: round(3.14, 99) == 3.14. It used to be refused as out of range.
+        var ex = Record.Exception(() => Gen("print(round(3.14, 99))\n"));
+        Assert.Null(ex);
     }
 
     // --- RFC 0014 decision 4: a user's own def round shadows the builtin ---
