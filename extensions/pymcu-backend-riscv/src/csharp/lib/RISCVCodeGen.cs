@@ -258,6 +258,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         flashTables.Clear();
         arrayBytes.Clear();
         softFloatNeeded.Clear();
+        gcNeeded.Clear();
         softFloatNeedsMul = false;
         foreach (var g in program.Globals) globalNames.Add(g.Name);
         foreach (var (name, count) in program.GlobalArrays)
@@ -293,6 +294,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         ReserveArraysTakenByAddress(program);
         EmitUnhandledExnRuntime(program);
         EmitSoftFloat();
+        EmitGcRuntime(program);
         EmitRuntimeHelpers();
         EmitDataSections(program);
 
@@ -378,6 +380,9 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             {
                 case Call:
                 case IndirectCall:
+                case GcAlloc:
+                case GcRoot:
+                case GcUnroot:
                     return false;
                 case Binary bin when CallsHelper(bin.Op):
                     return false;
@@ -411,6 +416,9 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             case Binary bin: yield return bin.Src1; yield return bin.Src2; yield return bin.Dst; break;
             case AugAssign a: yield return a.Target; yield return a.Operand; break;
             case Return r: yield return r.Value; break;
+            case GcAlloc ga: yield return ga.Size; yield return ga.Dst; break;
+            case GcRoot gr: yield return gr.Var; break;
+            case GcUnroot gu: yield return gu.Var; break;
             case LoadIndirect li: yield return li.SrcPtr; yield return li.Dst; break;
             case StoreIndirect si: yield return si.Src; yield return si.DstPtr; break;
             case JumpIfZero jz: yield return jz.Condition; break;
@@ -524,6 +532,9 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             case SignalSuccess: Emit("li", ErrorReg, "0"); break;
             case BranchOnError arg: Emit("bnez", ErrorReg, arg.ErrorLabel); break;
             case SignalError arg: CompileSignalError(arg); break;
+            case GcAlloc arg: CompileGcAlloc(arg); break;
+            case GcRoot arg: CompileGcRoot(arg); break;
+            case GcUnroot: CompileGcUnroot(); break;
             case Unary arg: CompileUnary(arg); break;
             case Binary arg: CompileBinary(arg); break;
             case BitSet arg: CompileBitSet(arg); break;
@@ -985,17 +996,28 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
 
         StoreRegInto("t0", arg.Dst);
 
-        // Remember what an address computed as base + constant is aligned to, so a word access
+        // Remember what an address computed as base + offset is aligned to, so a word access
         // through it can tell a field the layout put on a boundary from one it did not.
         if (arg.Op is PyMCU.IR.BinaryOp.Add or PyMCU.IR.BinaryOp.Sub
-            && arg.Src2 is Constant off && ValName(arg.Dst) is { Length: > 0 } dstName)
+            && ValName(arg.Dst) is { Length: > 0 } dstName)
         {
-            // A base nothing here computed (an instance pointer received as a parameter) is
-            // taken to sit on a word boundary, as every slot array does: whatever the offset
-            // then leaves misaligned really is.
             int baseAlign = AlignmentOf(arg.Src1);
-            if (baseAlign == 0) baseAlign = 4;
-            knownAlignment[dstName] = Math.Min(baseAlign, LowestSetBit(off.Value));
+            if (baseAlign == 0 && IsHeapRef(arg.Src1)) baseAlign = 4;     // objects start on a word
+            if (arg.Src2 is Constant off)
+            {
+                // A base nothing here computed (an instance pointer received as a parameter) is
+                // taken to sit on a word boundary, as every slot array does: whatever the
+                // offset then leaves misaligned really is.
+                if (baseAlign == 0) baseAlign = 4;
+                knownAlignment[dstName] = Math.Min(baseAlign, LowestSetBit(off.Value));
+            }
+            else if (baseAlign > 0)
+            {
+                // base + a run-time offset into an array or an object: nothing is known about
+                // where it lands unless the offset itself is known to be a multiple of something.
+                int offAlign = AlignmentOf(arg.Src2);
+                knownAlignment[dstName] = offAlign > 0 ? Math.Min(baseAlign, offAlign) : 1;
+            }
         }
     }
 

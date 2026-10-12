@@ -207,9 +207,14 @@ public partial class RiscvCodeGen
         Emit(jumpWhenZero ? "beqz" : "bnez", "t0", target);
     }
 
-    private void EmitSoftFloat()
+    private void EmitSoftFloat() => EmitCRuntime(softFloatNeeded, SoftFloatRoutines);
+
+    // Emits the routines in `roots` and everything they call, from a runtime compiled from C
+    // (see tools/gen_c_runtimes.py). The integer multiply the compiled code may call is the
+    // backend's own helper, which is then emitted too.
+    private void EmitCRuntime(HashSet<string> roots, Dictionary<string, (string[] Asm, string[] Calls)> routines)
     {
-        if (softFloatNeeded.Count == 0) return;
+        if (roots.Count == 0) return;
 
         var order = new List<string>();
         var seen = new HashSet<string>();
@@ -217,16 +222,16 @@ public partial class RiscvCodeGen
         {
             if (!seen.Add(name)) return;
             if (name == "__mulsi3") { softFloatNeedsMul = true; return; }
-            if (!SoftFloatRoutines.TryGetValue(name, out var routine)) return;
+            if (!routines.TryGetValue(name, out var routine)) return;
             order.Add(name);
             foreach (var callee in routine.Calls) Visit(callee);
         }
-        foreach (var name in softFloatNeeded.OrderBy(n => n, StringComparer.Ordinal)) Visit(name);
+        foreach (var name in roots.OrderBy(n => n, StringComparer.Ordinal)) Visit(name);
 
         EmitRaw(".section .text");
         EmitRaw(".align 2");
         foreach (var name in order)
-            foreach (var line in SoftFloatRoutines[name].Asm)
+            foreach (var line in routines[name].Asm)
                 EmitRaw(line);
     }
 

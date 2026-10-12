@@ -824,9 +824,9 @@ public class RISCVCodeGenTests
     {
         // Silently skipping an instruction would produce plausible-looking but
         // wrong firmware, so unimplemented IR must stop the build.
-        var prog = MakeProgram("main", new GcAlloc(new Constant(8), new Variable("p")));
+        var prog = MakeProgram("main", new VirtualCall("A", "A", "m", 0, new Variable("s"), [], new NoneVal()));
         var ex = Assert.Throws<NotSupportedException>(() => Compile(prog));
-        Assert.Contains("GcAlloc", ex.Message);
+        Assert.Contains("VirtualCall", ex.Message);
     }
 
     // ─── Assembler round-trip ────────────────────────────────────────────────
