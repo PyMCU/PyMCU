@@ -648,8 +648,11 @@ def millis() -> uint32:
     elif __CHIP__.name == "pic18f45k50":
         from pymcu.hal.timer import millis as _millis_pic18
         return _millis_pic18()
+    elif __CHIP__.name == "ch32v003":
+        from pymcu.hal.timer import millis as _millis_ch32
+        return _millis_ch32()
     else:
-        raise CompileError("millis() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_ms() to pace a loop instead.")
+        raise CompileError("millis() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0), CH32V003 (SysTick) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_ms() to pace a loop instead.")
 
 
 @inline
@@ -674,8 +677,11 @@ def micros() -> uint32:
     elif __CHIP__.name == "pic18f45k50":
         from pymcu.hal.timer import micros as _micros_pic18
         return _micros_pic18()
+    elif __CHIP__.name == "ch32v003":
+        from pymcu.hal.timer import micros as _micros_ch32
+        return _micros_ch32()
     else:
-        raise CompileError("micros() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_us() to pace a loop instead.")
+        raise CompileError("micros() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0), CH32V003 (SysTick) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_us() to pace a loop instead.")
 
 
 @inline

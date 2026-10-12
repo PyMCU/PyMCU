@@ -44,5 +44,9 @@ elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.pic18f45k50_timer import millis_init, millis, micros
 elif __CHIP__.arch == "pic12":
     from pymcu.hal.pic12.timer import Timer
+elif __CHIP__.arch == "riscv":
+    from pymcu.hal.riscv.timer import Timer
+    if __CHIP__.name == "ch32v003":
+        from pymcu.hal.riscv.timer.ch32v003 import millis_init, millis, micros
 else:
     raise CompileError("Timer not supported on this architecture")

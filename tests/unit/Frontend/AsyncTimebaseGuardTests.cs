@@ -42,7 +42,7 @@ public class AsyncTimebaseGuardTests
     [InlineData("pic16f877a", "pic14")]
     [InlineData("pic16f84a", "pic14")]
     [InlineData("pic10f200", "pic12")]
-    [InlineData("ch32v003", "riscv")]
+    [InlineData("ch32v203", "riscv")]
     public void NoTimebaseArchitecture_TicksRaisesCompileError(string chip, string arch)
     {
         var guard = GuardIn(TicksBodyFor(chip, arch));
