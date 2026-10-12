@@ -84,6 +84,11 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     private static bool IsSignedType(DataType t)
         => t is DataType.INT8 or DataType.INT16 or DataType.INT32;
 
+    // Bytes an access of this type moves. A reference or a function address is a pointer wide on
+    // this target, which DataType.SizeOf only knows from a process-wide setting the front end
+    // makes for itself: this backend does not touch it (tests share the process).
+    private static int WidthOf(DataType t) => t is DataType.GC_REF or DataType.FUNCREF ? 4 : t.SizeOf();
+
     private static DataType TypeOf(Val val) => val switch
     {
         Variable v => v.Type,
@@ -121,7 +126,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     private bool ProvablyMisaligned(Val ptr, DataType elem)
     {
         int a = AlignmentOf(ptr);
-        return elem.SizeOf() > 1 && a > 0 && a < elem.SizeOf();
+        return WidthOf(elem) > 1 && a > 0 && a < WidthOf(elem);
     }
 
     // Whole-word values compare as signed by default, which is right for every narrow type
@@ -148,7 +153,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         _ => "lw",
     };
 
-    private static string StoreMnemonic(DataType type) => type.SizeOf() switch
+    private static string StoreMnemonic(DataType type) => WidthOf(type) switch
     {
         1 => "sb",
         2 => "sh",
@@ -252,6 +257,11 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     }
 
     public override void Compile(ProgramIR program, TextWriter output)
+    {
+        CompileProgram(program, output);
+    }
+
+    private void CompileProgram(ProgramIR program, TextWriter output)
     {
         assembly.Clear();
         globalNames.Clear();
@@ -589,7 +599,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     // byte accesses: the CH32V003 traps on a misaligned lh/lw/sh/sw. Address in t0, value in t1.
     private void EmitBytewiseLoad(DataType elem)
     {
-        int size = elem.SizeOf();
+        int size = WidthOf(elem);
         Emit("lbu", "t1", "0(t0)");
         for (int i = 1; i < size; i++)
         {
@@ -602,7 +612,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
 
     private void EmitBytewiseStore(DataType elem)
     {
-        int size = elem.SizeOf();
+        int size = WidthOf(elem);
         Emit("sb", "t1", "0(t0)");
         for (int i = 1; i < size; i++)
         {
@@ -617,7 +627,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     // Runtime indices go through t1; t2 stays free because LoadIntoReg uses it.
     private void EmitScaledIndexAdd(Val index, DataType elem)
     {
-        int size = elem.SizeOf();
+        int size = WidthOf(elem);
 
         if (index is Constant c)
         {

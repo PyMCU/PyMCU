@@ -152,4 +152,39 @@ public class RISCVGcTests
 
         Assert.DoesNotContain("lw\tt1, 0(t0)", asm);
     }
+
+    [Fact]
+    public void AReferenceIsAWordWhenItIsStoredThroughAPointer()
+    {
+        // A GC_REF is as wide as a pointer on the part (4 bytes), not the 2 an unconfigured
+        // process assumes: a halfword store would keep half of the address.
+        var asm = Compile(Program(
+            new StoreIndirect(Ref("r"), new Variable("p", DataType.UINT32), DataType.GC_REF)));
+
+        Assert.Contains("sw\tt1, 0(t0)", asm);
+        Assert.DoesNotContain("sh\tt1, 0(t0)", asm);
+    }
+
+    [Fact]
+    public void AReferenceTwoBytesPastTheHeaderOfAnObjectIsReadBytewise()
+    {
+        // list[list[T]]: the count byte, the capacity byte, then the refs, so the first ref sits
+        // at offset 2 and the second at offset 6 of a word-aligned object.
+        var asm = Compile(Program(
+            new Binary(BinaryOp.Add, Ref("cells"), new Constant(6), new Temporary("p", DataType.UINT32)),
+            new LoadIndirect(new Temporary("p", DataType.UINT32), Ref("row"), DataType.GC_REF)));
+
+        Assert.DoesNotContain("lw\tt1, 0(t0)", asm);
+        Assert.Contains("lbu\tt2, 3(t0)", asm);
+    }
+
+    [Fact]
+    public void CompilingDoesNotTouchTheProcessWidePointerWidth()
+    {
+        // The front end sets it for itself; unit tests share one process with the front end's.
+        int before = DataTypeExtensions.PointerWidth;
+        Compile(Program(new GcAlloc(new Constant(10), Ref("xs"), Refs: false)));
+
+        Assert.Equal(before, DataTypeExtensions.PointerWidth);
+    }
 }

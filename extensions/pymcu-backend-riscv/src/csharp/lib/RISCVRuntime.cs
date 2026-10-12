@@ -73,7 +73,7 @@ public partial class RiscvCodeGen
     // for every indexed access the program makes.
     private void NoteArray(string name, int count, DataType elem)
     {
-        int bytes = Math.Max(count, 1) * elem.SizeOf();
+        int bytes = Math.Max(count, 1) * WidthOf(elem);
         if (!arrayBytes.TryGetValue(name, out int have) || bytes > have)
             arrayBytes[name] = bytes;
     }
