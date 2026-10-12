@@ -279,6 +279,26 @@ public class CompileTimeEvaluator(DeviceConfig config)
                     || needle == u.Version || needle == u.Machine;
                 return inExpr.Op == BinaryOp.In ? found : !found;
             }
+            // `__CHIP__.arch not in ("pic12", "pic14")` -- membership in a literal tuple or list
+            // whose elements are all known at compile time, the same answer the chain of `==`
+            // gives. Each element is compared the way `==` compares, so a number against a
+            // name is refused the same way.
+            case BinaryExpr { Op: BinaryOp.In or BinaryOp.NotIn } seqIn
+                when seqIn.Right is TupleExpr or ListExpr:
+            {
+                var elements = seqIn.Right is TupleExpr tup ? tup.Elements : ((ListExpr)seqIn.Right).Elements;
+                bool needleNum = TryResolveNumber(seqIn.Left, out long needleValue);
+                string? needleText = needleNum ? null : Resolve(seqIn.Left);
+                bool found = false;
+                foreach (var el in elements)
+                {
+                    bool elNum = TryResolveNumber(el, out long elValue);
+                    RejectMixedComparison(seqIn, needleNum, elNum);
+                    if (needleNum ? needleValue == elValue : needleText == Resolve(el))
+                        found = true;
+                }
+                return seqIn.Op == BinaryOp.In ? found : !found;
+            }
             default:
                 return expr is CallExpr { Callee: MemberAccessExpr { Member: "startswith" } mem, Args: [StringLiteral argStr] }
                     ? Resolve(mem.Object).StartsWith(argStr.Value)
