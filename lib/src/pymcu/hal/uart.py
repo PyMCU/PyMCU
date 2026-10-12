@@ -16,6 +16,8 @@ elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.uart import UART
 elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.uart import UART
+elif __CHIP__.arch == "riscv":
+    from pymcu.hal.riscv.uart import UART
 elif __CHIP__.name == "rp2040":
     from pymcu.hal.rp2040.uart import UART
     from pymcu.hal.rp2040.uart import tx_id as _tx_id_impl, rx_id as _rx_id_impl

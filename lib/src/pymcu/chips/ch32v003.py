@@ -66,3 +66,23 @@ SYSTICK_CTLR : ptr[int32] = ptr(SYSTICK_BASE + 0x00)
 SYSTICK_SR   : ptr[int32] = ptr(SYSTICK_BASE + 0x04)
 SYSTICK_CNT  : ptr[int32] = ptr(SYSTICK_BASE + 0x08)
 SYSTICK_CMP  : ptr[int32] = ptr(SYSTICK_BASE + 0x10)
+
+# USART1 (CH32V003 reference manual, chapter "USART"). Default pins with no remap:
+# TX = PD5, RX = PD6. Clock gate: RCC_APB2PCENR bit 14 (USART1EN).
+USART1_BASE = 0x40013800
+USART1_STATR : ptr[int32] = ptr(USART1_BASE + 0x00)
+USART1_DATAR : ptr[int32] = ptr(USART1_BASE + 0x04)
+USART1_BRR   : ptr[int32] = ptr(USART1_BASE + 0x08)
+USART1_CTLR1 : ptr[int32] = ptr(USART1_BASE + 0x0C)
+USART1_CTLR2 : ptr[int32] = ptr(USART1_BASE + 0x10)
+USART1_CTLR3 : ptr[int32] = ptr(USART1_BASE + 0x14)
+
+# STATR flags.
+USART_STATR_RXNE = 5
+USART_STATR_TC   = 6
+USART_STATR_TXE  = 7
+# CTLR1 bits.
+USART_CTLR1_RE = 2
+USART_CTLR1_TE = 3
+USART_CTLR1_M  = 12
+USART_CTLR1_UE = 13

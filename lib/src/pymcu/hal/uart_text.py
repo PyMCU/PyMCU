@@ -43,6 +43,13 @@ elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.pic14_uart_unsupported import uart_write_text_sink as uart_write
 elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.pic18_uart import uart_write
+elif __CHIP__.name == "ch32v003":
+    from pymcu.hal.riscv.uart.ch32v003 import uart_write
+elif __CHIP__.arch == "riscv":
+    # A RISC-V part with no UART HAL (the CH32V20x): the writers below are emitted whether or
+    # not the program calls them, so this arm binds an inert sink rather than a uart_write that
+    # refuses. Asking for the UART refuses at pymcu.hal.riscv.uart.
+    from pymcu.hal.riscv.uart.unsupported import uart_write_text_sink as uart_write
 elif __CHIP__.name == "rp2040" or __CHIP__.name == "rp2350":
     from pymcu.hal.rp.console import uart_write
 else:

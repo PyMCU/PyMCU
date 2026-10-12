@@ -10,6 +10,8 @@ from pymcu.chips import __CHIP__
 
 if __CHIP__.name == "rp2040" or __CHIP__.name == "rp2350":
     from pymcu.hal.rp.console import uart_write, uart_write_fmt
+elif __CHIP__.name == "ch32v003":
+    from pymcu.hal.riscv.uart.ch32v003 import uart_write, uart_write_fmt, uart_write_byte_repr
 
 from pymcu.hal.uart_text import (
     uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
@@ -32,6 +34,8 @@ def print_str(s: const[str]):
     elif __CHIP__.arch == "pic14":
         uart_write_str(s)
     elif __CHIP__.arch == "pic18":
+        uart_write_str(s)
+    elif __CHIP__.arch == "riscv":
         uart_write_str(s)
 
 
