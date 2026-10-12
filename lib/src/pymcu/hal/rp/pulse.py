@@ -63,11 +63,17 @@ if __CHIP__.name == "rp2350":
     from pymcu.chips.rp2350 import (
         PIO1_BASE, DMA_BASE, RESETS_RESET_CLR, RESETS_RESET_DONE,
         RESET_PIO1, RESET_DMA, PULSE_RING_BASE,
+        PWM_BASE, PWM_CH_STRIDE, PWM_CH_CSR, PWM_CH_DIV, PWM_CH_CC, PWM_CH_TOP,
+        RESET_PWM, RESET_IO_BANK0, RESET_PADS_BANK0, IO_BANK0_BASE, PADS_BANK0_BASE,
+        SIO_GPIO_OE_SET, SIO_GPIO_OE_CLR, SIO_GPIO_OUT_CLR, GPIO_FUNC_PWM, GPIO_FUNC_SIO,
     )
 else:
     from pymcu.chips.rp2040 import (
         PIO1_BASE, DMA_BASE, RESETS_RESET_CLR, RESETS_RESET_DONE,
         RESET_PIO1, RESET_DMA, PULSE_RING_BASE,
+        PWM_BASE, PWM_CH_STRIDE, PWM_CH_CSR, PWM_CH_DIV, PWM_CH_CC, PWM_CH_TOP,
+        RESET_PWM, RESET_IO_BANK0, RESET_PADS_BANK0, IO_BANK0_BASE, PADS_BANK0_BASE,
+        SIO_GPIO_OE_SET, SIO_GPIO_OE_CLR, SIO_GPIO_OUT_CLR, GPIO_FUNC_PWM, GPIO_FUNC_SIO,
     )
 
 _PIO_CTRL: ptr[uint32] = ptr(PIO1_BASE + 0x000)
@@ -318,25 +324,67 @@ class PulseCapture:
 
 
 class PulseTrain:
-    """A gated carrier on one pin: not implemented for the RP2040 and RP2350 yet."""
+    """A gated carrier on one pin: what an infrared emitter sends.
 
-    def __init__(self, pin: const, freq: const[uint32] = 38000, duty_u16: const[uint16] = 32768):
-        raise CompileError(
-            "pulseio.PulseOut is not implemented on the RP2040 and RP2350 yet: it needs a PWM "
-            "slice gated by a PIO or DMA schedule, and only the capture half (PulseIn) is built.")
+    The carrier is a PWM slice that runs free; the pin is handed to it (carrier on) or taken
+    back and held low (carrier off) by switching its function, so the gap between two edges
+    is the CPU's delay, as on the AVR. Any GPIO below 32 has a slice.
+    """
 
-    @inline
-    def send(self, pulses, n: uint16):
-        pass
+    def __init__(self, pin: const[uint8], freq: const[uint32] = 38000,
+                 duty_u16: const[uint16] = 32768):
+        self._pin = pin
+        unreset: uint32 = (1 << RESET_PWM) | (1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)
+        RESETS_RESET_CLR.value = unreset
+        while (RESETS_RESET_DONE.value & unreset) != unreset:
+            pass
+
+        # The slice: counts the system clock, wraps once per carrier period.
+        div: ptr[uint32] = ptr(PWM_BASE + ((pin >> 1) & 7) * PWM_CH_STRIDE + PWM_CH_DIV)
+        div.value = 1 << 4
+        top: ptr[uint32] = ptr(PWM_BASE + ((pin >> 1) & 7) * PWM_CH_STRIDE + PWM_CH_TOP)
+        top.value = ((__FREQ__ // freq) - 1) & 0xFFFF
+        cc: ptr[uint32] = ptr(PWM_BASE + ((pin >> 1) & 7) * PWM_CH_STRIDE + PWM_CH_CC)
+        if (pin & 1) == 0:
+            cc.value = ((((__FREQ__ // freq) >> 4) * duty_u16) >> 12) & 0xFFFF
+        else:
+            cc.value = (((((__FREQ__ // freq) >> 4) * duty_u16) >> 12) & 0xFFFF) << 16
+        csr: ptr[uint32] = ptr(PWM_BASE + ((pin >> 1) & 7) * PWM_CH_STRIDE + PWM_CH_CSR)
+        csr.value = 1
+
+        # The pin: an output held low, until the carrier is switched on.
+        pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * pin)
+        pad.value = 1 << 6
+        SIO_GPIO_OUT_CLR.value = 1 << pin
+        SIO_GPIO_OE_SET.value = 1 << pin
+        ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * pin + 4)
+        ctrl.value = GPIO_FUNC_SIO
 
     @inline
     def carrier_on(self):
-        pass
+        ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * self._pin + 4)
+        ctrl.value = GPIO_FUNC_PWM
 
     @inline
     def carrier_off(self):
-        pass
+        ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * self._pin + 4)
+        ctrl.value = GPIO_FUNC_SIO
+
+    @inline
+    def send(self, pulses, n: uint16):
+        i: uint16 = 0
+        while i < n:
+            if (i & 1) == 0:
+                self.carrier_on()
+            else:
+                self.carrier_off()
+            pulse_delay_us(pulses[i])
+            i = i + 1
+        self.carrier_off()
 
     @inline
     def deinit(self):
-        pass
+        self.carrier_off()
+        csr: ptr[uint32] = ptr(PWM_BASE + ((self._pin >> 1) & 7) * PWM_CH_STRIDE + PWM_CH_CSR)
+        csr.value = 0
+        SIO_GPIO_OE_CLR.value = 1 << self._pin
