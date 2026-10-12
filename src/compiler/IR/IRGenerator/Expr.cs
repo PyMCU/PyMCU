@@ -4523,6 +4523,18 @@ public partial class IRGenerator
                             $"array index {elemIdx} out of range for size {sz}",
                             expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                     string elemName = qualified + "__" + elemIdx;
+                    // An all-constant sequence an imported module binds at its top level has its
+                    // slots written inside that module's ___module_init, a frame of its own, so
+                    // a reader elsewhere (`b = _K; b[0]` in a method) found a slot nothing
+                    // wrote once the init's store died. The elements are constants, so read them.
+                    int initDot = qualified.IndexOf("___module_init.", StringComparison.Ordinal);
+                    if (initDot >= 0
+                        && !currentFunction.StartsWith(qualified[..(initDot + "___module_init".Length)],
+                                                       StringComparison.Ordinal)
+                        && constSequenceBindings.ContainsKey(qualified)
+                        && ctArrayConstElements.TryGetValue(qualified, out var initConsts)
+                        && elemIdx < initConsts.Count)
+                        return new Constant(initConsts[elemIdx]);
                     // The slot's own type wins over the array's uniform element type: a
                     // struct.unpack sequence stores int8/int16 fields next to unsigned ones,
                     // and the uniform type would read a signed field's bits as unsigned.
