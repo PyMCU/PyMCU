@@ -797,7 +797,8 @@ public partial class IRGenerator
         // machinery the ATmega software time base serves (asyncio.ticks() reads the same
         // counter). Report it before the transform below erases the syntax -- the driver
         // used to learn this by scanning source text.
-        if (deviceConfig.TargetChip.StartsWith("atmega", StringComparison.OrdinalIgnoreCase)
+        if ((deviceConfig.TargetChip.StartsWith("atmega", StringComparison.OrdinalIgnoreCase)
+                || deviceConfig.TargetChip.StartsWith("ch32v003", StringComparison.OrdinalIgnoreCase))
             && (mainAst.Functions.Any(f => f.IsAsync)
                 || importedModules.Any(m => projectModules.Contains(m.Key)
                                             && m.Value.Functions.Any(f => f.IsAsync))))

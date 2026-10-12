@@ -53,6 +53,25 @@ WITH_INIT = (
 )
 
 
+def test_a_resolved_reader_asks_the_driver_to_arm_the_time_base(tmp_path):
+    out, _ = compile_program(tmp_path, READER)
+
+    assert "[BUILD_OK]" in out
+    assert "[NEEDS_TIMEBASE]" in out
+
+
+def test_an_async_program_asks_the_driver_to_arm_the_time_base(tmp_path):
+    out, _ = compile_program(
+        tmp_path,
+        "import asyncio\n"
+        "async def blink():\n"
+        "    await asyncio.sleep_ms(10)\n"
+        "def main():\n"
+        "    asyncio.run(blink())\n")
+
+    assert "[NEEDS_TIMEBASE]" in out, out
+
+
 def test_a_program_that_arms_it_itself_reports_that(tmp_path):
     out, _ = compile_program(tmp_path, WITH_INIT)
 

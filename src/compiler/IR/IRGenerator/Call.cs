@@ -11669,7 +11669,9 @@ public partial class IRGenerator
     private bool TargetHasSoftwareCounter() =>
         deviceConfig.TargetChip.StartsWith("atmega", StringComparison.OrdinalIgnoreCase)
         || deviceConfig.TargetChip.StartsWith("attiny", StringComparison.OrdinalIgnoreCase)
-        || deviceConfig.TargetChip.Equals("pic18f45k50", StringComparison.OrdinalIgnoreCase);
+        || deviceConfig.TargetChip.Equals("pic18f45k50", StringComparison.OrdinalIgnoreCase)
+        // The CH32V003's SysTick is armed by millis_init() and counted by its interrupt.
+        || deviceConfig.TargetChip.StartsWith("ch32v003", StringComparison.OrdinalIgnoreCase);
 
     private void ReportDriverNeeds(string callee)
     {
