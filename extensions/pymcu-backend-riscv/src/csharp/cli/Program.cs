@@ -58,6 +58,26 @@ var verboseOpt = new Option<bool>("--verbose", "-v")
     DefaultValueFactory = _ => false
 };
 
+// The driver probes --help for these before passing them (src/driver/backends/__init__.py).
+var stdoutBaudOpt = new Option<int>("--stdout-baud")
+{
+    Description = "Baud rate of the program's diagnostic output ([tool.pymcu] stdout_baud)",
+    DefaultValueFactory = _ => 115200
+};
+
+var uartOwnedOpt = new Option<bool>("--uart-owned")
+{
+    Description = "The program sets the UART up itself, so the unhandled-exception report needs no setup of its own"
+};
+
+// RFC 0009 capability flag: the backend moves the Optional/Union member tag (payload in a0,
+// tag in a1) whenever the IR carries one, so the flag only lets the driver tell this binary
+// from one that would drop the tag.
+var returnTagsOpt = new Option<bool>("--return-tags")
+{
+    Description = "Declare support for RFC 0009 Optional return tags (payload + member byte)"
+};
+
 var rootCmd = new RootCommand("pymcuc-riscv — PyMCU RISC-V backend runner");
 rootCmd.Arguments.Add(irFileArg);
 rootCmd.Options.Add(outputOpt);
@@ -66,6 +86,9 @@ rootCmd.Options.Add(archOpt);
 rootCmd.Options.Add(freqOpt);
 rootCmd.Options.Add(configOpt);
 rootCmd.Options.Add(verboseOpt);
+rootCmd.Options.Add(stdoutBaudOpt);
+rootCmd.Options.Add(uartOwnedOpt);
+rootCmd.Options.Add(returnTagsOpt);
 
 rootCmd.SetAction(pr =>
 {
@@ -76,6 +99,8 @@ rootCmd.SetAction(pr =>
     var freq    = pr.GetValue(freqOpt);
     var configs = pr.GetValue(configOpt) ?? [];
     var verbose = pr.GetValue(verboseOpt);
+    var stdoutBaud = pr.GetValue(stdoutBaudOpt);
+    var uartOwned = pr.GetValue(uartOwnedOpt);
 
     if (string.IsNullOrEmpty(output) && !string.IsNullOrEmpty(irFile))
         output = Path.ChangeExtension(irFile, ".asm");
@@ -107,6 +132,8 @@ rootCmd.SetAction(pr =>
         TargetChip = target,
         Arch       = arch,
         Frequency  = freq,
+        StdoutBaud = stdoutBaud,
+        UartOwnedByProgram = uartOwned,
     };
     foreach (var item in configs)
     {
