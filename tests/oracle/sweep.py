@@ -312,6 +312,12 @@ def evaluate(probe: Path, chip: str, tmp_dir: Path, pymcu: Path) -> dict:
         record["detail"] = detail
         return record
 
+    # `# expect: compile` asks only that the build succeeds (the pymcu-avr suite checks the same
+    # and never runs the image): the program prints nothing to compare.
+    if expectation.kind == "compile":
+        record["outcome"] = "compiled"
+        return record
+
     try:
         actual = run_emulator(chip, bin_path)
     except subprocess.TimeoutExpired:

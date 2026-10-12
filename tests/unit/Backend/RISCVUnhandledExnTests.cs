@@ -105,4 +105,45 @@ public class RISCVUnhandledExnTests
         Assert.DoesNotContain("__pymcu_unhandled_exn", asm);
         Assert.DoesNotContain("__pymcu_exn_putc", asm);
     }
+
+    private static string CompileWith(DeviceConfig cfg, ProgramIR program)
+    {
+        var sw = new StringWriter();
+        new RiscvCodeGen(cfg).Compile(program, sw);
+        return sw.ToString();
+    }
+
+    [Fact]
+    public void AProgramThatNeverSetsTheUartUpTurnsTheTransmitterOnItself()
+    {
+        var cfg = new DeviceConfig
+        {
+            Chip = "ch32v003", Arch = "ch32v", Frequency = 24_000_000, StdoutBaud = 115200,
+            UartOwnedByProgram = false,
+        };
+        var asm = CompileWith(cfg, Program(
+            Fn("main", CallThenCheck),
+            Fn("risky", new SignalError(new Constant(1), null))));
+
+        Assert.Contains("0x40021018", asm);        // RCC_APB2PCENR: clock IOPD and USART1
+        Assert.Contains("0x40011400", asm);        // GPIOD_CFGLR: PD5 as alternate function
+        Assert.Contains("li\tt0, 208", asm);       // BRR for 24 MHz at 115200
+        Assert.Contains("li\tt0, 8200", asm);      // CTLR1: UE | TE
+    }
+
+    [Fact]
+    public void AProgramThatOwnsTheUartLeavesItsSetupAlone()
+    {
+        var cfg = new DeviceConfig
+        {
+            Chip = "ch32v003", Arch = "ch32v", Frequency = 24_000_000, StdoutBaud = 115200,
+            UartOwnedByProgram = true,
+        };
+        var asm = CompileWith(cfg, Program(
+            Fn("main", CallThenCheck),
+            Fn("risky", new SignalError(new Constant(1), null))));
+
+        Assert.DoesNotContain("0x40021018", asm);
+        Assert.DoesNotContain("li\tt0, 208", asm);
+    }
 }

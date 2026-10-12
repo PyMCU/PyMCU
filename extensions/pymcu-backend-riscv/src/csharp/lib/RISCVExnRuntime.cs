@@ -46,12 +46,45 @@ public partial class RiscvCodeGen
         EmitRaw(".section .text");
         EmitRaw(".align 2");
         EmitLabel(UnhandledExnLabel);
-        // No USART, nothing to say: park. (Same test the AVR runtime makes on TXEN.)
+        // Is USART1 on? (Same test the AVR runtime makes on TXEN.)
         Emit("li", "t2", $"0x{Usart1Base + 0x0C:X8}");
         Emit("lw", "t0", "0(t2)");
         Emit("li", "t1", "0x2000");
         Emit("and", "t0", "t0", "t1");
-        Emit("beqz", "t0", "__pymcu_exn_halt");
+        if (cfg.UartOwnedByProgram)
+        {
+            // The program configured the UART itself: if it left it off, say nothing.
+            Emit("beqz", "t0", "__pymcu_exn_halt");
+        }
+        else
+        {
+            // Nothing in the program set the UART up, and a program that raises and never prints
+            // would otherwise stop without a word. Turn the transmitter on here, the way the
+            // stdout preamble would have: clock IOPD and USART1, PD5 as alternate-function
+            // push-pull, BRR for the frequency and `stdout_baud`, UE and TE (reference manual
+            // chapters RCC, GPIO and USART).
+            Emit("bnez", "t0", "__pymcu_exn_tx_ready");
+            Emit("li", "t2", "0x40021018");               // RCC_APB2PCENR
+            Emit("lw", "t0", "0(t2)");
+            Emit("li", "t1", "0x4020");                   // IOPDEN | USART1EN
+            Emit("or", "t0", "t0", "t1");
+            Emit("sw", "t0", "0(t2)");
+            Emit("li", "t2", "0x40011400");               // GPIOD_CFGLR
+            Emit("lw", "t0", "0(t2)");
+            Emit("li", "t1", (~(0xF << 20)).ToString());
+            Emit("and", "t0", "t0", "t1");
+            Emit("li", "t1", (0xB << 20).ToString());
+            Emit("or", "t0", "t0", "t1");
+            Emit("sw", "t0", "0(t2)");
+            long baud = Math.Max(1, cfg.StdoutBaud);
+            Emit("li", "t0", (((long)cfg.Frequency + baud / 2) / baud).ToString());
+            Emit("li", "t2", $"0x{Usart1Base + 0x08:X8}");   // BRR
+            Emit("sw", "t0", "0(t2)");
+            Emit("li", "t0", "8200");                     // UE | TE
+            Emit("li", "t2", $"0x{Usart1Base + 0x0C:X8}");   // CTLR1
+            Emit("sw", "t0", "0(t2)");
+            EmitLabel("__pymcu_exn_tx_ready");
+        }
         Emit("li", "a0", "69");                      // 'E'
         Emit("call", "__pymcu_exn_putc");
         Emit("li", "a0", "58");                      // ':'
