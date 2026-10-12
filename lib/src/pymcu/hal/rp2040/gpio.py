@@ -54,6 +54,11 @@ class Pin:
         # Pad: input-enable on, output-disable off (bit6 = IE).
         pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * pin)
         pad.value = 1 << 6
+        # `pull=`: the pad's pull-up (PUE, bit 3) or pull-down (PDE, bit 2) on top of IE.
+        if pull == 1:       # PULL_UP
+            pad.value = 0x48
+        elif pull == 2:     # PULL_DOWN
+            pad.value = 0x44
 
         # Route the pin to SIO (GPIOn_CTRL FUNCSEL = 5).
         ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * pin + 4)
