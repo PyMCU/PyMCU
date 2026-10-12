@@ -244,11 +244,9 @@ def isfinite(x: float) -> bool:
 # Past |x| of a few thousand a float32 argument has no bits left for the reduction to work
 # with, and that is true of every float32 sin; math.sin(1e6) is not attempted.
 #
-# Domain errors raise ValueError, as CPython's do, but WITHOUT its text ("math domain error").
-# A raise with a message anywhere in an imported module makes the whole program carry the
-# unhandled-exception report, whether or not the function is ever called: 102 bytes for a
-# program that only wanted math.sqrt. So these raise bare, and sqrt/log/exp/pow keep the text
-# they have always had, which lives in the runtime helpers and is paid for only by a caller.
+# Domain errors raise ValueError with CPython's text ("math domain error"). A function nothing
+# calls does not make the program carry the unhandled-exception report: the compiler counts a
+# raise with a message only in functions the program can reach.
 
 pi: const[float] = 3.141592653589793
 e: const[float] = 2.718281828459045
@@ -296,14 +294,14 @@ def hypot(x: float, y: float) -> float:
 def fmod(x: float, y: float) -> float:
     """The remainder of x / y with the sign of x, as C's fmod gives it."""
     if y == 0.0:
-        raise ValueError
+        raise ValueError("math domain error")
     if isinf(x):
-        raise ValueError
+        raise ValueError("math domain error")
     if isinf(y):
         return x
     q: float = x / y
     if q > 2000000000.0 or q < -2000000000.0:
-        raise ValueError
+        raise ValueError("math.fmod: quotient too large for float32")
     return x - float(int32(q)) * y
 
 
@@ -420,14 +418,14 @@ def atan2(y: float, x: float) -> float:
 def asin(x: float) -> float:
     """The arc sine of x, in radians. x must be in [-1, 1]."""
     if x > 1.0 or x < -1.0:
-        raise ValueError
+        raise ValueError("math domain error")
     return atan2(x, sqrt(1.0 - x * x))
 
 
 def acos(x: float) -> float:
     """The arc cosine of x, in radians. x must be in [-1, 1]."""
     if x > 1.0 or x < -1.0:
-        raise ValueError
+        raise ValueError("math domain error")
     return atan2(sqrt(1.0 - x * x), x)
 
 
@@ -467,14 +465,14 @@ def asinh(x: float) -> float:
 def acosh(x: float) -> float:
     """The inverse hyperbolic cosine of x. x must be at least 1."""
     if x < 1.0:
-        raise ValueError
+        raise ValueError("math domain error")
     return log(x + sqrt(x * x - 1.0))
 
 
 def atanh(x: float) -> float:
     """The inverse hyperbolic tangent of x. x must be in (-1, 1)."""
     if x >= 1.0 or x <= -1.0:
-        raise ValueError
+        raise ValueError("math domain error")
     return 0.5 * log((1.0 + x) / (1.0 - x))
 
 
@@ -519,7 +517,7 @@ def expm1(x: float) -> float:
 def log1p(x: float) -> float:
     """log(1 + x), kept accurate for small x. Raises ValueError for x <= -1."""
     if x <= -1.0:
-        raise ValueError
+        raise ValueError("math domain error")
     if x < 0.1 and x > -0.1:
         t: float = x / (2.0 + x)
         z: float = t * t
@@ -554,7 +552,7 @@ def lcm(a: int32, b: int32) -> int32:
 def isqrt(n: int32) -> int32:
     """The integer square root of n: the largest r with r * r <= n."""
     if n < 0:
-        raise ValueError
+        raise ValueError("isqrt() argument must be nonnegative")
     r: int32 = int32(sqrt(float(n)))
     while r * r > n:
         r = r - 1
@@ -567,9 +565,9 @@ def factorial(n: int32) -> int32:
     """n!, for n up to 12: 13! does not fit in 32 bits, and a result that wrapped would be
     a wrong answer, so it raises instead."""
     if n < 0:
-        raise ValueError
+        raise ValueError("factorial() not defined for negative values")
     if n > 12:
-        raise ValueError
+        raise ValueError("factorial() result does not fit in 32 bits")
     r: int32 = 1
     i: int32 = 2
     while i <= n:

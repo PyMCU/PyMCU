@@ -4,7 +4,7 @@ Pinned here: every name compiles on an AVR and on an ARM target through both fro
 names that are deliberately absent say why at the call (instead of "Unknown module member"),
 and a program that imports math but uses none of the new functions pays nothing for them.
 
-The VALUES are checked elsewhere, against CPython: tests/oracle/probes 878-881 in pymcu-avr for
+The VALUES are checked elsewhere, against CPython: tests/oracle/probes 882-885 in pymcu-avr for
 AVR, and tests/natmod in pymcu-arm for a native module on an emulated RP2040.
 """
 
