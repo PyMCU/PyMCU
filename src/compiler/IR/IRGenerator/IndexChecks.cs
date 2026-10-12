@@ -139,15 +139,27 @@ public partial class IRGenerator
         // arena's size would say nothing about the buffer it belongs to. A buffer's real bound is its
         // own run-time length, which is not checked yet.
         "/pymcu/arena.py",
+
+        // The float printer fills digit buffers it sized for the worst case, with counters the
+        // algorithm bounds (xd[nd - 1 - i] with nd <= the buffer and i < nd); nothing the caller
+        // passes reaches those indexes.
+        "/pymcu/hal/uart_text.py",
     };
 
-    private static readonly string[] UncheckedRuntimeDirectories =
+    // Functions of the HAL whose index is internal state, not something the program passes. Each
+    // entry is (file, function); the rest of the HAL stays checked, so a buffer index or a length
+    // that comes from the program (PulseIn[i], a transfer length) still raises.
+    private static readonly (string File, string Function, string Why)[] UncheckedRuntimeFunctions =
     {
-        // The HAL's ring buffers keep head and tail inside the buffer by construction (`& MASK`
-        // on every advance, power-of-two sizes), and its float printer (uart_text.f32_repr) fills
-        // digit buffers it sized for the worst case with counters the algorithm bounds
-        // (xd[nd - 1 - i] with nd <= the buffer, i < nd). Neither index comes from the caller.
-        "/pymcu/hal/",
+        // The UART receive ring: `_rx_tail` advances with `& 0x3F` and the buffer has 64 slots, so
+        // the tail is inside it by construction; only the receive interrupt writes `_rx_head`.
+        ("/pymcu/hal/avr/uart/avr.py", "uart_rx_read", "ring tail masked to the 64-slot buffer"),
+        ("/pymcu/hal/avr/uart/avr.py", "uart_rx_read_timeout", "ring tail masked to the 64-slot buffer"),
+        ("/pymcu/hal/avr/uart/atmega32u4.py", "uart_rx_read", "ring tail masked to the 64-slot buffer"),
+        ("/pymcu/hal/avr/uart/attiny2313.py", "uart_rx_read", "ring tail masked to the 64-slot buffer"),
+        // The pulse capture ring: `_pulse_tail` wraps to 0 when it reaches `_pulse_maxlen`, the
+        // size the buffer was created with.
+        ("/pymcu/hal/avr/pulse/atmega328p.py", "pulse_capture_popleft", "ring tail wraps at the buffer size"),
     };
 
     // Deliberately unlike CPython: code reachable from an interrupt handler is not checked
@@ -159,8 +171,15 @@ public partial class IRGenerator
         string path = "/" + (currentSourcePath ?? "").Replace('\\', '/').TrimStart('/');
         foreach (var f in UncheckedRuntimeFiles)
             if (path.EndsWith(f, StringComparison.Ordinal)) return true;
-        foreach (var d in UncheckedRuntimeDirectories)
-            if (path.Contains(d, StringComparison.Ordinal)) return true;
+
+        // The innermost function being lowered: an @inline callee's own name while it is expanded,
+        // otherwise the function being compiled.
+        string fn = inlineStack.Count > 0 && inlineStack[^1].CalleeName.Length > 0
+            ? inlineStack[^1].CalleeName : currentFunction;
+        foreach (var (file, function, _) in UncheckedRuntimeFunctions)
+            if (path.EndsWith(file, StringComparison.Ordinal)
+                && (fn == function || fn.EndsWith("_" + function, StringComparison.Ordinal)))
+                return true;
         return false;
     }
 
