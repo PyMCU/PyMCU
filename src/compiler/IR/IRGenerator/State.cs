@@ -837,6 +837,13 @@ public partial class IRGenerator
     /// the report machinery out of images whose reachable code never raises one.
     private bool sawRaiseMessageStore;
 
+    /// The (name, line) of every function a call site was expanded from. A function with no
+    /// subroutine form (it returns a tuple...) is only ever compiled through such a call; a
+    /// library export that is missing from the IR AND was never expanded is a function that
+    /// vanished. Resolved calls, not names in text: a string, an attribute or a longer name that
+    /// merely contains this one is not a call.
+    internal readonly HashSet<(string Name, int Line)> ExpandedInlineFunctions = new();
+
     /// Qualified IR names of the functions inside which a raise carrying a message
     /// lowered. Every non-inline def in a scanned module is queued for lowering, so a
     /// raise in a function nothing calls (the pulse_in stubs on ATmega2560/32u4, the

@@ -2512,6 +2512,8 @@ public partial class IRGenerator
                 { File = at.File, LocationIsFinal = true };
         }
 
+        if (func != null) ExpandedInlineFunctions.Add((func.Name, func.Line));
+
         if (func != null)
         {
             CheckSignatureShape(func, expr.Args, QualNameForCall(func, callee), expr);

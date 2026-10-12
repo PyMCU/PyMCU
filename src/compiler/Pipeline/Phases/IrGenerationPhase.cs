@@ -98,7 +98,7 @@ public class IrGenerationPhase : CompilerPhaseBase
         // A library's exports are its whole interface, so one that did not come out as a
         // symbol is refused here, at its `def`, rather than left missing for a linker to find.
         if (context.Options.Library)
-            RefuseExportsWithoutASymbol(context.RootAst!, optimized);
+            RefuseExportsWithoutASymbol(context.RootAst!, optimized, irGen.ExpandedInlineFunctions);
 
         // CanFail analysis runs after optimization so that dead-code-eliminated
         // functions and cloned bodies are the final IR seen by the backend.
@@ -121,13 +121,21 @@ public class IrGenerationPhase : CompilerPhaseBase
     /// spelling, a `bytes` parameter; a tuple return another). Every function that was marked as
     /// an export and is not a symbol of the program is an error at its definition.
     /// </summary>
-    private static void RefuseExportsWithoutASymbol(Frontend.ProgramNode ast, ProgramIR program)
+    private static void RefuseExportsWithoutASymbol(
+        Frontend.ProgramNode ast, ProgramIR program,
+        IReadOnlySet<(string Name, int Line)> expanded)
     {
         var emitted = program.Functions.Select(f => f.Name).ToHashSet();
         foreach (var fn in ast.Functions)
         {
             if (!fn.IsExportC || fn.IsInline || fn.IsInterrupt) continue;
             if (emitted.Contains(fn.Name)) continue;
+
+            // A helper another function of the library calls is expanded into its callers, which
+            // is how a function with no subroutine form is meant to be used: it has no symbol
+            // and needs none. Only a function no call was ever expanded from has vanished, and
+            // that is the bug.
+            if (expanded.Contains((fn.Name, fn.Line))) continue;
 
             string why = fn.ReturnType.StartsWith("tuple", StringComparison.Ordinal)
                 ? "it returns a tuple, which has no subroutine form (several values cannot come back through one return)"
