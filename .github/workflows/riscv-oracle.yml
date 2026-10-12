@@ -1,0 +1,108 @@
+name: RISC-V Oracle
+
+# The language oracle corpus (pymcu-avr's tests/oracle/probes, 665 programs) built for the
+# CH32V003 and run in CH32VSharp, compared with CPython. The job fails if any probe ends as
+# something other than a match, a refusal the probe asked for, a compile-only probe or a probe
+# that is documented as not measurable here (sweep.py: the ones restricted to the other front
+# end, and 840, which pins an AVR heap limit). A fix that regresses one probe breaks this job.
+#
+# Measured on a laptop the sweep itself takes about five minutes, so the whole corpus runs and
+# there is no quick subset: the two ahead-of-time publishes (compiler, backend) are the long
+# part. The Python front end is not swept here (a second pass of the same length); run
+# `sweep.py --py-parser` by hand for that.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "extensions/pymcu-backend-riscv/**"
+      - "extensions/pymcu-sdk/**"
+      - "lib/**"
+      - "src/compiler/**"
+      - "src/driver/**"
+      - "tests/oracle/**"
+      - ".github/workflows/riscv-oracle.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "extensions/pymcu-backend-riscv/**"
+      - "extensions/pymcu-sdk/**"
+      - "lib/**"
+      - "src/compiler/**"
+      - "src/driver/**"
+      - "tests/oracle/**"
+      - ".github/workflows/riscv-oracle.yml"
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    name: CH32V003 sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      # The three repos sit side by side: the runner project references ../CH32VSharp by path
+      # (tests/oracle/runner/*.csproj) and the sweep reads the corpus from pymcu-avr.
+      - name: Checkout PyMCU
+        uses: actions/checkout@v4
+        with:
+          path: PyMCU
+
+      - name: Checkout CH32VSharp
+        uses: actions/checkout@v4
+        with:
+          repository: PyMCU/CH32VSharp
+          path: CH32VSharp
+
+      - name: Checkout pymcu-avr (the corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: PyMCU/pymcu-avr
+          path: pymcu-avr
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: PyMCU/global.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # clang and zlib: the ahead-of-time publish of the compiler and the backend links with
+      # them. binutils: the backend writes GNU assembly; the riscv64 build assembles
+      # `-mabi=ilp32e` output to a 32-bit object and links `-m elf32lriscv`.
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev binutils-riscv64-unknown-elf
+
+      - name: Install the driver, the standard library and the RISC-V backend
+        working-directory: PyMCU
+        run: |
+          pip install --upgrade pip
+          pip install --pre pytest pyyaml
+          pip install --pre -e ./extensions/pymcu-sdk -e ./lib
+          pip install --pre -e .
+          pip install --pre -e ./extensions/pymcu-backend-riscv
+
+      - name: Build the oracle runner
+        working-directory: PyMCU
+        run: dotnet build tests/oracle/runner -c Release -o build/oracle-runner --nologo
+
+      - name: Sweep the corpus on the CH32V003
+        working-directory: PyMCU
+        env:
+          PYMCU_AVR_ROOT: ${{ github.workspace }}/pymcu-avr
+        run: python tests/oracle/sweep.py --chip ch32v003 --out ../sweep.jsonl --check
+
+      - name: Upload the sweep
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ch32v003-sweep
+          path: sweep.jsonl
+          retention-days: 15

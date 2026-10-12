@@ -58,6 +58,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,7 +66,10 @@ import time
 import types
 from pathlib import Path
 
-AVR_ORACLE_ROOT = Path.home() / "Repos" / "pymcu-avr-ch32ref"
+# A pymcu-avr checkout: the corpus (tests/oracle/probes) and the expectation parser live there.
+# CI clones it next to this repo and says so in PYMCU_AVR_ROOT.
+AVR_ORACLE_ROOT = Path(os.environ.get("PYMCU_AVR_ROOT")
+                       or Path.home() / "Repos" / "pymcu-avr-ch32ref")
 PROBES_DIR = AVR_ORACLE_ROOT / "tests" / "oracle" / "probes"
 TEST_ORACLE_FILE = AVR_ORACLE_ROOT / "tests" / "oracle" / "test_oracle.py"
 
@@ -125,6 +129,21 @@ BASE277_PAGE = {
 TARGET_CHIP_INFO = {
     "ch32v003": ("ch32v003", "riscv", 24_000_000),
 }
+
+# Probes whose point is a property of the AVR chip the corpus was written for, not of the
+# language: running them here measures the chip. Reported as not measured, with the reason,
+# instead of as a mismatch nobody can act on.
+TARGET_SPECIFIC_PROBES = {
+    # Asks for a 256-byte object to hit the 255-byte payload ceiling of the AVR heap header (one
+    # length byte). The collector here keeps 16 bits of length, so the same object is allocated
+    # and the program prints its length, which is what CPython does.
+    "840_annotated_list_literal_exceeds_object_ceiling.py":
+        "pins the AVR heap's 255-byte object ceiling; the CH32V003 heap header holds 16 bits of "
+        "length, so the object is allocated",
+}
+
+# What a sweep may contain without being a regression.
+ACCEPTED_OUTCOMES = {"match", "refused", "compiled", "no_medido"}
 
 # A `# expect: refuse <text>` header is worded for AVR's toolchain (binutils' as/ld), which
 # this sweep's own refusal may say correctly but differently: `@extern` on a symbol nothing
@@ -300,6 +319,11 @@ def evaluate(probe: Path, chip: str, tmp_dir: Path, pymcu: Path) -> dict:
     if expectation.tracked:
         record["tracked"] = expectation.tracked
 
+    if probe.name in TARGET_SPECIFIC_PROBES:
+        record["outcome"] = "no_medido"
+        record["reason"] = TARGET_SPECIFIC_PROBES[probe.name]
+        return record
+
     # A probe marked `# frontend: default` / `# frontend: py-parser` documents a gap between the
     # two front ends and is only honest under the one it names (pymcu-avr's test_oracle.py
     # skips it under the other). `--py-parser` runs the sweep under the Python front end.
@@ -370,7 +394,10 @@ def main() -> None:
     ap.add_argument("--only", default=None, help="substring filter on probe filename")
     ap.add_argument("--py-parser", action="store_true",
                     help="build with the Python front end (PYMCU_PY_PARSER=1) instead of the C# one")
-    ap.add_argument("--pymcu", default="/private/tmp/claude-501/ch32/.venv/bin/pymcu")
+    ap.add_argument("--pymcu", default=shutil.which("pymcu") or "pymcu")
+    ap.add_argument("--check", action="store_true",
+                    help="exit 1 if any probe ended as something other than match, refused, "
+                         "compiled or not measured (CI)")
     args = ap.parse_args()
 
     if args.py_parser:
@@ -401,6 +428,21 @@ def main() -> None:
             if i % 25 == 0 or i == len(probes):
                 elapsed = time.time() - t0
                 print(f"[{args.chip}] {i}/{len(probes)} ({elapsed:.0f}s)", file=sys.stderr)
+
+    if args.check:
+        sys.exit(check(out_path))
+
+
+def check(out_path: Path) -> int:
+    records = [json.loads(line) for line in out_path.read_text().splitlines() if line.strip()]
+    summary: dict[str, int] = {}
+    for r in records:
+        summary[r["outcome"]] = summary.get(r["outcome"], 0) + 1
+    print("sweep: " + ", ".join(f"{k} {v}" for k, v in sorted(summary.items())), file=sys.stderr)
+    bad = [r for r in records if r["outcome"] not in ACCEPTED_OUTCOMES]
+    for r in bad:
+        print(f"UNEXPECTED {r['outcome']}: {r['probe']} {r.get('detail', '')}", file=sys.stderr)
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

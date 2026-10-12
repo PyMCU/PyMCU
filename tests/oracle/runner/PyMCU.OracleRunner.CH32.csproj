@@ -6,11 +6,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <!-- CH32VSharp is a local sibling repo with no remote yet (the licence and the remote are the
-         user's call), so it is referenced by path, the way the ARM runner references RP2350Sharp.
-         tests/oracle/runner -> the directory holding both repos is four levels up; clone or
-         link CH32VSharp next to this repo to build the runner. Swap for a PackageReference
-         once it is published. -->
+    <!-- CH32VSharp (https://github.com/PyMCU/CH32VSharp) is referenced by path, as a repo that
+         sits next to this one: tests/oracle/runner -> the directory holding both is four levels
+         up. The riscv-oracle workflow checks the two out side by side. Swap for a
+         PackageReference once it is published. -->
     <ProjectReference Include="../../../../CH32VSharp/src/CH32VSharp.TestKit/CH32VSharp.TestKit.csproj" />
   </ItemGroup>
 </Project>
