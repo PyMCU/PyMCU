@@ -263,9 +263,13 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         foreach (var (name, count) in program.GlobalArrays)
         {
             globalNames.Add(name);
-            // GlobalArrays only carries a count; assume word elements until an
-            // indexed access tells us the real element type.
-            NoteArray(name, count, DataType.UINT32);
+            // GlobalArrays only carries a count. The IR also records the byte size of every
+            // fixed array; where it does, that is the reservation. Where it does not, assume
+            // word elements until an indexed access tells us the real element type.
+            if (program.ArrayByteSizes.TryGetValue(name, out int bytes) && bytes > 0)
+                arrayBytes[name] = bytes;
+            else
+                NoteArray(name, count, DataType.UINT32);
         }
 
         ScanForRuntimeHelpers(program);
