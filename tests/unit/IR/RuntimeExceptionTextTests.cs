@@ -81,4 +81,27 @@ public class RuntimeExceptionTextTests
         var tup = Body("ts = (1, 2)\nk = 99\ntry:\n    y = ts.index(k)\nexcept ValueError as e:\n    pass\n");
         Assert.True(Interns(tup, "tuple.index(x): x not in tuple"));
     }
+
+    // The raise on a key the compiler already knows is missing never returns, so what follows it
+    // must not read a temporary nothing writes: tools/verify_ir.py reports that as a slot in
+    // somebody else's frame (`read-never-written`), the shape of a bit test on an unwritten slot.
+    [Fact]
+    public void AKnownMissingDictKeyInsideATryReadsNoUnwrittenTemporary()
+    {
+        var body = Body("d = {'a': 1, 'b': 2}\ntry:\n    z: int = d['zz']\nexcept KeyError as e:\n    pass\n");
+
+        var written = new HashSet<string>();
+        foreach (var ins in body)
+            foreach (var prop in ins.GetType().GetProperties()
+                         .Where(p => p.Name is "Dst" or "Target" && p.PropertyType == typeof(Val)))
+                if (prop.GetValue(ins) is Temporary t)
+                    written.Add(t.Name);
+
+        var unwritten = body.OfType<Copy>()
+            .Select(c => c.Src).OfType<Temporary>()
+            .Where(t => !written.Contains(t.Name))
+            .Select(t => t.Name)
+            .ToList();
+        Assert.Empty(unwritten);
+    }
 }
