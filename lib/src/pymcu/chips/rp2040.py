@@ -140,7 +140,7 @@ PIO0_BASE = 0x50200000
 PIO1_BASE = 0x50300000
 # Block-level registers.
 PIO_CTRL       = 0x000   # SM_ENABLE[3:0], SM_RESTART[7:4], CLKDIV_RESTART[11:8]
-PIO_FSTAT      = 0x004   # TXEMPTY[3:0], TXFULL[11:8], RXEMPTY[19:16], RXFULL[27:24]
+PIO_FSTAT      = 0x004   # RXFULL[3:0], RXEMPTY[11:8], TXFULL[19:16], TXEMPTY[27:24]
 PIO_TXF0       = 0x010   # +4*sm: TX FIFO write
 PIO_RXF0       = 0x020   # +4*sm: RX FIFO read
 PIO_INSTR_MEM0 = 0x048   # +4*i: 32-entry instruction memory
