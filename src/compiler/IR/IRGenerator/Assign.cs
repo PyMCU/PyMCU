@@ -11572,6 +11572,34 @@ public partial class IRGenerator
                             BindSequenceAlias(dstName, canonBuf);
                         unpackSrcToDst[canonBuf] = dstName;
                     }
+                    // The target is rebound: a None it held before this statement no longer
+                    // describes it, and when the slot carries a presence byte (a return that
+                    // answers None on another path) the byte travels to the target, which is
+                    // what `if rom:` and the next call's Optional parameter read.
+                    noneValuedNames.Remove(dstName);
+                    if (optionalTagSlots.TryGetValue(srcName, out var bufSrcTag))
+                    {
+                        string bufDstTag = dstName + "$tag";
+                        variableTypes[bufDstTag] = DataType.UINT8;
+                        Emit(new Copy(bufSrcTag, new Variable(bufDstTag, DataType.UINT8)));
+                        optionalTagSlots[dstName] = new Variable(bufDstTag, DataType.UINT8);
+                        if (optionalMembersByName.TryGetValue(srcName, out var bufSrcMembers))
+                            optionalMembersByName[dstName] = bufSrcMembers;
+                    }
+                    else if (optionalTagSlots.TryGetValue(dstName, out var bufDstOwnTag))
+                    {
+                        // The call this expansion folded had no path that answers None, so the
+                        // buffer is there: a target that already carries a presence byte (it was
+                        // None before) says so, or its next `if rom:` reads the old byte.
+                        Emit(new Copy(new Constant(0), bufDstOwnTag));
+                    }
+                    // The next call that passes this target on as an Optional buffer reads its
+                    // base from the companion pointer (CarryOptionalTagToParam).
+                    if (optionalTagSlots.ContainsKey(dstName) && ResolveArrayVar(dstName) is { } dstArr)
+                    {
+                        variableTypes[dstName + "$ptr"] = GcPtrWidth();
+                        Emit(new Copy(new ArrayBase(dstArr.Name), new Variable(dstName + "$ptr", GcPtrWidth())));
+                    }
                     continue;
                 }
                 // A return element that is itself a compile-time sequence -- `a, t, c =

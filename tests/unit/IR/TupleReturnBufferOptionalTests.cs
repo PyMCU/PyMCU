@@ -124,4 +124,55 @@ public class TupleReturnBufferOptionalTests
         var allCopies = ir.Functions.SelectMany(f => f.Body).OfType<Copy>().ToList();
         Assert.Contains(allCopies, c => c.Dst is Variable v && v.Name.EndsWith("$tag"));
     }
+
+    private const string BusSrc =
+        "class Bus:\n" +
+        "    def _search_rom(self, l_rom: Optional[bytearray], diff: uint8) -> Tuple[bytearray, uint8]:\n" +
+        "        if diff == 255:\n" +
+        "            return None, 0\n" +
+        "        rom: bytearray = bytearray(8)\n" +
+        "        rom[0] = diff\n" +
+        "        return rom, 0\n" +
+        "\n" +
+        "    def scan(self) -> uint8:\n" +
+        "        diff: uint8 = 65\n" +
+        "        rom = None\n" +
+        "        count: uint8 = 0\n" +
+        "        for _ in range(4):\n" +
+        "            rom, diff = self._search_rom(rom, diff)\n" +
+        "            if rom:\n" +
+        "                count += 1\n" +
+        "            if diff == 0:\n" +
+        "                break\n" +
+        "        return count\n" +
+        "\n" +
+        "bus = Bus()\n" +
+        "GPIOR0.value = bus.scan()\n";
+
+    [Fact]
+    public void ABufferReturn_WritesTheSlotsPresenceByteToo()
+    {
+        // The return that answers a buffer must write the slot's "$tag" as well as the one that
+        // answers None, or the byte keeps what an earlier call left and `if rom:` reads that
+        // (ARM folded the loop to "never present"; AVR only worked by the order of the writes).
+        var ir = Gen(BusSrc);
+        var tagWrites = ir.Functions.SelectMany(f => f.Body).OfType<Copy>()
+            .Where(c => c.Dst is Variable v && v.Name.Contains("iret") && v.Name.EndsWith("$tag"))
+            .ToList();
+        Assert.Contains(tagWrites, c => c.Src is Constant { Value: 1 });
+        Assert.Contains(tagWrites, c => c.Src is Constant { Value: 0 });
+    }
+
+    [Fact]
+    public void TheUnpackTarget_TakesTheCalleesPresenceByte_AndABufferPointerForTheNextCall()
+    {
+        var ir = Gen(BusSrc);
+        var copies = ir.Functions.SelectMany(f => f.Body).OfType<Copy>().ToList();
+        // The target's own byte comes from the slot's byte, not from a constant.
+        Assert.Contains(copies, c => c.Dst is Variable { Name: var d } && d.EndsWith("scan.rom$tag")
+                                     && c.Src is Variable { Name: var s } && s.Contains("iret"));
+        // And the base of its buffer is left in a companion pointer for the call that takes it back.
+        Assert.Contains(copies, c => c.Dst is Variable { Name: var d } && d.EndsWith("scan.rom$ptr")
+                                     && c.Src is ArrayBase);
+    }
 }

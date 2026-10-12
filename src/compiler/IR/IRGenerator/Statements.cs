@@ -1605,6 +1605,19 @@ public partial class IRGenerator
                         floatConstantVariables.Remove(ctx.ResultVars[k]);
                         strConstantVariables.Remove(ctx.ResultVars[k]);
                         constSequenceBindings.Remove(ctx.ResultVars[k]);
+                        // A slot some other return answers None for needs its presence byte
+                        // written on THIS path too: a buffer return leaves it 0, or the byte
+                        // keeps what an earlier call left and the caller's `if rom:` reads that.
+                        if (tupleReturnBufferOptionalSlots.TryGetValue(ctx.CalleeName, out var bufOptSlots)
+                            && bufOptSlots.Contains(k))
+                        {
+                            string bufTagSlot = ctx.ResultVars[k] + "$tag";
+                            variableTypes[bufTagSlot] = DataType.UINT8;
+                            Emit(new Copy(BufferPresenceTagVal(tup.Elements[k]),
+                                new Variable(bufTagSlot, DataType.UINT8)));
+                            optionalTagSlots[ctx.ResultVars[k]] = new Variable(bufTagSlot, DataType.UINT8);
+                            optionalMembersByName[ctx.ResultVars[k]] = new List<string> { declared[k], "None" };
+                        }
                         continue;
                     }
                     if (IsSequenceObject(tup.Elements[k]))
