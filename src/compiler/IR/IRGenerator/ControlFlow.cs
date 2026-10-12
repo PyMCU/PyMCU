@@ -2054,12 +2054,24 @@ public partial class IRGenerator
         {
             // A pair tagged with "=" is a direct member WRITE, not a call: the field is named
             // outright, so there is nothing to look up in the method.
+            // `root.field` names an instance a field holds: its class is the field's declared one
+            // and its storage is flattened under the root's key plus the field (`bus_w_phase`).
+            int dotAt = instance.IndexOf('.');
+            string? heldCls = dotAt > 0
+                ? FieldInstanceClass(new MemberAccessExpr(new VariableExpr(instance[..dotAt]), instance[(dotAt + 1)..]))
+                : null;
             var written = method.StartsWith("=", StringComparison.Ordinal)
                 ? new[] { method[1..] }
-                : FieldsMutatedBy(instance, method).ToArray();
+                : dotAt > 0
+                    ? (heldCls == null ? Array.Empty<string>()
+                        : FieldsWrittenBy(ResolveMROMethod(heldCls, method) + "_" + method).ToArray())
+                    : FieldsMutatedBy(instance, method).ToArray();
+            var instancePrefixes = dotAt > 0
+                ? ResolvedKeys(instance[..dotAt]).Select(k => k + "_" + instance[(dotAt + 1)..]).ToList()
+                : ResolvedKeys(instance).ToList();
 
             foreach (var field in written)
-                foreach (var prefix in ResolvedKeys(instance))
+                foreach (var prefix in instancePrefixes)
                 {
                     constantVariables.Remove(prefix + "_" + field);
                     constantVariables.Remove(prefix + "." + field);
@@ -2740,6 +2752,9 @@ public partial class IRGenerator
             case CallExpr c:
                 if (c.Callee is MemberAccessExpr { Object: VariableExpr recv } rm)
                     receivers.Add((recv.Name, rm.Member));
+                // `self.w.read()`: the receiver is an instance a field holds, named by the pair.
+                else if (c.Callee is MemberAccessExpr { Object: MemberAccessExpr { Object: VariableExpr fieldRoot } fieldRecv } fm)
+                    receivers.Add((fieldRoot.Name + "." + fieldRecv.Member, fm.Member));
                 CollectCalls(c.Callee, receivers);
                 foreach (var a in c.Args) CollectCalls(a, receivers);
                 return;
