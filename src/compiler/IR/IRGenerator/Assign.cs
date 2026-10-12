@@ -5598,7 +5598,10 @@ public partial class IRGenerator
             RefuseInstanceElementValue(stmt.Value, $"an element of '{memStore.Member}'", srcVal);
             RemapArrayAccess(flatStore, idxVal, out var storeName, out var storeIdx,
                 out var storeSize, out var storeDt);
-            Emit(new ArrayStore(storeName, storeIdx, srcVal, storeDt, storeSize));
+            if (bytearrayParams.Contains(storeName))
+                Emit(new BytearrayStore(storeName, storeIdx, srcVal));
+            else
+                Emit(new ArrayStore(storeName, storeIdx, srcVal, storeDt, storeSize));
             return;
         }
 

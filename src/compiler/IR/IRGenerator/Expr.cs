@@ -3768,6 +3768,16 @@ public partial class IRGenerator
                 Temporary rt => rt.Name,
                 _ => null,
             };
+            // A call result that is the base pointer of a buffer (a record's `.rom`): the
+            // subscript reads through the pointer.
+            if (retVarName != null && bytearrayParams.Contains(retVarName)
+                && arraySizes.ContainsKey(retVarName))
+            {
+                Val ptrIdx = VisitExpression(expr.Index);
+                Temporary ptrTmp = MakeTemp(DataType.UINT8);
+                Emit(new BytearrayLoad(retVarName, ptrIdx, ptrTmp));
+                return ptrTmp;
+            }
             if (retVarName != null
                 && TryResolveArrayStorageKey(FollowAliases(retVarName), out var retKey)
                 && arraySizes.TryGetValue(retKey, out int retSize))
@@ -4611,7 +4621,10 @@ public partial class IRGenerator
             RemapArrayAccess(flatLoad, idxVal, out var loadName, out var loadIdx,
                 out var loadSize, out var loadDt);
             Temporary tmp = MakeTemp(loadDt);
-            Emit(new ArrayLoad(loadName, loadIdx, tmp, loadDt, loadSize));
+            if (bytearrayParams.Contains(loadName))
+                Emit(new BytearrayLoad(loadName, loadIdx, tmp));
+            else
+                Emit(new ArrayLoad(loadName, loadIdx, tmp, loadDt, loadSize));
             return tmp;
         }
 
@@ -4620,6 +4633,24 @@ public partial class IRGenerator
         // adafruit_bmp280's register read) runs an inline expansion whose I2C traffic must
         // happen exactly once, and re-evaluating it would send every transaction twice.
         Val tgtVal = VisitExpression(expr.Target);
+        // `found[i].rom[k]`: the member read answered the base pointer of a record's buffer, so
+        // the subscript reads through it, the way `r = found[i].rom; r[k]` does.
+        if (expr.Target is MemberAccessExpr
+            && tgtVal is Variable ptrBase && bytearrayParams.Contains(ptrBase.Name)
+            && arraySizes.TryGetValue(ptrBase.Name, out int ptrBaseSize))
+        {
+            Val ptrBaseIdx = VisitExpression(expr.Index);
+            if (ptrBaseIdx is Constant ptrBaseConst && (ptrBaseConst.Value < 0 || ptrBaseConst.Value >= ptrBaseSize))
+                throw new IndexError(
+                    $"array index {ptrBaseConst.Value} out of range for size {ptrBaseSize}",
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+            if (IndexCheckAppliesTo(ptrBase.Name))
+                ptrBaseIdx = CheckRuntimeIndex(ptrBaseIdx, ptrBaseSize,
+                                               IndexErrorText(ptrBase.Name, store: false), expr.Index, ptrBase.Name);
+            Temporary ptrBaseTmp = MakeTemp(DataType.UINT8);
+            Emit(new BytearrayLoad(ptrBase.Name, ptrBaseIdx, ptrBaseTmp));
+            return ptrBaseTmp;
+        }
         {
             string cls = GetValClass(tgtVal);
             if (!string.IsNullOrEmpty(cls))
@@ -7427,7 +7458,30 @@ public partial class IRGenerator
             && ResolveMROPropertyClass(getterCls, expr.Member) is { } getterPropCls
             && propertyGetters.Contains(getterPropCls + "." + expr.Member))
         {
-            return VisitCall(new CallExpr(expr, new List<Expression>()));
+            Val getterResult = VisitCall(new CallExpr(expr, new List<Expression>()));
+            // A handle read out of a list of buffer records IS the base pointer of the buffer its
+            // class holds: a getter declared to return that buffer (`OneWireAddress.rom`) answers
+            // the handle's own pointer, as a buffer of the record's size.
+            if (factoryHandleInstances.Contains(baseName)
+                && ptrRecordClassSize.TryGetValue(getterCls, out int getterRecSize)
+                && functionReturnTypes.TryGetValue(getterPropCls + "_" + expr.Member, out var getterRt)
+                && IsBufferTypeName(getterRt))
+            {
+                // A name of its own for the buffer: the handle's name carries the instance's
+                // class, and a name bound to it would be an instance, not a buffer.
+                string ptrBufName = baseName + "__ptrbuf";
+                variableTypes[ptrBufName] = DataType.GC_REF;
+                RegisterPointerBuffer(ptrBufName, getterRecSize);
+                var ptrBuf = new Variable(ptrBufName, DataType.GC_REF);
+                // The handle is the temporary the element read filled when it came straight
+                // out of a subscript; naming it as a Variable reads a slot nothing wrote.
+                Val recordHandle = objVal is Temporary handleTmp
+                    ? handleTmp with { Type = DataType.GC_REF }
+                    : new Variable(baseName, DataType.GC_REF);
+                Emit(new Copy(recordHandle, ptrBuf));
+                return ptrBuf;
+            }
+            return getterResult;
         }
 
         // RFC 0001 Model B (SRAM slot): a direct field read on a slot instance OUTSIDE a method

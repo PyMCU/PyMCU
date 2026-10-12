@@ -139,6 +139,9 @@ public partial class IRGenerator
         string n = name;
         for (int hop = 0; hop < 20; hop++)
         {
+            // A buffer that lives behind a pointer is its own storage: whatever copy-propagation
+            // alias the name carries does not hold the pointer.
+            if (bytearrayParams.Contains(n)) break;
             if (!variableAliases.TryGetValue(n, out var next) || next == null || next == n)
                 break;
             n = next;
@@ -3866,6 +3869,16 @@ public partial class IRGenerator
                     if (elemDt == DataType.GC_REF
                         && listInnerElemTypes.TryGetValue(listQ, out var loopInnerElem))
                         listVarElemTypes[elemVarName] = loopInnerElem;
+                    // `for d in found` over buffer records: the loop variable is the record's
+                    // handle, so `d.rom[k]` reads through the pointer the way `found[i].rom[k]` does.
+                    bool recordLoop = elemDt == DataType.GC_REF
+                        && listVarElemClass.TryGetValue(listQ, out var recordLoopCls)
+                        && ptrRecordClassSize.ContainsKey(recordLoopCls);
+                    if (recordLoop)
+                    {
+                        instanceClasses[elemVarName] = listVarElemClass[listQ];
+                        factoryHandleInstances.Add(elemVarName);
+                    }
 
                     string loopStart = MakeLabel();
                     string loopCont = MakeLabel();
@@ -3900,6 +3913,11 @@ public partial class IRGenerator
                     Emit(new Jump(loopStart));
                     Emit(new Label(loopEnd));
                     loopStack.RemoveAt(loopStack.Count - 1);
+                    if (recordLoop)
+                    {
+                        instanceClasses.Remove(elemVarName);
+                        factoryHandleInstances.Remove(elemVarName);
+                    }
                     JoinLoopState(listLoopSnap, TakeBranchState(), listStrBefore);
                     return;
                 }

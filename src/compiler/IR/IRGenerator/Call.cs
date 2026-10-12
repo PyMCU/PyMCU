@@ -7172,8 +7172,30 @@ public partial class IRGenerator
     /// is a name -- a property getter's result, a field alias, a forwarded parameter -- with
     /// no run-time length variable of its own (<see cref="ForwardRuntimeLenToInlineParam"/>).
     /// </summary>
+    /// <summary>
+    /// <paramref name="name"/> holds the base pointer of a <paramref name="size"/>-byte buffer:
+    /// subscripts, len() and walks on it read through the pointer.
+    /// </summary>
+    private void RegisterPointerBuffer(string name, int size)
+    {
+        bytearrayParams.Add(name);
+        arraySizes[name] = size;
+        bufferLogicalLen[name] = size;
+        arrayElemTypes[name] = DataType.UINT8;
+    }
+
     private bool TryResolveConstArrayKeyThroughAliases(string name, out string resolvedKey)
     {
+        // A handle read out of a list of buffer records is the base pointer of an N-byte
+        // buffer: it is that buffer, addressed through the pointer the handle holds.
+        if (factoryHandleInstances.Contains(name)
+            && instanceClasses.TryGetValue(name, out var recCls) && recCls != null
+            && ptrRecordClassSize.TryGetValue(recCls, out int recSize))
+        {
+            RegisterPointerBuffer(name, recSize);
+            resolvedKey = name;
+            return true;
+        }
         string cur = name;
         for (int depth = 0; depth < 20; depth++)
         {
