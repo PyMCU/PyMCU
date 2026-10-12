@@ -232,16 +232,6 @@ status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
-symbol = "pwm.PWM.set_freq"
-status = "tracked:#387"
-reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
-
-[[deviation]]
-symbol = "pwm.PWM.start"
-status = "tracked:#387"
-reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
-
-[[deviation]]
 symbol = "spi.SPI"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
