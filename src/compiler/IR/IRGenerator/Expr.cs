@@ -3276,7 +3276,9 @@ public partial class IRGenerator
                 if (keyC.Length == 1)
                     RecordRuntimeExceptionText("KeyError", PyReprOfKey(keyExpr, keyC[0]));
                 EmitRaiseUnwind(new Constant(4 /* KeyError */), unhandledInMain: true);
-                return MakeTemp(DataType.UINT8);
+                // A literal placeholder, not MakeTemp: the raise never returns, and a temporary
+                // nothing ever writes is a read-never-written slot in the verifier's eyes.
+                return new Constant(0);
             }
 
             string miss = keyC.Length == 1
