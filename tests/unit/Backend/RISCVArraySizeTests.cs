@@ -51,4 +51,30 @@ public class RISCVArraySizeTests
 
         Assert.Matches(@"old:\s+\.zero\t16\b", asm);
     }
+
+    [Fact]
+    public void ALocalArrayOnlyEverPassedByAddressStillGetsStorage()
+    {
+        // Its stores folded away, so nothing indexes it: only the address is taken. The
+        // recorded size is the one thing that says it needs space at all.
+        var p = new ProgramIR { ArrayByteSizes = new() { ["f.digs"] = 24 } };
+        p.Functions.Add(new Function
+        {
+            Name = "main",
+            Body = { new Call("use", new List<Val> { new ArrayBase("f.digs") }, new NoneVal()), new Return(new NoneVal()) },
+        });
+
+        var asm = Compile(p);
+
+        Assert.Matches(@"f\.digs:\s+\.zero\t24\b", asm);
+    }
+
+    [Fact]
+    public void ARecordedArrayNothingReferencesTakesNoStorage()
+    {
+        var p = new ProgramIR { ArrayByteSizes = new() { ["unused"] = 24 } };
+        p.Functions.Add(new Function { Name = "main", Body = { new Return(new NoneVal()) } });
+
+        Assert.DoesNotContain("unused", Compile(p));
+    }
 }

@@ -290,6 +290,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         foreach (var func in program.Functions)
             CompileFunction(func);
 
+        ReserveArraysTakenByAddress(program);
         EmitUnhandledExnRuntime(program);
         EmitSoftFloat();
         EmitRuntimeHelpers();

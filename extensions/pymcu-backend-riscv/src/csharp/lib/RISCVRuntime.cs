@@ -78,6 +78,22 @@ public partial class RiscvCodeGen
             arrayBytes[name] = bytes;
     }
 
+    // An array whose every indexed access folded away is still passed by address, and then
+    // nothing has asked for its storage: the size the IR records for it is the only record
+    // that it needs some.
+    private void ReserveArraysTakenByAddress(ProgramIR program)
+    {
+        foreach (var func in program.Functions)
+        foreach (var instr in func.Body)
+        foreach (var v in OperandsOf(instr))
+        {
+            if (v is not ArrayBase ab) continue;
+            if (arrayBytes.ContainsKey(ab.ArrayName) || flashTables.ContainsKey(ab.ArrayName)) continue;
+            if (program.ArrayByteSizes.TryGetValue(ab.ArrayName, out int bytes) && bytes > 0)
+                arrayBytes[ab.ArrayName] = bytes;
+        }
+    }
+
     private int StackTop => RamBase + (cfg.RamSize > 0 ? cfg.RamSize : Profile.RamSize);
 
     private static bool HasMain(ProgramIR program)
