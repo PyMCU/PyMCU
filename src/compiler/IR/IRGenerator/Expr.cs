@@ -3803,7 +3803,13 @@ public partial class IRGenerator
             if (retVarName != null && listVarElemTypes.TryGetValue(retVarName, out var retListElemDt)
                 && retListElemDt != DataType.UNKNOWN)
             {
-                Val listPtr = new Variable(retVarName, DataType.GC_REF);
+                // The call's result is a temporary the expansion's return wrote: naming it as a
+                // Variable reads a slot nothing writes (the optimizer then drops the copy that
+                // filled the temporary), so the list pointer comes from the very value the call
+                // answered.
+                Val listPtr = callResult is Temporary callListTmp
+                    ? callListTmp with { Type = DataType.GC_REF }
+                    : new Variable(retVarName, DataType.GC_REF);
                 Val idxVal = VisitExpression(expr.Index);
                 Temporary elemAddr = EmitElemAddr(listPtr, idxVal, retListElemDt.SizeOf());
                 Temporary listResult = MakeTemp(retListElemDt);
