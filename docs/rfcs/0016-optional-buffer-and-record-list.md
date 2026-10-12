@@ -181,6 +181,14 @@ larger record is refused with a message that says so. A handle read back from th
 `r = h.rom` read through the pointer. Classes with more than one field, and the rule against
 mutating the original after the append (section 3), are not yet implemented.
 
+Order of the rest of Part B. The maintainer approved the general record, so it is not dropped, but
+it comes after the single-field case that adafruit_onewire needs, in its own block of commits:
+first the one-field class with a buffer (shipped, above); then the general record, a class of
+several scalar and buffer fields laid out in one heap object and read field by field through the
+pointer; then the rule against mutating the original after the append, with its message. The
+single-field case is the representation the general one generalises, so nothing in the first
+block is thrown away by the second.
+
 Four faults found on the way are independent of this RFC and are fixed in their own commits:
 a property read on an instance held in a field (`self._io.value`) used to take the register
 shortcut; the list a call returns, indexed in place, read a slot nothing wrote; a bytes bound at
