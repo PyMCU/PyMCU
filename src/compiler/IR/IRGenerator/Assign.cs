@@ -5245,6 +5245,15 @@ public partial class IRGenerator
 
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
+        if (bufferCopiedIntoList.Count > 0 && indexExpr.Target is VariableExpr copiedTgt
+            && ResolveArrayVar(copiedTgt.Name) is { } copiedArr
+            && bufferCopiedIntoList.TryGetValue(copiedArr.Name, out int copiedAtLine))
+            throw UserError(
+                $"'{copiedTgt.Name}' was copied into a list when it was appended (line {copiedAtLine}); "
+                + "changing it afterwards would not change the list. CPython shares the object, so "
+                + "this store means something different there. Bind a new buffer to the name "
+                + "(`" + copiedTgt.Name + " = bytearray(N)`) before writing, or write the bytes before "
+                + "appending.", stmt);
         // Every path below visits the subscript before the value, and CPython evaluates the
         // value first: `a[i()] = v()` calls v, then i. When both can have an effect the value
         // is evaluated here and carried as held. The elements of a sequence value are pinned
@@ -7425,6 +7434,7 @@ public partial class IRGenerator
                                 sizeSource);
             }
 
+            bufferCopiedIntoList.Remove(qualified);
             int grown = KeepGrownArraySize(qualified, count, replayingModuleLevel);
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;

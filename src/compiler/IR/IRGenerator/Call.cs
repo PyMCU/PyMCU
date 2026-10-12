@@ -14924,6 +14924,8 @@ public partial class IRGenerator
                     + $"{ptrRecordClassSize.GetValueOrDefault(recordCls)}-byte buffers; this append "
                     + $"adds one made from a {recordSize}-byte buffer. A list of such records has one "
                     + "record size.", valExpr);
+            if (recordSrcKey.Length > 0 && ResolveArrayVar(recordSrcKey) is { } copiedArr)
+                bufferCopiedIntoList[copiedArr.Name] = currentStmtLine;
             elemVal = MaterializeBufferRecord(recordSrcKey, recordSize, valExpr);
         }
         else

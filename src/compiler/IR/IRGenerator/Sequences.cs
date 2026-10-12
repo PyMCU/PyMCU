@@ -745,6 +745,7 @@ public partial class IRGenerator
     /// </summary>
     private void EmitSequenceCopy(string dstKey, string srcKey)
     {
+        bufferCopiedIntoList.Remove(dstKey);
         variableAliases.Remove(dstKey);
         constantVariables.Remove(dstKey);
         strConstantVariables.Remove(dstKey);
