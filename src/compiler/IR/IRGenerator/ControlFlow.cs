@@ -3146,7 +3146,7 @@ public partial class IRGenerator
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(resolvedMessage!)),
                           new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
-            sawRaiseMessageStore = true;
+            NoteRaiseMessageStore();
         }
         else if (programRecordsRaiseMessages && programReportsRaiseMessage
                  && writesMessage
@@ -4415,7 +4415,7 @@ public partial class IRGenerator
         DeclareExceptionSiteVar();
         Emit(new Copy(new Constant(site.Id), new Variable(ExceptionSiteVar, DataType.UINT8)));
         raiseMessageSites.Add(site);
-        sawRaiseMessageStore = true;
+        NoteRaiseMessageStore();
     }
 
     /// <summary>
@@ -4477,7 +4477,7 @@ public partial class IRGenerator
         DeclareExceptionSiteVar();
         Emit(new Copy(new Constant(site.Id), new Variable(ExceptionSiteVar, DataType.UINT8)));
         raiseMessageSites.Add(site);
-        sawRaiseMessageStore = true;
+        NoteRaiseMessageStore();
     }
 
     /// <summary>
@@ -4853,7 +4853,7 @@ public partial class IRGenerator
         DeclareExceptionMessageVar();
         Emit(new Copy(new FlashStrAddr(InternStringAsFlash(text)),
                       new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
-        sawRaiseMessageStore = true;
+        NoteRaiseMessageStore();
     }
 
     private void EmitRaiseUnwind(Val code, bool unhandledInMain, string? restorePrefix = null)

@@ -844,6 +844,19 @@ public partial class IRGenerator
     /// merely contains this one is not a call.
     internal readonly HashSet<(string Name, int Line)> ExpandedInlineFunctions = new();
 
+    /// The IR names of the functions in which a message store lowered (see
+    /// <see cref="sawRaiseMessageStore"/>). Every non-inline def of a scanned module is lowered
+    /// whether or not anything calls it, so a store in a function nothing reaches must not decide
+    /// that the program carries the exception report: at the end of generation the flag is
+    /// narrowed to the stores whose function the program can reach.
+    private readonly HashSet<string> messageStoreFunctions = new();
+
+    private void NoteRaiseMessageStore()
+    {
+        sawRaiseMessageStore = true;
+        messageStoreFunctions.Add(string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction);
+    }
+
     /// Qualified IR names of the functions inside which a raise carrying a message
     /// lowered. Every non-inline def in a scanned module is queued for lowering, so a
     /// raise in a function nothing calls (the pulse_in stubs on ATmega2560/32u4, the

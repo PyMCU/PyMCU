@@ -1744,6 +1744,13 @@ public partial class IRGenerator
         // In that case the messageless-raise clear stores lowered under the flag are
         // dead, and so is the report tail -- strip the clears and skip the synthesis so
         // the image stays byte-identical to one built without the machinery.
+        // The flag says a store LOWERED; what matters is a store the program can REACH. A
+        // library with many small functions that raise with a message (pymcu.math) would
+        // otherwise charge every importer for the report whether it calls them or not.
+        if (sawRaiseMessageStore)
+            sawRaiseMessageStore = messageStoreFunctions.Overlaps(
+                PyMCU.IR.Optimizer.ComputeReachableFunctions(irProgram));
+
         if (!sawRaiseMessageStore)
         {
             foreach (var fn in irProgram.Functions)

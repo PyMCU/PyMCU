@@ -3943,7 +3943,7 @@ public partial class IRGenerator
             DeclareExceptionMessageVar();
             Emit(new Copy(new FlashStrAddr(InternStringAsFlash(message)),
                           new Variable(ExceptionMessageVar, DataTypeExtensions.PointerType())));
-            sawRaiseMessageStore = true;
+            NoteRaiseMessageStore();
             if (programHasDynamicRaiseMessage)
             {
                 // A literal raise clears the site id so print(e) takes the
