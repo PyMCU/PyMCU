@@ -208,12 +208,39 @@ public class ListGrowCeilingTests
     }
 
     [Fact]
+    public void AnnotatedGrowableListIsAcceptedOnRiscv()
+    {
+        var ir = GenFor("riscv",
+            "from pymcu.types import uint8\n\n" +
+            "xs: list[uint8] = list()\n" +
+            "xs.append(1)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+        Assert.Contains(main.Body, i => i is GcAlloc);
+    }
+
+    [Fact]
     public void AnnotatedGrowableListStillRefusedOnAnUnsupportedTarget()
     {
-        var ex = Assert.ThrowsAny<CompilerError>(() => GenFor("riscv",
+        var ex = Assert.ThrowsAny<CompilerError>(() => GenFor("pic14",
             "from pymcu.types import uint8\n\n" +
             "xs: list[uint8] = list()\n"));
-        Assert.Contains("only implemented on AVR and ARM", ex.Message);
-        Assert.Contains("riscv", ex.Message);
+        Assert.Contains("only implemented on AVR, ARM and RISC-V", ex.Message);
+        Assert.Contains("pic14", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("arm")]
+    [InlineData("riscv")]
+    public void AListsPointerArithmeticIsDoneAtThirtyTwoBitsOnA32BitTarget(string arch)
+    {
+        var ir = GenFor(arch,
+            "from pymcu.types import uint8\n\n" +
+            "xs: list[uint8] = list()\n" +
+            "xs.append(1)\n");
+        var main = ir.Functions.Single(f => f.Name == "main");
+        var adds = main.Body.OfType<Binary>()
+            .Where(b => b.Op == PyMCU.IR.BinaryOp.Add && b.Dst is Temporary { Type: DataType.UINT32 })
+            .ToList();
+        Assert.NotEmpty(adds);
     }
 }

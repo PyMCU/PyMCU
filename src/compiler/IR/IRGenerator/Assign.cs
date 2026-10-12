@@ -9054,13 +9054,13 @@ public partial class IRGenerator
         // program's side, without naming the variable or the line. A fixed array is the
         // shape that works everywhere else, and it is what the reader wanted here anyway.
         string arch = deviceConfig?.Arch ?? "";
-        if (arch != "avr" && arch != "arm" && arch != "")
+        if (arch != "avr" && arch != "arm" && arch != "riscv" && arch != "")
         {
             int knownSize = stmt.Value is ListExpr initList ? initList.Elements.Count : 0;
             string sizeShown = knownSize > 0 ? knownSize.ToString() : "N";
             throw UserError(
                 $"'{stmt.Target}: {stmt.Annotation}' needs a growable list, which is "
-                + $"heap-allocated and only implemented on AVR and ARM (this target is "
+                + $"heap-allocated and only implemented on AVR, ARM and RISC-V (this target is "
                 + $"{arch}). Use a fixed array instead: "
                 + $"`{stmt.Target}: {elemTypeName}[{sizeShown}] = [...]`");
         }
@@ -11035,13 +11035,13 @@ public partial class IRGenerator
 
     // GC_REF values are absolute heap addresses, whose width depends on the target's
     // address space -- 16 bits on AVR (the only width list[T]/array.array's pointer-
-    // offset arithmetic originally assumed) but 32 on ARM: RP2040/RP2350 RAM starts at
+    // offset arithmetic originally assumed) but 32 on ARM and RISC-V: RP2040/RP2350 RAM starts at
     // 0x20000000, far outside 16 bits, so reinterpreting a GC_REF as UINT16 before an
     // ADD silently truncates it to garbage and every subsequent read/write through it
     // lands at a wrong, essentially random address. Every "basePtr + offset" computation
     // for a list element/header access goes through this one switch, so a backend added
     // later needs only extend it here, not re-audit each call site.
-    internal DataType GcPtrWidth() => deviceConfig?.Arch == "arm" ? DataType.UINT32 : DataType.UINT16;
+    internal DataType GcPtrWidth() => deviceConfig?.PointerWidth == 4 ? DataType.UINT32 : DataType.UINT16;
 
     // The GC object header's size in bytes, i.e. how far BEFORE user_ptr the mark byte
     // sits: 2 on AVR (mark + a 1-byte size field, gc_runtime.S), 4 on ARM (mark + a
@@ -11051,7 +11051,7 @@ public partial class IRGenerator
     // Only EmitRefPayloadFlag reaches backward into the header from IRGenerator's side;
     // every other list field (count, capacity, elements) is addressed FORWARD from
     // user_ptr and is already header-size-agnostic.
-    internal int GcHeaderSize() => deviceConfig?.Arch == "arm" ? 4 : 2;
+    internal int GcHeaderSize() => deviceConfig?.PointerWidth == 4 ? 4 : 2;
 
     // Stores `value` at `basePtr + offset`. For offset 0, stores directly via basePtr.
     // For offset > 0, emits a Binary ADD to compute the address then StoreIndirect.
