@@ -318,7 +318,7 @@ public partial class IRGenerator
     /// index is unsigned, the original adjusted for a negative value when it is signed. Emits the
     /// IndexError path otherwise.
     /// </summary>
-    private Val CheckRuntimeIndex(Val idx, int size, string text, Expression? indexExpr)
+    private Val CheckRuntimeIndex(Val idx, int size, string text, Expression? indexExpr, string? arrayKey = null)
     {
         if (size <= 0 || idx is Constant || suppressIndexChecks || SourceIsUncheckedRuntime()) return idx;
 
@@ -363,15 +363,15 @@ public partial class IRGenerator
                 Emit(new Copy(idx, adj));
                 string nonNeg = MakeLabel();
                 Emit(new JumpIfGreaterOrEqual(adj, new Constant(0), nonNeg));
-                Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, adj, new Constant(size)));
+                EmitSized(new AugAssign(PyMCU.IR.BinaryOp.Add, adj, new Constant(size)), arrayKey, size);
                 Emit(new JumpIfLessThan(adj, new Constant(0), tail));
                 Emit(new Label(nonNeg));
-                Emit(new JumpIfGreaterOrEqual(adj, new Constant(size), tail));
+                EmitSized(new JumpIfGreaterOrEqual(adj, new Constant(size), tail), arrayKey, size);
                 result = adj;
             }
             else
             {
-                Emit(new JumpIfGreaterOrEqual(idx, new Constant(size), tail));
+                EmitSized(new JumpIfGreaterOrEqual(idx, new Constant(size), tail), arrayKey, size);
             }
             if (idxName != null) indexCheckCache[(idxName, size)] = result;
             if (exprKey != null) indexCheckCache[("expr:" + exprKey, size)] = result;
@@ -388,15 +388,15 @@ public partial class IRGenerator
             Emit(new Copy(idx, adj));
             string nonNeg = MakeLabel();
             Emit(new JumpIfGreaterOrEqual(adj, new Constant(0), nonNeg));
-            Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, adj, new Constant(size)));
+            EmitSized(new AugAssign(PyMCU.IR.BinaryOp.Add, adj, new Constant(size)), arrayKey, size);
             Emit(new JumpIfLessThan(adj, new Constant(0), fail));
             Emit(new Label(nonNeg));
-            Emit(new JumpIfLessThan(adj, new Constant(size), ok));
+            EmitSized(new JumpIfLessThan(adj, new Constant(size), ok), arrayKey, size);
             result = adj;
         }
         else
         {
-            Emit(new JumpIfLessThan(idx, new Constant(size), ok));
+            EmitSized(new JumpIfLessThan(idx, new Constant(size), ok), arrayKey, size);
         }
         Emit(new Label(fail));
         RecordRuntimeExceptionText("IndexError", text);
@@ -405,6 +405,39 @@ public partial class IRGenerator
         if (idxName != null) indexCheckCache[(idxName, size)] = result;
         if (exprKey != null) indexCheckCache[("expr:" + exprKey, size)] = result;
         return result;
+    }
+
+    // `buf.extend(...)` grows a fixed buffer while compiling (#362), and a function is lowered
+    // before or after the extend depending on where it is called from, so the length known at an
+    // index site can be shorter than the one the program ends with (PulseIn's ring is declared with
+    // one entry and grown to maxlen). The checks that compare with such a length are remembered by
+    // reference together with the array they bound, and PatchGrownIndexChecks gives them the final
+    // length once every function is lowered.
+    private readonly List<(Instruction Instr, string Key, int Size)> sizedIndexChecks = new();
+
+    private void EmitSized(Instruction instr, string? arrayKey, int size)
+    {
+        Emit(instr);
+        if (arrayKey != null) sizedIndexChecks.Add((instr, arrayKey, size));
+    }
+
+    private void PatchGrownIndexChecks(ProgramIR program)
+    {
+        var grown = new Dictionary<Instruction, int>(ReferenceEqualityComparer.Instance);
+        foreach (var (instr, key, size) in sizedIndexChecks)
+            if (arraySizes.TryGetValue(key, out int sz) && LogicalArrayLen(key, sz) is var final && final > size)
+                grown[instr] = final;
+        if (grown.Count == 0) return;
+        foreach (var fn in program.Functions)
+            for (int i = 0; i < fn.Body.Count; i++)
+                if (grown.TryGetValue(fn.Body[i], out int final))
+                    fn.Body[i] = fn.Body[i] switch
+                    {
+                        JumpIfGreaterOrEqual j => j with { Src2 = new Constant(final) },
+                        JumpIfLessThan j => j with { Src2 = new Constant(final) },
+                        AugAssign a => a with { Operand = new Constant(final) },
+                        var other => other,
+                    };
     }
 
     // Text -> label of the failure tail the function being lowered will end with.

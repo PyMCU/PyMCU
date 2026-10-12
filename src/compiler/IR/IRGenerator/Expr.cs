@@ -4488,7 +4488,7 @@ public partial class IRGenerator
                 // the end); see IndexChecks.cs for what lets the check be dropped.
                 if (IndexCheckAppliesTo(qualified))
                     idxVal = CheckRuntimeIndex(idxVal, LogicalArrayLen(qualified, sz),
-                                               IndexErrorText(qualified, store: false), expr.Index);
+                                               IndexErrorText(qualified, store: false), expr.Index, qualified);
 
                 // `DIGITS[digit]` with `digit` known only at run time, on a lookup table
                 // written as a plain list. The elements are constants and nothing writes them,

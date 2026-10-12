@@ -178,4 +178,40 @@ public class RuntimeIndexCheckTests
             () => Body("def f(x: float) -> float:\n    return round(x, -20)\n\nr: float = f(1.5)\n"));
         Assert.Contains("below the supported range", ex.Message);
     }
+
+    // PulseIn's ring is declared with one entry and grown with .extend() by a function lowered after
+    // the reader; the reader's check must bound the length the buffer ends with.
+    private static int Compares(List<Instruction> b, int n) =>
+        b.OfType<JumpIfGreaterOrEqual>().Count(j => j.Src2 is Constant { Value: var v } && v == n)
+        + b.OfType<JumpIfLessThan>().Count(j => j.Src2 is Constant { Value: var v } && v == n);
+
+    private const string RingReader =
+        "from pymcu.types import uint16, uint8\nring: uint16[1] = [0]\nother: uint8[4] = [1, 2, 3, 4]\n\n" +
+        "def get(i: int) -> int:\n    return ring[i]\n\n" +
+        "def get_other(i: int) -> int:\n    return other[i]\n\n";
+
+    [Fact]
+    public void ABufferExtendedAfterItsReaderIsCheckedAgainstTheFinalLength()
+    {
+        var b = Body(RingReader + "def grow():\n    ring.extend(bytes(7))\n\ngrow()\nx: int = get(3) + get_other(1)\n");
+        Assert.Equal(1, Compares(b, 8));
+        Assert.Equal(0, Compares(b, 1));
+    }
+
+    [Fact]
+    public void ExtendOnAnotherBufferLeavesThisOnesCheckAlone()
+    {
+        var b = Body(RingReader + "def grow():\n    other2.extend(bytes(7))\n\n" +
+                     "other2: uint8[1] = [0]\ngrow()\nx: int = get(0) + get_other(1)\n");
+        Assert.Equal(1, Compares(b, 1));
+        Assert.Equal(1, Compares(b, 4));
+    }
+
+    [Fact]
+    public void ExtendInAStringOrACommentChangesNothing()
+    {
+        var b = Body(RingReader + "# ring.extend(bytes(7))\ns: str = \"ring.extend(x)\"\nx: int = get(0) + get_other(1)\n");
+        Assert.Equal(1, Compares(b, 1));
+        Assert.Equal(0, Compares(b, 8));
+    }
 }

@@ -2027,6 +2027,7 @@ public partial class IRGenerator
         if (WidthSeeds == null || !WidthSeeds.Grew)
             Verifier.Check(irProgram, "generate");
 
+        PatchGrownIndexChecks(irProgram);
         VerifyIndexFailTailsDefined(irProgram);
 
         // A measuring aid, not a diagnostic: how many run-time index checks this program carries and how
@@ -2492,7 +2493,7 @@ public partial class IRGenerator
     {
         if (idx is not Constant && arraySizes.TryGetValue(key, out int rtSize))
             return IndexCheckAppliesTo(key) ? CheckRuntimeIndex(idx, LogicalArrayLen(key, rtSize), IndexErrorText(key, store),
-                                     at as Expression) : idx;
+                                     at as Expression, key) : idx;
         if (idx is not Constant c || !arraySizes.TryGetValue(key, out int size)) return idx;
         int len = LogicalArrayLen(key, size);
         int k = c.Value < 0 ? c.Value + len : c.Value;
