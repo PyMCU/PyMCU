@@ -166,16 +166,37 @@ public class RISCVCodeGenTests
     }
 
     [Fact]
-    public void CallWithMoreArgumentsThanRegistersIsRejected()
+    public void ArgumentsBeyondTheSixRegistersGoOnTheStack()
     {
-        // ilp32e only has a0-a5; stack-passed arguments are not implemented.
+        // ilp32e: a0-a5 carry the first six, the rest sit at 0(sp), 4(sp), ... at the call.
         List<Val> args = [
             new Constant(1), new Constant(2), new Constant(3),
-            new Constant(4), new Constant(5), new Constant(6), new Constant(7)];
+            new Constant(4), new Constant(5), new Constant(6), new Constant(7), new Constant(8)];
         var prog = MakeProgram("main", new Call("wide", args, new NoneVal()));
 
-        var ex = Assert.Throws<NotSupportedException>(() => Compile(prog));
-        Assert.Contains("ilp32e", ex.Message);
+        var asm = Compile(prog);
+
+        Assert.Matches(@"(?s)addi\tsp, sp, -8\s+li\tt1, 7\s+sw\tt1, 0\(sp\)\s+li\tt1, 8\s+sw\tt1, 4\(sp\)", asm);
+        Assert.Contains("li\ta5, 6", asm);
+        Assert.Matches(@"(?s)call\twide\s+addi\tsp, sp, 8", asm);
+    }
+
+    [Fact]
+    public void ParametersBeyondTheSixRegistersAreReadFromTheCallersStack()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "wide",
+            Params = ["a", "b", "c", "d", "e", "f", "g", "h"],
+            Body = [new Return(new Variable("h"))],
+        });
+
+        var asm = Compile(prog);
+
+        // The caller's sp is this function's s0: argument 6 is at 0(s0), argument 7 at 4(s0).
+        Assert.Matches(@"lw\tt0, 0\(s0\)\s+sw\tt0, -\d+\(s0\)", asm);
+        Assert.Matches(@"lw\tt0, 4\(s0\)\s+sw\tt0, -\d+\(s0\)", asm);
     }
 
     [Fact]

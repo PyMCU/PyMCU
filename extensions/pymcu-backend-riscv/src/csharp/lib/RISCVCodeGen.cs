@@ -339,17 +339,22 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         Emit("sw", "s0", $"{currentStackAdjustment - 8}(sp)");
         EmitFramePointer();
 
-        // Spill incoming arguments into the slots the body reads them from.
+        // Spill incoming arguments into the slots the body reads them from. The first six
+        // arrive in a0-a5; the rest are at 0(s0), 4(s0), ... because the caller's sp at the call
+        // is this frame's s0.
         for (int i = 0; i < func.Params.Count; i++)
         {
-            if (i >= ArgRegs.Length)
-                throw new NotSupportedException(
-                    $"RISC-V backend: '{func.Name}' takes {func.Params.Count} parameters; " +
-                    $"the ilp32e ABI passes at most {ArgRegs.Length} in registers and " +
-                    "stack-passed arguments are not implemented yet.");
+            if (!stackLayout.TryGetValue(func.Params[i], out int offset)) continue;
 
-            if (stackLayout.TryGetValue(func.Params[i], out int offset))
+            if (i < ArgRegs.Length)
+            {
                 Emit("sw", ArgRegs[i], $"{offset}(s0)");
+            }
+            else
+            {
+                Emit("lw", "t0", $"{(i - ArgRegs.Length) * 4}(s0)");
+                Emit("sw", "t0", $"{offset}(s0)");
+            }
         }
 
         foreach (var instr in func.Body)
@@ -708,8 +713,9 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call arg)
     {
-        LoadCallArguments(arg.Args, arg.FunctionName);
+        int stackBytes = LoadCallArguments(arg.Args, arg.FunctionName);
         Emit("call", arg.FunctionName);
+        ReleaseCallArguments(stackBytes);
         StoreRegInto("a0", arg.Dst);
         // RFC 0009: the callee's union-member tag byte comes back in a1, next to the payload.
         if (arg.TagDst is not null)
@@ -721,27 +727,40 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         // The target address is materialised first: LoadIntoReg only ever clobbers
         // its destination and t2, so it survives the argument setup below.
         LoadIntoReg(arg.FuncAddr, "t0");
-        LoadCallArguments(arg.Args, "an indirect call");
+        int stackBytes = LoadCallArguments(arg.Args, "an indirect call");
         Emit("jalr", "t0");
+        ReleaseCallArguments(stackBytes);
         StoreRegInto("a0", arg.Dst);
     }
 
-    private void LoadCallArguments(List<Val> args, string callee)
+    // Loads the arguments of a call: the first six into a0-a5, the rest in words at 0(sp),
+    // 4(sp), ... of space reserved just below sp. Returns the bytes reserved, which the caller
+    // releases once the call returns.
+    private int LoadCallArguments(List<Val> args, string callee)
     {
-        if (args.Count > ArgRegs.Length)
-            throw new NotSupportedException(
-                $"RISC-V backend: {callee} passes {args.Count} arguments; the ilp32e ABI " +
-                $"passes at most {ArgRegs.Length} in registers and stack-passed arguments " +
-                "are not implemented yet.");
+        paramTypes.TryGetValue(callee, out var types);
+        bool IsFloatParam(int i) => types is not null && i < types.Length && types[i] == DataType.FLOAT;
+
+        int stackBytes = Math.Max(0, args.Count - ArgRegs.Length) * 4;
+        if (stackBytes > 0)
+        {
+            Emit("addi", "sp", "sp", (-stackBytes).ToString());
+            for (int i = ArgRegs.Length; i < args.Count; i++)
+            {
+                // t1: an indirect call keeps its target in t0.
+                if (IsFloatParam(i)) LoadAsFloat(args[i], "t1");
+                else LoadIntoReg(args[i], "t1");
+                Emit("sw", "t1", $"{(i - ArgRegs.Length) * 4}(sp)");
+            }
+        }
 
         // An integer argument for a float parameter is converted by a call that would clobber
         // the argument registers already loaded, so those conversions run first and wait on the
         // stack.
         var converted = new List<int>();
-        if (paramTypes.TryGetValue(callee, out var types))
-            for (int i = 0; i < args.Count && i < types.Length; i++)
-                if (types[i] == DataType.FLOAT && NeedsConversionCall(args[i]))
-                    converted.Add(i);
+        for (int i = 0; i < args.Count && i < ArgRegs.Length; i++)
+            if (IsFloatParam(i) && NeedsConversionCall(args[i]))
+                converted.Add(i);
 
         foreach (int i in converted)
         {
@@ -750,13 +769,11 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             Emit("sw", "a0", "0(sp)");
         }
 
-        for (int i = 0; i < args.Count; i++)
+        for (int i = 0; i < args.Count && i < ArgRegs.Length; i++)
         {
             if (converted.Contains(i)) continue;
-            if (paramTypes.TryGetValue(callee, out var t) && i < t.Length && t[i] == DataType.FLOAT)
-                LoadAsFloat(args[i], ArgRegs[i]);
-            else
-                LoadIntoReg(args[i], ArgRegs[i]);
+            if (IsFloatParam(i)) LoadAsFloat(args[i], ArgRegs[i]);
+            else LoadIntoReg(args[i], ArgRegs[i]);
         }
 
         for (int k = converted.Count - 1; k >= 0; k--)
@@ -764,6 +781,13 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             Emit("lw", ArgRegs[converted[k]], "0(sp)");
             Emit("addi", "sp", "sp", "4");
         }
+
+        return stackBytes;
+    }
+
+    private void ReleaseCallArguments(int stackBytes)
+    {
+        if (stackBytes > 0) Emit("addi", "sp", "sp", stackBytes.ToString());
     }
 
     // What each function's parameters are typed as, read off how its body uses them: the IR
