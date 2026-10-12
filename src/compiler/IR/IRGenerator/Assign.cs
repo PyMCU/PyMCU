@@ -9367,7 +9367,7 @@ public partial class IRGenerator
         // this gate was. ARM (rp2040/rp2350, via pymcu-arm-oraclesweep) implements it the
         // same way AVR does: a plain static array needs no backend-specific runtime.
         if (!string.IsNullOrEmpty(deviceConfig.Arch)
-            && deviceConfig.Arch != "avr" && deviceConfig.Arch != "arm")
+            && deviceConfig.Arch != "avr" && deviceConfig.Arch != "arm" && deviceConfig.Arch != "riscv")
             throw UserError(
                 $"a runtime-sized bytearray(n) allocates from PyMCU's arena, which is " +
                 $"not implemented on this target (target arch: '{deviceConfig.Arch}'). " +

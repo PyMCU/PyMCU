@@ -466,8 +466,8 @@ public class ArenaAllocatorTests
     // Target architecture gate: the arena itself is an ordinary module-level array plus
     // a bump pointer (lib/src/pymcu/arena.py) -- nothing about ITS lowering is
     // AVR-specific, only the gate naming the architecture was. ARM (rp2040/rp2350)
-    // declares arch="arm" (lib/src/pymcu/chips/rp2040.py); any other target (e.g.
-    // riscv) still refuses.
+    // declares arch="arm" (lib/src/pymcu/chips/rp2040.py) and the CH32 parts arch="riscv";
+    // any other target (e.g. pic14) still refuses.
     // ------------------------------------------------------------------
 
     private static ProgramIR GenerateFor(string arch, string body) =>
@@ -491,12 +491,26 @@ public class ArenaAllocatorTests
     }
 
     [Fact]
+    public void RuntimeSizedBytearrayAllocatesFromTheArenaOnRiscv()
+    {
+        var program = GenerateFor("riscv",
+            "n: uint16 = 5\n" +
+            "buf: bytearray = bytearray(n)\n" +
+            "buf[0] = 42\n" +
+            "x: uint8 = buf[0]\n");
+
+        var main = Assert.Single(program.Functions, f => f.Name == "main");
+        Assert.DoesNotContain(main.Body, i => i is ArrayStore st && st.ArrayName == "buf");
+        Assert.Contains(main.Body, i => i is ArrayStore ws && ws.ArrayName == "_arena");
+    }
+
+    [Fact]
     public void RuntimeSizedBytearrayStillRefusedOnAnUnsupportedTarget()
     {
-        var ex = Assert.ThrowsAny<CompilerError>(() => GenerateFor("riscv",
+        var ex = Assert.ThrowsAny<CompilerError>(() => GenerateFor("pic14",
             "n: uint16 = 5\n" +
             "buf: bytearray = bytearray(n)\n"));
         Assert.Contains("not implemented on this target", ex.Message);
-        Assert.Contains("riscv", ex.Message);
+        Assert.Contains("pic14", ex.Message);
     }
 }
