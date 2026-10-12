@@ -110,6 +110,18 @@ UART_FR_BUSY = 3    # transmitter busy
 CLOCKS_BASE = 0x40008000
 
 # ==========================================
+#  WATCHDOG
+# ==========================================
+# A 24-bit down-counter that resets the chip when it reaches zero. It counts the 1 us tick the
+# boot ROM leaves running (the same one the TIMER uses). Writing LOAD reloads the counter, which is
+# how it is fed. Erratum RP2040-E1: the counter drops by TWO per tick, so a load of n lasts n / 2 us.
+WATCHDOG_BASE = 0x40058000
+WATCHDOG_CTRL   : ptr[uint32] = ptr(WATCHDOG_BASE + 0x00)   # TIME[23:0] (ro), ENABLE[30], TRIGGER[31]
+WATCHDOG_LOAD   : ptr[uint32] = ptr(WATCHDOG_BASE + 0x04)   # load value, 24 bits
+WATCHDOG_REASON : ptr[uint32] = ptr(WATCHDOG_BASE + 0x08)   # TIMER[0], FORCE[1]
+WATCHDOG_CTRL_ENABLE = 30
+
+# ==========================================
 #  TIMER (free-running 64-bit microsecond counter)
 # ==========================================
 # A single 1 MHz counter shared by the whole chip. TIMERAWL is the raw low

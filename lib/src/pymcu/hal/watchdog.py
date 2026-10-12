@@ -10,5 +10,7 @@ from pymcu.exceptions import CompileError
 
 if __CHIP__.arch == "avr":
     from pymcu.hal.avr.watchdog import Watchdog
+elif __CHIP__.name == "rp2040":
+    from pymcu.hal.rp2040.watchdog import Watchdog
 else:
     raise CompileError("Watchdog not supported on this architecture")
