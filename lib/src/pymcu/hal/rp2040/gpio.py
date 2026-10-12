@@ -29,6 +29,7 @@ class Pin:
     OUT        = 0
     IN         = 1
     OPEN_DRAIN = 2   # not natively supported; accepted for API compat (no-op in mode())
+    IN_PULLUP  = 3   # an input with the pad's pull-up on (the AVR spelling; pymcu.hal.pulse uses it)
 
     PULL_UP   = 1
     PULL_DOWN = 2
@@ -59,6 +60,8 @@ class Pin:
             SIO_GPIO_OE_SET.value = 1 << pin
         else:
             SIO_GPIO_OE_CLR.value = 1 << pin
+            if mode == 3:
+                pad.value = 0x48        # IE + PUE
 
         if value != -1:
             if value == 0:
@@ -93,6 +96,9 @@ class Pin:
             SIO_GPIO_OE_SET.value = 1 << self._pin
         else:       # IN (OPEN_DRAIN falls here: leaves FUNCSEL intact, floats output)
             SIO_GPIO_OE_CLR.value = 1 << self._pin
+            if m == 3:  # IN_PULLUP
+                pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * self._pin)
+                pad.value = 0x48
 
     @inline
     def pull(self, p: const[uint8]):
