@@ -2328,6 +2328,30 @@ public partial class IRGenerator
         return false;
     }
 
+    /// <summary>
+    /// True when the module being lowered binds <paramref name="name"/> at its top level to a
+    /// sequence (bytes, list, tuple, bytearray). Those live in the sequence tables under the
+    /// module-qualified key, not in the module scope's Globals, so a lookup that asks only
+    /// the scopes cannot tell the owner's name from a same-spelled global of another module.
+    /// </summary>
+    private bool CurrentModuleBindsSequence(string name, string otherPrefix)
+    {
+        if (string.IsNullOrEmpty(currentModulePrefix)) return false;
+        foreach (var m in modules.Keys)
+        {
+            string own = m.Replace('.', '_') + "_";
+            // A method's prefix is the module's plus the class's (`mb_Dev_`).
+            if (own == otherPrefix || !currentModulePrefix.StartsWith(own, StringComparison.Ordinal))
+                continue;
+            // Filed under the module's init function, where its top level runs.
+            foreach (string key in new[] { own + name, own + "__module_init." + name })
+                if (constSequenceBindings.ContainsKey(key) || arraySizes.ContainsKey(key)
+                    || variableAliases.ContainsKey(key))
+                    return true;
+        }
+        return false;
+    }
+
     private bool FrameKeyBinds(string k) =>
         variableTypes.ContainsKey(k) || constantVariables.ContainsKey(k)
         || constantAddressVariables.ContainsKey(k) || strConstantVariables.ContainsKey(k)
@@ -2890,6 +2914,10 @@ public partial class IRGenerator
             if (!mod.Value.Globals.ContainsKey(name) && !mod.Value.MutableGlobals.ContainsKey(name))
                 continue;
             string mangledMod = mod.Key.Replace('.', '_');
+            // A module-level sequence (`_K = b"\x55"`) is in neither scope table, so the
+            // module that owns one saw another module's `_K = const(0x55)` answer for it.
+            if (CurrentModuleBindsSequence(name, mangledMod + "_"))
+                continue;
             string modKey = mangledMod + "_" + name;
             if (globals.TryGetValue(modKey, out var modSym))
             {
