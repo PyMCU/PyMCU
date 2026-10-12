@@ -2910,6 +2910,12 @@ public partial class IRGenerator
                         // it stands for; `for i, p in enumerate(pins)` is the same program as
                         // enumerating the list written at the call.
                         VariableExpr ev2 => ResolveConstSequence(ev2.Name),
+                        // The same for a sequence of numbers a `self` field was handed -- the
+                        // list a constructor stored (`self.header = header`), which `for v in
+                        // self.header` already walks. A field of INSTANCES is not one of these:
+                        // it binds element slots below, so it is asked first and left alone.
+                        MemberAccessExpr em2 when !TryResolveInstanceSequence(em2, out _, out _)
+                            => ResolveConstSequenceExpr(em2),
                         _ => null,
                     };
                     if (seqElems != null)
