@@ -19,7 +19,7 @@
 # it here would put a second opinion between the caller and the wire.
 #
 # There is no clock line, so the bit times ARE the protocol, and how they are made
-# is the chip's business: counted NOPs on an AVR, a PIO program on an RP2040, a DMA
+# is the chip's business: counted NOPs on an AVR, a PIO program on an RP2040 or RP2350 (pymcu.hal.rp.ws2812), a DMA
 # to a timer's compare unit elsewhere. Which of those is used never reaches a
 # caller. What does reach a caller is that interrupts have to be off across a
 # frame, because an interrupt taken mid-byte stretches one high time past its
@@ -50,6 +50,10 @@ if __CHIP__.arch == "avr":
     from pymcu.hal.avr.ws2812 import ws2812_init as _init
     from pymcu.hal.avr.ws2812 import ws2812_write_byte as _write_byte
     from pymcu.hal.avr.ws2812 import ws2812_reset as _reset
+elif __CHIP__.arch == "arm":
+    from pymcu.hal.rp.ws2812 import ws2812_init as _init
+    from pymcu.hal.rp.ws2812 import ws2812_write_byte as _write_byte
+    from pymcu.hal.rp.ws2812 import ws2812_reset as _reset
 
 
 @inline
@@ -57,6 +61,8 @@ def ws2812_init(pin: str):
     """Drive the data pin low and leave it there, ready for a frame."""
     match __CHIP__.arch:
         case "avr":
+            _init(pin)
+        case "arm":
             _init(pin)
         case _:
             raise CompileError(
@@ -72,6 +78,8 @@ def ws2812_write_byte(pin: str, val: uint8):
     match __CHIP__.arch:
         case "avr":
             _write_byte(pin, val)
+        case "arm":
+            _write_byte(val)
         case _:
             raise CompileError(
                 "WS2812 pixels are not implemented on this architecture yet. The "
@@ -86,6 +94,8 @@ def ws2812_reset(pin: str):
     match __CHIP__.arch:
         case "avr":
             _reset(pin)
+        case "arm":
+            _reset()
         case _:
             raise CompileError(
                 "WS2812 pixels are not implemented on this architecture yet. The "
