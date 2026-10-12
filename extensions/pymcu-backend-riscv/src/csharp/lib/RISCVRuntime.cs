@@ -264,6 +264,7 @@ public partial class RiscvCodeGen
 
     private void EmitRuntimeHelpers()
     {
+        needsMul |= softFloatNeedsMul;
         if (!needsMul && !needsFloorDivMod && !needsUDivMod) return;
 
         EmitRaw(".section .text");
