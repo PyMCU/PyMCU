@@ -4176,7 +4176,7 @@ public partial class IRGenerator
                 && SequenceKeyOf(expr.Target) is { } cseqKey
                 && TryMaterialiseConstTableFromValues(cseqKey, constSeqMem.Member, cseqValues)
                     is { } cseqTable)
-                return EmitFlashArrayRead(cseqTable, cseqIdxVal, cseqValues.Count);
+                return EmitFlashArrayRead(cseqTable, CheckRuntimeIndex(cseqIdxVal, cseqValues.Count, "list index out of range", expr.Index), cseqValues.Count);
             if (cseqIdxVal is not Constant cseqIdxConst)
                 throw UserError(
                     $"'{FormatMemberTarget(constSeqMem)}' holds {constSeqElems.Count} compile-time "
@@ -4218,7 +4218,7 @@ public partial class IRGenerator
                          && TryMaterialiseConstTableFromValues(
                                 "param:" + string.Join(",", litValues), "", litValues)
                             is { } litTable)
-                    return EmitFlashArrayRead(litTable, litIdx!, litValues.Count);
+                    return EmitFlashArrayRead(litTable, CheckRuntimeIndex(litIdx!, litValues.Count, "list index out of range", expr.Index), litValues.Count);
                 // Not every element is a compile-time constant (`bytes([register & 0xFF])`
                 // forwarded by name through one or more further parameters, e.g.
                 // `writeto(buffer)` -> `write_bytes(data, ...)`), so there is no flash table
@@ -4298,7 +4298,7 @@ public partial class IRGenerator
                         && TryMaterialiseConstTableFromValues("seq:" + seqWritten, seqWritten,
                                                               seqValues, storeOnly: true)
                             is { } seqTable)
-                        return EmitFlashArrayRead(seqTable, seqIdxVal, seqValues.Count);
+                        return EmitFlashArrayRead(seqTable, CheckRuntimeIndex(seqIdxVal, seqValues.Count, SequenceIndexText(ve.Name), expr.Index), seqValues.Count);
                 }
             }
 
@@ -4411,7 +4411,7 @@ public partial class IRGenerator
                 }
                 if (TryMaterialiseConstTableFromValues("module:" + ve.Name, ve.Name, modValues)
                         is { } modTable)
-                    return EmitFlashArrayRead(modTable, modIdx, modValues.Count);
+                    return EmitFlashArrayRead(modTable, CheckRuntimeIndex(modIdx, modValues.Count, SequenceIndexText(ve.Name), expr.Index), modValues.Count);
             }
 
                         // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
@@ -4483,6 +4483,12 @@ public partial class IRGenerator
                     throw new IndexError(
                         $"array index {cidx.Value} out of range for size {sz}",
                         expr.Line > 0 ? expr.Line : lastLine, expr.Column);
+
+                // A run-time index is checked against the length (and a negative one counts from
+                // the end); see IndexChecks.cs for what lets the check be dropped.
+                if (IndexCheckAppliesTo(qualified))
+                    idxVal = CheckRuntimeIndex(idxVal, LogicalArrayLen(qualified, sz),
+                                               IndexErrorText(qualified, store: false), expr.Index);
 
                 // `DIGITS[digit]` with `digit` known only at run time, on a lookup table
                 // written as a plain list. The elements are constants and nothing writes them,
@@ -4605,7 +4611,8 @@ public partial class IRGenerator
                 // Runtime index on a const[str]: intern string as flash data and
                 // emit ArrayLoadFlash so the loop can iterate byte by byte.
                 string flashName = InternStringAsFlash(strVal);
-                Val idxVal = VisitExpression(expr.Index);
+                Val idxVal = CheckRuntimeIndex(VisitExpression(expr.Index), strVal.Length,
+                                               "string index out of range", expr.Index);
                 Temporary tmp = MakeTemp(DataType.UINT8);
                 Emit(new ArrayLoadFlash(flashName, idxVal, tmp));
                 return tmp;

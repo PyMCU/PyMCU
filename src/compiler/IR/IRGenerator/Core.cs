@@ -238,6 +238,7 @@ public partial class IRGenerator
             foreach (var k in valueTrackingAliases) variableAliases.Remove(k);
             valueTrackingAliases.Clear();
         }
+        NoteInstructionForIndexChecks(inst);
         CheckSlotWrite(inst);
         currentInstructions.Add(inst);
         if (inst is ExnRecordMark { Restore: true } recordMark)
@@ -781,6 +782,7 @@ public partial class IRGenerator
         programBindsExceptionObject = ProgramBindsExceptionObject(mainAst, importedModules.Values);
         (boundHandlersCatchAll, boundHandlerTypes) =
             BoundHandlerTypes(mainAst, importedModules.Values);
+        ComputeIsrReachableFunctions(mainAst, importedModules.Values);
 
         // Desugar `async def` coroutines into ZCA state-machine classes before any
         // scanning, so the rest of the pipeline sees ordinary classes. Imported modules
@@ -2025,6 +2027,13 @@ public partial class IRGenerator
         if (WidthSeeds == null || !WidthSeeds.Grew)
             Verifier.Check(irProgram, "generate");
 
+        VerifyIndexFailTailsDefined(irProgram);
+
+        // A measuring aid, not a diagnostic: how many run-time index checks this program carries and how
+        // many were dropped as proven. Printed only when asked for, so a build's output is unchanged.
+        if (Environment.GetEnvironmentVariable("PYMCU_INDEX_CHECK_STATS") == "1")
+            Console.Error.WriteLine($"[index-check] emitted={indexChecksEmitted} elided={indexChecksElided} reused={indexChecksReused}");
+
         return irProgram;
     }
 
@@ -2479,8 +2488,11 @@ public partial class IRGenerator
     /// the backend as it was: the load read the bytes in front of the array, silently, and
     /// the store failed in the assembler on a negative displacement.
     /// </summary>
-    private Val ConstArrayIndex(string key, Val idx, ASTNode at)
+    private Val ConstArrayIndex(string key, Val idx, ASTNode at, bool store = false)
     {
+        if (idx is not Constant && arraySizes.TryGetValue(key, out int rtSize))
+            return IndexCheckAppliesTo(key) ? CheckRuntimeIndex(idx, LogicalArrayLen(key, rtSize), IndexErrorText(key, store),
+                                     at as Expression) : idx;
         if (idx is not Constant c || !arraySizes.TryGetValue(key, out int size)) return idx;
         int len = LogicalArrayLen(key, size);
         int k = c.Value < 0 ? c.Value + len : c.Value;

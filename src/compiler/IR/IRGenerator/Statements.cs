@@ -794,7 +794,12 @@ public partial class IRGenerator
 
         bool savedSeqTerminated = _seqTerminated;
         _seqTerminated = false;
+        bool savedSuppressIndexChecks = suppressIndexChecks;
+        suppressIndexChecks = isrReachableFunctions.Contains(funcNode);
+        var savedIndexFailTails = sharedIndexFailTails;
+        sharedIndexFailTails = new();
         VisitBlock(funcNode.Body);
+        suppressIndexChecks = savedSuppressIndexChecks;
         _seqTerminated = savedSeqTerminated;
 
         // A function that promises a value must produce one on every path. Falling off the end
@@ -825,6 +830,8 @@ public partial class IRGenerator
         {
             Emit(new Return(new NoneVal(), TagForReturn(null, new NoneVal())));
         }
+        FlushSharedIndexFailures();
+        sharedIndexFailTails = savedIndexFailTails;
 
         // Collect unique GC_REF named locals; inject GcRoot at prologue and GcUnroot before each Return.
         // Only track named Variables (not Temporaries): gc_alloc returns a Temporary that is immediately

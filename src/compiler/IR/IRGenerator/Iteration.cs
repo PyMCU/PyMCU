@@ -4436,6 +4436,7 @@ public partial class IRGenerator
         var strBeforeLoop = new Dictionary<string, string?>(strConstantVariables);
         var loopSnap = TakeBranchState();
         InvalidateConstantsAssignedIn(stmt.Body);
+        string? provenCounter = ProveLoopCounter(stmt, varName, startVal, stopVal, stepVal);
 
         Emit(new Label(startLabel));
         // A negative step counts down, so the loop ends when the variable drops to or below
@@ -4463,6 +4464,7 @@ public partial class IRGenerator
             Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, exitLabel));
 
         VisitStatement(stmt.Body);
+        ReleaseLoopCounter(provenCounter);
 
         Emit(new Label(contLabel));
         Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, loopVar, stepVal));

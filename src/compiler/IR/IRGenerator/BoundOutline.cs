@@ -1431,6 +1431,8 @@ public partial class IRGenerator
         // fault inside the shared body must deliver to the synth's own catch (or to no
         // catch at all), never jump at a label or an exn variable only the caller owns.
         var savedTryCatchStack  = tryCatchStack;
+        var savedIndexFailTails = sharedIndexFailTails;
+        sharedIndexFailTails = new();
         var savedHandlerStack   = handlerCodeStack;
         // The caller's snapshot prefixes are caller scope too: a bare `raise` in the
         // shared body would restore the record of whichever handler happened to be
@@ -1688,6 +1690,7 @@ public partial class IRGenerator
             inlineStack            = savedInlineStack;
             finallyStack           = savedFinallyStack;
             tryCatchStack          = savedTryCatchStack;
+            sharedIndexFailTails   = savedIndexFailTails;
             handlerCodeStack       = savedHandlerStack;
             handlerSnapStack       = savedHandlerSnapStack;
             lastLine               = savedLastLine;
@@ -1705,6 +1708,7 @@ public partial class IRGenerator
         }
         if (currentInstructions.Count == 0 || currentInstructions[^1] is not Return)
             Emit(new Return(new NoneVal()));
+        FlushSharedIndexFailures();
 
         irFunc.Body = new List<Instruction>(currentInstructions);
 
@@ -1752,6 +1756,7 @@ public partial class IRGenerator
         inlineStack            = savedInlineStack;
         finallyStack           = savedFinallyStack;
         tryCatchStack          = savedTryCatchStack;
+        sharedIndexFailTails   = savedIndexFailTails;
         handlerCodeStack       = savedHandlerStack;
         handlerSnapStack       = savedHandlerSnapStack;
         lastLine               = savedLastLine;

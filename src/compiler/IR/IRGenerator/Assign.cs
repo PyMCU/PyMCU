@@ -5524,7 +5524,7 @@ public partial class IRGenerator
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified)
                     || arrayViewBase.ContainsKey(qualified))
                 {
-                    Val idxVal = ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index);
+                    Val idxVal = ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index, store: true);
                     Val srcVal = VisitExpression(stmt.Value);
                     RefuseInstanceElementValue(stmt.Value, $"an element of '{ve.Name}'", srcVal);
                     RemapArrayAccess(qualified, idxVal, out var storeName, out var storeIdx,
@@ -5539,7 +5539,7 @@ public partial class IRGenerator
                     // iteration). This lets inline functions write into a caller's
                     // fixed array via constant-index stores without SRAM indexing.
                     int elemIdx;
-                    if (ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index)
+                    if (ConstArrayIndex(qualified, VisitExpression(indexExpr.Index), indexExpr.Index, store: true)
                         is Constant cc)
                         elemIdx = cc.Value;
                     else
@@ -5559,7 +5559,7 @@ public partial class IRGenerator
         if (indexExpr.Target is MemberAccessExpr memStore
             && ResolveMemberArrayName(memStore) is string flatStore)
         {
-            Val idxVal = ConstArrayIndex(flatStore, VisitExpression(indexExpr.Index), indexExpr.Index);
+            Val idxVal = ConstArrayIndex(flatStore, VisitExpression(indexExpr.Index), indexExpr.Index, store: true);
             Val srcVal = VisitExpression(stmt.Value);
             RefuseInstanceElementValue(stmt.Value, $"an element of '{memStore.Member}'", srcVal);
             RemapArrayAccess(flatStore, idxVal, out var storeName, out var storeIdx,
@@ -7002,6 +7002,16 @@ public partial class IRGenerator
 
     private void VisitVarDecl(VarDecl stmt)
     {
+        if (stmt.VarType is "bytearray" or "bytes")
+        {
+            // Both spellings the array can be filed under; the over-approximation is harmless,
+            // the set only chooses the wording of an IndexError.
+            foreach (var key in new[] { stmt.Name, (string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + ".") + stmt.Name })
+            {
+                byteBufferArrays.Add(key);
+                if (stmt.VarType == "bytes") bytesKindArrays.Add(key);
+            }
+        }
         CheckAnnotationNames(stmt.VarType, stmt);
 
         // RFC 0013 phase 0c ("static by exclusion"): record the binding up
@@ -10855,7 +10865,7 @@ public partial class IRGenerator
 
                 if (arraySizes.ContainsKey(qualified))
                 {
-                    Val idxVal = ConstArrayIndex(qualified, VisitExpression(ie.Index), ie.Index);
+                    Val idxVal = ConstArrayIndex(qualified, VisitExpression(ie.Index), ie.Index, store: true);
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
                     {
                         Emit(new ArrayStore(qualified, idxVal, result, arrayElemTypes[qualified],
@@ -10880,7 +10890,7 @@ public partial class IRGenerator
             if (ie.Target is MemberAccessExpr augMem
                 && ResolveMemberArrayName(augMem) is string flatAug)
             {
-                Val idxVal = ConstArrayIndex(flatAug, VisitExpression(ie.Index), ie.Index);
+                Val idxVal = ConstArrayIndex(flatAug, VisitExpression(ie.Index), ie.Index, store: true);
                 RemapArrayAccess(flatAug, idxVal, out var augName, out var augIdx,
                     out var augSize, out var augDt);
                 Emit(new ArrayStore(augName, augIdx, result, augDt, augSize));

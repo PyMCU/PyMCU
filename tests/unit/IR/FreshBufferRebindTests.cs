@@ -52,8 +52,8 @@ public class FreshBufferRebindTests
             "x = go(3)\n" + "y = go(4)\n");
 
         var go = Body(ir, "go");
-        go.OfType<SignalError>().Should().BeEmpty(
-            because: "the None arm rebinds b to a real buffer, so b[k] cannot be a TypeError");
+        go.OfType<SignalError>().Where(e => e.Code is Constant { Value: 2 }).Should().BeEmpty(
+            because: "the None arm rebinds b to a real buffer, so b[k] cannot be a TypeError (an IndexError for a k past the end is another matter)");
         go.OfType<ArrayLoad>().Should().Contain(l => l.ArrayName.EndsWith(".b"),
             because: "the subscript reads the buffer the arm laid out");
     }
