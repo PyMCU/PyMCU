@@ -207,11 +207,6 @@ status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
 
 [[deviation]]
-symbol = "i2c.I2C.writebyte"
-status = "tracked:#387"
-reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."
-
-[[deviation]]
 symbol = "i2c.I2C.writeto_mem"
 status = "tracked:#387"
 reason = "Cross-backend native HAL API parity is tracked in PyMCU#387."

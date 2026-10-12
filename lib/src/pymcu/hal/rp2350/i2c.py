@@ -119,6 +119,14 @@ class I2C:
         return self._abort_code()
 
     @inline
+    def writebyte(self, addr: uint8, data: uint8) -> uint8:
+        # The AVR HAL's single-byte write, with its answer: 1 when the address and the
+        # byte were acknowledged, 0 otherwise (write_to answers with an I2C_* code).
+        if self.write_to(addr, data) == I2C_OK:
+            return 1
+        return 0
+
+    @inline
     def write_bytes(self, addr: uint8, data: bytearray, start: uint16, n: uint16) -> uint8:
         # Multi-byte write starting at data[start]; STOP is asserted with the
         # final byte. The index is as wide as the count, and a uint8 here is
