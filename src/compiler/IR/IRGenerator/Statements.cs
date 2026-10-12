@@ -1614,7 +1614,12 @@ public partial class IRGenerator
                             + " Give the caller the buffer through a parameter instead, or "
                             + "return just the elements you need.",
                             tup.Elements[k]);
-                    if (ctx.ReturnedBufferSlots?.ContainsKey(k) == true)
+                    // A buffer slot some return answers None for (tupleReturnBufferOptionalSlots)
+                    // takes a literal None on any path: the presence byte says which it was.
+                    bool noneInBufferOptionalSlot = tup.Elements[k] is NoneLiteral
+                        && tupleReturnBufferOptionalSlots.TryGetValue(ctx.CalleeName, out var noneSlots)
+                        && noneSlots.Contains(k);
+                    if (ctx.ReturnedBufferSlots?.ContainsKey(k) == true && !noneInBufferOptionalSlot)
                         throw UserError(
                             $"'{ctx.CalleeName}' returns a value in element {k} here but a "
                             + "buffer on another path -- the caller's unpack target cannot "
@@ -1670,7 +1675,7 @@ public partial class IRGenerator
                             + "(`return inst.<field>, val`), or hand the instance to the "
                             + "caller through a parameter.", tup.Elements[k]);
 
-                    (ctx.ReturnedScalarSlots ??= new()).Add(k);
+                    if (!noneInBufferOptionalSlot) (ctx.ReturnedScalarSlots ??= new()).Add(k);
                     // The result slots carry the annotated element widths when the callee
                     // declared them (see EmitInlineFunctionCall); the element's own width
                     // otherwise, so a uint16 member does not truncate to uint8.
