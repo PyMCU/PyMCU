@@ -235,6 +235,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         foreach (var func in program.Functions)
             CompileFunction(func);
 
+        EmitUnhandledExnRuntime(program);
         EmitRuntimeHelpers();
         EmitDataSections(program);
 
@@ -646,6 +647,8 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
 
         if (arg.CatchLabel is not null)
             Emit("j", arg.CatchLabel);
+        else if (currentFuncName == "main" && !currentIsInterrupt)
+            Emit("j", UnhandledExnLabel);       // nowhere to propagate to: report and park
         else
             EmitEpilogue();
     }
