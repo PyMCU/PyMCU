@@ -175,4 +175,40 @@ public class TupleReturnBufferOptionalTests
         Assert.Contains(copies, c => c.Dst is Variable { Name: var d } && d.EndsWith("scan.rom$ptr")
                                      && c.Src is ArrayBase);
     }
+
+    private const string ModuleLevelSrc =
+        "class Bus:\n" +
+        "    def search(self, l_rom: Optional[bytearray], diff: int) -> Tuple[bytearray, int]:\n" +
+        "        if not l_rom:\n" +
+        "            l_rom = bytearray(8)\n" +
+        "        rom = bytearray(8)\n" +
+        "        rom[0] = l_rom[0] + 5\n" +
+        "        return rom, diff - 1\n" +
+        "\n" +
+        "bus = Bus()\n" +
+        "rom = None\n" +
+        "diff = 3\n" +
+        "rom, diff = bus.search(rom, diff)\n" +
+        "GPIOR0.value = rom[0]\n";
+
+    [Fact]
+    public void AModuleLevelNone_RebindFolded_DoesNotLeaveTheNameNoneForTheNextRead()
+    {
+        // The caller passes None, so `if not l_rom:` folds and no run-time branch reaches the
+        // rebind; the name still answered for the None, and `l_rom[0]` raised TypeError.
+        var main = Optimizer.Optimize(Gen(ModuleLevelSrc)).Functions.Single(f => f.Name == "main").Body;
+        int begin = main.FindIndex(i => i is InlineExpansionMarker { IsEnd: false });
+        int end = main.FindIndex(begin, i => i is InlineExpansionMarker { IsEnd: true });
+        Assert.True(begin >= 0 && end > begin);
+        Assert.DoesNotContain(main.GetRange(begin, end - begin), i => i is SignalError);
+    }
+
+    [Fact]
+    public void AModuleLevelBufferTarget_IsDeclaredOnce()
+    {
+        // `rom` is a scalar (the None) and then an array (the buffer it is bound to): the
+        // program has to declare one of them, or LLVM sees two definitions of @rom.
+        var ir = Gen(ModuleLevelSrc);
+        Assert.DoesNotContain(ir.Globals, g => g is Variable { Name: "rom" });
+    }
 }

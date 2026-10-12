@@ -1890,6 +1890,10 @@ public partial class IRGenerator
 
         foreach (var kvp in mutableGlobals)
         {
+            // A name that ended up holding an array (`rom = None`, then `rom, diff = f(rom)`
+            // binding it to a buffer) is declared as that array: a scalar of the same name beside
+            // it is a second definition of the symbol, which LLVM refuses.
+            if (arraySizes.ContainsKey(kvp.Key)) continue;
             irProgram.Globals.Add(new Variable(kvp.Key, kvp.Value));
         }
 

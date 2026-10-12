@@ -7377,6 +7377,16 @@ public partial class IRGenerator
                     + "make the condition one the compiler can decide.", stmt);
             noneValuedNames.Remove(qualified);
             if (!replayingModuleLevel) variableAliases.Remove(qualified);
+            // A fresh buffer replaces what the name held, an Optional parameter's tag included:
+            // when the `if not l_rom:` that guards this rebind folded (the caller passed None),
+            // no run-time branch got here, and the name kept answering for a None it no longer
+            // is, so the next read raised TypeError.
+            if (optionalTagSlots.ContainsKey(qualified) && !bytearrayParams.Contains(qualified))
+            {
+                optionalTagSlots.Remove(qualified);
+                optionalMembersByName.Remove(qualified);
+                narrowedOptionals.Remove(qualified);
+            }
 
             if (count <= 0)
             {
@@ -11576,7 +11586,8 @@ public partial class IRGenerator
                     // describes it, and when the slot carries a presence byte (a return that
                     // answers None on another path) the byte travels to the target, which is
                     // what `if rom:` and the next call's Optional parameter read.
-                    noneValuedNames.Remove(dstName);
+                    foreach (string noneKey in ScopedNameKeys(stmt.Targets[k]).Append(dstName))
+                        noneValuedNames.Remove(noneKey);
                     if (optionalTagSlots.TryGetValue(srcName, out var bufSrcTag))
                     {
                         string bufDstTag = dstName + "$tag";
