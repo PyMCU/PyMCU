@@ -384,5 +384,11 @@ def _pulse_wait_ticks(ticks: uint16):
         return
     target: uint16 = ticks - 16
     start: uint16 = TCNT1.value
-    while (TCNT1.value - start) < target:
-        pass
+    # The counter is 16 bits and wraps every 32.8 ms. `TCNT1.value - start` on its own is a
+    # signed difference in the language, as in Python, and is negative once the counter has
+    # wrapped past `start`: the wait then ran on until it came round again, so a frame longer
+    # than one wrap stalled at the first pulse that straddled it. Storing the difference in a
+    # uint16 is what brings it back into 0..65535.
+    elapsed: uint16 = 0
+    while elapsed < target:
+        elapsed = TCNT1.value - start
