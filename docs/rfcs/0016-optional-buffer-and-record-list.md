@@ -181,13 +181,16 @@ larger record is refused with a message that says so. A handle read back from th
 `r = h.rom` read through the pointer. Classes with more than one field, and the rule against
 mutating the original after the append (section 3), are not yet implemented.
 
-Order of the rest of Part B. The maintainer approved the general record, so it is not dropped, but
-it comes after the single-field case that adafruit_onewire needs, in its own block of commits:
-first the one-field class with a buffer (shipped, above); then the general record, a class of
-several scalar and buffer fields laid out in one heap object and read field by field through the
-pointer; then the rule against mutating the original after the append, with its message. The
-single-field case is the representation the general one generalises, so nothing in the first
-block is thrown away by the second.
+The general record and the rule against mutating after the append have landed, in that order
+after the single-field case. A class of two or more scalar fields, each set from a constructor
+parameter, is a heap object laid out like the class's SRAM slot (the same offsets Model B uses,
+so an @outline method takes the pointer as `self` exactly as it takes a slot's base); reads,
+writes through the handle and iteration load and store through the pointer, and a method that is
+not @outline is refused by name. Buffers, unions, nested instances and fields the constructor
+does not set inside such a class are still refused. A buffer copied by `append(C(buf))` is
+refused a later `buf[i] = v` in the same function, unless a new buffer is bound to the name
+first; a store written before the append (the scan loop's shape) is unaffected. The record
+ceiling is 253 bytes on AVR, reported with the record's size, and 65527 on ARM.
 
 Four faults found on the way are independent of this RFC and are fixed in their own commits:
 a property read on an instance held in a field (`self._io.value`) used to take the register
