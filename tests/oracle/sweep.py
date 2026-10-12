@@ -300,9 +300,13 @@ def evaluate(probe: Path, chip: str, tmp_dir: Path, pymcu: Path) -> dict:
     if expectation.tracked:
         record["tracked"] = expectation.tracked
 
-    if expectation.frontend is not None and expectation.frontend != "default":
+    # A probe marked `# frontend: default` / `# frontend: py-parser` documents a gap between the
+    # two front ends and is only honest under the one it names (pymcu-avr's test_oracle.py
+    # skips it under the other). `--py-parser` runs the sweep under the Python front end.
+    running = "py-parser" if os.environ.get("PYMCU_PY_PARSER") else "default"
+    if expectation.frontend is not None and expectation.frontend != running:
         record["outcome"] = "no_medido"
-        record["reason"] = f"restricted to the {expectation.frontend} front end; this sweep runs the default front end only"
+        record["reason"] = f"restricted to the {expectation.frontend} front end; this sweep runs the {running} front end"
         return record
 
     chip_name, arch, freq = TARGET_CHIP_INFO[chip]
@@ -364,9 +368,13 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--only", default=None, help="substring filter on probe filename")
+    ap.add_argument("--py-parser", action="store_true",
+                    help="build with the Python front end (PYMCU_PY_PARSER=1) instead of the C# one")
     ap.add_argument("--pymcu", default="/private/tmp/claude-501/ch32/.venv/bin/pymcu")
     args = ap.parse_args()
 
+    if args.py_parser:
+        os.environ["PYMCU_PY_PARSER"] = "1"
     pymcu = Path(args.pymcu)
     assert pymcu.is_file(), f"pymcu binary not found: {pymcu}"
     assert RUNNER_DLL.is_file(), f"runner not built: {RUNNER_DLL}"
