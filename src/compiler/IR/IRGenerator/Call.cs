@@ -559,10 +559,22 @@ public partial class IRGenerator
                         // address and the callee wrote its state through a null pointer, with no
                         // diagnostic. Fall through to the force-inline path, which expands the
                         // body against the flattened fields.
-                        string outlinedInst = objVal is Variable ivName ? ivName.Name : "";
+                        string outlinedInst = objVal is Variable ivName ? ivName.Name
+                            : objVal is Temporary ivTmp ? ivTmp.Name : "";
+                        bool recordReceiver = recordHandles.Contains(outlinedInst);
+                        // A record read out of a list has no flattened fields to expand a method
+                        // against: only a slot method, which takes the record's pointer as `self`,
+                        // can run on it. Expanding any other would read fields nothing wrote.
+                        if (recordReceiver && !slotMethods.Contains(callee))
+                            throw UserError(
+                                $"'{memC.Member}' is called on an instance read out of a growable list, "
+                                + "which is a record in the heap: only a method declared @outline can "
+                                + "take its pointer as self. Mark the method @outline, or copy the "
+                                + "fields you need into locals.", expr);
                         bool slotAbiUnavailable = slotMethods.Contains(callee)
                             && !slotInstances.ContainsKey(outlinedInst)
-                            && !factoryHandleInstances.Contains(outlinedInst);
+                            && !factoryHandleInstances.Contains(outlinedInst)
+                            && !recordReceiver;
                         if (slotAbiUnavailable && !inlineFunctions.ContainsKey(callee)
                             && (instanceMethodDefs.TryGetValue(callee, out var slotImpl)
                                 || methodAstByName.TryGetValue(callee, out slotImpl)))
@@ -583,6 +595,11 @@ public partial class IRGenerator
                                 // Model B (SRAM slot): pass the slot base address as `self`;
                                 // the body reads fields via BytearrayLoad at offsets.
                                 oArgs.Add(new ArrayBase(slotName));
+                            }
+                            else if (slotMethods.Contains(callee) && recordReceiver)
+                            {
+                                // A record in the heap: its pointer is `self`.
+                                oArgs.Add(new Variable(RecordPointerVar(objVal, ResolveInstanceClassForRecord(instName)), GcPtrWidth()));
                             }
                             else
                             {
@@ -14533,6 +14550,115 @@ public partial class IRGenerator
         return rec;
     }
 
+    /// <summary>
+    /// `C(a, b, ...)` where C is a class of two or more scalar fields, each set from a
+    /// constructor parameter, and the call passes exactly those arguments positionally. Such an
+    /// instance can live in a growable list as a heap record laid out like the class's SRAM slot
+    /// (RFC 0016, the general record); anything else keeps the refusal.
+    /// </summary>
+    private bool TryGeneralRecordCtor(Expression valExpr, out string cls, out int stride,
+        out List<(string Field, int Off, DataType Ty, Expression Arg)> fields)
+    {
+        cls = ""; stride = 0; fields = new();
+        if (valExpr is not CallExpr ctor || ClassNameOf(ctor.Callee) is not { } name
+            || QualifiedClassKey(name) is not { } clsQ
+            || !classFieldLayout.TryGetValue(clsQ, out var layout) || layout.Count < 2
+            || !functionParams.TryGetValue(clsQ + "___init__", out var init)
+            || ctor.Args.Any(a => a is KeywordArgExpr))
+            return false;
+        var found = new List<(string, int, DataType, Expression)>();
+        int off = 0;
+        foreach (var (field, type, srcParam) in layout)
+        {
+            if (string.IsNullOrEmpty(srcParam) || IsUnionField(clsQ, field, out _)
+                || type is "bytearray" or "bytes" or "str" || classFieldLayout.ContainsKey(type))
+                return false;
+            int p = init.IndexOf(srcParam);
+            if (p < 1 || p - 1 >= ctor.Args.Count) return false;
+            DataType dt = SlotFieldPayloadType(clsQ, field, type);
+            found.Add((field, off, dt, ctor.Args[p - 1]));
+            off += dt.SizeOf();
+        }
+        int ceiling = deviceConfig?.Arch == "arm" ? 65535 - 8 : 253;
+        if (off > ceiling)
+            throw UserError(
+                $"the record of '{ShortClassNameOf(clsQ)}' is {off} bytes; the heap holds at most "
+                + $"{ceiling} per object on this target. Split the class, or keep the data in "
+                + "arrays.", valExpr);
+        cls = clsQ; stride = off; fields = found;
+        return true;
+    }
+
+    /// <summary>
+    /// A heap object holding one instance of <paramref name="cls"/>, answered as its pointer. The
+    /// values are evaluated first (they may allocate), then the record is allocated, a failed
+    /// allocation raises MemoryError, and each field is stored at its slot offset.
+    /// </summary>
+    private Val MaterializeGeneralRecord(int stride,
+        List<(string Field, int Off, DataType Ty, Expression Arg)> fields)
+    {
+        var values = fields.Select(f => VisitExpression(f.Arg)).ToList();
+        DataType ptrWidth = GcPtrWidth();
+        Temporary rec = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(new Constant(stride), rec, false));
+        Val recChk = rec with { Type = ptrWidth };
+        Temporary ok = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.NotEqual, recChk, new Constant(0), ok));
+        string okLabel = MakeLabel();
+        Emit(new JumpIfNotZero(ok, okLabel));
+        EmitRuntimeRaise("MemoryError", "list append out of memory");
+        Emit(new Label(okLabel));
+        string ptrName = "__record" + (tempCounter++);
+        variableTypes[ptrName] = GcPtrWidth();
+        RegisterPointerBuffer(ptrName, stride);
+        Emit(new Copy(recChk, new Variable(ptrName, ptrWidth)));
+        for (int i = 0; i < fields.Count; ++i)
+            EmitSlotFieldStore(ptrName, true, fields[i].Off, fields[i].Ty, values[i], 0);
+        return rec;
+    }
+
+    /// <summary>
+    /// The name of a pointer variable holding the record <paramref name="handle"/> points at. A
+    /// named handle is its own pointer; a temporary the element read filled is copied to a
+    /// variable first, because the backends look a pointer up by variable name and a temporary
+    /// of the same spelling is not that variable.
+    /// </summary>
+    private string RecordPointerVar(Val handle, string cls)
+    {
+        int stride = generalRecordStride[cls];
+        DataType w = GcPtrWidth();
+        // A receiver the dispatch re-wrapped as a Variable of the temporary's own name is still
+        // the temporary the element read filled.
+        if (handle is Variable sv && Temporary.IsScratchName(sv.Name))
+            handle = new Temporary(sv.Name, w);
+        if (handle is Variable hv)
+        {
+            RegisterPointerBuffer(hv.Name, stride);
+            return hv.Name;
+        }
+        string hn = handle is Temporary ht ? ht.Name : "__rec";
+        string name = hn + "__rp";
+        variableTypes[name] = w;
+        RegisterPointerBuffer(name, stride);
+        Emit(new Copy(handle is Temporary t2 ? t2 with { Type = w } : handle, new Variable(name, w)));
+        return name;
+    }
+
+    /// <summary>Marks <paramref name="name"/> as holding an element read from a list of instances.</summary>
+    private string ResolveInstanceClassForRecord(string name) => instanceClasses[name]!;
+
+    private void TagListElement(string name, string cls)
+    {
+        instanceClasses[name] = cls;
+        if (classFieldLayout.TryGetValue(cls, out var lay) && lay.Count == 1)
+            factoryHandleInstances.Add(name);
+        else if (generalRecordStride.ContainsKey(cls))
+        {
+            recordHandles.Add(name);
+            if (!variableTypes.ContainsKey(name)) variableTypes[name] = GcPtrWidth();
+        }
+    }
+
     // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).
     private Val EmitListAppend(Variable listVar, Expression valExpr)
     {
@@ -14550,7 +14676,11 @@ public partial class IRGenerator
         // a named instance or instance field, an element read off an instance array, and
         // a call whose declared return is a class.
         bool bufferRecord = TryBufferRecordCtor(valExpr, out string recordCls, out string recordSrcKey, out int recordSize);
-        if (!bufferRecord && InstanceClassOfValueExpr(valExpr) is { } appendInstCls)
+        string generalCls = ""; int generalStride = 0;
+        var generalFields = new List<(string Field, int Off, DataType Ty, Expression Arg)>();
+        bool generalRecord = !bufferRecord
+            && TryGeneralRecordCtor(valExpr, out generalCls, out generalStride, out generalFields);
+        if (!bufferRecord && !generalRecord && InstanceClassOfValueExpr(valExpr) is { } appendInstCls)
             throw UserError(
                 $"'.append()' cannot take an instance of '{ShortClassNameOf(appendInstCls)}': "
                 + "PyMCU instances are flattened to compile-time storage, so a growable list "
@@ -14567,7 +14697,7 @@ public partial class IRGenerator
         // it by the grow's collection.
         if (elemDt == DataType.UNKNOWN)
         {
-            elemDt = bufferRecord ? DataType.GC_REF : InferListElemType(valExpr);
+            elemDt = bufferRecord || generalRecord ? DataType.GC_REF : InferListElemType(valExpr);
             if (elemDt is DataType.UNKNOWN or DataType.VOID)
                 throw UserError(
                     $"cannot infer the element type of '{listVar.Name}' from this append; " +
@@ -14584,6 +14714,11 @@ public partial class IRGenerator
                 listVarElemClass[listVar.Name] = recordCls;
                 ptrRecordClassSize[recordCls] = recordSize;
             }
+            else if (generalRecord)
+            {
+                listVarElemClass[listVar.Name] = generalCls;
+                generalRecordStride[generalCls] = generalStride;
+            }
             else if (elemDt == DataType.GC_REF && valExpr is VariableExpr valVar
                 && listVarElemTypes.TryGetValue(ResolveNameKey(valVar.Name), out var argElem)
                 && argElem != DataType.UNKNOWN)
@@ -14594,7 +14729,7 @@ public partial class IRGenerator
             // read of an element can re-tag it (the read site, Expr.cs, is the consumer).
             // Stored module-qualified: every table the read side re-tags against
             // (instanceClasses, classFieldLayout) is keyed that way.
-            if (!bufferRecord && valExpr is CallExpr appendCtor && ClassNameOf(appendCtor.Callee) is { } appendCls
+            if (!bufferRecord && !generalRecord && valExpr is CallExpr appendCtor && ClassNameOf(appendCtor.Callee) is { } appendCls
                 && QualifiedClassKey(appendCls) is { } appendClsQ
                 && classFieldLayout.TryGetValue(appendClsQ, out var appendLayout)
                 && appendLayout.Count == 1)
@@ -14771,6 +14906,14 @@ public partial class IRGenerator
                     && litDecl != DataType.UNKNOWN ? litDecl : null, valExpr);
             listInnerElemTypes[listVar.Name] = listVarElemTypes[litVar.Name];
             elemVal = litVar;
+        }
+        else if (generalRecord)
+        {
+            if (listVarElemClass.TryGetValue(listVar.Name, out var heldGenCls) && heldGenCls != generalCls)
+                throw UserError(
+                    $"'{listVar.Name}' holds records of '{ShortClassNameOf(heldGenCls)}'; this append adds "
+                    + $"one of '{ShortClassNameOf(generalCls)}'. A list of records has one class.", valExpr);
+            elemVal = MaterializeGeneralRecord(generalStride, generalFields);
         }
         else if (bufferRecord)
         {

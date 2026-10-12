@@ -2737,6 +2737,10 @@ public partial class IRGenerator
             instanceClasses[listHandleTgt.Name] = listHandleCls;
             factoryHandleInstances.Add(listHandleTgt.Name);
         }
+        else if (target is Variable recordTgt && value is Temporary recordSrc
+            && recordHandles.Contains(recordSrc.Name)
+            && instanceClasses.TryGetValue(recordSrc.Name, out var recordHandleCls) && recordHandleCls != null)
+            TagListElement(recordTgt.Name, recordHandleCls);
         if (target is Variable instTgt && instAnchor != null)
         {
             variableAliases[instTgt.Name] = instAnchor;
@@ -3409,6 +3413,19 @@ public partial class IRGenerator
         // Direct field write on a slot instance outside a method (`p.x = v`): store into the
         // instance slot, mirroring the direct read in VisitMemberAccess. Otherwise it wrote a
         // flattened `p_x` variable disjoint from the slot the methods read.
+        if (memExpr2.Object is VariableExpr recordInst)
+        {
+            string recordKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + recordInst.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + recordInst.Name : recordInst.Name);
+            foreach (string rk in new[] { recordKey, recordInst.Name })
+                if (recordHandles.Contains(rk) && instanceClasses.TryGetValue(rk, out var recordClsW)
+                    && TryGetSlotFieldLayout(recordClsW, memExpr2.Member, out int recordOffW, out var recordTyW, out _))
+                {
+                    EmitSlotFieldStore(rk, true, recordOffW, recordTyW, value, 0);
+                    return;
+                }
+        }
         if (memExpr2.Object is VariableExpr slotInst)
         {
             // Resolve the instance like the read side does: qualify with the inline prefix /

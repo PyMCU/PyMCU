@@ -3873,11 +3873,11 @@ public partial class IRGenerator
                     // handle, so `d.rom[k]` reads through the pointer the way `found[i].rom[k]` does.
                     bool recordLoop = elemDt == DataType.GC_REF
                         && listVarElemClass.TryGetValue(listQ, out var recordLoopCls)
-                        && ptrRecordClassSize.ContainsKey(recordLoopCls);
+                        && (ptrRecordClassSize.ContainsKey(recordLoopCls)
+                            || generalRecordStride.ContainsKey(recordLoopCls));
                     if (recordLoop)
                     {
-                        instanceClasses[elemVarName] = listVarElemClass[listQ];
-                        factoryHandleInstances.Add(elemVarName);
+                        TagListElement(elemVarName, listVarElemClass[listQ]);
                     }
 
                     string loopStart = MakeLabel();
@@ -3917,6 +3917,7 @@ public partial class IRGenerator
                     {
                         instanceClasses.Remove(elemVarName);
                         factoryHandleInstances.Remove(elemVarName);
+                        recordHandles.Remove(elemVarName);
                     }
                     JoinLoopState(listLoopSnap, TakeBranchState(), listStrBefore);
                     return;

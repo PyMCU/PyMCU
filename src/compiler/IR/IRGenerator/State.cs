@@ -1697,6 +1697,20 @@ public partial class IRGenerator
     // N-byte buffer. Keyed by the module-qualified class name; the value is N.
     private readonly Dictionary<string, int> ptrRecordClassSize = new();
 
+    // A class of several scalar fields appended to a growable list (RFC 0016, the general record):
+    // each element is a heap object laid out like the class's SRAM slot, and a handle read back
+    // from the list is its base pointer. Keyed by the module-qualified class name; the value is
+    // the record's size in bytes. recordHandles are the names (temps, loop variables, bound
+    // names) that hold such a pointer.
+    private readonly Dictionary<string, int> generalRecordStride = new();
+    private readonly HashSet<string> recordHandles = new();
+
+    // The array keys whose bytes an `xs.append(C(buf))` copied into a heap record. A store into
+    // one of them afterwards would, in CPython, change the list's element too (the list holds
+    // the same object); here the element is a copy, so the store is refused. A fresh buffer
+    // bound to the name (`buf = bytearray(8)`, or an unpack that rebinds it) clears the entry.
+    private readonly Dictionary<string, int> bufferCopiedIntoList = new();
+
     // For a list[list[T]] variable: qualified_name → the INNER list's element type.
     // `bins[b]` yields a Temporary whose own element type is T -- the entry lets the
     // second subscript (`bins[b][0]`), a `for kb in bins` loop variable, and nested

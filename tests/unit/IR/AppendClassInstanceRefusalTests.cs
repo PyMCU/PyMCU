@@ -44,9 +44,12 @@ public class AppendClassInstanceRefusalTests
     }
 
     [Fact]
-    public void AppendingAFreshMultiFieldInstance_IsRefused()
+    public void AppendingAFreshMultiFieldInstance_BecomesAHeapRecord()
     {
-        var ex = Assert.Throws<CompilerError>(() => Gen(
+        // Refused until RFC 0016's general record: a class of several scalar fields built in the
+        // call is copied into a heap object whose pointer the list keeps, so there is nothing left
+        // to repeat at every index. (A named instance is still refused, below.)
+        var ir = Gen(
             "from pymcu.types import uint8\n" +
             "class Pair:\n" +
             "    def __init__(self, n: uint8, m: uint8) -> None:\n" +
@@ -54,8 +57,8 @@ public class AppendClassInstanceRefusalTests
             "        self._m = m\n" +
             "xs = []\n" +
             "xs.append(Pair(0, 10))\n" +
-            "xs.append(Pair(1, 11))\n"));
-        Assert.Contains("'.append()' cannot take an instance of 'Pair'", ex.Message);
+            "xs.append(Pair(1, 11))\n");
+        Assert.NotEmpty(ir.Functions);
     }
 
     [Fact]

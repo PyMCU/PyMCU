@@ -3831,12 +3831,7 @@ public partial class IRGenerator
                 // propagation recorded for the list, carried onto the loaded element --
                 // mirrors the named-variable list-read site (`devices[i]`) above.
                 if (listVarElemClass.TryGetValue(retVarName, out var retListCls))
-                {
-                    instanceClasses[listResult.Name] = retListCls;
-                    if (classFieldLayout.TryGetValue(retListCls, out var retListLay)
-                        && retListLay.Count == 1)
-                        factoryHandleInstances.Add(listResult.Name);
-                }
+                    TagListElement(listResult.Name, retListCls);
                 return listResult;
             }
 
@@ -4517,12 +4512,7 @@ public partial class IRGenerator
                     // .rom`) and a method call on it both dispatch on a class that is not
                     // there and the element reads as a bare, untagged number instead.
                     if (listVarElemClass.TryGetValue(listQ, out var listElemCls))
-                    {
-                        instanceClasses[result.Name] = listElemCls;
-                        if (classFieldLayout.TryGetValue(listElemCls, out var listElemLay)
-                            && listElemLay.Count == 1)
-                            factoryHandleInstances.Add(result.Name);
-                    }
+                        TagListElement(result.Name, listElemCls);
                     return result;
                 }
             }
@@ -7383,6 +7373,17 @@ public partial class IRGenerator
 
         var objVal = VisitExpression(expr.Object);
         var baseName = objVal is Variable vv ? vv.Name : (objVal is Temporary tt ? tt.Name : "");
+
+        // A record read out of a list of instances (RFC 0016, the general record): the handle is
+        // the base pointer of a heap object laid out like the class's slot, so the field is
+        // loaded through it.
+        if (baseName != null && recordHandles.Contains(baseName)
+            && instanceClasses.TryGetValue(baseName, out var recordClsR)
+            && TryGetSlotFieldLayout(recordClsR, expr.Member, out int recordOffR, out DataType recordTyR, out _))
+            return TagSlotFieldClass(
+                EmitSlotFieldLoad(RecordPointerVar(objVal, recordClsR), true, recordOffR, recordTyR, 0),
+                recordClsR, expr.Member);
+
 
         // (see NamesABoxedField, used by the guard above)
 
