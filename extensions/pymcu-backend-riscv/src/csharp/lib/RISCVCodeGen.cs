@@ -687,7 +687,10 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     // teardown is shared. main has nowhere to return to and parks instead.
     private void CompileSignalError(SignalError arg)
     {
-        LoadIntoReg(arg.Code, ErrorReg);
+        // Code 0 is the frontend's "propagate what is pending" (a handler that matched nothing,
+        // a bare raise): the error register already holds the code and must stay as it is.
+        if (arg.Code is not Constant { Value: 0 })
+            LoadIntoReg(arg.Code, ErrorReg);
 
         if (arg.CatchLabel is not null)
             Emit("j", arg.CatchLabel);

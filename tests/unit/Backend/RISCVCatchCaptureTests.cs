@@ -66,4 +66,23 @@ public class RISCVCatchCaptureTests
 
         Assert.DoesNotContain("li\ts1, 0", asm);
     }
+
+    [Fact]
+    public void ASignalOfCodeZeroKeepsTheCodeThatIsPending()
+    {
+        var asm = Compile(Fn("main", new SignalError(new Constant(0), "L_outer"), new Label("L_outer"),
+            new Return(new NoneVal())));
+
+        Assert.DoesNotContain("li\ts1, 0", asm);
+        Assert.Contains("j\tL_outer", asm);
+    }
+
+    [Fact]
+    public void ASignalOfARealCodeLoadsTheErrorRegister()
+    {
+        var asm = Compile(Fn("main", new SignalError(new Constant(3), "L_outer"), new Label("L_outer"),
+            new Return(new NoneVal())));
+
+        Assert.Contains("li\ts1, 3", asm);
+    }
 }
