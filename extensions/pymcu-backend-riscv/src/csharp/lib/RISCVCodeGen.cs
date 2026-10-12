@@ -102,6 +102,17 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         return false;
     }
 
+    // Whole-word values compare as signed by default, which is right for every narrow type
+    // (they are zero- or sign-extended into the register) but wrong for a uint32 or a pointer
+    // with the top bit set: 0x80000000 would be less than 1.
+    private static bool IsUnsignedCompare(Val a, Val b)
+    {
+        static bool Wide(Val v) => TypeOf(v) is DataType.UINT32 or DataType.FUNCREF or DataType.GC_REF;
+        return (Wide(a) || Wide(b)) && !IsSignedType(TypeOf(a)) && !IsSignedType(TypeOf(b));
+    }
+
+    private static string Slt(Binary arg) => IsUnsignedCompare(arg.Src1, arg.Src2) ? "sltu" : "slt";
+
     // Load/store mnemonics for an access of the given element width. Narrow
     // signed types sign-extend (lb/lh) so a negative int8 keeps its value in a
     // 32-bit register; unsigned ones zero-extend (lbu/lhu). Stores only care
@@ -169,6 +180,19 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         }
     }
 
+    // Leaves reg holding the value its type can represent, sign- or zero-extended to 32 bits
+    // the way lb/lbu/lh/lhu would have loaded it.
+    private void EmitWrapToType(string reg, DataType type)
+    {
+        switch (type)
+        {
+            case DataType.UINT8: Emit("andi", reg, reg, "255"); break;
+            case DataType.INT8: Emit("slli", reg, reg, "24"); Emit("srai", reg, reg, "24"); break;
+            case DataType.UINT16: Emit("slli", reg, reg, "16"); Emit("srli", reg, reg, "16"); break;
+            case DataType.INT16: Emit("slli", reg, reg, "16"); Emit("srai", reg, reg, "16"); break;
+        }
+    }
+
     private void StoreRegInto(string reg, Val val)
     {
         if (val is Constant or NoneVal) return;
@@ -186,6 +210,11 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         if (string.IsNullOrEmpty(name))
             throw new NotSupportedException(
                 $"RISC-V backend: cannot store into operand of type {val.GetType().Name}.");
+
+        // Registers and frame slots are whole words, so a result has to be wrapped to the width
+        // its destination declares before it is stored; a later lw would otherwise hand back
+        // the bits above it (255 + 1 in a uint8 must read 0, not 256).
+        EmitWrapToType(reg, TypeOf(val));
 
         if (stackLayout.TryGetValue(name, out int offset))
             Emit("sw", reg, $"{offset}(s0)");
@@ -445,10 +474,10 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfNotZero arg: LoadIntoReg(arg.Condition, "t0"); Emit("bnez", "t0", arg.Target); break;
             case JumpIfEqual arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit("beq", "t0", "t1", arg.Target); break;
             case JumpIfNotEqual arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit("bne", "t0", "t1", arg.Target); break;
-            case JumpIfLessThan arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit("blt", "t0", "t1", arg.Target); break;
-            case JumpIfLessOrEqual arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit("ble", "t0", "t1", arg.Target); break;
-            case JumpIfGreaterThan arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit("bgt", "t0", "t1", arg.Target); break;
-            case JumpIfGreaterOrEqual arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit("bge", "t0", "t1", arg.Target); break;
+            case JumpIfLessThan arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit(IsUnsignedCompare(arg.Src1, arg.Src2) ? "bltu" : "blt", "t0", "t1", arg.Target); break;
+            case JumpIfLessOrEqual arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit(IsUnsignedCompare(arg.Src1, arg.Src2) ? "bleu" : "ble", "t0", "t1", arg.Target); break;
+            case JumpIfGreaterThan arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit(IsUnsignedCompare(arg.Src1, arg.Src2) ? "bgtu" : "bgt", "t0", "t1", arg.Target); break;
+            case JumpIfGreaterOrEqual arg: LoadIntoReg(arg.Src1, "t0"); LoadIntoReg(arg.Src2, "t1"); Emit(IsUnsignedCompare(arg.Src1, arg.Src2) ? "bgeu" : "bge", "t0", "t1", arg.Target); break;
             case Label arg: EmitLabel(arg.Name); break;
             case Call arg: CompileCall(arg); break;
             case IndirectCall arg: CompileIndirectCall(arg); break;
@@ -726,7 +755,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
                 case PyMCU.IR.BinaryOp.BitAnd: Emit("andi", "t0", "t0", val.ToString()); usedImmediate = true; break;
                 case PyMCU.IR.BinaryOp.BitOr: Emit("ori", "t0", "t0", val.ToString()); usedImmediate = true; break;
                 case PyMCU.IR.BinaryOp.BitXor: Emit("xori", "t0", "t0", val.ToString()); usedImmediate = true; break;
-                case PyMCU.IR.BinaryOp.LessThan: Emit("slti", "t0", "t0", val.ToString()); usedImmediate = true; break;
+                case PyMCU.IR.BinaryOp.LessThan: Emit(Slt(arg) == "sltu" ? "sltiu" : "slti", "t0", "t0", val.ToString()); usedImmediate = true; break;
             }
         }
 
@@ -764,12 +793,16 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
                     break;
                 case PyMCU.IR.BinaryOp.Equal: Emit("xor", "t0", "t0", "t1"); Emit("seqz", "t0", "t0"); break;
                 case PyMCU.IR.BinaryOp.NotEqual: Emit("xor", "t0", "t0", "t1"); Emit("snez", "t0", "t0"); break;
-                case PyMCU.IR.BinaryOp.LessThan: Emit("slt", "t0", "t0", "t1"); break;
-                case PyMCU.IR.BinaryOp.GreaterEqual: Emit("slt", "t0", "t0", "t1"); Emit("seqz", "t0", "t0"); break;
-                case PyMCU.IR.BinaryOp.GreaterThan: Emit("slt", "t0", "t1", "t0"); break;
-                case PyMCU.IR.BinaryOp.LessEqual: Emit("slt", "t0", "t1", "t0"); Emit("seqz", "t0", "t0"); break;
+                case PyMCU.IR.BinaryOp.LessThan: Emit(Slt(arg), "t0", "t0", "t1"); break;
+                case PyMCU.IR.BinaryOp.GreaterEqual: Emit(Slt(arg), "t0", "t0", "t1"); Emit("seqz", "t0", "t0"); break;
+                case PyMCU.IR.BinaryOp.GreaterThan: Emit(Slt(arg), "t0", "t1", "t0"); break;
+                case PyMCU.IR.BinaryOp.LessEqual: Emit(Slt(arg), "t0", "t1", "t0"); Emit("seqz", "t0", "t0"); break;
                 case PyMCU.IR.BinaryOp.LShift: Emit("sll", "t0", "t0", "t1"); break;
-                case PyMCU.IR.BinaryOp.RShift: Emit("srl", "t0", "t0", "t1"); break;
+                // Python's >> is arithmetic on a negative operand; the value sits in the register
+                // sign-extended, so sra keeps it negative where srl would shift zeros in.
+                case PyMCU.IR.BinaryOp.RShift:
+                    Emit(IsSignedType(TypeOf(arg.Src1)) ? "sra" : "srl", "t0", "t0", "t1");
+                    break;
             }
         }
 
