@@ -260,6 +260,16 @@ public partial class IRGenerator
         // lowered as a run-time jump over a constant and BOTH sides compiled. A rebind
         // in the dead arm then left a binding the join could only veto, and the
         // sequence the live arm established was dropped along with it.
+        if (TryConstStrTruthiness(cond, out bool strCondTruthy))
+        {
+            if (strCondTruthy)
+            {
+                if (jumpIfTrue) Emit(new Jump(targetLabel));
+                return 2;
+            }
+            if (!jumpIfTrue) Emit(new Jump(targetLabel));
+            return -1;
+        }
         if (TryConstIntTruthiness(cond, out bool condTruthy))
         {
             if (condTruthy)
@@ -819,6 +829,12 @@ public partial class IRGenerator
     // is constant-false by accident is worse to debug than a compile error.
     private Expression LowerInstanceTruthiness(Expression cond)
     {
+        // The truth of a heap list is its length. The name holds the address of the list, which
+        // is never zero, so testing the name answered true for an empty list.
+        if (LowerHeapListTruth(cond) is { } listTruth) return listTruth;
+        if (cond is UnaryExpr { Op: AstUnOp.Not } notList && LowerHeapListTruth(notList.Operand) is { } notListTruth)
+            return new UnaryExpr(AstUnOp.Not, notListTruth) { Line = cond.Line, Column = cond.Column, Length = cond.Length };
+
         // RFC 0008: an open romfs handle is truthy until close() -- both are
         // compile-time facts, so the condition is a literal.
         if (ResolveRomfsHandleExpr(cond) is { } romTruth)
@@ -842,6 +858,24 @@ public partial class IRGenerator
         throw UserError(
             $"'{ve.Name}' is an instance of '{shown}' with no __bool__ or __len__, so it has no " +
             $"truth value. Test a field or a method result instead (e.g. `if {ve.Name}.<field>:`).", ve);
+    }
+
+    /// <summary>
+    /// `len(x) != 0` for a heap list named by <paramref name="e"/> (a variable or a field), else
+    /// null. The length is read by the same lowering `len(x)` has, so it is right on every target.
+    /// </summary>
+    private Expression? LowerHeapListTruth(Expression e)
+    {
+        bool isHeapList = e switch
+        {
+            VariableExpr v => ResolveListVarQualified(v.Name) is { Length: > 0 } k && listVarElemTypes.ContainsKey(k),
+            MemberAccessExpr { Object: VariableExpr o } m => listVarElemTypes.ContainsKey(ResolveNameKey(o.Name) + "_" + m.Member),
+            _ => false,
+        };
+        if (!isHeapList) return null;
+        return new BinaryExpr(
+            new CallExpr(new VariableExpr("len") { Line = e.Line }, new List<Expression> { e }) { Line = e.Line },
+            PyMCU.Frontend.BinaryOp.NotEqual, new IntegerLiteral(0)) { Line = e.Line, Column = e.Column, Length = e.Length };
     }
 
     private string? FieldInstanceClass(MemberAccessExpr access)
