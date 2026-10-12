@@ -7358,7 +7358,7 @@ public partial class IRGenerator
                 string storageQ = !string.IsNullOrEmpty(currentInlinePrefix)
                     ? currentInlinePrefix + storage
                     : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + storage : storage);
-                Emit(new Copy(new ArrayBase(storageQ), new Variable(qualified, DataType.UINT16)));
+                Emit(new Copy(new ArrayBase(storageQ), new Variable(qualified, GcPtrWidth())));
                 Emit(new Copy(new Constant(bufIdx), rebindTag));
                 narrowedOptionals[qualified] = bufIdx;
                 noneValuedNames.Remove(qualified);

@@ -2335,6 +2335,15 @@ public partial class IRGenerator
         var real = Enumerable.Range(0, members.Count).Where(i => i != noneIdx).ToList();
         if (real.Count == 1 && noneIdx >= 0)
         {
+            // A buffer is truthy whenever it is there (its size is fixed and above zero), so
+            // the presence byte alone decides; the payload may be nothing a test can read
+            // (the array's own name, or a pointer that is only meaningful under the tag).
+            if (IsBufferTypeName(members[real[0]]))
+            {
+                if (jumpOnTruthy) Emit(new JumpIfNotEqual(tag, new Constant(noneIdx), target));
+                else Emit(new JumpIfEqual(tag, new Constant(noneIdx), target));
+                return;
+            }
             // The phase-1 [X, None] shape: the two-jump form, byte-identical.
             if (jumpOnTruthy)
             {
@@ -3590,7 +3599,32 @@ public partial class IRGenerator
                 // just carried -- the same three dictionaries a real subroutine's own
                 // buffer-Optional parameter registers together (Statements.cs), here for
                 // the INLINE parameter-forwarding path instead.
-                if (am.Any(mm => mm is "bytearray" or "bytes")) bytearrayParams.Add(paramName);
+                if (am.Any(mm => mm is "bytearray" or "bytes"))
+                {
+                    bytearrayParams.Add(paramName);
+                    // The parameter is read through a pointer, and the rebind further down only
+                    // sets it on the path that makes a buffer of its own. On the path the caller
+                    // passed one, the pointer has to name the caller's buffer from the start, or
+                    // the reads go to whatever the pointer held (`l_rom[i]` was always 0).
+                    if (bytearrayParams.Contains(argName))
+                        Emit(new Copy(new Variable(argName, GcPtrWidth()),
+                            new Variable(paramName, GcPtrWidth())));
+                    else if (TryResolveConstArrayKeyThroughAliases(argName, out var argArrayKey)
+                             && arraySizes.ContainsKey(argArrayKey) && !bytearrayParams.Contains(argArrayKey))
+                        Emit(new Copy(new ArrayBase(argArrayKey), new Variable(paramName, GcPtrWidth())));
+                    else
+                    {
+                        // A loop-carried unpack target (`rom, diff = f(rom, diff)`): its buffer is
+                        // only registered by the unpack further down the same body, so this call
+                        // cannot name it yet. The unpack leaves the base in a companion pointer,
+                        // the way it leaves the presence byte in `$tag`; the first turn never
+                        // reads it, the tag says None then.
+                        string argPtr = argName + "$ptr";
+                        variableTypes[argPtr] = GcPtrWidth();
+                        Emit(new Copy(new Variable(argPtr, GcPtrWidth()),
+                            new Variable(paramName, GcPtrWidth())));
+                    }
+                }
             }
             if (narrowedOptionals.TryGetValue(argName, out var nIdx)) narrowedOptionals[paramName] = nIdx;
         }
