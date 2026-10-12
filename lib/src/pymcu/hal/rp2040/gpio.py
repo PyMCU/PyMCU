@@ -41,6 +41,10 @@ class Pin:
         # to a single `store i32 33554432` -- zero-cost), so only a genuinely runtime
         # pin pays for the 4*pin / 8*pin / 1<<pin instructions.
         self._pin = pin
+        # What a layer written against the Pin of any target asks for to name the pin it drives
+        # (neopixel_write hands it to the WS2812 driver): the AVR's is a port name, here it is
+        # the GPIO number.
+        self.name = pin
 
         # Bring IO_BANK0 and PADS_BANK0 out of reset and wait until ready.
         RESETS_RESET_CLR.value = (1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)
