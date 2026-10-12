@@ -156,6 +156,11 @@ PIO_SM_INSTR     = 0x10  # execute an instruction immediately
 PIO_SM_PINCTRL   = 0x14  # OUT_BASE[4:0], SET_BASE[9:5], SIDESET_BASE[14:10], IN_BASE[19:15],
                          # OUT_COUNT[25:20], SET_COUNT[28:26], SIDESET_COUNT[31:29]
 
+# The pulse-capture ring (pymcu.hal.rp.pulse): 1 KiB of RAM, 1 KiB aligned because the DMA ring
+# wraps the write address inside an aligned window. The linker scripts of pymcu-arm
+# (src/runtime/rp2040.ld, rp2350.ld) reserve it as __pulse_ring = _stack_top (0x20042000) - 8K stack reserve - 1K, and take it out of the heap.
+PULSE_RING_BASE = 0x2003FC00
+
 # ==========================================
 #  SPI (ARM PL022) -- SPI0 / SPI1
 # ==========================================

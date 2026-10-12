@@ -141,6 +141,11 @@ PIO_SM_ADDR      = 0x0C
 PIO_SM_INSTR     = 0x10
 PIO_SM_PINCTRL   = 0x14
 
+# The pulse-capture ring (pymcu.hal.rp.pulse): 1 KiB of RAM, 1 KiB aligned because the DMA ring
+# wraps the write address inside an aligned window. The linker scripts of pymcu-arm
+# (src/runtime/rp2040.ld, rp2350.ld) reserve it as __pulse_ring = _stack_top (0x20082000) - 8K stack reserve - 1K, and take it out of the heap.
+PULSE_RING_BASE = 0x2007FC00
+
 # ==========================================
 #  SPI (ARM PL022) -- bases moved on RP2350; register offsets unchanged
 # ==========================================
