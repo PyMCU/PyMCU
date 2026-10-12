@@ -14451,6 +14451,66 @@ public partial class IRGenerator
         return null;
     }
 
+    /// <summary>
+    /// `C(buf)` where C is a single-field class whose one field is the constructor's buffer
+    /// parameter, and `buf` is a buffer of a size known here. Such an instance IS the buffer, so
+    /// appending it to a list needs a copy: the buffer is static storage that the next
+    /// iteration overwrites, and a list of aliases would hold the last one N times.
+    /// </summary>
+    private bool TryBufferRecordCtor(Expression valExpr, out string cls, out string srcKey, out int size)
+    {
+        cls = ""; srcKey = ""; size = 0;
+        if (valExpr is not CallExpr { Args.Count: 1 } ctor || ClassNameOf(ctor.Callee) is not { } name
+            || QualifiedClassKey(name) is not { } clsQ
+            || !classFieldLayout.TryGetValue(clsQ, out var layout) || layout.Count != 1)
+            return false;
+        // `C(bytearray(8))`: a fresh buffer of a literal size, which the record zero-fills.
+        if (ctor.Args[0] is CallExpr { Callee: VariableExpr { Name: "bytearray" }, Args.Count: 1 } fresh
+            && fresh.Args[0] is IntegerLiteral { Value: > 0 } freshN)
+        {
+            cls = clsQ; srcKey = ""; size = freshN.Value;
+            return true;
+        }
+        if (ctor.Args[0] is not VariableExpr argVar || ResolveArrayVar(argVar.Name) is not { } info
+            || info.Size <= 0)
+            return false;
+        cls = clsQ; srcKey = argVar.Name; size = info.Size;
+        return true;
+    }
+
+    /// <summary>
+    /// A heap object holding a copy of the <paramref name="size"/> bytes of buffer
+    /// <paramref name="srcName"/>, answered as the object's pointer. The object has no list
+    /// header, so the pointer is the base of a plain byte buffer.
+    /// </summary>
+    private Val MaterializeBufferRecord(string srcName, int size, Expression at)
+    {
+        if (size > 32)
+            throw UserError(
+                $"a record copied from a {size}-byte buffer is more than this list append unrolls "
+                + "(32 bytes). Keep the buffer in a field of its own instead.", at);
+        DataType ptrWidth = GcPtrWidth();
+        Temporary rec = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(new Constant(size), rec, false));
+        Val recChk = rec with { Type = ptrWidth };
+        Temporary ok = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.NotEqual, recChk, new Constant(0), ok));
+        string okLabel = MakeLabel();
+        Emit(new JumpIfNotZero(ok, okLabel));
+        EmitRuntimeRaise("MemoryError", "list append out of memory");
+        Emit(new Label(okLabel));
+        for (int i = 0; i < size; i++)
+        {
+            Val b = srcName.Length == 0
+                ? new Constant(0)
+                : VisitExpression(new IndexExpr(new VariableExpr(srcName) { Line = at.Line }, new IntegerLiteral(i)) { Line = at.Line });
+            Temporary dst = MakeTemp(ptrWidth);
+            Emit(new Binary(BinaryOp.Add, recChk, new Constant(i), dst));
+            Emit(new StoreIndirect(b, dst));
+        }
+        return rec;
+    }
+
     // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).
     private Val EmitListAppend(Variable listVar, Expression valExpr)
     {
@@ -14467,7 +14527,8 @@ public partial class IRGenerator
         // InstanceClassOfValueExpr spells the instance every way it arrives: a ctor call,
         // a named instance or instance field, an element read off an instance array, and
         // a call whose declared return is a class.
-        if (InstanceClassOfValueExpr(valExpr) is { } appendInstCls)
+        bool bufferRecord = TryBufferRecordCtor(valExpr, out string recordCls, out string recordSrcKey, out int recordSize);
+        if (!bufferRecord && InstanceClassOfValueExpr(valExpr) is { } appendInstCls)
             throw UserError(
                 $"'.append()' cannot take an instance of '{ShortClassNameOf(appendInstCls)}': "
                 + "PyMCU instances are flattened to compile-time storage, so a growable list "
@@ -14484,7 +14545,7 @@ public partial class IRGenerator
         // it by the grow's collection.
         if (elemDt == DataType.UNKNOWN)
         {
-            elemDt = InferListElemType(valExpr);
+            elemDt = bufferRecord ? DataType.GC_REF : InferListElemType(valExpr);
             if (elemDt is DataType.UNKNOWN or DataType.VOID)
                 throw UserError(
                     $"cannot infer the element type of '{listVar.Name}' from this append; " +
@@ -14496,7 +14557,12 @@ public partial class IRGenerator
             // `x[i][j]` and `for inner in x` resolve it, exactly as a
             // declared list[list[T]] does. A literal argument's inner type is
             // recorded after it materializes below.
-            if (elemDt == DataType.GC_REF && valExpr is VariableExpr valVar
+            if (bufferRecord)
+            {
+                listVarElemClass[listVar.Name] = recordCls;
+                ptrRecordClassSize[recordCls] = recordSize;
+            }
+            else if (elemDt == DataType.GC_REF && valExpr is VariableExpr valVar
                 && listVarElemTypes.TryGetValue(ResolveNameKey(valVar.Name), out var argElem)
                 && argElem != DataType.UNKNOWN)
                 listInnerElemTypes[listVar.Name] = argElem;
@@ -14506,7 +14572,7 @@ public partial class IRGenerator
             // read of an element can re-tag it (the read site, Expr.cs, is the consumer).
             // Stored module-qualified: every table the read side re-tags against
             // (instanceClasses, classFieldLayout) is keyed that way.
-            if (valExpr is CallExpr appendCtor && ClassNameOf(appendCtor.Callee) is { } appendCls
+            if (!bufferRecord && valExpr is CallExpr appendCtor && ClassNameOf(appendCtor.Callee) is { } appendCls
                 && QualifiedClassKey(appendCls) is { } appendClsQ
                 && classFieldLayout.TryGetValue(appendClsQ, out var appendLayout)
                 && appendLayout.Count == 1)
@@ -14683,6 +14749,17 @@ public partial class IRGenerator
                     && litDecl != DataType.UNKNOWN ? litDecl : null, valExpr);
             listInnerElemTypes[listVar.Name] = listVarElemTypes[litVar.Name];
             elemVal = litVar;
+        }
+        else if (bufferRecord)
+        {
+            if (listVarElemClass.TryGetValue(listVar.Name, out var heldCls) && heldCls != recordCls
+                || ptrRecordClassSize.TryGetValue(recordCls, out var heldSize) && heldSize != recordSize)
+                throw UserError(
+                    $"'{listVar.Name}' holds records of '{ShortClassNameOf(recordCls)}' made from "
+                    + $"{ptrRecordClassSize.GetValueOrDefault(recordCls)}-byte buffers; this append "
+                    + $"adds one made from a {recordSize}-byte buffer. A list of such records has one "
+                    + "record size.", valExpr);
+            elemVal = MaterializeBufferRecord(recordSrcKey, recordSize, valExpr);
         }
         else
         {

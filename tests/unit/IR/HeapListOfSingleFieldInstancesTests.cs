@@ -65,15 +65,15 @@ public class HeapListOfSingleFieldInstancesTests
     [Fact]
     public void AnAppendedSingleFieldBufferInstance_WidensTheListToAPointer()
     {
-        // xs[0] must load a 16-bit pointer (the Addr handle, RFC 0001 Model A), not the
-        // UINT8 default InferExprType gave a CallExpr before this fix -- a silent
-        // truncation of any address above 255.
+        // xs[0] must load a pointer to the record (the Addr handle, RFC 0016), at the width
+        // of a GC reference, not the UINT8 default InferExprType gave a CallExpr before
+        // this fix -- a silent truncation of any address above 255.
         var main = Gen(AddrAndScanner +
             "xs = s.scan()\n" +
             "h = xs[0]\n")
             .Functions.Single(f => f.Name == "main").Body;
 
-        Assert.Contains(main, i => i is LoadIndirect { Elem: DataType.UINT16 });
+        Assert.Contains(main, i => i is LoadIndirect { Elem: DataType.GC_REF });
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public class HeapListOfSingleFieldInstancesTests
             "h = s.scan()[0]\n")
             .Functions.Single(f => f.Name == "main").Body;
 
-        Assert.Contains(main, i => i is LoadIndirect { Elem: DataType.UINT16 });
+        Assert.Contains(main, i => i is LoadIndirect { Elem: DataType.GC_REF });
         Assert.DoesNotContain(main, i => i is BitCheck);
     }
 }

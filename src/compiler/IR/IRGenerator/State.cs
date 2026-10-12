@@ -1691,6 +1691,12 @@ public partial class IRGenerator
     // way a nested single-field ZCA field read already re-tags its own result.
     private Dictionary<string, string> listVarElemClass = new();
 
+    // A single-field class whose one field is a buffer of N bytes, appended to a growable list
+    // (adafruit_onewire's `devices.append(OneWireAddress(rom))`): each element is a heap copy of
+    // the buffer, and a handle of the class read back from the list is the base pointer of an
+    // N-byte buffer. Keyed by the module-qualified class name; the value is N.
+    private readonly Dictionary<string, int> ptrRecordClassSize = new();
+
     // For a list[list[T]] variable: qualified_name → the INNER list's element type.
     // `bins[b]` yields a Temporary whose own element type is T -- the entry lets the
     // second subscript (`bins[b][0]`), a `for kb in bins` loop variable, and nested

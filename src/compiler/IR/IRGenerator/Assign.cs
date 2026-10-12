@@ -2177,6 +2177,8 @@ public partial class IRGenerator
             listVarElemTypes[key] = listVarElemTypes[valueListKey];
             if (listInnerElemTypes.TryGetValue(valueListKey, out var innerElem))
                 listInnerElemTypes[key] = innerElem;
+            if (listVarElemClass.TryGetValue(valueListKey, out var valueListCls))
+                listVarElemClass[key] = valueListCls;
             variableTypes[key] = DataType.GC_REF;
             // The bound name inherits the source's mutability class: a tuple-returning
             // call's result must print `( ... )` and refuse `x[i] = v`, not read as
@@ -2547,6 +2549,8 @@ public partial class IRGenerator
                         if (ListReturnElemType(stmt.Value, value) is { } mgListElem)
                         {
                             listVarElemTypes[moduleGlobalName] = mgListElem;
+                            if (ListReturnElemClass(stmt.Value, value) is { } mgListCls)
+                                listVarElemClass[moduleGlobalName] = mgListCls;
                             mutableGlobals[moduleGlobalName] = DataType.GC_REF;
                             if (ListReturnInnerElemType(stmt.Value, value) is { } mgInner)
                                 listInnerElemTypes[moduleGlobalName] = mgInner;
@@ -2584,6 +2588,8 @@ public partial class IRGenerator
                             // unannotated callee's recorded `return <list var>`.
                             if (ListReturnElemType(stmt.Value, value) is { } listElem)
                                 listVarElemTypes[qualifiedName] = listElem;
+                            if (ListReturnElemClass(stmt.Value, value) is { } qualListCls)
+                                listVarElemClass[qualifiedName] = qualListCls;
                             if (ListReturnInnerElemType(stmt.Value, value) is { } innerElem)
                                 listInnerElemTypes[qualifiedName] = innerElem;
                             // `x = f()` with f declared `-> tuple`: the name is
@@ -2720,6 +2726,17 @@ public partial class IRGenerator
         string? instAnchor = instSrcName != null
             && ClassedInstanceAnchor(FollowAliases(instSrcName))
             ? FollowAliases(instSrcName) : null;
+        // `h = xs[i]` where the element read back is the handle of a single-field class held in
+        // a heap list: the name receives the handle, so it carries the class and the handle tag
+        // the temp carried (the read tagged only the temp).
+        if (target is Variable listHandleTgt && value is Temporary listHandleSrc
+            && factoryHandleInstances.Contains(listHandleSrc.Name)
+            && instanceClasses.TryGetValue(listHandleSrc.Name, out var listHandleCls)
+            && listHandleCls != null && ptrRecordClassSize.ContainsKey(listHandleCls))
+        {
+            instanceClasses[listHandleTgt.Name] = listHandleCls;
+            factoryHandleInstances.Add(listHandleTgt.Name);
+        }
         if (target is Variable instTgt && instAnchor != null)
         {
             variableAliases[instTgt.Name] = instAnchor;
@@ -2859,6 +2876,8 @@ public partial class IRGenerator
                 // receiving name is itself the list var: its own slot holds the
                 // pointer, which is where len()/row[i]/append must look.
                 listVarElemTypes[tDst.Name] = carriedListElem;
+                if (listVarElemClass.TryGetValue(tSrc.Name, out var carriedListCls))
+                    listVarElemClass[tDst.Name] = carriedListCls;
                 if (listInnerElemTypes.TryGetValue(tSrc.Name, out var carriedInner))
                     listInnerElemTypes[tDst.Name] = carriedInner;
                 else

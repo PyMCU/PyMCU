@@ -4495,7 +4495,9 @@ public partial class IRGenerator
                     // so the name that receives it resolves len()/[i]/append the same
                     // way the declared spelling would.
                     if (elemDt == DataType.GC_REF
-                        && listInnerElemTypes.TryGetValue(listQ, out var subElemDt))
+                        && listInnerElemTypes.TryGetValue(listQ, out var subElemDt)
+                        && !(listVarElemClass.TryGetValue(listQ, out var recElemCls)
+                             && ptrRecordClassSize.ContainsKey(recElemCls)))
                         listVarElemTypes[result.Name] = subElemDt;
                     // RFC 0015 / RFC 0001: `devices[i]` where `devices` holds single-field
                     // class instances (EmitListAppend recorded which class) -- the loaded
