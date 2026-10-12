@@ -79,5 +79,11 @@ SECTIONS
 
     _end = .;
 
+    /* The collected heap behind list[T]: the RAM between the last static and the stack, which
+       grows down from the top. __heap_start >= __heap_end means there is no room for one. */
+    __stack_reserve = 512;
+    __heap_start = ALIGN(_end, 4);
+    __heap_end = ORIGIN(RAM) + LENGTH(RAM) - __stack_reserve;
+
     /DISCARD/ : { *(.comment) }
 }
