@@ -41,6 +41,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     private bool currentIsLeaf;
     private bool currentIsInterrupt;
     private bool currentCanFail;
+    private readonly Dictionary<string, int> knownAlignment = new();
     private int labelCounter;
 
     // Caller-saved registers an ISR must preserve, because the interrupted code
@@ -100,6 +101,26 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         if (a is Constant ca && ca.Value < 0) return true;
         if (b is Constant cb && cb.Value < 0) return true;
         return false;
+    }
+
+    private static int LowestSetBit(int value) => value == 0 ? 4 : Math.Min(4, value & -value);
+
+    // The largest power of two (up to 4) an address is known to be a multiple of; 0 when nothing
+    // is known. Array symbols are laid out on a word boundary.
+    private int AlignmentOf(Val v) => v switch
+    {
+        ArrayBase => 4,
+        Constant c => LowestSetBit(c.Value),
+        _ when knownAlignment.TryGetValue(ValName(v), out int a) => a,
+        _ => 0,
+    };
+
+    // A pointer whose value nothing here computed may be a peripheral register, which has to be
+    // read with its own width, so only an address known to fall off the boundary goes bytewise.
+    private bool ProvablyMisaligned(Val ptr, DataType elem)
+    {
+        int a = AlignmentOf(ptr);
+        return elem.SizeOf() > 1 && a > 0 && a < elem.SizeOf();
     }
 
     // Whole-word values compare as signed by default, which is right for every narrow type
@@ -215,6 +236,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         // its destination declares before it is stored; a later lw would otherwise hand back
         // the bits above it (255 + 1 in a uint8 must read 0, not 256).
         EmitWrapToType(reg, TypeOf(val));
+        knownAlignment.Remove(name);
 
         if (stackLayout.TryGetValue(name, out int offset))
             Emit("sw", reg, $"{offset}(s0)");
@@ -288,6 +310,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         currentIsLeaf = IsLeaf(func);
         currentIsInterrupt = func.IsInterrupt;
         currentCanFail = func.CanFail;
+        knownAlignment.Clear();
 
         var allocator = new DynamicStackAllocator();
         var (offsets, frameSize) = allocator.Allocate(func);
@@ -496,13 +519,19 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             case AugAssign aa: CompileBinary(new Binary(aa.Op, aa.Target, aa.Operand, aa.Target)); break;
             case LoadIndirect li:
                 LoadIntoReg(li.SrcPtr, "t0");
-                Emit(LoadMnemonic(li.Elem), "t1", "0(t0)");
+                if (ProvablyMisaligned(li.SrcPtr, li.Elem))
+                    EmitBytewiseLoad(li.Elem);
+                else
+                    Emit(LoadMnemonic(li.Elem), "t1", "0(t0)");
                 StoreRegInto("t1", li.Dst);
                 break;
             case StoreIndirect si:
                 LoadIntoReg(si.DstPtr, "t0");
                 LoadIntoReg(si.Src, "t1");
-                Emit(StoreMnemonic(si.Elem), "t1", "0(t0)");
+                if (ProvablyMisaligned(si.DstPtr, si.Elem))
+                    EmitBytewiseStore(si.Elem);
+                else
+                    Emit(StoreMnemonic(si.Elem), "t1", "0(t0)");
                 break;
             case ArrayLoad arg: CompileArrayLoad(arg); break;
             case ArrayStore arg: CompileArrayStore(arg); break;
@@ -526,6 +555,32 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
                     $"RISC-V backend: IR instruction '{instr.GetType().Name}' is not supported yet. " +
                     "This target currently covers integer arithmetic, control flow, bit operations, " +
                     "direct/indirect calls and MMIO access.");
+        }
+    }
+
+    // A halfword or word at an address that may not be a multiple of its size is assembled from
+    // byte accesses: the CH32V003 traps on a misaligned lh/lw/sh/sw. Address in t0, value in t1.
+    private void EmitBytewiseLoad(DataType elem)
+    {
+        int size = elem.SizeOf();
+        Emit("lbu", "t1", "0(t0)");
+        for (int i = 1; i < size; i++)
+        {
+            Emit("lbu", "t2", $"{i}(t0)");
+            Emit("slli", "t2", "t2", (8 * i).ToString());
+            Emit("or", "t1", "t1", "t2");
+        }
+        EmitWrapToType("t1", elem);
+    }
+
+    private void EmitBytewiseStore(DataType elem)
+    {
+        int size = elem.SizeOf();
+        Emit("sb", "t1", "0(t0)");
+        for (int i = 1; i < size; i++)
+        {
+            Emit("srli", "t2", "t1", (8 * i).ToString());
+            Emit("sb", "t2", $"{i}(t0)");
         }
     }
 
@@ -810,6 +865,15 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         }
 
         StoreRegInto("t0", arg.Dst);
+
+        // Remember what an address computed as base + constant is aligned to, so a word access
+        // through it can tell a field the layout put on a boundary from one it did not.
+        if (arg.Op is PyMCU.IR.BinaryOp.Add or PyMCU.IR.BinaryOp.Sub
+            && arg.Src2 is Constant off && ValName(arg.Dst) is { Length: > 0 } dstName)
+        {
+            int baseAlign = AlignmentOf(arg.Src1);
+            if (baseAlign > 0) knownAlignment[dstName] = Math.Min(baseAlign, LowestSetBit(off.Value));
+        }
     }
 
     // Lowers Div/FloorDiv/Mod with the operands already in t0 and t1, leaving the
