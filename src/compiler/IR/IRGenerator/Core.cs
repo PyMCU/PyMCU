@@ -2669,6 +2669,15 @@ public partial class IRGenerator
                 return new Variable(own, ownType);
         }
 
+        // A chip fact the module bound through its own `from pymcu.chips import` is read from
+        // that binding. The entry file's rebinding of the same spelling (`__FREQ__ = 42`) is
+        // filed under the bare name and is the user's own: it must not answer for a library,
+        // whose `__FREQ__ // 2` came out as 21 on a 16 MHz part.
+        if (!string.IsNullOrEmpty(currentModulePrefix) && IsAmbientFactName(name)
+            && !(moduleLevel ? InlineScopeShadows(name) : LocalScopeBinds(name))
+            && ChipFactBinding(name) is { } ownFact)
+            return ChipFactValue(ownFact, at);
+
         // A module-level compile-time symbol (a `ptr(...)` register, a constant) is the
         // name's meaning only where no frame binds it: a `buf: ptr[uint8]` parameter read
         // the module's `buf = ptr(0x4A)` instead of the register it was handed.

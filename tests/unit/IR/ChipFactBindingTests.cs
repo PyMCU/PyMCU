@@ -57,4 +57,30 @@ public class ChipFactBindingTests
             "v = __CHIP__.name\n");
         Assert.True(EmitsString(ir, "atmega328p"));
     }
+
+    [Fact]
+    public void ChipFact_ReboundInTheEntryFile_IsNotWhatALibraryReads()
+    {
+        // The entry file's globals are filed under the bare name, and `__FREQ__ = 42` there is
+        // the user's own binding. A library function that bound the fact with its own
+        // `from pymcu.chips import __FREQ__` still reads the chip's clock: it computed 21 for
+        // `__FREQ__ // 2` where the part runs at 16 MHz.
+        var config = new DeviceConfig { Arch = "avr", Chip = "atmega328p", Frequency = 16_000_000 };
+        var lib = new Parser(new Lexer(
+            "from pymcu.chips import __FREQ__\n" +
+            "from pymcu.types import uint32\n\n" +
+            "def half() -> uint32:\n" +
+            "    return __FREQ__ // 2\n").Tokenize()).ParseProgram();
+        var main = new Parser(new Lexer(
+            "from pymcu.chips import __FREQ__\n" +
+            "import mylib\n\n" +
+            "__FREQ__ = 42\n" +
+            "x = mylib.half()\n").Tokenize()).ParseProgram();
+        new ConditionalCompilator(config).Process(main);
+        var ir = new IRGenerator().Generate(main, new Dictionary<string, ProgramNode> { ["mylib"] = lib }, config);
+
+        var half = ir.Functions.Single(f => f.Name.EndsWith("half"));
+        var ret = half.Body.OfType<Return>().Single();
+        Assert.Equal(8_000_000, Assert.IsType<Constant>(ret.Value).Value);
+    }
 }
