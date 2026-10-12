@@ -1651,6 +1651,19 @@ public partial class IRGenerator
                     else constantVariables.Remove(ctx.ResultVars[k]);
                     if (elemVal is FloatConstant fc) floatConstantVariables[ctx.ResultVars[k]] = fc.Value;
                     else floatConstantVariables.Remove(ctx.ResultVars[k]);
+                    // Which value each reachable return left in this slot: the constant entry
+                    // above describes only the LAST return walked, and a caller that folds it
+                    // reads that arm's value on every path (`return 7, d - 1` followed by
+                    // `return 7, 0` answered 0 to every caller).
+                    if (!ctx.ResultReturnedUnconditionally)
+                    {
+                        int? slotConst = constantVariables.TryGetValue(ctx.ResultVars[k], out int sc) ? sc : null;
+                        ctx.TupleSlotConsts ??= new();
+                        if (!ctx.TupleSlotConsts.TryGetValue(k, out var firstConst))
+                            ctx.TupleSlotConsts[k] = slotConst;
+                        else if (firstConst == null || slotConst == null || firstConst != slotConst)
+                            (ctx.TupleSlotVaries ??= new()).Add(k);
+                    }
                     strConstantVariables.Remove(ctx.ResultVars[k]);
                     constSequenceBindings.Remove(ctx.ResultVars[k]);
                     // The iret_ names are shared scratch across expansions too: a mask
@@ -1660,6 +1673,8 @@ public partial class IRGenerator
                     scalarMaskedNames.Remove(ctx.ResultVars[k]);
                 }
 
+                if (_runtimeBranchDepth <= ctx.EntryBranchDepth)
+                    ctx.ResultReturnedUnconditionally = true;
                 EmitPendingFinally(ctx.FinallyDepth);
                 Emit(new Jump(ctx.ExitLabel));
                 return;

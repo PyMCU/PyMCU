@@ -95,6 +95,13 @@ public class InlineContext
     // return yields a DIFFERENT constant, because then the value is selected at run time.
     public int? ResultConst { get; set; }
 
+    // The tuple counterpart of ResultConst, per result slot: the constant the first reachable
+    // tuple `return` wrote into the slot (null when it wrote a non-constant), and the slots a
+    // later reachable return wrote a different value into. A varying slot holds a value chosen
+    // at run time, so its constant entry is dropped when the expansion ends.
+    public Dictionary<int, int?>? TupleSlotConsts { get; set; }
+    public HashSet<int>? TupleSlotVaries { get; set; }
+
     // Set once a return has been visited at this expansion's own branch depth, i.e. one that
     // no run-time condition guards. Control cannot get past it, so every later return in the
     // body is dead code and must not disturb what the result is tracked as. A folded `if`

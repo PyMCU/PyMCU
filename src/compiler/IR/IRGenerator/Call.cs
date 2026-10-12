@@ -4256,6 +4256,13 @@ public partial class IRGenerator
 
         Emit(new Label(exitLabel));
 
+        // A result slot that two reachable returns filled with different values holds a value
+        // chosen at run time: the constant the last return left behind must not be read as it.
+        if (inlineStack.Count > 0 && inlineStack.Last().TupleSlotVaries is { } variedSlots)
+            foreach (int variedSlot in variedSlots)
+                if (variedSlot < inlineStack.Last().ResultVars.Count)
+                    constantVariables.Remove(inlineStack.Last().ResultVars[variedSlot]);
+
         if (isForceInlined)
             Emit(new InlineExpansionMarker(callee, true));
         else if (isInlineMethod)
