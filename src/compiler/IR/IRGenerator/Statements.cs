@@ -111,6 +111,15 @@ public partial class IRGenerator
                 if (!globalSym.IsMemoryAddress) return globalSym.Value;
             }
 
+            // The entry file's own constants are filed under the bare name, and inside one of its
+            // classes the prefix above is the class's (`Bus_`), so the lookup missed them: a
+            // `bytearray(NB)` in a method failed once a loop dropped the fact that held the value.
+            // Code of an imported module never reads the entry file's names, and a name the frame
+            // binds is its own.
+            if (!OwningModulePrefixes().Any() && !LocalScopeBinds(varE.Name)
+                && globals.TryGetValue(varE.Name, out var entrySym) && !entrySym.IsMemoryAddress)
+                return entrySym.Value;
+
             foreach (var modName in modules.Keys)
             {
                 string modKey = modName + "_" + varE.Name;
