@@ -40,6 +40,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     private string currentFuncName = "";
     private bool currentIsLeaf;
     private bool currentIsInterrupt;
+    private bool currentCanFail;
     private int labelCounter;
 
     // Caller-saved registers an ISR must preserve, because the interrupted code
@@ -151,6 +152,14 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             throw new NotSupportedException(
                 $"RISC-V backend: cannot load operand of type {val.GetType().Name}.");
 
+        // "__exn_r22_capture" is the frontend's read-only alias for the error register, where
+        // SignalError left the code when a catch dispatcher is entered (R22 on AVR, s1 here).
+        if (name == "__exn_r22_capture")
+        {
+            Emit("mv", reg, ErrorReg);
+            return;
+        }
+
         if (stackLayout.TryGetValue(name, out int offset))
             Emit("lw", reg, $"{offset}(s0)");
         else
@@ -249,6 +258,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         currentFuncName = func.Name;
         currentIsLeaf = IsLeaf(func);
         currentIsInterrupt = func.IsInterrupt;
+        currentCanFail = func.CanFail;
 
         var allocator = new DynamicStackAllocator();
         var (offsets, frameSize) = allocator.Allocate(func);
@@ -635,6 +645,11 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     {
         if (arg.Value is not NoneVal)
             LoadIntoReg(arg.Value, "a0");
+
+        // A function that can fail must hand its caller a clear error register on the happy
+        // path, whatever fallible callees it ran on the way (AVR does the same with CLT).
+        if (currentCanFail && !currentIsInterrupt)
+            Emit("li", ErrorReg, "0");
 
         EmitEpilogue();
     }
