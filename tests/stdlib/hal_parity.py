@@ -358,12 +358,35 @@ def _signature_text(sig: Signature) -> str:
     return f"({', '.join(params)}){deco}"
 
 
+def _imported_from(path: Path, name: str) -> str | None:
+    """The pymcu module a `from M import name` anywhere in `path` takes `name` from.
+
+    A per-chip package (hal/avr/pulse) re-exports what its chip module defines; the claim is
+    about that definition.
+    """
+    for node in ast.walk(parse_source(path)):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("pymcu."):
+            if any(a.name == name and a.asname is None for a in node.names):
+                return node.module
+    return None
+
+
 def _surface_for_claim(claim: Claim) -> Signature | ClassSurface | None:
-    surface = module_surface(module_path(claim.module))
+    path = module_path(claim.module)
+    surface = module_surface(path)
     if claim.implementation in surface.functions:
         sigs = surface.functions[claim.implementation]
         return sigs[0] if len(sigs) == 1 else None
-    return surface.classes.get(claim.implementation)
+    if claim.implementation in surface.classes:
+        return surface.classes[claim.implementation]
+    source = _imported_from(path, claim.implementation)
+    if source is not None and module_path(source) != path and module_path(source).exists():
+        followed = module_surface(module_path(source))
+        if claim.implementation in followed.functions:
+            sigs = followed.functions[claim.implementation]
+            return sigs[0] if len(sigs) == 1 else None
+        return followed.classes.get(claim.implementation)
+    return None
 
 
 def _method_map(surface: ClassSurface) -> dict[str, tuple[Signature, ...]]:
