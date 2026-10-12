@@ -84,3 +84,50 @@ def test_an_ordinary_library_still_exports_every_function(tmp_path, py_parser):
 
     assert proc.returncode == 0, proc.stderr
     assert sorted(names) == ["F", "h"]
+
+
+@pytest.mark.parametrize("py_parser", FRONTENDS)
+def test_a_tuple_helper_that_another_function_calls_is_expanded_into_it(tmp_path, py_parser):
+    """The guard is about functions that VANISHED. A helper that returns a tuple and is used by
+    another function of the library has a use: it is expanded at the call, as it always was, and
+    needs no symbol."""
+    proc, names = build(tmp_path, (
+        "def pair(a: int) -> tuple[int, int]:\n    return (a, a + 1)\n\n\n"
+        "def lo(a: int) -> int:\n    x, y = pair(a)\n    return x + y\n"), py_parser)
+
+    assert proc.returncode == 0, proc.stderr
+    assert names == ["lo"]
+
+
+@pytest.mark.parametrize("py_parser", FRONTENDS)
+def test_a_tuple_function_that_nothing_calls_is_still_refused(tmp_path, py_parser):
+    proc, _ = build(tmp_path, (
+        "def lo(a: int) -> int:\n    return a\n\n\n"
+        "def pair(a: int) -> tuple[int, int]:\n    return (a, a + 1)\n"), py_parser)
+
+    assert proc.returncode != 0
+    assert "main.py:5:" in proc.stderr and "returns a tuple" in proc.stderr
+
+
+# A call is what exempts a tuple function from being a symbol, and the call is the one the
+# compiler resolved and expanded -- not a mention. Each source below mentions `lo` in a way
+# that is not a call, so `lo` has vanished and has to be refused, at its own `def` (line 1).
+TUPLE_LO = "def lo(a: int) -> tuple[int, int]:\n    return (a, a + 1)\n\n\n"
+
+
+@pytest.mark.parametrize("py_parser", FRONTENDS)
+@pytest.mark.parametrize("rest", [
+    pytest.param('def use(a: int) -> int:\n    return len("lo") + a\n',
+                 id="the-name-inside-a-string"),
+    pytest.param("def lo2(a: int) -> int:\n    return a\n\n\n"
+                 "def use(a: int) -> int:\n    return lo2(a)\n",
+                 id="a-longer-name-that-starts-with-it"),
+    pytest.param("class B:\n    def __init__(self):\n        self.lo = 1\n\n\n"
+                 "def use(a: int) -> int:\n    b = B()\n    return b.lo + a\n",
+                 id="an-attribute-of-that-name"),
+])
+def test_a_mention_that_is_not_a_call_does_not_save_a_tuple_function(tmp_path, py_parser, rest):
+    proc, _ = build(tmp_path, TUPLE_LO + rest, py_parser)
+
+    assert proc.returncode != 0, "BUILD_OK with `lo` missing is the bug"
+    assert "main.py:1:" in proc.stderr and "returns a tuple" in proc.stderr
