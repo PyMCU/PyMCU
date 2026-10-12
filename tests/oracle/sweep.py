@@ -84,12 +84,19 @@ GPIOR_IMPORT_RE = re.compile(
 CHIP_MODULE_IMPORT_RE = re.compile(
     r"import pymcu\.chips\.atmega328p as (\w+)")
 
+# CH32V003_SCRATCH: the 2 KiB SRAM has no spare corner. The stack grows down from 0x20000800
+# and .data/.bss grow up from 0x20000000, so a fixed absolute SRAM byte is eventually owned by
+# one of them (measured: 0x200007F0 is main's own frame). The stand-in lives in the TIM2 window
+# (0x40000000, 1 KiB) instead: CH32VSharp keeps whatever is written to a peripheral nothing
+# models, zero at first, which is exactly the AVR GPIOR0 contract (a spare, zero-initialized,
+# read/write byte outside the compiler's storage).
+#
 # Scratch byte near the top of each chip's SRAM, standing in for the AVR's GPIOR0 spare
 # register. Same ptr[uint8] shape as every real per-chip register table in lib/src/pymcu/chips.
 # A probe naming more than one register (583's GPIOR0, GPIOR1) gets one scratch byte per
 # name, immediately above this one -- SCRATCH_ADDR + 1, + 2, ... -- so they never alias.
 SCRATCH_ADDR = {
-    "ch32v003": 0x200007F0,  # SRAM 0x20000000 + 2 KiB, 16 bytes below top (stack grows down from the top)
+    "ch32v003": 0x400000F0,  # see CH32V003_SCRATCH below
 }
 
 # 196's `BASE: const[uint16] = 0x0400` (free SRAM on the ATmega328P, used as a direct
@@ -101,12 +108,12 @@ SCRATCH_ADDR = {
 # reason this needs code, not a same-width literal swap, is that uint8/uint16 cannot hold a
 # 32-bit SRAM address, the way GPIOR0's ptr[uint8] holds AVR's 16-bit one.
 BASE196_ADDR = {
-    "ch32v003": 0x20000500,
+    "ch32v003": 0x40000100,
 }
 # Stored pre-divided by 256: the probes' own source multiplies BASE back by 256
 # (`BASE * 256`), so BASE itself must already be address // 256.
 BASE277_PAGE = {
-    "ch32v003": 0x20000600 // 256,
+    "ch32v003": 0x40000300 // 256,
 }
 
 TARGET_CHIP_INFO = {
