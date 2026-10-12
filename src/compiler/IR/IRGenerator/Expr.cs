@@ -6407,8 +6407,16 @@ public partial class IRGenerator
     // name bound to a class that registers <member> as a getter. The MRO walk makes a getter
     // declared on a base class reachable from a subclass instance (`lcd.columns`).
     private bool IsPropertyGetterRead(MemberAccessExpr expr)
-        => expr.Object is VariableExpr recv
-           && InstanceClassOfName(recv.Name) is { } cls
+        => (expr.Object switch
+            {
+                VariableExpr recv => InstanceClassOfName(recv.Name),
+                // `self._io.value`: the receiver is an instance held in a field, whose class
+                // the field's own declaration gives. Judged only by a bare name, the read of a
+                // property on a field fell to the `.value` pointer shortcut and answered the
+                // field itself, so a driver's `self._pin.value` never read the pin.
+                MemberAccessExpr fieldRecv => FieldInstanceClass(fieldRecv),
+                _ => null,
+            }) is { } cls
            && ResolveMROPropertyClass(cls, expr.Member) is { } propCls
            && propertyGetters.Contains(propCls + "." + expr.Member);
 
