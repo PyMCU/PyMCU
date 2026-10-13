@@ -918,6 +918,10 @@ public partial class IRGenerator
         string mkey = defCls + "_" + mem.Member;
         if (inlineFunctions.TryGetValue(mkey, out var mm) && mm != null)
             yield return (mm, defCls, mkey);
+        else if (instanceMethodDefs.TryGetValue(mkey, out var im))
+            // A plain instance method joins inlineFunctions only when its first call is
+            // lowered, so the first loop to repeat it saw a body 80 nodes too small.
+            yield return (im, defCls, mkey);
         foreach (var kv in inlineFunctions)
             if (kv.Value != null && kv.Key.StartsWith(mkey + "___", StringComparison.Ordinal))
                 yield return (kv.Value, defCls, kv.Key);

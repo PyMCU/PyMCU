@@ -429,6 +429,32 @@ public class UnrollPolicyTests
         HasLoopBackEdge(Main(ir)).Should().BeTrue();
     }
 
+    // The same shape with a plain method: it joins the inline table only when its
+    // first call is lowered, so the first loop to repeat it counted nothing and
+    // unrolled while a second identical loop, later, did not.
+    [Fact]
+    public void ALoopOverAPlainMethodCountsItBeforeItsFirstCall()
+    {
+        var ir = Gen(
+            Regs +
+            "class W:\n" +
+            "    def pulse(self, n):\n" + Pulse("        ") +
+            "class B:\n" +
+            "    def __init__(self):\n" +
+            "        self.w = W()\n" +
+            "    @inline\n" +
+            "    def run(self):\n" +
+            "        for i in range(4):\n" +
+            "            self.w.pulse(i)\n" +
+            "b = B()\n" +
+            "def main():\n" +
+            "    b.run()\n" +
+            "    b.run()\n");
+        // Two run() expansions, one counter loop each, not four copies of pulse in the first.
+        GpioWrites(Main(ir)).Should().Be(16);
+        HasLoopBackEdge(Main(ir)).Should().BeTrue();
+    }
+
     // ch reaches `ch in ":;"` through self.show(ch). The scan for "the loop variable
     // must stay a constant" resolved `self.m()` only under a receiver key, so a loop
     // in a method of the same class lost the requirement once its body was counted.
