@@ -1456,6 +1456,12 @@ public partial class IRGenerator
                     string arrName = "";
                     if (targetVal is Variable v) arrName = v.Name;
                     else throw UserError("match/case sequence pattern: subject must be an array variable", stmt);
+                    // The array lives under the key the enclosing function (or inline expansion)
+                    // files it under -- `main.data`, not the bare `data` the subject names. Reading
+                    // `data__0` named a slot nothing wrote, so a capture came out 0 and a literal
+                    // in the pattern compared against 0 (#401).
+                    ResolveForBase(arrName, out string patBase, out int patBaseSize);
+                    if (patBaseSize > 0) arrName = patBase;
 
                     // `pair = [4, 5]` with nothing elsewhere indexing or iterating it at a
                     // run-time index never gets a real SRAM/register slot at all -- it is a pure
