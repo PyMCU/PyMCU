@@ -403,6 +403,32 @@ public class UnrollPolicyTests
         HasLoopBackEdge(Main(ir)).Should().BeFalse();
     }
 
+    // A loop in a method repeats a call made through a field of `self`. The loop's
+    // body was counted with no class for `self`, so `self.w.pulse(i)` resolved to
+    // nothing, the body looked 13 nodes wide and range(8) unrolled eight copies of
+    // a whole 1-Wire bit slot (ds18x20: write_bit expanded 176 times).
+    [Fact]
+    public void ALoopThroughASelfFieldCountsTheCalleeItExpands()
+    {
+        var ir = Gen(
+            Regs +
+            "class W:\n" +
+            "    @inline\n" +
+            "    def pulse(self, n):\n" + Pulse("        ") +
+            "class B:\n" +
+            "    def __init__(self):\n" +
+            "        self.w = W()\n" +
+            "    @inline\n" +
+            "    def run(self):\n" +
+            "        for i in range(4):\n" +
+            "            self.w.pulse(i)\n" +
+            "b = B()\n" +
+            "def main():\n" +
+            "    b.run()\n");
+        GpioWrites(Main(ir)).Should().Be(8, "pulse expands once in the counter loop");
+        HasLoopBackEdge(Main(ir)).Should().BeTrue();
+    }
+
     // ch reaches `ch in ":;"` through self.show(ch). The scan for "the loop variable
     // must stay a constant" resolved `self.m()` only under a receiver key, so a loop
     // in a method of the same class lost the requirement once its body was counted.

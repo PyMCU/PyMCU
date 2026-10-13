@@ -391,7 +391,7 @@ public partial class IRGenerator
     /// </summary>
     private bool UnrolledLoopBodyIsCheap(Statement? body) =>
         CheapBodyShape(body)
-        && ExpandedNodes(body, null, null, new HashSet<FunctionDef>())
+        && ExpandedNodes(body, InstanceClassOfName("self"), null, new HashSet<FunctionDef>())
             <= ConstSequenceUnrollBodyLimit;
 
     // Walk one loop body; false as soon as a loop or a comprehension (lowered as
