@@ -1302,7 +1302,34 @@ def param_position(arg):
     return {"line": line, "col": col + 1, "len": max(1, len(arg.arg))}
 
 
+TYPE_PARAMS_MESSAGE = ("PEP 695 type parameters are not supported: PyMCU has no generics, and the "
+                       "bracket opens a scope of its own that a body would read its names from. "
+                       "Write the function over the concrete type")
+
+
+def refuse_type_params(node):
+    """`def f[T](...)`, `class Box[T]`: the C# parser stops at the `[`; the AST carries the list in
+    a field nothing read, so the bracket vanished, `def f[T, T]` compiled (CPython rejects it),
+    and a `T` in the body resolved to the module's T instead of the parameter (#521). The
+    refusal lands on the `[`, where the C# parser's lands."""
+    params = getattr(node, "type_params", None)
+    if not params:
+        return
+    first = params[0]
+    col = getattr(first, "col_offset", 0)
+    if SOURCE:
+        lines = SOURCE.splitlines()
+        if 0 < first.lineno <= len(lines):
+            at = lines[first.lineno - 1].rfind("[", 0, col + 1)
+            if at >= 0:
+                col = at
+    probe = ast.Name(id="[", ctx=ast.Load(), lineno=first.lineno, col_offset=col,
+                     end_lineno=first.lineno, end_col_offset=col + 1)
+    raise Unsupported(TYPE_PARAMS_MESSAGE, probe)
+
+
 def function_of(node, is_async=False):
+    refuse_type_params(node)
     # Two defaults the C# parser applies and the rest of the compiler reads:
     # an undeclared return type is "void" (not empty), and every __dunder__ is
     # implicitly @inline (which is what makes an undecorated __init__ work).
@@ -1430,6 +1457,7 @@ def apply_decorator(fn, dec, node):
 
 
 def class_of(node):
+    refuse_type_params(node)
     bases = []
     for b in node.bases:
         bases.append(ast.unparse(b))

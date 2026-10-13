@@ -777,6 +777,7 @@ public class Parser
             isInline = true;
         }
 
+        if (Check(TokenType.LBracket)) Error(TypeParamsMessage);
         Consume(TokenType.LParen, "Expected '(' after function name");
         var parameters = ParseParameters();
         Consume(TokenType.RParen, "Expected ')' after parameters");
@@ -903,6 +904,7 @@ public class Parser
             Consume(TokenType.RParen, "Expected ')'");
         }
 
+        if (Check(TokenType.LBracket)) Error(TypeParamsMessage);
         Consume(TokenType.Colon, "Expected ':'");
         var body = ParseSuite("Expected newline after class definition");
         return Located(new ClassDef(name, bases, body) { IsStatic = true }, classKeyword);
@@ -1677,6 +1679,11 @@ public class Parser
 
         return new IfStmt(condition, thenBranch, elifBranches, elseBranch) { Line = line };
     }
+
+    // PEP 695 `def f[T]` / `class Box[T]`; the Python front end says the same words (#521).
+    private const string TypeParamsMessage =
+        "PEP 695 type parameters are not supported: PyMCU has no generics, and the bracket opens a "
+        + "scope of its own that a body would read its names from. Write the function over the concrete type";
 
     // Greater than zero while a `case` pattern is being read.
     private int casePatternDepth;
