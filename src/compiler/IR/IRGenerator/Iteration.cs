@@ -615,6 +615,10 @@ public partial class IRGenerator
     {
         switch (t)
         {
+            // `ch in ":;"`: a string has no run-time membership test, only the
+            // per-character fold a constant left side gets.
+            case StringLiteral:
+                return true;
             case VariableExpr v:
                 if (dictLiteralBindings.ContainsKey(ResolveNameKey(v.Name))
                     || setLiteralBindings.ContainsKey(ResolveNameKey(v.Name)))

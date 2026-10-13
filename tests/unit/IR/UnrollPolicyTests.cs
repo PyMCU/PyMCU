@@ -56,6 +56,9 @@ public class UnrollPolicyTests
             .Any(t => t.ins is Jump j && labels.TryGetValue(j.Target, out int p) && p <= t.i);
     }
 
+    private static string Pulse(string indent) => string.Concat(Enumerable.Range(0, 15)
+        .Select(k => $"{indent}GPIOR{(k & 1)}.value = n\n"));
+
     // ── range() ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -397,6 +400,26 @@ public class UnrollPolicyTests
             "        d.show(ch)\n");
         GpioWrites(Main(ir)).Should().Be(2,
             "each unrolled call folds self.chars[ch] to a constant store");
+        HasLoopBackEdge(Main(ir)).Should().BeFalse();
+    }
+
+    // `ch in ":;"` has no run-time form, only the per-character fold of a constant
+    // left side, so a loop variable reaching it must unroll whatever the body costs.
+    [Fact]
+    public void ALoopVarFeedingAStringMembershipTestStillUnrolls()
+    {
+        var ir = Gen(
+            Regs +
+            "class Seg:\n" +
+            "    @inline\n" +
+            "    def show(self, ch):\n" +
+            "        n = 1\n" + Pulse("        ") +
+            "        if ch in \"ab\":\n" +
+            "            GPIOR0.value = 7\n" +
+            "d = Seg()\n" +
+            "def main():\n" +
+            "    for ch in \"ab\":\n" +
+            "        d.show(ch)\n");
         HasLoopBackEdge(Main(ir)).Should().BeFalse();
     }
 }
