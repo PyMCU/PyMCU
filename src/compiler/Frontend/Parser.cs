@@ -1678,6 +1678,16 @@ public class Parser
         return new IfStmt(condition, thenBranch, elifBranches, elseBranch) { Line = line };
     }
 
+    // Greater than zero while a `case` pattern is being read.
+    private int casePatternDepth;
+
+    private Expression ParseCasePattern()
+    {
+        casePatternDepth++;
+        try { return ParseExpression(); }
+        finally { casePatternDepth--; }
+    }
+
     private Statement ParseMatchStatement()
     {
         Consume(TokenType.Match, "Expected 'match'");
@@ -1716,12 +1726,12 @@ public class Parser
                 }
                 else
                 {
-                    pattern = ParseExpression();
+                    pattern = ParseCasePattern();
                 }
             }
             else
             {
-                pattern = ParseExpression();
+                pattern = ParseCasePattern();
             }
 
             if (Check(TokenType.As))
@@ -3446,6 +3456,12 @@ public class Parser
             Error("'...' is the Ellipsis literal, and PyMCU has no value for one. As a "
                   + "placeholder BODY it is accepted and means `pass`; in an expression -- "
                   + "assigned, passed, compared -- there is nothing for it to be.");
+
+        // A `*rest` inside a `case [a, *rest]:` pattern: the pattern is read as an expression and
+        // the star is where that stops. Say what it was, in the words the Python front end uses.
+        if (casePatternDepth > 0 && Check(TokenType.Star))
+            Error("a star pattern (`*rest`) in a sequence pattern is not supported: "
+                  + "match the elements by position, or take the tail with a slice");
 
         Error("Expected expression");
         return null!;

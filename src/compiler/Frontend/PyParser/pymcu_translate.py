@@ -1201,7 +1201,12 @@ def pattern_element(pat):
         inner = pattern_element(pat.pattern)
         return inner
     if isinstance(pat, ast.MatchStar):
-        return {"k": "Var", "name": pat.name or "_", "line": line_of(pat)}
+        # The C# parser reads the pattern as an expression and stops at the `*`. Reading it
+        # here as a plain capture bound the name to one element and left the rest of the
+        # sequence unmatched, so `case [head, *tail]` took the arm for every length and
+        # printed the wrong element.
+        raise Unsupported("a star pattern (`*rest`) in a sequence pattern is not supported: "
+                          "match the elements by position, or take the tail with a slice", pat)
     value, _ = pattern_of(pat)
     if value is None:
         return {"k": "Var", "name": "_", "line": line_of(pat)}
