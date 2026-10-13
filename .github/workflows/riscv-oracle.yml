@@ -70,7 +70,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       # clang and zlib: the ahead-of-time publish of the compiler and the backend links with
       # them. binutils: the backend writes GNU assembly; the riscv64 build assembles
