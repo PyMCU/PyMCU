@@ -403,6 +403,33 @@ public class UnrollPolicyTests
         HasLoopBackEdge(Main(ir)).Should().BeFalse();
     }
 
+    // ch reaches `ch in ":;"` through self.show(ch). The scan for "the loop variable
+    // must stay a constant" resolved `self.m()` only under a receiver key, so a loop
+    // in a method of the same class lost the requirement once its body was counted.
+    [Fact]
+    public void ALoopVarFeedingASelfMethodThatTestsAStringStillUnrolls()
+    {
+        var ir = Gen(
+            Regs +
+            "@inline\n" +
+            "def big(n):\n" + Pulse("    ") +
+            "class Seg:\n" +
+            "    @inline\n" +
+            "    def show(self, ch):\n" +
+            "        if ch in \"ab\":\n" +
+            "            GPIOR0.value = 7\n" +
+            "    @inline\n" +
+            "    def run(self):\n" +
+            "        for ch in \"ab\":\n" +
+            "            big(1)\n" +
+            "            self.show(ch)\n" +
+            "d = Seg()\n" +
+            "def main():\n" +
+            "    d.run()\n");
+        HasLoopBackEdge(Main(ir)).Should().BeFalse(
+            "the loop unrolls so each show(ch) folds the membership test");
+    }
+
     // `ch in ":;"` has no run-time form, only the per-character fold of a constant
     // left side, so a loop variable reaching it must unroll whatever the body costs.
     [Fact]

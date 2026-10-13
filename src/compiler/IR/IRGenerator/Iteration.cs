@@ -652,6 +652,9 @@ public partial class IRGenerator
                 recvKey = selfKey;
                 if (recvKey != null) instanceClasses.TryGetValue(recvKey, out cls);
                 cls ??= methodInstanceTypes.TryGetValue(currentFunction, out var mc) ? mc : null;
+                // Inside an inline expansion `currentFunction` is the caller, and the class
+                // `self` stands for is the one the instance bound to this scope.
+                cls ??= InstanceClassOfName("self");
             }
             else
             {
