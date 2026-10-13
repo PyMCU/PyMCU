@@ -36,6 +36,21 @@ public class InferredSlotWidthTests
         }
     }
 
+    // The same driver without the optimizer, for the checks on the generator's own IR.
+    private static ProgramIR GenSeededRaw(string src)
+    {
+        var seeds = new WidthSeeds();
+        for (int run = 1; ; run++)
+        {
+            seeds.BeginRun();
+            var ir = new IRGenerator { WidthSeeds = seeds }.Generate(
+                new Parser(new Lexer(src).Tokenize()).ParseProgram(),
+                new Dictionary<string, ProgramNode>(),
+                new DeviceConfig { Arch = "avr" });
+            if (!seeds.Grew || run == 5) return ir;
+        }
+    }
+
     private static IEnumerable<Variable> VariablesNamed(ProgramIR ir, string name) =>
         ir.Functions.SelectMany(f => f.Body).SelectMany(Operands)
             .OfType<Variable>().Where(v => v.Name == name);
@@ -545,5 +560,55 @@ public class InferredSlotWidthTests
 
         act.Should().Throw<PyMCU.Common.CompilerError>()
             .WithMessage("*would have to hold both*uint8*float*");
+    }
+
+    private static void ShouldBeOneWidth(ProgramIR ir, string name)
+    {
+        var types = VariablesNamed(ir, name).Select(v => v.Type).Distinct().ToList();
+        types.Should().HaveCount(1, $"the backend homes '{name}' once, so every use must agree");
+    }
+
+    [Fact]
+    public void A_name_set_to_a_literal_then_unpacked_from_a_tuple_holds_one_width()
+    {
+        // `x = 0` was written at the literal's width; `x, diff = self.step(diff)` then wrote it at
+        // the 16-bit width of the result slot. Judged against the Copy's own type no store looked
+        // too narrow, so no seed was filed and the name stayed at two widths (verify_ir:
+        // "written at UINT8 but used at INT16").
+        var ir = GenSeededRaw(
+            "class Bus:\n" +
+            "    def step(self, diff: int) -> tuple[int, int]:\n" +
+            "        if diff > 1:\n" +
+            "            return 7, diff - 1\n" +
+            "        return 7, 0\n" +
+            "    def walk(self) -> int:\n" +
+            "        x = 0\n" +
+            "        diff = 3\n" +
+            "        total = 0\n" +
+            "        for _ in range(6):\n" +
+            "            x, diff = self.step(diff)\n" +
+            "            total = total * 10 + diff\n" +
+            "            if diff == 0:\n" +
+            "                break\n" +
+            "        return total\n" +
+            "z = Bus().walk()\n");
+        ShouldBeOneWidth(ir, "inline1.walk.x");
+        ShouldBeOneWidth(ir, "inline1.walk.diff");
+    }
+
+    [Fact]
+    public void A_name_set_to_a_literal_then_assigned_a_call_result_holds_one_width()
+    {
+        var ir = GenSeededRaw(
+            "class Bus:\n" +
+            "    def search(self, diff: int) -> int:\n" +
+            "        return diff + 300\n" +
+            "    def scan(self) -> int:\n" +
+            "        diff = 3\n" +
+            "        for _ in range(3):\n" +
+            "            diff = self.search(diff)\n" +
+            "        return diff\n" +
+            "r = Bus().scan()\n");
+        ShouldBeOneWidth(ir, "inline1.scan.diff");
     }
 }

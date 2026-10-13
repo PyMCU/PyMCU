@@ -47,8 +47,17 @@ public partial class IRGenerator
     {
         if (WidthSeeds == null) return chosen;
         inferredSlots[name] = name;
-        return SeedSlot(name, chosen);
+        DataType width = SeedSlot(name, chosen);
+        // The first width a name was given is the one the backend homes it at. A later write
+        // that carries its own wider type (`x = 0`, then `x, d = f()` or `x = f()` with a 16-bit
+        // result) must be judged against THIS width, or no store ever looks too narrow and the
+        // seed that would widen the name from the start is never filed.
+        firstSlotWidth.TryAdd(name, width);
+        return width;
     }
+
+    // The width each registered slot was first chosen at, in this run.
+    private readonly Dictionary<string, DataType> firstSlotWidth = new();
 
     /// Every def whose parameters or return can be unannotated, before TypeInference writes
     /// into them. The key is what the next run finds the same def by: its module, position
@@ -181,7 +190,8 @@ public partial class IRGenerator
         switch (inst)
         {
             case Copy { Dst: Variable dv } cp when inferredSlots.TryGetValue(dv.Name, out var ck):
-                NoteStore(ck, dv.Type, cp.Src, storeReadsItsTarget);
+                NoteStore(ck, firstSlotWidth.TryGetValue(dv.Name, out var firstW) ? firstW : dv.Type,
+                    cp.Src, storeReadsItsTarget);
                 break;
             case AugAssign { Target: Variable av } aa when inferredSlots.TryGetValue(av.Name, out var ak):
                 NoteAugStore(ak, av.Type, aa.Op, aa.Operand);
