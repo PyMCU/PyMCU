@@ -187,4 +187,23 @@ public class RISCVGcTests
 
         Assert.Equal(before, DataTypeExtensions.PointerWidth);
     }
+
+    [Fact]
+    public void TheHeapAndTheSoftFloatDoNotDefineTheSameLocalLabelTwice()
+    {
+        // Each C runtime was compiled on its own and numbers its local labels from .L0, so a
+        // program that reaches both (a record with a float field in a growable list) defined
+        // `.L44` twice and the assembler stopped.
+        var asm = Compile(Program(
+            new GcAlloc(new Constant(10), Ref("xs"), Refs: false),
+            new Binary(BinaryOp.Add, new Variable("a", DataType.FLOAT), new Variable("b", DataType.FLOAT),
+                new Variable("r", DataType.FLOAT))));
+
+        var labels = System.Text.RegularExpressions.Regex.Matches(asm, @"(?m)^(\.L\w+):")
+            .Select(m => m.Groups[1].Value).ToList();
+        Assert.True(labels.Count > 10, "both runtimes should have been emitted");
+        Assert.Equal(labels.Count, labels.Distinct().Count());
+        Assert.Contains(labels, l => l.StartsWith(".Lgc"));
+        Assert.Contains(labels, l => l.StartsWith(".Lsf"));
+    }
 }

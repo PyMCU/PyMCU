@@ -66,7 +66,7 @@ public partial class RiscvCodeGen
 
         if (gcNeeded.Count == 0) return;
 
-        EmitCRuntime(gcNeeded, GcRoutines);
+        EmitCRuntime(gcNeeded, GcRoutines, "gc");
 
         var gcGlobals = program.Globals.Where(g => g.Type == DataType.GC_REF).Select(g => g.Name).ToList();
         int slots = program.Functions.SelectMany(f => f.Body).Count(i => i is GcRoot) + gcGlobals.Count;

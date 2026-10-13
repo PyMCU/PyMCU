@@ -207,12 +207,13 @@ public partial class RiscvCodeGen
         Emit(jumpWhenZero ? "beqz" : "bnez", "t0", target);
     }
 
-    private void EmitSoftFloat() => EmitCRuntime(softFloatNeeded, SoftFloatRoutines);
+    private void EmitSoftFloat() => EmitCRuntime(softFloatNeeded, SoftFloatRoutines, "sf");
 
     // Emits the routines in `roots` and everything they call, from a runtime compiled from C
     // (see tools/gen_c_runtimes.py). The integer multiply the compiled code may call is the
     // backend's own helper, which is then emitted too.
-    private void EmitCRuntime(HashSet<string> roots, Dictionary<string, (string[] Asm, string[] Calls)> routines)
+    private void EmitCRuntime(HashSet<string> roots, Dictionary<string, (string[] Asm, string[] Calls)> routines,
+        string labelPrefix)
     {
         if (roots.Count == 0) return;
 
@@ -230,9 +231,12 @@ public partial class RiscvCodeGen
 
         EmitRaw(".section .text");
         EmitRaw(".align 2");
+        // Each runtime was compiled on its own, so each numbers its local labels from .L0 up: a
+        // program that reaches the soft float AND the heap would define .L44 twice, and the
+        // assembler stops at the second. Prefixing the numbers keeps the two apart.
         foreach (var name in order)
             foreach (var line in routines[name].Asm)
-                EmitRaw(line);
+                EmitRaw(System.Text.RegularExpressions.Regex.Replace(line, @"\.L(\d+)", $".L{labelPrefix}$1"));
     }
 
     // The routines call the runtime's multiply when the core has none of its own.
