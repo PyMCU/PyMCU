@@ -501,4 +501,60 @@ public class UnrollPolicyTests
             "        d.show(ch)\n");
         HasLoopBackEdge(Main(ir)).Should().BeFalse();
     }
+
+    // A call in a counter loop whose callee rebinds an Optional buffer parameter under a
+    // run-time condition: `rom, diff = bus.search(rom, diff)` reads `rom` as the argument
+    // before the unpack that gives it a buffer has run, so the callee's
+    // `if not l_rom: l_rom = bytearray(8)` used to be refused as a buffer that travels as a name.
+    // Three turns unrolled and never got there; thirty is a counter loop.
+    private const string SearchLoop =
+        "from typing import Optional, Tuple\n" +
+        "from pymcu.chips.atmega328p import GPIOR0\n" +
+        "from pymcu.types import uint8\n\n" +
+        "class Bus:\n" +
+        "    def search(self, l_rom: Optional[bytearray], diff: int) -> Tuple[bytearray, int]:\n" +
+        "        if diff == 99:\n" +
+        "            return None, 0\n" +
+        "        if not l_rom:\n" +
+        "            l_rom = bytearray(8)\n" +
+        "        rom = bytearray(8)\n" +
+        "        for i in range(8):\n" +
+        "            rom[i] = l_rom[i] + 1\n" +
+        "        return rom, diff - 1\n\n";
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(30)]
+    public void ARangeLoopFeedingAnOptionalBufferBackIntoItsCallCompilesAtAnyTripCount(int trips)
+    {
+        var ir = Gen(
+            SearchLoop +
+            "bus = Bus()\n" +
+            "def main():\n" +
+            "    rom = None\n" +
+            "    diff = 3\n" +
+            $"    for _ in range({trips}):\n" +
+            "        rom, diff = bus.search(rom, diff)\n" +
+            "        if rom:\n" +
+            "            GPIOR0.value = rom[0]\n");
+        if (trips > 8) HasLoopBackEdge(Main(ir)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void AWhileLoopFeedingAnOptionalBufferBackIntoItsCallCompiles()
+    {
+        var ir = Gen(
+            SearchLoop +
+            "bus = Bus()\n" +
+            "def main():\n" +
+            "    rom = None\n" +
+            "    diff = 3\n" +
+            "    n = 0\n" +
+            "    while n < 30:\n" +
+            "        n += 1\n" +
+            "        rom, diff = bus.search(rom, diff)\n" +
+            "        if rom:\n" +
+            "            GPIOR0.value = rom[0]\n");
+        HasLoopBackEdge(Main(ir)).Should().BeTrue();
+    }
 }

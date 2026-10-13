@@ -2800,6 +2800,7 @@ public partial class IRGenerator
             return;
         }
 
+        PreRegisterLoopCarriedBufferOptionalTargets(stmt.Body);
         string startLabel = MakeLabel();
         string endLabel = MakeLabel();
         loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel,

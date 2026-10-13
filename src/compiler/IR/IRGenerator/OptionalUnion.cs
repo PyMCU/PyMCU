@@ -708,6 +708,45 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// The loop-carried counterpart of <see cref="CollectExpansionTupleReturnBufferOptionalTargets"/>
+    /// for a run-time loop in the scope being lowered: `rom, diff = bus.search(rom, diff)` reads
+    /// `rom` as the call's argument on the loop's first visit, before the unpack that gives it a
+    /// buffer member has run. A counter loop compiles once, so the target has to be a
+    /// buffer-Optional already, or the callee's `if not l_rom: l_rom = bytearray(8)` finds the
+    /// name's inferred members (`uint8 | None`) and is refused. An unrolled loop never gets here:
+    /// each copy sees the state the one before left.
+    /// </summary>
+    private void PreRegisterLoopCarriedBufferOptionalTargets(Statement? body)
+    {
+        if (tupleReturnBufferOptionalSlots.Count == 0 || body == null) return;
+        foreach (var s in TypeInference.WalkStatements(body))
+        {
+            if (s is not TupleUnpackStmt { Value: CallExpr call } tu) continue;
+            string? key = null;
+            if (call.Callee is MemberAccessExpr { Object: VariableExpr recv } mem
+                && InstanceClassOfName(recv.Name) is { } cls)
+                key = ResolveMROMethod(cls, mem.Member) + "_" + mem.Member;
+            else if (call.Callee is VariableExpr fn)
+                key = ResolveCallee(fn.Name);
+            if (key == null || !tupleReturnBufferOptionalSlots.TryGetValue(key, out var slots)) continue;
+            var calleeElems = functionReturnTypes.TryGetValue(key, out var rt)
+                ? TupleType.ElementTypes(rt) : new List<string>();
+            foreach (int k in slots)
+            {
+                if (k >= tu.Targets.Count || k >= calleeElems.Count) continue;
+                string targetQ = QualifyBoundName(tu.Targets[k]);
+                // Only a name already holding a presence byte the buffer member is missing from
+                // (`rom = None` ahead of the loop), or one with none yet.
+                if (optionalMembersByName.TryGetValue(targetQ, out var have)
+                    && have.Any(m => m is "bytearray" or "bytes")) continue;
+                if (!optionalTagSlots.ContainsKey(targetQ))
+                    optionalTagSlots[targetQ] = new Variable(targetQ + "$tag", DataType.UINT8);
+                optionalMembersByName[targetQ] = new List<string> { calleeElems[k], "None" };
+            }
+        }
+    }
+
     // ── transitive closure of a forwarded buffer parameter's own run-time length ──
 
     /// <summary>
@@ -3602,6 +3641,10 @@ public partial class IRGenerator
                 if (am.Any(mm => mm is "bytearray" or "bytes"))
                 {
                     bytearrayParams.Add(paramName);
+                    // A pointer parameter is read through its own pointer; a name alias left over
+                    // from the argument binding sent every read to the caller's variable instead,
+                    // past the buffer a rebind pointed the parameter at.
+                    variableAliases.Remove(paramName);
                     // The parameter is read through a pointer, and the rebind further down only
                     // sets it on the path that makes a buffer of its own. On the path the caller
                     // passed one, the pointer has to name the caller's buffer from the start, or

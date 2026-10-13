@@ -11633,7 +11633,14 @@ public partial class IRGenerator
                     }
                     // The next call that passes this target on as an Optional buffer reads its
                     // base from the companion pointer (CarryOptionalTagToParam).
-                    if (optionalTagSlots.ContainsKey(dstName) && ResolveArrayVar(dstName) is { } dstArr)
+                    // The copy above filed the storage under the target's own key; a module-level
+                    // target (`rom` replayed inside main) is aliased to a scoped spelling that has
+                    // no array, so the scoped lookup alone answers nothing and the companion
+                    // pointer the next call reads was never set.
+                    if (optionalTagSlots.ContainsKey(dstName)
+                        && (ResolveArrayVar(dstName)
+                            ?? (arraySizes.TryGetValue(dstName, out int ownSz)
+                                ? (dstName, ownSz) : ((string, int)?)null)) is { } dstArr)
                     {
                         variableTypes[dstName + "$ptr"] = GcPtrWidth();
                         Emit(new Copy(new ArrayBase(dstArr.Name), new Variable(dstName + "$ptr", GcPtrWidth())));

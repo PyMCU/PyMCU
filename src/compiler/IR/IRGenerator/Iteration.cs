@@ -4449,6 +4449,7 @@ public partial class IRGenerator
             return;
         }
 
+        PreRegisterLoopCarriedBufferOptionalTargets(stmt.Body);
         Val startVal = stmt.RangeStart != null ? VisitExpression(stmt.RangeStart) : new Constant(0);
         Val stopVal = VisitExpression(stmt.RangeStop!);
         Val stepVal = stmt.RangeStep != null ? VisitExpression(stmt.RangeStep) : new Constant(1);
