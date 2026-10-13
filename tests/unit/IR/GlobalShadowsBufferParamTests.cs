@@ -201,9 +201,12 @@ public class GlobalShadowsBufferParamTests
     [Fact]
     public void PlainFunctionBufferParam_Len_IsNotTheModuleArraysLength()
     {
-        // A function that takes len() of its buffer parameter is expanded at the call site, where
-        // the parameter is the buffer passed. With a module array of the same name it once
-        // compiled to THAT array's length.
+        // A buffer reached by pointer used to have no compile-time length here, which was
+        // refused; with a module array of the SAME NAME as the parameter, the bare-name
+        // lookup used to answer that global's length instead (the shadowing bug this test
+        // is named for). Now `len(buf)` gets a hidden run-time length (ParamNeedsRuntimeLen,
+        // Scan.cs), computed at each CALL SITE from the argument actually passed -- `rb`,
+        // never the global `buf` -- so the call below must answer 17, not 13.
         var ir = Gen(
             "def size(buf: bytearray) -> uint8:\n" +
             "    return len(buf)\n" +
@@ -211,15 +214,16 @@ public class GlobalShadowsBufferParamTests
             "rb = bytearray(17)\n" +
             "GPIOR1.value = size(rb)\n");
 
-        var text = string.Join("\n", All(ir).Select(i => i.ToString()));
-        Assert.Contains("Copy { Src = Constant { Value = 17,", text);
-        Assert.DoesNotContain("Copy { Src = Constant { Value = 13,", text);
+        var call = All(ir).OfType<Call>().Single(c => c.FunctionName == "size");
+        Assert.Equal(2, call.Args.Count);
     }
 
     [Fact]
     public void PlainFunctionBytesParam_Len_IsNotTheModuleConstantsLength()
     {
-        // Same, for bytes: with the module's `buf = b"..."` in scope, len() answered 3.
+        // Same shape as the bytearray case above: len() used to answer the module's
+        // similarly-named `buf = b"..."` constant (3) instead of refusing; now it reads a
+        // hidden run-time length taken from the call site's own argument (`rb`, length 4).
         var ir = Gen(
             "def size(buf: bytes) -> uint8:\n" +
             "    return len(buf)\n" +
@@ -227,9 +231,8 @@ public class GlobalShadowsBufferParamTests
             "rb = b\"\\x15\\x16\\x17\\x18\"\n" +
             "GPIOR1.value = size(rb)\n");
 
-        var text = string.Join("\n", All(ir).Select(i => i.ToString()));
-        Assert.Contains("Value = 4,", text);
-        Assert.DoesNotContain("Value = 3,", text);
+        var call = All(ir).OfType<Call>().Single(c => c.FunctionName == "size");
+        Assert.Equal(2, call.Args.Count);
     }
 
     [Fact]

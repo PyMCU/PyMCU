@@ -87,22 +87,38 @@ public class LibraryModeTests
     }
 
     [Fact]
-    public void WithoutLibraryMode_LenOfABufferParamIsTheLengthOfTheBufferEachCallPasses()
+    public void WithoutLibraryMode_LenOfABufferParam_GetsItsOwnHiddenLength()
     {
-        // As a subroutine the parameter is an address with no length, so the function is expanded
-        // at its call sites (a library export keeps its subroutine and its hidden length).
+        // Used to throw: outside Library mode, `len()` on a plain bytearray parameter had no
+        // answer at all. A parameter the body actually measures (ParamNeedsRuntimeLen,
+        // Scan.cs) now gets the same hidden-length wire Library mode's kernel ABI always gave
+        // every buffer parameter -- but only this one, and not because the whole program is a
+        // library: `func` is not IsExportC, and only `buf` (the parameter len() reads) gets a
+        // trailing argument.
         var ir = Gen(
-            "def plasma(buf: bytearray) -> int:\n    return len(buf)\n" +
-            "b = bytearray(5)\nx: int = plasma(b)\n",
+            "def plasma(buf: bytearray) -> int:\n    return len(buf)\n",
             library: false);
-        Assert.DoesNotContain(ir.Functions, f => f.Name == "plasma");
+
+        // Outside Library mode an entry file with no main gets a synthetic one; the function
+        // under test is the other.
+        var fn = Assert.Single(ir.Functions, f => f.Name != "main");
+        Assert.False(fn.IsExportC);
+        Assert.Equal(2, fn.Params.Count);
+        Assert.Equal(fn.Name + ".__len_buf", fn.Params[1]);
     }
 
     [Fact]
-    public void WithoutLibraryMode_LenOfABufferParamOfAFunctionNobodyCallsIsNotAnError()
+    public void WithoutLibraryMode_ABufferParamNeverMeasured_StaysPlain()
     {
-        var ir = Gen("def plasma(buf: bytearray) -> int:\n    return len(buf)\n", library: false);
-        Assert.DoesNotContain(ir.Functions, f => f.Name == "plasma");
+        // The other half of the gate: a buffer parameter the body never calls len() or
+        // for-in on costs nothing extra outside Library mode -- one hidden parameter, only
+        // where ParamNeedsRuntimeLen actually finds a use.
+        var ir = Gen(
+            "def touch(buf: bytearray) -> uint8:\n    return buf[0]\n",
+            library: false);
+
+        var fn = Assert.Single(ir.Functions, f => f.Name != "main");
+        Assert.Single(fn.Params);
     }
 
     [Fact]

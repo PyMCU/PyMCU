@@ -8,9 +8,11 @@ namespace PyMCU.UnitTests;
 
 /// <summary>
 /// A function that takes the length of a buffer parameter, or walks it, was refused ("len() argument
-/// must be a fixed-size array"): as a subroutine the parameter is an address with no length. The
-/// call sites know the buffer, so such a function is expanded at them. adafruit_onewire's
-/// `crc8(data)`, a static method that does `for byte in data`, is the shape that asked for it.
+/// must be a fixed-size array"): as a subroutine the parameter is an address with no length. It was
+/// first answered by expanding such a function at its call sites; the hidden run-time length
+/// (RFC 0015) answers it better, so the function stays a subroutine that takes the buffer's length
+/// as one more argument. adafruit_onewire's `crc8(data)`, a static method that does
+/// `for byte in data`, is the shape that asked for it, and probes 900 to 902 pin it.
 /// </summary>
 public class BufferParamMeasuredTests
 {
@@ -25,19 +27,21 @@ public class BufferParamMeasuredTests
     [InlineData("def total(data: bytearray) -> int:\n    s = 0\n    for b in data:\n        s += b\n    return s\n\n")]
     [InlineData("def total(data: bytearray) -> int:\n    s = 0\n    for i in range(len(data)):\n        s += data[i]\n    return s\n\n")]
     [InlineData("def total(data: bytearray) -> int:\n    return data[len(data) - 1]\n\n")]
-    public void AFunctionThatMeasuresItsBufferParameterIsExpandedAtItsCallSite(string fn)
+    public void AFunctionThatMeasuresItsBufferParameterStaysASubroutineWithAHiddenLength(string fn)
     {
         var ir = Generate(fn + Buf + "x: int = total(buf)\n");
-        Assert.DoesNotContain(ir.Functions, f => f.Name == "total");
+        var total = Assert.Single(ir.Functions, f => f.Name == "total");
+        Assert.Equal(2, total.Params.Count);
     }
 
     [Fact]
-    public void AStaticMethodThatWalksItsBufferParameterIsExpandedToo()
+    public void AStaticMethodThatWalksItsBufferParameterGetsTheHiddenLengthToo()
     {
         var ir = Generate("class C:\n    @staticmethod\n    def crc(data: bytearray) -> int:\n"
                           + "        c = 0\n        for b in data:\n            c ^= b\n        return c\n\n"
                           + Buf + "x: int = C.crc(buf)\n");
-        Assert.DoesNotContain(ir.Functions, f => f.Name.EndsWith("crc"));
+        var crc = Assert.Single(ir.Functions, f => f.Name.EndsWith("crc"));
+        Assert.Equal(2, crc.Params.Count);
     }
 
     [Fact]
