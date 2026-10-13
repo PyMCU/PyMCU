@@ -1078,6 +1078,16 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
                 int offAlign = AlignmentOf(arg.Src2);
                 knownAlignment[dstName] = offAlign > 0 ? Math.Min(baseAlign, offAlign) : 1;
             }
+            else if (AlignmentOf(arg.Src2) is > 0 and < 4 and var runtimeOffAlign)
+            {
+                // A base nothing here computed (a list or instance pointer held in a variable or a
+                // parameter) plus a run-time offset that is known to leave the word boundary: the
+                // elements of a growable list start 2 bytes into the object, `(i << 2) + 2`. The
+                // base is taken to sit on a word, as the constant-offset case above does, so the
+                // address falls off it by what the offset says. Left unknown, a 32-bit element of
+                // a list was stored with `sw` to an address ending in 2 and the core trapped.
+                knownAlignment[dstName] = runtimeOffAlign;
+            }
         }
     }
 

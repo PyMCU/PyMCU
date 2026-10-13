@@ -138,4 +138,31 @@ public class RISCVUnalignedAccessTests
 
         Assert.Contains("lw\tt1, 0(t0)", asm);
     }
+
+    [Fact]
+    public void AWordStoreIntoAListElementTwoBytesPastTheBaseGoesByteByByte()
+    {
+        // The elements of a growable list start 2 bytes into the object, so element i is at
+        // base + (i << 2) + 2 and a word there is never on a word boundary. The base is a variable
+        // nothing here computed; the offset says what the address falls off.
+        var asm = Compile(
+            new Binary(BinaryOp.LShift, new Variable("i", DataType.UINT8), new Constant(2), T("o4", DataType.UINT32)),
+            new Binary(BinaryOp.Add, T("o4", DataType.UINT32), new Constant(2), T("o", DataType.UINT32)),
+            new Binary(BinaryOp.Add, new Variable("lst", DataType.UINT32), T("o", DataType.UINT32), T("p", DataType.UINT32)),
+            new StoreIndirect(new Variable("v", DataType.UINT32), T("p", DataType.UINT32), DataType.UINT32));
+
+        Assert.DoesNotContain("sw\tt1, 0(t0)", asm);
+        Assert.Contains("sb\tt1, 0(t0)", asm);
+        Assert.Contains("sb\tt2, 3(t0)", asm);
+    }
+
+    [Fact]
+    public void AWordStoreAtABaseAndARunTimeOffsetNothingKnowsStaysOneStore()
+    {
+        var asm = Compile(
+            new Binary(BinaryOp.Add, new Variable("base", DataType.UINT32), new Variable("off", DataType.UINT32), T("p", DataType.UINT32)),
+            new StoreIndirect(new Variable("v", DataType.UINT32), T("p", DataType.UINT32), DataType.UINT32));
+
+        Assert.Contains("sw\tt1, 0(t0)", asm);
+    }
 }
