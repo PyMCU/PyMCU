@@ -52,7 +52,12 @@ public partial class IRGenerator
         // that carries its own wider type (`x = 0`, then `x, d = f()` or `x = f()` with a 16-bit
         // result) must be judged against THIS width, or no store ever looks too narrow and the
         // seed that would widen the name from the start is never filed.
-        firstSlotWidth.TryAdd(name, width);
+        if (!firstSlotWidth.TryAdd(name, width) && WidthSeeds.IsInt(width)
+            && firstSlotWidth[name] is var first && WidthSeeds.IsInt(first))
+            // A second choice point (another expansion that mints the same generated name) chose
+            // a different width for it. One name has one width, so the narrower choice asks for
+            // the wider and the next run declares it so from the start.
+            RequireSlot(name, first, width);
         return width;
     }
 

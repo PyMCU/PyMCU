@@ -611,4 +611,43 @@ public class InferredSlotWidthTests
             "r = Bus().scan()\n");
         ShouldBeOneWidth(ir, "inline1.scan.diff");
     }
+
+    [Fact]
+    public void Two_expansions_that_mint_one_name_at_different_widths_agree_on_one()
+    {
+        // The write of a constant byte folds `bit` to a constant (a byte); the write of a buffer
+        // element makes it a 16-bit value. Both expansions mint the same generated name, and each
+        // choice point judged its own value only, so one name was written at two widths
+        // (verify_ir on adafruit_onewire's _writebyte: "'inline7._writebyte.bit' is written at
+        // UINT8 but used at INT16"). A second choice point that disagrees now files the wider.
+        var ir = GenSeededRaw(
+            "from pymcu.types import uint8\n" +
+            "last: uint8 = 0\n" +
+            "class Bus:\n" +
+            "    def wb(self, value: int) -> None:\n" +
+            "        global last\n" +
+            "        for i in range(2):\n" +
+            "            bit = (value >> i) & 1\n" +
+            "            last = bit\n" +
+            "    def write(self, buf: bytearray, start: int = 0, end: int = -1) -> None:\n" +
+            "        if end < 0:\n" +
+            "            end = len(buf)\n" +
+            "        for i in range(start, end):\n" +
+            "            self.wb(buf[i])\n" +
+            "class Dev:\n" +
+            "    def __init__(self, bus: Bus) -> None:\n" +
+            "        self.bus = bus\n" +
+            "    def write(self, buf: bytearray) -> None:\n" +
+            "        self.bus.write(buf)\n" +
+            "    def select(self, rom: bytearray) -> None:\n" +
+            "        self.write(b\"\\x55\")\n" +
+            "        self.write(rom)\n" +
+            "d = Dev(Bus())\n" +
+            "r = bytearray(2)\n" +
+            "d.select(r)\n");
+        var names = ir.Functions.SelectMany(f => f.Body).SelectMany(Operands).OfType<Variable>()
+            .Where(v => v.Name.EndsWith(".wb.bit")).GroupBy(v => v.Name);
+        foreach (var g in names)
+            g.Select(v => v.Type).Distinct().Should().HaveCount(1, $"'{g.Key}' is homed once");
+    }
 }
