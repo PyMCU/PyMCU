@@ -38,6 +38,8 @@ public partial class IRGenerator
     private DataType SeedSlot(string key, DataType chosen)
     {
         if (WidthSeeds?.AtRunStart(key) is not { } seed || !WidthSeeds.IsInt(chosen)) return chosen;
+        // A float seed makes the slot a float: no integer width holds what it was stored.
+        if (seed == DataType.FLOAT) return DataType.FLOAT;
         return WidthSeeds.Join(chosen, seed);
     }
 
@@ -235,6 +237,15 @@ public partial class IRGenerator
     private void NoteStore(string key, DataType slot, Val value, bool readsItself)
     {
         if (WidthSeeds == null || !WidthSeeds.IsInt(slot)) return;
+        // A float stored into a slot that was an int (`h = 0`, then `h = 55.5`, or an accumulator
+        // that starts at 0): the slot cannot hold it, and the store used to be truncated to the
+        // integer part. The name needs to be a float from its first write, so the next run
+        // declares it one.
+        if (value is FloatConstant || (value is Temporary or Variable && GetValType(value) == DataType.FLOAT))
+        {
+            RequireSlot(key, slot, DataType.FLOAT);
+            return;
+        }
         if (readsItself && value is Temporary gt && binaryOperands.TryGetValue(gt.Name, out var gops)
             && gops.Grows)
             WarnLoopAccumulator(key, slot);
@@ -309,6 +320,13 @@ public partial class IRGenerator
 
     private void RequireSlot(string key, DataType slot, DataType need)
     {
+        if (need == DataType.FLOAT)
+        {
+            Logger.Verbose("width", $"'{key}' is {slot.ToString().ToLower()} and is stored a float: "
+                + "compiling again with it a float");
+            WidthSeeds!.Require(key, DataType.FLOAT);
+            return;
+        }
         var want = PyMCU.Common.WidthSeeds.Join(slot, need);
         if (want == slot) return;   // nothing wider holds it (uint32 with a sign)
         Logger.Verbose("width", $"'{key}' is {slot.ToString().ToLower()} and is stored "

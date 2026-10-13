@@ -650,4 +650,22 @@ public class InferredSlotWidthTests
         foreach (var g in names)
             g.Select(v => v.Type).Distinct().Should().HaveCount(1, $"'{g.Key}' is homed once");
     }
+
+    [Fact]
+    public void A_name_set_to_zero_then_stored_a_float_is_a_float_from_its_first_write()
+    {
+        // `h = 0` then `h = 55.5`: the name was typed an integer by its first write and the float
+        // was truncated to 55 (and an accumulator that starts at 0 summed the integer parts). A
+        // float store into an integer slot files a float seed, so the next run declares the name
+        // a float from `h = 0` on.
+        var ir = GenSeededRaw(
+            "def f(n: int) -> float:\n" +
+            "    h = 0\n" +
+            "    if n > 1:\n" +
+            "        h = 55.5\n" +
+            "    return h\n" +
+            "r = f(3)\n");
+        var types = VariablesNamed(ir, "f.h").Select(v => v.Type).Distinct().ToList();
+        types.Should().Equal(new[] { DataType.FLOAT });
+    }
 }

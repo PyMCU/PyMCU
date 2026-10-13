@@ -46,7 +46,9 @@ public class WidthSeeds
     public void Require(string key, DataType need)
     {
         var have = Get(key);
-        var joined = have is { } h ? Join(h, need) : need;
+        // A float is not an integer width and no integer width joins with it into something that
+        // holds it: once a slot is stored a float it is a float.
+        var joined = need == DataType.FLOAT ? DataType.FLOAT : have is { } h ? Join(h, need) : need;
         if (have == joined) return;
         seeds[key] = joined;
         Grew = true;
