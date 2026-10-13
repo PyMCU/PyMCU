@@ -386,6 +386,26 @@ def evaluate(probe: Path, chip: str, tmp_dir: Path, pymcu: Path) -> dict:
     return record
 
 
+def resolve_pymcu(explicit: str | None) -> Path:
+    """The pymcu driver to build the probes with.
+
+    --pymcu wins. Otherwise the pymcu beside the interpreter running this script: a venv's
+    python is started as `.venv/bin/python` without activating it, and the pymcu on PATH is
+    then some other install, which has no RISC-V toolchain (every probe came out as "No
+    toolchain found"). PATH is the last resort.
+    """
+    if explicit:
+        found = Path(explicit)
+    else:
+        beside = Path(sys.executable).parent / "pymcu"
+        on_path = shutil.which("pymcu")
+        found = beside if beside.is_file() else Path(on_path) if on_path else beside
+    if not found.is_file():
+        raise SystemExit(f"pymcu driver not found at {found}; pass --pymcu PATH or run this script "
+                         "with the interpreter of the venv that has pymcu installed")
+    return found
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--chip", required=True, choices=["ch32v003"])
@@ -394,7 +414,9 @@ def main() -> None:
     ap.add_argument("--only", default=None, help="substring filter on probe filename")
     ap.add_argument("--py-parser", action="store_true",
                     help="build with the Python front end (PYMCU_PY_PARSER=1) instead of the C# one")
-    ap.add_argument("--pymcu", default=shutil.which("pymcu") or "pymcu")
+    ap.add_argument("--pymcu", default=None,
+                    help="the pymcu driver to build with; default: the one beside the running "
+                         "interpreter, else pymcu on PATH")
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if any probe ended as something other than match, refused, "
                          "compiled or not measured (CI)")
@@ -402,8 +424,7 @@ def main() -> None:
 
     if args.py_parser:
         os.environ["PYMCU_PY_PARSER"] = "1"
-    pymcu = Path(args.pymcu)
-    assert pymcu.is_file(), f"pymcu binary not found: {pymcu}"
+    pymcu = resolve_pymcu(args.pymcu)
     assert RUNNER_DLL.is_file(), f"runner not built: {RUNNER_DLL}"
 
     probes = probe_files()
