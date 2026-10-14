@@ -16,7 +16,7 @@ from pymcu.chips.rp2040 import (
     PWM_BASE, PWM_CH_STRIDE, PWM_CH_CSR, PWM_CH_DIV, PWM_CH_CC, PWM_CH_TOP,
     RESETS_RESET_CLR, RESETS_RESET_DONE, RESET_PWM,
     RESET_IO_BANK0, RESET_PADS_BANK0,
-    IO_BANK0_BASE, GPIO_FUNC_PWM,
+    IO_BANK0_BASE, GPIO_FUNC_PWM, GPIO_FUNC_SIO, SIO_GPIO_OE_CLR,
 )
 from pymcu.types import ptr, uint8, uint16, uint32, const, inline
 
@@ -35,6 +35,7 @@ class PWM:
         # compat layers pass it) and wins when non-zero. invert flips the output level.
         if duty_u16 != 0:
             duty = duty_u16
+        self._pin = pin
         self._base = PWM_BASE + ((pin >> 1) & 7) * PWM_CH_STRIDE
         self._chan = pin & 1                       # 0 = A, 1 = B
         self._csr = 1 | (invert << (2 + (pin & 1)))
@@ -80,6 +81,14 @@ class PWM:
         topr.value = top
 
     @inline
+    def frequency(self) -> uint32:
+        # The frequency this slice actually emits, which is not always the one asked for: the
+        # period is a whole number of system clocks (TOP + 1) times the divider (in sixteenths).
+        div: ptr[uint32] = ptr(self._base + PWM_CH_DIV)
+        top: ptr[uint32] = ptr(self._base + PWM_CH_TOP)
+        return (_CLK_SYS * 16) // (div.value * (top.value + 1))
+
+    @inline
     def set_duty(self, duty: uint16):
         # Scale 0..65535 to the slice TOP and write the channel compare.
         top: ptr[uint32] = ptr(self._base + PWM_CH_TOP)
@@ -102,7 +111,11 @@ class PWM:
 
     @inline
     def deinit(self):
-        self.stop()
+        # The pin back to an input, which is what CircuitPython leaves behind. The slice is
+        # not disabled: its other channel may still be running (stop() does that).
+        ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * self._pin + 4)
+        ctrl.value = GPIO_FUNC_SIO
+        SIO_GPIO_OE_CLR.value = 1 << self._pin
 
     @inline
     def stop(self):
